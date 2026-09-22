@@ -1,6 +1,6 @@
 # Figure index
 
-26 figures. Each one answers a stated research question; a figure without a question is not included.
+27 figures. Each one answers a stated research question; a figure without a question is not included.
 
 | # | File | Research question |
 |---|------|-------------------|
@@ -27,6 +27,7 @@
 | 21 | `fig21_strategy_combination.png` | Does combining weakly performing but uncorrelated strategies produce a better return stream than any of them alone? |
 | 22 | `fig22_parameter_sensitivity.png` | Does performance hold across the whole parameter family, or does it depend on one narrow choice that would signal parameter mining? |
 | 23 | `fig23_is_vs_oos.png` | How much performance is lost moving from in-sample to walk-forward out-of-sample, and is any of it distinguishable from zero? |
+| 24 | `fig24_machine_learning.png` | Does nonlinear machine learning deliver genuine out-of-sample economic improvement over the simpler models, or only a better classification score? |
 | 25 | `fig25_final_comparison.png` | Which model ladder step actually improved risk-adjusted returns after costs, and where did the improvement come from? |
 | 26 | `fig26_pairs_trading.png` | Are any of these pairs genuinely cointegrated on training data, and does the spread revert fast enough to be tradable? |
 | 27 | `fig27_pca_stat_arb.png` | Do returns unexplained by the first three principal components mean revert, and is a factor-neutral book built on them profitable net of costs? |
