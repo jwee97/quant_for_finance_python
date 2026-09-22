@@ -100,3 +100,21 @@ def test_every_figure_has_a_stated_research_question():
         pytest.skip("figures not generated")
     missing = [p.name for p in figures.glob("*.png") if not p.with_suffix(".txt").exists()]
     assert not missing, f"figures without a research question: {missing}"
+
+
+def test_notebook_is_valid_and_imports_only_public_api():
+    """The tour notebook must be parseable and must not reach into internals."""
+    import json
+
+    path = ROOT / "notebooks" / "01_platform_tour.ipynb"
+    if not path.exists():
+        pytest.skip("notebook not present")
+    notebook = json.loads(path.read_text(encoding="utf-8"))
+    assert notebook["nbformat"] >= 4
+    code = "\n".join(
+        "".join(cell["source"]) for cell in notebook["cells"] if cell["cell_type"] == "code"
+    )
+    assert code.strip(), "notebook has no code"
+    # Private helpers are an implementation detail; a tour should not depend on them.
+    assert "import _" not in code and "._" not in code.replace("df._", "")
+    compile(code, str(path), "exec")
