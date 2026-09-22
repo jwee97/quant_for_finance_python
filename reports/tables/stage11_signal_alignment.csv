@@ -1,0 +1,4 @@
+,worst_forward_correlation,leakage,diagnosis
+momentum_126,0.024815150124795283,False,CLEAN: no implausible correlation at a non-negative lead
+zscore_21,0.31713597679439404,False,"CONTEMPORANEOUS: the signal contains the same day's return, which is legitimate for a price-level feature but makes an execution lag of at least one day mandatory -- trading the close you measured would capture a mechanical, untradable correlation"
+CONTROL_next_day_return,1.0,True,"LEAKAGE: the signal is implausibly correlated with a strictly future return, so a future observation was used to build it"

@@ -1,0 +1,6 @@
+method,baseline_max_weight,baseline_effective_n,baseline_n_holdings,mean_abs_weight_change,mean_turnover_from_noise,p95_turnover_from_noise,max_turnover_from_noise,mean_max_weight,mean_effective_n,n_trials
+unconstrained,0.774245,1.598943,3,0.016401,0.246021,0.575796,0.917744,0.738974,1.731857,150
+constrained,0.250000,4.545455,5,0.024603,0.369049,0.700000,0.987966,0.250000,4.636081,150
+shrunk_mu,0.688749,1.840560,4,0.030776,0.461643,0.885970,1.133989,0.627929,2.066747,150
+shrunk_mu_constrained,0.250000,5.001128,6,0.040876,0.613147,1.024831,1.233939,0.250000,4.785901,150
+min_variance,0.250000,4.424097,5,0.000000,0.000000,0.000000,0.000000,0.250000,4.424097,150

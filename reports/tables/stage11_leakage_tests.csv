@@ -1,0 +1,25 @@
+strategy,mode,split_date,passed,max_weight_difference,n_differing_cells,future_weights_changed,message,n_cells_checked,first_difference_date
+M1_inverse_vol,shock,2012-06-29,True,0.000000,0,True,PASS: no pre-split weight responded to future data,24540,
+M1_inverse_vol,reverse,2012-06-29,True,0.000000,0,True,PASS: no pre-split weight responded to future data,24540,
+M1_inverse_vol,shock,2017-06-30,True,0.000000,0,True,PASS: no pre-split weight responded to future data,43410,
+M1_inverse_vol,reverse,2017-06-30,True,0.000000,0,True,PASS: no pre-split weight responded to future data,43410,
+M1_inverse_vol,shock,2021-06-30,True,0.000000,0,True,PASS: no pre-split weight responded to future data,58500,
+M1_inverse_vol,reverse,2021-06-30,True,0.000000,0,True,PASS: no pre-split weight responded to future data,58500,
+M3_momentum,shock,2012-06-29,True,0.000000,0,True,PASS: no pre-split weight responded to future data,24540,
+M3_momentum,reverse,2012-06-29,True,0.000000,0,True,PASS: no pre-split weight responded to future data,24540,
+M3_momentum,shock,2017-06-30,True,0.000000,0,True,PASS: no pre-split weight responded to future data,43410,
+M3_momentum,reverse,2017-06-30,True,0.000000,0,True,PASS: no pre-split weight responded to future data,43410,
+M3_momentum,shock,2021-06-30,True,0.000000,0,True,PASS: no pre-split weight responded to future data,58500,
+M3_momentum,reverse,2021-06-30,True,0.000000,0,True,PASS: no pre-split weight responded to future data,58500,
+M4_mean_reversion,shock,2012-06-29,True,0.000000,0,True,PASS: no pre-split weight responded to future data,24540,
+M4_mean_reversion,reverse,2012-06-29,True,0.000000,0,True,PASS: no pre-split weight responded to future data,24540,
+M4_mean_reversion,shock,2017-06-30,True,0.000000,0,True,PASS: no pre-split weight responded to future data,43410,
+M4_mean_reversion,reverse,2017-06-30,True,0.000000,0,True,PASS: no pre-split weight responded to future data,43410,
+M4_mean_reversion,shock,2021-06-30,True,0.000000,0,True,PASS: no pre-split weight responded to future data,58500,
+M4_mean_reversion,reverse,2021-06-30,True,0.000000,0,True,PASS: no pre-split weight responded to future data,58500,
+CONTROL_cheating_strategy,shock,2012-06-29,False,0.500000,15,True,"LEAKAGE: 15 pre-split weights changed when future data changed (max 5.000e-01, first at 2012-06-29)",24540,2012-06-29
+CONTROL_cheating_strategy,reverse,2012-06-29,False,0.155939,14,True,"LEAKAGE: 14 pre-split weights changed when future data changed (max 1.559e-01, first at 2012-06-29)",24540,2012-06-29
+CONTROL_cheating_strategy,shock,2017-06-30,False,0.214103,15,True,"LEAKAGE: 15 pre-split weights changed when future data changed (max 2.141e-01, first at 2017-06-30)",43410,2017-06-30
+CONTROL_cheating_strategy,reverse,2017-06-30,False,0.359140,15,True,"LEAKAGE: 15 pre-split weights changed when future data changed (max 3.591e-01, first at 2017-06-30)",43410,2017-06-30
+CONTROL_cheating_strategy,shock,2021-06-30,False,0.500000,15,True,"LEAKAGE: 15 pre-split weights changed when future data changed (max 5.000e-01, first at 2021-06-30)",58500,2021-06-30
+CONTROL_cheating_strategy,reverse,2021-06-30,False,0.144979,14,True,"LEAKAGE: 14 pre-split weights changed when future data changed (max 1.450e-01, first at 2021-06-30)",58500,2021-06-30

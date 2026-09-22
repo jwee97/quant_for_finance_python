@@ -1,0 +1,21 @@
+book,scenario,pnl,worst_contributor,worst_contribution
+M0_equal_weight,Equity -20%,-0.066667,SPY,-0.013333
+M0_equal_weight,Rates +100bp (duration-scaled),-0.022667,SHY,-0.004667
+M0_equal_weight,All risk assets -15% together,-0.110000,SPY,-0.010000
+M0_equal_weight,"Equities -15%, bonds -5%, commodities +10%",-0.062000,SPY,-0.010000
+M1_inverse_vol,Equity -20%,-0.032388,SPY,-0.008336
+M1_inverse_vol,Rates +100bp (duration-scaled),-0.042439,SHY,-0.017500
+M1_inverse_vol,All risk assets -15% together,-0.073032,HYG,-0.020079
+M1_inverse_vol,"Equities -15%, bonds -5%, commodities +10%",-0.065701,SHY,-0.012500
+M2_risk_parity,Equity -20%,-0.028823,SPY,-0.007360
+M2_risk_parity,Rates +100bp (duration-scaled),-0.041084,SHY,-0.017500
+M2_risk_parity,All risk assets -15% together,-0.072772,HYG,-0.015151
+M2_risk_parity,"Equities -15%, bonds -5%, commodities +10%",-0.056094,SHY,-0.012500
+M5_momentum_plus_mr,Equity -20%,-0.019655,IWM,-0.016727
+M5_momentum_plus_mr,Rates +100bp (duration-scaled),-0.008882,SHY,-0.017500
+M5_momentum_plus_mr,All risk assets -15% together,-0.037518,HYG,-0.031364
+M5_momentum_plus_mr,"Equities -15%, bonds -5%, commodities +10%",-0.032012,HYG,-0.016728
+M9_mean_cvar,Equity -20%,0.000000,SPY,0.000000
+M9_mean_cvar,Rates +100bp (duration-scaled),-0.050029,SHY,-0.017500
+M9_mean_cvar,All risk assets -15% together,-0.053510,HYG,-0.037500
+M9_mean_cvar,"Equities -15%, bonds -5%, commodities +10%",-0.041490,HYG,-0.020000

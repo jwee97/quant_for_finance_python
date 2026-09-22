@@ -1,0 +1,4 @@
+,risk_concentration,diversification_ratio,effective_n
+M0_equal_weight,0.299980,1.497322,15.000000
+M1_inverse_vol,0.101861,1.539758,8.238159
+M2_risk_parity,0.069168,1.744969,8.548533

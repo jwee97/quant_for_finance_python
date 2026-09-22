@@ -102,6 +102,9 @@ def performance_summary(returns: pd.Series, risk_free: pd.Series | float = 0.0,
     curve = cumulative_returns(clean)
     dd = drawdown(curve)
     vol = annualised_volatility(clean, periods_per_year)
+    # The third and fourth moments are undefined for a constant series, and
+    # scipy warns about catastrophic cancellation rather than returning NaN.
+    dispersed = float(clean.std(ddof=1)) > 1e-12
 
     out = {
         "start": clean.index[0].date().isoformat(),
@@ -120,8 +123,8 @@ def performance_summary(returns: pd.Series, risk_free: pd.Series | float = 0.0,
         "hit_rate": float((clean > 0).mean()),
         "best_day": float(clean.max()),
         "worst_day": float(clean.min()),
-        "skew": float(stats.skew(clean, bias=False)),
-        "excess_kurtosis": float(stats.kurtosis(clean, bias=False)),
+        "skew": float(stats.skew(clean, bias=False)) if dispersed else float("nan"),
+        "excess_kurtosis": float(stats.kurtosis(clean, bias=False)) if dispersed else float("nan"),
         "var_95": value_at_risk(clean, 0.95),
         "cvar_95": conditional_value_at_risk(clean, 0.95),
         "tail_ratio": tail_ratio(clean),

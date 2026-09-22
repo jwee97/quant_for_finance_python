@@ -271,7 +271,15 @@ def christoffersen_test(breaches: pd.Series) -> tuple[float, float]:
     if they all arrive in the same week -- which is precisely what happens when
     a model ignores volatility clustering. Tests a first-order Markov chain
     against the independence restriction.
+
+    The transition probabilities can legitimately hit 0 or 1 (a perfectly
+    clustered breach sequence has ``pi11 = 1``), which is the *most* extreme
+    evidence of dependence and exactly when the test must fire. Those cases
+    are handled with the ``0 log 0 = 0`` convention via ``xlogy`` rather than
+    being discarded as degenerate.
     """
+    from scipy.special import xlogy
+
     indicator = breaches.dropna().astype(int).to_numpy()
     if len(indicator) < 10:
         return float("nan"), float("nan")
@@ -280,20 +288,30 @@ def christoffersen_test(breaches: pd.Series) -> tuple[float, float]:
     n01 = int(np.sum((previous == 0) & (current == 1)))
     n10 = int(np.sum((previous == 1) & (current == 0)))
     n11 = int(np.sum((previous == 1) & (current == 1)))
-
-    if (n01 + n11) == 0 or (n00 + n01) == 0 or (n10 + n11) == 0:
+    total = n00 + n01 + n10 + n11
+    if total == 0:
         return float("nan"), float("nan")
+
+    breach_count = n01 + n11
+    # No breaches at all, or nothing but breaches: independence is untestable.
+    if breach_count == 0 or breach_count == total:
+        return float("nan"), float("nan")
+    # No observation ever followed a breach: the transition from state 1 is
+    # unobserved, so the Markov alternative is not identified.
+    if (n10 + n11) == 0 or (n00 + n01) == 0:
+        return float("nan"), float("nan")
+
     pi01 = n01 / (n00 + n01)
     pi11 = n11 / (n10 + n11)
-    pi = (n01 + n11) / (n00 + n01 + n10 + n11)
-    if pi in (0.0, 1.0) or pi01 in (0.0,) or pi11 in (0.0, 1.0):
-        return float("nan"), float("nan")
+    pi = breach_count / total
 
-    log_null = (n00 + n10) * np.log(1 - pi) + (n01 + n11) * np.log(pi)
-    log_alt = (n00 * np.log(1 - pi01) + n01 * np.log(pi01)
-               + n10 * np.log(1 - pi11) + n11 * np.log(pi11))
-    statistic = -2.0 * (log_null - log_alt)
-    return float(statistic), float(1.0 - stats.chi2.cdf(statistic, 1))
+    log_null = xlogy(n00 + n10, 1.0 - pi) + xlogy(n01 + n11, pi)
+    log_alt = (xlogy(n00, 1.0 - pi01) + xlogy(n01, pi01)
+               + xlogy(n10, 1.0 - pi11) + xlogy(n11, pi11))
+    statistic = float(-2.0 * (log_null - log_alt))
+    if not np.isfinite(statistic) or statistic < 0:
+        return float("nan"), float("nan")
+    return statistic, float(1.0 - stats.chi2.cdf(statistic, 1))
 
 
 def rolling_var_backtest(returns: pd.Series, alpha: float = 0.95, lookback: int = 500,

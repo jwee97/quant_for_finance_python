@@ -15,7 +15,7 @@ import numpy as np
 import pandas as pd
 
 from ..features.volatility import ewma_volatility, rolling_volatility
-from .constraints import Constraints
+from .constraints import Constraints, project_frame
 
 
 def inverse_volatility_weights(volatility: pd.Series, floor: float = 1e-6) -> pd.Series:
@@ -36,5 +36,5 @@ def inverse_vol_book(returns: pd.DataFrame, investable: pd.DataFrame, lookback: 
     inverse = 1.0 / vol.replace(0.0, np.nan)
     weights = inverse.div(inverse.sum(axis=1), axis=0).fillna(0.0)
     if constraints is not None:
-        weights = weights.apply(lambda row: constraints.project(row) if row.sum() > 0 else row, axis=1)
+        weights = project_frame(weights, constraints)
     return weights

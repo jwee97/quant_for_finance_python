@@ -12,7 +12,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from .constraints import Constraints
+from .constraints import Constraints, project_frame
 
 
 def equal_weights(assets, value: float = 1.0) -> pd.Series:
@@ -33,5 +33,5 @@ def equal_weight_book(investable: pd.DataFrame, constraints: Constraints | None 
     counts = mask.sum(axis=1).replace(0, np.nan)
     weights = mask.div(counts, axis=0).fillna(0.0)
     if constraints is not None:
-        weights = weights.apply(lambda row: constraints.project(row) if row.sum() > 0 else row, axis=1)
+        weights = project_frame(weights, constraints)
     return weights

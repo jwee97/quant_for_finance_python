@@ -1,0 +1,1 @@
+Figure 23. How much performance is lost moving from in-sample to walk-forward out-of-sample, and is any of it distinguishable from zero?

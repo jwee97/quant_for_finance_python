@@ -1,0 +1,61 @@
+2026-09-22 13:33:39 | INFO    | stage.stage09_risk           | ========================================================================
+2026-09-22 13:33:39 | INFO    | stage.stage09_risk           | STAGE 9 | risk management (Ch. 21)
+2026-09-22 13:33:39 | INFO    | stage.stage09_risk           | ========================================================================
+2026-09-22 13:33:44 | INFO    | stage.stage09_risk           | VaR by method (equal weight):
+       historical  parametric_normal  parametric_t  cornish_fisher  monte_carlo_normal  monte_carlo_t
+alpha                                                                                                
+0.95      0.01015            0.01104       0.00950         0.01027             0.01098        0.01047
+0.99      0.01925            0.01573       0.01849         0.03262             0.01596        0.01765
+2026-09-22 13:33:47 | INFO    | stage.stage09_risk           | CVaR (equal weight):
+       var_historical  cvar_historical  cvar_var_ratio  var_normal  cvar_normal   cvar_t  cvar_monte_carlo
+alpha                                                                                                     
+0.95          0.01015          0.01648          1.6232     0.01104      0.01392  0.01570           0.01524
+0.99          0.01925          0.02885          1.4985     0.01573      0.01807  0.02825           0.02412
+2026-09-22 13:33:47 | INFO    | stage.stage09_risk           | VaR backtest (Kupiec + Christoffersen):
+ alpha            method  n_obs  n_breaches  expected_breaches  breach_rate  expected_rate  kupiec_pvalue  christoffersen_pvalue  joint_pvalue  mean_breach_size  max_breach_size                      verdict
+  0.95        historical   4941         268             247.05       0.0542           0.05         0.1771                 0.0000        0.0000            0.0056           0.0499 fail: breaches are clustered
+  0.95 parametric_normal   4941         257             247.05       0.0520           0.05         0.5187                 0.0000        0.0000            0.0055           0.0495 fail: breaches are clustered
+  0.95      parametric_t   4941         284             247.05       0.0575           0.05         0.0184                 0.0000        0.0000            0.0055           0.0499       fail: understates risk
+  0.95       ewma_normal   4941         231             247.05       0.0468           0.05         0.2897                 0.0002        0.0006            0.0049           0.0457 fail: breaches are clustered
+  0.99        historical   4941          73              49.41       0.0148           0.01         0.0016                 0.0000        0.0000            0.0077           0.0451       fail: understates risk
+  0.99 parametric_normal   4941         100              49.41       0.0202           0.01         0.0000                 0.0000        0.0000            0.0074           0.0463       fail: understates risk
+  0.99      parametric_t   4941          71              49.41       0.0144           0.01         0.0038                 0.0000        0.0000            0.0084           0.0449       fail: understates risk
+  0.99       ewma_normal   4941          84              49.41       0.0170           0.01         0.0000                 0.0006        0.0000            0.0066           0.0410       fail: understates risk
+2026-09-22 13:33:50 | INFO    | stage.stage09_risk           | CVaR validation (realised/predicted tail loss): {'M0_equal_weight': 1.034, 'M1_inverse_vol': 1.01, 'M2_risk_parity': 1.035, 'M5_momentum_plus_mr': 1.032, 'M9_mean_cvar': 1.018, 'SPY_buy_hold': 1.074}
+2026-09-22 13:33:50 | INFO    | stage.stage09_risk           | risk summary by book:
+                    portfolio_vol_ann diversification_ratio effective_n_positions max_risk_share top_risk_contributor pc1_variance_share var_95_daily cvar_95_daily
+M0_equal_weight              0.109811              1.497322                  15.0       0.313255                  SLV           0.918297     0.010262      0.016852
+M1_inverse_vol               0.053688              1.539758              8.238159       0.115303                  SLV           0.748679     0.005766      0.009602
+M2_risk_parity               0.050828              1.744969              8.548533          0.117                  SLV           0.751475     0.005792      0.009629
+M5_momentum_plus_mr          0.020852              3.705178              7.121676         0.5227                  IWM            0.69772     0.004835      0.008275
+M9_mean_cvar                 0.028012              1.819964               4.55752       0.391008                  DBC           0.405255     0.004136      0.006726
+2026-09-22 13:33:50 | INFO    | stage.stage09_risk           | stress regimes:
+strategy                           M0_equal_weight  M1_inverse_vol  M2_risk_parity  M5_momentum_plus_mr  M9_mean_cvar  SPY_buy_hold
+regime                                                                                                                             
+COVID crash                                -0.1848         -0.1094         -0.1140              -0.1167       -0.0538       -0.3340
+COVID policy recovery                       0.4000          0.2507          0.2453               0.0735        0.0995        0.6983
+Euro sovereign crisis                      -0.0574         -0.0259         -0.0191               0.0702        0.0445       -0.1443
+Feb-2018 volatility shock                  -0.0526         -0.0341         -0.0361              -0.0166       -0.0167       -0.0906
+Global financial crisis                    -0.2642         -0.1061         -0.1073              -0.0538        0.0003       -0.5477
+Post-COVID inflation / rate shock          -0.1986         -0.1665         -0.1613               0.0248       -0.1287       -0.2383
+Q4-2018 selloff                            -0.0756         -0.0337         -0.0433              -0.0465       -0.0097       -0.1892
+Taper tantrum                              -0.0335         -0.0300         -0.0307              -0.0030       -0.0375       -0.0020
+2026-09-22 13:33:50 | INFO    | stage.stage09_risk           | average pairwise correlation by regime:
+                                   n_days  mean_correlation  max_correlation  min_correlation
+Global financial crisis             356.0             0.166            0.940           -0.509
+Euro sovereign crisis                66.0             0.162            0.966           -0.712
+Taper tantrum                        74.0             0.425            0.942            0.002
+Feb-2018 volatility shock            10.0             0.220            0.976           -0.877
+Q4-2018 selloff                      59.0             0.200            0.953           -0.510
+COVID crash                          24.0             0.305            0.983           -0.611
+COVID policy recovery               197.0             0.270            0.919           -0.483
+Post-COVID inflation / rate shock   198.0             0.416            0.971           -0.034
+Full sample                        4892.0             0.256            0.923           -0.306
+2026-09-22 13:33:50 | INFO    | stage.stage09_risk           | hypothetical scenarios:
+book                                        M0_equal_weight  M1_inverse_vol  M2_risk_parity  M5_momentum_plus_mr  M9_mean_cvar
+scenario                                                                                                                      
+All risk assets -15% together                       -0.1100         -0.0730         -0.0728              -0.0375       -0.0535
+Equities -15%, bonds -5%, commodities +10%          -0.0620         -0.0657         -0.0561              -0.0320       -0.0415
+Equity -20%                                         -0.0667         -0.0324         -0.0288              -0.0197        0.0000
+Rates +100bp (duration-scaled)                      -0.0227         -0.0424         -0.0411              -0.0089       -0.0500
+2026-09-22 13:33:53 | INFO    | stage.stage09_risk           | STAGE 9 complete

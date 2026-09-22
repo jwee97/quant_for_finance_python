@@ -1,0 +1,1 @@
+Figure 16. What does each allocation method actually hold, and is the book stable or does it churn?

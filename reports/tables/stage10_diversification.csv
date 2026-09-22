@@ -1,0 +1,9 @@
+,ann_return,ann_vol,sharpe,avg_component_sharpe,best_component_sharpe,diversification_gain
+M1_inverse_vol,0.055453,0.064082,0.865346,,,
+M2_risk_parity,0.052558,0.065305,0.804800,,,
+M3_momentum,0.019728,0.066613,0.296157,,,
+M4_mean_reversion,-0.016332,0.068384,-0.238824,,,
+M9_mean_cvar,0.033817,0.041741,0.810163,,,
+combined_inverse_vol,0.029401,0.037921,0.775340,0.507528,0.865346,0.267811
+combined_equal,0.029051,0.037361,0.777560,0.507528,0.865346,0.270032
+combined_alpha_only,0.003869,0.040731,0.095000,0.507528,0.865346,-0.412528

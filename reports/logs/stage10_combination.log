@@ -1,0 +1,31 @@
+2026-09-22 13:35:54 | INFO    | stage.stage10_combination    | ========================================================================
+2026-09-22 13:35:54 | INFO    | stage.stage10_combination    | STAGE 10 | combining quant strategies (Ch. 22 §22.5)
+2026-09-22 13:35:54 | INFO    | stage.stage10_combination    | ========================================================================
+2026-09-22 13:35:57 | INFO    | stage.stage10_combination    | strategy return-stream correlations:
+                   M1_inverse_vol  M2_risk_parity  M3_momentum  M4_mean_reversion  M9_mean_cvar
+M1_inverse_vol              1.000           0.981       -0.109              0.206         0.753
+M2_risk_parity              0.981           1.000       -0.108              0.218         0.766
+M3_momentum                -0.109          -0.108        1.000             -0.288        -0.088
+M4_mean_reversion           0.206           0.218       -0.288              1.000         0.082
+M9_mean_cvar                0.753           0.766       -0.088              0.082         1.000
+2026-09-22 13:35:57 | INFO    | stage.stage10_combination    | diversification table:
+                      ann_return  ann_vol  sharpe  avg_component_sharpe  best_component_sharpe  diversification_gain
+M1_inverse_vol            0.0555   0.0641  0.8653                   NaN                    NaN                   NaN
+M2_risk_parity            0.0526   0.0653  0.8048                   NaN                    NaN                   NaN
+M3_momentum               0.0197   0.0666  0.2962                   NaN                    NaN                   NaN
+M4_mean_reversion        -0.0163   0.0684 -0.2388                   NaN                    NaN                   NaN
+M9_mean_cvar              0.0338   0.0417  0.8102                   NaN                    NaN                   NaN
+combined_inverse_vol      0.0294   0.0379  0.7753                0.5075                 0.8653                0.2678
+combined_equal            0.0291   0.0374  0.7776                0.5075                 0.8653                0.2700
+combined_alpha_only       0.0039   0.0407  0.0950                0.5075                 0.8653               -0.4125
+2026-09-22 13:35:57 | INFO    | stage.stage10_combination    | performance of components and combinations:
+                        cagr  ann_vol  sharpe  max_drawdown
+M1_inverse_vol        0.0547   0.0641  0.8653       -0.1759
+M2_risk_parity        0.0516   0.0653  0.8048       -0.1836
+M3_momentum           0.0176   0.0666  0.2962       -0.1522
+M4_mean_reversion    -0.0185   0.0684 -0.2388       -0.3439
+M9_mean_cvar          0.0334   0.0417  0.8102       -0.1419
+combined_equal        0.0287   0.0374  0.7776       -0.1161
+combined_inverse_vol  0.0290   0.0379  0.7753       -0.1290
+combined_alpha_only   0.0030   0.0407  0.0950       -0.1191
+2026-09-22 13:35:58 | INFO    | stage.stage10_combination    | STAGE 10 complete

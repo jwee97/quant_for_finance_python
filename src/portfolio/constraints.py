@@ -165,6 +165,80 @@ class Constraints:
         return w
 
 
+def project_frame(weights: pd.DataFrame, constraints: "Constraints",
+                  iterations: int = 100, tolerance: float = 1e-10) -> pd.DataFrame:
+    """Project every row of a weight frame onto the constraint set, vectorised.
+
+    Same alternating projection as ``Constraints.project`` (box -> group caps
+    -> exposure equality) but applied to the whole matrix at once. The
+    row-at-a-time version was the single slowest thing in the pipeline: the
+    leakage suite rebuilds a 5211-row book 24 times, and at ~10 ms per row
+    that alone ran for half an hour.
+
+    Rows that are already feasible are untouched, and all-zero rows (dates
+    with nothing investable) are left flat rather than being scaled up from
+    nothing.
+    """
+    assets = list(weights.columns)
+    values = weights.to_numpy(dtype=float).copy()
+    finite = np.isfinite(values)
+    values = np.where(finite, values, 0.0)
+
+    active = np.abs(values).sum(axis=1) > 1e-12
+    if not active.any():
+        return weights.copy()
+
+    target = constraints.net_exposure if constraints.net_exposure is not None else None
+    lo, hi = constraints.min_weight, constraints.max_weight
+    group_index = {
+        key: np.array([assets.index(a) for a in assets if constraints.group_map.get(a) == key])
+        for key in constraints.group_limits
+    }
+    group_index = {k: v for k, v in group_index.items() if len(v)}
+
+    work = values[active]
+    row_target = np.full(len(work), target) if target is not None else work.sum(axis=1)
+
+    for _ in range(iterations):
+        before = work.copy()
+        np.clip(work, lo, hi, out=work)
+
+        for key, columns in group_index.items():
+            limit = constraints.group_limits[key]
+            exposure = work[:, columns].sum(axis=1)
+            breach = exposure > limit + 1e-12
+            if breach.any():
+                scale = np.ones(len(work))
+                scale[breach] = limit / exposure[breach]
+                work[:, columns] *= scale[:, None]
+
+        total = work.sum(axis=1)
+        deficit = row_target - total
+        headroom = np.clip(hi - work, 0.0, None)
+        room = np.clip(work - lo, 0.0, None)
+
+        add = deficit > 1e-12
+        if add.any():
+            capacity = headroom.sum(axis=1)
+            usable = add & (capacity > 1e-12)
+            if usable.any():
+                work[usable] += headroom[usable] * (deficit[usable] / capacity[usable])[:, None]
+
+        remove = deficit < -1e-12
+        if remove.any():
+            capacity = room.sum(axis=1)
+            usable = remove & (capacity > 1e-12)
+            if usable.any():
+                work[usable] += room[usable] * (deficit[usable] / capacity[usable])[:, None]
+
+        if np.max(np.abs(work - before)) < tolerance:
+            break
+
+    values[active] = work
+    out = pd.DataFrame(values, index=weights.index, columns=weights.columns)
+    return out.where(finite, np.nan)
+
+
 def apply_turnover_limit(target: pd.Series, previous: pd.Series, max_turnover: float) -> pd.Series:
     """Move only part of the way towards the target if the trade is too large.
 
