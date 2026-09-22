@@ -1,0 +1,4 @@
+ticker,date,return,peer_median_return,universe_median_return,volume_z,peer_confirms,heavy_volume,verdict,action
+SLV,2026-01-30,-0.285403,-0.068565,-0.005592,4.834914,False,True,market_event_confirmed,retain
+EEM,2008-10-13,0.227699,0.133422,0.063607,2.402865,True,True,market_event_confirmed,retain
+EEM,2008-10-28,0.209326,0.113673,0.022599,2.512977,True,True,market_event_confirmed,retain

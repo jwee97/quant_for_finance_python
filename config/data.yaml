@@ -1,0 +1,68 @@
+# ---------------------------------------------------------------------------
+# Data acquisition, validation and cleaning policy (spec §7-§11, Ch. 7).
+# ---------------------------------------------------------------------------
+provider: yahoo            # only provider implemented in V1
+start: "2006-01-01"        # DBC inception is Feb-2006; the common-history
+                           # window is resolved from the data, not assumed.
+end: null                  # null => today (recorded in provenance metadata)
+
+paths:
+  raw: "data/raw"
+  processed: "data/processed"
+  features: "data/features"
+  metadata: "data/metadata"
+
+fields: [open, high, low, close, adj_close, volume]
+
+download:
+  max_retries: 4
+  backoff_seconds: 2.0     # doubles each attempt: 2, 4, 8, 16
+  # Raw files are written once and then treated as immutable. Re-running the
+  # downloader without --force refuses to overwrite an existing raw file.
+  overwrite_raw: false
+
+# --- Validation thresholds (spec §9) -------------------------------------
+# These FLAG observations for investigation. Nothing is deleted automatically:
+#     flag anomaly  !=  delete anomaly
+validation:
+  jump_threshold: 0.20         # |r_t| > 20% -> investigate
+  extreme_jump_threshold: 0.50 # |r_t| > 50% -> almost certainly bad data
+  max_gap_days: 5              # calendar gap between consecutive obs
+  stale_price_run: 5           # identical closes in a row
+  min_volume: 0                # zero-volume days are flagged, not dropped
+  min_observations: 500        # asset is unusable below this
+  # Static-arbitrage / internal-consistency checks (Ch. 7 §7.5.3).
+  ohlc_tolerance: 1.0e-8
+
+# --- Missing data policy (spec §11, Ch. 7 §7.6) --------------------------
+# The book lists interpolation, regression, bootstrapping and KNN. Their
+# presence in the book does not license blind application. The policy below
+# encodes "ask why it is missing first":
+#   - leading NaNs (asset not yet listed)  -> NEVER filled, the asset is
+#     simply absent from the investable universe on that date;
+#   - isolated interior NaNs on an exchange trading day (provider gap)
+#     -> forward filled up to `max_ffill_days`, and the fill is RECORDED in a
+#     mask so that every downstream consumer can exclude filled days;
+#   - runs longer than max_ffill_days -> left missing and reported.
+missing_data:
+  policy: "flag_then_limited_ffill"
+  max_ffill_days: 3
+  fill_volume_with_zero: false
+  # Interpolation / regression / bootstrap / KNN imputation are implemented in
+  # src/data/clean.py for comparison purposes but are NOT used in the
+  # production pipeline for prices; see reports/data_quality_report.md.
+  # 'zero' is the return-space equivalent of forward filling a PRICE, which is
+  # what the production policy does; it is included so the comparison scores
+  # the policy we actually use rather than a hypothetical one.
+  comparison_methods: [zero, ffill, linear_interpolate, knn, cross_sectional_regression]
+
+# --- Corporate actions (spec §10, Ch. 7 §7.5.1) --------------------------
+corporate_actions:
+  # Both series are preserved. Research returns use adjusted prices; the raw
+  # close is kept so that mechanical price changes (splits, distributions)
+  # can be distinguished from economic moves.
+  keep_unadjusted: true
+  return_basis: adj_close
+  # Ratio between the two series; a jump in this ratio is a distribution or
+  # split and must NOT be read as a return.
+  detect_action_threshold: 0.001

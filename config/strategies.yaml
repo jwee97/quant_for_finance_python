@@ -1,0 +1,51 @@
+# ---------------------------------------------------------------------------
+# Alpha signal configuration (spec §14-§19, Ch. 22 §22.3, Ch. 20 §20.1).
+#
+# Lookback grids are declared UP FRONT and evaluated as a family. We never
+# report a single lookback chosen because it maximised the Sharpe ratio; the
+# robustness stage (§42) reports the whole surface.
+# ---------------------------------------------------------------------------
+momentum:
+  enabled: true
+  lookbacks: [21, 63, 126, 252]          # primary research grid
+  robustness_lookbacks: [21, 42, 63, 84, 126, 168, 189, 252]
+  skip_days: 1                           # skip the most recent day (1-day
+                                         # reversal / execution realism)
+  variants: [raw, vol_scaled, ranked]
+  vol_lookback: 63                        # sigma used by vol_scaled
+  primary_variant: vol_scaled
+  primary_lookback: 126
+
+mean_reversion:
+  enabled: true
+  lookbacks: [5, 10, 21, 63]
+  robustness_lookbacks: [3, 5, 10, 15, 21, 42, 63]
+  # z = (P - MA) / sigma(P) computed on log prices for scale invariance
+  price_basis: log
+  variants: [zscore, zscore_ranked]
+  primary_variant: zscore
+  primary_lookback: 21
+  sign: -1                                # mean reversion => trade against z
+
+# --- Signal -> position translation (spec §39, Ch. 22 §22.3.10) ----------
+# The forecast and the position are DIFFERENT objects. The transform stack
+# below is what turns one into the other; it is applied identically in
+# research and in the backtest.
+transform:
+  winsorize_quantile: 0.02     # trim extreme signal values, do not delete
+  cross_sectional: true        # demean cross-sectionally => dollar neutral-ish
+  scale: zscore                # {zscore, rank, tanh, none}
+  clip: 3.0                    # cap standardised signal at +/- 3 sigma
+  max_abs_weight: 0.25
+  gross_leverage: 1.0
+  long_only: false
+
+# --- Forecast horizons for IC / regression work -------------------------
+horizons: [1, 5, 10, 21, 42, 63]
+primary_horizon: 21
+
+# --- Strategy combination (spec §38, Ch. 22 §22.5) ----------------------
+combination:
+  method: inverse_vol          # {equal, inverse_vol, ic_weighted}
+  members: [momentum, mean_reversion]
+  vol_lookback: 252

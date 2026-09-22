@@ -1,0 +1,22 @@
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.ipynb_checkpoints/
+.venv/
+venv/
+
+# Derived data. Raw data IS committed (see data/README.md) because it is the
+# immutable record the research is built on; everything downstream is
+# reproducible from it via `python -m experiments.run_all`.
+data/processed/*
+data/features/*
+!data/**/.gitkeep
+
+# Local overrides
+config/local.yaml
+.env

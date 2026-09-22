@@ -1,0 +1,83 @@
+# ---------------------------------------------------------------------------
+# Portfolio construction (spec §24-§31, Ch. 19 and Ch. 20 §20.2).
+# ---------------------------------------------------------------------------
+# Model ladder (spec §55). Each model is deliberately one step more complex
+# than the previous one so that improvement can be attributed.
+models:
+  - id: M0
+    name: equal_weight
+  - id: M1
+    name: inverse_vol
+  - id: M2
+    name: risk_parity
+  - id: M3
+    name: momentum
+  - id: M4
+    name: mean_reversion
+  - id: M5
+    name: momentum_plus_mr
+  - id: M6
+    name: combined_alpha_mvo
+  - id: M7
+    name: combined_alpha_shrinkage_mvo
+  - id: M8
+    name: black_litterman        # extension A
+  - id: M9
+    name: mean_cvar              # extension D
+  - id: M10
+    name: ml_alpha               # Ch. 23 extension
+
+risk_parity:
+  method: newton                 # {newton, slsqp}
+  max_iter: 500
+  tolerance: 1.0e-10
+
+mean_variance:
+  risk_aversion: 5.0             # lambda in max w'mu - lambda/2 w'Sigma w
+  allow_short: false
+  solver: slsqp
+  max_iter: 400
+  # Expected returns are the single most error-prone input (Ch. 19 §19.3).
+  # The default shrinks the signal-implied mu towards the cross-sectional
+  # mean before it ever reaches the optimiser.
+  mu_shrinkage: 0.5
+  mu_scale: 0.05                 # annualised spread of signal-implied mu
+
+black_litterman:
+  tau: 0.05
+  risk_aversion: 2.5
+  view_confidence: 0.30          # omega scaling on momentum views
+
+mean_cvar:
+  alpha: 0.95
+  scenarios: 750                 # trailing days used as the scenario set
+
+constraints:
+  min_weight: 0.0
+  max_weight: 0.25
+  gross_leverage: 1.0
+  max_turnover: null             # null => unconstrained; set e.g. 0.30
+  group_limits:                  # asset-class exposure caps (spec §29)
+    equity_dm: 0.60
+    equity_intl: 0.40
+    govt: 0.80
+    credit: 0.40
+    commodity: 0.40
+    real_assets: 0.20
+
+covariance:
+  method: shrinkage              # {sample, rolling, ewma, shrinkage}
+  lookback: 252
+  ewma_halflife: 60
+  shrinkage_target: constant_correlation   # {identity, constant_correlation, diagonal}
+  shrinkage_delta: null          # null => Ledoit-Wolf analytic intensity
+  min_eigenvalue: 1.0e-10        # PSD repair floor
+
+volatility:
+  method: ewma                   # {rolling, ewma, parkinson, garman_klass, garch}
+  lookback: 63
+  ewma_halflife: 40
+  annualisation: 252
+  target_vol: 0.10               # annualised portfolio vol target
+  vol_target_enabled: true
+  max_leverage_from_vol_target: 1.5

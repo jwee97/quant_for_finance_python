@@ -1,0 +1,67 @@
+# ---------------------------------------------------------------------------
+# Backtest engine, costs and out-of-sample protocol
+# (spec §20-§23, §40-§41; Ch. 22 §22.2).
+# ---------------------------------------------------------------------------
+engine:
+  # Information timeline (spec §21). Signals computed from data up to and
+  # including t determine the weights HELD over (t, t+1]. `signal_lag` is
+  # an ADDITIONAL delay on top of that convention.
+  signal_lag: 1                  # days between signal date and execution
+  rebalance: monthly             # {daily, weekly, monthly, quarterly}
+  weight_drift: true             # positions drift with returns between
+                                 # rebalances (realistic turnover)
+  initial_capital: 1.0
+  annualisation: 252
+  min_assets: 5                  # skip dates with fewer investable assets
+
+costs:
+  model: linear                  # TC_t = c * turnover_t
+  cost_bps: 10.0                 # baseline round-trip cost in bps of traded notional
+  sensitivity_bps: [0.0, 5.0, 10.0, 25.0, 50.0]
+  # Per-asset overrides let liquidity differences show up in net returns.
+  per_asset_bps:
+    SPY: 3.0
+    QQQ: 3.0
+    IWM: 5.0
+    EFA: 6.0
+    EEM: 9.0
+    SHY: 4.0
+    IEF: 5.0
+    TLT: 5.0
+    AGG: 6.0
+    LQD: 8.0
+    HYG: 10.0
+    GLD: 5.0
+    SLV: 8.0
+    DBC: 12.0
+    VNQ: 7.0
+
+# --- Sample protocol (spec §40-§41) -------------------------------------
+# Three disjoint blocks. The final holdout is opened once, after every model
+# choice is frozen. The report states plainly that it is no longer untouched
+# after that.
+samples:
+  development:
+    start: "2006-04-10"
+    end: "2015-12-31"
+  validation:
+    start: "2016-01-01"
+    end: "2021-12-31"
+  final_holdout:
+    start: "2022-01-01"
+    end: null
+
+walk_forward:
+  scheme: expanding               # {expanding, rolling}
+  train_years_min: 5
+  test_months: 12
+  rolling_train_years: 8          # used when scheme == rolling
+  embargo_days: 21                # gap between train end and test start to
+                                  # kill horizon overlap leakage
+  refit_covariance: true
+  refit_signal_weights: true
+
+robustness:
+  bootstrap_samples: 2000
+  block_length: 21                # stationary block bootstrap for Sharpe CIs
+  seed: 7

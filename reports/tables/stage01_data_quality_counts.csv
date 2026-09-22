@@ -1,0 +1,5 @@
+check,severity,n
+price_jump,warning,3
+stale_price,warning,3
+adjustment_break,info,1736
+late_inception,info,3

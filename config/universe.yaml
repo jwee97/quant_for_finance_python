@@ -1,0 +1,104 @@
+# ---------------------------------------------------------------------------
+# Investment universe (spec §5).
+#
+# V1 uses liquid ETFs as asset-class proxies. This is a deliberate
+# simplification: Ch. 7 shows that stock, FX, futures, options and
+# fixed-income datasets each carry distinct cleaning problems. Keeping the
+# instrument type homogeneous (all US-listed, daily, dividend-paying ETFs)
+# means we solve ONE data problem properly rather than five badly, while
+# still exposing the strategy to genuinely different economic risk premia.
+#
+# The universe is fixed ex ante and written down here. It is never modified
+# in response to backtest results -- that would be universe selection bias
+# (Ch. 22 §22.2.4, common quant traps).
+# ---------------------------------------------------------------------------
+name: "multi_asset_etf_v1"
+version: 1
+
+assets:
+  - ticker: SPY
+    name: "SPDR S&P 500 ETF Trust"
+    asset_class: equity
+    group: equity_dm
+    exposure: "US large cap"
+  - ticker: QQQ
+    name: "Invesco QQQ Trust"
+    asset_class: equity
+    group: equity_dm
+    exposure: "Nasdaq 100 / growth"
+  - ticker: IWM
+    name: "iShares Russell 2000 ETF"
+    asset_class: equity
+    group: equity_dm
+    exposure: "US small cap"
+  - ticker: EFA
+    name: "iShares MSCI EAFE ETF"
+    asset_class: equity
+    group: equity_intl
+    exposure: "Developed ex-US"
+  - ticker: EEM
+    name: "iShares MSCI Emerging Markets ETF"
+    asset_class: equity
+    group: equity_intl
+    exposure: "Emerging markets"
+  - ticker: SHY
+    name: "iShares 1-3 Year Treasury Bond ETF"
+    asset_class: rates
+    group: govt
+    exposure: "Short Treasury"
+  - ticker: IEF
+    name: "iShares 7-10 Year Treasury Bond ETF"
+    asset_class: rates
+    group: govt
+    exposure: "Intermediate Treasury"
+  - ticker: TLT
+    name: "iShares 20+ Year Treasury Bond ETF"
+    asset_class: rates
+    group: govt
+    exposure: "Long Treasury"
+  - ticker: AGG
+    name: "iShares Core U.S. Aggregate Bond ETF"
+    asset_class: fixed_income
+    group: govt
+    exposure: "Aggregate bonds"
+  - ticker: LQD
+    name: "iShares iBoxx $ Investment Grade Corporate Bond ETF"
+    asset_class: credit
+    group: credit
+    exposure: "Investment grade credit"
+  - ticker: HYG
+    name: "iShares iBoxx $ High Yield Corporate Bond ETF"
+    asset_class: credit
+    group: credit
+    exposure: "High yield credit"
+  - ticker: GLD
+    name: "SPDR Gold Shares"
+    asset_class: commodity
+    group: commodity
+    exposure: "Gold"
+  - ticker: SLV
+    name: "iShares Silver Trust"
+    asset_class: commodity
+    group: commodity
+    exposure: "Silver"
+  - ticker: DBC
+    name: "Invesco DB Commodity Index Tracking Fund"
+    asset_class: commodity
+    group: commodity
+    exposure: "Broad commodities"
+  - ticker: VNQ
+    name: "Vanguard Real Estate ETF"
+    asset_class: real_estate
+    group: real_assets
+    exposure: "US REITs"
+
+# Benchmarks are downloaded and cleaned identically but are never traded by
+# the strategies; they exist to answer "did the research beat buy-and-hold?".
+benchmarks:
+  - ticker: SPY
+    role: "equity buy-and-hold reference"
+
+# Risk-free proxy. BIL has a short history, so the cash rate is taken from
+# SHY total returns when no explicit rate series is configured. Documented as
+# an approximation in the research report (§3 Data limitations).
+cash_proxy: SHY

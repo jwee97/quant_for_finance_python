@@ -1,0 +1,16 @@
+,observations_raw,calendar_days,pre_inception_days,post_delisting_days,interior_gaps,values_forward_filled,unfilled_interior_gaps,nonpositive_prices_invalidated,corporate_actions_detected,distribution_like_actions,split_like_actions,investable_days
+AGG,5211,5211,0,0,0,0,0,0,246,246,0,5211
+DBC,5188,5211,23,0,0,0,0,0,9,9,0,5188
+EEM,5211,5211,0,0,0,0,0,0,39,39,0,5211
+EFA,5211,5211,0,0,0,0,0,0,40,40,0,5211
+GLD,5211,5211,0,0,0,0,0,0,0,0,0,5211
+HYG,4893,5211,318,0,0,0,0,0,232,232,0,4893
+IEF,5211,5211,0,0,0,0,0,0,227,227,0,5211
+IWM,5211,5211,0,0,0,0,0,0,83,83,0,5211
+LQD,5211,5211,0,0,0,0,0,0,247,247,0,5211
+QQQ,5211,5211,0,0,0,0,0,0,74,74,0,5211
+SHY,5211,5211,0,0,0,0,0,0,127,127,0,5211
+SLV,5131,5211,80,0,0,0,0,0,0,0,0,5131
+SPY,5211,5211,0,0,0,0,0,0,83,83,0,5211
+TLT,5211,5211,0,0,0,0,0,0,247,247,0,5211
+VNQ,5211,5211,0,0,0,0,0,0,82,82,0,5211

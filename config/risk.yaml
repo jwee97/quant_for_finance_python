@@ -1,0 +1,74 @@
+# ---------------------------------------------------------------------------
+# Risk engine (spec §34-§37, Ch. 21).
+# ---------------------------------------------------------------------------
+var:
+  confidence_levels: [0.95, 0.99]
+  horizon_days: 1
+  methods: [historical, parametric_normal, parametric_t, monte_carlo]
+  lookback: 500                  # estimation window for rolling VaR
+  min_lookback: 250
+  monte_carlo:
+    n_scenarios: 20000
+    distribution: student_t       # {normal, student_t, bootstrap}
+    df: 5
+    seed: 20240101
+
+cvar:
+  confidence_levels: [0.95, 0.99]
+  methods: [historical, monte_carlo]
+
+backtest_var:
+  # Kupiec unconditional-coverage and Christoffersen independence tests
+  # (spec §36, Ch. 21 §21.3.5-6).
+  significance: 0.05
+
+stress:
+  # Named historical regimes. Dates are event windows chosen ex ante from
+  # published macro chronology, not from strategy drawdowns.
+  regimes:
+    gfc:
+      label: "Global financial crisis"
+      start: "2007-10-09"
+      end: "2009-03-09"
+    euro_crisis:
+      label: "Euro sovereign crisis"
+      start: "2011-07-01"
+      end: "2011-10-04"
+    taper_tantrum:
+      label: "Taper tantrum"
+      start: "2013-05-22"
+      end: "2013-09-05"
+    vol_shock_2018:
+      label: "Feb-2018 volatility shock"
+      start: "2018-01-26"
+      end: "2018-02-08"
+    q4_2018:
+      label: "Q4-2018 selloff"
+      start: "2018-10-01"
+      end: "2018-12-24"
+    covid:
+      label: "COVID crash"
+      start: "2020-02-19"
+      end: "2020-03-23"
+    covid_recovery:
+      label: "COVID policy recovery"
+      start: "2020-03-24"
+      end: "2020-12-31"
+    inflation_2022:
+      label: "Post-COVID inflation / rate shock"
+      start: "2022-01-03"
+      end: "2022-10-14"
+  # Hypothetical scenarios: instantaneous shocks applied to the live weights.
+  scenarios:
+    equity_down_20:
+      label: "Equity -20%"
+      shocks: { equity: -0.20 }
+    rates_up_100bp:
+      label: "Rates +100bp (duration-scaled)"
+      shocks: { rates: -0.07, fixed_income: -0.05, credit: -0.04 }
+    correlation_to_one:
+      label: "All risk assets -15% together"
+      shocks: { equity: -0.15, credit: -0.15, commodity: -0.15, real_estate: -0.15 }
+    stagflation:
+      label: "Equities -15%, bonds -5%, commodities +10%"
+      shocks: { equity: -0.15, rates: -0.05, fixed_income: -0.05, credit: -0.08, commodity: 0.10, real_estate: -0.12 }

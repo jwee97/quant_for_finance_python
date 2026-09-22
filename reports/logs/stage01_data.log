@@ -1,0 +1,76 @@
+2026-09-22 12:39:44 | INFO    | stage.stage01_data           | context ok: stage01_data figures=/home/user/quant_for_finance_python/reports/figures
+2026-09-22 12:41:05 | INFO    | stage.stage01_data           | ========================================================================
+2026-09-22 12:41:05 | INFO    | stage.stage01_data           | STAGE 1 | financial data infrastructure (Ch. 7)
+2026-09-22 12:41:05 | INFO    | stage.stage01_data           | ========================================================================
+2026-09-22 12:41:09 | INFO    | stage.stage01_data           | processed panels written: adjustment_ratio.csv, cleaning_log.csv, corporate_actions.csv, filled_mask.csv, high.csv, investable.csv, low.csv, open.csv, prices_adjusted.csv, prices_close.csv, volume.csv
+2026-09-22 12:41:09 | INFO    | stage.stage01_data           | jump investigation:
+ticker       date    return  peer_median_return  universe_median_return  volume_z  peer_confirms  heavy_volume                verdict action
+   SLV 2026-01-30 -0.285403           -0.068565               -0.005592  4.834914          False          True market_event_confirmed retain
+   EEM 2008-10-13  0.227699            0.133422                0.063607  2.402865           True          True market_event_confirmed retain
+   EEM 2008-10-28  0.209326            0.113673                0.022599  2.512977           True          True market_event_confirmed retain
+2026-09-22 12:41:10 | INFO    | stage.stage01_data           | imputation comparison:
+                            n_imputed  mae_bps  rmse_bps  bias_bps  corr_with_truth
+method                                                                             
+ffill                             400   114.75    194.90    -10.23            -0.22
+linear_interpolate                400   100.82    165.17     -1.09            -0.24
+knn                               400    42.13     66.16      2.06             0.83
+cross_sectional_regression        400    62.49     93.66      4.05             0.61
+2026-09-22 12:41:11 | INFO    | stage.stage01_data           | data quality report: /home/user/quant_for_finance_python/reports/data_quality_report.md
+2026-09-22 12:41:11 | INFO    | stage.stage01_data           | STAGE 1 complete
+2026-09-22 12:41:42 | INFO    | stage.stage01_data           | ========================================================================
+2026-09-22 12:41:42 | INFO    | stage.stage01_data           | STAGE 1 | financial data infrastructure (Ch. 7)
+2026-09-22 12:41:42 | INFO    | stage.stage01_data           | ========================================================================
+2026-09-22 12:41:46 | INFO    | stage.stage01_data           | processed panels written: adjustment_ratio.csv, cleaning_log.csv, corporate_actions.csv, filled_mask.csv, high.csv, investable.csv, low.csv, open.csv, prices_adjusted.csv, prices_close.csv, volume.csv
+2026-09-22 12:41:46 | INFO    | stage.stage01_data           | jump investigation:
+ticker       date    return  peer_median_return  universe_median_return  volume_z  peer_confirms  heavy_volume                verdict action
+   SLV 2026-01-30 -0.285403           -0.068565               -0.005592  4.834914          False          True market_event_confirmed retain
+   EEM 2008-10-13  0.227699            0.133422                0.063607  2.402865           True          True market_event_confirmed retain
+   EEM 2008-10-28  0.209326            0.113673                0.022599  2.512977           True          True market_event_confirmed retain
+2026-09-22 12:41:47 | INFO    | stage.stage01_data           | imputation comparison:
+                            n_imputed  mae_bps  rmse_bps  bias_bps  corr_with_truth
+method                                                                             
+zero                              400    72.54    117.69     -0.47              NaN
+ffill                             400   114.75    194.90    -10.23            -0.22
+linear_interpolate                400   100.82    165.17     -1.09            -0.24
+knn                               400    42.13     66.16      2.06             0.83
+cross_sectional_regression        400    62.49     93.66      4.05             0.61
+2026-09-22 12:41:48 | INFO    | stage.stage01_data           | data quality report: /home/user/quant_for_finance_python/reports/data_quality_report.md
+2026-09-22 12:41:48 | INFO    | stage.stage01_data           | STAGE 1 complete
+2026-09-22 12:42:03 | INFO    | stage.stage01_data           | ========================================================================
+2026-09-22 12:42:03 | INFO    | stage.stage01_data           | STAGE 1 | financial data infrastructure (Ch. 7)
+2026-09-22 12:42:03 | INFO    | stage.stage01_data           | ========================================================================
+2026-09-22 12:42:06 | INFO    | stage.stage01_data           | processed panels written: adjustment_ratio.csv, cleaning_log.csv, corporate_actions.csv, filled_mask.csv, high.csv, investable.csv, low.csv, open.csv, prices_adjusted.csv, prices_close.csv, volume.csv
+2026-09-22 12:42:06 | INFO    | stage.stage01_data           | jump investigation:
+ticker       date    return  peer_median_return  universe_median_return  volume_z  peer_confirms  heavy_volume                verdict action
+   SLV 2026-01-30 -0.285403           -0.068565               -0.005592  4.834914          False          True market_event_confirmed retain
+   EEM 2008-10-13  0.227699            0.133422                0.063607  2.402865           True          True market_event_confirmed retain
+   EEM 2008-10-28  0.209326            0.113673                0.022599  2.512977           True          True market_event_confirmed retain
+2026-09-22 12:42:08 | INFO    | stage.stage01_data           | imputation comparison:
+                            n_imputed  mae_bps  rmse_bps  bias_bps  corr_with_truth
+method                                                                             
+zero                              400    72.54    117.69     -0.47              NaN
+ffill                             400   114.75    194.90    -10.23            -0.22
+linear_interpolate                400   100.82    165.17     -1.09            -0.24
+knn                               400    42.13     66.16      2.06             0.83
+cross_sectional_regression        400    62.49     93.66      4.05             0.61
+2026-09-22 12:42:08 | INFO    | stage.stage01_data           | data quality report: /home/user/quant_for_finance_python/reports/data_quality_report.md
+2026-09-22 12:42:08 | INFO    | stage.stage01_data           | STAGE 1 complete
+2026-09-22 12:42:39 | INFO    | stage.stage01_data           | ========================================================================
+2026-09-22 12:42:39 | INFO    | stage.stage01_data           | STAGE 1 | financial data infrastructure (Ch. 7)
+2026-09-22 12:42:39 | INFO    | stage.stage01_data           | ========================================================================
+2026-09-22 12:42:43 | INFO    | stage.stage01_data           | processed panels written: adjustment_ratio.csv, cleaning_log.csv, corporate_actions.csv, filled_mask.csv, high.csv, investable.csv, low.csv, open.csv, prices_adjusted.csv, prices_close.csv, volume.csv
+2026-09-22 12:42:43 | INFO    | stage.stage01_data           | jump investigation:
+ticker       date    return  peer_median_return  universe_median_return  volume_z  peer_confirms  heavy_volume                verdict action
+   SLV 2026-01-30 -0.285403           -0.068565               -0.005592  4.834914          False          True market_event_confirmed retain
+   EEM 2008-10-13  0.227699            0.133422                0.063607  2.402865           True          True market_event_confirmed retain
+   EEM 2008-10-28  0.209326            0.113673                0.022599  2.512977           True          True market_event_confirmed retain
+2026-09-22 12:42:44 | INFO    | stage.stage01_data           | imputation comparison:
+                            n_imputed  mae_bps  rmse_bps  bias_bps  corr_with_truth
+method                                                                             
+zero                              400    72.54    117.69     -0.47              NaN
+ffill                             400   114.75    194.90    -10.23            -0.22
+linear_interpolate                400   100.82    165.17     -1.09            -0.24
+knn                               400    42.13     66.16      2.06             0.83
+cross_sectional_regression        400    62.49     93.66      4.05             0.61
+2026-09-22 12:42:45 | INFO    | stage.stage01_data           | data quality report: /home/user/quant_for_finance_python/reports/data_quality_report.md
+2026-09-22 12:42:45 | INFO    | stage.stage01_data           | STAGE 1 complete
