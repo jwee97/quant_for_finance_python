@@ -1,0 +1,1 @@
+Figure 4. How much does volatility move through time, and does it move together across asset classes? (Motivates vol targeting and time-varying covariance.)

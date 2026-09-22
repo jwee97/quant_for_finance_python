@@ -1,0 +1,5 @@
+component,explained_variance,highest_loadings,lowest_loadings,dominant_class,long_short
+PC1,0.407369,"SPY +0.39, EFA +0.37, IWM +0.37","TLT -0.16, IEF -0.16, SHY -0.12",equity,spread
+PC2,0.249719,"AGG +0.46, IEF +0.45, TLT +0.41","DBC +0.02, IWM +0.03, SPY +0.03",rates,directional
+PC3,0.117327,"GLD +0.61, SLV +0.59, DBC +0.37","LQD -0.18, HYG -0.15, VNQ -0.14",commodity,spread
+PC4,0.048312,"VNQ +0.31, SHY +0.25, GLD +0.20","DBC -0.57, HYG -0.43, LQD -0.38",credit,spread

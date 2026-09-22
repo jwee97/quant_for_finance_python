@@ -1,0 +1,1 @@
+Figure 5. Is the diversification visible in the full-sample correlation matrix still there when it is needed?
