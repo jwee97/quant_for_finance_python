@@ -1,3 +1,7 @@
+# Figure index
+
+26 figures. Each one answers a stated research question; a figure without a question is not included.
+
 | # | File | Research question |
 |---|------|-------------------|
 | 1 | `fig01_data_availability.png` | On which dates is each asset actually investable, and how much common history do we have? |
@@ -24,3 +28,5 @@
 | 22 | `fig22_parameter_sensitivity.png` | Does performance hold across the whole parameter family, or does it depend on one narrow choice that would signal parameter mining? |
 | 23 | `fig23_is_vs_oos.png` | How much performance is lost moving from in-sample to walk-forward out-of-sample, and is any of it distinguishable from zero? |
 | 25 | `fig25_final_comparison.png` | Which model ladder step actually improved risk-adjusted returns after costs, and where did the improvement come from? |
+| 26 | `fig26_pairs_trading.png` | Are any of these pairs genuinely cointegrated on training data, and does the spread revert fast enough to be tradable? |
+| 27 | `fig27_pca_stat_arb.png` | Do returns unexplained by the first three principal components mean revert, and is a factor-neutral book built on them profitable net of costs? |

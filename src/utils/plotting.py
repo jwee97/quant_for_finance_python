@@ -96,12 +96,42 @@ def save_figure(
     return path
 
 
-def write_figure_index(path: str | Path) -> Path:
-    """Markdown index of every figure written in this process."""
+def write_figure_index(path: str | Path, figures_dir: str | Path | None = None) -> Path:
+    """Markdown index of every figure and the question it answers.
+
+    Built by scanning the caption files on disk rather than from this
+    process's in-memory list. That matters because the stages run in
+    sequence: an index built in-process by stage 12 would silently omit
+    stage 13's figure. Scanning makes the index complete regardless of which
+    stages ran, and regardless of their order.
+    """
     path = Path(path)
-    lines = ["| # | File | Research question |", "|---|------|-------------------|"]
+    figures = Path(figures_dir) if figures_dir is not None else path.parent / "figures"
+
+    rows: list[tuple[int, str, str]] = []
+    for caption in sorted(figures.glob("*.txt")):
+        text = caption.read_text(encoding="utf-8").strip()
+        number, question = 0, text
+        if text.lower().startswith("figure "):
+            head, _, tail = text.partition(". ")
+            digits = "".join(c for c in head if c.isdigit())
+            if digits:
+                number, question = int(digits), tail or text
+        rows.append((number, caption.with_suffix(".png").name, question))
+
+    # Anything produced in this process but not yet written as a caption file.
+    known = {row[1] for row in rows}
     for row in FIGURE_INDEX:
-        lines.append(f"| {row['number']} | `{row['file']}` | {row['question']} |")
+        if row["file"] not in known:
+            rows.append((int(row["number"]) if row["number"] else 0, row["file"], row["question"]))
+
+    rows.sort(key=lambda r: (r[0] == 0, r[0], r[1]))
+    lines = ["# Figure index", "",
+             f"{len(rows)} figures. Each one answers a stated research question; a figure "
+             "without a question is not included.", "",
+             "| # | File | Research question |", "|---|------|-------------------|"]
+    for number, filename, question in rows:
+        lines.append(f"| {number or ''} | `{filename}` | {question} |")
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return path
 

@@ -22,7 +22,7 @@ from src.models.machine_learning import (
     predictions_to_signal,
     walk_forward_predictions,
 )
-from src.utils.plotting import PALETTE, bar_with_values, new_axes, save_figure
+from src.utils.plotting import PALETTE, bar_with_values, new_axes, save_figure, write_figure_index
 from experiments.context import build_context
 from experiments.strategies import transform_config
 
@@ -141,6 +141,9 @@ def main(argv: list[str] | None = None) -> int:
 
     figure_ml(context, cv_summary, importances, evaluation_frame,
               context.figure("fig24_machine_learning.png"))
+    # Refresh the index now that this stage's figure exists; it is built by
+    # scanning the figures directory, so it stays complete whatever ran.
+    write_figure_index(cfg.reports_dir() / "figure_index.md", context.figures)
 
     best_predictive = str(cv_summary["auc"].idxmax())
     best_economic = (str(evaluation_frame["sharpe"].astype(float).idxmax())

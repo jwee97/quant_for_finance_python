@@ -84,7 +84,13 @@ in [`reports/tables/stage12_final_comparison.csv`](reports/tables/).
    independence test at 95%: the breaches cluster. An unconditional VaR is not
    a risk limit.
 
-5. **What does work is the part that estimates the least.** The models that
+5. **Four strategy types, one conclusion.** Momentum, mean reversion, machine
+   learning and relative value (pairs and PCA statistical arbitrage) were all
+   built with the same discipline, and all four land in the same place: a real
+   but small edge, a high required turnover, and costs that close the gap.
+   Zero of ten candidate pairs were even cointegrated.
+
+6. **What does work is the part that estimates the least.** The models that
    never touch expected returns — inverse volatility, risk parity, mean-CVaR
    — beat every model that does. The estimation-error experiment shows why:
    unconstrained mean-variance holds 3 of 15 assets at a 77% maximum weight,
@@ -102,7 +108,7 @@ data/processed/  cleaned wide panels (rebuilt, not committed)
 src/
   data/          download, validation, cleaning, loading      (Ch. 7)
   features/      returns, volatility, momentum, reversion, PCA (Ch. 8, 20)
-  signals/       forecasts, the forecast->position stack, blending (Ch. 22)
+  signals/       forecasts, position stack, blending, pairs, PCA stat-arb (Ch. 22)
   portfolio/     EW, inverse vol, risk parity, MVO, BL, CVaR, covariance (Ch. 19, 20)
   backtest/      engine, execution, costs, metrics             (Ch. 22)
   risk/          VaR, CVaR, contributions, stress              (Ch. 21)
@@ -111,7 +117,7 @@ src/
   utils/         config, logging, dates, plotting, experiment registry
 experiments/     numbered stage scripts + the experiment registry
 reports/         figures, tables, the data-quality report, the research paper
-tests/           101 tests
+tests/           114 tests
 ```
 
 ---
@@ -121,10 +127,11 @@ tests/           101 tests
 ```bash
 pip install -r requirements.txt
 
-python -m experiments.run_all --download      # full pipeline, ~25 minutes
+python -m experiments.run_all --download      # stages 1-13, ~25 minutes
 python -m experiments.run_all --from 6 --to 9 # a range of stages
+python -m experiments.run_all --only 14       # optional pairs / PCA stat-arb branch
 python -m experiments.stage01_data            # a single stage
-pytest -q                                      # 101 tests
+pytest -q                                      # 114 tests
 ```
 
 Stage 1 writes `data/raw/*.csv` once and refuses to overwrite them without
@@ -173,6 +180,7 @@ RAW DATA -> VALIDATION -> CLEAN DATA -> FEATURES
 | 11 | Walk-forward, robustness, leakage | Ch. 22 §22.2.4, §22.2.6–7 |
 | 12 | Final comparison | Ch. 22 §22.2.5 |
 | 13 | Machine learning extension | Ch. 23 |
+| 14 | Pairs trading and PCA stat-arb (optional) | Ch. 22 §22.3.3–§22.3.7 |
 
 ---
 

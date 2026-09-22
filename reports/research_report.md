@@ -1028,6 +1028,92 @@ directly and far more cheaply.
 
 ---
 
+## 13A. Extensions: pairs trading and PCA statistical arbitrage
+
+Two further strategy types from Chapter 22, run as a **separate research
+branch** (`python -m experiments.stage14_extensions`) rather than folded into
+the headline ladder. They are different animals with different assumptions,
+and mixing them into the core comparison would muddy the question it answers.
+
+### 13A.1 Pairs trading (Extension E, §22.3.3–§22.3.4)
+
+The discipline here is the order of operations: establish that the
+relationship *exists* before building a rule on it. Ten economically
+motivated candidate pairs were declared in advance, and each was tested for
+cointegration by Engle-Granger on the **development sample only**, so the pair
+is selected without seeing the period it will be traded in.
+
+| Pair | Return correlation | ADF p-value | Half-life (days) | Cointegrated? |
+|------|-------------------:|------------:|-----------------:|:-------------:|
+| LQD/HYG | 0.39 | 0.053 | 61 | no (just) |
+| SPY/IWM | 0.92 | 0.073 | 65 | no |
+| AGG/IEF | 0.65 | 0.090 | 68 | no |
+| IEF/TLT | 0.91 | 0.135 | 134 | no |
+| SPY/VNQ | 0.78 | 0.229 | 83 | no |
+| **GLD/SLV** | **0.81** | **0.426** | **254** | **no** |
+| SPY/QQQ | 0.92 | 0.610 | 255 | no |
+| EFA/EEM | 0.89 | 0.843 | 614 | no |
+
+**Zero of ten pairs are cointegrated.** The most striking rows are SPY/QQQ and
+SPY/IWM: return correlations of 0.92, and spreads that wander off with
+half-lives of 255 and 65 days. This is exactly the distinction the screen
+exists to enforce — correlation is not cointegration, and trading a spread
+that never comes back is a bet on nothing.
+
+GLD/SLV, the closest analogue in this universe to the book's gold-versus-gold-
+miners example, has an ADF p-value of 0.43 and a 254-day half-life. It is not
+tradable on this evidence.
+
+Trading them anyway, using hedge ratios fitted on development data only,
+confirms the screen was right: the best net Sharpe across all ten is **0.17**
+(SPY/VNQ), the median is **−0.28**, and the pair with the strongest prior
+(GLD/SLV) returns −0.30 with a 66% drawdown. All ten turn over 9–18× a year,
+so costs take roughly 0.25–0.85 off each gross Sharpe.
+
+The finding: on a liquid multi-asset ETF universe there are no pairs worth
+trading. That is unsurprising — cointegration is far more plausible between
+two firms in the same industry than between two broad index funds — but it is
+now established rather than assumed.
+
+### 13A.2 PCA statistical arbitrage (Extension F, §22.3.5–§22.3.7)
+
+The progression the specification describes: PCA for *understanding* risk
+becomes PCA for *generating* alpha. Each asset's returns are regressed on the
+first three principal components estimated from a trailing 252-day window,
+refit every 21 days and applied forward. The residual is what the factor
+exposures do not explain; a cumulative residual far from zero is the signal.
+
+> **How many components explain the universe?** (§22.3.7) PC1 explains 50.8%
+> of variance on the most recent window, the first three 80.2%, and the first
+> five 90.1%.
+
+| Horizon | Mean IC | t (overlap-adjusted) | p |
+|--------:|--------:|---------------------:|---:|
+| 1 | +0.0048 | 1.28 | 0.20 |
+| 5 | +0.0084 | 0.99 | 0.32 |
+| 21 | +0.0190 | 1.11 | 0.27 |
+| 63 | +0.0192 | 0.66 | 0.51 |
+
+No horizon is significant. The backtest is correspondingly poor: gross Sharpe
++0.06, **net Sharpe −0.27**, turnover 13.2× a year, and a breakeven
+transaction cost of **1.1 bps**.
+
+One part of it did work exactly as designed. The residual factor exposures of
+the final book are PC1 −0.035, PC2 +0.011, PC3 +0.026 — the construction is
+genuinely factor neutral, not a disguised beta bet. The machinery is correct;
+there is simply no residual alpha in it to harvest.
+
+### 13A.3 What the extensions add to the conclusion
+
+Both are rejected, and both are rejected for the *same reason as everything
+else in this project*: a small edge, a high required turnover, and costs that
+close the gap. The extensions therefore strengthen rather than complicate the
+headline finding. Four independent strategy types — cross-sectional momentum,
+mean reversion, machine learning, and now relative value in two forms — were
+built with the same discipline and all landed in the same place.
+
+---
+
 ## 14. Failure analysis
 
 What did not work, and why — recorded because a research process that reports
@@ -1069,6 +1155,17 @@ above.
 
 **7. Strategy combination as a route past the best component (REJECTED).**
 Combining beat the average component but not the best one.
+
+**8. Pairs trading (REJECTED at the screen).** Zero of ten candidate pairs
+were cointegrated on the development sample. *Why:* broad index ETFs share a
+common factor but nothing pins their spread; SPY/QQQ has a 0.92 return
+correlation and a 255-day spread half-life. The screen rejected them before
+any trading rule was built, which is the point of running it first.
+
+**9. PCA statistical arbitrage (REJECTED).** Factor-neutral by construction
+(residual exposures ≤ 0.035) and correct in every mechanical respect, but the
+residual signal is not significant at any horizon and the strategy breaks even
+at 1.1 bps.
 
 **What worked:** risk-based allocation that never estimates an expected
 return. That is a thin conclusion relative to the machinery built to reach it
@@ -1143,6 +1240,10 @@ The pattern across all thirteen stages is one thing, stated three ways:
 - The machine-learning models with the highest information coefficients
   produced the lowest net returns.
 
+Four independent strategy types — cross-sectional momentum, mean reversion,
+machine learning, and relative value in two forms — were built with identical
+discipline and all landed in the same place.
+
 **Every step that added estimation added error faster than it added edge.**
 The project's most useful output is not a strategy. It is the set of
 instruments — HAC inference, FDR control, breakeven costs, automated
@@ -1159,11 +1260,12 @@ that has not been asked to.
 
 ```bash
 pip install -r requirements.txt
-python -m experiments.run_all --fresh --download   # ~25 minutes
+python -m experiments.run_all --fresh --download   # stages 1-13, ~25 minutes
+python -m experiments.run_all --only 14            # optional extensions branch
 pytest -q                                           # 101 tests
 ```
 
-Outputs: `reports/figures/` (25 figures), `reports/tables/` (~70 CSVs),
+Outputs: `reports/figures/` (25 figures, 27 with the extensions branch), `reports/tables/` (~70 CSVs),
 `reports/data_quality_report.md`, `experiments/registry.md`.
 
 Identity of a result = git commit + `data_version` + config fingerprint, all
@@ -1185,6 +1287,7 @@ three printed by every stage.
 | 11 | Ch. 22 §22.2.4, §22.2.6–§22.2.7 |
 | 12 | Ch. 22 §22.2.5 |
 | 13 | Ch. 23 §23.2–§23.3 |
+| 14 (optional) | Ch. 22 §22.3.3–§22.3.7 |
 
 ## Appendix C — Figures
 

@@ -36,7 +36,11 @@ STAGES = [
     (11, "stage11_validation", "Walk-forward, robustness and leakage"),
     (12, "stage12_results", "Final comparison and results"),
     (13, "stage13_ml", "Machine learning extension (Ch. 23)"),
+    # Optional research branch: deliberately outside the headline ladder, so
+    # it runs only when asked for (--to 14, or --only 14).
+    (14, "stage14_extensions", "Pairs trading and PCA stat-arb (Ch. 22 §22.3.3-7)"),
 ]
+DEFAULT_LAST_STAGE = 13
 
 
 def clear_derived(config, logger) -> None:
@@ -62,7 +66,9 @@ def clear_derived(config, logger) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run the research pipeline")
     parser.add_argument("--from", dest="start", type=int, default=1, help="first stage")
-    parser.add_argument("--to", dest="end", type=int, default=13, help="last stage")
+    parser.add_argument("--to", dest="end", type=int, default=DEFAULT_LAST_STAGE,
+                        help=f"last stage (default {DEFAULT_LAST_STAGE}; pass 14 for the "
+                             "optional pairs / PCA stat-arb branch)")
     parser.add_argument("--only", type=int, nargs="*", help="run only these stages")
     parser.add_argument("--download", action="store_true", help="fetch raw data in stage 1")
     parser.add_argument("--fresh", action="store_true", help="clear derived artefacts first")

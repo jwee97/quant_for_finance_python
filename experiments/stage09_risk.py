@@ -75,7 +75,9 @@ def figure_var(context, portfolio, backtests, path):
 
     monthly = breaches.resample("YE").size() if len(breaches) else pd.Series(dtype=int)
     if len(monthly):
-        axes[1, 1].bar(monthly.index.year, monthly.to_numpy(), color="#CC0000")
+        years = monthly.index.year.to_numpy()
+        axes[1, 1].bar(years, monthly.to_numpy(), color="#CC0000")
+        axes[1, 1].set_xticks(years[::2], [str(y) for y in years[::2]], rotation=45)
         expected_year = 252 * 0.05
         axes[1, 1].axhline(expected_year, color="black", linestyle="--",
                            label=f"expected {expected_year:.0f}/year")

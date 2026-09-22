@@ -1,0 +1,1 @@
+Figure 26. Are any of these pairs genuinely cointegrated on training data, and does the spread revert fast enough to be tradable?

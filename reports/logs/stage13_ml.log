@@ -38,3 +38,13 @@ zscore_5        0.0052
 2026-09-22 14:14:03 | INFO    | stage.stage13_ml             | STAGE 13 | machine learning extension (Ch. 23)
 2026-09-22 14:14:03 | INFO    | stage.stage13_ml             | ========================================================================
 2026-09-22 14:14:03 | INFO    | stage.stage13_ml             | design matrix: {'n_samples': 73634, 'n_features': 13, 'n_dates': 4937, 'n_assets': 15, 'positive_rate': 0.4880354184208382, 'start': '2007-01-05', 'end': '2026-08-20'}
+2026-09-22 14:18:20 | INFO    | stage.stage13_ml             | purged cross-validation (mean across folds):
+                       accuracy     auc      ic  accuracy_std  ic_std  folds_positive_ic
+model                                                                                   
+ML0_logistic             0.5336  0.5453  0.0673        0.0289  0.0408                1.0
+ML1_logistic_l2          0.5331  0.5452  0.0670        0.0288  0.0404                1.0
+ML2_random_forest        0.5331  0.5525  0.0769        0.0043  0.0254                1.0
+ML3_gradient_boosting    0.5285  0.5387  0.0578        0.0086  0.0244                1.0
+2026-09-22 14:18:26 | INFO    | stage.stage13_ml             | ML0_logistic walk-forward: IC +0.0798  net Sharpe -0.008  turnover 5.0x
+2026-09-22 14:18:31 | INFO    | stage.stage13_ml             | ML1_logistic_l2 walk-forward: IC +0.0794  net Sharpe -0.007  turnover 5.0x
+2026-09-22 14:19:50 | INFO    | stage.stage13_ml             | ML2_random_forest walk-forward: IC +0.0956  net Sharpe +0.058  turnover 5.4x
