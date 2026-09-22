@@ -20,3 +20,6 @@ data/features/*
 # Local overrides
 config/local.yaml
 .env
+
+# Stage caches and logs (rebuilt by the pipeline)
+reports/logs/

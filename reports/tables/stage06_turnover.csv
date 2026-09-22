@@ -1,0 +1,4 @@
+,mean_daily_turnover,annualised_turnover,median_daily_turnover,max_daily_turnover,share_of_days_trading,mean_turnover_on_trading_days
+M3_momentum,0.036221,9.127800,0.000000,2.316888,0.046632,0.776748
+M4_mean_reversion,0.088477,22.296138,0.000000,3.000000,0.047592,1.859082
+M5_momentum_plus_mr,0.072778,18.339937,0.000000,2.966743,0.047592,1.529208

@@ -1,0 +1,1 @@
+Figure 18. Which covariance method produces the most stable and useful out-of-sample risk forecasts, and what does shrinkage actually buy?

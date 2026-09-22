@@ -6,7 +6,7 @@
 - **Requested window**: 2006-01-01 to 2026-09-22
 - **Universe**: 15 ETFs (multi_asset_etf_v1 v1)
 - **Trading calendar**: 5211 days, 2006-01-03 to 2026-09-21
-- **Config fingerprint**: `f7a1562ded61`
+- **Config fingerprint**: `12f9cfd14055`
 
 ## 1. Provider adjustment convention (Ch. 7 §7.5.1)
 
