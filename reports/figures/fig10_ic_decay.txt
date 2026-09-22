@@ -1,0 +1,1 @@
+Figure 10. How quickly does momentum's predictive information decay, and does any combination of lookback and horizon show a genuine edge?

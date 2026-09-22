@@ -25,6 +25,12 @@ mean_reversion:
   variants: [zscore, zscore_ranked]
   primary_variant: zscore
   primary_lookback: 21
+  # Declared BEFORE looking at any IC. Reversion is a short-horizon
+  # phenomenon and the variance-ratio evidence (which uses only the price
+  # series' own autocovariance, never forward returns) is strongest at 5-10
+  # days. Picking this horizon afterwards from the IC surface would be
+  # selecting the test on its own outcome.
+  test_horizon: 5
   sign: -1                                # mean reversion => trade against z
 
 # --- Signal -> position translation (spec §39, Ch. 22 §22.3.10) ----------
@@ -43,6 +49,14 @@ transform:
 # --- Forecast horizons for IC / regression work -------------------------
 horizons: [1, 5, 10, 21, 42, 63]
 primary_horizon: 21
+
+# Families are evaluated as whole grids, so a naive 5% threshold would produce
+# several "discoveries" from noise alone. Every family-level claim is reported
+# with a Benjamini-Hochberg false-discovery-rate adjustment across all
+# (feature, horizon) tests in that family.
+multiple_testing:
+  method: benjamini_hochberg
+  fdr: 0.10
 
 # --- Strategy combination (spec §38, Ch. 22 §22.5) ----------------------
 combination:

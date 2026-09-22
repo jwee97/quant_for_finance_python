@@ -1,0 +1,1 @@
+Figure 8. Is the momentum signal well behaved, and are different lookbacks measuring different things or the same thing?

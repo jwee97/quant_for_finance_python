@@ -1,0 +1,107 @@
+2026-09-22 13:04:49 | INFO    | stage.stage05_expected_returns | ========================================================================
+2026-09-22 13:04:49 | INFO    | stage.stage05_expected_returns | STAGE 5 | expected returns, IC and signal validation (Ch. 20)
+2026-09-22 13:04:49 | INFO    | stage.stage05_expected_returns | ========================================================================
+2026-09-22 13:04:55 | INFO    | stage.stage05_expected_returns | IC decay (mean IC by horizon):
+signal   momentum_126_vol_scaled  momentum_252_raw  reversion_5_zscore  reversion_21_zscore
+horizon                                                                                    
+1                         0.0041            0.0364              0.0279               0.0206
+5                         0.0034            0.0510              0.0259               0.0176
+10                       -0.0039            0.0565              0.0161               0.0109
+21                       -0.0029            0.0604              0.0129               0.0140
+42                       -0.0051            0.0598              0.0039               0.0100
+63                       -0.0055            0.0620             -0.0001              -0.0048
+2026-09-22 13:04:55 | INFO    | stage.stage05_expected_returns | implied information ratio (Fundamental Law, pre-cost):
+signal   momentum_126_vol_scaled  momentum_252_raw  reversion_5_zscore  reversion_21_zscore
+horizon                                                                                    
+1                          0.251             2.239               1.715                1.265
+5                          0.094             1.402               0.713                0.485
+10                        -0.077             1.099               0.312                0.213
+21                        -0.039             0.810               0.173                0.188
+42                        -0.048             0.567               0.037                0.095
+63                        -0.043             0.480              -0.001               -0.037
+2026-09-22 13:04:57 | INFO    | stage.stage05_expected_returns | naive vs HAC standard errors:
+                                 coefficient  se_naive  se_hac  t_naive   t_hac  se_inflation
+momentum_126_vol_scaled\n(h=21)      -0.0017    0.0002  0.0005  -7.0871 -3.3362        2.1243
+momentum_252_raw\n(h=21)              0.0025    0.0010  0.0032   2.5664  0.7743        3.3146
+reversion_5_zscore\n(h=1)             0.0004    0.0000  0.0001   8.7656  4.8738        1.7985
+reversion_21_zscore\n(h=1)            0.0002    0.0000  0.0001   4.8939  2.4281        2.0155
+2026-09-22 13:04:57 | INFO    | stage.stage05_expected_returns | average cross-sectional signal correlation:
+                         momentum_126_vol_scaled  momentum_252_raw  reversion_5_zscore  reversion_21_zscore
+momentum_126_vol_scaled                    1.000             0.502              -0.104               -0.289
+momentum_252_raw                           0.502             1.000              -0.076               -0.180
+reversion_5_zscore                        -0.104            -0.076               1.000                0.595
+reversion_21_zscore                       -0.289            -0.180               0.595                1.000
+2026-09-22 13:04:59 | INFO    | stage.stage05_expected_returns | combined-signal IC:
+         mean_ic  t_stat_overlap_adjusted  p_value  implied_information_ratio
+horizon                                                                      
+1         0.0415                   7.0679   0.0000                     2.5542
+5         0.0505                   3.8701   0.0001                     1.3886
+10        0.0449                   2.4386   0.0147                     0.8725
+21        0.0453                   1.7163   0.0861                     0.6072
+42        0.0395                   1.0434   0.2967                     0.3748
+63        0.0363                   0.7912   0.4288                     0.2810
+2026-09-22 13:04:59 | INFO    | stage.stage05_expected_returns | cross-sectional dispersion of annualised expected returns:
+       signal_implied_mu_ann  historical_mu_ann
+count               4958.000          4958.0000
+mean                   0.025             0.0687
+std                    0.000             0.0265
+min                    0.025             0.0182
+25%                    0.025             0.0496
+50%                    0.025             0.0629
+75%                    0.025             0.0828
+max                    0.025             0.1822
+2026-09-22 13:05:00 | INFO    | stage.stage05_expected_returns | STAGE 5 complete
+2026-09-22 13:05:28 | INFO    | stage.stage05_expected_returns | ========================================================================
+2026-09-22 13:05:28 | INFO    | stage.stage05_expected_returns | STAGE 5 | expected returns, IC and signal validation (Ch. 20)
+2026-09-22 13:05:28 | INFO    | stage.stage05_expected_returns | ========================================================================
+2026-09-22 13:05:35 | INFO    | stage.stage05_expected_returns | IC decay (mean IC by horizon):
+signal   momentum_126_vol_scaled  momentum_252_raw  reversion_5_zscore  reversion_21_zscore
+horizon                                                                                    
+1                         0.0041            0.0364              0.0279               0.0206
+5                         0.0034            0.0510              0.0259               0.0176
+10                       -0.0039            0.0565              0.0161               0.0109
+21                       -0.0029            0.0604              0.0129               0.0140
+42                       -0.0051            0.0598              0.0039               0.0100
+63                       -0.0055            0.0620             -0.0001              -0.0048
+2026-09-22 13:05:35 | INFO    | stage.stage05_expected_returns | implied information ratio (Fundamental Law, pre-cost):
+signal   momentum_126_vol_scaled  momentum_252_raw  reversion_5_zscore  reversion_21_zscore
+horizon                                                                                    
+1                          0.251             2.239               1.715                1.265
+5                          0.094             1.402               0.713                0.485
+10                        -0.077             1.099               0.312                0.213
+21                        -0.039             0.810               0.173                0.188
+42                        -0.048             0.567               0.037                0.095
+63                        -0.043             0.480              -0.001               -0.037
+2026-09-22 13:05:37 | INFO    | stage.stage05_expected_returns | naive vs HAC standard errors:
+                                 coefficient  se_naive  se_hac  t_naive   t_hac  se_inflation
+momentum_126_vol_scaled\n(h=21)      -0.0017    0.0002  0.0005  -7.0871 -3.3362        2.1243
+momentum_252_raw\n(h=21)              0.0025    0.0010  0.0032   2.5664  0.7743        3.3146
+reversion_5_zscore\n(h=1)             0.0004    0.0000  0.0001   8.7656  4.8738        1.7985
+reversion_21_zscore\n(h=1)            0.0002    0.0000  0.0001   4.8939  2.4281        2.0155
+2026-09-22 13:05:37 | INFO    | stage.stage05_expected_returns | average cross-sectional signal correlation:
+                         momentum_126_vol_scaled  momentum_252_raw  reversion_5_zscore  reversion_21_zscore
+momentum_126_vol_scaled                    1.000             0.502              -0.104               -0.289
+momentum_252_raw                           0.502             1.000              -0.076               -0.180
+reversion_5_zscore                        -0.104            -0.076               1.000                0.595
+reversion_21_zscore                       -0.289            -0.180               0.595                1.000
+2026-09-22 13:05:38 | INFO    | stage.stage05_expected_returns | combined-signal IC:
+         mean_ic  t_stat_overlap_adjusted  p_value  implied_information_ratio
+horizon                                                                      
+1         0.0415                   7.0679   0.0000                     2.5542
+5         0.0505                   3.8701   0.0001                     1.3886
+10        0.0449                   2.4386   0.0147                     0.8725
+21        0.0453                   1.7163   0.0861                     0.6072
+42        0.0395                   1.0434   0.2967                     0.3748
+63        0.0363                   0.7912   0.4288                     0.2810
+2026-09-22 13:05:38 | INFO    | stage.stage05_expected_returns | cross-sectional dispersion of annualised expected returns:
+       signal_implied_mu_ann  historical_mu_ann
+count               4958.000          4958.0000
+mean                   0.025             0.0687
+std                    0.000             0.0265
+min                    0.025             0.0182
+25%                    0.025             0.0496
+50%                    0.025             0.0629
+75%                    0.025             0.0828
+max                    0.025             0.1822
+2026-09-22 13:05:38 | INFO    | stage.stage05_expected_returns | the signal-implied dispersion is constant by construction (0.025 = target_spread x (1 - shrinkage)): how far apart the optimiser is allowed to believe assets are is an explicit research assumption here, not an accident of signal scale. The historical estimator's dispersion instead wanders between 0.018 and 0.182, and every one of those swings feeds straight into the weights -- which is the estimation-error problem quantified in Stage 7.
+2026-09-22 13:05:39 | INFO    | stage.stage05_expected_returns | STAGE 5 complete

@@ -1,0 +1,1 @@
+Figure 11. Do prices actually mean revert on this universe, and over what horizon, before any trading rule is built on top?
