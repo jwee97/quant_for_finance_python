@@ -1262,7 +1262,7 @@ that has not been asked to.
 pip install -r requirements.txt
 python -m experiments.run_all --fresh --download   # stages 1-13, ~25 minutes
 python -m experiments.run_all --only 14            # optional extensions branch
-pytest -q                                           # 101 tests
+pytest -q                                           # 130 tests
 ```
 
 Outputs: `reports/figures/` (25 figures, 27 with the extensions branch), `reports/tables/` (~70 CSVs),

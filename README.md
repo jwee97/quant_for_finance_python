@@ -117,7 +117,7 @@ src/
   utils/         config, logging, dates, plotting, experiment registry
 experiments/     numbered stage scripts + the experiment registry
 reports/         figures, tables, the data-quality report, the research paper
-tests/           114 tests
+tests/           130 tests
 ```
 
 ---
@@ -131,7 +131,7 @@ python -m experiments.run_all --download      # stages 1-13, ~25 minutes
 python -m experiments.run_all --from 6 --to 9 # a range of stages
 python -m experiments.run_all --only 14       # optional pairs / PCA stat-arb branch
 python -m experiments.stage01_data            # a single stage
-pytest -q                                      # 114 tests
+pytest -q                                      # 130 tests
 ```
 
 Stage 1 writes `data/raw/*.csv` once and refuses to overwrite them without
