@@ -33,6 +33,24 @@ ALL_MODELS = ["M0_equal_weight", "M1_inverse_vol", "M2_risk_parity", "M3_momentu
               "M7_combined_alpha_shrinkage_mvo", "M8_black_litterman", "M9_mean_cvar"]
 
 
+def short_label(name: str) -> str:
+    """Compact axis label: 'M7_combined_alpha_shrinkage_mvo' -> 'M7 shrink mvo'."""
+    aliases = {
+        "M0_equal_weight": "M0 equal wt",
+        "M1_inverse_vol": "M1 inv vol",
+        "M2_risk_parity": "M2 risk parity",
+        "M3_momentum": "M3 momentum",
+        "M4_mean_reversion": "M4 reversion",
+        "M5_momentum_plus_mr": "M5 mom+rev",
+        "M6_combined_alpha_mvo": "M6 MVO",
+        "M7_combined_alpha_shrinkage_mvo": "M7 shrink MVO",
+        "M8_black_litterman": "M8 Black-Litt",
+        "M9_mean_cvar": "M9 mean-CVaR",
+        "SPY_buy_hold": "SPY",
+    }
+    return aliases.get(name, name.replace("_", " "))
+
+
 def figure_final(context, streams, samples, table, path):
     fig, axes = new_axes(2, 2, figsize=(13.8, 8.8))
 
@@ -40,7 +58,7 @@ def figure_final(context, streams, samples, table, path):
         curve = cumulative_returns(series.dropna())
         style = "-" if not name.startswith("SPY") else ":"
         axes[0, 0].plot(curve.index, curve.to_numpy(), style, color=PALETTE[i % len(PALETTE)],
-                        linewidth=1.3, label=name.replace("_", " "))
+                        linewidth=1.3, label=short_label(name))
     for window in samples.values():
         if window.start is not None:
             axes[0, 0].axvline(window.start, color="#999999", linestyle="--", linewidth=0.8)
@@ -49,25 +67,29 @@ def figure_final(context, streams, samples, table, path):
     axes[0, 0].set_title("Net equity curves (dashed lines mark sample boundaries)")
     axes[0, 0].legend(ncol=2, fontsize=7)
 
-    risk_return = table.dropna(subset=["ann_vol", "cagr"])
+    risk_return = table.dropna(subset=["ann_vol", "cagr"]).sort_values("ann_vol")
+    # Alternate the label offset so near-identical points (M6/M7 sit almost on
+    # top of each other) stay readable instead of overprinting.
     for i, (name, row) in enumerate(risk_return.iterrows()):
         axes[0, 1].scatter(row["ann_vol"], row["cagr"], s=70, color=PALETTE[i % len(PALETTE)],
                            zorder=5)
-        axes[0, 1].annotate(name.split("_")[0], (row["ann_vol"], row["cagr"]),
-                            textcoords="offset points", xytext=(6, 4), fontsize=8)
+        offset = (7, 5) if i % 2 == 0 else (7, -11)
+        axes[0, 1].annotate(short_label(name), (row["ann_vol"], row["cagr"]),
+                            textcoords="offset points", xytext=offset, fontsize=8)
     axes[0, 1].set_xlabel("Annualised volatility")
     axes[0, 1].set_ylabel("CAGR")
     axes[0, 1].set_title("Risk and return, net of costs")
     axes[0, 1].axhline(0.0, color="black", linewidth=0.8)
 
     sharpes = table["sharpe"].dropna().sort_values()
+    sharpes.index = [short_label(n) for n in sharpes.index]
     bar_with_values(axes[1, 0], sharpes, "Net Sharpe ratio, full sample", "Sharpe", "{:.2f}",
-                    rotation=60)
+                    rotation=45)
 
     for i, (name, series) in enumerate(streams.items()):
         dd = drawdown(cumulative_returns(series.dropna()))
         axes[1, 1].plot(dd.index, dd.to_numpy(), color=PALETTE[i % len(PALETTE)], linewidth=0.9,
-                        label=name.replace("_", " "))
+                        label=short_label(name))
     axes[1, 1].set_ylabel("Drawdown")
     axes[1, 1].set_title("Drawdowns")
     axes[1, 1].legend(ncol=2, fontsize=7)
