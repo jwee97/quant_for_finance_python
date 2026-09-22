@@ -135,13 +135,16 @@ def make_models(seed: int = 42) -> dict:
     from sklearn.preprocessing import StandardScaler
 
     return {
+        # L2 is scikit-learn's default penalty in every supported version, so
+        # it is selected by C alone. Passing penalty="l2" explicitly is
+        # deprecated from 1.8 and would emit a FutureWarning on every fit.
         "ML0_logistic": Pipeline([
             ("scale", StandardScaler()),
-            ("model", LogisticRegression(max_iter=1000, C=1e6)),  # effectively unregularised
+            ("model", LogisticRegression(max_iter=1000, C=1e6)),   # effectively unregularised
         ]),
         "ML1_logistic_l2": Pipeline([
             ("scale", StandardScaler()),
-            ("model", LogisticRegression(max_iter=1000, C=0.1, penalty="l2")),
+            ("model", LogisticRegression(max_iter=1000, C=0.1)),   # meaningfully regularised
         ]),
         "ML2_random_forest": RandomForestClassifier(
             n_estimators=300, max_depth=5, min_samples_leaf=200,
