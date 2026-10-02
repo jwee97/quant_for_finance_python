@@ -22,7 +22,10 @@ detection:
     n_states_primary: 2          # bull / low-vol  vs  bear / high-vol (Hamilton)
     n_states_sensitivity: 3
     covariance_type: full
-    n_init: 5
+    n_init: 5                    # fresh random starts for the FIRST fit
+    n_init_refit: 1              # every later refit: previous solution + this many fresh starts,
+                                 # best likelihood wins (EM on 2-3 states in 3 dimensions has a
+                                 # simple surface: all five starts agree to 4 decimals)
     n_iter: 300
     tol: 1.0e-4
     seed: 11
@@ -83,3 +86,45 @@ strategies:
   # RA3 gates the momentum book on its TRAINING-sample in-regime mean return.
   gate_min_days: 60
   benchmarks: [equal_weight, risk_parity, momentum, naive_vol_timing]
+
+# ---------------------------------------------------------------------------
+# Decision rules, fixed before any regime result was computed.
+# ---------------------------------------------------------------------------
+decisions:
+  # Every regime-conditional hypothesis below is judged by a circular-shift
+  # permutation test (analysis.permutation) on the state at close t against
+  # the return on day t+1, so nothing contemporaneous can pass for a signal.
+  # Benjamini-Hochberg control at analysis.fdr across all such tests.
+  h_hmm_volatility:              # filtered high-vol state predicts |next-day equity-sleeve return|
+    retain_if: "significant after BH control"
+  h_hmm_returns:                 # ... predicts next-day equity-sleeve MEAN return
+    retain_if: "significant after BH control"
+  h_rules:                       # named rule regimes (bear, high-vol, inflation, liquidity)
+    retain_if: "at least one regime x sleeve test significant after BH control"
+  h_bocpd:
+    retain_if: "alarms within search_days of at least min_events_detected events AND no more than max_false_alarms_per_year false-alarm episodes per year outside the event windows"
+    min_events_detected: 4
+    max_false_alarms_per_year: 3.0
+    merge_gap_days: 5            # alarm days closer than this belong to one episode
+  # The simple detector BOCPD has to be compared with; reported, not a gate.
+  naive_detector: { short_window: 5, long_window: 250, ratio: 2.0 }
+  h_strategies:
+    # Paired stationary bootstrap on the net Sharpe difference (two-sided p),
+    # judged as one family with BH control: RA1 vs equal weight, RA2 vs equal
+    # weight, RA2 vs risk parity, RA3 vs momentum. A strategy is retained only
+    # if every comparison it appears in is BH-significant with a POSITIVE
+    # difference. RA2 therefore has to beat BOTH constant allocations.
+    paired_test: { n_samples: 2000, block_length: 21, seed: 7 }
+    family:
+      RA1_derisk: [equal_weight]
+      RA2_blend: [equal_weight, risk_parity]
+      RA3_gated_momentum: [momentum]
+  # Look-ahead controls. The honest strategies must PASS the automated test
+  # and the smoothed-probability controls must FAIL it, or the test is blind.
+  leakage:
+    split_dates: ["2014-06-30", "2019-06-28"]
+    modes: ["shock", "reverse"]
+  # Post-hoc sensitivity, labelled as such and never used to overturn a decision:
+  # does a faster overlay (weekly instead of monthly rebalancing) change the answer?
+  sensitivity:
+    overlay_rebalance: weekly
