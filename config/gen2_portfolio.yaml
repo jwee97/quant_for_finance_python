@@ -17,6 +17,45 @@ dynamic_covariance:
   gfc_min_train_days: 500
   bootstrap: { n_samples: 2000, block_length: 21, seed: 7 }
 
+  # --- design fixed before any Stage 17 result was computed -----------------
+  # Forecast origins are the last trading day of each month. EVERY estimator
+  # (static or dynamic) sees returns through and including the origin and
+  # forecasts the average daily covariance over the next horizon_days trading
+  # days. Outputs are daily covariance matrices, so losses are comparable.
+  static:
+    sample: { lookback: 252 }
+    ewma: { halflife: 60 }
+    shrinkage: { lookback: 252, target: constant_correlation }
+  # Loss: the Gaussian deviance (multivariate QLIKE), log|S_hat| + tr(S_hat^-1 R),
+  # where R is the realised second-moment matrix of the next horizon_days daily
+  # returns. It ranks forecasts consistently even though R is a noisy proxy for
+  # the latent covariance. The realised variance of the unconstrained
+  # minimum-variance portfolio built from S_hat is reported beside it.
+  loss: qlike
+  # Crisis windows (forecast ORIGINS inside them), evaluated on the 14-asset
+  # ex-HYG universe because that is the one with an out-of-sample GFC.
+  crisis_windows:
+    gfc: ["2008-09-01", "2009-06-30"]
+    covid: ["2020-02-01", "2020-06-30"]
+    rate_shock_2022: ["2022-01-01", "2022-12-31"]
+  decisions:
+    fdr: 0.10
+    dm_lag: 1                    # consecutive 21-day windows can overlap by a day or two
+    # h_forecast_loss: a dynamic model (dcc, ogarch) is retained iff its mean
+    #   loss is LOWER than each static estimator's and every one of the six
+    #   Diebold-Mariano tests (two-sided, BH across the six) is significant.
+    # h_crisis: the same rule on the pooled forecast origins inside the crisis
+    #   windows (14-asset universe), BH across its own six tests.
+    # h_minvar: long-only minimum-variance books (config constraints) built from
+    #   each estimator; a dynamic model is retained iff the paired bootstrap
+    #   finds its book's realised VOLATILITY significantly lower than the
+    #   shrinkage-based book's (two-sided, BH across the two).
+    # Not decisions, only reported: risk-parity books, Sharpe ratios, turnover
+    #   and costs, GARCH and DCC parameters, positive-definiteness checks.
+  not_implemented:
+    - "Wishart / matrix-variate stochastic-volatility covariance models"
+    - "factor stochastic volatility"
+
 hierarchical:
   covariance: shrinkage
   lookback: 252
