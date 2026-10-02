@@ -1,0 +1,29 @@
+,max_abs_error
+BF M1_inverse_vol period_identity,6.245e-17
+BF M1_inverse_vol reconciliation_to_engine,1.089e-15
+BF M1_inverse_vol linked_total_vs_cumulative_active,5.851e-14
+BF M2_risk_parity period_identity,6.939e-17
+BF M2_risk_parity reconciliation_to_engine,1.089e-15
+BF M2_risk_parity linked_total_vs_cumulative_active,7.483e-14
+BF M11_hrp period_identity,5.031e-17
+BF M11_hrp reconciliation_to_engine,1.089e-15
+BF M11_hrp linked_total_vs_cumulative_active,3.675e-14
+BF M12_herc period_identity,5.204e-17
+BF M12_herc reconciliation_to_engine,1.089e-15
+BF M12_herc linked_total_vs_cumulative_active,8.482e-14
+contribution M0_equal_weight,3.864e-14
+contribution M1_inverse_vol,4.663e-15
+contribution M2_risk_parity,5.773e-15
+contribution M11_hrp,1.688e-14
+contribution M12_herc,1.310e-14
+window agreement M1_inverse_vol,0.000e+00
+window agreement M2_risk_parity,0.000e+00
+window agreement M11_hrp,0.000e+00
+window agreement M12_herc,0.000e+00
+window agreement benchmark,0.000e+00
+risk M0_equal_weight Euler sum,1.110e-16
+risk M1_inverse_vol Euler sum,5.551e-17
+risk M2_risk_parity Euler sum,8.327e-17
+risk M11_hrp Euler sum,5.551e-17
+risk M12_herc Euler sum,5.551e-17
+sleeve linked sum,4.996e-15
