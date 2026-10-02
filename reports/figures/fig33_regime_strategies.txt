@@ -1,0 +1,1 @@
+Figure 33. Do regime-aware rules beat static allocations after costs, and how much would a backtest on hindsight probabilities have overstated?

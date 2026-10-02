@@ -239,3 +239,20 @@ def staleness(series: dict[str, pd.Series], specs: list[MacroSeriesSpec],
         last = stamp.reindex(union).ffill().reindex(pd.DatetimeIndex(calendar))
         out[key] = (pd.DatetimeIndex(calendar) - pd.DatetimeIndex(last)).days
     return pd.DataFrame(out, index=pd.DatetimeIndex(calendar))
+
+
+def ensure_macro_raw(config, force: bool = False) -> tuple[list[MacroSeriesSpec], dict[str, pd.Series]]:
+    """The declared macro series, downloading any that are not on disk yet.
+
+    Raw files are immutable once written, so this only ever fills gaps; a
+    deliberate refresh goes through ``MacroDownloader.download_all(force=True)``.
+    """
+    specs = load_specs(config)
+    raw_dir = config.root / "data" / "raw" / "macro"
+    if force or not all((raw_dir / f"{spec.id}.csv").exists() for spec in specs):
+        manifest = MacroDownloader(raw_dir, config.path("metadata")).download_all(specs, force=force)
+        failed = [k for k, v in manifest["series"].items() if v["status"] == "failed"]
+        if failed:
+            raise RuntimeError(f"macro download failed for: {failed}")
+    return specs, load_macro_raw(raw_dir, specs)
+

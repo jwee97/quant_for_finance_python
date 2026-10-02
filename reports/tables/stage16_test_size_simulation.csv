@@ -1,0 +1,5 @@
+scenario,test,rejection_rate_5pct
+"persistent label, persistent outcome",naive shuffle,0.780000
+"persistent label, persistent outcome",circular shift,0.066667
+"rare high-variance regime, no mean effect","circular shift, plain difference",0.360000
+"rare high-variance regime, no mean effect","circular shift, studentised",0.033333

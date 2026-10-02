@@ -1,0 +1,1 @@
+Figure 30. What do the regime models say through time, how different is the tradable (filtered) answer from the hindsight (smoothed) one, and how long do the regimes last?

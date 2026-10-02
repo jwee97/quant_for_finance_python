@@ -254,7 +254,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Stage 15: macro features")
     parser.add_argument("--download", action="store_true", help="refetch macro data")
     parser.add_argument("--force", action="store_true", help="overwrite immutable raw macro files")
-    args = parser.parse_args(argv or [])
+    args = parser.parse_args(argv)
 
     context, logger = build_context(STAGE, generation=2)
     cfg = context.config

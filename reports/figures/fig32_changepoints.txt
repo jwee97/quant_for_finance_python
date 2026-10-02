@@ -1,0 +1,1 @@
+Figure 32. Does Bayesian online change-point detection flag dated volatility shocks quickly, at what false-alarm cost, and does it beat a one-line volatility-jump rule?

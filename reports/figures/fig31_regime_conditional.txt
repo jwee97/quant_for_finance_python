@@ -1,0 +1,1 @@
+Figure 31. Do regimes differ in risk and diversification, does any regime state predict the NEXT day once persistence and variance are respected, and why does the test need to be built this way?
