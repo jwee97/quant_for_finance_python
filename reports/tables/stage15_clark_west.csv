@@ -1,0 +1,16 @@
+sleeve,restricted,unrestricted,statistic,p_value,mspe_adjusted_difference,oos_r2,n_obs,comparison,bh_significant,significant_raw_5pct
+equity,hist,price,-1.396490,0.918717,-0.000043,-0.027053,177,price_vs_hist,False,False
+equity,hist,macro,-0.208534,0.582594,-0.000007,-0.014119,188,macro_vs_hist,False,False
+equity,price,both,0.942170,0.173053,0.000042,0.007857,177,both_vs_price,False,False
+bonds,hist,price,-2.053252,0.979976,-0.000005,-0.013137,177,price_vs_hist,False,False
+bonds,hist,macro,0.710018,0.238847,0.000004,0.000445,188,macro_vs_hist,False,False
+bonds,price,both,1.276007,0.100977,0.000005,0.010579,177,both_vs_price,False,False
+credit,hist,price,0.883076,0.188598,0.000003,0.008486,177,price_vs_hist,False,False
+credit,hist,macro,1.048774,0.147141,0.000006,0.009556,188,macro_vs_hist,False,False
+credit,price,both,0.934926,0.174913,0.000006,0.009657,177,both_vs_price,False,False
+commodities,hist,price,-1.565249,0.941238,-0.000013,-0.006079,177,price_vs_hist,False,False
+commodities,hist,macro,-0.695020,0.756479,-0.000010,-0.005328,188,macro_vs_hist,False,False
+commodities,price,both,-0.257973,0.601786,-0.000004,-0.004110,177,both_vs_price,False,False
+real_estate,hist,price,-0.694789,0.756406,-0.000005,-0.002782,177,price_vs_hist,False,False
+real_estate,hist,macro,-0.203838,0.580760,-0.000006,-0.008592,188,macro_vs_hist,False,False
+real_estate,price,both,0.207469,0.417822,0.000007,-0.003080,177,both_vs_price,False,False

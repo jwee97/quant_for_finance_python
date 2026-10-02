@@ -1,0 +1,10 @@
+,value
+sharpe_a,0.010654
+sharpe_b,-0.149017
+difference,0.159671
+ci_lower_5pct,-0.130082
+ci_upper_95pct,0.449484
+p_value,0.359000
+return_correlation,0.672844
+n_obs,3701.000000
+n_samples,2000.000000

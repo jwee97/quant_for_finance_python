@@ -1,0 +1,1 @@
+Figure 28. Can macro series be used without look-ahead, how stale is the information on a typical trading day, and how many independent dimensions do the features really carry?

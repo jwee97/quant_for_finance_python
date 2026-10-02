@@ -38,6 +38,23 @@ FEATURE_COLUMNS = [
 ]
 
 
+def monthly_grid(series: pd.Series) -> pd.Series:
+    """Re-index a monthly series to an unbroken run of month-start stamps.
+
+    A month that was never published (the October 2025 CPI and unemployment
+    prints were cancelled by the government shutdown) becomes NaN instead of
+    vanishing from the index. Position-based operations such as ``pct_change(12)``
+    would otherwise compare against thirteen months back for the next year, a
+    silent error that no look-ahead test can see because it only misstates
+    the arithmetic.
+    """
+    stamps = series.index.to_period("M").to_timestamp()
+    if stamps.has_duplicates:
+        raise ValueError("monthly series has two observations in one month")
+    stamped = pd.Series(series.to_numpy(dtype=float), index=stamps).sort_index()
+    return stamped.reindex(pd.date_range(stamped.index.min(), stamped.index.max(), freq="MS"))
+
+
 def monthly_transforms(raw: dict[str, pd.Series], short_months: int = 3,
                        long_months: int = 12) -> dict[str, pd.Series]:
     """Monthly transforms, still indexed by REFERENCE month.
@@ -45,15 +62,23 @@ def monthly_transforms(raw: dict[str, pd.Series], short_months: int = 3,
     ``SAHM`` is the Sahm-rule gap: the 3-month average unemployment rate minus
     the minimum of that average over the preceding 12 months. It rises above
     ~0.5 pp at the onset of recessions.
+
+    Transforms run on the date-aligned monthly grid and are defined only for
+    months in which the underlying series was actually observed, so a missing
+    publication is carried as a gap rather than back-filled or invented.
     """
     out: dict[str, pd.Series] = {}
     if "CPIAUCNS" in raw:
-        out["CPI_YOY"] = raw["CPIAUCNS"].pct_change(12)
+        grid = monthly_grid(raw["CPIAUCNS"])
+        out["CPI_YOY"] = grid / grid.shift(12) - 1.0
     if "UNRATE" in raw:
-        average = raw["UNRATE"].rolling(short_months).mean()
-        out["SAHM"] = average - average.shift(1).rolling(long_months).min()
+        grid = monthly_grid(raw["UNRATE"])
+        average = grid.rolling(short_months, min_periods=short_months - 1).mean().where(grid.notna())
+        floor = average.shift(1).rolling(long_months, min_periods=long_months - 1).min()
+        out["SAHM"] = (average - floor).where(grid.notna())
     if "GACDFSA066MSFRBPHI" in raw:
-        out["PHILLY_CHG3"] = raw["GACDFSA066MSFRBPHI"].diff(3)
+        grid = monthly_grid(raw["GACDFSA066MSFRBPHI"])
+        out["PHILLY_CHG3"] = grid.diff(3)
     return out
 
 

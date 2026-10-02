@@ -234,6 +234,7 @@ def staleness(series: dict[str, pd.Series], specs: list[MacroSeriesSpec],
     for key, values in series.items():
         available = availability_index(values.index, by_id[key])
         stamp = pd.Series(available, index=available).sort_index()
+        stamp = stamp[~stamp.index.duplicated(keep="last")]
         union = stamp.index.union(pd.DatetimeIndex(calendar)).sort_values()
         last = stamp.reindex(union).ffill().reindex(pd.DatetimeIndex(calendar))
         out[key] = (pd.DatetimeIndex(calendar) - pd.DatetimeIndex(last)).days

@@ -95,6 +95,21 @@ def test_staleness_never_exceeds_the_release_cycle_plus_the_lag_for_monthly_data
     assert stale.max() <= 31                                              # never older than one month
 
 
+def test_weekend_reference_days_collapse_onto_the_next_business_day_without_error():
+    """FRED's fed funds series is reported seven days a week; Friday, Saturday and Sunday
+    values all become public on Monday. The last of them is the value in force."""
+    idx = pd.date_range("2020-01-03", "2020-01-12", freq="D")             # Fri .. Sun
+    series = pd.Series(np.arange(len(idx), dtype=float), index=idx)
+    calendar = pd.bdate_range("2020-01-02", "2020-01-17")
+    asof = asof_series(series, DAILY, calendar)
+    stale = staleness({"D": series}, [DAILY], calendar)["D"]
+    assert asof.loc["2020-01-06"] == 2.0                                   # Sunday 5th's value, Monday
+    assert asof.loc["2020-01-07"] == 3.0                                   # Monday 6th's value, Tuesday
+    assert stale.loc["2020-01-06"] == 0                                    # published that very day
+    assert asof.loc["2020-01-13"] == 9.0                                   # Fri/Sat/Sun 10-12th, public Monday
+    assert stale.loc["2020-01-14"] == 1                                    # the series ends; one day older
+
+
 def test_cpi_yoy_is_computed_on_reference_months_then_lagged():
     idx = pd.date_range("2015-01-01", periods=84, freq="MS")
     cpi = pd.Series(100.0 * 1.003 ** np.arange(84), index=idx)
@@ -120,6 +135,28 @@ def macro_levels_for(cpi, spec):
 
     calendar = pd.bdate_range("2015-01-01", "2021-12-31")
     return build_macro_levels({"CPIAUCNS": cpi}, [spec], calendar)
+
+
+def test_a_missing_month_does_not_misalign_year_over_year_arithmetic():
+    """October 2025 CPI was never published. Position-based pct_change(12) would compare
+    November 2025 with October 2024 (thirteen months) for a full year afterwards."""
+    idx = pd.date_range("2022-01-01", periods=48, freq="MS")
+    cpi = pd.Series(100.0 * 1.003 ** np.arange(48), index=idx).drop(pd.Timestamp("2024-10-01"))
+    yoy = monthly_transforms({"CPIAUCNS": cpi})["CPI_YOY"]
+    twelve_months = 1.003 ** 12 - 1.0
+    assert np.isnan(yoy.loc["2024-10-01"])                                 # the gap stays a gap
+    assert np.isnan(yoy.loc["2025-10-01"])                                 # its anniversary has no base
+    valid = yoy.dropna().loc["2023-01-01":]
+    assert np.allclose(valid.to_numpy(), twelve_months, atol=1e-12)        # never the 13-month change
+
+
+def test_derived_monthly_series_are_only_defined_where_the_source_was_observed():
+    idx = pd.date_range("2018-01-01", periods=60, freq="MS")
+    unemployment = pd.Series(5.0, index=idx).drop(pd.Timestamp("2021-10-01"))
+    sahm = monthly_transforms({"UNRATE": unemployment})["SAHM"]
+    assert np.isnan(sahm.loc["2021-10-01"])                                # no print, no derived value
+    assert sahm.loc["2021-11-01":].notna().all()                           # the next months recover
+    assert np.allclose(sahm.dropna().to_numpy(), 0.0)                      # flat unemployment: zero gap
 
 
 def test_sahm_gap_is_zero_for_flat_unemployment_and_rises_in_a_downturn():

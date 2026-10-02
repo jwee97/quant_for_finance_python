@@ -1,0 +1,11 @@
+model,sleeve,n_obs,mse_respected,mse_ignored,statistic,p_value,bh_significant
+macro,equity,188,0.001880,0.001872,1.568428,0.058391,False
+macro,bonds,188,0.000398,0.000397,0.650667,0.257631,False
+macro,credit,188,0.000323,0.000327,-0.769386,0.779168,False
+macro,commodities,188,0.002801,0.002792,0.880895,0.189187,False
+macro,real_estate,188,0.002365,0.002362,0.465369,0.320834,False
+both,equity,177,0.001798,0.001772,2.276130,0.011419,False
+both,bonds,177,0.000385,0.000384,1.637945,0.050717,False
+both,credit,177,0.000303,0.000302,1.023671,0.152995,False
+both,commodities,177,0.002389,0.002384,0.849944,0.197678,False
+both,real_estate,177,0.002243,0.002239,0.781728,0.217187,False

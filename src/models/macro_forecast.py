@@ -97,13 +97,16 @@ def _fit_predict(train_x: np.ndarray, train_y: np.ndarray, test_x: np.ndarray,
 def walk_forward_forecasts(panel: MonthlyPanel, min_train_months: int = 60,
                            alphas: list[float] | None = None, cv_splits: int = 5,
                            first_test_year: int | None = None,
-                           macro_override: pd.DataFrame | None = None) -> dict:
+                           macro_override: pd.DataFrame | None = None,
+                           models: tuple[str, ...] | None = None) -> dict:
     """Expanding-window one-month-ahead forecasts for every sleeve and model.
 
     Returns ``{"actual": DataFrame, "forecasts": {model: DataFrame}}`` indexed by
     the month-end at which the forecast was made. ``macro_override`` swaps in a
     different macro panel (used to run the same study with publication lags
-    deliberately ignored, to measure how much that flatters the result).
+    deliberately ignored, to measure how much that flatters the result). ``models``
+    restricts which learned models are fitted (the history benchmark is always
+    produced); models left out come back as all-NaN frames.
     """
     alphas = alphas or [1.0, 10.0, 100.0, 1000.0]
     macro = (macro_override.reindex(panel.dates) if macro_override is not None else panel.macro)
@@ -130,7 +133,7 @@ def walk_forward_forecasts(panel: MonthlyPanel, min_train_months: int = 60,
 
             forecasts["hist"].iloc[k, forecasts["hist"].columns.get_loc(sleeve)] = float(y_train.mean())
             for model, parts in MODEL_FEATURES.items():
-                if not parts:
+                if not parts or (models is not None and model not in models):
                     continue
                 frame = pd.concat([blocks[p] for p in parts], axis=1)
                 train_x = frame.iloc[train_rows]

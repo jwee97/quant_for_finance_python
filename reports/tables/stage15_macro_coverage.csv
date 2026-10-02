@@ -1,0 +1,10 @@
+,source,frequency,release_lag_days,first,last,observations
+T10Y2Y,fred,daily,1,1976-06-01,2026-10-01,12581
+T10Y3M,fred,daily,1,1982-01-04,2026-10-01,11190
+DFF,fred,daily,1,1954-07-01,2026-09-30,26390
+T10YIE,fred,daily,1,2003-01-02,2026-10-01,5942
+CPIAUCNS,fred,monthly,45,1913-01-01,2026-08-01,1363
+UNRATE,fred,monthly,40,1948-01-01,2026-09-01,944
+GACDFSA066MSFRBPHI,fred,monthly,22,1968-05-01,2026-09-01,701
+VIX,yahoo,daily,0,1990-01-02,2026-10-02,9258
+MOVE,yahoo,daily,0,2002-11-12,2026-10-02,5908
