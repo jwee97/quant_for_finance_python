@@ -91,3 +91,30 @@ def test_pairwise_tests_apply_fdr_control():
     twin_vs_bad = table[((table["a"] == "bad") & (table["b"] == "twin")) |
                         ((table["a"] == "twin") & (table["b"] == "bad"))]
     assert not bool(twin_vs_bad["bh_significant"].iloc[0])
+
+
+def test_paired_volatility_test_finds_a_real_difference_and_not_a_fake_one():
+    from src.validation.robustness import paired_volatility_test
+
+    rng = np.random.default_rng(0)
+    shocks = pd.Series(rng.standard_normal(2500) * 0.01, index=pd.bdate_range("2012-01-02", periods=2500))
+    found = paired_volatility_test(shocks * 1.25, shocks, n_samples=600, seed=1)
+    assert found["ratio"] == pytest.approx(1.25, rel=1e-9) and found["difference"] > 0
+    assert found["p_value"] < 0.01
+    noise = shocks + pd.Series(rng.standard_normal(2500) * 0.003, index=shocks.index)
+    null = paired_volatility_test(noise, shocks + pd.Series(rng.standard_normal(2500) * 0.003, index=shocks.index),
+                                  n_samples=600, seed=1)
+    assert null["p_value"] > 0.05 or abs(null["ratio"] - 1.0) < 0.03
+
+
+def test_paired_volatility_test_pairs_the_resampling():
+    """Two nearly identical streams: the difference is estimated far more tightly than either volatility."""
+    from src.validation.robustness import paired_volatility_test
+
+    rng = np.random.default_rng(1)
+    base = pd.Series(rng.standard_normal(2500) * 0.01, index=pd.bdate_range("2012-01-02", periods=2500))
+    other = base * 1.05 + pd.Series(rng.standard_normal(2500) * 0.0005, index=base.index)
+    result = paired_volatility_test(other, base, n_samples=600, seed=2)
+    width = result["ci_upper_95pct"] - result["ci_lower_5pct"]
+    assert width < 0.25 * result["volatility_b"] * 0.05 * 4          # far narrower than an unpaired interval
+    assert result["return_correlation"] > 0.99

@@ -1,0 +1,5 @@
+allocator,model,volatility_a,volatility_b,difference,ratio,ci_lower_5pct,ci_upper_95pct,p_value,return_correlation,n_obs,n_samples,sharpe_difference,sharpe_p_value,bh_significant,model_better
+min_variance,dcc,0.036679,0.038148,-0.001470,0.961478,-0.002404,-0.000615,0.008500,0.968167,4123,2000,0.032947,0.580500,True,True
+min_variance,ogarch,0.039745,0.038148,0.001597,1.041862,0.000559,0.002573,0.008500,0.936744,4123,2000,0.240925,0.002500,True,False
+risk_parity,dcc,0.061117,0.060938,0.000179,1.002933,-0.000358,0.000798,0.600500,0.996269,4123,2000,-0.002666,0.893000,False,False
+risk_parity,ogarch,0.061375,0.060938,0.000437,1.007177,-0.000583,0.001407,0.473000,0.994607,4123,2000,0.019039,0.469000,False,False

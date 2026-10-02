@@ -1,0 +1,1 @@
+Figure 35. Do the dynamic forecasts beat the static ones on loss, in crises, and as the input to a minimum-variance book?

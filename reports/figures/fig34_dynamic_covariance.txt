@@ -1,0 +1,1 @@
+Figure 34. How do the dynamic covariance forecasts differ from the static ones, what do the models learn, and when does the extra flexibility pay?

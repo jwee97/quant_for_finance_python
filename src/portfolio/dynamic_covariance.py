@@ -365,7 +365,7 @@ def qlike_loss(forecast: np.ndarray, realised: np.ndarray) -> np.ndarray:
 
 def gmv_realised_variance(forecast: np.ndarray, realised: np.ndarray) -> np.ndarray:
     """Realised variance of the unconstrained global-minimum-variance portfolio built from each forecast."""
-    ones = np.ones(forecast.shape[1])
-    solved = np.linalg.solve(forecast, ones)
-    w = solved / (ones @ solved)
+    ones = np.ones((forecast.shape[0], forecast.shape[1], 1))
+    solved = np.linalg.solve(forecast, ones)[..., 0]
+    w = solved / solved.sum(axis=1, keepdims=True)
     return np.einsum("ti,tij,tj->t", w, realised, w)

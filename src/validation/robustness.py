@@ -311,3 +311,45 @@ def pairwise_sharpe_tests(streams: dict[str, pd.Series], fdr: float = 0.10, **kw
     frame["bh_significant"] = np.arange(m) <= cutoff
     frame["significant_raw_5pct"] = frame["p_value"] < 0.05
     return frame
+
+
+def paired_volatility_test(a: pd.Series, b: pd.Series, n_samples: int = 2000, block_length: int = 21,
+                           seed: int = 7, periods_per_year: int = ANN, chunk: int = 250) -> dict:
+    """Is the realised volatility of ``a`` different from that of ``b``?
+
+    Same construction as ``paired_sharpe_test`` (shared stationary-bootstrap
+    indices, two-sided p-value from the bootstrap difference re-centred on
+    zero), applied to annualised volatility. This is the criterion that judges a
+    covariance estimator through a minimum-variance book: the estimator whose
+    book is less volatile out of sample has the better risk forecast.
+    """
+    frame = pd.concat([a.rename("a"), b.rename("b")], axis=1).dropna()
+    n = len(frame)
+    if n < 100:
+        return {}
+    x, y = frame["a"].to_numpy(), frame["b"].to_numpy()
+    scale = np.sqrt(periods_per_year)
+    observed = float(x.std(ddof=1) * scale - y.std(ddof=1) * scale)
+    rng = np.random.default_rng(seed)
+    deltas = []
+    remaining = n_samples
+    while remaining > 0:
+        size = min(chunk, remaining)
+        idx = np.vstack([stationary_bootstrap_indices(n, block_length, rng) for _ in range(size)])
+        deltas.append(x[idx].std(axis=1, ddof=1) * scale - y[idx].std(axis=1, ddof=1) * scale)
+        remaining -= size
+    delta = np.concatenate(deltas)
+    centred = delta - delta.mean()
+    p_value = float((np.abs(centred) >= abs(observed)).mean())
+    return {
+        "volatility_a": float(x.std(ddof=1) * scale),
+        "volatility_b": float(y.std(ddof=1) * scale),
+        "difference": observed,
+        "ratio": float(x.std(ddof=1) / y.std(ddof=1)),
+        "ci_lower_5pct": float(np.percentile(delta, 5)),
+        "ci_upper_95pct": float(np.percentile(delta, 95)),
+        "p_value": max(p_value, 1.0 / (len(delta) + 1)),
+        "return_correlation": float(np.corrcoef(x, y)[0, 1]),
+        "n_obs": int(n),
+        "n_samples": int(len(delta)),
+    }

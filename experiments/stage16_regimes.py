@@ -1288,6 +1288,9 @@ def main(argv: list[str] | None = None) -> int:
     first = models["hmm_primary"].first_date
     n_refits = len(models["hmm_primary"].windows)
     logger.info("first out-of-sample probability: %s after %d refits", first.date(), n_refits)
+    context.save_table(pd.DataFrame({"hmm2_p_high": models["hmm_primary"].p_high,
+                                     "hmm3_p_high": models["hmm_sensitivity"].p_high}).dropna(how="all"),
+                       "stage16_filtered_probabilities.csv")
     context.save_table(pd.concat([hmm_refit_table(models["hmm_primary"], "hmm_2_states"),
                                   hmm_refit_table(models["hmm_sensitivity"], "hmm_3_states")]),
                        "stage16_hmm_refits.csv", index=False)

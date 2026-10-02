@@ -1,0 +1,7 @@
+model,static,n_origins,wins,win_rate,sign_test_p_value,median_loss_difference,mean_loss_difference
+dcc,sample,196,80,0.408163,0.012223,0.651408,-6.211859
+dcc,ewma,196,64,0.326531,0.000001,1.135130,-5.597833
+dcc,shrinkage,196,125,0.637755,0.000140,-0.701156,-4.249600
+ogarch,sample,196,16,0.081633,0.000000,8.279742,0.653151
+ogarch,ewma,196,12,0.061224,0.000000,8.457165,1.267176
+ogarch,shrinkage,196,13,0.066327,0.000000,6.927720,2.615410

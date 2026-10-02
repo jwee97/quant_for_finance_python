@@ -1,0 +1,16 @@
+window,estimator,n_origins,mean_qlike,mean_gmv_variance
+gfc,sample,10,-95.196773,0.000002
+gfc,ewma,10,-99.417514,0.000002
+gfc,shrinkage,10,-100.189047,0.000002
+gfc,dcc,10,-109.053902,0.000003
+gfc,ogarch,10,-24.027704,0.000004
+covid,sample,5,141.481267,0.000002
+covid,ewma,5,150.055318,0.000002
+covid,shrinkage,5,33.454827,0.000001
+covid,dcc,5,-58.915466,0.000001
+covid,ogarch,5,-84.449575,0.000001
+rate_shock_2022,sample,12,-128.406259,0.000001
+rate_shock_2022,ewma,12,-130.621784,0.000001
+rate_shock_2022,shrinkage,12,-129.105203,0.000001
+rate_shock_2022,dcc,12,-130.938256,0.000001
+rate_shock_2022,ogarch,12,-124.685471,0.000001

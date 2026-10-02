@@ -1,0 +1,7 @@
+model,static,n_origins,mean_loss_model,mean_loss_static,mean_loss_difference,statistic,p_value,bh_significant,model_better
+dcc,sample,27,-109.495386,-66.127278,-43.368108,-1.234705,0.216940,False,False
+dcc,ewma,27,-109.495386,-67.087406,-42.407980,-1.157352,0.247129,False,False
+dcc,shrinkage,27,-109.495386,-88.291806,-21.203580,-1.322837,0.185890,False,False
+ogarch,sample,27,-79.953724,-66.127278,-13.826447,-0.304926,0.760422,False,False
+ogarch,ewma,27,-79.953724,-67.087406,-12.866318,-0.272880,0.784946,False,False
+ogarch,shrinkage,27,-79.953724,-88.291806,8.338082,0.286982,0.774126,False,False
