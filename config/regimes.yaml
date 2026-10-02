@@ -1,0 +1,85 @@
+# ---------------------------------------------------------------------------
+# Regime detection (Generation 2, Priority 1).
+#
+# Everything below is declared BEFORE any regime result was computed. The
+# number of states, the features, the thresholds and the strategy rules are not
+# tuned afterwards; each variant that gets tried is counted as a trial in the
+# deflated-Sharpe calculation.
+#
+# The governing trap: a regime label is only tradable if it was knowable at the
+# time. Hidden-Markov "smoothed" probabilities use the whole sample, including
+# the future, so every regime-conditional backtest built on them is look-ahead.
+# This project uses FILTERED probabilities, P(S_t | x_1..x_t), with parameters
+# estimated only on data before each refit date, and the look-ahead test is run
+# against a control that uses smoothed probabilities to prove it can tell.
+# ---------------------------------------------------------------------------
+detection:
+  sleeves:                       # the emission variables of the HMM / GMM
+    equity: [SPY, QQQ, IWM, EFA, EEM]
+    rates: [SHY, IEF, TLT, AGG]
+    real_assets: [GLD, SLV, DBC, VNQ]
+  hmm:
+    n_states_primary: 2          # bull / low-vol  vs  bear / high-vol (Hamilton)
+    n_states_sensitivity: 3
+    covariance_type: full
+    n_init: 5
+    n_iter: 300
+    tol: 1.0e-4
+    seed: 11
+  gmm:
+    n_components: [2, 3]
+    n_init: 5
+  walk_forward:
+    min_train_days: 750          # ~3y: the 2008 crash is inside the first window,
+                                 # so late-GFC, 2011, 2018, 2020 and 2022 are OOS
+    refit_every: 126
+
+bocpd:
+  hazard_lambda: 250             # one change per ~year, a priori
+  burn_in_days: 250              # prior scale taken from the first year only
+  prior: { kappa0: 1.0, alpha0: 1.0 }
+  short_run_days: 10
+  alarm_threshold: 0.5
+  # Sharp, dated volatility shocks from public chronology. Slow regime shifts
+  # (the 2022 rate cycle) have no single onset date and are deliberately absent.
+  events:
+    lehman: "2008-09-15"
+    us_downgrade: "2011-08-08"
+    china_devaluation: "2015-08-24"
+    volmageddon: "2018-02-05"
+    covid: "2020-02-24"
+  search_days: 60
+
+rules:                           # transparent, causal, named regimes
+  bear:
+    index: SPY
+    drawdown: 0.20               # conventional: -20% from peak confirms a bear
+    recovery: 0.20               # +20% from trough confirms the next bull
+  volatility:
+    halflife: 21
+    high_percentile: 0.80
+    low_percentile: 0.20
+    min_history: 252
+  inflation_shock:
+    cpi_yoy_min: 0.04            # CPI inflation at or above 4%
+    stock_bond_corr_min: 0.0     # AND bonds failing to hedge equities
+    corr_window: 126
+  liquidity_crisis:
+    vol_percentile_min: 0.90
+    credit_window: 21
+    credit_max: -0.05            # HYG underperforms IEF by 5% over a month
+    credit_pair: [HYG, IEF]
+
+analysis:
+  min_days_per_regime: 60
+  permutation: { n_shifts: 5000, min_shift_days: 63, seed: 7 }
+  fdr: 0.10
+
+strategies:
+  # Three regime-aware rules, each with one structural parameter, fixed here.
+  derisk_max: 0.50               # RA1: shift up to 50% to cash as P(high-vol) -> 1
+  cash: SHY
+  # RA2 blends equal weight and risk parity by P(high-vol); no free parameter.
+  # RA3 gates the momentum book on its TRAINING-sample in-regime mean return.
+  gate_min_days: 60
+  benchmarks: [equal_weight, risk_parity, momentum, naive_vol_timing]

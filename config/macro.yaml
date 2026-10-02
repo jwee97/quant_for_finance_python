@@ -1,0 +1,91 @@
+# ---------------------------------------------------------------------------
+# Macro feature panel (Generation 2, Priority 5).
+#
+# The hard part of macro data is not downloading it, it is knowing WHEN each
+# number became known. A monthly CPI print is dated the 1st of its reference
+# month but is published about six weeks later; using it from the 1st is
+# look-ahead bias that no amount of careful price-signal work can undo.
+# Every series therefore carries an explicit publication lag, and the panel
+# is built "as of" each trading date from availability dates, not reference
+# dates.
+#
+# Revisions are a second, smaller problem: FRED serves the latest vintage, not
+# what was known at the time. Series are chosen to limit it (CPI is the
+# non-seasonally-adjusted index, which is never revised) and the remaining
+# exposure is stated in the report rather than ignored.
+# ---------------------------------------------------------------------------
+sources:
+  fred_csv: "https://fred.stlouisfed.org/graph/fredgraph.csv?id={id}"
+
+series:
+  - id: T10Y2Y
+    source: fred
+    frequency: daily
+    release_lag_days: 1
+    feature: "yield-curve slope, 10y minus 2y (pp)"
+  - id: T10Y3M
+    source: fred
+    frequency: daily
+    release_lag_days: 1
+    feature: "yield-curve slope, 10y minus 3m (pp)"
+  - id: DFF
+    source: fred
+    frequency: daily
+    release_lag_days: 1
+    feature: "effective federal funds rate (%)"
+  - id: T10YIE
+    source: fred
+    frequency: daily
+    release_lag_days: 1
+    feature: "10y breakeven inflation, market implied (%)"
+  - id: CPIAUCNS
+    source: fred
+    frequency: monthly
+    # Dated the 1st of the reference month; BLS publishes ~10-17 days into the
+    # next month, i.e. 40-48 days after the date stamp. 45 is the conservative end.
+    release_lag_days: 45
+    feature: "CPI, not seasonally adjusted (never revised)"
+  - id: UNRATE
+    source: fred
+    frequency: monthly
+    # Released the first Friday of the following month: 33-40 days after stamp.
+    release_lag_days: 40
+    feature: "civilian unemployment rate (%); seasonally adjusted, mildly revised"
+  - id: GACDFSA066MSFRBPHI
+    source: fred
+    frequency: monthly
+    # Philadelphia Fed manufacturing survey, released the 3rd Thursday of the
+    # REFERENCE month (day 15-21). Used as the PMI proxy because the ISM PMI is
+    # proprietary and not available from any free source.
+    release_lag_days: 22
+    feature: "Philly Fed manufacturing diffusion index (PMI proxy)"
+  - id: VIX
+    source: yahoo
+    symbol: "^VIX"
+    frequency: daily
+    release_lag_days: 0          # an index close is known at that close
+    feature: "CBOE VIX"
+  - id: MOVE
+    source: yahoo
+    symbol: "^MOVE"
+    frequency: daily
+    release_lag_days: 0
+    feature: "ICE BofA MOVE index (Treasury implied volatility)"
+
+features:
+  # Expanding-window z-scores: at date t only data up to t enter the mean and
+  # standard deviation. A full-sample z-score would leak the future level of
+  # every series into every past feature.
+  standardise:
+    min_periods: 756
+    winsorize: 4.0
+  change_windows: [63, 126]
+  sahm_rule: { short_months: 3, long_months: 12 }
+
+# Out-of-sample predictability test (Clark-West, nested models).
+predictability:
+  horizon_days: 21
+  first_test_year: 2010
+  min_train_months: 60
+  ridge_alphas: [1.0, 10.0, 100.0, 1000.0]
+  fdr: 0.10

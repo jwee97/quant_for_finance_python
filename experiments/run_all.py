@@ -22,34 +22,53 @@ from pathlib import Path
 from src.utils.config import load_config
 from src.utils.logging import stage_logger
 
+# (number, module, description, generation)
 STAGES = [
-    (1, "stage01_data", "Financial data infrastructure (Ch. 7)"),
-    (2, "stage02_eda", "Exploratory analysis and PCA (Ch. 8)"),
-    (3, "stage03_momentum", "Momentum alpha research (Ch. 22)"),
-    (4, "stage04_mean_reversion", "Mean-reversion alpha research (Ch. 22)"),
-    (5, "stage05_expected_returns", "Expected returns and IC (Ch. 20)"),
-    (6, "stage06_backtest", "Backtesting the alpha models (Ch. 22)"),
-    (7, "stage07_portfolio", "Portfolio construction (Ch. 19)"),
-    (8, "stage08_covariance", "Volatility and covariance (Ch. 20 §20.2)"),
-    (9, "stage09_risk", "Risk management (Ch. 21)"),
-    (10, "stage10_combination", "Combining strategies (Ch. 22 §22.5)"),
-    (11, "stage11_validation", "Walk-forward, robustness and leakage"),
-    (12, "stage12_results", "Final comparison and results"),
-    (13, "stage13_ml", "Machine learning extension (Ch. 23)"),
-    # Optional research branch: deliberately outside the headline ladder, so
-    # it runs only when asked for (--to 14, or --only 14).
-    (14, "stage14_extensions", "Pairs trading and PCA stat-arb (Ch. 22 §22.3.3-7)"),
+    (1, "stage01_data", "Financial data infrastructure (Ch. 7)", 1),
+    (2, "stage02_eda", "Exploratory analysis and PCA (Ch. 8)", 1),
+    (3, "stage03_momentum", "Momentum alpha research (Ch. 22)", 1),
+    (4, "stage04_mean_reversion", "Mean-reversion alpha research (Ch. 22)", 1),
+    (5, "stage05_expected_returns", "Expected returns and IC (Ch. 20)", 1),
+    (6, "stage06_backtest", "Backtesting the alpha models (Ch. 22)", 1),
+    (7, "stage07_portfolio", "Portfolio construction (Ch. 19)", 1),
+    (8, "stage08_covariance", "Volatility and covariance (Ch. 20 §20.2)", 1),
+    (9, "stage09_risk", "Risk management (Ch. 21)", 1),
+    (10, "stage10_combination", "Combining strategies (Ch. 22 §22.5)", 1),
+    (11, "stage11_validation", "Walk-forward, robustness and leakage", 1),
+    (12, "stage12_results", "Final comparison and results", 1),
+    (13, "stage13_ml", "Machine learning extension (Ch. 23)", 1),
+    # A separate research branch (pairs / PCA stat-arb). It is part of the full
+    # run so that every table the report cites can be regenerated.
+    (14, "stage14_extensions", "Pairs trading and PCA stat-arb (Ch. 22 §22.3.3-7)", 1),
+    # Generation 2. Numbered by build order; the dependencies are: macro (15)
+    # feeds regimes (16) and probabilistic forecasting (19).
+    (15, "stage15_macro", "Macro features and predictability", 2),
+    (16, "stage16_regimes", "Regime detection", 2),
+    (17, "stage17_dynamic_covariance", "Dynamic covariance (DCC, O-GARCH)", 2),
+    (18, "stage18_hierarchical", "Hierarchical risk parity (HRP, HERC)", 2),
+    (19, "stage19_probabilistic", "Probabilistic forecasting and sizing", 2),
+    (20, "stage20_attribution", "Portfolio attribution", 2),
 ]
-DEFAULT_LAST_STAGE = 13
+LAST_STAGE = max(number for number, *_ in STAGES)
 
 
-def clear_derived(config, logger) -> None:
-    """Delete everything that is rebuilt, never the immutable raw data."""
-    targets = [
-        config.path("processed"), config.path("features"),
-        config.reports_dir("figures"), config.reports_dir("tables"),
-        config.root / "experiments" / "registry.jsonl",
-    ]
+def clear_derived(config, logger, full: bool) -> None:
+    """Delete rebuilt artefacts, never the immutable raw data.
+
+    ``full=True`` (the whole pipeline is about to run) clears processed data,
+    caches, every figure and table, and the registry. With a *partial* run
+    that would silently delete the outputs of every stage that is not about to
+    be re-run, so only the processed data and caches are cleared and the
+    reports, tables and registry are left for the selected stages to
+    overwrite.
+    """
+    targets = [config.path("processed"), config.path("features")]
+    if full:
+        targets += [config.reports_dir("figures"), config.reports_dir("tables"),
+                    config.root / "experiments" / "registry.jsonl"]
+    else:
+        logger.warning("partial run: clearing processed data and caches only; reports, "
+                       "tables and the experiment registry are kept")
     for target in targets:
         if target.is_dir():
             for path in target.iterdir():
@@ -66,12 +85,14 @@ def clear_derived(config, logger) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run the research pipeline")
     parser.add_argument("--from", dest="start", type=int, default=1, help="first stage")
-    parser.add_argument("--to", dest="end", type=int, default=DEFAULT_LAST_STAGE,
-                        help=f"last stage (default {DEFAULT_LAST_STAGE}; pass 14 for the "
-                             "optional pairs / PCA stat-arb branch)")
+    parser.add_argument("--to", dest="end", type=int, default=LAST_STAGE, help="last stage")
     parser.add_argument("--only", type=int, nargs="*", help="run only these stages")
+    parser.add_argument("--generation", type=int, choices=(1, 2),
+                        help="run only the stages of one generation")
     parser.add_argument("--download", action="store_true", help="fetch raw data in stage 1")
-    parser.add_argument("--fresh", action="store_true", help="clear derived artefacts first")
+    parser.add_argument("--fresh", action="store_true",
+                        help="clear derived artefacts first (the whole pipeline: everything; "
+                             "a partial run: processed data and caches only)")
     parser.add_argument("--continue-on-error", action="store_true",
                         help="keep going if a stage fails")
     args = parser.parse_args(argv)
@@ -83,19 +104,21 @@ def main(argv: list[str] | None = None) -> int:
     logger.info("config fingerprint: %s", config.fingerprint())
     logger.info("#" * 78)
 
-    if args.fresh:
-        clear_derived(config, logger)
-
-    selected = (
-        [s for s in STAGES if s[0] in set(args.only)] if args.only
-        else [s for s in STAGES if args.start <= s[0] <= args.end]
-    )
+    if args.only:
+        selected = [s for s in STAGES if s[0] in set(args.only)]
+    else:
+        selected = [s for s in STAGES if args.start <= s[0] <= args.end]
+        if args.generation:
+            selected = [s for s in selected if s[3] == args.generation]
     if not selected:
         logger.error("no stages selected")
         return 1
 
+    if args.fresh:
+        clear_derived(config, logger, full=len(selected) == len(STAGES))
+
     results, started = [], time.time()
-    for number, module_name, description in selected:
+    for number, module_name, description, _generation in selected:
         logger.info("")
         logger.info("=" * 78)
         logger.info("STAGE %d | %s", number, description)

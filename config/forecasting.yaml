@@ -1,0 +1,40 @@
+# ---------------------------------------------------------------------------
+# Probabilistic forecasting (Generation 2, Priority 2).
+#
+# Point forecasts throw away the one thing a risk-aware allocator needs: how
+# sure the model is. This stage forecasts a distribution, scores it with proper
+# scoring rules, and asks whether sizing positions by confidence beats sizing
+# them by direction alone.
+# ---------------------------------------------------------------------------
+horizon_days: 21                 # matches the monthly rebalance, so evaluation
+                                 # observations do not overlap
+walk_forward:
+  min_train_days: 1260
+  refit_every: 252
+  embargo_days: 21
+  calibration_fraction: 0.20     # last 20% of each training block fits the
+                                 # calibrator, after an embargo
+
+features:
+  price: [mom_21, mom_63, mom_126, mom_252, zscore_5, zscore_21, zscore_63,
+          vol_21, vol_63, vol_ratio, drawdown_252, rsi_14]
+  regime: [p_high_vol]           # filtered probability from Stage 16
+  macro: [curve_10y2y, curve_10y3m, vix, move, breakeven, cpi_yoy,
+          unemployment, philly, fed_funds]
+  variants: [price_only, price_macro]
+
+classifier:
+  C: 0.1
+  calibration: sigmoid           # Platt scaling fitted on held-out data
+gaussian:
+  ridge_alpha: 100.0
+  vol_halflife: 40
+
+sizing:
+  kelly_fraction: 0.25           # fractional Kelly: full Kelly is ruinous under
+                                 # estimation error
+  max_weight: 0.25
+  max_gross: 1.0
+  no_trade_edge: 0.02            # |p - base rate| below this => no position
+scoring:
+  reliability_bins: 10

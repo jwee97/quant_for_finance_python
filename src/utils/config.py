@@ -11,11 +11,14 @@ import hashlib
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 import yaml
 
-CONFIG_FILES = (
+# Generation 1 configuration. The default fingerprint hashes exactly these, so
+# every Generation 1 result keeps the identity its report cites even though the
+# platform has since grown.
+CORE_NAMESPACES = (
     "universe",
     "data",
     "strategies",
@@ -23,6 +26,16 @@ CONFIG_FILES = (
     "risk",
     "backtest",
 )
+
+# Generation 2 additions live in their own files and never touch the core ones.
+GEN2_NAMESPACES = (
+    "macro",
+    "regimes",
+    "forecasting",
+    "gen2_portfolio",
+)
+
+CONFIG_FILES = CORE_NAMESPACES + GEN2_NAMESPACES
 
 
 def project_root() -> Path:
@@ -64,6 +77,10 @@ class Config:
     portfolio: dict = field(default_factory=dict)
     risk: dict = field(default_factory=dict)
     backtest: dict = field(default_factory=dict)
+    macro: dict = field(default_factory=dict)
+    regimes: dict = field(default_factory=dict)
+    forecasting: dict = field(default_factory=dict)
+    gen2_portfolio: dict = field(default_factory=dict)
     root: Path = field(default_factory=project_root)
 
     # -- construction -----------------------------------------------------
@@ -124,9 +141,30 @@ class Config:
         out.mkdir(parents=True, exist_ok=True)
         return out
 
-    def fingerprint(self) -> str:
-        """Stable hash of the full configuration, stamped into experiments."""
-        blob = json.dumps(self.as_dict(), sort_keys=True, default=str).encode("utf-8")
+    def fingerprint(self, scope: str | Iterable[str] = "core") -> str:
+        """Stable hash of the configuration a result depends on.
+
+        ``scope="core"`` (the default) hashes the six Generation 1 namespaces,
+        so Generation 1 artefacts keep the identity their report cites.
+        ``scope="all"`` additionally hashes the Generation 2 namespaces and is
+        what Generation 2 stages stamp into the experiment registry. An
+        explicit iterable of namespace names is also accepted.
+
+        A result's identity should be the hash of exactly the configuration it
+        depends on: Generation 1 code ignores the Generation 2 files, so a
+        change to them must not rename a Generation 1 result.
+        """
+        if scope == "core":
+            names: tuple[str, ...] = CORE_NAMESPACES
+        elif scope == "all":
+            names = CONFIG_FILES
+        else:
+            names = tuple(scope)
+            unknown = set(names) - set(CONFIG_FILES)
+            if unknown:
+                raise KeyError(f"unknown configuration namespaces: {sorted(unknown)}")
+        payload = {name: getattr(self, name) for name in names}
+        blob = json.dumps(payload, sort_keys=True, default=str).encode("utf-8")
         return hashlib.sha256(blob).hexdigest()[:12]
 
 

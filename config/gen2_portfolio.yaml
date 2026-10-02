@@ -1,0 +1,36 @@
+# ---------------------------------------------------------------------------
+# Generation 2 portfolio construction: dynamic covariance, hierarchical risk
+# parity and attribution.
+# ---------------------------------------------------------------------------
+dynamic_covariance:
+  garch_dist: normal             # Gaussian QMLE: consistent for the variance
+                                 # parameters, as the DCC two-step requires
+  min_train_days: 750            # the 15-asset balanced sample starts 2007-04-11
+  refit_every: 252
+  horizon_days: 21               # average the forecast over the holding period
+  ogarch_factors: 3              # the Marchenko-Pastur-significant count (Stage 2)
+  estimators: [sample, ewma, shrinkage, dcc, ogarch]
+  allocators: [min_variance, risk_parity]
+  # HYG lists in April 2007, so the 15-asset sample cannot reach the GFC
+  # out of sample. A 14-asset (ex-HYG) variant exists solely to cover it.
+  gfc_universe_exclude: [HYG]
+  gfc_min_train_days: 500
+  bootstrap: { n_samples: 2000, block_length: 21, seed: 7 }
+
+hierarchical:
+  covariance: shrinkage
+  lookback: 252
+  hrp: { linkage: single }       # as in Lopez de Prado (2016)
+  herc:
+    linkage: ward
+    k_range: [2, 6]              # k chosen by silhouette, not the gap statistic
+    within_cluster: erc
+  stability:
+    n_bootstrap: 200
+    block_length: 21
+    seed: 5
+
+attribution:
+  benchmark: M0_equal_weight
+  sector_map: asset_class
+  linking: carino
