@@ -1,0 +1,7 @@
+strategy,benchmark,sharpe_a,sharpe_b,difference,ci_lower_5pct,ci_upper_95pct,p_value,return_correlation,n_obs,n_samples
+fractional_kelly,gaussian_sign_only,0.175876,0.243816,-0.067941,-0.236604,0.110721,0.540000,0.910757,3933,2000
+probability_sized_raw,direction_only_raw,-0.321970,-0.119346,-0.202625,-0.345314,-0.054510,0.021000,0.933099,3933,2000
+fractional_kelly,passive_equal_weight,0.175876,0.727835,-0.551959,-0.888368,-0.206002,0.008000,0.669048,3933,2000
+direction_only,passive_equal_weight,-0.662541,0.727835,-1.390376,-1.977007,-0.851128,0.000500,0.093299,3933,2000
+direction_only_raw,direction_only,-0.119346,-0.662541,0.543195,-0.005210,1.131895,0.117500,0.283803,3933,2000
+probability_sized_raw,probability_sized,-0.321970,-0.744940,0.422970,-0.068249,0.974340,0.179500,0.370721,3933,2000

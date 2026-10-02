@@ -1,0 +1,1 @@
+Figure 38. Are the probability forecasts calibrated, do they beat benchmarks that carry no feature information, and is the Gaussian forecast's spread right?

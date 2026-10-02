@@ -1,0 +1,5 @@
+variant,strategy,benchmark,sharpe_a,sharpe_b,difference,ci_lower_5pct,ci_upper_95pct,p_value,return_correlation,n_obs,n_samples,bh_significant,passes
+price_only,probability_sized,direction_only,-0.744940,-0.662541,-0.082399,-0.218365,0.034813,0.290000,0.934899,3933,2000,False,False
+price_only,fractional_kelly,direction_only,0.175876,-0.662541,0.838417,0.266212,1.476415,0.021000,0.119387,3933,2000,True,True
+price_macro,probability_sized,direction_only,-0.553540,-0.527969,-0.025570,-0.164812,0.112666,0.753500,0.943037,3933,2000,False,False
+price_macro,fractional_kelly,direction_only,0.391983,-0.527969,0.919953,0.391952,1.494555,0.007000,0.144972,3933,2000,False,False

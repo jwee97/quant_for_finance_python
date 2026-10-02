@@ -389,7 +389,8 @@ def _cap(weights: pd.Series, max_weight: float) -> pd.Series:
     return weights.clip(lower=-max_weight, upper=max_weight)
 
 
-def edge_book(pred_at_origin: pd.DataFrame, sizing: str, no_trade_edge: float, max_weight: float) -> pd.Series:
+def edge_book(pred_at_origin: pd.DataFrame, sizing: str, no_trade_edge: float, max_weight: float,
+              prob_column: str = "p_cal") -> pd.Series:
     """Direction-only or probability-sized weights for one origin.
 
     ``edge`` is the calibrated probability minus the asset's base rate. Assets
@@ -398,8 +399,8 @@ def edge_book(pred_at_origin: pd.DataFrame, sizing: str, no_trade_edge: float, m
     sized), scaled to gross exposure one and then capped, so the two books
     differ ONLY in whether the size of the edge matters.
     """
-    edge = (pred_at_origin["p_cal"] - pred_at_origin["base_rate"]).where(
-        (pred_at_origin["p_cal"] - pred_at_origin["base_rate"]).abs() >= no_trade_edge, 0.0)
+    raw_edge = pred_at_origin[prob_column] - pred_at_origin["base_rate"]
+    edge = raw_edge.where(raw_edge.abs() >= no_trade_edge, 0.0)
     scale = 1.0 / pred_at_origin["sigma"].replace(0.0, np.nan)
     raw = (np.sign(edge) if sizing == "direction_only" else edge) * scale
     raw = raw.fillna(0.0)
@@ -415,3 +416,10 @@ def kelly_book(pred_at_origin: pd.DataFrame, kelly_fraction: float, max_weight: 
     weights = _cap(raw, max_weight)
     gross = weights.abs().sum()
     return weights * (max_gross / gross) if gross > max_gross else weights
+
+
+def sign_book(pred_at_origin: pd.DataFrame, max_weight: float) -> pd.Series:
+    """sign(mu) / sigma scaled to gross exposure one and capped: the Gaussian signal with NO use of its size."""
+    raw = (np.sign(pred_at_origin["mu"]) / pred_at_origin["sigma"].replace(0.0, np.nan)).fillna(0.0)
+    gross = raw.abs().sum()
+    return _cap(raw / gross if gross > 0 else raw, max_weight)

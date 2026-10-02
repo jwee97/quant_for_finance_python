@@ -1,0 +1,1 @@
+Figure 39. Does sizing positions by calibrated confidence or fractional Kelly beat a direction-only book, and is a bigger edge worth a bigger bet?
