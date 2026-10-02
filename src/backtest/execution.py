@@ -55,7 +55,7 @@ def restrict_to_rebalances(weights: pd.DataFrame, index: pd.DatetimeIndex,
     return out
 
 
-def drift_weights(targets: pd.DataFrame, returns: pd.DataFrame) -> pd.DataFrame:
+def drift_weights(targets: pd.DataFrame, returns: pd.DataFrame, return_pre_trade: bool = False):
     """Evolve the book between rebalances with realised asset returns.
 
     A portfolio set to 25/25/25/25 does not stay there: the winners grow. This
@@ -64,6 +64,21 @@ def drift_weights(targets: pd.DataFrame, returns: pd.DataFrame) -> pd.DataFrame:
     is one of the easiest ways to manufacture a costless strategy.
 
     ``targets`` carries target weights on rebalance dates and NaN elsewhere.
+
+    Timing, stated exactly. ``held[t]`` is the book IN FORCE AT THE CLOSE of day
+    ``t``. On a rebalance row it is the target (struck at that close, so it has
+    NOT earned that day's return). On any other row it is the previous close's
+    book after day ``t``'s return has been earned, renormalised to keep gross
+    exposure. The book that earns day ``t+1`` is therefore ``held[t]``, which
+    is how the engine uses it. With ``return_pre_trade=True`` the second value
+    is the book at each close BEFORE trading, i.e. after that day's drift: the
+    thing a rebalance actually trades against.
+
+    (An earlier version grew the book by day ``t``'s return when stepping to
+    ``t+1``, which both applied the rebalance day's return to a book that never
+    held through it and left every later row one day stale. The size of the
+    effect on the Generation 1 results is measured and recorded in the
+    Generation 2 report, not asserted here.)
     """
     columns = targets.columns
     index = targets.index
@@ -71,21 +86,26 @@ def drift_weights(targets: pd.DataFrame, returns: pd.DataFrame) -> pd.DataFrame:
     target_values = targets.to_numpy(dtype=float)
 
     held = np.full_like(target_values, np.nan)
+    pre = np.full_like(target_values, np.nan)
     current = None
     for i in range(len(index)):
+        if current is not None:
+            grown = current * (1.0 + ret[i])
+            total = np.abs(grown).sum()
+            # Preserve gross exposure: drift changes relative weights, not leverage.
+            gross = np.abs(current).sum()
+            current = grown * (gross / total) if total > 1e-12 else grown
+            pre[i] = current
         row = target_values[i]
         if np.isfinite(row).any():
             current = np.nan_to_num(row, nan=0.0)
         if current is None:
             continue
         held[i] = current
-        # Grow the book by the day's returns for the NEXT row's starting point.
-        grown = current * (1.0 + ret[i] if i + 1 < len(index) else 1.0)
-        total = np.abs(grown).sum()
-        # Preserve gross exposure: drift changes relative weights, not leverage.
-        gross = np.abs(current).sum()
-        current = grown * (gross / total) if total > 1e-12 else grown
-    return pd.DataFrame(held, index=index, columns=columns)
+    held_frame = pd.DataFrame(held, index=index, columns=columns)
+    if return_pre_trade:
+        return held_frame, pd.DataFrame(pre, index=index, columns=columns)
+    return held_frame
 
 
 def build_held_weights(targets: pd.DataFrame, returns: pd.DataFrame, frequency: str = "monthly",
@@ -100,15 +120,16 @@ def build_held_weights(targets: pd.DataFrame, returns: pd.DataFrame, frequency: 
     scheduled = restrict_to_rebalances(lagged, pd.DatetimeIndex(targets.index), frequency)
 
     if drift:
-        held = drift_weights(scheduled, returns)
+        held, pre_trade = drift_weights(scheduled, returns, return_pre_trade=True)
     else:
         held = scheduled.ffill()
+        pre_trade = held.shift(1)
 
-    # Traded = target on a rebalance date minus what had drifted into the book.
-    previous = held.shift(1)
+    # Traded = target on a rebalance date minus what had drifted into the book
+    # by that close.
     traded = pd.DataFrame(0.0, index=held.index, columns=held.columns)
     rebalanced = scheduled.notna().any(axis=1)
-    traded.loc[rebalanced] = (held.loc[rebalanced] - previous.loc[rebalanced].fillna(0.0))
+    traded.loc[rebalanced] = (held.loc[rebalanced] - pre_trade.loc[rebalanced].fillna(0.0))
     first_valid = held.dropna(how="all").index
     if len(first_valid):
         traded.loc[first_valid[0]] = held.loc[first_valid[0]].fillna(0.0)

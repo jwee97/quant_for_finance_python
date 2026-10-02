@@ -166,3 +166,58 @@ def test_deflated_sharpe_falls_as_trials_rise():
     many = deflated_sharpe_ratio(1.0, 500, 2520)
     assert single > many
     assert 0.0 <= many <= 1.0
+
+
+# ------------------------------------------------------------------ drift timing, pinned exactly
+def _two_asset_path():
+    index = pd.bdate_range("2020-01-01", periods=9)
+    returns = pd.DataFrame({"A": [0.0, 0.0, 0.20, 0.10, 0.05, -0.04, 0.0, 0.0, 0.0], "B": 0.0}, index=index)
+    return index, returns
+
+
+def test_drift_follows_true_buy_and_hold_weights_and_the_rebalance_day_return_is_not_earned():
+    """A target struck at the close of day 2 has not earned day 2's +20%; day 3's +10% is its first."""
+    index, returns = _two_asset_path()
+    targets = pd.DataFrame(np.nan, index=index, columns=["A", "B"])
+    targets.iloc[2] = [0.5, 0.5]
+    held, pre = drift_weights(targets, returns, return_pre_trade=True)
+    weight = 0.5
+    expected = {2: 0.5}
+    for t in range(3, len(index)):
+        grown = weight * (1 + returns["A"].iloc[t])
+        weight = grown / (grown + (1 - weight))
+        expected[t] = weight
+    for t, value in expected.items():
+        assert held["A"].iloc[t] == pytest.approx(value, abs=1e-14)
+    assert held["A"].iloc[3] == pytest.approx(0.5 * 1.10 / (0.5 * 1.10 + 0.5))      # NOT drifted by day 2's 20%
+    assert np.isnan(held["A"].iloc[:2]).all() and held.iloc[3:].sum(axis=1).tolist() == pytest.approx([1.0] * 6)
+    assert pre["A"].iloc[3] == pytest.approx(held["A"].iloc[3])                      # no trade: pre-trade equals held
+
+
+def test_the_engine_earns_exactly_the_buy_and_hold_return_between_rebalances():
+    rng = np.random.default_rng(0)
+    index = pd.bdate_range("2020-01-20", "2020-03-31")
+    returns = pd.DataFrame(rng.normal(0.001, 0.02, (len(index), 2)), index=index, columns=["A", "B"])
+    target = pd.DataFrame(0.5, index=index, columns=["A", "B"])
+    engine = BacktestEngine(signal_lag=0, rebalance="monthly", weight_drift=True)
+    result = engine.run(target, returns, "fifty_fifty", apply_vol_target=False)
+    window = returns.loc["2020-02-03":"2020-02-28"]                    # struck at the January close, held to the February close
+    buy_and_hold = 0.5 * float(np.prod(1.0 + window["A"])) + 0.5 * float(np.prod(1.0 + window["B"])) - 1.0
+    compounded = float(np.prod(1.0 + result.gross_returns.loc[window.index]) - 1.0)
+    assert compounded == pytest.approx(buy_and_hold, abs=1e-12)
+
+
+def test_a_rebalance_trades_against_the_book_as_drifted_through_that_days_return():
+    index, returns = _two_asset_path()
+    targets = pd.DataFrame(np.nan, index=index, columns=["A", "B"])
+    targets.iloc[1] = [0.5, 0.5]
+    targets.iloc[5] = [0.5, 0.5]                                                    # back to 50/50 after drift
+    held, traded = build_held_weights(targets.shift(-0), returns, frequency="daily", lag=0, drift=True)
+    # at the close of day 5 the book had drifted through days 2..5 of returns
+    weight = 0.5
+    for t in range(2, 6):
+        grown = weight * (1 + returns["A"].iloc[t])
+        weight = grown / (grown + (1 - weight))
+    assert traded["A"].iloc[5] == pytest.approx(0.5 - weight, abs=1e-12)
+    assert traded["B"].iloc[5] == pytest.approx(-(0.5 - weight), abs=1e-12)
+    assert traded.iloc[2:5].abs().to_numpy().max() == 0.0                           # nothing trades between rebalances
