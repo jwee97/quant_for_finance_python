@@ -1,6 +1,6 @@
 # Figure index
 
-27 figures. Each one answers a stated research question; a figure without a question is not included.
+41 figures. Each one answers a stated research question; a figure without a question is not included.
 
 | # | File | Research question |
 |---|------|-------------------|
@@ -31,3 +31,17 @@
 | 25 | `fig25_final_comparison.png` | Which model ladder step actually improved risk-adjusted returns after costs, and where did the improvement come from? |
 | 26 | `fig26_pairs_trading.png` | Are any of these pairs genuinely cointegrated on training data, and does the spread revert fast enough to be tradable? |
 | 27 | `fig27_pca_stat_arb.png` | Do returns unexplained by the first three principal components mean revert, and is a factor-neutral book built on them profitable net of costs? |
+| 28 | `fig28_macro_panel.png` | Can macro series be used without look-ahead, how stale is the information on a typical trading day, and how many independent dimensions do the features really carry? |
+| 29 | `fig29_macro_predictability.png` | Do macro features forecast asset-class returns beyond what price features already do, how much would ignoring publication lags have flattered the answer, and does it survive costs? |
+| 30 | `fig30_regimes_timeline.png` | What do the regime models say through time, how different is the tradable (filtered) answer from the hindsight (smoothed) one, and how long do the regimes last? |
+| 31 | `fig31_regime_conditional.png` | Do regimes differ in risk and diversification, does any regime state predict the NEXT day once persistence and variance are respected, and why does the test need to be built this way? |
+| 32 | `fig32_changepoints.png` | Does Bayesian online change-point detection flag dated volatility shocks quickly, at what false-alarm cost, and does it beat a one-line volatility-jump rule? |
+| 33 | `fig33_regime_strategies.png` | Do regime-aware rules beat static allocations after costs, and how much would a backtest on hindsight probabilities have overstated? |
+| 34 | `fig34_dynamic_covariance.png` | How do the dynamic covariance forecasts differ from the static ones, what do the models learn, and when does the extra flexibility pay? |
+| 35 | `fig35_dynamic_covariance_payoff.png` | Do the dynamic forecasts beat the static ones on loss, in crises, and as the input to a minimum-variance book? |
+| 36 | `fig36_hierarchical_anatomy.png` | What structure does hierarchical clustering find in a 15-ETF universe, and how does that change what is held? |
+| 37 | `fig37_hierarchical_results.png` | Do HRP and HERC produce more stable weights than minimum variance under estimation noise, and does that translate into a statistically better risk-adjusted return than risk parity? |
+| 38 | `fig38_probabilistic_calibration.png` | Are the probability forecasts calibrated, do they beat benchmarks that carry no feature information, and is the Gaussian forecast's spread right? |
+| 39 | `fig39_confidence_sizing.png` | Does sizing positions by calibrated confidence or fractional Kelly beat a direction-only book, and is a bigger edge worth a bigger bet? |
+| 40 | `fig40_brinson_attribution.png` | Is the difference between risk-based allocators and equal weight explained by asset-class allocation or by selection within classes, and which bets paid? |
+| 41 | `fig41_risk_cost_sleeves.png` | Which asset classes carry the risk, the return and the transaction cost of each allocator, and which sleeve supplied the combined strategy's return? |

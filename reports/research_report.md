@@ -1274,12 +1274,12 @@ that has not been asked to.
 
 ```bash
 pip install -r requirements.txt
-python -m experiments.run_all --fresh --download   # stages 1-13, ~25 minutes
-python -m experiments.run_all --only 14            # optional extensions branch
-pytest -q                                           # 130 tests
+python -m experiments.run_all --fresh --download   # stages 1-14, about 20 minutes
+python -m experiments.run_all --generation 1       # Generation 1 only (stages 1-14)
+pytest -q                                           # 295 tests (Generation 1 and 2)
 ```
 
-Outputs: `reports/figures/` (25 figures, 27 with the extensions branch), `reports/tables/` (~70 CSVs),
+Outputs: `reports/figures/` (figures 1-27 belong to this report; Generation 2 adds 28-41), `reports/tables/` (113 CSVs for stages 1-14),
 `reports/data_quality_report.md`, `experiments/registry.md`.
 
 Identity of a result = git commit + `data_version` + config fingerprint, all
@@ -1301,9 +1301,9 @@ three printed by every stage.
 | 11 | Ch. 22 §22.2.4, §22.2.6–§22.2.7 |
 | 12 | Ch. 22 §22.2.5 |
 | 13 | Ch. 23 §23.2–§23.3 |
-| 14 (optional) | Ch. 22 §22.3.3–§22.3.7 |
+| 14 | Ch. 22 §22.3.3–§22.3.7 |
 
 ## Appendix C — Figures
 
-All 25 figures, and the research question each answers, are indexed in
+All 27 figures of this report (and the 14 of Generation 2), with the research question each answers, are indexed in
 `reports/figure_index.md`.

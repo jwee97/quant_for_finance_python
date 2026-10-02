@@ -41,25 +41,25 @@ research process.
 ## Headline results
 
 Full sample: **15 liquid ETFs, 5,211 trading days, 2006-01-03 to 2026-09-21.**
-All figures are net of transaction costs at the baseline assumption.
+All figures are net of transaction costs at the baseline assumption, on the engine as corrected in the Generation 2 build (see the erratum in the research report).
 
 | Model | CAGR | Vol | Sharpe | Max DD | Turnover |
 |-------|-----:|----:|-------:|-------:|---------:|
 | SPY buy & hold | 11.1% | 19.2% | 0.65 | −55.2% | 0.0x |
-| M0 Equal weight | 7.3% | 10.9% | 0.70 | −33.0% | 0.4x |
-| M1 Inverse volatility | 5.5% | 6.4% | **0.87** | −17.6% | 0.5x |
-| M2 Risk parity | 5.2% | 6.5% | 0.80 | −18.4% | 0.4x |
-| M3 Momentum | 1.8% | 6.7% | 0.30 | −15.2% | 9.2x |
-| M4 Mean reversion | −1.9% | 6.8% | −0.24 | −34.4% | 22.4x |
-| M5 Momentum + reversion | 0.2% | 6.7% | 0.06 | −20.5% | 18.4x |
-| M7 Combined alpha + shrinkage MVO | 3.6% | 7.5% | 0.50 | −21.2% | 10.8x |
-| M8 Black-Litterman | 4.3% | 11.2% | 0.43 | −29.3% | 11.9x |
+| M0 Equal weight | 7.1% | 10.9% | 0.69 | −33.4% | 0.4x |
+| M1 Inverse volatility | 5.4% | 6.4% | **0.85** | −17.7% | 0.5x |
+| M2 Risk parity | 5.0% | 6.5% | 0.79 | −18.5% | 0.4x |
+| M3 Momentum | 1.9% | 6.7% | 0.31 | −14.8% | 9.2x |
+| M4 Mean reversion | −1.9% | 6.8% | −0.24 | −34.7% | 22.4x |
+| M5 Momentum + reversion | 0.2% | 6.7% | 0.07 | −19.9% | 18.4x |
+| M7 Combined alpha + shrinkage MVO | 3.5% | 7.5% | 0.50 | −21.1% | 10.8x |
+| M8 Black-Litterman | 4.2% | 11.2% | 0.42 | −29.5% | 11.9x |
 | M9 Mean-CVaR | 3.3% | 4.2% | 0.81 | −14.2% | 0.6x |
 
 The full table, including in-sample/out-of-sample splits and every metric, is
 in [`reports/tables/stage12_final_comparison.csv`](reports/tables/).
 
-### Five findings worth stating plainly
+### Six findings worth stating plainly
 
 1. **The alpha signals do not survive costs.** Momentum and mean reversion
    both have statistically detectable information, but it lives at the 1–5 day
@@ -79,7 +79,7 @@ in [`reports/tables/stage12_final_comparison.csv`](reports/tables/).
    exactly when it is needed.
 
 4. **The risk model fails its own backtest, and that is the useful part.**
-   Every VaR method breaches too often at 99% (historical: 1.53% of days
+   Every VaR method breaches too often at 99% (historical: 1.46% of days
    against 1% promised) and every method fails the Christoffersen
    independence test at 95%: the breaches cluster. An unconditional VaR is not
    a risk limit.
@@ -99,6 +99,31 @@ in [`reports/tables/stage12_final_comparison.csv`](reports/tables/).
 
 ---
 
+## Generation 2
+
+Six extensions, each held to a decision rule committed before its result existed (the one exception, Stage 18, is
+disclosed in the report): macro features, regime detection, dynamic covariance, hierarchical risk parity,
+probabilistic forecasting and performance attribution. The full account, including every deviation and post-hoc
+analysis, is in [`reports/generation2_report.md`](reports/generation2_report.md).
+
+**The result is the Generation 1 result again.** Of 23 decision-bearing hypotheses, three were retained, each with a
+qualification: a volatility-clustering sanity check; a DCC-GARCH minimum-variance book that is 3.9% less volatile
+for twice the turnover; and fractional-Kelly sizing, whose pass is confounded (it loses to passive equal weight and
+does not beat sign-only sizing of its own signal). Macro features do not forecast beyond price; regimes found in daily
+returns are a few days long and an overlay does not beat what it overlays; HRP and HERC are not better than risk
+parity; Platt calibration made the probabilities worse.
+
+**An engine bug was found and fixed.** The weight-drift step was one day stale. Fixing it moved every Generation 1 Sharpe
+ratio by at most 0.016, changed no ranking and no decision, and every Generation 1 number was regenerated. The
+before/after record is in [`reports/errata/`](reports/errata/).
+
+**Not built:** Generation 3 (Bayesian portfolio optimisation, online learning, alternative data, an alpha-combination
+engine, an execution model) and Generation 4 (transformers, an LLM assistant, distributed experiments, a research
+database, cloud), Wishart and factor stochastic-volatility covariance models, factor-model attribution, and the
+software-engineering items of the roadmap's Priority 20.
+
+---
+
 ## Repository layout
 
 ```
@@ -109,15 +134,18 @@ src/
   data/          download, validation, cleaning, loading      (Ch. 7)
   features/      returns, volatility, momentum, reversion, PCA (Ch. 8, 20)
   signals/       forecasts, position stack, blending, pairs, PCA stat-arb (Ch. 22)
-  portfolio/     EW, inverse vol, risk parity, MVO, BL, CVaR, covariance (Ch. 19, 20)
-  backtest/      engine, execution, costs, metrics             (Ch. 22)
+  portfolio/     EW, inverse vol, risk parity, MVO, BL, CVaR, covariance (Ch. 19, 20),
+                 HRP / HERC, DCC-GARCH / O-GARCH, regime-aware overlays
+  backtest/      engine, execution, costs, metrics, attribution (Ch. 22)
   risk/          VaR, CVaR, contributions, stress              (Ch. 21)
-  validation/    walk-forward, robustness, leakage detection
-  models/        regression with HAC errors, ML ladder         (Ch. 20, 23)
+  validation/    walk-forward, robustness, leakage detection, permutation tests
+  models/        regression with HAC errors, ML ladder, macro forecasts,
+                 regimes (HMM / GMM / BOCPD), probabilistic forecasts
   utils/         config, logging, dates, plotting, experiment registry
 experiments/     numbered stage scripts + the experiment registry
-reports/         figures, tables, the data-quality report, the research paper
-tests/           130 tests
+reports/         figures, tables, the data-quality report, the research paper,
+                 the Generation 2 report, errata/ (before/after record of the drift fix)
+tests/           295 tests
 ```
 
 ---
@@ -127,11 +155,12 @@ tests/           130 tests
 ```bash
 pip install -r requirements.txt
 
-python -m experiments.run_all --download      # stages 1-13, ~25 minutes
+python -m experiments.run_all --download      # all 20 stages, ~33 minutes
+python -m experiments.run_all --generation 2  # Generation 2 only (stages 15-20)
 python -m experiments.run_all --from 6 --to 9 # a range of stages
-python -m experiments.run_all --only 14       # optional pairs / PCA stat-arb branch
+python -m experiments.run_all --fresh         # clear derived artefacts first
 python -m experiments.stage01_data            # a single stage
-pytest -q                                      # 130 tests
+pytest -q                                      # 295 tests
 ```
 
 Stage 1 writes `data/raw/*.csv` once and refuses to overwrite them without
@@ -180,7 +209,13 @@ RAW DATA -> VALIDATION -> CLEAN DATA -> FEATURES
 | 11 | Walk-forward, robustness, leakage | Ch. 22 §22.2.4, §22.2.6–7 |
 | 12 | Final comparison | Ch. 22 §22.2.5 |
 | 13 | Machine learning extension | Ch. 23 |
-| 14 | Pairs trading and PCA stat-arb (optional) | Ch. 22 §22.3.3–§22.3.7 |
+| 14 | Pairs trading and PCA stat-arb | Ch. 22 §22.3.3–§22.3.7 |
+| 15 | Macro features, nested-model predictability (Gen 2) | Ch. 20 §20.1 |
+| 16 | Regime detection: HMM, GMM, BOCPD, regime overlays (Gen 2) | Ch. 8, Ch. 20 |
+| 17 | Dynamic covariance: DCC-GARCH, O-GARCH (Gen 2) | Ch. 20 §20.2 |
+| 18 | Hierarchical risk parity: HRP, HERC (Gen 2) | Ch. 19 |
+| 19 | Probabilistic forecasts and confidence-aware sizing (Gen 2) | Ch. 20, Ch. 22 |
+| 20 | Performance attribution: Brinson-Fachler, Carino, Euler (Gen 2) | Ch. 21, Ch. 22 |
 
 ---
 
@@ -203,6 +238,7 @@ RAW DATA -> VALIDATION -> CLEAN DATA -> FEATURES
 ## Reports
 
 - [`reports/research_report.md`](reports/research_report.md) — the full paper
+- [`reports/generation2_report.md`](reports/generation2_report.md) — Generation 2: regimes, dynamic covariance, forecasts, attribution, and the engine erratum
 - [`reports/data_quality_report.md`](reports/data_quality_report.md) — Stage 1 findings
 - [`reports/figure_index.md`](reports/figure_index.md) — every figure and the question it answers
 - [`experiments/registry.md`](experiments/registry.md) — every experiment, including the rejected ones
@@ -227,6 +263,10 @@ conclusions:
   further work on this data cannot claim a clean out-of-sample test.
 - These are backtests. They are not a live track record, and no result here
   includes slippage, financing, taxes or the effect of trading at scale.
+- Generation 2 spends the same twenty years a second time, applies no
+  multiple-testing correction across stages, starts its regime sample in
+  December 2008, and uses macro data at today's vintages with modelled release
+  lags rather than real-time vintages.
 
 ## Licence
 

@@ -23,17 +23,20 @@ REPORT = ROOT / "reports" / "research_report.md"
 
 # (label in the report, table, index, column, tolerance)
 CLAIMS = [
-    ("M0 equal weight Sharpe", "stage12_final_comparison.csv", "M0_equal_weight", "sharpe", 0.70, 0.02),
-    ("M1 inverse vol Sharpe", "stage12_final_comparison.csv", "M1_inverse_vol", "sharpe", 0.87, 0.02),
-    ("M2 risk parity Sharpe", "stage12_final_comparison.csv", "M2_risk_parity", "sharpe", 0.80, 0.02),
-    ("M3 momentum Sharpe", "stage12_final_comparison.csv", "M3_momentum", "sharpe", 0.30, 0.02),
-    ("M4 mean reversion Sharpe", "stage12_final_comparison.csv", "M4_mean_reversion", "sharpe", -0.24, 0.02),
-    ("M9 mean-CVaR Sharpe", "stage12_final_comparison.csv", "M9_mean_cvar", "sharpe", 0.81, 0.02),
-    ("SPY Sharpe", "stage12_final_comparison.csv", "SPY_buy_hold", "sharpe", 0.65, 0.02),
-    ("PC1 explained variance", "stage02_pca_summary.csv", "PC1", "explained_variance", 0.407, 0.005),
-    ("holdout momentum Sharpe", "stage12_final_holdout.csv", "M3_momentum", "sharpe", -0.166, 0.02),
-    ("holdout reversion Sharpe", "stage12_final_holdout.csv", "M4_mean_reversion", "sharpe", -0.313, 0.02),
-    ("holdout SPY Sharpe", "stage12_final_holdout.csv", "SPY_buy_hold", "sharpe", 0.762, 0.02),
+    ("M0 equal weight Sharpe", "stage12_final_comparison.csv", "M0_equal_weight", "sharpe", 0.69, 0.0051),
+    ("M1 inverse vol Sharpe", "stage12_final_comparison.csv", "M1_inverse_vol", "sharpe", 0.85, 0.0051),
+    ("M2 risk parity Sharpe", "stage12_final_comparison.csv", "M2_risk_parity", "sharpe", 0.79, 0.0051),
+    ("M3 momentum Sharpe", "stage12_final_comparison.csv", "M3_momentum", "sharpe", 0.31, 0.0051),
+    ("M4 mean reversion Sharpe", "stage12_final_comparison.csv", "M4_mean_reversion", "sharpe", -0.24, 0.0051),
+    ("M9 mean-CVaR Sharpe", "stage12_final_comparison.csv", "M9_mean_cvar", "sharpe", 0.81, 0.0051),
+    ("SPY Sharpe", "stage12_final_comparison.csv", "SPY_buy_hold", "sharpe", 0.65, 0.0051),
+    ("PC1 explained variance", "stage02_pca_summary.csv", "PC1", "explained_variance", 0.407, 0.0005),
+    ("holdout momentum Sharpe", "stage12_final_holdout.csv", "M3_momentum", "sharpe", -0.15, 0.0051),
+    ("holdout reversion Sharpe", "stage12_final_holdout.csv", "M4_mean_reversion", "sharpe", -0.31, 0.0051),
+    ("holdout SPY Sharpe", "stage12_final_holdout.csv", "SPY_buy_hold", "sharpe", 0.76, 0.0051),
+    ("momentum breakeven cost (bps)", "stage06_breakeven_costs.csv", "M3_momentum", "breakeven_bps", 28.9, 0.051),
+    ("mean-reversion breakeven cost (bps)", "stage06_breakeven_costs.csv", "M4_mean_reversion", "breakeven_bps", -1.2, 0.051),
+    ("combined breakeven cost (bps)", "stage06_breakeven_costs.csv", "M5_momentum_plus_mr", "breakeven_bps", 8.8, 0.051),
 ]
 
 
@@ -118,3 +121,62 @@ def test_notebook_is_valid_and_imports_only_public_api():
     # Private helpers are an implementation detail; a tour should not depend on them.
     assert "import _" not in code and "._" not in code.replace("df._", "")
     compile(code, str(path), "exec")
+
+
+def _report_table_rows(heading: str) -> list[list[str]]:
+    """Cells of the markdown table that follows ``heading`` in the report."""
+    text = REPORT.read_text(encoding="utf-8").replace("\u2212", "-").replace("**", "")
+    block = text.split(heading, 1)[1]
+    rows = []
+    for line in block.splitlines()[1:]:
+        if not line.startswith("|"):
+            if rows:
+                break
+            continue
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        if set(cells[0]) <= set("-:"):
+            continue
+        rows.append(cells)
+    return rows[1:]                                           # drop the header row
+
+
+def test_headline_table_matches_the_final_comparison_cell_by_cell():
+    """Every number in Section 1.4 is the stage-12 table's value, rounded as printed."""
+    if not REPORT.exists() or not (TABLES / "stage12_final_comparison.csv").exists():
+        pytest.skip("report or tables not generated")
+    frame = pd.read_csv(TABLES / "stage12_final_comparison.csv", index_col=0)
+    keys = {"SPY buy & hold": "SPY_buy_hold", "M0 Equal weight": "M0_equal_weight", "M1 Inverse volatility": "M1_inverse_vol",
+            "M2 Risk parity": "M2_risk_parity", "M3 Momentum": "M3_momentum", "M4 Mean reversion": "M4_mean_reversion",
+            "M5 Momentum + reversion": "M5_momentum_plus_mr", "M6 Combined alpha + MVO": "M6_combined_alpha_mvo",
+            "M7 + shrinkage covariance": "M7_combined_alpha_shrinkage_mvo", "M8 Black-Litterman": "M8_black_litterman",
+            "M9 Mean-CVaR": "M9_mean_cvar"}
+    checked = 0
+    for cells in _report_table_rows("### 1.4 The headline table"):
+        if cells[0] not in keys:
+            continue
+        r = frame.loc[keys[cells[0]]]
+        expected = [100 * r["cagr"], 100 * r["ann_vol"], r["sharpe"], r["sortino"], 100 * r["max_drawdown"], 100 * r["cvar_95"],
+                    r["ann_turnover"], 1e4 * r["ann_cost_drag"]]
+        shown = [float(c.replace("%", "").replace("x", "").replace(" bp", "")) for c in cells[1:9]]
+        decimals = [1, 1, 2, 2, 1, 2, 1, 0]
+        for value, text, d, name in zip(expected, shown, decimals, ["CAGR", "vol", "Sharpe", "Sortino", "max DD", "CVaR", "turnover", "cost drag"]):
+            assert abs(value - text) <= 0.5 * 10 ** -d + 1e-9, f"{cells[0]} {name}: report {text}, table {value:.4f}"
+        checked += 1
+    assert checked == len(keys)
+
+
+def test_walk_forward_and_holdout_tables_match_their_csvs():
+    if not REPORT.exists() or not (TABLES / "stage11_walk_forward_summary.csv").exists():
+        pytest.skip("report or tables not generated")
+    wf = pd.read_csv(TABLES / "stage11_walk_forward_summary.csv", index_col=0)
+    names = {"M1 inverse volatility": "M1_inverse_vol", "M2 risk parity": "M2_risk_parity", "M9 mean-CVaR": "M9_mean_cvar",
+             "M0 equal weight": "M0_equal_weight", "M3 momentum": "M3_momentum", "M5 combined alpha": "M5_momentum_plus_mr"}
+    for cells in _report_table_rows("### 12.3 Walk-forward"):
+        assert abs(float(cells[3]) - wf.loc[names[cells[0]], "sharpe"]) <= 0.0005 + 1e-9, cells
+    ho = pd.read_csv(TABLES / "stage12_final_holdout.csv", index_col=0)
+    hold = {"SPY buy & hold": "SPY_buy_hold", "M0 equal weight": "M0_equal_weight", "M2 risk parity": "M2_risk_parity",
+            "M1 inverse volatility": "M1_inverse_vol", "M7 shrinkage MVO": "M7_combined_alpha_shrinkage_mvo", "M9 mean-CVaR": "M9_mean_cvar",
+            "M8 Black-Litterman": "M8_black_litterman", "M5 combined alpha": "M5_momentum_plus_mr", "M3 momentum": "M3_momentum",
+            "M4 mean reversion": "M4_mean_reversion"}
+    for cells in _report_table_rows("2022-01-03 to 2026-09-21:"):
+        assert abs(float(cells[3]) - ho.loc[hold[cells[0]], "sharpe"]) <= 0.005 + 1e-9, cells

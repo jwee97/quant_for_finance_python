@@ -145,6 +145,12 @@ def main(argv: list[str] | None = None) -> int:
     for number, name, status, elapsed in results:
         logger.info("  stage %2d  %-26s %-12s %6.1fs", number, name, status, elapsed)
 
+    # The index is built by scanning caption files, so it is complete after any combination of stages.
+    from src.utils.plotting import write_figure_index
+    write_figure_index(config.reports_dir() / "figure_index.md")
+    from src.utils.experiments import ExperimentRegistry
+    ExperimentRegistry(config.root / "experiments" / "registry.jsonl").to_markdown(config.root / "experiments" / "registry.md")
+
     failed = [r for r in results if r[2].startswith("FAILED")]
     if failed:
         logger.error("%d stage(s) failed", len(failed))
