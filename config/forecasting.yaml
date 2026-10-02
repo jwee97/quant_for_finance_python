@@ -38,3 +38,48 @@ sizing:
   no_trade_edge: 0.02            # |p - base rate| below this => no position
 scoring:
   reliability_bins: 10
+
+# ---------------------------------------------------------------------------
+# Design and decision rules, fixed before any Stage 19 result was computed.
+# ---------------------------------------------------------------------------
+origins: month_end               # last trading day of each month, 15 ETFs
+target: "simple return over the next horizon_days trading days (direction: > 0)"
+sleeves:                         # asset-class groups for interactions (as Stage 15, plus cash)
+  equity: [SPY, QQQ, IWM, EFA, EEM]
+  bonds: [IEF, TLT, AGG]
+  credit: [LQD, HYG]
+  commodities: [GLD, SLV, DBC]
+  real_estate: [VNQ]
+  cash: [SHY]
+macro_interactions: sleeve       # regime and macro features enter alone AND times each sleeve dummy,
+                                 # because a pooled linear model otherwise gives every asset the same
+                                 # response to the yield curve
+classifier_inputs: "standardised features, asset dummies; no feature uses data after the origin"
+benchmarks:
+  classifier: "per-asset base rate of positive outcomes in the training block"
+  gaussian: "N(training mean of the asset, EWMA variance): same variance, no feature information in the mean"
+sizing_strategies:
+  direction_only: "w_i = sign(e_i) / sigma_i"                       # e_i = p_i - base_rate_i
+  probability_sized: "w_i = e_i / sigma_i"                           # same edge, sized by its magnitude
+  fractional_kelly: "w_i = kelly_fraction * mu_i / sigma_i^2"        # Gaussian forecast
+  common: >-
+    both edge-based books drop |e_i| < no_trade_edge, then scale to gross 1 with
+    max_weight; Kelly caps at max_weight and scales to max_gross; monthly
+    rebalance, net of costs
+decisions:
+  fdr: 0.10
+  bootstrap: { n_samples: 2000, block_length: 3, seed: 7 }           # blocks of three MONTHS
+  # h_calibration: Platt scaling lowers the expected calibration error of the raw
+  #   classifier (paired bootstrap over months, one-sided 5%).
+  # h_skill_classifier: the calibrated price-only classifier has a lower log loss
+  #   than the base-rate benchmark: Diebold-Mariano on monthly cross-asset mean
+  #   loss differences, two-sided p < 0.05, negative mean difference.
+  # h_skill_gaussian: the price-only Gaussian forecast has a lower CRPS than the
+  #   benchmark Gaussian: the same test.
+  # h_macro: the price+macro variant beats the price-only variant on log loss OR
+  #   CRPS: two DM tests, BH FDR, negative mean difference.
+  # h_sizing: the paired bootstrap on the net Sharpe difference, strategy minus
+  #   direction_only, for probability_sized and fractional_kelly (price-only
+  #   forecasts), BH across the two, positive difference.
+  # Reported, not judged: AUC, Brier score, PIT histograms, the price+macro
+  #   versions of the sizing strategies, reliability tables.
