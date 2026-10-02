@@ -1,13 +1,13 @@
 group,variant,strategy,sharpe
-"RA1, monthly overlay","honest (filtered, walk-forward)",RA1_derisk,0.915388
-"RA1, monthly overlay","filtered, full-sample parameters",RA1_derisk|full_theta,0.866413
-"RA1, monthly overlay",smoothed (look-ahead),RA1_derisk|smoothed,0.899764
-"RA2, monthly blend","honest (filtered, walk-forward)",RA2_blend,0.900621
-"RA2, monthly blend","filtered, full-sample parameters",RA2_blend|full_theta,0.858981
-"RA2, monthly blend",smoothed (look-ahead),RA2_blend|smoothed,0.884897
+"RA1, monthly overlay","honest (filtered, walk-forward)",RA1_derisk,0.903617
+"RA1, monthly overlay","filtered, full-sample parameters",RA1_derisk|full_theta,0.854394
+"RA1, monthly overlay",smoothed (look-ahead),RA1_derisk|smoothed,0.888002
+"RA2, monthly blend","honest (filtered, walk-forward)",RA2_blend,0.888317
+"RA2, monthly blend","filtered, full-sample parameters",RA2_blend|full_theta,0.846571
+"RA2, monthly blend",smoothed (look-ahead),RA2_blend|smoothed,0.872550
 "RA1, weekly overlay
-(post-hoc)","honest (filtered, walk-forward)",RA1_derisk,0.879082
+(post-hoc)","honest (filtered, walk-forward)",RA1_derisk,0.871067
 "RA1, weekly overlay
-(post-hoc)","filtered, full-sample parameters",RA1_derisk|full_theta,0.837628
+(post-hoc)","filtered, full-sample parameters",RA1_derisk|full_theta,0.829629
 "RA1, weekly overlay
-(post-hoc)",smoothed (look-ahead),RA1_derisk|smoothed,0.913899
+(post-hoc)",smoothed (look-ahead),RA1_derisk|smoothed,0.906205

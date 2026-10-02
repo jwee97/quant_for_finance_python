@@ -8,6 +8,20 @@ real estate
 **Data version:** `f13af1fed1f7` · **Config fingerprint:** `12f9cfd14055`
 **Reproduce with:** `python -m experiments.run_all --fresh`
 
+> **Erratum, added during the Generation 2 build.** Building the Stage 20
+> attribution exposed a timing error in the backtest engine's weight-drift step:
+> between rebalances the book was grown by the *previous* row's return, which
+> applied the rebalance day's return to a book that had only just been struck and
+> left every later row one day stale. It is fixed (`src/backtest/execution.py`,
+> pinned by three exact tests) and **every number in this report was regenerated
+> from a clean slate on the corrected engine.** The effect is second order: the
+> Sharpe ratios of the ten strategy books move by between −0.016 and +0.015, their
+> ranking is unchanged, and no pre-declared decision in the experiment registry
+> changed. The measurement is in
+> [`generation2_report.md`](generation2_report.md), Section 3, together with a few
+> figures that disagreed with their own tables for unrelated reasons and were
+> corrected in the same pass.
+
 ---
 
 ## 1. Executive summary
@@ -29,21 +43,21 @@ information on this universe. That information lives almost entirely at the
 one-to-five-day horizon. Harvesting it requires turning the book over 9 to 22
 times a year, and at that rate transaction costs consume more than the signal
 is worth. Mean reversion does not survive even at zero cost. Momentum survives
-at zero cost and dies somewhere between 10 and 28 basis points, which is
+at zero cost and dies somewhere between 10 and 29 basis points, which is
 inside the plausible range for these instruments.
 
 What does work is the part of the process that estimates the least. Inverse
-volatility (Sharpe 0.87), risk parity (0.80) and mean-CVaR (0.81) all beat
-both equal weighting (0.70) and SPY buy-and-hold (0.65), and they do it with
-one-third to one-half of SPY's drawdown. None of them uses an expected-return
+volatility (Sharpe 0.85), risk parity (0.79) and mean-CVaR (0.81) all beat
+both equal weighting (0.69) and SPY buy-and-hold (0.65), and they do it with
+a quarter to a third of SPY's drawdown. None of them uses an expected-return
 forecast. Every model that does — constrained mean-variance, Black-Litterman,
 the four machine-learning models — lands below them.
 
 ### 1.3 The five findings
 
-1. **The alpha signals do not survive costs.** Gross Sharpe 0.38 becomes net
-   0.30 for momentum; −0.04 becomes −0.24 for mean reversion. Mean reversion's
-   breakeven transaction cost is **−1.1 bps**: it loses money before a single
+1. **The alpha signals do not survive costs.** Gross Sharpe 0.40 becomes net
+   0.31 for momentum; −0.04 becomes −0.24 for mean reversion. Mean reversion's
+   breakeven transaction cost is **−1.2 bps**: it loses money before a single
    basis point of cost is charged.
 
 2. **Honest inference changes the conclusions.** With overlapping forward
@@ -58,13 +72,13 @@ the four machine-learning models — lands below them.
    needed.
 
 4. **The VaR model fails its own backtest.** Every method breaches too often
-   at 99% (historical: 1.48% of days against 1% promised), and every method
+   at 99% (historical: 1.46% of days against 1% promised), and every method
    fails the Christoffersen independence test at 95%: the breach *count* is
    roughly right, but the breaches arrive in clusters. CVaR, by contrast, is
    well calibrated (realised/predicted = 1.03).
 
 5. **Nothing here survives multiple-testing deflation.** The best out-of-sample
-   Sharpe ratio is 0.84, and after accounting for the 42 parameter variants
+   Sharpe ratio is 0.83, and after accounting for the 42 parameter variants
    tried, its deflated Sharpe probability is 0.86 — below the 0.95 threshold.
    The honest statement is that this research cannot distinguish its best
    model from a good draw.
@@ -75,18 +89,18 @@ Full sample, net of costs at the baseline assumption:
 
 | Model | CAGR | Vol | Sharpe | Sortino | Max DD | CVaR 95% | Turnover | Cost drag |
 |-------|-----:|----:|-------:|--------:|-------:|---------:|---------:|----------:|
-| SPY buy & hold | 11.1% | 19.2% | 0.65 | 0.61 | −55.2% | 2.87% | 0.0x | 0 bp |
-| M0 Equal weight | 7.3% | 10.9% | 0.70 | 0.66 | −33.0% | 1.65% | 0.4x | 2 bp |
-| **M1 Inverse volatility** | 5.5% | 6.4% | **0.87** | 0.82 | −17.6% | 0.96% | 0.5x | 3 bp |
-| M2 Risk parity | 5.2% | 6.5% | 0.80 | 0.75 | −18.4% | 0.96% | 0.4x | 3 bp |
-| M3 Momentum | 1.8% | 6.7% | 0.30 | 0.29 | −15.2% | 1.02% | 9.2x | 57 bp |
-| M4 Mean reversion | −1.9% | 6.8% | −0.24 | −0.24 | −34.4% | 1.06% | 22.4x | 139 bp |
-| M5 Momentum + reversion | 0.2% | 6.7% | 0.06 | 0.06 | −20.5% | 1.03% | 18.4x | 115 bp |
-| M6 Combined alpha + MVO | 3.6% | 7.5% | 0.51 | 0.47 | −21.2% | 1.15% | 10.9x | 68 bp |
-| M7 + shrinkage covariance | 3.6% | 7.5% | 0.50 | 0.47 | −21.2% | 1.15% | 10.8x | 67 bp |
-| M8 Black-Litterman | 4.3% | 11.2% | 0.43 | 0.39 | −29.3% | 1.71% | 11.9x | 74 bp |
-| M9 Mean-CVaR | 3.3% | 4.2% | 0.81 | 0.76 | −14.2% | 0.67% | 0.6x | 4 bp |
-| ML0–ML3 (best) | 0.1% | 3.4% | 0.06 | — | −14.8% | — | 5.4x | 54 bp |
+| SPY buy & hold | 11.1% | 19.2% | 0.65 | 0.61 | −55.2% | 2.94% | 0.0x | 0 bp |
+| M0 Equal weight | 7.1% | 10.9% | 0.69 | 0.65 | −33.4% | 1.65% | 0.4x | 2 bp |
+| **M1 Inverse volatility** | 5.4% | 6.4% | **0.85** | 0.81 | −17.7% | 0.94% | 0.5x | 3 bp |
+| M2 Risk parity | 5.0% | 6.5% | 0.79 | 0.73 | −18.5% | 0.97% | 0.4x | 3 bp |
+| M3 Momentum | 1.9% | 6.7% | 0.31 | 0.30 | −14.8% | 0.98% | 9.2x | 57 bp |
+| M4 Mean reversion | −1.9% | 6.8% | −0.24 | −0.24 | −34.7% | 1.00% | 22.4x | 139 bp |
+| M5 Momentum + reversion | 0.2% | 6.7% | 0.07 | 0.07 | −19.9% | 0.99% | 18.4x | 116 bp |
+| M6 Combined alpha + MVO | 3.5% | 7.5% | 0.50 | 0.46 | −21.2% | 1.10% | 10.9x | 68 bp |
+| M7 + shrinkage covariance | 3.5% | 7.5% | 0.50 | 0.46 | −21.1% | 1.10% | 10.8x | 67 bp |
+| M8 Black-Litterman | 4.2% | 11.2% | 0.42 | 0.38 | −29.5% | 1.68% | 11.9x | 74 bp |
+| M9 Mean-CVaR | 3.3% | 4.2% | 0.81 | 0.76 | −14.2% | 0.62% | 0.6x | 4 bp |
+| ML0–ML3 (best) | 0.1% | 3.4% | 0.05 | — | −15.2% | — | 5.4x | 54 bp |
 
 The ordering is the finding. Complexity is monotonically *unrewarded*: every
 step up the ladder that requires estimating an expected return performs worse
@@ -515,21 +529,21 @@ what makes the leakage test in Section 12 meaningful.
 
 | Model | Gross Sharpe | Net Sharpe | Turnover | Cost drag | **Breakeven cost** |
 |-------|-------------:|-----------:|---------:|----------:|-------------------:|
-| M3 Momentum | 0.38 | 0.30 | 9.2×/yr | 57 bp/yr | **27.8 bps** |
-| M4 Mean reversion | −0.04 | −0.24 | 22.4×/yr | 139 bp/yr | **−1.1 bps** |
-| M5 Combined | 0.23 | 0.06 | 18.4×/yr | 115 bp/yr | **8.5 bps** |
+| M3 Momentum | 0.40 | 0.31 | 9.2×/yr | 57 bp/yr | **28.9 bps** |
+| M4 Mean reversion | −0.04 | −0.24 | 22.4×/yr | 139 bp/yr | **−1.2 bps** |
+| M5 Combined | 0.24 | 0.07 | 18.4×/yr | 116 bp/yr | **8.8 bps** |
 
 The breakeven column is the one that settles the question.
 
-**Mean reversion breaks even at −1.1 bps**, which is to say it does not work
+**Mean reversion breaks even at −1.2 bps**, which is to say it does not work
 at all: its gross return is already negative, and costs merely deepen the
 loss. The signal-level IC was real; the strategy built on it is not. The gap
 between those two statements is the reason a backtest is run at all.
 
-**The combined strategy breaks even at 8.5 bps**, below the 10 bps baseline
+**The combined strategy breaks even at 8.8 bps**, below the 10 bps baseline
 and far below what a real desk would pay after impact.
 
-**Momentum breaks even at 27.8 bps.** That is the only alpha result in this
+**Momentum breaks even at 28.9 bps.** That is the only alpha result in this
 project with any daylight, and the margin is thin enough that a market-impact
 term — which this cost model does not have — could plausibly close it.
 
@@ -549,12 +563,12 @@ Each step adds exactly one idea, so improvement can be attributed:
 
 | | Model | Uses μ? | Uses Σ? | Net Sharpe |
 |-|-------|:-------:|:-------:|-----------:|
-| M0 | Equal weight | no | no | 0.70 |
-| M1 | Inverse volatility | no | diagonal only | **0.87** |
-| M2 | Risk parity | no | full | 0.80 |
-| M6 | Combined alpha + MVO | yes | sample | 0.51 |
+| M0 | Equal weight | no | no | 0.69 |
+| M1 | Inverse volatility | no | diagonal only | **0.85** |
+| M2 | Risk parity | no | full | 0.79 |
+| M6 | Combined alpha + MVO | yes | sample | 0.50 |
 | M7 | Combined alpha + shrinkage MVO | yes | shrunk | 0.50 |
-| M8 | Black-Litterman | equilibrium + views | shrunk | 0.43 |
+| M8 | Black-Litterman | equilibrium + views | shrunk | 0.42 |
 | M9 | Mean-CVaR | yes | scenarios | 0.81 |
 
 The ranking is almost exactly inverse to the amount of estimation required.
@@ -600,7 +614,7 @@ coordinate-descent and SLSQP solvers agree to 10⁻⁶).
 The resulting book allocates 33% to SHY and 0.7% to SLV — which is the
 intended behaviour, and also the method's main practical weakness: equalising
 *risk* contributions on a universe with a 22× volatility range produces a book
-dominated by short-duration bonds. Its 5.2% CAGR reflects that.
+dominated by short-duration bonds. Its 5.0% CAGR reflects that.
 
 Diversification ratios: equal weight 1.50, inverse volatility 1.54, risk
 parity **1.75**, mean-CVaR 1.82. Risk parity does extract more diversification
@@ -610,13 +624,13 @@ per unit of risk — it simply takes less risk overall.
 
 **Black-Litterman** (M8) behaves as designed: starting from market-implied
 equilibrium returns and tilting on momentum views produces an effective N of
-10.7 versus 4.5 for raw MVO — far better diversified. Its net Sharpe of 0.43
+10.7 versus 4.5 for raw MVO — far better diversified. Its net Sharpe of 0.42
 still trails the no-μ models, because the views themselves carry no edge.
 
 **Mean-CVaR** (M9) produces a genuinely different book from mean-variance
 (L1 distance 1.79) once units are handled correctly, shifting decisively
 towards low-tail-risk fixed income. It achieves the **lowest drawdown of any
-model (−14.2%)** and the lowest CVaR (0.67% daily), at 4.2% volatility. On
+model (−14.2%)** and the lowest CVaR (0.62% daily), at 4.2% volatility. On
 risk-adjusted terms it is the second-best model in the project.
 
 *Figures 16–17: portfolio weights, risk contributions.*
@@ -699,14 +713,14 @@ Rolling 500-day forecasts, tested over 4,941 days:
 
 | Method | α | Breaches | Expected | Rate | Kupiec p | Christoffersen p | Verdict |
 |--------|--:|---------:|---------:|-----:|---------:|-----------------:|---------|
-| Historical | 95% | 268 | 247 | 5.42% | 0.177 | **0.000** | fail: clustered |
-| Parametric normal | 95% | 257 | 247 | 5.20% | 0.519 | **0.000** | fail: clustered |
-| Parametric t | 95% | 284 | 247 | 5.75% | **0.018** | 0.000 | fail: understates |
-| EWMA normal | 95% | 231 | 247 | 4.68% | 0.290 | **0.001** | fail: clustered |
-| Historical | 99% | 73 | 49 | **1.48%** | **0.002** | 0.000 | fail: understates |
+| Historical | 95% | 270 | 247 | 5.46% | 0.140 | **0.000** | fail: clustered |
+| Parametric normal | 95% | 261 | 247 | 5.28% | 0.367 | **0.000** | fail: clustered |
+| Parametric t | 95% | 286 | 247 | 5.79% | **0.013** | 0.000 | fail: understates |
+| EWMA normal | 95% | 230 | 247 | 4.65% | 0.260 | **0.000** | fail: clustered |
+| Historical | 99% | 72 | 49 | **1.46%** | **0.002** | 0.000 | fail: understates |
 | Parametric normal | 99% | 100 | 49 | **2.02%** | **0.000** | 0.000 | fail: understates |
-| Parametric t | 99% | 71 | 49 | 1.44% | **0.004** | 0.000 | fail: understates |
-| EWMA normal | 99% | 84 | 49 | 1.70% | **0.000** | 0.001 | fail: understates |
+| Parametric t | 99% | 73 | 49 | 1.48% | **0.002** | 0.000 | fail: understates |
+| EWMA normal | 99% | 85 | 49 | 1.72% | **0.000** | 0.001 | fail: understates |
 
 **Zero of eight configurations pass.** This is the most useful negative result
 in the project, and it has two distinct parts.
@@ -730,14 +744,14 @@ mean:
 
 | Book | Realised / predicted |
 |------|---------------------:|
-| M1 inverse volatility | 1.01 |
+| M1 inverse volatility | 1.00 |
 | M9 mean-CVaR | 1.02 |
-| M5 combined | 1.03 |
+| M2 risk parity | 1.03 |
 | M0 equal weight | 1.03 |
-| M2 risk parity | 1.04 |
+| M5 combined | 1.03 |
 | SPY buy & hold | 1.07 |
 
-Within 1–7% across every book. The coherent, whole-tail measure works where
+Within 0–7% across every book. The coherent, whole-tail measure works where
 the single-quantile measure does not — a concrete argument for CVaR beyond
 the theoretical sub-additivity one.
 
@@ -763,29 +777,29 @@ chronology, never from strategy drawdowns:
 
 | Regime | SPY | M0 EW | M1 Inv-vol | M2 RP | M5 Alpha | M9 CVaR |
 |--------|----:|------:|-----------:|------:|---------:|--------:|
-| GFC (2007-10 → 2009-03) | **−54.8%** | −26.4% | −10.6% | −10.7% | −5.4% | **+0.0%** |
-| Euro crisis (2011) | −14.4% | −5.7% | −2.6% | −1.9% | **+7.0%** | +4.5% |
-| Taper tantrum (2013) | −0.2% | −3.4% | −3.0% | −3.1% | −0.3% | −3.8% |
+| GFC (2007-10 → 2009-03) | **−54.8%** | −27.7% | −11.4% | −11.7% | −4.5% | **−0.2%** |
+| Euro crisis (2011) | −14.4% | −6.0% | −2.7% | −2.1% | **+7.1%** | +4.4% |
+| Taper tantrum (2013) | −0.2% | −3.4% | −3.0% | −3.1% | −0.2% | −3.8% |
 | Feb-2018 vol shock | −9.1% | −5.3% | −3.4% | −3.6% | −1.7% | −1.7% |
-| Q4-2018 selloff | −18.9% | −7.6% | −3.4% | −4.3% | −4.7% | −1.0% |
-| COVID crash (2020) | −33.4% | −18.5% | −10.9% | −11.4% | −11.7% | **−5.4%** |
-| COVID recovery | **+69.8%** | +40.0% | +25.1% | +24.5% | +7.4% | +10.0% |
-| **Inflation shock (2022)** | −23.8% | −19.9% | **−16.7%** | **−16.1%** | **+2.5%** | −12.9% |
+| Q4-2018 selloff | −18.9% | −7.5% | −3.4% | −4.3% | −4.6% | −1.0% |
+| COVID crash (2020) | −33.4% | −19.1% | −11.4% | −11.9% | −12.1% | **−5.5%** |
+| COVID recovery | **+69.8%** | +39.8% | +25.0% | +24.4% | +7.2% | +10.0% |
+| **Inflation shock (2022)** | −23.8% | −19.8% | **−16.6%** | **−16.1%** | **+2.6%** | −12.9% |
 
 Two observations.
 
 **The risk-based books did their job in the deflationary crises.** Inverse
-volatility lost 10.6% in the GFC against SPY's 54.8%. Mean-CVaR was flat.
+volatility lost 11.4% in the GFC against SPY's 54.8%. Mean-CVaR was flat.
 
 **They did not in 2022 — and that is the case study the book closes on.** The
-post-COVID inflation shock cost inverse volatility 16.7% and risk parity
+post-COVID inflation shock cost inverse volatility 16.6% and risk parity
 16.1%, only marginally better than SPY's 23.8% and worse, proportionally, than
 anything else in the table. The reason is in Section 4.2: average pairwise
 correlation rose to 0.416 as equities and bonds fell together, and a book
 built on the equity-bond hedge had nowhere to hide. Risk parity's structural
 overweight to duration made it *more* exposed to a rates shock, not less.
 
-Notably, the alpha strategy M5 is the only book positive in 2022 (+2.5%). Its
+Notably, the alpha strategy M5 is the only book positive in 2022 (+2.6%). Its
 dismal full-sample record does not erase the fact that a trend-responsive
 strategy was the one thing that helped in the regime that broke everything
 else — an argument for diversifying across *strategy types*, not just assets.
@@ -796,26 +810,26 @@ else — an argument for diversifying across *strategy types*, not just assets.
 
 ## 11. Combining strategies
 
-Blending the five return streams (mean pairwise correlation +0.31):
+Blending the five return streams (mean pairwise correlation +0.24):
 
 | Book | Return | Vol | Sharpe | Max DD |
 |------|-------:|----:|-------:|-------:|
-| M1 inverse volatility (best component) | 5.6% | 6.4% | **0.865** | −17.6% |
-| M2 risk parity | 5.3% | 6.5% | 0.805 | −18.4% |
-| M9 mean-CVaR | 3.4% | 4.2% | 0.810 | −14.2% |
-| M3 momentum | 2.0% | 6.7% | 0.296 | −15.2% |
-| M4 mean reversion | −1.6% | 6.8% | −0.239 | −34.4% |
-| **Combined (equal)** | 2.9% | 3.7% | 0.778 | **−11.6%** |
-| **Combined (inverse vol)** | 2.9% | 3.8% | 0.775 | −12.9% |
-| Combined (alpha only) | 0.4% | 4.1% | 0.095 | −11.9% |
+| M1 inverse volatility (best component) | 5.4% | 6.4% | **0.851** | −17.7% |
+| M2 risk parity | 5.1% | 6.5% | 0.789 | −18.5% |
+| M9 mean-CVaR | 3.4% | 4.2% | 0.808 | −14.2% |
+| M3 momentum | 2.1% | 6.7% | 0.312 | −14.8% |
+| M4 mean reversion | −1.7% | 6.8% | −0.243 | −34.7% |
+| **Combined (equal)** | 2.9% | 3.7% | 0.771 | **−11.5%** |
+| **Combined (inverse vol)** | 2.9% | 3.8% | 0.769 | −12.8% |
+| Combined (alpha only) | 0.4% | 4.1% | 0.106 | −11.5% |
 
-The honest reading: combining beats the **average** component (0.78 vs 0.51, a
-gain of +0.27) but **not the best** component (0.87). It does produce the
-lowest drawdown of any book in the table (−11.6%) at the lowest volatility.
+The honest reading: combining beats the **average** component (0.77 vs 0.50, a
+gain of +0.27) but **not the best** component (0.85). It does produce the
+joint-lowest drawdown in the table (−11.5%, level with the alpha-only blend) at the lowest volatility.
 
 Combination is not alchemy. It cannot turn strategies with no edge into one
-that has an edge — the alpha-only blend achieves 0.095, which is what you get
-from averaging 0.30 and −0.24. What it does is reduce the variance of the
+that has an edge — the alpha-only blend achieves 0.106, which is about what you get
+from averaging 0.31 and −0.24. What it does is reduce the variance of the
 total, which is worth having when the components are genuinely positive and
 worth nothing when they are not.
 
@@ -857,15 +871,15 @@ capture a mechanical, untradable correlation.
 
 | Family | Sets | Best | Median | Worst | % positive | Verdict |
 |--------|-----:|-----:|-------:|------:|-----------:|---------|
-| Momentum | 24 | 0.302 | 0.076 | −0.410 | 75% | **plateau** |
-| Mean reversion | 18 | 0.208 | −0.152 | −0.610 | 39% | **spike — treat as parameter mining** |
+| Momentum | 24 | 0.316 | 0.083 | −0.407 | 79% | **plateau** |
+| Mean reversion | 18 | 0.197 | −0.160 | −0.614 | 39% | **spike — treat as parameter mining** |
 
-Momentum shows the shape you want: three quarters of the parameter
+Momentum shows the shape you want: about four fifths of the parameter
 combinations produce a positive net Sharpe and the best is not far above the
 median. Mean reversion shows the shape you fear: the median is *negative*, and
 the single positive result sits far above it. On this evidence the one
 attractive mean-reversion parameterisation should be treated as a lucky draw,
-not a discovery — which is consistent with its −1.1 bps breakeven cost.
+not a discovery — which is consistent with its −1.2 bps breakeven cost.
 
 ### 12.3 Walk-forward
 
@@ -874,15 +888,15 @@ and test to kill horizon overlap. Only test returns are concatenated.
 
 | Model | OOS CAGR | OOS Vol | OOS Sharpe | Max DD | Folds positive | Fold Sharpe σ |
 |-------|---------:|--------:|-----------:|-------:|---------------:|--------------:|
-| M1 inverse volatility | 4.9% | 6.0% | **0.835** | −17.3% | 13/16 | 1.25 |
-| M2 risk parity | 5.0% | 6.1% | 0.834 | −16.9% | 13/16 | 1.24 |
-| M9 mean-CVaR | 3.1% | 3.8% | 0.832 | −14.2% | 11/16 | 1.36 |
-| M0 equal weight | 6.9% | 9.5% | 0.755 | −20.7% | 12/16 | 1.16 |
-| M3 momentum | 2.3% | 6.3% | 0.389 | −15.2% | 10/16 | 0.85 |
-| M5 combined alpha | 1.3% | 6.2% | 0.237 | −12.4% | 11/16 | 0.87 |
+| M9 mean-CVaR | 3.1% | 3.8% | **0.829** | −14.2% | 11/16 | 1.36 |
+| M1 inverse volatility | 4.9% | 6.0% | 0.826 | −17.3% | 13/16 | 1.25 |
+| M2 risk parity | 5.0% | 6.1% | 0.824 | −16.9% | 12/16 | 1.24 |
+| M0 equal weight | 6.8% | 9.5% | 0.746 | −20.6% | 12/16 | 1.16 |
+| M3 momentum | 2.3% | 6.3% | 0.400 | −14.8% | 10/16 | 0.85 |
+| M5 combined alpha | 1.3% | 6.2% | 0.236 | −12.8% | 11/16 | 0.87 |
 
 The per-fold standard deviation of 1.16–1.36 against mean Sharpe ratios of
-0.24–0.84 is the number to keep in view: **year-to-year dispersion is larger
+0.24–0.83 is the number to keep in view: **year-to-year dispersion is larger
 than the effect being measured.**
 
 ### 12.4 In-sample versus out-of-sample
@@ -892,11 +906,11 @@ folds (2016–2026):
 
 | Model | IS Sharpe | OOS Sharpe | Slippage | Retention |
 |-------|----------:|-----------:|---------:|----------:|
-| M0 equal weight | 0.53 | 0.90 | −0.37 | 1.70 |
-| M1 inverse volatility | 0.79 | 0.94 | −0.15 | 1.19 |
-| M2 risk parity | 0.66 | 0.93 | −0.27 | 1.41 |
-| **M3 momentum** | 0.37 | **0.21** | **+0.15** | **0.58** |
-| M5 combined alpha | −0.02 | 0.15 | −0.17 | — |
+| M0 equal weight | 0.51 | 0.89 | −0.38 | 1.75 |
+| M1 inverse volatility | 0.77 | 0.93 | −0.16 | 1.21 |
+| M2 risk parity | 0.64 | 0.92 | −0.28 | 1.45 |
+| **M3 momentum** | 0.39 | **0.22** | **+0.17** | **0.57** |
+| M5 combined alpha | −0.00 | 0.14 | −0.14 | — |
 | M9 mean-CVaR | 0.87 | 0.75 | +0.12 | 0.86 |
 
 Most models did *better* out of sample. That looks like a triumph and is
@@ -907,7 +921,7 @@ and reporting it as evidence of robustness would be exactly the kind of
 self-flattery this project is designed to avoid. The per-fold dispersion and
 the bootstrap intervals below are the more honest reads.
 
-Momentum is the exception that behaves as theory predicts: it retains 58% of
+Momentum is the exception that behaves as theory predicts: it retains 57% of
 its in-sample Sharpe.
 
 ### 12.5 Statistical uncertainty
@@ -916,17 +930,17 @@ Stationary block bootstrap, 2,000 samples, 21-day blocks:
 
 | Model | OOS Sharpe | 90% CI | p vs 0 | Deflated Sharpe prob. |
 |-------|-----------:|--------|-------:|----------------------:|
-| M1 inverse volatility | 0.835 | [0.41, 1.28] | 0.0005 | 0.864 |
-| M2 risk parity | 0.834 | [0.41, 1.26] | 0.0010 | 0.863 |
-| M9 mean-CVaR | 0.832 | [0.39, 1.28] | 0.0000 | 0.861 |
-| M0 equal weight | 0.755 | [0.35, 1.17] | 0.0020 | 0.783 |
-| M3 momentum | 0.389 | [0.02, 0.77] | 0.0375 | 0.252 |
-| M5 combined alpha | 0.237 | [−0.12, 0.61] | 0.1405 | 0.102 |
+| M9 mean-CVaR | 0.829 | [0.38, 1.27] | 0.0000 | 0.859 |
+| M1 inverse volatility | 0.826 | [0.40, 1.27] | 0.0010 | 0.856 |
+| M2 risk parity | 0.824 | [0.39, 1.25] | 0.0015 | 0.854 |
+| M0 equal weight | 0.746 | [0.33, 1.17] | 0.0020 | 0.772 |
+| M3 momentum | 0.400 | [0.03, 0.78] | 0.0330 | 0.266 |
+| M5 combined alpha | 0.236 | [−0.12, 0.62] | 0.1405 | 0.102 |
 
 Two conclusions that should temper everything above.
 
 **The intervals are wide.** Twenty years of daily data supports a 90% interval
-of roughly ±0.44 on a Sharpe ratio. The top three models — 0.835, 0.834, 0.832
+of roughly ±0.44 on a Sharpe ratio. The top three models — 0.829, 0.826, 0.824
 — are statistically indistinguishable from one another, and from equal
 weighting. Any claim that inverse volatility "beats" risk parity is not
 supported by this sample.
@@ -934,7 +948,7 @@ supported by this sample.
 **Nothing survives deflation.** Accounting for the 42 parameter variants
 tried, no model reaches the 0.95 threshold; the best reaches 0.86. The
 risk-based models are *close*, and their p-values against zero are genuinely
-small (0.0005–0.002), so the effect is probably real. But this research cannot
+small (all at most 0.002), so the effect is probably real. But this research cannot
 claim, at conventional standards, that its best model is more than a good
 draw from the set it searched.
 
@@ -948,19 +962,19 @@ untouched, and any further work on this data cannot claim a clean test.**
 | Model | CAGR | Vol | Sharpe | Max DD | P(Sharpe > 0) |
 |-------|-----:|----:|-------:|-------:|--------------:|
 | SPY buy & hold | 12.4% | 17.4% | **0.76** | −24.5% | 0.95 |
-| M0 equal weight | 7.4% | 10.7% | 0.73 | −19.6% | 0.94 |
-| M2 risk parity | 4.9% | 7.3% | 0.69 | −16.0% | 0.93 |
+| M0 equal weight | 7.5% | 10.7% | 0.73 | −19.6% | 0.94 |
+| M2 risk parity | 4.9% | 7.3% | 0.69 | −15.9% | 0.93 |
 | M1 inverse volatility | 4.3% | 7.0% | 0.63 | −16.4% | 0.92 |
-| M7 shrinkage MVO | 3.9% | 8.0% | 0.52 | −18.7% | 0.87 |
+| M7 shrinkage MVO | 3.9% | 8.0% | 0.52 | −18.6% | 0.87 |
 | M9 mean-CVaR | 2.4% | 5.0% | 0.49 | −13.1% | 0.86 |
-| M8 Black-Litterman | 3.5% | 11.8% | 0.35 | −26.8% | 0.78 |
-| **M5 combined alpha** | −1.0% | 6.4% | **−0.12** | −11.9% | 0.39 |
-| **M3 momentum** | −1.3% | 6.5% | **−0.17** | −15.2% | 0.36 |
-| **M4 mean reversion** | −2.3% | 6.6% | **−0.31** | −13.4% | 0.25 |
+| M8 Black-Litterman | 3.5% | 11.9% | 0.35 | −26.7% | 0.78 |
+| **M5 combined alpha** | −0.9% | 6.5% | **−0.12** | −12.0% | 0.40 |
+| **M3 momentum** | −1.2% | 6.5% | **−0.15** | −14.8% | 0.37 |
+| **M4 mean reversion** | −2.2% | 6.6% | **−0.31** | −13.3% | 0.25 |
 
 The holdout is unambiguous on the question that matters. **All three alpha
 models are negative.** The risk-based allocators hold up, retaining 0.63–0.73
-against their full-sample 0.80–0.87. And SPY buy-and-hold has the highest
+against their full-sample 0.79–0.85. And SPY buy-and-hold has the highest
 Sharpe of anything in the table — over this particular window, a passive
 equity holding beat every systematic construction in the project.
 
@@ -968,15 +982,15 @@ Sharpe by sample block, which puts the holdout in context:
 
 | Model | Development (2006–15) | Validation (2016–21) | Holdout (2022–26) |
 |-------|----------------------:|---------------------:|------------------:|
-| M0 equal weight | 0.53 | 1.07 | 0.73 |
-| M1 inverse volatility | 0.80 | 1.25 | 0.63 |
-| M2 risk parity | 0.67 | 1.18 | 0.69 |
-| M9 mean-CVaR | 0.88 | 1.10 | 0.49 |
-| M3 momentum | 0.37 | 0.57 | −0.17 |
-| M4 mean reversion | −0.30 | −0.01 | −0.31 |
+| M0 equal weight | 0.50 | 1.05 | 0.73 |
+| M1 inverse volatility | 0.78 | 1.23 | 0.63 |
+| M2 risk parity | 0.65 | 1.16 | 0.69 |
+| M9 mean-CVaR | 0.88 | 1.09 | 0.49 |
+| M3 momentum | 0.39 | 0.57 | −0.15 |
+| M4 mean reversion | −0.31 | −0.02 | −0.31 |
 | SPY buy & hold | 0.43 | 0.98 | 0.76 |
 
-The validation block flatters everything — Sharpe ratios of 1.0–1.25 across
+The validation block flatters everything — Sharpe ratios of 1.0–1.23 across
 the board, in a period of falling rates and rising equities. Any research that
 had stopped at 2021 would have concluded that all of these models work well.
 The holdout is the correction, and mean reversion is the only model that was
@@ -993,10 +1007,10 @@ cross-validation over unique dates, then walk-forward.
 
 | Model | Accuracy | AUC | CV IC | **WF IC** | **WF t** | Net Sharpe | Gross Sharpe | Turnover |
 |-------|---------:|----:|------:|----------:|---------:|-----------:|-------------:|---------:|
-| ML0 Logistic | 0.534 | 0.545 | 0.067 | 0.080 | 2.59 | −0.008 | 0.119 | 5.0× |
-| ML1 Logistic L2 | 0.533 | 0.545 | 0.067 | 0.079 | 2.58 | −0.007 | 0.119 | 5.0× |
-| **ML2 Random forest** | 0.533 | **0.553** | **0.077** | **0.096** | **3.42** | **+0.058** | 0.218 | 5.4× |
-| ML3 Gradient boosting | 0.529 | 0.539 | 0.058 | 0.054 | 2.08 | **−0.300** | −0.001 | 10.2× |
+| ML0 Logistic | 0.534 | 0.545 | 0.067 | 0.080 | 2.59 | −0.010 | 0.117 | 5.0× |
+| ML1 Logistic L2 | 0.533 | 0.545 | 0.067 | 0.079 | 2.58 | −0.009 | 0.116 | 5.0× |
+| **ML2 Random forest** | 0.533 | **0.553** | **0.077** | **0.096** | **3.42** | **+0.050** | 0.209 | 5.4× |
+| ML3 Gradient boosting | 0.529 | 0.539 | 0.058 | 0.054 | 2.08 | **−0.308** | −0.009 | 10.2× |
 
 > **Does nonlinear ML deliver genuine out-of-sample economic improvement?**
 
@@ -1008,12 +1022,12 @@ the classical signals produced*. Every model has a positive IC in 5 of 5
 cross-validation folds. By the standards of Section 5, these are the best
 signals in the project.
 
-And the best net Sharpe among them is **0.058**.
+And the best net Sharpe among them is **0.050**.
 
 This is precisely why spec §48 demands three evaluation axes. Classification
 accuracy weights a 0.1% day and a 5% day identically; trading does not.
 Gradient boosting demonstrates the point in its sharpest form: a significant
-IC of 0.054, and a net Sharpe of **−0.30**, because it trades at 10.2× a year
+IC of 0.054, and a net Sharpe of **−0.31**, because it trades at 10.2× a year
 and its edge cannot pay for that.
 
 ML is not rejected here because it is ML. It is rejected because the
@@ -1096,7 +1110,7 @@ exposures do not explain; a cumulative residual far from zero is the signal.
 
 No horizon is significant. The backtest is correspondingly poor: gross Sharpe
 +0.06, **net Sharpe −0.27**, turnover 13.2× a year, and a breakeven
-transaction cost of **1.1 bps**.
+transaction cost of **1.2 bps**.
 
 One part of it did work exactly as designed. The residual factor exposures of
 the final book are PC1 −0.035, PC2 +0.011, PC3 +0.026 — the construction is
@@ -1130,18 +1144,18 @@ without neutralisation.
 **2. Mean reversion as a strategy (REJECTED).** The *hypothesis* survived: 14
 of 15 assets have a 5-day variance ratio below 1, and five family tests
 survive FDR control. The *strategy* did not: −0.24 net Sharpe, and a breakeven
-cost of −1.1 bps, meaning it loses money gross. *Why:* every surviving test is
+cost of −1.2 bps, meaning it loses money gross. *Why:* every surviving test is
 at the one-day horizon, and a one-day holding period on a fifteen-asset book
 generates 22× annual turnover. The parameter surface confirms it — the median
 parameterisation has a *negative* Sharpe.
 
 **3. Mean-variance optimisation with signal-implied μ (REJECTED as an
-improvement).** M6 and M7 achieved 0.51 and 0.50 against inverse volatility's
-0.87. *Why:* Section 8.2. The optimiser faithfully maximises a quantity it
+improvement).** M6 and M7 achieved 0.50 and 0.50 against inverse volatility's
+0.85. *Why:* Section 8.2. The optimiser faithfully maximises a quantity it
 cannot estimate. Shrinking the covariance matrix (M7 vs M6) changed the Sharpe
-ratio by 0.006 — the covariance was never the binding problem.
+ratio by 0.005 — the covariance was never the binding problem.
 
-**4. Black-Litterman (REJECTED as an improvement).** 0.43 net Sharpe. The
+**4. Black-Litterman (REJECTED as an improvement).** 0.42 net Sharpe. The
 machinery worked exactly as designed — effective N of 10.7 versus 4.5 for raw
 MVO — but the views fed into it came from a momentum signal with no
 demonstrated edge. Better plumbing does not fix a bad input.
@@ -1165,7 +1179,7 @@ any trading rule was built, which is the point of running it first.
 **9. PCA statistical arbitrage (REJECTED).** Factor-neutral by construction
 (residual exposures ≤ 0.035) and correct in every mechanical respect, but the
 residual signal is not significant at any horizon and the strategy breaks even
-at 1.1 bps.
+at 1.2 bps.
 
 **What worked:** risk-based allocation that never estimates an expected
 return. That is a thin conclusion relative to the machinery built to reach it
@@ -1180,7 +1194,7 @@ return. That is a thin conclusion relative to the machinery built to reach it
 
 2. **No market impact.** Costs are linear in traded notional. Real impact is
    convex in participation, so the 9–22× turnover strategies are, if anything,
-   flattered. Momentum's 27.8 bps breakeven would likely narrow further.
+   flattered. Momentum's 28.9 bps breakeven would likely narrow further.
 
 3. **One macro cycle.** Twenty years contains one deflationary crisis and one
    inflationary one. The regime conclusions in Section 10.5 rest on very few
@@ -1220,7 +1234,7 @@ Both alpha families were negative in the final holdout. The answer is no.
 **On the secondary question.** Robust portfolio construction does improve
 risk-adjusted performance — but only the portion of it that avoids estimating
 expected returns. Inverse volatility, risk parity and mean-CVaR beat equal
-weighting and SPY on Sharpe ratio, with a third to half the drawdown, and they
+weighting and SPY on Sharpe ratio, with a quarter to a third of SPY's drawdown, and they
 held up out of sample. The improvement is real, modest, and statistically
 indistinguishable between the three.
 
@@ -1251,7 +1265,7 @@ look-ahead testing with a failing control, parameter surfaces, block bootstraps
 and deflated Sharpe ratios — that were able to establish that, honestly,
 against a set of ideas that all looked promising at the signal level.
 
-A Sharpe ratio of 0.84 that survives this process is worth more than a 3.0
+A Sharpe ratio of 0.83 that survives this process is worth more than a 3.0
 that has not been asked to.
 
 ---

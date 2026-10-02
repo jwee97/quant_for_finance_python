@@ -1,5 +1,5 @@
 strategy,benchmark,sharpe_a,sharpe_b,difference,ci_lower_5pct,ci_upper_95pct,p_value,return_correlation,n_obs,n_samples,bh_significant,passes
-RA1_derisk,equal_weight,0.915388,0.871155,0.044234,-0.053182,0.141253,0.463500,0.971106,4460,2000,False,False
-RA2_blend,equal_weight,0.900621,0.871155,0.029466,-0.038589,0.098416,0.472500,0.981772,4460,2000,False,False
-RA2_blend,risk_parity,0.900621,0.938663,-0.038042,-0.141848,0.055386,0.520500,0.966269,4460,2000,False,False
-RA3_gated_momentum,momentum,0.312975,0.282695,0.030280,-0.023943,0.091876,0.379500,0.975219,4460,2000,False,False
+RA1_derisk,equal_weight,0.903617,0.857596,0.046021,-0.052478,0.144287,0.451500,0.971236,4460,2000,False,False
+RA2_blend,equal_weight,0.888317,0.857596,0.030722,-0.038181,0.099740,0.458000,0.981871,4460,2000,False,False
+RA2_blend,risk_parity,0.888317,0.924282,-0.035965,-0.140185,0.058060,0.553000,0.966192,4460,2000,False,False
+RA3_gated_momentum,momentum,0.295382,0.293473,0.001910,-0.033567,0.037914,0.904500,0.987191,4460,2000,False,False

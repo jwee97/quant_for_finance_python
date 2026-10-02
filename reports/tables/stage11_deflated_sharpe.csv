@@ -1,7 +1,7 @@
 ,observed_best_sharpe,n_trials,n_obs,deflated_sharpe_probability,survives_at_95pct,interpretation
-M0_equal_weight,0.7553826427005719,42,3952,0.7829425784815485,False,the best result is within what searching this many variants produces by chance
-M1_inverse_vol,0.8351692393108778,42,3952,0.8638491474477559,False,the best result is within what searching this many variants produces by chance
-M2_risk_parity,0.8340925825318053,42,3952,0.8629170346526547,False,the best result is within what searching this many variants produces by chance
-M3_momentum,0.38917446466529976,42,3952,0.2522801319288005,False,the best result is within what searching this many variants produces by chance
-M5_momentum_plus_mr,0.23661061321651372,42,3952,0.10178325602119193,False,the best result is within what searching this many variants produces by chance
-M9_mean_cvar,0.8315525816455673,42,3952,0.8607007759145942,False,the best result is within what searching this many variants produces by chance
+M0_equal_weight,0.7461577818015775,42,3952,0.7720677198581924,False,the best result is within what searching this many variants produces by chance
+M1_inverse_vol,0.8259275340424912,42,3952,0.8557062174932288,False,the best result is within what searching this many variants produces by chance
+M2_risk_parity,0.8242113942854954,42,3952,0.8541586706882371,False,the best result is within what searching this many variants produces by chance
+M3_momentum,0.39969781632159546,42,3952,0.26576754790989343,False,the best result is within what searching this many variants produces by chance
+M5_momentum_plus_mr,0.2362182569648756,42,3952,0.10150731521327266,False,the best result is within what searching this many variants produces by chance
+M9_mean_cvar,0.8294691726010613,42,3952,0.8588647919515662,False,the best result is within what searching this many variants produces by chance
