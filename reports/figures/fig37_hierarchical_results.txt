@@ -1,0 +1,1 @@
+Figure 37. Do HRP and HERC produce more stable weights than minimum variance under estimation noise, and does that translate into a statistically better risk-adjusted return than risk parity?

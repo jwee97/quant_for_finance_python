@@ -73,6 +73,11 @@ def build_context(stage: str, rebuild_config: dict | None = None, generation: in
         data_version=data_version(config.path("metadata")),
         config_fingerprint=config.fingerprint("all" if generation >= 2 else "core"),
     )
+    if generation >= 2:
+        replaced = registry.drop_stage(stage)
+        if replaced:
+            stage_logger(stage, config.root).info(
+                "re-run: replacing %d earlier registry entries for %s", replaced, stage)
     context = StageContext(
         config=config,
         registry=registry,

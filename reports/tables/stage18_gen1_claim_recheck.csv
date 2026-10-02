@@ -1,0 +1,7 @@
+a,b,sharpe_a,sharpe_b,difference,ci_lower_5pct,ci_upper_95pct,p_value,return_correlation,n_obs,n_samples,bh_significant,significant_raw_5pct
+M0_equal_weight,M2_risk_parity,0.755383,0.834093,-0.078710,-0.158751,0.005639,0.113500,0.978863,3952,2000,False,False
+M0_equal_weight,M1_inverse_vol,0.755383,0.835169,-0.079787,-0.172454,0.011999,0.160500,0.972810,3952,2000,False,False
+M0_equal_weight,M9_mean_cvar,0.755383,0.831553,-0.076170,-0.373837,0.235073,0.702000,0.669912,3952,2000,False,False
+M1_inverse_vol,M2_risk_parity,0.835169,0.834093,0.001077,-0.044116,0.042220,0.971500,0.993470,3952,2000,False,False
+M1_inverse_vol,M9_mean_cvar,0.835169,0.831553,0.003617,-0.241978,0.248942,0.981000,0.788166,3952,2000,False,False
+M2_risk_parity,M9_mean_cvar,0.834093,0.831553,0.002540,-0.239573,0.241978,0.985000,0.790712,3952,2000,False,False

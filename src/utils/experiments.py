@@ -131,6 +131,24 @@ class ExperimentRegistry:
             handle.write(json.dumps(experiment.to_json(), sort_keys=True) + "\n")
         return experiment
 
+    def drop_stage(self, stage: str) -> int:
+        """Remove one stage's records so that re-running it replaces them.
+
+        Without this, every re-run of a stage appends a second copy of the same
+        experiments and the registry double-counts them. This is replacement of
+        a stale run of the *same* experiment, not the quiet deletion of a
+        failure the registry exists to prevent: the re-run records its own
+        decision, including REJECT, and the history of earlier runs is in git.
+        Returns the number of records removed.
+        """
+        records = self.records()
+        kept = [r for r in records if r.get("stage") != stage]
+        removed = len(records) - len(kept)
+        if removed:
+            self.path.write_text(
+                "".join(json.dumps(r, sort_keys=True) + "\n" for r in kept), encoding="utf-8")
+        return removed
+
     def reset(self) -> None:
         """Truncate the log. Only used by ``run_all`` when rebuilding from scratch."""
         if self.path.exists():

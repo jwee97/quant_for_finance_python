@@ -83,9 +83,26 @@ features:
   sahm_rule: { short_months: 3, long_months: 12 }
 
 # Out-of-sample predictability test (Clark-West, nested models).
+#
+# Sleeves are declared here, before any result: five asset-class groups whose
+# monthly excess return over cash (SHY) is the forecast target. SHY is the cash
+# proxy, so it is in no sleeve and carries a neutral signal in the strategy.
 predictability:
-  horizon_days: 21
+  sleeves:
+    equity: [SPY, QQQ, IWM, EFA, EEM]
+    bonds: [IEF, TLT, AGG]
+    credit: [LQD, HYG]
+    commodities: [GLD, SLV, DBC]
+    real_estate: [VNQ]
+  cash: SHY
+  # Effective start is set by min_train_months, not by this year: with data from
+  # 2006 and 60 training months the first test month is January 2011.
   first_test_year: 2010
   min_train_months: 60
   ridge_alphas: [1.0, 10.0, 100.0, 1000.0]
+  cv_splits: 5
+  price_features: [mom_3m, mom_12m, vol_3m, drawdown_12m]
   fdr: 0.10
+  # Decision rule, fixed in advance: macro "adds information" if at least one
+  # sleeve passes Clark-West at this FDR for (price+macro) vs price, AND the
+  # average out-of-sample R-squared of that comparison is positive.

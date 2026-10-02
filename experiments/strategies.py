@@ -21,6 +21,7 @@ from src.portfolio.constraints import Constraints
 from src.portfolio.covariance import estimate_covariance
 from src.portfolio.cvar_optimize import mean_cvar_weights
 from src.portfolio.equal_weight import equal_weight_book
+from src.portfolio.hierarchical import hierarchical_book
 from src.portfolio.inverse_vol import inverse_vol_book
 from src.portfolio.mean_variance import mean_variance_weights
 from src.portfolio.risk_parity import risk_parity_book
@@ -170,6 +171,19 @@ def _optimised_book(market, config, objective: str, covariance_method: str = "sh
     return book.ffill().fillna(0.0)
 
 
+def _hierarchical_kwargs(config, kind: str) -> dict:
+    """Keyword arguments for ``hierarchical_book`` from the Generation 2 config."""
+    node = config.get("gen2_portfolio.hierarchical", {}) or {}
+    default_linkage = "single" if kind == "hrp" else "ward"
+    linkage_method = ((node.get(kind, {}) or {}).get("linkage", default_linkage))
+    return {
+        "lookback": int(node.get("lookback", 252)),
+        "covariance_method": str(node.get("covariance", "shrinkage")),
+        "linkage_method": str(linkage_method),
+        "k_range": tuple((node.get("herc", {}) or {}).get("k_range", [2, 6])),
+    }
+
+
 # ---------------------------------------------------------------------------
 # The ladder
 # ---------------------------------------------------------------------------
@@ -202,8 +216,21 @@ def build_ladder(market, config, include: list[str] | None = None) -> dict[str, 
         "M7_combined_alpha_shrinkage_mvo": lambda: _optimised_book(market, config, "mvo", "shrinkage"),
         "M8_black_litterman": lambda: _optimised_book(market, config, "black_litterman", "shrinkage"),
         "M9_mean_cvar": lambda: _optimised_book(market, config, "mean_cvar", "shrinkage"),
+        # Generation 2: hierarchical allocators. Same covariance estimator,
+        # lookback and constraints as risk parity, so the comparison isolates
+        # the allocation rule.
+        "M11_hrp": lambda: hierarchical_book(
+            market.returns(), market.investable, "hrp", **_hierarchical_kwargs(config, "hrp"),
+            constraints=constraints, min_assets=int(config.get("backtest.engine.min_assets", 5)),
+            rebalance_index=marks,
+        ),
+        "M12_herc": lambda: hierarchical_book(
+            market.returns(), market.investable, "herc", **_hierarchical_kwargs(config, "herc"),
+            constraints=constraints, min_assets=int(config.get("backtest.engine.min_assets", 5)),
+            rebalance_index=marks,
+        ),
     }
-    names = include or list(builders)
+    names = include or [n for n in builders if not n.startswith(("M11", "M12"))]
     out = {}
     for name in names:
         if name not in builders:

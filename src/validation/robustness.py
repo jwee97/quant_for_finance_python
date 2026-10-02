@@ -209,3 +209,105 @@ def multiple_testing_penalty(best_sharpe: float, n_trials: int, n_obs: int,
             else "the best result is within what searching this many variants produces by chance"
         ),
     }
+
+
+# ---------------------------------------------------------------------------
+# Generation 2 additions: vectorised bootstrap indices and a paired Sharpe test
+# ---------------------------------------------------------------------------
+def stationary_bootstrap_indices(n: int, mean_block: float, rng: np.random.Generator) -> np.ndarray:
+    """Politis-Romano stationary-bootstrap indices, fully vectorised.
+
+    Each position either starts a new block at a uniformly random index
+    (probability ``1 / mean_block``) or continues the previous block. Block
+    lengths are therefore geometric, which is what makes the resampled series
+    stationary. The existing ``stationary_block_bootstrap`` uses a Python loop
+    and is left exactly as it was so Generation 1 results cannot move.
+    """
+    restart = rng.random(n) < 1.0 / max(mean_block, 1.0)
+    restart[0] = True
+    block_positions = np.flatnonzero(restart)
+    block_id = np.cumsum(restart) - 1
+    block_start = rng.integers(0, n, size=len(block_positions))
+    offset = np.arange(n) - block_positions[block_id]
+    return (block_start[block_id] + offset) % n
+
+
+def _sharpe_rows(matrix: np.ndarray, periods_per_year: int) -> np.ndarray:
+    """Annualised Sharpe ratio of every row of ``matrix``."""
+    std = matrix.std(axis=1, ddof=1)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        return np.where(std > 0, matrix.mean(axis=1) / std * np.sqrt(periods_per_year), np.nan)
+
+
+def paired_sharpe_test(a: pd.Series, b: pd.Series, n_samples: int = 2000, block_length: int = 21,
+                       seed: int = 7, periods_per_year: int = ANN, chunk: int = 250) -> dict:
+    """Is the Sharpe ratio of ``a`` different from that of ``b``?
+
+    Both series are resampled with the SAME block indices, so the bootstrap
+    preserves their cross-correlation. That is the whole point of pairing:
+    two risk-based allocators hold overlapping books and their returns are
+    correlated at 0.9+, so the difference between their Sharpe ratios is
+    estimated far more precisely than either Sharpe ratio on its own. Comparing
+    two *marginal* confidence intervals and declaring overlap to mean "no
+    difference" throws that precision away and understates the evidence.
+
+    The p-value is two-sided, from the bootstrap distribution of the difference
+    re-centred on zero (the null), as in Ledoit and Wolf (2008) without their
+    studentisation.
+    """
+    frame = pd.concat([a.rename("a"), b.rename("b")], axis=1).dropna()
+    n = len(frame)
+    if n < 100:
+        return {}
+    x, y = frame["a"].to_numpy(), frame["b"].to_numpy()
+
+    def sharpe(v: np.ndarray) -> float:
+        return float(v.mean() / v.std(ddof=1) * np.sqrt(periods_per_year))
+
+    observed = sharpe(x) - sharpe(y)
+    rng = np.random.default_rng(seed)
+    deltas = []
+    remaining = n_samples
+    while remaining > 0:
+        size = min(chunk, remaining)
+        idx = np.vstack([stationary_bootstrap_indices(n, block_length, rng) for _ in range(size)])
+        deltas.append(_sharpe_rows(x[idx], periods_per_year) - _sharpe_rows(y[idx], periods_per_year))
+        remaining -= size
+    delta = np.concatenate(deltas)
+    delta = delta[np.isfinite(delta)]
+
+    centred = delta - delta.mean()
+    p_value = float((np.abs(centred) >= abs(observed)).mean())
+    return {
+        "sharpe_a": sharpe(x),
+        "sharpe_b": sharpe(y),
+        "difference": float(observed),
+        "ci_lower_5pct": float(np.percentile(delta, 5)),
+        "ci_upper_95pct": float(np.percentile(delta, 95)),
+        "p_value": max(p_value, 1.0 / (len(delta) + 1)),
+        "return_correlation": float(np.corrcoef(x, y)[0, 1]),
+        "n_obs": int(n),
+        "n_samples": int(len(delta)),
+    }
+
+
+def pairwise_sharpe_tests(streams: dict[str, pd.Series], fdr: float = 0.10, **kwargs) -> pd.DataFrame:
+    """Every pair of strategies, with Benjamini-Hochberg control across the family."""
+    names = list(streams)
+    rows = []
+    for i, first in enumerate(names):
+        for second in names[i + 1:]:
+            result = paired_sharpe_test(streams[first], streams[second], **kwargs)
+            if result:
+                rows.append({"a": first, "b": second, **result})
+    frame = pd.DataFrame(rows)
+    if frame.empty:
+        return frame
+    frame = frame.sort_values("p_value").reset_index(drop=True)
+    m = len(frame)
+    threshold = (np.arange(1, m + 1) / m) * fdr
+    passing = frame["p_value"].to_numpy() <= threshold
+    cutoff = int(np.flatnonzero(passing).max()) if passing.any() else -1
+    frame["bh_significant"] = np.arange(m) <= cutoff
+    frame["significant_raw_5pct"] = frame["p_value"] < 0.05
+    return frame
