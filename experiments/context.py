@@ -61,17 +61,18 @@ class StageContext:
 def build_context(stage: str, rebuild_config: dict | None = None, generation: int = 1):
     """Create the context and a stage logger.
 
-    ``generation=2`` stamps the registry with the fingerprint of the full
-    configuration, because Generation 2 stages depend on the Generation 2
-    files as well. Generation 1 stages keep the core fingerprint their report
-    cites.
+    ``generation=2`` stamps the registry with the fingerprint of the core plus
+    Generation 2 configuration, ``generation=3`` with the fingerprint that adds
+    the Generation 3 files: a result's identity is the hash of exactly the
+    configuration it depends on. Generation 1 stages keep the core fingerprint
+    their report cites.
     """
     config = load_config(overrides=rebuild_config) if rebuild_config else load_config()
     from src.data.download import data_version
 
     registry = ExperimentRegistry(
         data_version=data_version(config.path("metadata")),
-        config_fingerprint=config.fingerprint("all" if generation >= 2 else "core"),
+        config_fingerprint=config.fingerprint({1: "core", 2: "all"}.get(generation, "gen3")),
     )
     if generation >= 2:
         replaced = registry.drop_stage(stage)

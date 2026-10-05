@@ -35,7 +35,16 @@ GEN2_NAMESPACES = (
     "gen2_portfolio",
 )
 
-CONFIG_FILES = CORE_NAMESPACES + GEN2_NAMESPACES
+# Generation 3 additions, again in their own files.
+GEN3_NAMESPACES = (
+    "bayes",
+    "online",
+    "altdata",
+    "combination",
+    "execution",
+)
+
+CONFIG_FILES = CORE_NAMESPACES + GEN2_NAMESPACES + GEN3_NAMESPACES
 
 
 def project_root() -> Path:
@@ -81,6 +90,11 @@ class Config:
     regimes: dict = field(default_factory=dict)
     forecasting: dict = field(default_factory=dict)
     gen2_portfolio: dict = field(default_factory=dict)
+    bayes: dict = field(default_factory=dict)
+    online: dict = field(default_factory=dict)
+    altdata: dict = field(default_factory=dict)
+    combination: dict = field(default_factory=dict)
+    execution: dict = field(default_factory=dict)
     root: Path = field(default_factory=project_root)
 
     # -- construction -----------------------------------------------------
@@ -147,7 +161,9 @@ class Config:
         ``scope="core"`` (the default) hashes the six Generation 1 namespaces,
         so Generation 1 artefacts keep the identity their report cites.
         ``scope="all"`` additionally hashes the Generation 2 namespaces and is
-        what Generation 2 stages stamp into the experiment registry. An
+        what Generation 2 stages stamp into the experiment registry (its value
+        is pinned by a test: Generation 3 files must not rename a Generation 2
+        result). ``scope="gen3"`` adds the Generation 3 namespaces. An
         explicit iterable of namespace names is also accepted.
 
         A result's identity should be the hash of exactly the configuration it
@@ -157,6 +173,8 @@ class Config:
         if scope == "core":
             names: tuple[str, ...] = CORE_NAMESPACES
         elif scope == "all":
+            names = CORE_NAMESPACES + GEN2_NAMESPACES
+        elif scope == "gen3":
             names = CONFIG_FILES
         else:
             names = tuple(scope)

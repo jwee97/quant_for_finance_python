@@ -87,7 +87,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--from", dest="start", type=int, default=1, help="first stage")
     parser.add_argument("--to", dest="end", type=int, default=LAST_STAGE, help="last stage")
     parser.add_argument("--only", type=int, nargs="*", help="run only these stages")
-    parser.add_argument("--generation", type=int, choices=(1, 2),
+    parser.add_argument("--generation", type=int, choices=(1, 2, 3),
                         help="run only the stages of one generation")
     parser.add_argument("--download", action="store_true", help="fetch raw data in stage 1")
     parser.add_argument("--fresh", action="store_true",
