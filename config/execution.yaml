@@ -1,1 +1,56 @@
-# Generation 3 namespace: execution. Design and decision rules are written here and committed BEFORE any result.
+# ---------------------------------------------------------------------------
+# Execution model (Generation 3, Priority 7).
+#
+# Generation 1 charged a linear cost per unit traded and said so: "no market
+# impact, so the high-turnover strategies are, if anything, flattered". This
+# stage replaces that with spread + commission + square-root market impact,
+# sized by the fund's own assets under management against each ETF's average
+# daily dollar volume, and asks what it does to every book.
+#
+#   cost per dollar traded in asset i on day t =
+#       linear_i                          (the Generation 1 per-asset rate: spread and commission)
+#     + Y * sigma_i,t * sqrt( |dw_i,t| * AUM / ADV_i,t )         (market impact)
+#
+# so that as AUM -> 0 the model reduces EXACTLY to Generation 1 (a tested identity).
+# sigma_i,t is the 21-day daily volatility and ADV_i,t the 63-day average dollar
+# volume, both through the previous close; |dw_i,t| is the day's weight change.
+#
+# Rules written before any Stage 25 result and committed on their own.
+# ---------------------------------------------------------------------------
+impact:
+  coefficient_Y: 1.0              # order-one coefficient of the square-root law; 0.5 and 2.0 are reported as sensitivities
+  volatility_window_days: 21
+  adv_window_days: 63
+  max_participation: 1.0          # participation above 100% of ADV is capped in the formula and flagged
+
+aum_grid_usd: [1.0e7, 1.0e8, 1.0e9, 1.0e10]
+capacity_grid: { low: 1.0e6, high: 1.0e11, points: 21 }
+capacity_definition: "the AUM at which a book's impact-inclusive net Sharpe falls to half of its Generation 1 linear-cost net Sharpe (log-linear interpolation; 'above grid' if it never does)"
+
+books:
+  allocators: [M0_equal_weight, M1_inverse_vol, M2_risk_parity, M9_mean_cvar, M11_hrp, M12_herc]
+  alphas: [M3_momentum, M4_mean_reversion, M5_momentum_plus_mr]
+  combinations: "the Stage 24 equal, cost-aware and Hedge combinations (a descriptive row)"
+
+no_trade_band:
+  rule: "per asset, hold the executed weight unless the target differs from it by more than the band; then trade to the target"
+  declared_band: 0.01             # 1% of capital
+  swept: [0.0, 0.0025, 0.005, 0.01, 0.02]     # reported; only the declared band is judged
+  evaluated_at_aum_usd: 1.0e9
+
+scheduling:
+  note: "Almgren-Chriss style: spreading a trade over k days divides temporary impact per dollar by sqrt(k) and adds timing risk. A descriptive table for a representative rebalance, not a decision."
+  days: [1, 2, 5, 10]
+
+decisions:
+  fdr: 0.10
+  bootstrap: { n_samples: 2000, block_length: 21, seed: 7 }
+  # h_capacity: at 1e9 dollars of AUM the impact-inclusive net Sharpe of EVERY allocator
+  #   lies within 0.05 of its Generation 1 linear-cost net Sharpe. Retained if the largest
+  #   absolute change among the six allocators is at most 0.05.
+  # h_bands: the declared 1% no-trade band improves the net Sharpe, at 1e9 dollars, of
+  #   EACH of the three alpha books (M3, M4, M5): paired stationary bootstrap of
+  #   banded minus unbanded, positive difference, Benjamini-Hochberg across the three
+  #   at 10%. Retained only if all three pass.
+  # Reported, not judged: every book at every AUM, capacity by book, the Y sensitivities,
+  #   the band sweep, the scheduling table, participation statistics, the combination rows.
