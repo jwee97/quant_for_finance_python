@@ -1,1 +1,67 @@
-# Generation 3 namespace: altdata. Design and decision rules are written here and committed BEFORE any result.
+# ---------------------------------------------------------------------------
+# Non-price ("alternative") data (Generation 3, Priority 6).
+#
+# The roadmap lists ETF flows, options-implied volatility, CFTC positioning,
+# earnings and analyst revisions, credit spreads and ETF creation/redemption
+# activity. Only some of these are available without a paid licence, and this
+# stage says which, rather than substituting something else under the same name:
+#
+#   OBTAINED   credit spread (Moody's Baa minus 10y Treasury, FRED)
+#              options-implied volatility structure (VIX3M, VXN, GVZ, OVX; Yahoo)
+#              CFTC Commitments of Traders positioning (public CFTC history files)
+#              weekly initial jobless claims (FRED), a high-frequency real-activity series
+#   NOT OBTAINED   ETF flows; earnings and analyst revisions; ETF creation and
+#              redemption activity. No free, point-in-time source exists for them.
+#              They are NOT proxied and nothing in this stage stands in for them.
+#
+# These are non-price data, but they are not exotic: every series here is public.
+# The report calls them "non-price data" for that reason.
+#
+# Rules below were committed before any Stage 23 result was computed.
+# ---------------------------------------------------------------------------
+series:
+  - { id: BAA10Y, source: fred, frequency: daily, release_lag_days: 1, feature: "Moody's Baa yield minus the 10y Treasury yield (pp); never revised" }
+  - { id: ICSA, source: fred, frequency: daily, release_lag_days: 6, feature: "initial jobless claims, weekly (the observation dated Saturday is published the following Thursday: five calendar days; six BUSINESS days are used, conservatively). Seasonal factors are revised annually and the advance figure is revised a week later, a small look-ahead stated in the report" }
+  - { id: VIX3M, source: yahoo, symbol: "^VIX3M", frequency: daily, release_lag_days: 0, feature: "3-month implied volatility of the S&P 500" }
+  - { id: VXN, source: yahoo, symbol: "^VXN", frequency: daily, release_lag_days: 0, feature: "implied volatility of the Nasdaq-100" }
+  - { id: GVZ, source: yahoo, symbol: "^GVZ", frequency: daily, release_lag_days: 0, feature: "implied volatility of gold" }
+  - { id: OVX, source: yahoo, symbol: "^OVX", frequency: daily, release_lag_days: 0, feature: "implied volatility of crude oil" }
+
+cftc:
+  source: "https://www.cftc.gov/files/dea/history/ (public Commitments of Traders history files)"
+  # Positions are as of Tuesday and released the following Friday at 15:30 ET, after the close.
+  # A value is treated as known four calendar days after its Tuesday: first usable on the next Monday's close.
+  release_lag_days: 4
+  contracts:                       # CFTC contract market codes are stable across the name changes of the contracts
+    es:     { code: "13874A", report: tff,    group: lev,   etf: SPY, label: "E-mini S&P 500" }
+    nq:     { code: "209742", report: tff,    group: lev,   etf: QQQ, label: "E-mini Nasdaq-100" }
+    ust10:  { code: "043602", report: tff,    group: lev,   etf: IEF, label: "10-year Treasury note" }
+    gold:   { code: "088691", report: disagg, group: mmoney, etf: GLD, label: "Gold" }
+    silver: { code: "084691", report: disagg, group: mmoney, etf: SLV, label: "Silver" }
+    crude:  { code: "067651", report: disagg, group: mmoney, etf: DBC, label: "WTI crude oil" }
+  positioning: "(speculative long - speculative short) / open interest; leveraged funds for financial futures, managed money for commodities"
+
+features:
+  standardisation: "expanding z-score, at least 756 trading days, winsorised at 4 (as the macro features)"
+  list: [baa10y_level, baa10y_change_63, claims_4w_log, claims_change_13w, vix_over_vix3m, vxn_minus_vix, gvz, ovx,
+         cftc_es, cftc_nq, cftc_ust10, cftc_gold, cftc_silver, cftc_crude]
+
+nested_test:
+  sleeves: [equity, bonds, credit, commodities, real_estate]
+  models: "price+macro (the Stage 15 'both' model) against price+macro+non-price, ridge with time-series CV, expanding window, 60 training months"
+  test: "Clark-West, BH across the five sleeves at FDR 10%"
+
+positioning_test:
+  design: "per contract, monthly non-overlapping observations: next-month excess return of the matching ETF on the month-end positioning z-score, Newey-West standard errors (lag 1), two-sided"
+  family: "the six contracts, BH at 10%"
+
+decisions:
+  fdr: 0.10
+  # h_nonprice_nested: retained if at least one sleeve passes Clark-West for
+  #   price+macro+non-price against price+macro AND the mean out-of-sample R-squared
+  #   of that comparison is positive.
+  # h_positioning: retained if at least one contract's positioning z-score has a
+  #   BH-significant coefficient (the sign is reported, not assumed).
+  # Reported, not judged: information coefficients of the individual features,
+  #   the implied-volatility term-structure slope against equity returns, staleness
+  #   of each series, the same tests with publication lags ignored (post-hoc).

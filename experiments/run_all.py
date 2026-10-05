@@ -48,6 +48,10 @@ STAGES = [
     (18, "stage18_hierarchical", "Hierarchical risk parity (HRP, HERC)", 2),
     (19, "stage19_probabilistic", "Probabilistic forecasting and sizing", 2),
     (20, "stage20_attribution", "Portfolio attribution", 2),
+    # Generation 3. Build order again; 24 combines the alphas of Gen 1-2 with 22's online
+    # weights and 23's non-price features, and 25 re-costs every book.
+    (21, "stage21_bayesian", "Bayesian portfolio construction", 3),
+    (22, "stage22_online", "Online learning", 3),
 ]
 LAST_STAGE = max(number for number, *_ in STAGES)
 
