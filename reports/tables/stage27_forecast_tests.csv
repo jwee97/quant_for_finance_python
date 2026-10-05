@@ -1,0 +1,4 @@
+model,n_origins,n_rows,mean_crps_model,mean_crps_frozen,mean_crps_difference,statistic,p_value,mse_ratio,mean_ic_model,mean_ic_frozen,bh_significant,passes
+patchtst,187,2805,0.022667,0.023006,-0.000339,-1.431388,0.152319,0.982965,0.029412,0.045315,False,False
+tsmixer,187,2805,0.022451,0.023006,-0.000555,-2.345684,0.018992,0.961706,0.048759,0.045315,True,True
+linear_window,187,2805,0.023502,0.023006,0.000496,1.476496,0.139811,1.059167,0.022383,0.045315,False,False

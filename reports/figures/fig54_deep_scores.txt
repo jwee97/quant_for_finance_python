@@ -1,0 +1,1 @@
+Figure 54. Do a patch transformer and an MLP-mixer forecast 21-day ETF returns better than the annually refitted price-only ridge, on the same rows and with the same volatility forecast?

@@ -1,0 +1,1 @@
+Figure 55. How well do the deep models fit, how much of their skill is seed noise, and how big are they next to the 252-feature linear control?

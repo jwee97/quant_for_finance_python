@@ -1,0 +1,9 @@
+a,b,n_origins,mean_crps_difference_a_minus_b,p_value,mean_abs_forecast_a,mean_abs_forecast_b
+patchtst,zero,187,0.000099,0.617243,0.006601,0.000000
+tsmixer,zero,187,-0.000116,0.452266,0.005682,0.000000
+patchtst,historical_mean,187,0.000272,0.042554,0.006601,0.005480
+tsmixer,historical_mean,187,0.000056,0.560589,0.005682,0.005480
+linear_window,zero,187,0.000934,0.003378,0.010626,0.000000
+frozen_ridge,zero,187,0.000438,0.088108,0.008182,0.000000
+frozen_ridge,historical_mean,187,0.000611,0.003152,0.008182,0.005480
+tsmixer,frozen_ridge,187,-0.000555,0.018992,0.005682,0.008182

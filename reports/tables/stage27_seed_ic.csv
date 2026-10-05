@@ -1,0 +1,9 @@
+,mean_ic
+patchtst:ensemble,0.029412
+patchtst:seed 1,0.014439
+patchtst:seed 2,0.008995
+patchtst:seed 3,0.063102
+tsmixer:ensemble,0.048759
+tsmixer:seed 1,0.031150
+tsmixer:seed 2,0.024293
+tsmixer:seed 3,0.052807
