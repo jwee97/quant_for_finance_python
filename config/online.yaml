@@ -1,1 +1,51 @@
-# Generation 3 namespace: online. Design and decision rules are written here and committed BEFORE any result.
+# ---------------------------------------------------------------------------
+# Online learning (Generation 3, Priority 10).
+#
+# Generation 1 and 2 train, freeze and test: a model is refit once a year and
+# held fixed in between. Production systems train, trade, update, trade,
+# update. Two questions, with rules written before any Stage 22 result and
+# committed on their own:
+#
+# 1. FORECASTING. Do models that update every month (recursive least squares
+#    with forgetting, normalised LMS, a random-walk-coefficient Kalman filter)
+#    forecast 21-day ETF returns better than the annually refitted ridge of
+#    Stage 19?
+# 2. AGGREGATION. Does an online expert-aggregation rule (Hedge) over the
+#    strategy sleeves beat the inverse-volatility blend of Stage 10, and what
+#    is its regret against the best sleeve in hindsight?
+# ---------------------------------------------------------------------------
+forecasting:
+  target: "simple return over the next 21 trading days, per ETF (as Stage 19)"
+  origins: month_end              # as Stage 19, evaluated from 2011-01
+  features: "the 12 price features of Stage 19 plus asset dummies"
+  scaling: "features standardised with the statistics of the initial training block, then FIXED (so the recursion is exact)"
+  warm_start_days: 1260           # as Stage 19's minimum training window
+  label_rule: "an origin's label enters the update only once its 21-day window has fully elapsed before the forecast origin"
+  models:
+    rls: { forgetting_per_month: 0.99, ridge: 100.0 }           # memory about 100 months
+    nlms: { step: 0.1 }                                         # normalised least-mean-squares
+    kalman: { process_to_observation_noise: 0.001 }             # random-walk coefficients
+  benchmark: "Stage 19 price-only Gaussian ridge mean (annual refit, embargo), same EWMA sigma"
+  scoring: "CRPS of the Gaussian N(mu, sigma^2); sigma identical for every model, so the comparison isolates the mean"
+  test: "Diebold-Mariano on monthly cross-asset mean CRPS differences, two-sided"
+
+aggregation:
+  experts: [M1_inverse_vol, M2_risk_parity, M3_momentum, M4_mean_reversion, M9_mean_cvar]    # net daily returns, as Stage 10
+  hedge:
+    gain_scale: 0.01              # daily gains are divided by 1% before entering the exponent
+    learning_rate: "sqrt(8 ln N / T) with T = 252 per year elapsed (theory-derived, not tuned)"
+  comparators: [inverse_vol_blend, equal_blend]
+  regret: "cumulative gain of the best single expert minus the aggregate's, in units of gain_scale"
+
+decisions:
+  fdr: 0.10
+  bootstrap: { n_samples: 2000, block_length: 21, seed: 7 }
+  # h_online_forecast: a family of three Diebold-Mariano tests on CRPS (rls, nlms,
+  #   kalman against the frozen ridge), Benjamini-Hochberg at 10%. Retained only
+  #   if at least one model has a significantly LOWER loss.
+  # h_online_blend: the Hedge blend has a higher net Sharpe than the inverse-volatility
+  #   blend: paired stationary bootstrap, positive difference, one-sided 5% (p < 0.10
+  #   two-sided with a positive sign).
+  # Reported, not judged: the equal-blend comparison, regret and its theoretical
+  #   bound, the evolution of the expert weights, sub-sample results, MSE and IC of the
+  #   online forecasts, the effect of the forgetting factor (post-hoc, labelled).
