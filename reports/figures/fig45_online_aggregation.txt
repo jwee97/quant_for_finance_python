@@ -1,0 +1,1 @@
+Figure 45. Does an online expert-aggregation rule over the strategy sleeves beat the inverse-volatility blend, and how large is its regret against the best sleeve in hindsight?

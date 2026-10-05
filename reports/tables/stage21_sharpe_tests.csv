@@ -1,0 +1,5 @@
+a,b,sharpe_a,sharpe_b,difference,ci_lower_5pct,ci_upper_95pct,p_value,return_correlation,n_obs,n_samples,bh_significant,passes
+bayes_predictive,mvo_sample,0.612840,0.606434,0.006406,-0.128243,0.146771,0.941000,0.940016,4921,2000,False,False
+bayes_stein,mvo_sample,0.565634,0.606434,-0.040799,-0.114252,0.031520,0.354000,0.974522,4921,2000,False,False
+bayes_predictive,M2_risk_parity,0.612840,0.810840,-0.198000,-0.382043,-0.031197,0.064500,0.870631,4921,2000,False,False
+bayes_stein,M2_risk_parity,0.565634,0.810840,-0.245206,-0.539155,0.024448,0.162000,0.699978,4921,2000,False,False

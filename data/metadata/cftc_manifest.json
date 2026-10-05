@@ -1,0 +1,117 @@
+{
+  "data_version": "b2ec476d7703",
+  "files": {
+    "com_disagg_txt_2017.zip": {
+      "bytes": 1794263,
+      "report": "disagg",
+      "sha256": "83b75e0da711593f1f25fc569e3c6284693e338e060b22b9d97a38faccf26700"
+    },
+    "com_disagg_txt_2018.zip": {
+      "bytes": 2047343,
+      "report": "disagg",
+      "sha256": "b6fb4aac99e4b1dbab468e5948529a8b4e7a86edd045aa06906cb5703e5b2cb8"
+    },
+    "com_disagg_txt_2019.zip": {
+      "bytes": 2056717,
+      "report": "disagg",
+      "sha256": "80b8038908c0f5ac2885d4ba9b7c7c2b9f005ba764151cd5c2234f071e8bd7ab"
+    },
+    "com_disagg_txt_2020.zip": {
+      "bytes": 2005733,
+      "report": "disagg",
+      "sha256": "4fa720045cfb9577505bb28cea44e95bf2fcfc0f33f804b332d8f189dca1d9a9"
+    },
+    "com_disagg_txt_2021.zip": {
+      "bytes": 2013057,
+      "report": "disagg",
+      "sha256": "2f745ebcdb5a02d0716ed9d7de2f4925b03943d1dcca244cc8a346d27860571d"
+    },
+    "com_disagg_txt_2022.zip": {
+      "bytes": 2105261,
+      "report": "disagg",
+      "sha256": "9307ad2ee3ab61ed134625bebe1307923c64d8eebab925cb421c80d2fdd30287"
+    },
+    "com_disagg_txt_2023.zip": {
+      "bytes": 2257219,
+      "report": "disagg",
+      "sha256": "73eb9a8f17e249cce182b4c41786b40151c48e9b7fbe4b20f02c1c1b66455c3b"
+    },
+    "com_disagg_txt_2024.zip": {
+      "bytes": 2445082,
+      "report": "disagg",
+      "sha256": "711b1b8da84dc3ba1bf8c76e743197569f7cd88b9bb3fedb7225e78a7fb7f570"
+    },
+    "com_disagg_txt_2025.zip": {
+      "bytes": 2498864,
+      "report": "disagg",
+      "sha256": "727c78bb431fea3994a4c73cebafd17e33e0ae83bea199a66ff65b742e9b25bc"
+    },
+    "com_disagg_txt_2026.zip": {
+      "bytes": 1952599,
+      "report": "disagg",
+      "sha256": "feebc06106122ee74dba8cf949b4e2dd1bfcd84b1211e9525a653119dec61c1c"
+    },
+    "com_disagg_txt_hist_2006_2016.zip": {
+      "bytes": 12912932,
+      "report": "disagg",
+      "sha256": "28b9fe128d0894316fc77a30d466d1e41749e52f053c7b97d87a8b9d1806d3c0"
+    },
+    "fin_fut_txt_2006_2016.zip": {
+      "bytes": 3166765,
+      "report": "tff",
+      "sha256": "c3a8d01765133a24ce9c082de88933816497d06f1b03eec8c53750bdd818f14b"
+    },
+    "fut_fin_txt_2017.zip": {
+      "bytes": 395830,
+      "report": "tff",
+      "sha256": "e6e2dd537efcc57cdd6cdcc4e45e567fd47e65d8afc8369d8383bf09195ae7f5"
+    },
+    "fut_fin_txt_2018.zip": {
+      "bytes": 458570,
+      "report": "tff",
+      "sha256": "6843d130a25a17c6248df67463810f02077ef4eeafdd629299d21c18f5125e40"
+    },
+    "fut_fin_txt_2019.zip": {
+      "bytes": 454803,
+      "report": "tff",
+      "sha256": "631b31880d513072aa50d63117c896184dd35db3cc8fcdd6debd80197ee7a661"
+    },
+    "fut_fin_txt_2020.zip": {
+      "bytes": 430721,
+      "report": "tff",
+      "sha256": "c90d98d94db708772d669f263fb8061c75f8a7f681ba231fb21247e5c9798e6b"
+    },
+    "fut_fin_txt_2021.zip": {
+      "bytes": 466549,
+      "report": "tff",
+      "sha256": "5c929991038c70ae2501661b6d442b9e784d3c29d3166ceac2e21b45ac93d56a"
+    },
+    "fut_fin_txt_2022.zip": {
+      "bytes": 494559,
+      "report": "tff",
+      "sha256": "94c9c1fdee9dfbe377a09923ddfe26b88d3460605dd076081f221ad367d88601"
+    },
+    "fut_fin_txt_2023.zip": {
+      "bytes": 506931,
+      "report": "tff",
+      "sha256": "43c3dbdd4d01fceefad5e457003751cdc0974c7cf46097b322e26e9e2fe44d7a"
+    },
+    "fut_fin_txt_2024.zip": {
+      "bytes": 563591,
+      "report": "tff",
+      "sha256": "3f00585741a7cf76c207df640951d644dd91ff22a1106b38ca37a2469c765637"
+    },
+    "fut_fin_txt_2025.zip": {
+      "bytes": 627068,
+      "report": "tff",
+      "sha256": "2ea0cda6395f7dd6501c27422be3763e1f2f5b41b768cfd36b871f092a07d438"
+    },
+    "fut_fin_txt_2026.zip": {
+      "bytes": 548802,
+      "report": "tff",
+      "sha256": "bc9377665f7b8980f3f5a70e1eca8ce0867604522d1eed0a06604a3305b3098f"
+    }
+  },
+  "manifest_time": "2026-10-05T15:27:40+00:00",
+  "source": "https://www.cftc.gov/files/dea/history/"
+}

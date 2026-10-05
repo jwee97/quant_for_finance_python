@@ -1,0 +1,1 @@
+Figure 44. Do online-updating models (recursive least squares, normalised LMS, a Kalman filter) forecast 21-day ETF returns better than the annually refitted ridge, with the same features and volatility?

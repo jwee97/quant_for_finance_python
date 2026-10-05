@@ -14,6 +14,9 @@ venv/
 # immutable record the research is built on; everything downstream is
 # reproducible from it via `python -m experiments.run_all`.
 data/processed/*
+# CFTC zips are large and the current-year one changes weekly; the parsed positioning table and the manifest
+# (with every zip's sha256) are committed instead.
+data/raw/altdata/cftc/*.zip
 data/features/*
 !data/**/.gitkeep
 

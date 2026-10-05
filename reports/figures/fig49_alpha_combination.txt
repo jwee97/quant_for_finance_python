@@ -1,0 +1,1 @@
+Figure 49. Does a cost-aware rule for how much to trust each alpha, applied to the combined forecast, beat equal weighting and the best Generation 1 alpha net of costs?

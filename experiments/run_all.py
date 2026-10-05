@@ -52,6 +52,8 @@ STAGES = [
     # weights and 23's non-price features, and 25 re-costs every book.
     (21, "stage21_bayesian", "Bayesian portfolio construction", 3),
     (22, "stage22_online", "Online learning", 3),
+    (23, "stage23_altdata", "Non-price data", 3),
+    (24, "stage24_combination", "Alpha-combination engine", 3),
 ]
 LAST_STAGE = max(number for number, *_ in STAGES)
 

@@ -1,0 +1,8 @@
+,development,validation,final_holdout
+mvo_sample,0.520332,0.614563,0.740989
+bayes_stein,0.516896,0.536395,0.678733
+bayes_predictive,0.475065,0.758855,0.690127
+M0_equal_weight,0.448513,1.046313,0.727914
+M1_inverse_vol,0.701740,1.229087,0.633572
+M2_risk_parity,0.677603,1.159237,0.694986
+M7_combined_alpha_shrinkage_mvo,0.378080,0.678190,0.519672

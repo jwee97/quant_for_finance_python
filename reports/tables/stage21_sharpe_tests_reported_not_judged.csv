@@ -1,0 +1,4 @@
+a,b,sharpe_a,sharpe_b,difference,ci_lower_5pct,ci_upper_95pct,p_value,return_correlation,n_obs,n_samples
+bayes_predictive,M0_equal_weight,0.612840,0.664162,-0.051323,-0.217694,0.108587,0.606000,0.875305,4921,2000
+bayes_predictive,M1_inverse_vol,0.612840,0.823819,-0.210980,-0.407290,-0.026461,0.066500,0.849475,4921,2000
+bayes_predictive,M7_combined_alpha_shrinkage_mvo,0.612840,0.510685,0.102155,-0.147370,0.319551,0.458000,0.741662,4921,2000

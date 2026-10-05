@@ -1,0 +1,1 @@
+Figure 43. Does treating mean and covariance as uncertain earn a better net Sharpe than treating them as known or than risk parity, and does the posterior predictive distribution cover realised returns at its nominal rates?

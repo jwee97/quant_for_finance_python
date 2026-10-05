@@ -1,0 +1,4 @@
+method,mean_pairwise_l1,mean_max_weight,mean_effective_n
+bayes_predictive,0.572506,0.186279,8.801639
+bayes_stein,0.879327,0.249910,4.599949
+mvo_sample,0.867602,0.250000,4.503667

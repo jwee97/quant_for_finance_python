@@ -1,0 +1,1 @@
+Figure 47. Do non-price features add out-of-sample forecasting information to price and macro features, and does speculative positioning predict the matching ETF's next-month return?

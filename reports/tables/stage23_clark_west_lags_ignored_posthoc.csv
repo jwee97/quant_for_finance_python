@@ -1,0 +1,6 @@
+sleeve,restricted,unrestricted,statistic,p_value,mspe_adjusted_difference,oos_r2,n_obs,comparison,bh_significant,significant_raw_5pct
+equity,both,all,0.780763,0.217471,0.000040,0.005291,125,all_vs_both,False,False
+bonds,both,all,-0.279060,0.609901,-0.000001,-0.007809,125,all_vs_both,False,False
+credit,both,all,-0.941533,0.826784,-0.000008,-0.031844,125,all_vs_both,False,False
+commodities,both,all,-1.050894,0.853346,-0.000041,-0.025289,125,all_vs_both,False,False
+real_estate,both,all,-0.327030,0.628177,-0.000025,-0.022983,125,all_vs_both,False,False

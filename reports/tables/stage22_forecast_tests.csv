@@ -1,0 +1,4 @@
+model,n_origins,mean_crps_model,mean_crps_frozen,mean_crps_difference,statistic,p_value,mse_ratio,mean_ic_model,mean_ic_frozen,bh_significant,passes
+rls,187,0.022867,0.023006,-0.000138,-1.040379,0.298164,0.999109,0.036650,0.045315,False,False
+nlms,187,0.025178,0.023006,0.002172,5.234544,0.000000,1.147248,-0.025630,0.045315,True,False
+kalman,187,0.024284,0.023006,0.001278,3.441171,0.000579,1.128095,0.013025,0.045315,True,False

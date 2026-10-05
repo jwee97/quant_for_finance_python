@@ -110,7 +110,7 @@ def figure_forecasting(scores: dict, table: pd.DataFrame, sweep: pd.DataFrame, p
     x = np.arange(len(table))
     ax.bar(x, table["mean_crps_difference"] * 1e4, color=PALETTE[: len(table)])
     for xi, (_, r) in zip(x, table.iterrows()):
-        ax.text(xi, r["mean_crps_difference"] * 1e4, f"p={r['p_value']:.2f}" + (" *" if r["bh_significant"] else ""), ha="center",
+        ax.text(xi, r["mean_crps_difference"] * 1e4, f"p={r['p_value']:.2f}" + ((" *worse" if r["mean_crps_difference"] > 0 else " *better") if r["bh_significant"] else ""), ha="center",
                 va="bottom" if r["mean_crps_difference"] >= 0 else "top", fontsize=8)
     ax.axhline(0, color="black", linewidth=0.8)
     ax.set_xticks(x, table.index)
@@ -137,7 +137,7 @@ def figure_aggregation(hedge, curves: dict, path):
     ax.set_ylim(0, 1)
     ax.set_ylabel("Hedge weight")
     ax.set_title("What the online rule trusts, through time")
-    ax.legend(fontsize=8, loc="upper left", ncol=2)
+    ax.legend(fontsize=8, loc="upper center", bbox_to_anchor=(0.5, -0.1), ncol=3, frameon=False)
     ax = axes[1]
     for i, (name, s) in enumerate(curves.items()):
         ax.plot(s.index, s.to_numpy(), color=PALETTE[i], label=name)

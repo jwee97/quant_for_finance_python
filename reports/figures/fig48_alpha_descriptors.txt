@@ -1,0 +1,1 @@
+Figure 48. For each alpha, where does its information live (decay), what does its trading cost, and how correlated are the alphas as forecasts and as books?

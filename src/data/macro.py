@@ -83,6 +83,8 @@ class MacroDownloader:
     ``data_version`` that every Generation 1 result is stamped with.
     """
 
+    manifest_name = "macro_manifest.json"
+
     def __init__(self, raw_dir: str | Path, metadata_dir: str | Path,
                  max_retries: int = 4, backoff_seconds: float = 2.0):
         self.raw_dir = Path(raw_dir)
@@ -163,7 +165,7 @@ class MacroDownloader:
                      "that publication lags do not remove."),
             "series": records,
         }
-        (self.metadata_dir / "macro_manifest.json").write_text(
+        (self.metadata_dir / self.manifest_name).write_text(
             json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
         return manifest
 

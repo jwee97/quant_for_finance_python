@@ -1,0 +1,1 @@
+Figure 42. How uncertain is the optimal allocation once parameter uncertainty is acknowledged, and are posterior-averaged weights more stable than plug-in ones under estimation noise?

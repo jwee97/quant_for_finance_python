@@ -1,0 +1,5 @@
+,momentum,mean_reversion,pca_residual,ridge_forecast
+momentum,1.000000,-0.259549,-0.132989,0.106478
+mean_reversion,-0.259549,1.000000,0.310422,0.077851
+pca_residual,-0.132989,0.310422,1.000000,0.005593
+ridge_forecast,0.106478,0.077851,0.005593,1.000000
