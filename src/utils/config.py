@@ -44,7 +44,15 @@ GEN3_NAMESPACES = (
     "execution",
 )
 
-CONFIG_FILES = CORE_NAMESPACES + GEN2_NAMESPACES + GEN3_NAMESPACES
+# Generation 4 additions. Order matters only for readability; the fingerprint sorts by name.
+GEN4_NAMESPACES = (
+    "distributed",
+    "deeplearning",
+    "assistant",
+    "research_db",
+)
+
+CONFIG_FILES = CORE_NAMESPACES + GEN2_NAMESPACES + GEN3_NAMESPACES + GEN4_NAMESPACES
 
 
 def project_root() -> Path:
@@ -95,6 +103,10 @@ class Config:
     altdata: dict = field(default_factory=dict)
     combination: dict = field(default_factory=dict)
     execution: dict = field(default_factory=dict)
+    distributed: dict = field(default_factory=dict)
+    deeplearning: dict = field(default_factory=dict)
+    assistant: dict = field(default_factory=dict)
+    research_db: dict = field(default_factory=dict)
     root: Path = field(default_factory=project_root)
 
     # -- construction -----------------------------------------------------
@@ -163,7 +175,7 @@ class Config:
         ``scope="all"`` additionally hashes the Generation 2 namespaces and is
         what Generation 2 stages stamp into the experiment registry (its value
         is pinned by a test: Generation 3 files must not rename a Generation 2
-        result). ``scope="gen3"`` adds the Generation 3 namespaces. An
+        result). ``scope="gen3"`` adds the Generation 3 namespaces (pinned too), ``scope="gen4"`` the Generation 4 ones. An
         explicit iterable of namespace names is also accepted.
 
         A result's identity should be the hash of exactly the configuration it
@@ -175,6 +187,8 @@ class Config:
         elif scope == "all":
             names = CORE_NAMESPACES + GEN2_NAMESPACES
         elif scope == "gen3":
+            names = CORE_NAMESPACES + GEN2_NAMESPACES + GEN3_NAMESPACES
+        elif scope == "gen4":
             names = CONFIG_FILES
         else:
             names = tuple(scope)

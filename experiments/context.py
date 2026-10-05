@@ -62,8 +62,8 @@ def build_context(stage: str, rebuild_config: dict | None = None, generation: in
     """Create the context and a stage logger.
 
     ``generation=2`` stamps the registry with the fingerprint of the core plus
-    Generation 2 configuration, ``generation=3`` with the fingerprint that adds
-    the Generation 3 files: a result's identity is the hash of exactly the
+    Generation 2 configuration, ``generation=3`` and ``generation=4`` with the
+    fingerprints that add the Generation 3 and 4 files: a result's identity is the hash of exactly the
     configuration it depends on. Generation 1 stages keep the core fingerprint
     their report cites.
     """
@@ -72,7 +72,7 @@ def build_context(stage: str, rebuild_config: dict | None = None, generation: in
 
     registry = ExperimentRegistry(
         data_version=data_version(config.path("metadata")),
-        config_fingerprint=config.fingerprint({1: "core", 2: "all"}.get(generation, "gen3")),
+        config_fingerprint=config.fingerprint({1: "core", 2: "all", 3: "gen3"}.get(generation, "gen4")),
     )
     if generation >= 2:
         replaced = registry.drop_stage(stage)
