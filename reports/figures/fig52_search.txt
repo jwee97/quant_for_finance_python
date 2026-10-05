@@ -1,0 +1,1 @@
+Figure 52. Across a grid of 1,584 simple rules, how does net Sharpe distribute, how much of the best is what a search of that size produces from noise, and does any rule have a positive expected net return after White's Reality Check and Hansen's SPA?

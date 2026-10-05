@@ -1,0 +1,2 @@
+backend,tasks_checked,serial_s,parallel_s,speedup_on_check,grid_rules,grid_wall_s,cpu_count,max_abs_serial_vs_parallel
+joblib,24,13.236020,5.565367,2.378284,1584,230.455261,4,0.000000

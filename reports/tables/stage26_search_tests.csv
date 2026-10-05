@@ -1,0 +1,7 @@
+benchmark,test,statistic,p_value,best_rule
+cash,reality_check,0.008793,0.503000,1374
+cash,spa_lower,2.324382,0.278500,1374
+cash,spa_consistent,2.324382,0.344500,1374
+cash,spa_upper,2.324382,0.369500,1374
+M0_equal_weight,reality_check,-0.011586,0.999500,1374
+M0_equal_weight,spa_consistent,0.000000,1.000000,642

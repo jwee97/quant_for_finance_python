@@ -55,6 +55,8 @@ STAGES = [
     (23, "stage23_altdata", "Non-price data", 3),
     (24, "stage24_combination", "Alpha-combination engine", 3),
     (25, "stage25_execution", "Execution model", 3),
+    # Generation 4. The research database runs last because it ingests every other stage's output.
+    (26, "stage26_distributed", "Distributed experimentation", 4),
 ]
 LAST_STAGE = max(number for number, *_ in STAGES)
 

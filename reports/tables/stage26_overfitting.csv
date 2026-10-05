@@ -1,0 +1,2 @@
+n_rules,common_start,n_days,pbo,pbo_splits,mean_is_best_sharpe,mean_oos_of_best_sharpe,share_best_oos_negative,degradation_slope,best_net_sharpe,deflated_sharpe_probability_best,expected_best_sharpe_of_noise
+1584,2007-04-02,4899,0.598990,12870,0.643617,0.023068,0.405828,-1.082889,0.448171,0.079678,0.767431

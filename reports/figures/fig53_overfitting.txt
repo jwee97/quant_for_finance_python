@@ -1,0 +1,1 @@
+Figure 53. How often would the best-in-sample rule from this grid land in the bottom half out of sample, how much does its Sharpe degrade, and which parts of the grid are on average above or below zero?
