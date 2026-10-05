@@ -1,0 +1,1 @@
+Figure 51. Does holding positions inside a no-trade band save more in impact and spread than it costs in tracking, and how much does spreading a trade over several days trade cost for timing risk?

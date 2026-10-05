@@ -174,6 +174,11 @@ def main(argv: list[str] | None = None) -> int:
         signal = combine_alphas(z, w)
         combo_runs[name] = engine.run(book(signal), returns, name, investable, apply_vol_target=True)
     all_runs = {**runs, **combo_runs}
+    saved = context.processed / "stage24_runs"                     # read by Stage 25 (descriptive re-costing); not used here
+    saved.mkdir(parents=True, exist_ok=True)
+    for name, run in combo_runs.items():
+        run.gross_returns.to_frame("gross").to_csv(saved / f"{name}_gross.csv", index_label="date")
+        run.trades.to_csv(saved / f"{name}_trades.csv", index_label="date")
     common = {n: r.net_returns.loc[first_date:].dropna() for n, r in all_runs.items()}
     perf = pd.DataFrame({n: performance_summary(s) for n, s in common.items()}).T
     perf["ann_turnover"] = pd.Series({n: all_runs[n].summary().get("ann_turnover", np.nan) for n in all_runs})

@@ -1,0 +1,4 @@
+book,sharpe_a,sharpe_b,difference,ci_lower_5pct,ci_upper_95pct,p_value,return_correlation,n_obs,n_samples,bh_significant,passes
+M3_momentum,-0.032123,-0.043271,0.011148,-0.000542,0.023220,0.121500,0.999363,5191,2000,False,False
+M4_mean_reversion,-1.175890,-1.171962,-0.003928,-0.010705,0.002874,0.338000,0.999739,5191,2000,False,False
+M5_momentum_plus_mr,-0.724335,-0.733444,0.009108,0.001335,0.017342,0.053500,0.999700,5191,2000,False,False

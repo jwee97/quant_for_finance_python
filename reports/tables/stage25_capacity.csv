@@ -1,0 +1,13 @@
+,linear_sharpe,capacity_usd,capacity_usd_Y0.5,capacity_usd_Y2.0
+M0_equal_weight,0.685606,above grid,above grid,above grid
+M1_inverse_vol,0.851462,above grid,above grid,above grid
+M2_risk_parity,0.789003,above grid,above grid,above grid
+M9_mean_cvar,0.808352,above grid,above grid,above grid
+M11_hrp,0.769618,above grid,above grid,above grid
+M12_herc,0.766391,above grid,above grid,above grid
+M3_momentum,0.311524,102031408.8829409,630726102.3574014,23754735.463718038
+M4_mean_reversion,-0.243099,n/a,n/a,n/a
+M5_momentum_plus_mr,0.0685953,below grid,2617792.774769644,below grid
+equal,-0.0335754,n/a,n/a,n/a
+cost_aware,0.0403539,below grid,1354506.0789692912,below grid
+hedge,0.0798834,1209987.1942039453,4859126.348964285,below grid

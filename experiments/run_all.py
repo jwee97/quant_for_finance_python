@@ -54,6 +54,7 @@ STAGES = [
     (22, "stage22_online", "Online learning", 3),
     (23, "stage23_altdata", "Non-price data", 3),
     (24, "stage24_combination", "Alpha-combination engine", 3),
+    (25, "stage25_execution", "Execution model", 3),
 ]
 LAST_STAGE = max(number for number, *_ in STAGES)
 

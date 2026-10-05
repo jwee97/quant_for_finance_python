@@ -1,0 +1,1 @@
+Figure 50. Once market impact is charged on the fund's own size, how fast does each book's net Sharpe decay with assets under management, and at what size does it lose half of its linear-cost Sharpe?
