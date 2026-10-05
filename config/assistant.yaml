@@ -1,0 +1,58 @@
+# ---------------------------------------------------------------------------
+# LLM research assistant (Generation 4, Priority 16).
+#
+# The roadmap's advice: LLMs should not predict prices; use them to read central-bank
+# text and turn it into STRUCTURED FEATURES, and as an assistant over the research
+# record. What this stage builds and what it does not:
+#
+#   BUILT   a document pipeline (FOMC statements, point-in-time stamped), a validated
+#           extraction schema with a content-addressed cache, pluggable backends, and a
+#           read-only SQL guard with a question-to-query assistant over the research database.
+#   NOT RUN no language model was called to produce any reported result: this environment
+#           has no model API credentials. The Anthropic backend is implemented and tested
+#           against a fake client only. The reported experiment uses the OFFLINE LEXICON
+#           backend declared below, which is the baseline any language-model feature has to beat.
+#
+# Rules written before any Stage 28 result and committed on their own.
+# ---------------------------------------------------------------------------
+corpus:
+  source: "Federal Reserve Board FOMC statements (press releases), scheduled and unscheduled, 2006 onward"
+  availability: "a statement dated D is usable from D + 1 calendar day: the month-end feature uses the latest statement dated at or before month-end minus one day"
+  cached_as: "plain text under data/raw/text/fomc/ with a manifest of source URL and sha256 of the downloaded page"
+
+schema:                                  # every backend must return exactly these fields, validated and clipped
+  tone: "float: (hawkish term count - dovish term count) per 1,000 words"
+  change: "float in [0, 1]: 1 - cosine similarity of the statement's tf-idf vector with the previous statement's"
+  action: "int in {-1, 0, +1}: the target-rate decision announced (lower / maintain / raise)"
+
+lexicon_backend:
+  hawkish: ["inflation pressures", "elevated inflation", "upside risks to inflation", "tighten", "firming", "increase the target", "raise the target",
+            "reduce its holdings", "strong", "solid", "robust"]
+  dovish: ["accommodative", "accommodation", "lower the target", "reduce the target", "decrease the target", "downside risks", "weak", "soften", "slack",
+           "subdued", "patient", "deteriorat", "contraction", "declin", "purchases of", "extraordinary"]
+  action_patterns:
+    raise: "decided[^.]{0,80}\\b(raise|increase)\\b"
+    lower: "decided[^.]{0,80}\\b(lower|reduce|decrease)\\b"
+  # counts are of lower-cased substrings; the lists are fixed here and were not tuned on any result
+
+features:
+  standardisation: "expanding z-score of tone and change over statements, 16-statement burn-in (about two years); action enters as the z-score of the running total of rate moves over the last 4 statements"
+  model_blocks: ["price", "macro", "text"]
+
+assistant:
+  database: "the Stage 29 research database, opened read-only"
+  sql_guard: "a single SELECT or WITH statement over the whitelisted tables, no comments, no semicolons inside, a row limit applied, read-only connection"
+  backends: [template, anthropic]
+  template_backend: "maps a fixed list of recognised question patterns to parameterised queries; anything else is refused rather than guessed"
+  anthropic_backend: "temperature 0, structured output, the model identifier and prompt hash recorded with every answer; not exercised in this environment"
+
+decisions:
+  fdr: 0.10
+  # h_text: for each of the five sleeves of Stage 15, a nested Clark-West test of price + macro + text against
+  #   price + macro (the same walk-forward machinery as Stages 15 and 23, first test year 2010). Retained if at
+  #   least one sleeve is significant at FDR 10% AND the mean out-of-sample R-squared across sleeves is positive.
+  # Reported, not judged: each feature's rank correlation with the next month's bond and equity excess return;
+  #   the matched-sample control; coverage of the corpus; the lexicon's agreement with the announced action.
+  # Engineering acceptance (assertions and tests, not decisions): the SQL guard rejects every non-SELECT form
+  #   tried; the template backend answers its recognised questions and refuses the rest; the extraction cache
+  #   returns identical results for identical (text, schema, backend) and invalidates when any of the three changes.
