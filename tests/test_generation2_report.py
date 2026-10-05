@@ -33,7 +33,7 @@ def _registry() -> dict:
 
 
 def _gen2():
-    return {k: v for k, v in _registry().items() if v["stage"] >= "stage15"}
+    return {k: v for k, v in _registry().items() if "stage15" <= v["stage"] < "stage21"}
 
 
 def test_decision_ledger_matches_the_registry():

@@ -117,10 +117,33 @@ parity; Platt calibration made the probabilities worse.
 ratio by at most 0.016, changed no ranking and no decision, and every Generation 1 number was regenerated. The
 before/after record is in [`reports/errata/`](reports/errata/).
 
-**Not built:** Generation 3 (Bayesian portfolio optimisation, online learning, alternative data, an alpha-combination
-engine, an execution model) and Generation 4 (transformers, an LLM assistant, distributed experiments, a research
-database, cloud), Wishart and factor stochastic-volatility covariance models, factor-model attribution, and the
-software-engineering items of the roadmap's Priority 20.
+**Not built in Generation 2:** Wishart and factor stochastic-volatility covariance models, factor-model attribution, and
+the software-engineering items of the roadmap's Priority 20.
+
+---
+
+## Generation 3
+
+Five extensions (Stages 21-25), again each held to a rule committed before its result existed: Bayesian portfolio
+construction, online learning, non-price data, an alpha-combination engine, and an execution model with market impact.
+The full account, including every deviation and post-hoc analysis, is in
+[`reports/generation3_report.md`](reports/generation3_report.md).
+
+**The result is, once more, the Generation 1 result.** Of 9 decision-bearing hypotheses, two were retained, each with a
+qualification: posterior-averaged Bayesian weights are more stable than plug-in weights (but averaging is mechanical, and
+the Bayesian book's Sharpe is no better), and the six allocators lose at most 0.042 of net Sharpe at $1bn of assets (a thin
+margin that fails at twice the impact coefficient). Online learners forecast no better than an annually refitted ridge;
+credit, implied-volatility structure, jobless claims and CFTC positioning add nothing out of sample; combining the alphas
+at the forecast level does not beat momentum alone; a 1% no-trade band does not help.
+
+**The new finding is about size.** With square-root market impact, the allocators keep their Sharpe to beyond $10bn,
+while the momentum book halves its Sharpe at about $100m, and mean reversion, the combined book and every alpha
+combination are not viable at any size worth running.
+
+**Not built:** Generation 4 (transformers, an LLM assistant, distributed experiments, a research database, cloud);
+ETF flows, earnings revisions, creation and redemption data and options flow (not available free and not proxied);
+explainable machine learning, factor-model attribution, an Almgren-Chriss optimal trajectory, an estimated impact
+coefficient, and the software-engineering items of the roadmap's Priority 20.
 
 ---
 
@@ -131,21 +154,22 @@ config/          every parameter that affects a result, in YAML
 data/raw/        immutable per-ticker CSVs + provenance manifest
 data/processed/  cleaned wide panels (rebuilt, not committed)
 src/
-  data/          download, validation, cleaning, loading      (Ch. 7)
+  data/          download, validation, cleaning, loading, macro and non-price series  (Ch. 7)
   features/      returns, volatility, momentum, reversion, PCA (Ch. 8, 20)
-  signals/       forecasts, position stack, blending, pairs, PCA stat-arb (Ch. 22)
+  signals/       forecasts, position stack, blending, pairs, PCA stat-arb, alpha-combination engine (Ch. 22)
   portfolio/     EW, inverse vol, risk parity, MVO, BL, CVaR, covariance (Ch. 19, 20),
-                 HRP / HERC, DCC-GARCH / O-GARCH, regime-aware overlays
-  backtest/      engine, execution, costs, metrics, attribution (Ch. 22)
+                 HRP / HERC, DCC-GARCH / O-GARCH, regime-aware overlays, Bayesian (NIW, Bayes-Stein)
+  backtest/      engine, execution, costs, impact and capacity, metrics, attribution (Ch. 22)
   risk/          VaR, CVaR, contributions, stress              (Ch. 21)
   validation/    walk-forward, robustness, leakage detection, permutation tests
   models/        regression with HAC errors, ML ladder, macro forecasts,
-                 regimes (HMM / GMM / BOCPD), probabilistic forecasts
+                 regimes (HMM / GMM / BOCPD), probabilistic forecasts, online learners (RLS / NLMS /
+                 Kalman / Hedge)
   utils/         config, logging, dates, plotting, experiment registry
 experiments/     numbered stage scripts + the experiment registry
 reports/         figures, tables, the data-quality report, the research paper,
-                 the Generation 2 report, errata/ (before/after record of the drift fix)
-tests/           295 tests
+                 the Generation 2 and 3 reports, errata/ (before/after record of the drift fix)
+tests/           339 tests
 ```
 
 ---
@@ -155,12 +179,13 @@ tests/           295 tests
 ```bash
 pip install -r requirements.txt
 
-python -m experiments.run_all --download      # all 20 stages, ~33 minutes
+python -m experiments.run_all --download      # all 25 stages, ~60 minutes
 python -m experiments.run_all --generation 2  # Generation 2 only (stages 15-20)
+python -m experiments.run_all --generation 3  # Generation 3 only (stages 21-25)
 python -m experiments.run_all --from 6 --to 9 # a range of stages
 python -m experiments.run_all --fresh         # clear derived artefacts first
 python -m experiments.stage01_data            # a single stage
-pytest -q                                      # 295 tests
+pytest -q                                      # 339 tests
 ```
 
 Stage 1 writes `data/raw/*.csv` once and refuses to overwrite them without
@@ -216,6 +241,11 @@ RAW DATA -> VALIDATION -> CLEAN DATA -> FEATURES
 | 18 | Hierarchical risk parity: HRP, HERC (Gen 2) | Ch. 19 |
 | 19 | Probabilistic forecasts and confidence-aware sizing (Gen 2) | Ch. 20, Ch. 22 |
 | 20 | Performance attribution: Brinson-Fachler, Carino, Euler (Gen 2) | Ch. 21, Ch. 22 |
+| 21 | Bayesian portfolio construction: NIW posterior, Bayes-Stein, weights as a distribution (Gen 3) | Ch. 19, Ch. 20 |
+| 22 | Online learning: RLS, NLMS, Kalman, Hedge aggregation with regret (Gen 3) | Ch. 20, Ch. 22 |
+| 23 | Non-price data: credit spread, implied-volatility structure, claims, CFTC positioning (Gen 3) | Ch. 7, Ch. 20 |
+| 24 | Alpha-combination engine: forecast-level combination, trust rules, alpha descriptors (Gen 3) | Ch. 20, Ch. 22 |
+| 25 | Execution model: square-root impact, capacity, no-trade bands, scheduling (Gen 3) | Ch. 22 |
 
 ---
 
