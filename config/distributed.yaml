@@ -18,7 +18,7 @@ grid:
     vol_lookback_days: [21, 63, 126]      # used by the vol_scaled variant only; the other variants do not repeat across it
   mean_reversion:
     lookback_days: [5, 10, 21, 42, 63, 126]
-    price_basis: [log, price]
+    price_basis: [log, raw]                # "raw" is the repo's name for the un-logged price; the first draft of this file said "price"
     sign: [-1]                            # fade the deviation: the hypothesis, not its opposite
   execution:
     rebalance: [weekly, monthly, quarterly]
