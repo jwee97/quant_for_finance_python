@@ -1,0 +1,53 @@
+# ---------------------------------------------------------------------------
+# Distributed experimentation (Generation 4, Priority 15) and the statistics
+# that make a large search honest (Priority 19, pulled in by this stage).
+#
+# The roadmap's reason for parallel research is "10,000+ parameter combinations".
+# The cost of searching that many is that the best of them looks good by
+# construction. This stage runs a large grid of simple rules in parallel and asks
+# the one question a search must answer: after accounting for the size of the
+# search, is there any rule that earns a positive net return?
+#
+# Rules written before any Stage 26 result and committed on their own.
+# ---------------------------------------------------------------------------
+grid:
+  momentum:
+    variant: [vol_scaled, raw, ranked]
+    lookback_days: [21, 42, 63, 126, 189, 252]
+    skip_days: [0, 1, 5, 21]
+    vol_lookback_days: [21, 63, 126]      # used by the vol_scaled variant only; the other variants do not repeat across it
+  mean_reversion:
+    lookback_days: [5, 10, 21, 42, 63, 126]
+    price_basis: [log, price]
+    sign: [-1]                            # fade the deviation: the hypothesis, not its opposite
+  execution:
+    rebalance: [weekly, monthly, quarterly]
+    signal_lag_days: [1, 2]
+    cross_sectional: [true, false]
+  # 120 momentum + 12 mean-reversion rules, times 3 x 2 x 2 execution choices = 1,584 candidates.
+  # Everything else is the Generation 1 stack: winsorise 2%, z-score, clip at 3, 10% volatility target, per-asset linear costs.
+
+parallel:
+  backend: joblib                         # serial | joblib | dask | ray (optional adapters)
+  n_jobs: -1
+  chunk_size: 8
+  identity_check_tasks: 24                # a random subset run both serially and in parallel: results must agree to 1e-12 (an assertion, not a decision)
+
+multiple_testing:
+  benchmark: "cash: zero excess return"
+  statistic: "mean daily net return, annualised"
+  bootstrap: { n_samples: 2000, mean_block_length: 21, seed: 7 }     # stationary bootstrap, geometric blocks
+  spa: "Hansen (2005) studentised statistic with the consistent null recentring (threshold sqrt(2 log log n))"
+  pbo: { blocks: 16 }                     # combinatorially symmetric cross-validation, Bailey-Borwein-Lopez de Prado-Zhu
+  deflated_sharpe: "trials = the number of candidates (1,584); no effective-N reduction is applied, which is the harsher choice"
+
+decisions:
+  alpha: 0.10
+  # h_search: retained only if BOTH White's Reality Check and Hansen's SPA reject at 10%
+  #   the null that no candidate has a positive expected net return. Every candidate
+  #   is a rule that existed before the search; the search is the only data snooping.
+  # Reported, not judged: the best rule and its parameters; the share of candidates with
+  #   positive net Sharpe overall and in each of the development, validation and holdout
+  #   samples; probability of backtest overfitting; deflated Sharpe probability of the best
+  #   candidate; the same two tests against equal weight (M0) as the benchmark; the
+  #   performance of the grid by family and by execution choice; parallel speedup.
