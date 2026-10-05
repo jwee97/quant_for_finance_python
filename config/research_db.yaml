@@ -1,0 +1,34 @@
+# ---------------------------------------------------------------------------
+# Research database (Generation 4, Priority 14).
+#
+# Experiments live as files: a JSON-lines registry, one CSV per table, one PNG per figure.
+# The roadmap asks for them to be queryable ("every run, parameter, Sharpe, IC, figure").
+# This stage loads the existing record into SQLite (standard library, no server) and checks
+# that nothing was lost or altered in the move. It makes no research claim; its acceptance
+# tests are the deliverable.
+#
+# Rules written before the stage was built and committed on their own.
+# ---------------------------------------------------------------------------
+engine: sqlite                          # DuckDB reads the same SQL; it is not required and not used here
+path: data/processed/research.db        # derived, rebuilt on every run, not committed
+schema_version: 1
+
+tables:
+  experiments: "one row per registry entry: id, stage, hypothesis, decision, test period, config fingerprint, data version, date, notes, parameters (JSON)"
+  metrics: "one row per numeric entry of every experiment's results: (experiment_id, key, value)"
+  result_files: "one row per CSV under reports/tables: path, stage (from the file name), rows, columns, sha256"
+  figures: "one row per figure: number, file, research question, stage"
+  books: "every book or strategy row found in a performance table with a Sharpe column: source file, stage, name, and the standard metrics where present"
+  grid_results: "every rule of the Stage 26 grid with its parameters and metrics"
+
+acceptance:
+  # Each is asserted in the stage and covered by a test.
+  - "every registry entry is present, and every numeric result of every entry is a row in metrics with the same value"
+  - "every CSV in reports/tables is indexed and the stored sha256 equals the file's"
+  - "every figure caption file is in figures"
+  - "the roadmap's example query (momentum rules with annual turnover below 8, best net Sharpe first) returns exactly the rows a direct pandas filter of the grid file returns, in the same order"
+  - "the database opens read-only, and a write through the read-only connection fails"
+example_queries:
+  roadmap: "SELECT * FROM grid_results WHERE family='momentum' AND ann_turnover<8 ORDER BY sharpe DESC"
+  retained: "SELECT experiment_id, stage, hypothesis FROM experiments WHERE decision='retain' ORDER BY experiment_id"
+  best_books: "SELECT source, name, sharpe FROM books ORDER BY sharpe DESC LIMIT 10"
