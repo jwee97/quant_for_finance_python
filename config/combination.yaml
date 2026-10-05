@@ -1,1 +1,50 @@
-# Generation 3 namespace: combination. Design and decision rules are written here and committed BEFORE any result.
+# ---------------------------------------------------------------------------
+# Alpha-combination engine (Generation 3, Priority 13).
+#
+# Generation 1 treated momentum, mean reversion and PCA statistical arbitrage
+# as separate books. The roadmap's design is a forecast engine: every alpha
+# carries an expected return, a confidence, a turnover, a decay and a
+# correlation with the others, and the engine decides how much to trust each,
+# combines the FORECASTS (so opposing trades net before they are charged),
+# and builds one portfolio.
+#
+# Rules were committed before any Stage 24 result was computed.
+# ---------------------------------------------------------------------------
+alphas:
+  momentum: "Generation 1 primary momentum signal (126-day volatility-scaled)"
+  mean_reversion: "Generation 1 primary mean-reversion signal"
+  pca_residual: "Stage 14 PCA statistical-arbitrage signal (3 components, 252-day window, 21-day z-score)"
+  ridge_forecast: "Stage 19 price-only Gaussian ridge mean (month-end origins from 2011-01, held between origins)"
+  standardisation: "winsorise at 2%, cross-sectional demean and z-score each day, clip at 3 (as the Generation 1 position stack)"
+
+descriptors:                       # the five things the roadmap says each alpha gets
+  expected_return: "rank IC with the forward 21-day return, and the Grinold implied annual return IC x breadth-adjusted sigma"
+  confidence: "trailing information ratio of the IC"
+  turnover: "annual turnover of the alpha's own standalone book"
+  decay: "IC at horizons 1, 5, 10, 21, 63 days"
+  correlation: "correlation of the standardised signals and of the standalone books' net returns"
+
+combinations:
+  equal: "equal weight on the standardised alphas"
+  ic_weighted: "weight proportional to max(0, trailing information ratio of the 21-day IC), trailing 504 days of MATURED ICs (an IC is known 21 days after its date)"
+  cost_aware: "weight proportional to max(0, trailing net Sharpe of the alpha's standalone book, trailing 504 days, costs included), shrunk 50% toward equal weights; if every trailing net Sharpe is non-positive the weights fall back to equal (this is a combination, not a market-timing switch)"
+  hedge: "Hedge weights (Stage 22 rule) over the standalone books' net returns, sampled at month-ends"
+  update: monthly
+  min_history_days: 252
+
+evaluation:
+  window: "from 2011-01-03, the first date every alpha exists"
+  position_stack: "the Generation 1 stack (signal_to_positions) and the volatility-targeted book used for M3-M5"
+  costs: "the Generation 1 linear model (Stage 25 re-costs these books with an impact model)"
+
+decisions:
+  fdr: 0.10
+  bootstrap: { n_samples: 2000, block_length: 21, seed: 7 }
+  # h_engine: the cost-aware combination has a higher net Sharpe than (a) the equal-
+  #   weight combination and (b) the Generation 1 momentum book M3, the best of the
+  #   Generation 1 alphas as declared in Stage 6 (not chosen after the fact):
+  #   paired stationary bootstrap, a family of two, Benjamini-Hochberg at 10%,
+  #   positive difference required. Retained only if BOTH pass.
+  # Reported, not judged: the IC-weighted and Hedge combinations, the standalone
+  #   alphas, deflated Sharpe probabilities (trials in the stage: 4 combinations +
+  #   4 standalone alphas), the descriptors table, the weights through time.
