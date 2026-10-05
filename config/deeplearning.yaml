@@ -1,0 +1,57 @@
+# ---------------------------------------------------------------------------
+# Modern deep learning (Generation 4, Priority 17).
+#
+# The roadmap's advice is to skip LSTMs and treat transformers "as an extension,
+# not the core". This stage is that extension, and it is held to the same rule as
+# every other forecaster here: does it beat the annually refitted ridge of Stage 19
+# on proper scores, out of sample, with the same volatility forecast?
+#
+# Rules written before any Stage 27 result and committed on their own.
+# ---------------------------------------------------------------------------
+task:
+  target: "simple 21-day return divided by the EWMA volatility forecast at the origin (a z-score); the forecast is mu_z * sigma"
+  scale: "the Stage 19 volatility forecast is reused UNCHANGED for every model, so only the conditional mean differs"
+  origins: "the Stage 19 month-end origins from 2011-01-31, the same (origin, asset) rows"
+  window: 252                      # daily returns before the origin, each divided by the EWMA daily volatility at the origin, clipped at +-5
+  walk_forward: { min_train_days: 1260, refit_every: 252, embargo_days: 21 }     # exactly Stage 19's schedule
+  training_rows: "every 5th trading day (not only month-ends), all 15 ETFs pooled with an asset embedding; labels realised before the refit minus the embargo"
+
+models:
+  patchtst:
+    description: "channel-independent patch transformer (Nie et al. 2023): 21-day patches, 12 tokens, learned position, pre-norm encoder, mean pooling"
+    d_model: 32
+    layers: 2
+    heads: 4
+    ff: 64
+    dropout: 0.2
+  tsmixer:
+    description: "MLP-Mixer for time series (Chen et al. 2023): alternating time-mixing and feature-mixing MLPs over the same 12 patches"
+    d_model: 32
+    layers: 2
+    ff: 64
+    dropout: 0.2
+  linear_window:
+    description: "CONTROL, not a candidate: ridge regression on the same 252 normalised returns (Zeng et al. 2023: 'are transformers effective for time series forecasting?')"
+    ridge_alpha: 1000.0
+training:
+  optimiser: adam
+  learning_rate: 1.0e-3
+  weight_decay: 1.0e-2
+  batch_size: 256
+  max_epochs: 30
+  patience: 5
+  validation_fraction: 0.20        # the last 20% of training days, after a 42-day gap
+  ensemble_seeds: [11, 12, 13]     # the model's forecast is the mean over seeds
+  threads_per_worker: 1            # deterministic CPU execution; parallelism comes from running refits as independent tasks (Stage 26's executor)
+
+not_built:
+  zero_shot_foundation_models: "Chronos, TimeGPT and similar: their pre-training corpora overlap this sample, so a backtest over 2011-2026 is not out of sample for them, and the period after their cut-off is far too short to test"
+  temporal_fusion_transformer_timemixer_nhits_nbeats: "one transformer and one mixer are the representative sample; the rest are not built"
+
+decisions:
+  fdr: 0.10
+  # h_deep: retained if at least one of {patchtst, tsmixer} has a significantly LOWER mean CRPS than the
+  #   Stage 19 price-only ridge (Diebold-Mariano on the monthly cross-asset mean CRPS, two-sided, BH across the two,
+  #   with a negative mean loss difference).
+  # Reported, not judged: the linear_window control and the historical-mean benchmark against the same ridge;
+  #   mean rank IC; MSE ratios; ensemble against single seeds; validation curves; parameter counts; per-year differences.
