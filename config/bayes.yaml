@@ -1,1 +1,65 @@
-# Generation 3 namespace: bayes. Design and decision rules are written here and committed BEFORE any result.
+# ---------------------------------------------------------------------------
+# Bayesian portfolio construction (Generation 3, Priority 3).
+#
+# The plug-in optimiser treats the sample mean and covariance as if they were
+# the truth. Here they are treated as what they are, uncertain: a conjugate
+# Normal-inverse-Wishart posterior over (mu, Sigma), portfolio weights that are
+# a DISTRIBUTION (one optimum per posterior draw), and a decision that
+# averages over that distribution.
+#
+# Design and decision rules below were written before any Stage 21 result was
+# computed and are committed on their own (git history is the evidence).
+# ---------------------------------------------------------------------------
+estimation:
+  lookback_days: 252             # as every Generation 1 optimised book
+  rebalance: monthly             # as the engine
+  risk_aversion: 5.0             # as M6-M9
+  constraints: "Generation 1 constraint set (long-only, 25% cap, group limits)"
+
+prior:
+  mean: "common mean: every asset's expected return is shrunk toward the minimum-variance portfolio's mean (Jorion's Bayes-Stein target)"
+  mean_strength: "empirical Bayes: Jorion's shrinkage factor w = (N+2) / ((N+2) + T (xbar - m0)' S^-1 (xbar - m0)), implying kappa0 = T w / (1 - w); no free constant"
+  covariance: "inverse-Wishart centred on the constant-correlation shrinkage target"
+  nu0_days: 126                  # prior worth half a year of daily observations (the only declared constant)
+
+posterior:
+  draws: 100
+  seed: 11
+  decision: "posterior-mean weights: the average over draws of the constrained mean-variance optimum"
+
+books:
+  mvo_sample: "plug-in mean-variance on the SAMPLE mean and shrinkage covariance (no Bayes: the control)"
+  bayes_stein: "plug-in mean-variance on the Bayes-Stein posterior mean and posterior-mean covariance"
+  bayes_predictive: "average of the constrained optimum over 100 posterior draws"
+  references: [M0_equal_weight, M1_inverse_vol, M2_risk_parity, M7_combined_alpha_shrinkage_mvo]
+
+stability:
+  windows: "last trading day of each year, 2010-2025 (as Stage 18)"
+  n_bootstrap: 60
+  block_length: 21
+  seed: 5
+
+predictive_check:
+  note: "descriptive, not a decision: does the posterior predictive distribution of next month's book return cover realised outcomes at its nominal 50% and 90% levels?"
+  levels: [0.5, 0.9]
+
+decisions:
+  fdr: 0.10
+  bootstrap: { n_samples: 2000, block_length: 21, seed: 7 }
+  # h_bayes: paired stationary-bootstrap tests on NET Sharpe, a family of four,
+  #   Benjamini-Hochberg at 10%, a book is retained against a comparator only if
+  #   the difference is POSITIVE and significant:
+  #     bayes_predictive vs mvo_sample   (does the Bayesian treatment help the same inputs?)
+  #     bayes_stein      vs mvo_sample
+  #     bayes_predictive vs M2_risk_parity (does it beat the Generation 1 winner that estimates no mean?)
+  #     bayes_stein      vs M2_risk_parity
+  #   The hypothesis "Bayesian construction improves the allocation" is retained
+  #   only if bayes_predictive passes BOTH of its comparisons.
+  # h_stability: bayes_predictive has lower weight dispersion (mean pairwise L1
+  #   between bootstrap weight vectors) than mvo_sample in at least 75% of the 16
+  #   windows (retain) and at most 25% (reject; in between: inconclusive, recorded
+  #   as reject). Dispersion can be flattered by sitting in a corner, so the
+  #   effective number of positions is reported next to it, not judged.
+  # Reported, not judged: weight distributions (posterior interval per asset),
+  #   risk inflation, turnover, cost drag, the predictive coverage check,
+  #   sub-sample Sharpe ratios.
