@@ -134,7 +134,7 @@ def evaluate(out, pipeline, engine, ctx, models, validate: bool, trust) -> None:
         out.tables["reliability"] = fq.pop("reliability")
         out.metrics.update({f"forecast_{k}": v for k, v in fq.items()})
     # benchmarks
-    bench_names = spec.evaluation.get("benchmarks") or config.get("framework.tearsheet.benchmarks", ["equal_weight", "risk_parity"])
+    bench_names = spec.evaluation["benchmarks"] if "benchmarks" in spec.evaluation else config.get("framework.tearsheet.benchmarks", ["equal_weight", "risk_parity"])
     boot = (config.get("framework.tearsheet.bootstrap", {}) or {})
     rows = []
     for name in bench_names:

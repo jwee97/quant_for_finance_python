@@ -162,7 +162,8 @@ class Pipeline:
         return name, ALLOCATORS.create(name, **params)
 
     # ------------------------------------------------------------------------------------------- run
-    def run(self, validate: bool = True) -> PipelineResult:
+    def run(self, validate: bool = True, precomputed: dict | None = None) -> PipelineResult:
+        """Run the whole pipeline. ``precomputed`` lets a caller that has already computed the models' forecasts reuse them (e.g. to compare combination rules)."""
         t0 = time.perf_counter()
         spec, bundle, config = self.spec, self.bundle, self.config
         timings: dict = {}
@@ -175,7 +176,7 @@ class Pipeline:
 
         panels, combined, trust = {}, None, None
         if models:
-            panels = self._forecasts(models)
+            panels = precomputed if precomputed is not None else self._forecasts(models)
             combined, trust = self._combine(panels, models, engine)
         timings["forecast"] = time.perf_counter() - t0
 
@@ -224,9 +225,9 @@ class Pipeline:
         candidates = [net_returns.index[0]]
         if forecasts is not None and forecasts.first_valid() is not None:
             candidates.append(forecasts.first_valid())
-        live = targets.abs().sum(axis=1) > 1e-9
-        if live.any():
-            candidates.append(live.idxmax())
+        defined = targets.notna().any(axis=1)                  # the first date the allocator has a view; a flat book earns zero, it is not "missing"
+        if defined.any():
+            candidates.append(defined.idxmax())
         if self.spec.evaluation.get("start"):
             candidates.append(pd.Timestamp(self.spec.evaluation["start"]))
         return max(candidates)

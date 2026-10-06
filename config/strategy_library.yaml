@@ -49,7 +49,11 @@ specs:                                        # 42 specifications; model paramet
   - { model: ml_ridge }
   - { model: ml_ridge, params: { features: price_macro } }
 
-common_window: "from the first date on which every one of the 42 specifications has a live book (the slowest model sets it)"
+common_window: "from the first date on which every one of the 42 specifications has a forecast (the slowest calibration sets it); a specification that holds no position on a day earns zero that day"
+# AMENDMENT (committed after a first run, disclosed in the report). The first draft said "has a live book", meaning a non-zero position. A first run
+# showed that this lets one rarely-active specification (rolling-cointegration pairs, which first trades in 2024) shrink the window to 512 days and
+# turns flat specifications into NaN. Nothing in the 42 specifications or the decision rules changed. The first run's headline (best specification
+# dual_momentum, net Sharpe 1.75 over 512 days; Reality Check p = 0.040, SPA p = 0.108) is reported alongside the final one.
 
 combination:                                  # all 31 models, default parameters, combined at the FORECAST level
   models: all_non_crypto

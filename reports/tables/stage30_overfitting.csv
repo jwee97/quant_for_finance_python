@@ -1,0 +1,2 @@
+specifications,common_start,n_days,pbo,mean_is_best_sharpe,mean_oos_of_best_sharpe,degradation_slope,best,best_net_sharpe,deflated_sharpe_probability_best,expected_best_sharpe_of_noise,equal_weight_sharpe
+42,2024-09-05,512,0.072883,1.933946,1.074262,-0.543129,dual_momentum,1.749294,0.611642,1.549533,1.442160

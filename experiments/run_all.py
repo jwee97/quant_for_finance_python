@@ -58,7 +58,10 @@ STAGES = [
     (26, "stage26_distributed", "Distributed experimentation", 4),
     (27, "stage27_deep", "Deep learning", 4),
     (28, "stage28_text", "Text features and research assistant", 4),
+    # Generation 5. The research database (stage 29) is last in execution order because it ingests every other stage's output.
+    (30, "stage30_library", "The strategy library as a search", 5),
     (29, "stage29_research_db", "Research database", 4),
+
 ]
 LAST_STAGE = max(number for number, *_ in STAGES)
 
@@ -148,6 +151,14 @@ def main(argv: list[str] | None = None) -> int:
             results.append((number, module_name, f"FAILED: {exc}", elapsed))
             if not args.continue_on_error:
                 break
+
+    # The research database ingests every stage's output, so after any stage numbered above 29 it is rebuilt even when it was not selected.
+    ran = {number for number, _, status, _ in results if not status.startswith("FAILED")}
+    if ran and max(ran) > 29 and 29 not in {s[0] for s in selected} and not any(r[2].startswith("FAILED") for r in results):
+        started_db = time.time()
+        module = importlib.import_module("experiments.stage29_research_db")
+        code = module.main([])
+        results.append((29, "stage29_research_db", "ok" if code == 0 else f"exit {code}", time.time() - started_db))
 
     logger.info("")
     logger.info("=" * 78)
