@@ -248,3 +248,33 @@ def test_spec_validation_rejects_unknown_keys():
     from src.framework import PipelineSpec
     with pytest.raises(ValueError, match="unknown spec keys"):
         PipelineSpec.from_dict({"name": "x", "modles": []})
+
+
+# --------------------------------------------------------------------------------------- data quality
+def test_data_quality_finds_each_planted_problem_and_passes_clean_data(synthetic_prices):
+    from src.framework.dataquality import check_prices, format_report
+
+    clean = check_prices(synthetic_prices)
+    assert not clean["errors"]
+    broken = synthetic_prices.copy()
+    broken.iloc[300:312, 0] = broken.iloc[299, 0]                      # stale run
+    broken.iloc[500, 1] = broken.iloc[499, 1] * 1.8                      # a 80% jump
+    broken.iloc[700, 2] = np.nan                                         # a missing price
+    report = check_prices(broken)
+    text = "\n".join(report["warnings"])
+    assert "identical consecutive prices" in text and "daily return" in text and "missing price" in text
+    dup = pd.concat([synthetic_prices.iloc[:5], synthetic_prices.iloc[:5]])
+    assert any("duplicate" in e for e in check_prices(dup)["errors"])
+    assert any("below zero" in e or "at or below zero" in e for e in check_prices(synthetic_prices.iloc[:, :5] * 0 - 1)["errors"])
+    assert any("at least" in e for e in check_prices(synthetic_prices.iloc[:, :2])["errors"])
+    assert "ERROR" in format_report(check_prices(dup))
+
+
+def test_a_bundle_from_your_own_prices_never_fills_or_alters_them(synthetic_prices):
+    prices = synthetic_prices.copy()
+    prices.iloc[:100, 0] = np.nan
+    b = bundle_from_prices(prices, min_history=60)
+    assert b.prices.iloc[:100, 0].isna().all() and not b.investable.iloc[:100, 0].any() and b.investable.iloc[160:, 0].all()
+    assert np.allclose(b.returns.iloc[200:, 1], prices.iloc[:, 1].pct_change().iloc[200:])
+    with pytest.raises(ValueError):
+        bundle_from_prices(pd.concat([prices.iloc[:3], prices.iloc[:3]]))

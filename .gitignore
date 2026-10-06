@@ -26,3 +26,8 @@ config/local.yaml
 
 # Stage caches and logs (rebuilt by the pipeline)
 reports/logs/
+
+# A user's own experiment runs accumulate locally (Generation 5)
+data/experiments.db
+data/experiments/
+reports/tearsheets/

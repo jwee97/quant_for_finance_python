@@ -51,6 +51,24 @@ def _benchmark_returns(name: str, pipeline, engine, ctx) -> pd.Series:
     return engine.run(book(key, ctx), pipeline.bundle.returns, key, pipeline.bundle.investable, apply_vol_target=False).net_returns
 
 
+def deflated_probability(net: pd.Series, n_trials: int) -> float:
+    """Probability that the Sharpe ratio beats what the best of ``n_trials`` ideas would show by chance.
+
+    For a single trial there is nothing to deflate for, and the quantity is the probabilistic Sharpe ratio: the probability the true
+    Sharpe ratio is above zero given the sample length, skewness and kurtosis (Bailey and Lopez de Prado).
+    """
+    clean = net.dropna()
+    if len(clean) < 30 or clean.std(ddof=1) == 0:
+        return float("nan")
+    sharpe = float(ANN ** 0.5 * clean.mean() / clean.std(ddof=1))
+    skew, kurt = float(clean.skew()), float(clean.kurt() + 3.0)
+    if n_trials >= 2:
+        return deflated_sharpe_ratio(sharpe, n_trials, len(clean), skew, kurt)
+    sr = sharpe / np.sqrt(ANN)
+    variance = (1.0 - skew * sr + (kurt - 1.0) / 4.0 * sr ** 2) / (len(clean) - 1)
+    return float(norm.cdf(sr / np.sqrt(variance))) if variance > 0 else float("nan")
+
+
 def forecast_quality(forecasts, returns: pd.DataFrame, start) -> dict:
     """Rank IC, hit rate, mean confidence and the reliability of P(up), pooled over assets and dates (matured labels only)."""
     fwd = forward_returns(returns, forecasts.horizon).reindex_like(forecasts.mean)
@@ -134,7 +152,7 @@ def evaluate(out, pipeline, engine, ctx, models, validate: bool, trust) -> None:
     out.tables["benchmarks"] = pd.DataFrame(rows)
     # validation
     n_trials = int(spec.evaluation.get("n_trials", 1))
-    out.validation = {"deflated_sharpe_probability": deflated_sharpe_ratio(float(out.metrics["sharpe"]), max(n_trials, 1), len(net)), "n_trials": n_trials}
+    out.validation = {"deflated_sharpe_probability": deflated_probability(net, n_trials), "n_trials": n_trials}
     if validate and spec.evaluation.get("causality", True) and models:
         out.validation["causality"] = {m.name: check_causality(m, pipeline.bundle) for m in models}
     if validate and spec.evaluation.get("causality", True) and spec.regime:
