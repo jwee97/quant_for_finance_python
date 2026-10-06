@@ -49,7 +49,7 @@ Stage 29's design and acceptance checks were committed before it was built (`51c
 
 3. **The grid fades with time.** The share of rules with a positive net Sharpe is 82% in the development sample, 55% in validation and 44% in the final holdout.
 
-4. **Parallelism changed the time and nothing else.** Serial and joblib runs of the same 24 rules agree exactly (maximum difference 0.0), and the 1,584-rule grid takes about 4 minutes on four cores against an extrapolated 15 serially (a speed-up of about 3.8 on the grid, 2.0 on the short 24-rule check, which includes process start-up).
+4. **Parallelism changed the time and nothing else.** Serial and joblib runs of the same 24 rules agree exactly (maximum difference 0.0), and the 1,584-rule grid takes about 3.5 minutes on four cores against an extrapolated 14 serially (a speed-up of about 4.1 on the grid, 2.2 on the short 24-rule check, which includes process start-up).
 
 5. **The mixer "beats" the ridge because the ridge is poor.** Against predicting zero, the ridge's CRPS is +0.00044 worse (p = 0.088); against each asset's historical mean, +0.00061 worse (p = 0.003). The mixer is −0.00012 against zero (p = 0.45) and +0.00006 against the historical mean (p = 0.56): no better than knowing nothing but an average.
    The patch transformer is *worse* than the historical mean (+0.00027, p = 0.043).
@@ -95,7 +95,7 @@ Generation 1 position stack, a 10% volatility target and per-asset linear costs.
 
 **Outcome.** **Rejected.** The positive average of the grid is real in the sense that most momentum rules earn something after costs on this sample, and it fades from 82% of rules positive in the development sample to 44% in the final holdout; no rule can be distinguished from what a search of this size finds in noise.
 
-**Engineering identity.** Serial and parallel runs of 24 randomly chosen rules agree exactly (asserted to 1e-12 in the run, pinned by a test). Wall-clock: 241 s for the grid on four cores, against 926 s extrapolated from the serial timing of the check.
+**Engineering identity.** Serial and parallel runs of 24 randomly chosen rules agree exactly (asserted to 1e-12 in the run, pinned by a test). Wall-clock: 207 s for the grid on four cores, against 855 s extrapolated from the serial timing of the check.
 
 *Figures 52-53.*
 

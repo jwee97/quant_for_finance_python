@@ -33,7 +33,7 @@ The carry asset's return uses a linear approximation for the inverse perpetual.
 
 ## What we found
 
-None of the three timing rules beat the unconditioned alternatives after correction (EXP-084).
+None of the three timing rules beat the unconditioned alternatives after correction (EXP-083).
 
 ## Going deeper
 

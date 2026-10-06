@@ -15,6 +15,13 @@ validated research conclusion.
 the portfolio construction — and the negative half of that is the more useful
 result.
 
+**New here?** `pip install -e .`, then `quant demo` (thirteen seconds on the cached data), `quant dashboard` (an offline
+explorer of every hypothesis the project declared, most of them rejected) and `quant explain deflated sharpe` (any term,
+technique, strategy or experiment, in plain language). Read [`docs/START_HERE.md`](docs/START_HERE.md) for a learning path
+by background, the [technique guides](docs/techniques/index.md) (47 of them, from PCA to diffusion models), the
+[chapter map](docs/chapter_map.md) from the book to the code, and [what was and was not built](docs/roadmap_coverage.md).
+Adding a strategy is writing one forecast model: [how to](docs/how_to_add_a_strategy.md).
+
 ---
 
 ## The design principle
@@ -171,6 +178,38 @@ machine learning, factor-model attribution and reinforcement learning.
 
 ---
 
+## Generation 5
+
+A plugin framework and a newcomer layer around the earlier research, a library of 34 registered strategies, and thirteen
+stages of new evidence (Stages 30-40), each decision rule committed before its result. The full account, with every commit,
+deviation and post-hoc analysis, is in [`reports/generation5_report.md`](reports/generation5_report.md).
+
+**The framework.** `Forecast(mean, std, confidence)` and `Regime(name, probability)` objects, registries for forecast models,
+regime detectors and allocators, calibration against matured outcomes, six forecast-combination rules, a regime-switching
+allocator and risk policy, a causality test run on every plugin, a persistent experiment database that counts trials for the
+deflated Sharpe ratio, and a tear sheet with fixed red-flag rules. `quant backtest --model dual_momentum --tearsheet` runs one
+strategy through all of it; a new strategy is one class (see `docs/how_to_add_a_strategy.md`).
+
+**Fourteen decision-bearing hypotheses, four retained, each with its qualification.** A search over 42 library specifications
+finds one that beats cash after the search (dual momentum, Sharpe 0.90; Reality Check p = 0.0015) and none that beats passive
+equal weight (0.74; p = 0.61). The regime path beats 99.5% of shifted placebo paths, but the allocator it drives does not beat
+risk parity. Regime-conditional trust in twelve models (0.88 against 0.78, p = 0.0675) and a double-machine-learning effect of
+FOMC tone (p about 0.05, from an estimator whose declared validation failed) are retained and fragile. Against the historical
+mean, none of N-BEATS, N-HiTS, a TimeMixer-style mixer or graph attention has a lower CRPS; zero-shot Chronos is significantly
+worse; ensemble uncertainty carries no information about error; isotonic calibration does not beat Platt; diffusion
+scenarios do not beat the empirical distribution for 5% VaR; and a reinforcement-learned allocator turns a training-period
+gain into a Sharpe of 0.21 against 0.75 for equal weight.
+
+**Two diagnostics.** Stage 39 measures the power of the platform's own tests: with 15.7 years and 6% tracking error the paired
+Sharpe test needs a true difference of about 0.35, so most earlier rejections could not have been otherwise. Stage 40 regresses
+the Generation 1 books on the Fama-French five factors plus momentum.
+
+**Not built:** language-model results (no model was called), TimesFM and TimeGPT, causal forests, dispersion trading,
+cross-exchange crypto spreads, accounting-based value and quality, ETF flows and analyst revisions, a run of the Ray backend,
+Docker and CI runs.
+
+---
+
 ## Repository layout
 
 ```
@@ -192,12 +231,19 @@ src/
                  Reality Check / SPA / probability of backtest overfitting
   models/        regression with HAC errors, ML ladder, macro forecasts,
                  regimes (HMM / GMM / BOCPD), probabilistic forecasts, online learners (RLS / NLMS /
-                 Kalman / Hedge), patch-transformer and MLP-mixer forecasters
+                 Kalman / Hedge), patch-transformer, MLP-mixer, N-BEATS / N-HiTS / TimeMixer-style, graph attention,
+                 diffusion, evolution-strategies policy, explanation methods
+  framework/     Generation 5 plugin pipeline: types, registries, data bundle, regimes, calibration and combination, allocators,
+                 regime risk, validation, experiment manager, tear sheet, dashboard, demo, generated docs
+  strategies/    the 34 registered forecast models (time-series, cross-sectional, stat-arb, volatility, fixed income, macro, ML, crypto)
+  causal/        double machine learning, R-learner, 2SLS, difference in differences, simulated worlds
+  cli.py         the `quant` command
   utils/         config, logging, dates, plotting, experiment registry
+docs/            START_HERE, 47 technique guides, glossary, chapter map, strategy cards, notebooks, roadmap coverage (mkdocs.yml)
 experiments/     numbered stage scripts + the experiment registry
 reports/         figures, tables, the data-quality report, the research paper,
-                 the Generation 2, 3 and 4 reports, errata/ (before/after record of the drift fix)
-tests/           424 tests
+                 the Generation 2-5 reports, errata/ (before/after record of the drift fix), the dashboard
+tests/           621 tests
 Dockerfile, docker-compose.yml, Makefile, .github/workflows/ci.yml, .pre-commit-config.yaml
 ```
 
@@ -208,14 +254,17 @@ Dockerfile, docker-compose.yml, Makefile, .github/workflows/ci.yml, .pre-commit-
 ```bash
 pip install -r requirements.txt
 
-python -m experiments.run_all --download      # all 29 stages, ~80 minutes
+python -m experiments.run_all --download      # all 40 stages
 python -m experiments.run_all --generation 2  # Generation 2 only (stages 15-20)
 python -m experiments.run_all --generation 3  # Generation 3 only (stages 21-25)
 python -m experiments.run_all --generation 4  # Generation 4 only (stages 26-29)
+python -m experiments.run_all --generation 5  # Generation 5 only (stages 30-40)
 python -m experiments.run_all --from 6 --to 9 # a range of stages
 python -m experiments.run_all --fresh         # clear derived artefacts first
 python -m experiments.stage01_data            # a single stage
-pytest -q                                      # 424 tests
+pytest -q                                      # 621 tests
+quant demo; quant dashboard; quant explain risk parity   # the newcomer layer
+quant docs build                               # regenerate strategy cards, chapter map, findings digest
 make install test lint cov                     # the same through the Makefile; docker compose run --rm tests for the container
 ```
 
@@ -281,6 +330,17 @@ RAW DATA -> VALIDATION -> CLEAN DATA -> FEATURES
 | 27 | Deep learning: patch transformer, MLP-mixer against the Stage 19 ridge (Gen 4) | Ch. 23 |
 | 28 | Text features and research assistant: FOMC statements, extraction schema, SQL guard (Gen 4) | Ch. 20 |
 | 29 | Research database: SQLite, acceptance checks, query CLIs (Gen 4) | Ch. 7 |
+| 30 | The strategy library as a search: 42 specifications, Reality Check, SPA, PBO, combination (Gen 5) | Ch. 22 |
+| 31 | The adaptive pipeline: regime-switching allocation with placebo, regime risk, regime-conditional trust (Gen 5) | Ch. 19, Ch. 20 |
+| 32 | The optional crypto branch: funding carry, basis, stablecoin flows (Gen 5) | Ch. 22 |
+| 33 | N-BEATS, N-HiTS, TimeMixer-style, graph attention and Bayesian deep learning vs the historical mean (Gen 5) | Ch. 23 |
+| 34 | Zero-shot foundation model: Chronos-Bolt, descriptive (Gen 5) | Ch. 23 |
+| 35 | Explainability (permutation, Shapley, integrated gradients) and calibration (Platt vs isotonic) (Gen 5) | Ch. 23 |
+| 36 | Diffusion-model scenarios for tail risk (Gen 5) | Ch. 21 |
+| 37 | Causal inference: DML, R-learner, IV, difference in differences; FOMC application (Gen 5) | Ch. 23 |
+| 38 | Reinforcement-learning allocation by evolution strategies (Gen 5) | Ch. 19 |
+| 39 | Statistical power of the platform's own tests (Gen 5) | Ch. 22 |
+| 40 | Factor attribution on Fama-French five factors plus momentum (Gen 5) | Ch. 22 |
 
 ---
 
@@ -306,6 +366,8 @@ RAW DATA -> VALIDATION -> CLEAN DATA -> FEATURES
 - [`reports/generation2_report.md`](reports/generation2_report.md) — Generation 2: regimes, dynamic covariance, forecasts, attribution, and the engine erratum
 - [`reports/generation3_report.md`](reports/generation3_report.md) — Generation 3: Bayesian portfolios, online learning, non-price data, an alpha engine, execution and capacity
 - [`reports/generation4_report.md`](reports/generation4_report.md) — Generation 4: search-aware statistics, deep learning, text, the research database
+- [`reports/generation5_report.md`](reports/generation5_report.md) — Generation 5: the framework, the strategy library as a search, adaptive allocation, frontier models, power and factor attribution
+- [`docs/START_HERE.md`](docs/START_HERE.md) — a learning path, the technique guides, the glossary and the strategy cards
 - [`reports/data_quality_report.md`](reports/data_quality_report.md) — Stage 1 findings
 - [`reports/figure_index.md`](reports/figure_index.md) — every figure and the question it answers
 - [`experiments/registry.md`](experiments/registry.md) — every experiment, including the rejected ones
@@ -320,9 +382,10 @@ conclusions:
 - The universe consists of ETFs that exist and are liquid **today**. A
   universe chosen in 2006 would have included funds that later closed. This
   biases results upward and cannot be removed with this dataset.
-- Transaction costs are modelled as linear in traded notional. There is no
-  market-impact term, so the high-turnover strategies are, if anything,
-  flattered.
+- Generation 1 models transaction costs as linear in traded notional, which
+  flatters the high-turnover strategies; Generation 3 adds a square-root impact
+  model and measures capacity, with an impact coefficient that is an
+  order-of-magnitude assumption.
 - Twenty years is one macro cycle and a bit. It contains a single deflationary
   crisis and a single inflationary one, so regime conclusions rest on very
   few independent episodes.
@@ -334,6 +397,12 @@ conclusions:
   multiple-testing correction across stages, starts its regime sample in
   December 2008, and uses macro data at today's vintages with modelled release
   lags rather than real-time vintages.
+
+- Generation 5 adds thirteen stages on the same twenty years, with fourteen
+  declared decisions and no correction across stages. Several of its null results
+  are underpowered (Stage 39 says by how much), the causal and foundation-model
+  stages rest on small or possibly contaminated samples, and no language model was
+  ever called.
 
 ## Licence
 

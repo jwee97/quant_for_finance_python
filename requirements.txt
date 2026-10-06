@@ -31,5 +31,9 @@ torch>=2.2
 beautifulsoup4>=4.12
 lxml>=5.0
 
+# Generation 5 (optional)
+#   Stage 34 zero-shot foundation model:  pip install chronos-forecasting einops transformers   (the stage skips cleanly without them)
+#   Notebooks and docs site:              pip install nbclient ipykernel mkdocs mkdocs-material  (the notebook tests skip without them)
+#   Dashboard rendering test:             pip install playwright   (and a Chromium; the test skips without one)
 # Tests
 pytest>=7.4

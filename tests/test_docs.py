@@ -53,7 +53,9 @@ def test_every_model_in_a_guide_is_registered_and_every_registered_model_has_a_g
     from src.framework import MODELS, load_library
 
     load_library()
-    registered = {e.name for e in MODELS.entries()}
+    from src.framework.docs import library_models
+
+    registered = {e.name for e in library_models(MODELS)}
     cited = {m for g in GUIDES for m in _front(g)[0]["models"]}
     assert cited <= registered, cited - registered
     assert registered <= cited, registered - cited

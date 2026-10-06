@@ -32,7 +32,7 @@ Each model implements `score`, which a shared stack turns into a calibrated fore
 
 ## What we found
 
-At least one specification beat cash after the search (EXP-076, retained), none beat passive equal weight (EXP-077), and the confidence-weighted combination did not beat equal weighting or the Generation 1 momentum specification (EXP-078).
+At least one specification beat cash after the search (EXP-075, retained), none beat passive equal weight (EXP-076), and the confidence-weighted combination did not beat equal weighting or the Generation 1 momentum specification (EXP-077).
 
 ## Going deeper
 

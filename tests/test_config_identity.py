@@ -12,6 +12,7 @@ def test_generation_one_and_two_identities_are_pinned():
     assert config.fingerprint("all") == "c25e66aa003a"
     assert config.fingerprint("gen3") == "4a4c779b0c8d"          # Generation 4 files must not rename a Generation 3 result
     assert config.fingerprint("gen4") == "ea5f48a282e9"          # nor Generation 5 files a Generation 4 result
+    assert config.fingerprint("gen5") == "8cad6ee7344a"          # the Generation 5 report cites this; any edit to a declared rule changes it
 
 
 def test_generation_three_scope_changes_with_its_files_and_ignores_generation_four():

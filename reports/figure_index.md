@@ -1,6 +1,6 @@
 # Figure index
 
-58 figures. Each one answers a stated research question; a figure without a question is not included.
+79 figures. Each one answers a stated research question; a figure without a question is not included.
 
 | # | File | Research question |
 |---|------|-------------------|
@@ -62,3 +62,24 @@
 | 56 | `fig56_text_corpus.png` | What does the FOMC statement corpus look like through the offline lexicon: how many statements, what tone, and how much does each statement rewrite the last? |
 | 57 | `fig57_text_results.png` | Does tone, change or the announced rate action in FOMC statements add out-of-sample forecasting information to price and macro features for the five sleeves, and does the answer depend on how the restricted model is trained? |
 | 58 | `fig58_research_database.png` | What does the research database hold, how many hypotheses did each generation declare and with what outcome, and how many result tables does each stage contribute? |
+| 59 | `fig59_library_search.png` | Across 42 specifications of the strategy library, how are net Sharpe ratios distributed against what a search of that size finds in noise, and does any specification have an edge over cash or over passive equal weight after the search? |
+| 60 | `fig60_library_correlation.png` | How correlated are the 42 specifications' net returns, and so how many independent bets does the library contain? |
+| 61 | `fig61_library_combination.png` | Does the confidence-weighted combination of all 31 library models beat the equal-weight combination and Generation 1 momentum, net of costs? |
+| 62 | `fig62_regimes.png` | What regimes does the composite detector find, how much of the sample does each occupy, and how long does a spell last? |
+| 63 | `fig63_adaptive_allocation.png` | Does choosing the allocator by regime beat static risk parity and equal weight, and is the timing of the regime path worth anything compared with the same path shifted by a random number of years? |
+| 64 | `fig64_adaptive_risk_signal.png` | Does a regime-dependent volatility target beat a constant one, and does trusting each model according to its record in the current regime beat trusting them equally? |
+| 65 | `fig65_crypto.png` | Does timing the funding carry, trading the basis, or following stablecoin supply growth beat the unconditioned alternative (always-on carry, buy and hold) on Deribit perpetual data? |
+| 66 | `fig66_frontier_scores.png` | Does any modern deep forecaster beat an asset's own historical mean for the 21-day return, once the volatility forecast is held fixed? |
+| 67 | `fig67_frontier_bayesian.png` | Does the disagreement between seeds and dropout masks tell us anything about the forecast's spread that the EWMA volatility does not? |
+| 68 | `fig68_foundation_zero_shot.png` | Does a pre-trained time-series model, used without any fitting, say anything about next month's ETF returns? |
+| 69 | `fig69_explain_importance.png` | Which price features do small nonlinear models use to forecast the 21-day return, and do three attribution methods agree? |
+| 70 | `fig70_calibration_isotonic.png` | Does the more flexible isotonic recalibration improve on Platt scaling for monthly up/down probabilities? |
+| 71 | `fig71_diffusion_var.png` | Do scenarios drawn from a trained diffusion model give better tail-risk forecasts for the equal-weight portfolio than a normal or the empirical distribution? |
+| 72 | `fig72_diffusion_realism.png` | Does the diffusion model reproduce the fat tails and correlations of the training z-vectors, and does it invent extremes outside them? |
+| 73 | `fig73_causal_validation.png` | Do the causal estimators recover a known effect where the naive regression fails, and what do they say about FOMC tone? |
+| 74 | `fig74_causal_fomc.png` | What does the sample of statement days look like, and is there any sign that volatility changes the response to tone? |
+| 75 | `fig75_rl_allocator.png` | Does a small policy trained by evolution strategies on a net-of-cost utility beat equal weight out of sample, and is it distinguishable from a random tilt? |
+| 76 | `fig76_rl_overfitting.png` | How much of the policy's training-period gain survives the next year, and how much does the answer depend on the ES seed? |
+| 77 | `fig77_power_curves.png` | How large does a true Sharpe edge or forecast R-squared have to be before the platform's tests would notice it? |
+| 78 | `fig78_power_context.png` | Which of the platform's earlier null Sharpe comparisons were simply too small to detect? |
+| 79 | `fig79_factor_attribution.png` | How much of each book is exposure to known equity factors, and what is left over? |

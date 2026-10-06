@@ -3,7 +3,7 @@
 No language model is involved. The answers come from files in this repository: the glossary and the technique guides under ``docs/``, the plugin
 registries (every model, detector and allocator carries a description), and the decision registry (every experiment's hypothesis, rule and result).
 That makes the explanations checkable and identical on every machine, which is the point of a teaching tool for a field where confident wrong
-explanations are common. ``explain("EXP-081")`` explains a result; ``explain("deflated sharpe")`` explains a concept; ``explain("stage 31")`` summarises a stage.
+explanations are common. ``explain("EXP-080")`` explains a result; ``explain("deflated sharpe")`` explains a concept; ``explain("stage 31")`` summarises a stage.
 """
 
 from __future__ import annotations
@@ -104,7 +104,7 @@ def explain(query: str, config, full: bool = False) -> str:
     q = query.strip()
     guides, glossary, registry = load_guides(config), load_glossary(config), _registry(config)
     if not q:
-        return "Ask about a term (`quant explain sharpe ratio`), a technique (`quant explain risk parity`), a strategy (`quant explain dual_momentum`) or an experiment (`quant explain EXP-081`)."
+        return "Ask about a term (`quant explain sharpe ratio`), a technique (`quant explain risk parity`), a strategy (`quant explain dual_momentum`) or an experiment (`quant explain EXP-080`)."
 
     m = re.fullmatch(r"(?i)exp[- ]?(\d{1,3})", q)
     if m:

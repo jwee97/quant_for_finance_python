@@ -1,4 +1,4 @@
 query,sql,rows_returned
 roadmap,SELECT * FROM grid_results WHERE family='momentum' AND ann_turnover<8 ORDER BY sharpe DESC,624
-retained,"SELECT experiment_id, stage, hypothesis FROM experiments WHERE decision='retain' ORDER BY experiment_id",15
+retained,"SELECT experiment_id, stage, hypothesis FROM experiments WHERE decision='retain' ORDER BY experiment_id",19
 best_books,"SELECT source, name, sharpe FROM books WHERE source = 'stage12_final_comparison.csv' ORDER BY sharpe DESC LIMIT 10",10

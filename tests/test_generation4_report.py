@@ -37,7 +37,8 @@ def _signed(x: float, digits: int = 5) -> str:
 
 
 def test_decision_ledger_matches_the_registry():
-    decided = [d for d in _entries() if d["decision"] in ("retain", "reject")]
+    entries = [d for d in _entries() if "stage26" <= d["stage"] < "stage30"]
+    decided = [d for d in entries if d["decision"] in ("retain", "reject")]
     retained = sorted(d["stage"] for d in decided if d["decision"] == "retain")
     assert len(decided) == 3 and retained == ["stage27_deep"]
     text = _text()

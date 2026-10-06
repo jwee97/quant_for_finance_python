@@ -34,8 +34,8 @@ volatility targets, and regime-conditional trust in the signals.
 
 ## What we found
 
-Regime timing was retained against the placebo (EXP-081, p = 0.005) and the adaptive signal trust was retained but fragile (EXP-083, p = 0.068), whereas the allocation switch did not beat risk parity and equal weight (EXP-080) and
-the adaptive risk policy did not beat a constant target (EXP-082). Four decisions were declared, so some caution on multiplicity applies.
+Regime timing was retained against the placebo (EXP-080, p = 0.005) and the adaptive signal trust was retained but fragile (EXP-082, p = 0.068), whereas the allocation switch did not beat risk parity and equal weight (EXP-079) and
+the adaptive risk policy did not beat a constant target (EXP-081). Four decisions were declared, so some caution on multiplicity applies.
 
 ## Going deeper
 

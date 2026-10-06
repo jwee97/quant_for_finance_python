@@ -14,3 +14,7 @@ EXP-050,stage19_probabilistic,"Fractional-Kelly sizing from the Gaussian forecas
 EXP-060,stage21_bayesian,Posterior-averaged weights are more stable than plug-in mean-variance weights under estimation noise.
 EXP-068,stage25_execution,"At $1bn of assets the impact-inclusive net Sharpe of every allocator (M0, M1, M2, M9, M11, M12) lies within 0.05 of its Generation 1 linear-cost net Sharpe."
 EXP-073,stage27_deep,"A patch transformer or an MLP-mixer forecasts 21-day ETF returns with a significantly lower mean CRPS than the Stage 19 annually refitted price-only ridge (same volatility forecast, same rows)."
+EXP-075,stage30_library,"Across the 42 specifications of the strategy library, at least one has a positive expected net return after accounting for the search: both White's Reality Check and Hansen's SPA reject the null of none, at 10%."
+EXP-080,stage31_adaptive,The regime path adds value: the switching allocator's net Sharpe exceeds the 90th percentile of 200 circular-shift placebos.
+EXP-082,stage31_adaptive,Combining twelve models with regime-conditional trust weights has a higher net Sharpe than their unconditional equal combination.
+EXP-090,stage37_causal,"A more hawkish FOMC statement (a standardised increase in the Stage 28 tone score) changes the same-day standardised return of TLT or SPY (double machine learning, Benjamini-Hochberg across the two)."

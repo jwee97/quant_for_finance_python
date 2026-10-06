@@ -66,17 +66,17 @@ Generated from `experiments/registry.jsonl`. A *retain* means the declared rule 
 | EXP-071 | stage26_distributed | reject | Across a grid of 1,584 simple rules, at least one has a positive expected net return after accounting for the search: both White's Reality Check and Hansen's SP |
 | EXP-073 | stage27_deep | retain | A patch transformer or an MLP-mixer forecasts 21-day ETF returns with a significantly lower mean CRPS than the Stage 19 annually refitted price-only ridge (same |
 | EXP-074 | stage28_text | reject | Tone, change and the announced rate action of FOMC statements (offline lexicon features) add out-of-sample forecasting information to price and macro features f |
-| EXP-076 | stage30_library | retain | Across the 42 specifications of the strategy library, at least one has a positive expected net return after accounting for the search: both White's Reality Chec |
-| EXP-077 | stage30_library | reject | Across the 42 specifications, at least one beats passive equal weight after accounting for the search (Reality Check and SPA on differences of daily net returns |
-| EXP-078 | stage30_library | reject | The confidence-weighted combination of all 31 library models has a higher net Sharpe than both the equal-weight combination and the Generation 1 momentum specif |
-| EXP-080 | stage31_adaptive | reject | A regime-switching allocator (Crisis: mean-CVaR, LowVol: MVO, Inflation: commodity tilt, otherwise risk parity) has a higher net Sharpe than both static risk pa |
-| EXP-081 | stage31_adaptive | retain | The regime path adds value: the switching allocator's net Sharpe exceeds the 90th percentile of 200 circular-shift placebos. |
-| EXP-082 | stage31_adaptive | reject | Regime-dependent volatility targets give a higher net Sharpe than a constant 10% target for both risk parity and equal weight. |
-| EXP-083 | stage31_adaptive | retain | Combining twelve models with regime-conditional trust weights has a higher net Sharpe than their unconditional equal combination. |
-| EXP-084 | stage32_crypto | reject | Timing the funding carry, trading the basis, or following stablecoin supply growth beats the unconditioned alternative (always-on carry, buy and hold) after Ben |
-| EXP-085 | stage33_frontier | reject | At least one of N-BEATS, N-HiTS, a TimeMixer-style mixer or a graph attention network forecasts 21-day ETF returns with a significantly lower mean CRPS than the |
-| EXP-086 | stage33_frontier | reject | For the best model (nbeats), widening the forecast standard deviation by the deep-ensemble and MC-dropout epistemic variance lowers the mean CRPS. |
-| EXP-089 | stage35_explain | reject | Isotonic recalibration of the Stage 19 monthly up-probability has a lower mean log loss than Platt scaling (both refitted on matured outcomes, 2016 onward). |
-| EXP-090 | stage36_diffusion | reject | The diffusion-model 5% value-at-risk of the equal-weight 21-day return has a lower mean pinball loss than both the Gaussian and the bootstrap quantile (Benjamin |
-| EXP-091 | stage37_causal | retain | A more hawkish FOMC statement (a standardised increase in the Stage 28 tone score) changes the same-day standardised return of TLT or SPY (double machine learni |
-| EXP-092 | stage38_rl | reject | A policy learned by evolution strategies (linear softmax over price features, mean-variance utility net of costs, annual refits) has a higher net Sharpe than eq |
+| EXP-075 | stage30_library | retain | Across the 42 specifications of the strategy library, at least one has a positive expected net return after accounting for the search: both White's Reality Chec |
+| EXP-076 | stage30_library | reject | Across the 42 specifications, at least one beats passive equal weight after accounting for the search (Reality Check and SPA on differences of daily net returns |
+| EXP-077 | stage30_library | reject | The confidence-weighted combination of all 31 library models has a higher net Sharpe than both the equal-weight combination and the Generation 1 momentum specif |
+| EXP-079 | stage31_adaptive | reject | A regime-switching allocator (Crisis: mean-CVaR, LowVol: MVO, Inflation: commodity tilt, otherwise risk parity) has a higher net Sharpe than both static risk pa |
+| EXP-080 | stage31_adaptive | retain | The regime path adds value: the switching allocator's net Sharpe exceeds the 90th percentile of 200 circular-shift placebos. |
+| EXP-081 | stage31_adaptive | reject | Regime-dependent volatility targets give a higher net Sharpe than a constant 10% target for both risk parity and equal weight. |
+| EXP-082 | stage31_adaptive | retain | Combining twelve models with regime-conditional trust weights has a higher net Sharpe than their unconditional equal combination. |
+| EXP-083 | stage32_crypto | reject | Timing the funding carry, trading the basis, or following stablecoin supply growth beats the unconditioned alternative (always-on carry, buy and hold) after Ben |
+| EXP-084 | stage33_frontier | reject | At least one of N-BEATS, N-HiTS, a TimeMixer-style mixer or a graph attention network forecasts 21-day ETF returns with a significantly lower mean CRPS than the |
+| EXP-085 | stage33_frontier | reject | For the best model (nbeats), widening the forecast standard deviation by the deep-ensemble and MC-dropout epistemic variance lowers the mean CRPS. |
+| EXP-088 | stage35_explain | reject | Isotonic recalibration of the Stage 19 monthly up-probability has a lower mean log loss than Platt scaling (both refitted on matured outcomes, 2016 onward). |
+| EXP-089 | stage36_diffusion | reject | The diffusion-model 5% value-at-risk of the equal-weight 21-day return has a lower mean pinball loss than both the Gaussian and the bootstrap quantile (Benjamin |
+| EXP-090 | stage37_causal | retain | A more hawkish FOMC statement (a standardised increase in the Stage 28 tone score) changes the same-day standardised return of TLT or SPY (double machine learni |
+| EXP-091 | stage38_rl | reject | A policy learned by evolution strategies (linear softmax over price features, mean-variance utility net of costs, annual refits) has a higher net Sharpe than eq |
