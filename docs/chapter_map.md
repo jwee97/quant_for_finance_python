@@ -1,0 +1,53 @@
+# Chapter map
+
+Where each topic of *Quantitative Finance with Case Studies in Python* is implemented in this repository, with the guide that explains it, the stage that runs it, the figures that show it and the tests that pin it.
+
+| Book chapter | Guide | Stage(s) | Code | Figures | Tests |
+|---|---|---|---|---|---|
+| Ch. 7 | [Clean data you can trust](techniques/data-integrity.md) | 1 | `src/data/clean.py`, `src/data/validation.py` | 1 | `tests/test_data.py` |
+| Ch. 7 | [Running thousands of experiments in parallel](techniques/distributed-experiments.md) | 26 | `src/distributed/executor.py`, `experiments/stage26_distributed.py` | n/a | `tests/test_stage26_grid.py` |
+| Ch. 7 | [The research database and reproducibility](techniques/experiment-database-and-reproducibility.md) | 29 | `src/research_db/builder.py`, `src/framework/experiments.py` | 58 | `tests/test_research_db.py`, `tests/test_config_identity.py` |
+| Ch. 8 | [How many independent bets do I own? (PCA)](techniques/pca-effective-rank.md) | 2 | `src/features/pca.py`, `experiments/stage02_eda.py` | 5, 7 | `tests/test_returns.py` |
+| Ch. 19 | [Bayesian portfolio construction](techniques/bayesian-portfolio-construction.md) | 21 | `src/portfolio/bayesian.py`, `experiments/stage21_bayesian.py` | 42, 43 | `tests/test_bayesian.py` |
+| Ch. 19 | [Hierarchical risk parity (HRP) and HERC](techniques/hierarchical-risk-parity.md) | 18 | `src/portfolio/hierarchical.py`, `experiments/stage18_hierarchical.py` | 36, 37 | `tests/test_hierarchical.py` |
+| Ch. 19 | [Mean-variance optimisation and why it needs shrinkage](techniques/mean-variance-and-shrinkage.md) | 7, 8, 21 | `src/portfolio/mean_variance.py`, `src/portfolio/covariance.py` | 18 | `tests/test_portfolio.py` |
+| Ch. 19 | [Adapting the portfolio to the regime](techniques/regime-adaptive-allocation.md) | 31 | `src/framework/allocation.py`, `src/framework/risk.py` | 62, 63, 64 | `tests/test_framework.py`, `tests/test_regime_strategies.py` |
+| Ch. 19 | [Reinforcement learning for allocation (and why it comes last)](techniques/reinforcement-learning.md) | 38 | `src/models/rl_allocation.py`, `experiments/stage38_rl.py` | 75, 76 | `tests/test_rl_allocation.py` |
+| Ch. 19 | [Risk parity and inverse-volatility weighting](techniques/risk-parity.md) | 7 | `src/portfolio/risk_parity.py`, `src/portfolio/inverse_vol.py` | 16, 17 | `tests/test_portfolio.py` |
+| Ch. 20 | [Calibration: do 70% forecasts come true 70% of the time?](techniques/calibration.md) | 19, 35 | `src/models/probabilistic.py`, `experiments/stage35_explain.py` | 38, 70 | `tests/test_probabilistic.py`, `tests/test_explain.py` |
+| Ch. 20 | [The information coefficient and the fundamental law](techniques/information-coefficient.md) | 5 | `experiments/stage05_expected_returns.py`, `src/signals/transform.py` | 9, 10, 13 | `tests/test_signals.py`, `tests/test_forecast_tests.py` |
+| Ch. 20 | [Macro and alternative data without look-ahead](techniques/macro-and-alternative-data.md) | 15, 23, 30 | `src/data/macro.py`, `src/data/altdata.py` | 28, 29, 46, 47 | `tests/test_macro.py`, `tests/test_macro_forecast.py`, `tests/test_altdata.py` |
+| Ch. 20 | [Online learning: updating as data arrives](techniques/online-learning.md) | 22 | `src/models/online.py`, `experiments/stage22_online.py` | 44, 45 | `tests/test_online.py` |
+| Ch. 20 | [Forecasts as distributions: CRPS and the PIT](techniques/probabilistic-forecasting.md) | 19, 33 | `src/models/probabilistic.py`, `src/framework/types.py` | 38, 39 | `tests/test_probabilistic.py`, `tests/test_framework.py` |
+| Ch. 20 | [Market regimes: HMM, volatility states, change points](techniques/regime-detection.md) | 16, 31 | `src/models/regimes.py`, `src/framework/regimes.py` | 30, 31, 32, 62 | `tests/test_regimes.py`, `tests/test_framework.py` |
+| Ch. 20.2 | [Dynamic covariance: DCC-GARCH and orthogonal GARCH](techniques/dynamic-covariance.md) | 17 | `src/portfolio/dynamic_covariance.py`, `experiments/stage17_dynamic_covariance.py` | 34, 35 | `tests/test_dynamic_covariance.py` |
+| Ch. 20.2 | [Forecasting volatility: EWMA and GARCH](techniques/volatility-forecasting.md) | 2, 8 | `src/features/volatility.py`, `src/portfolio/covariance.py` | 4, 18 | `tests/test_returns.py`, `tests/test_portfolio.py` |
+| Ch. 21 | [Diffusion models for scenario generation](techniques/diffusion-scenarios.md) | 36 | `src/models/diffusion.py`, `experiments/stage36_diffusion.py` | 71, 72 | `tests/test_diffusion.py` |
+| Ch. 21 | [Mean-CVaR optimisation: optimising the tail](techniques/mean-cvar.md) | 7, 9 | `src/portfolio/cvar_optimize.py`, `src/risk/cvar.py` | 19, 20 | `tests/test_portfolio.py`, `tests/test_risk.py` |
+| Ch. 21 | [Value at risk, expected shortfall and how to test them](techniques/var-cvar-and-backtests.md) | 9, 36 | `src/risk/var.py`, `src/risk/cvar.py` | 19, 71 | `tests/test_risk.py`, `tests/test_diffusion.py` |
+| Ch. 22 | [Attribution: where did the return come from?](techniques/attribution.md) | 20, 40 | `src/backtest/attribution.py`, `experiments/stage20_attribution.py` | 40, 41, 79 | `tests/test_attribution.py`, `tests/test_factors.py` |
+| Ch. 22 | [How a backtest turns signals into returns](techniques/backtest-engine-and-costs.md) | 6 | `src/backtest/engine.py`, `src/backtest/costs.py` | 14, 15 | `tests/test_backtest.py` |
+| Ch. 22 | [Cross-sectional factors: low volatility, value, quality, carry, defensive beta](techniques/cross-sectional-factors.md) | 30 | `src/strategies/cross_sectional.py`, `src/strategies/_common.py` | 59, 60 | `tests/test_strategies.py` |
+| Ch. 22 | [Crypto carry: funding, basis and stablecoin flows](techniques/crypto-carry.md) | 32 | `src/data/crypto.py`, `src/strategies/crypto.py` | 65 | `tests/test_crypto.py` |
+| Ch. 22 | [Execution: spread, impact and capacity](techniques/execution-and-impact.md) | 25 | `src/backtest/execution.py`, `src/backtest/impact.py` | 50, 51 | `tests/test_impact.py` |
+| Ch. 22 | [Fixed income and volatility strategy families](techniques/fixed-income-and-volatility-strategies.md) | 30 | `src/strategies/fixed_income.py`, `src/strategies/volatility.py` | 59, 60 | `tests/test_strategies.py` |
+| Ch. 22 | [Mean reversion and z-scores](techniques/mean-reversion.md) | 4, 30 | `src/signals/mean_reversion.py`, `src/features/mean_reversion.py` | 11, 12 | `tests/test_signals.py` |
+| Ch. 22 | [Momentum and trend following](techniques/momentum.md) | 3, 30 | `src/signals/momentum.py`, `src/strategies/time_series.py` | 8, 9, 10 | `tests/test_signals.py`, `tests/test_strategies.py` |
+| Ch. 22 | [Multiple testing, false discovery and the deflated Sharpe ratio](techniques/multiple-testing.md) | 3, 11, 26 | `src/validation/multiple_testing.py`, `src/validation/forecast_tests.py` | 52, 53 | `tests/test_multiple_testing.py`, `tests/test_robustness.py` |
+| Ch. 22 | [Comparing two strategies fairly: the paired bootstrap](techniques/paired-sharpe-bootstrap.md) | 18, 31 | `src/validation/robustness.py` | 43 | `tests/test_robustness.py` |
+| Ch. 22 | [Pairs, cointegration and statistical arbitrage](techniques/pairs-and-statistical-arbitrage.md) | 14, 30 | `src/signals/pairs.py`, `src/signals/pca_strategy.py` | 26, 27 | `tests/test_extensions.py`, `tests/test_strategies.py` |
+| Ch. 22 | [Reading performance honestly](techniques/performance-metrics.md) | 6, 12 | `src/backtest/metrics.py`, `experiments/stage12_results.py` | 25 | `tests/test_backtest.py` |
+| Ch. 22 | [The plugin framework: every strategy is a forecast model](techniques/plugin-framework.md) | 30, 31 | `src/framework/pipeline.py`, `src/framework/registry.py` | n/a | `tests/test_framework.py` |
+| Ch. 22 | [Power: what could the tests have found?](techniques/power-analysis.md) | 39 | `experiments/stage39_power.py`, `config/diagnostics.yaml` | 77, 78 | `tests/test_power.py` |
+| Ch. 22 | [Reality Check, SPA and probability of backtest overfitting](techniques/reality-check-spa-pbo.md) | 26, 30 | `src/validation/multiple_testing.py`, `experiments/stage26_distributed.py` | 52, 53, 59 | `tests/test_multiple_testing.py`, `tests/test_stage26_grid.py` |
+| Ch. 22 | [The strategy library as a search, not a menu](techniques/strategy-library-search.md) | 30 | `src/strategies/__init__.py`, `src/strategies/_common.py` | 59, 60, 61 | `tests/test_strategies.py` |
+| Ch. 22 | [Walk-forward testing and look-ahead leakage](techniques/walk-forward-and-leakage.md) | 11 | `src/validation/walk_forward.py`, `src/validation/leakage.py` | 22, 23 | `tests/test_leakage.py` |
+| Ch. 22.5 | [Combining forecasts: stacks, trust rules and mixtures](techniques/forecast-combination.md) | 10, 24, 30, 31 | `src/framework/forecasting.py`, `src/signals/alpha_engine.py` | 48, 49, 61 | `tests/test_alpha_engine.py`, `tests/test_framework.py` |
+| Ch. 23 | [Uncertainty from neural networks: ensembles and MC dropout](techniques/bayesian-deep-learning.md) | 33 | `src/models/deep_forecast.py`, `experiments/stage33_frontier.py` | 67 | `tests/test_frontier_models.py` |
+| Ch. 23 | [Causal inference: from correlation to cause](techniques/causal-inference.md) | 37 | `src/causal/estimators.py`, `src/causal/simulate.py` | 73, 74 | `tests/test_causal.py` |
+| Ch. 23 | [Deep learning for time series: transformers, mixers, N-BEATS, N-HiTS](techniques/deep-time-series-models.md) | 27, 33 | `src/models/deep_forecast.py`, `src/models/deep_family.py` | 54, 55, 66 | `tests/test_deep_forecast.py`, `tests/test_frontier_models.py` |
+| Ch. 23 | [Explaining a model: permutation importance, Shapley values, integrated gradients](techniques/explainability.md) | 35 | `src/models/explain.py`, `experiments/stage35_explain.py` | 69 | `tests/test_explain.py` |
+| Ch. 23 | [Foundation models for time series (zero-shot Chronos)](techniques/foundation-models.md) | 34 | `experiments/stage34_foundation.py` | 68 | `tests/test_frontier_models.py` |
+| Ch. 23 | [Graph attention across assets](techniques/graph-neural-networks.md) | 33 | `src/models/graph_forecast.py`, `experiments/stage33_frontier.py` | 66 | `tests/test_frontier_models.py` |
+| Ch. 23 | [Machine learning on returns: ridge, forests and honesty](techniques/machine-learning-for-returns.md) | 13, 19 | `src/models/machine_learning.py`, `src/strategies/ml.py` | 24 | `tests/test_strategies.py` |
+| Ch. 23 | [Text as data: FOMC statements and the research assistant](techniques/text-features-and-the-assistant.md) | 28 | `src/assistant/documents.py`, `src/assistant/extraction.py` | 56, 57 | `tests/test_assistant.py` |

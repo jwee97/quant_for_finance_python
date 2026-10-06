@@ -8,6 +8,7 @@
     quant dashboard                       a self-contained HTML explorer of everything recorded
     quant explain "deflated sharpe"       a plain-language explanation of a term, technique or experiment
     quant demo                            a five-minute tour on cached data
+    quant docs build                      regenerate the strategy cards, chapter map and findings digest
 """
 
 from __future__ import annotations
@@ -146,13 +147,20 @@ def cmd_dashboard(args, config) -> int:
 
 def cmd_explain(args, config) -> int:
     from .assistant.explain import explain
-    print(explain(" ".join(args.term), config))
+    print(explain(" ".join(args.term), config, full=args.full))
     return 0
 
 
 def cmd_demo(args, config) -> int:
     from .framework.demo import run_demo
     return run_demo(config)
+
+
+def cmd_docs(args, config) -> int:
+    from .framework.docs import build_docs
+    for path in build_docs(config):
+        print(path.relative_to(config.root))
+    return 0
 
 
 def cmd_sql(args, config) -> int:
@@ -185,8 +193,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("run_id"); p.add_argument("--prices"); p.set_defaults(func=cmd_tearsheet)
     p = sub.add_parser("data", help="check a price file"); p.add_argument("action", choices=["check"]); p.add_argument("--prices"); p.set_defaults(func=cmd_data)
     p = sub.add_parser("dashboard", help="write a self-contained HTML dashboard"); p.add_argument("--out", default="reports/dashboard.html"); p.set_defaults(func=cmd_dashboard)
-    p = sub.add_parser("explain", help="explain a term, a technique or an experiment"); p.add_argument("term", nargs="+"); p.set_defaults(func=cmd_explain)
+    p = sub.add_parser("explain", help="explain a term, a technique or an experiment"); p.add_argument("term", nargs="+"); p.add_argument("--full", action="store_true", help="print the whole guide"); p.set_defaults(func=cmd_explain)
     p = sub.add_parser("demo", help="a five-minute tour"); p.set_defaults(func=cmd_demo)
+    p = sub.add_parser("docs", help="regenerate strategy cards, the chapter map and the findings digest"); p.add_argument("action", choices=["build"]); p.set_defaults(func=cmd_docs)
     p = sub.add_parser("sql", help="a read-only query on the research database"); p.add_argument("sql"); p.set_defaults(func=cmd_sql)
     return parser
 
