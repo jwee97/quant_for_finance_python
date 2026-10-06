@@ -1,0 +1,7 @@
+check,passed
+every registry entry is present,True
+every numeric result is in metrics with the same value,True
+every CSV is indexed and its sha256 matches,True
+every figure caption is in figures,True
+"the roadmap query equals a direct pandas filter, in order",True
+a write through the read-only connection fails,True

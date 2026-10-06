@@ -1,0 +1,16 @@
+experiment_id,stage,hypothesis
+EXP-001,stage01_data,"The ETF panel is fit for systematic research after validation and an explicit missing-data policy, with no observation deleted."
+EXP-002,stage02_eda,"A 15-ETF multi-asset universe contains far fewer independent risk dimensions than it contains assets, and that number falls further in crises."
+EXP-003,stage02_eda,"Daily ETF returns are not normally distributed, so parametric VaR will understate the tail."
+EXP-008,stage06_backtest,M3_momentum generates positive risk-adjusted returns after realistic transaction costs.
+EXP-012,stage08_covariance,Which covariance and volatility estimators produce the most useful out-of-sample risk forecasts? (spec §33)
+EXP-014,stage09_risk,Risk-based allocation survives the post-COVID inflation shock better than equity beta does (Ch. 19 closing case study).
+EXP-016,stage11_validation,The backtest engine and every production strategy are free of look-ahead bias.
+EXP-019,stage11_validation,Out-of-sample walk-forward performance justifies the model ladder's added complexity.
+EXP-020,stage12_results,Final model comparison: which step of the ladder actually improved risk-adjusted returns after costs? (spec §55-§56)
+EXP-027,stage16_regimes,A filtered high-volatility HMM state at the close of day t predicts larger absolute equity-sleeve returns on day t+1.
+EXP-038,stage17_dynamic_covariance,A long-only minimum-variance book built from DCC-GARCH forecasts realises lower volatility than the same book built from the shrinkage estimator.
+EXP-050,stage19_probabilistic,"Fractional-Kelly sizing from the Gaussian forecast beats direction-only sizing of the classifier signal, net of costs."
+EXP-060,stage21_bayesian,Posterior-averaged weights are more stable than plug-in mean-variance weights under estimation noise.
+EXP-068,stage25_execution,"At $1bn of assets the impact-inclusive net Sharpe of every allocator (M0, M1, M2, M9, M11, M12) lies within 0.05 of its Generation 1 linear-cost net Sharpe."
+EXP-073,stage27_deep,"A patch transformer or an MLP-mixer forecasts 21-day ETF returns with a significantly lower mean CRPS than the Stage 19 annually refitted price-only ridge (same volatility forecast, same rows)."

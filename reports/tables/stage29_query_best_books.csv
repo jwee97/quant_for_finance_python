@@ -1,0 +1,11 @@
+source,name,sharpe
+stage12_final_comparison.csv,M1_inverse_vol,0.851462
+stage12_final_comparison.csv,M9_mean_cvar,0.808352
+stage12_final_comparison.csv,M2_risk_parity,0.789003
+stage12_final_comparison.csv,M0_equal_weight,0.685606
+stage12_final_comparison.csv,SPY_buy_hold,0.647053
+stage12_final_comparison.csv,M6_combined_alpha_mvo,0.501968
+stage12_final_comparison.csv,M7_combined_alpha_shrinkage_mvo,0.496877
+stage12_final_comparison.csv,M8_black_litterman,0.424983
+stage12_final_comparison.csv,M3_momentum,0.311524
+stage12_final_comparison.csv,M5_momentum_plus_mr,0.068595

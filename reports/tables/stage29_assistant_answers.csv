@@ -1,0 +1,7 @@
+question,sql,rows,backend
+Which hypotheses were retained?,"SELECT experiment_id, stage, hypothesis FROM experiments WHERE decision = 'retain' ORDER BY experiment_id LIMIT 500",15,template:v1
+How many were rejected?,"SELECT stage, COUNT(*) AS rejected FROM experiments WHERE decision = 'reject' GROUP BY stage ORDER BY stage LIMIT 500",20,template:v1
+What did stage 25 find?,"SELECT experiment_id, decision, hypothesis FROM experiments WHERE stage LIKE ? ORDER BY experiment_id LIMIT 500",3,template:v1
+Describe EXP-068,"SELECT e.experiment_id, e.stage, e.decision, e.hypothesis, m.key, m.value FROM experiments e LEFT JOIN metrics m ON m.experiment_id = e.experiment_id WHERE e.experiment_id = ? ORDER BY m.key LIMIT 500",13,template:v1
+the best 5 books by sharpe,"SELECT source, name, sharpe FROM books WHERE source = 'stage12_final_comparison.csv' ORDER BY sharpe DESC LIMIT 5",5,template:v1
+momentum rules with turnover below 8,SELECT * FROM grid_results WHERE family = 'momentum' AND ann_turnover < ? ORDER BY sharpe DESC LIMIT 500,500,template:v1

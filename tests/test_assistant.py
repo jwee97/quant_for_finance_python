@@ -158,7 +158,7 @@ def _database(path):
         create table grid_results(id integer, family text, sharpe real, ann_turnover real);
         insert into experiments values ('EXP-001','stage01_data','h1','retain'),('EXP-002','stage21_bayesian','h2','reject'),('EXP-003','stage21_bayesian','h3','retain');
         insert into metrics values ('EXP-001','x',1.5);
-        insert into books values ('a.csv','stage12','M1',0.85),('a.csv','stage12','M3',0.31);
+        insert into books values ('stage12_final_comparison.csv','stage12','M1',0.85),('stage12_final_comparison.csv','stage12','M3',0.31),('stage09_stress_regimes.csv','stage09','M1',3.4);
         insert into grid_results values (1,'momentum',0.3,5.0),(2,'momentum',0.4,9.0),(3,'momentum',0.1,2.0),(4,'mean_reversion',0.9,1.0);
     """)
     connection.commit()
@@ -184,7 +184,7 @@ def test_sql_model_output_is_untrusted_and_the_connection_cannot_write(tmp_path)
     hostile = ResearchAssistant(tmp_path / "r.db", SQLBackend("m", FakeClient("DROP TABLE books")))
     with pytest.raises(UnsafeSQL):
         hostile.ask("anything")
-    good = ResearchAssistant(tmp_path / "r.db", SQLBackend("m", FakeClient("```select name from books where sharpe > 0.5```")))
+    good = ResearchAssistant(tmp_path / "r.db", SQLBackend("m", FakeClient("```select name from books where sharpe > 0.5 and source like 'stage12%'```")))
     assert list(good.ask("which book has a high sharpe").rows["name"]) == ["M1"]
     connection = open_readonly(tmp_path / "r.db")
     with pytest.raises(sqlite3.OperationalError):

@@ -31,4 +31,7 @@ acceptance:
 example_queries:
   roadmap: "SELECT * FROM grid_results WHERE family='momentum' AND ann_turnover<8 ORDER BY sharpe DESC"
   retained: "SELECT experiment_id, stage, hypothesis FROM experiments WHERE decision='retain' ORDER BY experiment_id"
-  best_books: "SELECT source, name, sharpe FROM books ORDER BY sharpe DESC LIMIT 10"
+  best_books: "SELECT source, name, sharpe FROM books WHERE source = 'stage12_final_comparison.csv' ORDER BY sharpe DESC LIMIT 10"
+  # The first draft of best_books had no WHERE clause and returned in-regime Sharpe ratios from the stress-window and regime-conditional
+  # tables (3.4 inside a crisis window), which are not comparable with full-sample Sharpe ratios. The books table is a raw harvest of every
+  # performance table; a query over it must say which table it means. Corrected before this stage's results were committed.

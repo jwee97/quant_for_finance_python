@@ -59,6 +59,7 @@ STAGES = [
     (26, "stage26_distributed", "Distributed experimentation", 4),
     (27, "stage27_deep", "Deep learning", 4),
     (28, "stage28_text", "Text features and research assistant", 4),
+    (29, "stage29_research_db", "Research database", 4),
 ]
 LAST_STAGE = max(number for number, *_ in STAGES)
 

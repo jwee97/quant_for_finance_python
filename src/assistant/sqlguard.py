@@ -101,9 +101,9 @@ class TemplateBackend:
             return ("SELECT experiment_id, decision, hypothesis FROM experiments WHERE stage LIKE ? ORDER BY experiment_id", (f"stage{int(stage.group(1)):02d}%",))
         if "best" in q and ("book" in q or "sharpe" in q):
             n = int(float(number.group(1))) if number else 10
-            return (f"SELECT source, name, sharpe FROM books ORDER BY sharpe DESC LIMIT {max(1, min(n, 100))}", ())
+            return (f"SELECT source, name, sharpe FROM books WHERE source = 'stage12_final_comparison.csv' ORDER BY sharpe DESC LIMIT {max(1, min(n, 100))}", ())
         raise Refused("I only answer: which hypotheses were retained / rejected; what stage N found; describe EXP-nnn; "
-                      "the best N books by Sharpe; momentum rules with turnover below X.")
+                      "the best N books by full-sample Sharpe (Stage 12 comparison); momentum rules with turnover below X.")
 
 
 class SQLBackend:
