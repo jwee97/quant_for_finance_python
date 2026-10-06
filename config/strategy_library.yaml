@@ -1,0 +1,74 @@
+# ---------------------------------------------------------------------------
+# The strategy library (Generation 5): 31 registered models on the 15-ETF universe, tested as a SEARCH.
+#
+# The library makes it easy to try many ideas, which is exactly when the best of them looks good by construction. Stage 30 runs every
+# declared specification through the same pipeline (calibrated forecast -> Generation 1 position stack -> 10% volatility target ->
+# per-asset linear costs) and asks the search-aware questions of Stage 26. Rules written before any Stage 30 result, committed on their own.
+# ---------------------------------------------------------------------------
+specs:                                        # 42 specifications; model parameters are the library defaults unless given
+  - { model: momentum }
+  - { model: momentum, params: { lookback: 63 } }
+  - { model: momentum, params: { lookback: 252 } }
+  - { model: mean_reversion }
+  - { model: mean_reversion, params: { lookback: 5 } }
+  - { model: mean_reversion, params: { lookback: 63 } }
+  - { model: dual_momentum }
+  - { model: dual_momentum, params: { lookback: 126, skip: 5 } }
+  - { model: vol_breakout }
+  - { model: vol_breakout, params: { window: 50 } }
+  - { model: donchian }
+  - { model: donchian, params: { entry: 20, exit: 10 } }
+  - { model: donchian, params: { entry: 100, exit: 50 } }
+  - { model: ma_crossover }
+  - { model: ma_crossover, params: { fast: 20, slow: 100 } }
+  - { model: trend_atr }
+  - { model: trend_atr, params: { k: 1.0 } }
+  - { model: xs_momentum }
+  - { model: relative_strength }
+  - { model: low_volatility }
+  - { model: defensive_beta }
+  - { model: value_proxy }
+  - { model: quality_proxy }
+  - { model: carry }
+  - { model: pca_residual }
+  - { model: kalman_pairs }
+  - { model: cointegration_pairs }
+  - { model: sparse_basket }
+  - { model: vrp_timing }
+  - { model: variance_carry }
+  - { model: implied_vs_realized }
+  - { model: curve_steepener }
+  - { model: butterfly }
+  - { model: carry_rolldown }
+  - { model: duration_timing }
+  - { model: inflation_rotation }
+  - { model: yield_curve_regime }
+  - { model: dollar_strength }
+  - { model: commodity_supercycle }
+  - { model: risk_on_off }
+  - { model: ml_ridge }
+  - { model: ml_ridge, params: { features: price_macro } }
+
+common_window: "from the first date on which every one of the 42 specifications has a live book (the slowest model sets it)"
+
+combination:                                  # all 31 models, default parameters, combined at the FORECAST level
+  models: all_non_crypto
+  allocation: { allocator: forecast_stack, params: { mode: time_series } }
+  rules: [equal, confidence, ic_weighted, cost_aware]
+
+multiple_testing:
+  benchmark_cash: "zero excess return"
+  benchmark_passive: "M0 equal weight, net of its own costs"
+  bootstrap: { n_samples: 2000, mean_block_length: 21, seed: 7 }
+  pbo_blocks: 16
+
+decisions:
+  alpha: 0.10
+  # h_library_cash: retained only if BOTH White's Reality Check and Hansen's SPA reject, at 10%, the null that none of the 42
+  #   specifications has a positive expected net return (benchmark: cash).
+  # h_library_passive: retained only if BOTH reject the null that none of the 42 beats passive equal weight (differences of daily net returns).
+  # h_combination: the confidence-weighted combination of all 31 models has a higher net Sharpe than (a) the equal-weight combination and
+  #   (b) the Generation 1 momentum specification (momentum, defaults): paired stationary bootstrap, a family of two, Benjamini-Hochberg at 10%,
+  #   positive differences required. Retained only if both pass.
+  # Reported, not judged: every specification's net Sharpe, turnover and cost drag; by family; PBO; deflated Sharpe probability of the best
+  #   (42 trials); the share positive by sample; the correlation of the specifications' net returns; the IC-weighted and cost-aware combinations.
