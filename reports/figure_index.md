@@ -1,6 +1,6 @@
 # Figure index
 
-51 figures. Each one answers a stated research question; a figure without a question is not included.
+58 figures. Each one answers a stated research question; a figure without a question is not included.
 
 | # | File | Research question |
 |---|------|-------------------|
@@ -55,3 +55,10 @@
 | 49 | `fig49_alpha_combination.png` | Does a cost-aware rule for how much to trust each alpha, applied to the combined forecast, beat equal weighting and the best Generation 1 alpha net of costs? |
 | 50 | `fig50_capacity.png` | Once market impact is charged on the fund's own size, how fast does each book's net Sharpe decay with assets under management, and at what size does it lose half of its linear-cost Sharpe? |
 | 51 | `fig51_bands_scheduling.png` | Does holding positions inside a no-trade band save more in impact and spread than it costs in tracking, and how much does spreading a trade over several days trade cost for timing risk? |
+| 52 | `fig52_search.png` | Across a grid of 1,584 simple rules, how does net Sharpe distribute, how much of the best is what a search of that size produces from noise, and does any rule have a positive expected net return after White's Reality Check and Hansen's SPA? |
+| 53 | `fig53_overfitting.png` | How often would the best-in-sample rule from this grid land in the bottom half out of sample, how much does its Sharpe degrade, and which parts of the grid are on average above or below zero? |
+| 54 | `fig54_deep_scores.png` | Do a patch transformer and an MLP-mixer forecast 21-day ETF returns better than the annually refitted price-only ridge, on the same rows and with the same volatility forecast? |
+| 55 | `fig55_deep_training.png` | How well do the deep models fit, how much of their skill is seed noise, and how big are they next to the 252-feature linear control? |
+| 56 | `fig56_text_corpus.png` | What does the FOMC statement corpus look like through the offline lexicon: how many statements, what tone, and how much does each statement rewrite the last? |
+| 57 | `fig57_text_results.png` | Does tone, change or the announced rate action in FOMC statements add out-of-sample forecasting information to price and macro features for the five sleeves, and does the answer depend on how the restricted model is trained? |
+| 58 | `fig58_research_database.png` | What does the research database hold, how many hypotheses did each generation declare and with what outcome, and how many result tables does each stage contribute? |

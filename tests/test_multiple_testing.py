@@ -92,3 +92,9 @@ def test_unknown_backend_and_seed_determinism():
     assert task_seed({"a": 1, "b": 2}) == task_seed({"b": 2, "a": 1})
     assert task_seed({"a": 1}) != task_seed({"a": 2})
     assert "serial" in available_backends()
+
+
+def test_dask_backend_matches_serial_when_dask_is_installed():
+    pytest.importorskip("dask.distributed")
+    tasks = [{"a": i, "b": 0.5 * i} for i in range(23)]
+    assert run_tasks(_square, tasks, "dask", n_jobs=2, chunk_size=4) == run_tasks(_square, tasks, "serial")

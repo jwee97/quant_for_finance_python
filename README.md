@@ -140,10 +140,34 @@ at the forecast level does not beat momentum alone; a 1% no-trade band does not 
 while the momentum book halves its Sharpe at about $100m, and mean reversion, the combined book and every alpha
 combination are not viable at any size worth running.
 
-**Not built:** Generation 4 (transformers, an LLM assistant, distributed experiments, a research database, cloud);
-ETF flows, earnings revisions, creation and redemption data and options flow (not available free and not proxied);
-explainable machine learning, factor-model attribution, an Almgren-Chriss optimal trajectory, an estimated impact
-coefficient, and the software-engineering items of the roadmap's Priority 20.
+**Not built in Generation 3:** ETF flows, earnings revisions, creation and redemption data and options flow (not available
+free and not proxied); explainable machine learning, factor-model attribution, an Almgren-Chriss optimal trajectory, an
+estimated impact coefficient.
+
+---
+
+## Generation 4
+
+Distributed experimentation, modern deep learning, a text-and-assistant stage, a research database (Stages 26-29), and the
+engineering around them. Three research questions with rules committed before their results; the database and the
+engineering have acceptance checks instead. Full account: [`reports/generation4_report.md`](reports/generation4_report.md).
+
+**One of three hypotheses retained, and its qualification is the finding.** A grid of 1,584 simple rules run in parallel
+has 76% of its members with a positive net Sharpe and a best of 0.45, but a search that size produces a best of about 0.77 from
+noise: White's Reality Check p = 0.50, Hansen's SPA p = 0.34, probability of backtest overfitting 0.60, and the in-sample
+winner has no out-of-sample edge. An MLP-mixer has a significantly lower CRPS than the Stage 19 ridge (p = 0.019), but the ridge
+is worse than predicting zero, and the mixer is no better than each asset's historical mean. FOMC statement tone, change and
+action add nothing to price and macro.
+
+**What the engineering did and did not do.** The research record is queryable (`python -m src.research_db "SELECT ..."`,
+`python -m src.assistant "which hypotheses were retained?"`) with six acceptance checks that pass. A Dockerfile, a compose
+file, a CI workflow, pre-commit, a Makefile and a lint gate exist; the image and the workflow were **not run** (no Docker
+daemon or Actions runner here). **No language model was called to produce any result**; the hosted-model paths are tested
+against fake clients only.
+
+**Not built:** zero-shot foundation models (their pre-training overlaps the sample), TFT / TimeMixer / N-HiTS / N-BEATS,
+any live language-model run, a cloud deployment, the ray backend's test, Hydra / MLflow / Weights & Biases, explainable
+machine learning, factor-model attribution and reinforcement learning.
 
 ---
 
@@ -157,19 +181,24 @@ src/
   data/          download, validation, cleaning, loading, macro and non-price series  (Ch. 7)
   features/      returns, volatility, momentum, reversion, PCA (Ch. 8, 20)
   signals/       forecasts, position stack, blending, pairs, PCA stat-arb, alpha-combination engine (Ch. 22)
+  distributed/   parallel executor (serial, joblib, dask, ray) with results identical to a serial run
+  assistant/     FOMC corpus, extraction backends with schema and cache, read-only SQL assistant
+  research_db/   SQLite research database builder and its acceptance checks
   portfolio/     EW, inverse vol, risk parity, MVO, BL, CVaR, covariance (Ch. 19, 20),
                  HRP / HERC, DCC-GARCH / O-GARCH, regime-aware overlays, Bayesian (NIW, Bayes-Stein)
   backtest/      engine, execution, costs, impact and capacity, metrics, attribution (Ch. 22)
   risk/          VaR, CVaR, contributions, stress              (Ch. 21)
-  validation/    walk-forward, robustness, leakage detection, permutation tests
+  validation/    walk-forward, robustness, leakage detection, permutation tests,
+                 Reality Check / SPA / probability of backtest overfitting
   models/        regression with HAC errors, ML ladder, macro forecasts,
                  regimes (HMM / GMM / BOCPD), probabilistic forecasts, online learners (RLS / NLMS /
-                 Kalman / Hedge)
+                 Kalman / Hedge), patch-transformer and MLP-mixer forecasters
   utils/         config, logging, dates, plotting, experiment registry
 experiments/     numbered stage scripts + the experiment registry
 reports/         figures, tables, the data-quality report, the research paper,
-                 the Generation 2 and 3 reports, errata/ (before/after record of the drift fix)
-tests/           339 tests
+                 the Generation 2, 3 and 4 reports, errata/ (before/after record of the drift fix)
+tests/           424 tests
+Dockerfile, docker-compose.yml, Makefile, .github/workflows/ci.yml, .pre-commit-config.yaml
 ```
 
 ---
@@ -179,13 +208,15 @@ tests/           339 tests
 ```bash
 pip install -r requirements.txt
 
-python -m experiments.run_all --download      # all 25 stages, ~60 minutes
+python -m experiments.run_all --download      # all 29 stages, ~80 minutes
 python -m experiments.run_all --generation 2  # Generation 2 only (stages 15-20)
 python -m experiments.run_all --generation 3  # Generation 3 only (stages 21-25)
+python -m experiments.run_all --generation 4  # Generation 4 only (stages 26-29)
 python -m experiments.run_all --from 6 --to 9 # a range of stages
 python -m experiments.run_all --fresh         # clear derived artefacts first
 python -m experiments.stage01_data            # a single stage
-pytest -q                                      # 339 tests
+pytest -q                                      # 424 tests
+make install test lint cov                     # the same through the Makefile; docker compose run --rm tests for the container
 ```
 
 Stage 1 writes `data/raw/*.csv` once and refuses to overwrite them without
@@ -246,6 +277,10 @@ RAW DATA -> VALIDATION -> CLEAN DATA -> FEATURES
 | 23 | Non-price data: credit spread, implied-volatility structure, claims, CFTC positioning (Gen 3) | Ch. 7, Ch. 20 |
 | 24 | Alpha-combination engine: forecast-level combination, trust rules, alpha descriptors (Gen 3) | Ch. 20, Ch. 22 |
 | 25 | Execution model: square-root impact, capacity, no-trade bands, scheduling (Gen 3) | Ch. 22 |
+| 26 | Distributed experimentation: 1,584-rule grid, Reality Check, SPA, PBO (Gen 4) | Ch. 22 §22.2.4 |
+| 27 | Deep learning: patch transformer, MLP-mixer against the Stage 19 ridge (Gen 4) | Ch. 23 |
+| 28 | Text features and research assistant: FOMC statements, extraction schema, SQL guard (Gen 4) | Ch. 20 |
+| 29 | Research database: SQLite, acceptance checks, query CLIs (Gen 4) | Ch. 7 |
 
 ---
 
@@ -269,6 +304,8 @@ RAW DATA -> VALIDATION -> CLEAN DATA -> FEATURES
 
 - [`reports/research_report.md`](reports/research_report.md) — the full paper
 - [`reports/generation2_report.md`](reports/generation2_report.md) — Generation 2: regimes, dynamic covariance, forecasts, attribution, and the engine erratum
+- [`reports/generation3_report.md`](reports/generation3_report.md) — Generation 3: Bayesian portfolios, online learning, non-price data, an alpha engine, execution and capacity
+- [`reports/generation4_report.md`](reports/generation4_report.md) — Generation 4: search-aware statistics, deep learning, text, the research database
 - [`reports/data_quality_report.md`](reports/data_quality_report.md) — Stage 1 findings
 - [`reports/figure_index.md`](reports/figure_index.md) — every figure and the question it answers
 - [`experiments/registry.md`](experiments/registry.md) — every experiment, including the rejected ones
