@@ -46,3 +46,49 @@ explain_calibrate:
       fdr: 0.10
       # h_isotonic: isotonic recalibration has a lower mean log loss than Platt scaling (Diebold-Mariano on monthly cross-asset means, two-sided, p <= 0.10, negative difference).
       # Reported, not judged: Platt vs raw; isotonic vs raw; Brier; ECE; reliability tables; Stage 19's own p_cal.
+
+# ===== Stage 36: diffusion-model scenarios for tail risk =====
+diffusion:
+  object: "the joint distribution of the 15 ETFs' 21-day forward returns, each divided by its EWMA 21-day sigma at the origin (the Stage 19 z-vector; 15 numbers per row), rows every 5th trading day, annual refits on the Stage 19 schedule with the Stage 27 embargo"
+  model: "denoising diffusion probabilistic model (Ho et al. 2020): 100 steps, cosine noise schedule, an MLP denoiser (3 hidden layers of 128, SiLU, sinusoidal step embedding), epsilon-prediction loss, 600 epochs of Adam at 1e-3, batch 128, seed 11; 2000 scenarios drawn per origin by ancestral sampling"
+  scenario_use: "a scenario z-vector is multiplied by the origin's sigma vector (known at the origin) to give 21-day asset returns; the portfolio return is the equal-weight average"
+  baselines:
+    gaussian: "multivariate normal with the mean and covariance of the same training z-vectors"
+    bootstrap: "resampling of the same training z-vectors (the empirical distribution; the diffusion model is a smoothed version of it)"
+  forecast: "the 5% and 1% quantiles (value at risk) of the equal-weight 21-day return, per monthly Stage 19 origin"
+  decisions:
+    fdr: 0.10
+    # h_diffusion: the diffusion 5% quantile has a lower mean pinball (quantile) loss than BOTH the Gaussian and the bootstrap quantile (Diebold-Mariano on the monthly losses,
+    #   two-sided, Benjamini-Hochberg across the two comparisons, negative differences).
+    # Reported, not judged: Kupiec unconditional-coverage test of every method at 5% and 1% (the 1% test has about two expected exceedances and little power); the 1% pinball
+    #   loss; scenario realism (marginal excess kurtosis, correlation matrix distance to the training correlation, share of generated z-vectors outside the training range);
+    #   an inverse-volatility book.
+
+# ===== Stage 37: causal inference =====
+causal:
+  estimators:
+    dml: "double/debiased machine learning (Chernozhukov et al. 2018), partially linear model, 5-fold cross-fitting, ridge or gradient-boosted nuisance models, heteroskedasticity-robust standard error"
+    r_learner: "R-learner (Nie and Wager 2021) for conditional average effects: cross-fitted residuals, a ridge final stage on the effect modifiers"
+    iv: "two-stage least squares with a heteroskedasticity-robust standard error"
+    did: "two-by-two difference in differences with standard errors clustered by unit"
+  validation: "Every estimator is first run on simulated data with a KNOWN effect: 300 replications of n = 500. Reported: bias, RMSE and 95% coverage of the true effect, next to the naive OLS that ignores the problem. DML must be near-unbiased where OLS is biased by confounding; IV must be near-unbiased where OLS is biased by endogeneity; DiD must be unbiased under parallel trends and biased when trends diverge (a designed failure, reported); the R-learner's estimated effects must correlate with the true heterogeneous effects. A validation that fails is reported as failed."
+  application:
+    question: "Does a more hawkish FOMC statement move rates-sensitive and equity ETFs on the day of the release? Treatment: the Stage 28 change in tone from the previous statement (tone_t minus tone_{t-1}, standardised). Outcome: the statement day's close-to-close return of TLT and of SPY, divided by that ETF's EWMA daily sigma the day before. Controls: the policy action, the text-change share, the previous tone level, the 5-day return before the day, the 21-day EWMA volatility the day before. Statements from 2006 onward with the ETF in existence."
+    iv_note: "No credible instrument for statement tone exists in these data, so IV is validated on simulations only and is not applied. Saying so is the result."
+    did_note: "Not applied to the FOMC question. Applied to one design only: statement days against the matched non-statement days one week earlier, rates-sensitive (TLT, IEF) against gold (GLD) as the control, on the absolute standardised return. This tests whether announcement days are different, not whether tone has an effect."
+  decisions:
+    fdr: 0.10
+    # h_tone: the DML estimate of the effect of the tone change on the standardised same-day return is non-zero for TLT or SPY (two-sided normal p-value, Benjamini-Hochberg across the two ETFs).
+    # Reported, not judged: naive OLS estimates; DML with each nuisance learner; the R-learner's effect-modifier coefficients (effect by prior-volatility tercile); the DiD estimate.
+
+# ===== Stage 38: reinforcement learning allocation =====
+reinforcement:
+  policy: "a linear softmax allocator: score_i = theta . x_i + b_i, where x_i are the twelve Stage 19 price features of asset i standardised with training statistics and b_i is an asset bias; weights = softmax(score), long-only, fully invested, monthly decisions at the Stage 19 origins"
+  reward: "net monthly return minus 0.5 * 5 * (monthly return)^2 summed over months, i.e. mean-variance utility with risk aversion 5, minus one-way linear costs of 10 bps (the engine's cost_bps) times turnover"
+  training: "evolution strategies (Salimans et al. 2017): 32 antithetic pairs, sigma 0.1, learning rate 0.05, 60 iterations, centred-rank fitness, theta and b initialised at zero (the equal-weight policy). Refit annually on the Stage 19 schedule using only months whose outcome matured before the refit; three ES seeds (1, 2, 3), whose weight vectors are averaged for the evaluated policy"
+  evaluation: "the policy's weights stamped at month-end go through the Generation 1 BacktestEngine (one-day lag, costs as configured) from the first Stage 19 origin; equal weight (M0) is the benchmark"
+  decisions:
+    fdr: 0.10
+    # h_rl: the learned policy's net Sharpe exceeds equal weight's with a paired stationary-bootstrap Sharpe-difference test at p <= 0.10 and a positive difference.
+    # Reported, not judged: Sharpe of each single ES seed; turnover; training-period utility against out-of-sample utility (the overfitting gap); the average weight on each asset; Sharpe
+    #   of 200 random policies drawn from the ES initial perturbation distribution (a null: how much of any result is just a different tilt).
