@@ -146,3 +146,19 @@ def test_chapter_map_and_internal_links_resolve():
             if target.startswith("http"):
                 continue
             assert (md.parent / target).resolve().exists(), (md.relative_to(ROOT), target)
+
+
+def test_demo_runs_end_to_end_and_teaches_the_two_questions(capsys):
+    import shutil
+
+    from src.framework.demo import run_demo
+    from src.utils.config import load_config
+
+    config = load_config()
+    before = set((config.root / "reports" / "tearsheets").glob("*")) if (config.root / "reports" / "tearsheets").exists() else set()
+    assert run_demo(config) == 0
+    out = capsys.readouterr().out
+    for marker in ("1. The data", "2. One strategy", "3. The red-flag list", "4. Regimes", "5. The most important lesson", "Deflated Sharpe probability of the best", "Against M0_equal_weight", "6. Where to go next"):
+        assert marker in out, marker
+    for new in set((config.root / "reports" / "tearsheets").glob("*")) - before:       # the tour leaves no files behind
+        shutil.rmtree(new, ignore_errors=True)
