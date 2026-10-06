@@ -1,0 +1,3 @@
+asset,n,naive_theta,naive_p,ols_controls_theta,ols_controls_p,dml_ridge_theta,dml_ridge_se,dml_ridge_p,dml_gbm_theta,dml_gbm_se,dml_gbm_p,declared_estimate,declared_p,bh_significant
+SPY,168,0.104660,0.323926,0.078770,0.469610,0.082344,0.107598,0.444098,0.205871,0.105053,0.050033,0.205871,0.050033,True
+TLT,168,-0.145335,0.074797,-0.177930,0.031789,-0.198758,0.085412,0.019963,-0.162957,0.084396,0.053501,-0.162957,0.053501,True

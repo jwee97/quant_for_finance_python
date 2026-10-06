@@ -66,6 +66,7 @@ STAGES = [
     (34, "stage34_foundation", "Zero-shot foundation model (descriptive)", 5),
     (35, "stage35_explain", "Explainability and calibration", 5),
     (36, "stage36_diffusion", "Diffusion scenarios for tail risk", 5),
+    (37, "stage37_causal", "Causal inference", 5),
     (29, "stage29_research_db", "Research database", 4),
 
 ]

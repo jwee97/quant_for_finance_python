@@ -1,0 +1,19 @@
+world,estimator,truth,mean_estimate,bias,rmse,n_reps,status,coverage_95
+confounded_plr,naive OLS (y on d),0.500000,1.684805,1.184805,1.185909,300,declared,0.000000
+confounded_plr,OLS with linear controls,0.500000,1.592988,1.092988,1.094585,300,declared,0.000000
+confounded_plr,"DML, ridge nuisance",0.500000,1.599566,1.099566,1.101152,300,declared,0.000000
+confounded_plr,"DML, GBM nuisance",0.500000,1.080436,0.580436,0.588589,300,declared,0.000000
+endogenous_iv,naive OLS (y on d),0.500000,1.345051,0.845051,0.846576,300,declared,0.000000
+endogenous_iv,2SLS,0.500000,0.479297,-0.020703,0.173282,300,declared,0.963333
+did_parallel,naive post-period difference,1.000000,1.499443,0.499443,0.530271,300,declared,0.213333
+did_parallel,DiD,1.000000,1.002293,0.002293,0.176305,300,declared,0.956667
+did_diverging,naive post-period difference,1.000000,2.299443,1.299443,1.311601,300,declared,0.000000
+did_diverging,DiD,1.000000,1.802293,0.802293,0.821433,300,declared,0.010000
+heterogeneous,"R-learner: corr(tau_hat, tau)",,1.000000,,,300,declared,
+heterogeneous,R-learner: slope on x0,1.000000,0.942137,-0.057863,0.086007,300,declared,
+heterogeneous,R-learner: intercept,0.500000,0.501863,0.001863,0.057541,300,declared,
+heterogeneous,naive OLS (average effect),0.500000,0.962904,0.462904,0.471813,300,declared,0.003333
+plr_oracle_posthoc,"DML final step, true nuisance",0.500000,0.498118,-0.001882,0.044825,300,post-hoc,0.940000
+plr_n5000_posthoc,naive OLS (y on d),0.500000,1.686411,1.186411,1.186517,100,post-hoc,0.000000
+plr_n5000_posthoc,"DML, GBM nuisance",0.500000,0.928830,0.428830,0.429770,100,post-hoc,0.000000
+plr_strong_gbm_posthoc,"DML, strong GBM nuisance",0.500000,0.575196,0.075196,0.084232,40,post-hoc,0.050000
