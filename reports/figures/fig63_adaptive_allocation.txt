@@ -1,0 +1,1 @@
+Figure 63. Does choosing the allocator by regime beat static risk parity and equal weight, and is the timing of the regime path worth anything compared with the same path shifted by a random number of years?

@@ -278,3 +278,29 @@ def test_a_bundle_from_your_own_prices_never_fills_or_alters_them(synthetic_pric
     assert np.allclose(b.returns.iloc[200:, 1], prices.iloc[:, 1].pct_change().iloc[200:])
     with pytest.raises(ValueError):
         bundle_from_prices(pd.concat([prices.iloc[:3], prices.iloc[:3]]))
+
+
+# ------------------------------------------------------------------------------ the adaptive signal
+def test_regime_trust_weights_follow_the_model_that_works_in_the_current_regime_and_use_only_the_past():
+    from src.framework.forecasting import regime_trust_weights
+
+    rng = np.random.default_rng(4)
+    idx = pd.bdate_range("2015-01-01", periods=1600)
+    labels = pd.Series(np.where((np.arange(1600) // 200) % 2 == 0, "Calm", "Stress"), index=idx)
+    good_in_calm = rng.normal(0, 0.01, 1600) + np.where(labels == "Calm", 0.002, -0.002)
+    good_in_stress = rng.normal(0, 0.01, 1600) + np.where(labels == "Stress", 0.002, -0.002)
+    streams = pd.DataFrame({"calm_model": good_in_calm, "stress_model": good_in_stress}, index=idx)
+    updates = idx[::21]
+    w = regime_trust_weights(streams, labels, updates, min_regime_days=100, shrink=0.0)
+    late_calm, late_stress = idx[1218], idx[1512]          # update dates (multiples of 21) inside a Calm and a Stress block
+    assert labels.loc[late_calm] == "Calm" and w.loc[late_calm, "calm_model"] > 0.8
+    assert labels.loc[late_stress] == "Stress" and w.loc[late_stress, "stress_model"] > 0.8
+    assert np.allclose(w.sum(axis=1), 1.0)
+    # causality: replacing everything after a date leaves the earlier weights unchanged
+    cut = idx[1000]
+    shocked = streams.copy()
+    shocked.loc[shocked.index > cut] = rng.normal(0, 0.05, shocked.loc[shocked.index > cut].shape)
+    w2 = regime_trust_weights(shocked, labels, updates, min_regime_days=100, shrink=0.0)
+    assert np.allclose(w.loc[:cut], w2.loc[:cut])
+    # with too little history in the regime the weights are equal
+    assert np.allclose(regime_trust_weights(streams.iloc[:150], labels.iloc[:150], idx[:150][::21], 200, 0.0).iloc[-1], 0.5)

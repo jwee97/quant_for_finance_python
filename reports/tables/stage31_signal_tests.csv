@@ -1,0 +1,2 @@
+a,b,sharpe_a,sharpe_b,difference,ci_lower_5pct,ci_upper_95pct,p_value,return_correlation,n_obs,n_samples
+regime-conditional trust,unconditional equal,0.881032,0.779893,0.101139,0.006357,0.186330,0.067500,0.967468,4687,2000

@@ -1,0 +1,4 @@
+a,b,sharpe_a,sharpe_b,difference,ci_lower_5pct,ci_upper_95pct,p_value,return_correlation,n_obs,n_samples
+regime switch (soft),"static blend (same books, fixed weights)",0.844386,0.685825,0.158561,0.025022,0.290764,0.055500,0.921416,4688,2000
+regime switch (hard),risk parity (M2),0.883414,0.772616,0.110797,-0.157685,0.366807,0.490500,0.766832,4688,2000
+regime switch (soft),regime switch (hard),0.844386,0.883414,-0.039028,-0.081959,0.000463,0.115000,0.993238,4688,2000

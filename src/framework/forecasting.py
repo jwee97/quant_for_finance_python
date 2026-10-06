@@ -131,3 +131,37 @@ def ic_trust_weights(panels: dict[str, ForecastPanel], returns: pd.DataFrame, wi
     index = pd.DatetimeIndex(returns.index)
     scores = pd.DataFrame({n: trailing_ir(matured_ic(p.mean.reindex(index), fwd, horizon), window, min_obs) for n, p in panels.items()})
     return trust_weights(scores, rebalance_dates(index, "monthly"), shrink=0.0)
+
+
+def regime_trust_weights(streams: pd.DataFrame, labels: pd.Series, update_dates, min_regime_days: int = 126, shrink: float = 0.5) -> pd.DataFrame:
+    """The ADAPTIVE SIGNAL: trust each model according to how it has done in the regime the market is in now.
+
+    On each update date ``t`` the current regime ``r`` is read from ``labels``; each model's Sharpe ratio is computed on the days up to and
+    including ``t`` that were ALSO in regime ``r``; weights are proportional to its positive part, shrunk toward equal weights by ``shrink``.
+    With fewer than ``min_regime_days`` such days, or no positive Sharpe, the weights are equal. Only returns already realised are used.
+    """
+    names = list(streams.columns)
+    equal = np.full(len(names), 1.0 / len(names))
+    labels = labels.reindex(streams.index)
+    values = streams.to_numpy()
+    rows = {}
+    for date in update_dates:
+        if date not in streams.index:
+            continue
+        r = labels.loc[date]
+        w = equal
+        if isinstance(r, str):
+            upto = streams.index.get_loc(date) + 1
+            mask = (labels.to_numpy()[:upto] == r) & np.isfinite(values[:upto]).all(axis=1)
+            if mask.sum() >= min_regime_days:
+                sub = values[:upto][mask]
+                sd = sub.std(axis=0, ddof=1)
+                sharpe = np.where(sd > 0, sub.mean(axis=0) / np.where(sd > 0, sd, 1.0), 0.0)
+                pos = np.clip(sharpe, 0.0, None)
+                if pos.sum() > 0:
+                    w = (1.0 - shrink) * pos / pos.sum() + shrink * equal
+                else:
+                    w = equal
+        rows[date] = w
+    table = pd.DataFrame.from_dict(rows, orient="index", columns=names).reindex(streams.index).ffill()
+    return table.fillna(1.0 / len(names))

@@ -26,7 +26,7 @@ from ..utils.logging import get_logger
 from ..validation.robustness import paired_sharpe_test
 from .allocation import ALLOCATORS, BOOKS, Context
 from .data import MarketBundle
-from .forecasting import combine_forecasts, ic_trust_weights
+from .forecasting import combine_forecasts, ic_trust_weights, regime_trust_weights
 from .registry import DETECTORS, MODELS
 from .risk import RegimeRiskPolicy
 from .types import ForecastPanel
@@ -133,7 +133,7 @@ class Pipeline:
             streams[m.name] = engine.run(w, self.bundle.returns, m.name, self.bundle.investable, apply_vol_target=True).net_returns
         return pd.DataFrame(streams)
 
-    def _combine(self, panels: dict, models, engine: BacktestEngine) -> tuple[ForecastPanel, pd.DataFrame | None]:
+    def _combine(self, panels: dict, models, engine: BacktestEngine, regimes=None) -> tuple[ForecastPanel, pd.DataFrame | None]:
         rule = str(self.spec.combination.get("rule", "equal"))
         if len(panels) == 1:
             return next(iter(panels.values())), None
@@ -141,6 +141,14 @@ class Pipeline:
             return combine_forecasts(panels, rule), None
         if rule == "ic_weighted":
             w = ic_trust_weights(panels, self.bundle.returns)
+            return combine_forecasts(panels, "given", w), w
+        if rule == "regime_conditional":
+            if regimes is None:
+                raise ValueError("the regime_conditional rule needs a regime detector in the spec")
+            standalone = self._standalone(panels, models, {}, engine)
+            node = self.spec.combination
+            w = regime_trust_weights(standalone, regimes.hard_labels(), rebalance_dates(self.bundle.index, "monthly"), int(node.get("min_regime_days", 126)),
+                                     float(node.get("shrink", 0.5)))
             return combine_forecasts(panels, "given", w), w
         if rule == "cost_aware":
             standalone = self._standalone(panels, models, {}, engine)
@@ -177,7 +185,7 @@ class Pipeline:
         panels, combined, trust = {}, None, None
         if models:
             panels = precomputed if precomputed is not None else self._forecasts(models)
-            combined, trust = self._combine(panels, models, engine)
+            combined, trust = self._combine(panels, models, engine, regimes)
         timings["forecast"] = time.perf_counter() - t0
 
         allocator_name, allocator = self._allocator(models)

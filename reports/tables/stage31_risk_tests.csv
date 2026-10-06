@@ -1,0 +1,3 @@
+a,b,sharpe_a,sharpe_b,difference,ci_lower_5pct,ci_upper_95pct,p_value,return_correlation,n_obs,n_samples,bh_significant,passes
+"risk_parity, regime target","risk_parity, constant 10%",0.732065,0.731722,0.000343,-0.042041,0.042020,0.985000,0.995253,4688,2000,False,False
+"equal_weight, regime target","equal_weight, constant 10%",0.586116,0.585830,0.000287,-0.036737,0.040068,0.991500,0.996198,4688,2000,False,False

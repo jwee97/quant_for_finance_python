@@ -1,0 +1,5 @@
+base,risk,sharpe,ann_vol,max_drawdown,cvar_95_daily,vol_of_vol,cagr
+risk_parity,regime target,0.732065,0.084108,-0.220664,0.012339,0.031270,0.059736
+risk_parity,constant 10%,0.731722,0.088648,-0.251708,0.013001,0.034642,0.062815
+equal_weight,regime target,0.586116,0.105738,-0.295302,0.015527,0.043165,0.057960
+equal_weight,constant 10%,0.585830,0.111318,-0.295302,0.016370,0.044593,0.060748

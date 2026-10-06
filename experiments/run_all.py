@@ -60,6 +60,7 @@ STAGES = [
     (28, "stage28_text", "Text features and research assistant", 4),
     # Generation 5. The research database (stage 29) is last in execution order because it ingests every other stage's output.
     (30, "stage30_library", "The strategy library as a search", 5),
+    (31, "stage31_adaptive", "The adaptive pipeline", 5),
     (29, "stage29_research_db", "Research database", 4),
 
 ]

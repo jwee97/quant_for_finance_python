@@ -1,0 +1,1 @@
+Figure 64. Does a regime-dependent volatility target beat a constant one, and does trusting each model according to its record in the current regime beat trusting them equally?
