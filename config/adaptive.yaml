@@ -1,0 +1,52 @@
+# ---------------------------------------------------------------------------
+# The adaptive pipeline (Generation 5):   Market -> Regime -> Adaptive signal -> Adaptive portfolio -> Adaptive risk
+#
+# Generation 2 asked whether regime labels could improve a book and found that the labels were volatility clusters a few days long, not bull and
+# bear markets. This stage asks the roadmap's fuller question: if EVERYTHING downstream reacts to the regime (the combination of signals, the
+# choice of allocator, the risk budget), does the platform do better than the same machinery that ignores it? Four pre-declared decisions,
+# each with a control, committed before any Stage 31 result.
+# ---------------------------------------------------------------------------
+detector:
+  name: composite                          # Crisis > Inflation > Deflation > HighVol > LowVol, probabilities (framework.regimes), causal
+  params: {}
+
+allocation:
+  default: { book: risk_parity }
+  rules:
+    Crisis:    { book: mean_cvar }          # "if regime == Crisis: use Mean-CVaR"
+    LowVol:    { book: mvo }                # "elif regime == LowVol: use MVO" (the plug-in sample mean-variance book)
+    HighVol:   { book: risk_parity }
+    Inflation: { book: risk_parity, tilt: { DBC: 0.10, GLD: 0.10 } }       # "elif regime == Inflation: overweight commodities"
+    Deflation: { book: risk_parity, tilt: { TLT: 0.10, IEF: 0.10 } }       # the mirror image: overweight duration
+  mode: soft                               # blend by probability; the 'hard' variant (most probable regime only) is reported
+  placebo: { draws: 200, min_shift_days: 252, seed: 7 }     # circular shifts of the regime probability path
+
+risk:
+  regime_targets: { LowVol: 0.10, HighVol: 0.08, Crisis: 0.05, Inflation: 0.09, Deflation: 0.09 }
+  constant_target: 0.10
+  lookback: 63
+  max_leverage: 1.5
+  base_books: [risk_parity, equal_weight]
+
+signal:
+  models: [momentum, mean_reversion, dual_momentum, donchian, ma_crossover, vol_breakout, xs_momentum, carry, pca_residual, yield_curve_regime, dollar_strength, commodity_supercycle]
+  allocation: { allocator: forecast_stack, params: { mode: time_series } }
+  regime_trust: { min_regime_days: 126, shrink: 0.5, update: monthly }     # weights from each model's trailing Sharpe on past days in the CURRENT regime (matured labels only)
+  comparator: equal                        # the unconditional equal-weight combination of the same twelve models
+
+bootstrap: { n_samples: 2000, block_length: 21, seed: 7 }
+
+decisions:
+  fdr: 0.10
+  # h_adaptive_allocation: the soft regime-switching allocator has a higher net Sharpe than BOTH static risk parity (M2) and equal weight (M0):
+  #   paired stationary bootstrap, a family of two, Benjamini-Hochberg at 10%, positive differences required. Retained only if both pass.
+  # h_regime_timing: the regime path itself adds value: the allocator's net Sharpe exceeds the 90th percentile of its 200 circular-shift
+  #   placebos (the same books blended with a regime path that is the true one shifted by a random number of years). This separates "the
+  #   mix of books is good" from "the timing of the mix is good".
+  # h_adaptive_risk: regime-dependent volatility targets give a higher net Sharpe than the constant 10% target for BOTH base books (risk parity and
+  #   equal weight): paired bootstrap, a family of two, Benjamini-Hochberg at 10%, positive differences required. Retained only if both pass.
+  #   Max drawdown, CVaR and volatility of volatility are reported, not judged.
+  # h_adaptive_signal: combining the twelve models with regime-conditional trust weights has a higher net Sharpe than their unconditional equal
+  #   combination: one paired test, p <= 0.10 and a positive difference.
+  # Reported, not judged: the hard-switch variant; the static blend of the same books with time-invariant weights; each rule's book alone;
+  #   performance by regime; the regime shares and mean persistence; turnover and cost drag.
