@@ -69,6 +69,7 @@ STAGES = [
     (37, "stage37_causal", "Causal inference", 5),
     (38, "stage38_rl", "Reinforcement-learning allocation", 5),
     (39, "stage39_power", "Statistical power of the platform tests", 5),
+    (40, "stage40_factors", "Factor attribution", 5),
     (29, "stage29_research_db", "Research database", 4),
 
 ]
