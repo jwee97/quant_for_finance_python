@@ -63,6 +63,7 @@ STAGES = [
     (31, "stage31_adaptive", "The adaptive pipeline", 5),
     (32, "stage32_crypto", "The optional crypto branch", 5),
     (33, "stage33_frontier", "Deep-forecasting family, graph and Bayesian deep learning", 5),
+    (34, "stage34_foundation", "Zero-shot foundation model (descriptive)", 5),
     (29, "stage29_research_db", "Research database", 4),
 
 ]

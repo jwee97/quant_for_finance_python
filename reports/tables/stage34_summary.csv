@@ -1,0 +1,2 @@
+mean_rank_ic,mean_abs_mu,mean_abs_mu_hist_mean,share_positive_forecasts,n_rows,model,hub_revision
+0.079927,0.015773,0.005480,0.793226,2805,amazon/chronos-bolt-small,772f3d25d38aec6d914c8949dab4462e2d46f5d8

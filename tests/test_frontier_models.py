@@ -109,3 +109,19 @@ def test_stage33_tables_follow_the_declared_rules():
     assert (t["passes"] == (t["bh_significant"] & (t["mean_crps_difference"] < 0))).all()
     b = pd.read_csv(path.with_name("stage33_bayesian.csv"), index_col=0)
     assert (b["mean_sigma_ratio"] >= 1.0).all()                # the epistemic term can only widen
+
+
+def test_stage34_is_descriptive_and_pins_its_model():
+    from pathlib import Path
+    import json
+
+    tables = Path(__file__).resolve().parents[1] / "reports" / "tables"
+    if not (tables / "stage34_tests.csv").exists():
+        pytest.skip("stage 34 not run")
+    meta = json.loads((tables / "stage34_model.json").read_text())
+    assert meta["model"] == "amazon/chronos-bolt-small" and meta["hub_revision"]
+    t = pd.read_csv(tables / "stage34_tests.csv", index_col=0)
+    assert {"historical_mean", "stage19_ridge"} <= set(t.index)
+    registry = (tables.parents[1] / "experiments" / "registry.jsonl").read_text().splitlines()
+    mine = [json.loads(line) for line in registry if '"stage34_foundation"' in line]
+    assert mine and all(e["decision"] == "record" for e in mine)          # descriptive by declaration: never retain/reject

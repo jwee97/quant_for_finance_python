@@ -1,0 +1,5 @@
+against,n_origins,mean_crps_chronos,mean_crps_other,mean_crps_difference,p_value
+historical_mean,187,0.023991,0.022395,0.001596,0.000023
+stage19_ridge,187,0.023991,0.023006,0.000985,0.033886
+nbeats,187,,,0.001683,0.000002
+timemixer,187,,,0.001678,0.000003

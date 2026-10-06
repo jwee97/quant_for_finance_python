@@ -1,0 +1,1 @@
+Figure 68. Does a pre-trained time-series model, used without any fitting, say anything about next month's ETF returns?
