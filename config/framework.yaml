@@ -1,0 +1,25 @@
+# ---------------------------------------------------------------------------
+# The research framework (Generation 5): data bundle, defaults and where things live.
+# Nothing here is a research claim; the studies that make claims have their own pre-declared files.
+# ---------------------------------------------------------------------------
+extra_series:                       # point-in-time FRED series used by the strategy library and the adaptive pipeline
+  - { id: DGS2,       source: fred, frequency: daily, release_lag_days: 1, feature: "2-year Treasury constant-maturity yield (%)" }
+  - { id: DGS5,       source: fred, frequency: daily, release_lag_days: 1, feature: "5-year Treasury yield (%)" }
+  - { id: DGS10,      source: fred, frequency: daily, release_lag_days: 1, feature: "10-year Treasury yield (%)" }
+  - { id: DGS20,      source: fred, frequency: daily, release_lag_days: 1, feature: "20-year Treasury yield (%)" }
+  - { id: DTWEXBGS,   source: fred, frequency: daily, release_lag_days: 1, feature: "broad trade-weighted US dollar index" }
+
+forecast:
+  horizon_days: 21
+  calibration:
+    min_observations: 504           # matured DATES (each with a cross-section of at least five assets) before a score is turned into a forecast
+    allow_negative_slope: false     # an in-sample anti-predictive signal is switched off, not inverted
+  volatility_halflife_days: 40      # std of the forecast: the EWMA volatility used everywhere since Generation 2
+
+experiment_db:
+  path: data/experiments.db         # persistent and local (git-ignored): a user's own runs accumulate here
+  runs_dir: data/experiments        # per-run artefacts (returns, weights)
+
+tearsheet:
+  benchmarks: [M0_equal_weight, M2_risk_parity]
+  bootstrap: { n_samples: 2000, block_length: 21, seed: 7 }
