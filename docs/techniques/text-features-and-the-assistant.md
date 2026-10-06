@@ -5,9 +5,9 @@ difficulty: 3
 chapter: Ch. 23
 prerequisites: [macro-and-alternative-data]
 stages: [28]
-files: [src/assistant/documents.py, src/assistant/extraction.py, src/assistant/sqlguard.py, experiments/stage28_text.py]
+files: [src/assistant/documents.py, src/assistant/extraction.py, src/assistant/sqlguard.py, experiments/stage28_text.py, src/cli.py]
 figures: [56, 57]
-tests: [tests/test_assistant.py]
+tests: [tests/test_assistant.py, tests/test_cli_tools.py]
 models: []
 ---
 
@@ -30,6 +30,8 @@ Text carries information numbers do not, but it is easy to leak (the statement t
 
 Stage 28 builds the corpus (171 statements) and tests the features against price and macro forecasts. The assistant's SQL tool is read-only and guarded by `sqlguard.py`. No language model was called in any result in this repository: the
 environment has no API credentials, and the offline lexicon is the only backend that was run.
+
+`quant ask "which hypotheses were retained?"` answers recognised questions from the research database with templates and refuses anything else. `--llm MODEL` lets a model write the SQL (validated read-only like any other statement); that path needs the optional `anthropic` package and an API key and has not been exercised against a live model in this repository.
 
 ## What we found
 

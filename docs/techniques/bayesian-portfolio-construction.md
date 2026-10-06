@@ -5,9 +5,9 @@ difficulty: 3
 chapter: Ch. 19
 prerequisites: [mean-variance-and-shrinkage]
 stages: [21]
-files: [src/portfolio/bayesian.py, experiments/stage21_bayesian.py]
+files: [src/portfolio/bayesian.py, experiments/stage21_bayesian.py, src/framework/allocators_portfolio.py]
 figures: [42, 43]
-tests: [tests/test_bayesian.py]
+tests: [tests/test_bayesian.py, tests/test_portfolio_allocators.py]
 models: []
 ---
 
@@ -29,6 +29,8 @@ It addresses the root cause of optimiser failure, estimation error, without ad h
 ## How this repo uses it
 
 `src/portfolio/bayesian.py` implements plug-in, Bayes-Stein and posterior-predictive books; Stage 21 compares weight stability and net Sharpe.
+
+The `bayesian` allocator exposes the three Stage 21 books (`kind: mvo_sample | bayes_stein | bayes_predictive`) to any specification, so they can be compared with the same costs, benchmarks and tear sheet as every other allocator.
 
 ## What we found
 

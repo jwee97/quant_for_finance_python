@@ -83,7 +83,7 @@ def run_demo(config) -> int:
     _say("\n6. Where to go next")
     _say("   quant dashboard                 an explorer of every hypothesis the project ever declared (most were rejected, on purpose)")
     _say("   quant explain deflated sharpe   plain-language explanations of any term, technique, strategy or experiment")
-    _say("   quant list models               the 34 strategies you can run with `quant backtest --model NAME`")
+    _say("   quant list models               the 39 models you can run with `quant backtest --model NAME`")
     _say("   docs/START_HERE.md              a learning path for your background")
     _say(f"\nDone in {time.time() - started:.0f} seconds.")
     return 0

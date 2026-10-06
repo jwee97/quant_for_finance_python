@@ -5,9 +5,9 @@ difficulty: 2
 chapter: Ch. 7
 prerequisites: [multiple-testing]
 stages: [26]
-files: [src/distributed/executor.py, experiments/stage26_distributed.py]
+files: [src/distributed/executor.py, experiments/stage26_distributed.py, src/framework/experiments.py]
 figures: []
-tests: [tests/test_stage26_grid.py]
+tests: [tests/test_stage26_grid.py, tests/test_experiment_manager.py]
 models: []
 ---
 
@@ -28,6 +28,8 @@ Search-aware research needs many experiments, and hundreds of thousands of backt
 ## How this repo uses it
 
 Stage 26's 1,584-rule grid runs in the executor, and the run asserts equality between serial and parallel results to 1e-12. The deep models and the diffusion model use the same executor for their annual refits.
+
+`quant sweep --spec SPEC --grid key=a,b,c` runs a grid of variations of one specification in parallel through the same executor; workers compute, the parent writes the database, and every variant counts as a trial in the deflated Sharpe ratio.
 
 ## What we found
 

@@ -5,10 +5,10 @@ difficulty: 3
 chapter: Ch. 20
 prerequisites: [walk-forward-and-leakage]
 stages: [15, 23, 30]
-files: [src/data/macro.py, src/data/altdata.py, src/features/macro.py, experiments/stage15_macro.py, experiments/stage23_altdata.py]
+files: [src/data/macro.py, src/data/altdata.py, src/features/macro.py, experiments/stage15_macro.py, experiments/stage23_altdata.py, src/strategies/macro.py]
 figures: [28, 29, 46, 47]
-tests: [tests/test_macro.py, tests/test_macro_forecast.py, tests/test_altdata.py]
-models: [yield_curve_regime, risk_on_off, inflation_rotation, dollar_strength, commodity_supercycle]
+tests: [tests/test_macro.py, tests/test_macro_forecast.py, tests/test_altdata.py, tests/test_positioning_explain.py]
+models: [yield_curve_regime, risk_on_off, inflation_rotation, dollar_strength, commodity_supercycle, cftc_positioning]
 ---
 
 # Macro and alternative data without look-ahead
@@ -30,6 +30,8 @@ Ignoring release dates makes macro features look predictive when they are not. T
 
 `src/data/macro.py` and `src/features/macro.py` build the lagged panel; Stage 15 and Stage 23 test macro and non-price features against price-only forecasts; five macro strategies (yield-curve regime, risk-on/off, inflation rotation, dollar strength,
 commodity supercycle) plug into the framework.
+
+The default bundle also carries the six CFTC positioning series (`cftc_es`, `cftc_nq`, `cftc_ust10`, `cftc_gold`, `cftc_silver`, `cftc_crude`) after their four-day release lag when the Stage 23 table has been downloaded, and the `cftc_positioning` model turns each into a contrarian (or, with `sign: 1`, trend-following) score for the matching ETF. Stage 23 found no predictive power, so the model is a template and a null result, not an edge.
 
 ## What we found
 

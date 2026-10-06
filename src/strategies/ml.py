@@ -72,5 +72,35 @@ class MLRidge(ForecastModel):
         std = ewma_sigma(data.returns, halflife, h).reindex_like(mean)
         return ForecastPanel.from_mean_std(mean, std.where(mean.notna()), h, self.name)
 
+    def explain(self, data, n_repeats: int = 10, recent_years: int = 5) -> pd.DataFrame:
+        """Permutation importance of the FINAL model (fit on every row whose label was complete by the last origin), measured on the most recent years.
+
+        Descriptive, not a performance claim: it says which features the model leans on, and the rows it is measured on are partly in its training set.
+        """
+        from sklearn.linear_model import Ridge
+
+        from ..models.explain import permutation_importance
+
+        self.require(data)
+        h, index = self.horizon, data.index
+        origins = month_end_dates(index)
+        X, y, sigma = self._rows(data, origins)
+        position = pd.Series(np.arange(len(index)), index=index)
+        origin_pos = position.reindex(X.index.get_level_values(0)).to_numpy()
+        z = (y / sigma.where(sigma > 0)).clip(-5, 5)
+        ok = (X.notna().all(axis=1) & z.notna()).to_numpy() & (origin_pos + h + self.embargo <= len(index) - 1)
+        if ok.sum() < 100:
+            raise ValueError("not enough matured rows to explain the model")
+        mu, sd = X[ok].mean(), X[ok].std(ddof=1).replace(0.0, 1.0)
+        Xs, target = ((X[ok] - mu) / sd).to_numpy(), z[ok].to_numpy()
+        model = Ridge(alpha=self.alpha).fit(Xs, target)
+        recent = X.index.get_level_values(0)[ok] >= index[-1] - pd.DateOffset(years=recent_years)
+        sample = recent if recent.sum() >= 50 else np.ones(len(target), dtype=bool)
+        importance = permutation_importance(model.predict, Xs[sample], target[sample], n_repeats=n_repeats)
+        table = pd.DataFrame({"importance": importance}, index=X.columns)
+        table = table[~table.index.isin(data.assets)]                          # asset dummies are intercepts, not features
+        table["share"] = table["importance"].clip(lower=0.0) / max(table["importance"].clip(lower=0.0).sum(), 1e-12)
+        return table.sort_values("importance", ascending=False)
+
     def score(self, data):
         return self.forecast(data).mean

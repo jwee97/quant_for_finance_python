@@ -147,3 +147,41 @@ class StaticDetector(_Base):
 
     def detect(self, bundle) -> RegimeSeries:
         return RegimeSeries(pd.DataFrame({self.regime: 1.0}, index=bundle.index), self.name)
+
+
+@register_detector("gmm", "Two-component Gaussian mixture on the market proxy, refit walk-forward, each day classified on its own; the high-variance component is HighVol")
+class GMMDetector(_Base):
+    name = "gmm"
+
+    def __init__(self, min_train: int = 750, refit_every: int = 126, n_init: int = 3, seed: int = 11):
+        self.min_train, self.refit_every, self.n_init, self.seed = min_train, refit_every, n_init, seed
+
+    def detect(self, bundle) -> RegimeSeries:
+        from ..models.regimes import walk_forward_gmm
+
+        proxy = market_proxy(bundle)
+        probs = walk_forward_gmm(proxy.to_frame("proxy"), 2, self.min_train, self.refit_every, self.n_init, self.seed)
+        p_high = probs["state_1"]                                      # components are ordered by variance: state_1 is the high-variance one
+        probabilities = pd.DataFrame({"LowVol": 1.0 - p_high, "HighVol": p_high}).where(p_high.notna())
+        series = RegimeSeries(probabilities, self.name, pd.DataFrame({"trend": _trend(proxy)}))
+        series.validate()
+        return series
+
+
+@register_detector("bocpd", "Bayesian online change-point detection on the market proxy: Shock is the probability the current run of stable returns is at most ten days old")
+class BOCPDDetector(_Base):
+    name = "bocpd"
+
+    def __init__(self, hazard_lambda: float = 250.0, burn_in: int = 250, short_run: int = 10):
+        self.hazard_lambda, self.burn_in, self.short_run = hazard_lambda, burn_in, short_run
+
+    def detect(self, bundle) -> RegimeSeries:
+        from ..models.regimes import bocpd
+
+        proxy = market_proxy(bundle)
+        result = bocpd(proxy, self.hazard_lambda, self.burn_in, short_runs=(self.short_run,))
+        shock = result.short_mass.iloc[:, 0].reindex(proxy.index).clip(0.0, 1.0)
+        probabilities = pd.DataFrame({"Stable": 1.0 - shock, "Shock": shock}).where(shock.notna())
+        series = RegimeSeries(probabilities, self.name, pd.DataFrame({"trend": _trend(proxy)}))
+        series.validate()
+        return series

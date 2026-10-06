@@ -174,6 +174,17 @@ def make_tearsheet(result, directory: Path, run_id: str = "") -> Path:
         lines += ["## By regime", "", _md_table(result.tables["by_regime"])]
     lines += ["## Where the return came from", "", _md_table(result.tables["attribution"], "{:+.2f}"), "## By asset", "",
               _md_table(result.tables["attribution_by_asset"], "{:+.3f}")]
+    extra = [("attribution_vs_benchmark", "Brinson-Fachler against equal weight (return points, Carino-linked)", "{:+.2f}"),
+             ("attribution_by_model", "Where the return came from, by model (return points)", "{:+.2f}"),
+             ("cost_breakdown", "Costs: spread and commission against market impact", "{:.2f}"),
+             ("capacity", "Capacity: net Sharpe by assets under management", "{:.3f}"),
+             ("regime_spread_scale", "Regime-conditional forecast spread (scale applied to the forecast standard deviation)", "{:.3f}"),
+             ("alpha_decay", "Alpha decay estimates behind the combination weights", "{:.3f}"),
+             ("risk_limits", "Regime risk limits", "{:.3f}")]
+    extra += [(k, f"What drives the forecast: {k.removeprefix('explain_')} (permutation importance of the final model)", "{:.4f}") for k in result.tables if k.startswith("explain_")]
+    for key, title, fmt in extra:
+        if key in result.tables and len(result.tables[key]):
+            lines += [f"## {title}", "", _md_table(result.tables[key], fmt)]
     forecast_keys = [k for k in m if k.startswith("forecast_")]
     if forecast_keys:
         lines += ["## Forecast quality", "", "| Measure | Value |", "|---|---|", *[f"| {k.replace('forecast_', '').replace('_', ' ')} | {m[k]:.4f} |" for k in forecast_keys]]

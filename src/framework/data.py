@@ -157,4 +157,24 @@ def load_macro_levels(config, index: pd.DatetimeIndex, download: bool = False) -
                 levels[spec.id] = asof_series(alt_raw[spec.id], spec, pd.DatetimeIndex(index)).reindex(index)
     except Exception:                                        # optional: a bundle without them still works; models that need them say so
         pass
+    levels = _with_positioning(config, levels, index)
+    return levels
+
+
+def _with_positioning(config, levels: pd.DataFrame, index: pd.DatetimeIndex) -> pd.DataFrame:
+    """CFTC speculative positioning (``cftc_es``, ``cftc_nq``, ``cftc_ust10``, ``cftc_gold``, ``cftc_silver``, ``cftc_crude``) known only after the release lag.
+
+    Read from the Generation 3 table if it has been downloaded; nothing is fetched here, and a missing table just leaves the columns out.
+    """
+    from ..data.altdata import cftc_series
+    from ..data.macro import asof_series
+
+    path = config.root / "data" / "raw" / "altdata" / "cftc_positioning.csv"
+    if not path.exists():
+        return levels
+    table = pd.read_csv(path, parse_dates=["date"])
+    series, specs = cftc_series(table, int(config.get("altdata.cftc.release_lag_days", 4)))
+    levels = levels.copy()
+    for spec in specs:
+        levels[spec.id] = asof_series(series[spec.id], spec, pd.DatetimeIndex(index)).reindex(index)
     return levels

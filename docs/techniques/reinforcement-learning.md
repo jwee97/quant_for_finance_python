@@ -5,9 +5,9 @@ difficulty: 3
 chapter: Ch. 19
 prerequisites: [backtest-engine-and-costs, multiple-testing]
 stages: [38]
-files: [src/models/rl_allocation.py, experiments/stage38_rl.py]
+files: [src/models/rl_allocation.py, experiments/stage38_rl.py, src/framework/allocators_portfolio.py]
 figures: [75, 76]
-tests: [tests/test_rl_allocation.py]
+tests: [tests/test_rl_allocation.py, tests/test_portfolio_allocators.py]
 models: []
 ---
 
@@ -29,6 +29,8 @@ Most reinforcement-learning finance results do not survive transaction costs and
 ## How this repo uses it
 
 `src/models/rl_allocation.py` has the policy and the optimiser; Stage 38 evaluates the average policy through the Generation 1 engine against equal weight and reports the overfitting gap and a random-tilt null.
+
+The `es_policy` allocator is the same softmax policy trained by evolution strategies, refit yearly on matured months, available as `allocation: {allocator: es_policy}`. It is the lowest-priority technique in the repository and Stage 38 found no out-of-sample gain over equal weight.
 
 ## What we found
 

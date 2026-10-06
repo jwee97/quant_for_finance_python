@@ -106,3 +106,28 @@ class RiskOnOff(ForecastModel):
         for a in present(data, ("GLD",)):
             scores[a] = 0.5 * off
         return scores.where(data.investable)
+
+
+POSITIONING_MAP = {"cftc_es": "SPY", "cftc_nq": "QQQ", "cftc_ust10": "IEF", "cftc_gold": "GLD", "cftc_silver": "SLV", "cftc_crude": "DBC"}
+
+
+@register_model("cftc_positioning", "macro", "CFTC positioning: fade crowded speculative net positioning in the futures matching each ETF (sign configurable)")
+class CftcPositioning(ForecastModel):
+    """When leveraged funds or managed money are extremely long, the marginal buyer may already be in. The Generation 3 test found no
+    significant predictive power for the next month, so treat this as a documented null result and a template for non-price data, not an edge."""
+
+    name, family, position_mode = "cftc_positioning", "macro", "time_series"
+
+    def __init__(self, sign: int = -1, min_periods: int = 756, mapping: dict | None = None):
+        if sign not in (-1, 1):
+            raise ValueError("sign must be -1 (fade) or +1 (follow)")
+        if min_periods < 52:
+            raise ValueError("min_periods must be at least 52 trading days")
+        self.sign, self.min_periods, self.mapping = sign, min_periods, dict(mapping or POSITIONING_MAP)
+
+    def score(self, data):
+        have = {k: a for k, a in self.mapping.items() if k in data.macro.columns and data.macro[k].notna().any() and a in data.assets}
+        if not have:
+            raise KeyError(f"cftc_positioning needs one of {sorted(self.mapping)} in the bundle's macro frame (run the Generation 3 download, stage 23)")
+        values = {asset: self.sign * np.tanh(expanding_z(data.macro[key].dropna(), self.min_periods).reindex(data.index).ffill() / 2.0) for key, asset in have.items()}
+        return zero_except(data.index, data.assets, values).where(data.investable)

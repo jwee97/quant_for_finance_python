@@ -5,9 +5,9 @@ difficulty: 3
 chapter: Ch. 20
 prerequisites: [volatility-forecasting]
 stages: [16, 31]
-files: [src/models/regimes.py, src/framework/regimes.py, src/features/regime_rules.py, experiments/stage16_regimes.py]
+files: [src/models/regimes.py, src/framework/regimes.py, src/features/regime_rules.py, experiments/stage16_regimes.py, src/framework/adaptive.py]
 figures: [30, 31, 32, 62]
-tests: [tests/test_regimes.py, tests/test_framework.py]
+tests: [tests/test_regimes.py, tests/test_framework.py, tests/test_adaptive_integration.py]
 models: []
 ---
 
@@ -32,6 +32,8 @@ mostly volatility regimes.
 
 Regimes are `Regime(name, probability)` objects. `src/framework/regimes.py` has the registered detectors (HMM, volatility state, macro, composite, static control) and the framework's
 look-ahead test runs on each. Stage 16 evaluates them; Stage 31 uses the composite in the adaptive pipeline with a circular-shift placebo.
+
+In the plugin framework two more detectors are registered, `gmm` (a Gaussian mixture on trailing volatility and trend features) and `bocpd` (Bayesian online change-point detection), beside `hmm` and the rule-based ones. A regime feeds the rest of the pipeline in three places: `forecast: {regime_spread: ...}` rescales the forecast spread by what the model's errors actually were in the current regime, `allocation` can be a `regime_switch`, and `risk: {limits: {gross_caps: ..., drawdown: ...}}` caps gross exposure by regime and de-risks in a drawdown.
 
 ## What we found
 

@@ -16,7 +16,7 @@ Nothing here claims that a built item *works* as a way to make money; the [findi
 | Dynamic covariance: DCC-GARCH, orthogonal GARCH | Built | [dynamic-covariance](techniques/dynamic-covariance.md), Stage 17 |
 | Dynamic covariance filters; factor stochastic volatility | Not built | Kalman filters are used for pairs hedge ratios and online forecasting, not for covariance; factor stochastic volatility needs MCMC machinery that was not justified for a 15-asset universe |
 | Portfolio attribution (allocation, selection, interaction, sleeves, factors) | Built | [attribution](techniques/attribution.md), Stages 20 and 40 |
-| Attribution into named strategy components such as momentum, carry and residual | Partly | Attribution is by asset class, sleeve and equity factor, not by strategy component |
+| Attribution into named strategy components such as momentum, carry and residual | Built | Every multi-model tear sheet has an attribution by model that reconciles exactly to the portfolio return; Brinson-Fachler against equal weight is in every tear sheet. Factor attribution (Stage 40) is still a separate stage |
 | Execution model: spread, impact, commission | Built | [execution-and-impact](techniques/execution-and-impact.md), Stage 25 |
 | Slippage as a separate term | Not built | Not separable from spread and impact in daily ETF data |
 
@@ -42,7 +42,8 @@ Nothing here claims that a built item *works* as a way to make money; the [findi
 |---|---|---|
 | PatchTST, TSMixer, TimeMixer, N-BEATS, N-HiTS | Built | [deep-time-series-models](techniques/deep-time-series-models.md), Stages 27 and 33. The TimeMixer model is a simplified multiscale mixer in its spirit, not the paper's architecture |
 | Chronos | Built (zero-shot) | [foundation-models](techniques/foundation-models.md), Stage 34 |
-| TimesFM, TimeGPT | Not built | TimeGPT is a paid API; TimesFM was not run |
+| TimesFM | Built (zero-shot plug-in) | `timesfm` model (TimesFM 2.5, 200M, optional dependency); causality-checked, one exploratory run in [feature_audit](feature_audit.md); no pre-registered stage |
+| TimeGPT | Not built | Paid API; no credentials |
 | Fine-tuning and transfer learning of foundation models | Not built | Zero-shot only: fine-tuning on a few hundred monthly points is overfitting by construction |
 | Graph neural networks | Built | [graph-neural-networks](techniques/graph-neural-networks.md), Stage 33 (15 nodes) |
 | Diffusion models | Built | [diffusion-scenarios](techniques/diffusion-scenarios.md), Stage 36 |

@@ -5,10 +5,10 @@ difficulty: 3
 chapter: Ch. 20
 prerequisites: [probabilistic-forecasting]
 stages: [22]
-files: [src/models/online.py, experiments/stage22_online.py]
+files: [src/models/online.py, experiments/stage22_online.py, src/strategies/online.py]
 figures: [44, 45]
-tests: [tests/test_online.py]
-models: []
+tests: [tests/test_online.py, tests/test_online_model.py]
+models: [online_ridge]
 ---
 
 # Online learning: updating as data arrives
@@ -30,6 +30,8 @@ Markets drift, so a frozen model decays. But a model that adapts quickly also ch
 
 `src/models/online.py` implements the three learners and the aggregation; Stage 22 gives them the same features, volatility forecast and origins as the annually refitted Stage 19 ridge, so
 only the update scheme differs.
+
+In the plugin framework the `online_ridge` model wraps the same three updaters (`updater: ridge | nlms | kalman`): at each month-end origin it first absorbs only the origins whose 21-day label is already complete, then predicts. Run it with `quant backtest --model online_ridge --tearsheet`; `forgetting` is the knob that matters.
 
 ## What we found
 

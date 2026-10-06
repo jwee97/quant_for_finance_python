@@ -5,9 +5,9 @@ difficulty: 3
 chapter: Ch. 22.5
 prerequisites: [probabilistic-forecasting]
 stages: [10, 24, 30, 31]
-files: [src/framework/forecasting.py, src/signals/alpha_engine.py, src/signals/combine.py, experiments/stage24_combination.py]
+files: [src/framework/forecasting.py, src/signals/alpha_engine.py, src/signals/combine.py, experiments/stage24_combination.py, src/framework/adaptive.py]
 figures: [48, 49, 61]
-tests: [tests/test_alpha_engine.py, tests/test_framework.py]
+tests: [tests/test_alpha_engine.py, tests/test_framework.py, tests/test_adaptive_integration.py]
 models: []
 ---
 
@@ -30,6 +30,8 @@ This is how systematic firms actually run: many small alphas, one portfolio. The
 
 `src/framework/forecasting.py` has `combine_forecasts` with every rule; the Generation 3 alpha engine in `src/signals/alpha_engine.py` is the cost-aware one; Stage 31 adds regime-conditional
 trust. Adding a strategy means registering a forecast model; it joins the combination automatically.
+
+The `decay_weighted` combination rule weights each model by its information coefficient at the holding period implied by an exponential decay fitted to its incremental IC at lags 1 to 20 (matured labels only); the fitted half-lives appear in the tear sheet as "alpha decay". It sits beside `equal`, `confidence`, `precision`, `ic_trust` and `regime_trust`.
 
 ## What we found
 

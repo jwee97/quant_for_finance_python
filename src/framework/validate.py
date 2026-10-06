@@ -74,7 +74,7 @@ def forecast_quality(forecasts, returns: pd.DataFrame, start) -> dict:
     fwd = forward_returns(returns, forecasts.horizon).reindex_like(forecasts.mean)
     mean, conf = forecasts.mean.loc[start:], forecasts.confidence.loc[start:]
     fwd = fwd.loc[start:]
-    p_up = pd.DataFrame(norm.cdf((forecasts.mean / forecasts.std.where(forecasts.std > 0)).to_numpy()), index=forecasts.mean.index, columns=forecasts.mean.columns).loc[start:]
+    p_up = forecasts.probability_up().loc[start:]
     ok = mean.notna() & fwd.notna() & p_up.notna()
     ic = []
     for _, (m, f) in zip(mean.index[::forecasts.horizon], ((mean.loc[d], fwd.loc[d]) for d in mean.index[::forecasts.horizon])):

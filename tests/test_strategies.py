@@ -13,7 +13,8 @@ from src.strategies.fixed_income import LEG, rolling_duration
 from src.strategies.statarb import kalman_spread, simulate_nav_arbitrage
 
 load_library()
-LIBRARY = [e.name for e in MODELS.entries() if not e.name.startswith("test_") and e.family != "crypto"]      # crypto models have their own bundle (tests/test_crypto.py)
+FOUNDATION = {"chronos", "timesfm"}                                                                         # optional pre-trained models: slow on CPU, tested in tests/test_deep_models.py
+LIBRARY = [e.name for e in MODELS.entries() if not e.name.startswith("test_") and e.family != "crypto" and e.name not in FOUNDATION]      # crypto models have their own bundle (tests/test_crypto.py)
 CLASSES = {"SPY": "equity", "QQQ": "equity", "IWM": "equity", "EFA": "equity", "EEM": "equity", "SHY": "rates", "IEF": "rates", "TLT": "rates", "AGG": "fixed_income",
            "LQD": "credit", "HYG": "credit", "GLD": "commodity", "SLV": "commodity", "DBC": "commodity", "VNQ": "real_estate"}
 
@@ -34,7 +35,7 @@ def bundle():
     macro = pd.DataFrame({"DGS2": walk(2.0, 0.02), "DGS5": walk(2.8, 0.02), "DGS10": walk(3.5, 0.02), "DGS20": walk(4.0, 0.02), "DFF": walk(1.0, 0.01),
                           "T10YIE": walk(2.0, 0.01), "T10Y3M": walk(1.0, 0.03, -2), "DTWEXBGS": walk(100, 0.2), "VIX": walk(20, 0.5, 9), "VIX3M": walk(21, 0.4, 10),
                           "VXN": walk(24, 0.5, 10), "GVZ": walk(18, 0.4, 8), "OVX": walk(35, 0.7, 12), "MOVE": walk(90, 1.0, 40), "BAA10Y": walk(2.5, 0.02, 1.0),
-                          "CPI_YOY": walk(0.025, 0.0004, -0.01)})
+                          "CPI_YOY": walk(0.025, 0.0004, -0.01), "cftc_es": walk(0.1, 0.01, -1), "cftc_gold": walk(0.3, 0.01, -1)})
     return bundle_from_prices(prices, volume=volume, high=high, low=low, asset_class=CLASSES, macro=macro, name="synthetic-etfs")
 
 

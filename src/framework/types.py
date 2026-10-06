@@ -63,11 +63,19 @@ class ForecastPanel:
     confidence: pd.DataFrame
     horizon: int = 21
     name: str = ""
+    p_up: pd.DataFrame | None = None      # P(return > 0) when it has been calibrated; ``None`` means the Gaussian value Phi(mean / std)
 
     @classmethod
     def from_mean_std(cls, mean: pd.DataFrame, std: pd.DataFrame, horizon: int = 21, name: str = "") -> "ForecastPanel":
         std = std.reindex_like(mean)
         return cls(mean, std, confidence_from(mean, std), horizon, name)
+
+    def probability_up(self) -> pd.DataFrame:
+        """The calibrated probability of an up move if there is one, else the Gaussian ``Phi(mean / std)``."""
+        if self.p_up is not None:
+            return self.p_up
+        z = self.mean / self.std.where(self.std > 0)
+        return pd.DataFrame(norm.cdf(z.to_numpy()), index=z.index, columns=z.columns)
 
     def at(self, date, asset) -> Forecast:
         return Forecast(float(self.mean.at[date, asset]), float(self.std.at[date, asset]), float(self.confidence.at[date, asset]))
@@ -77,7 +85,8 @@ class ForecastPanel:
         return self.mean.index
 
     def restrict(self, index) -> "ForecastPanel":
-        return ForecastPanel(self.mean.reindex(index), self.std.reindex(index), self.confidence.reindex(index), self.horizon, self.name)
+        return ForecastPanel(self.mean.reindex(index), self.std.reindex(index), self.confidence.reindex(index), self.horizon, self.name,
+                             None if self.p_up is None else self.p_up.reindex(index))
 
     def first_valid(self) -> pd.Timestamp | None:
         valid = self.mean.dropna(how="all")

@@ -31,7 +31,7 @@ distributed = ["dask[distributed]>=2024.1", "ray>=2.9"]
 llm = ["anthropic>=0.40"]
 dev = ["pytest>=7.4", "pytest-cov>=5.0", "ruff>=0.5", "pre-commit>=3.7"]
 docs = ["mkdocs>=1.6", "mkdocs-material>=9.5", "nbclient>=0.10", "ipykernel>=6.29"]
-foundation = ["chronos-forecasting>=2.0", "einops>=0.8", "transformers>=4.40"]
+foundation = ["chronos-forecasting>=2.0", "einops>=0.8", "transformers>=4.40", "timesfm[torch]>=3.0"]
 
 [project.scripts]
 quant = "src.cli:main"

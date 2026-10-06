@@ -1,0 +1,24 @@
+# One specification that exercises the whole integrated chain:
+#   regime detection -> regime-conditional forecast spread -> calibrated confidence -> decay-aware alpha combination
+#   -> confidence-sized portfolio -> regime volatility target and risk limits -> impact-aware costs -> attribution
+# Run it:   quant run examples/adaptive_pipeline.yaml --tearsheet --group examples
+name: adaptive_pipeline
+models:
+  - { name: momentum }
+  - { name: mean_reversion }
+  - { name: dual_momentum }
+regime: { detector: composite }
+combination: { rule: decay_weighted, holding: 21 }
+forecast:
+  regime_spread: { min_obs: 1000, shrink: 0.5 }
+  confidence: { method: platt, min_obs: 2000 }
+allocation: { allocator: confidence, params: { min_confidence: 0.05, gross: 1.0, max_weight: 0.25 } }
+risk:
+  mode: regime
+  regime_targets: { LowVol: 0.10, HighVol: 0.08, Crisis: 0.05, Inflation: 0.09, Deflation: 0.09 }
+  limits:
+    gross_caps: { Crisis: 0.5 }
+    drawdown: { trigger: 0.10, derisk: 0.5, recover: 0.05 }
+execution: { aum: 100000000 }
+evaluation: { benchmarks: [equal_weight, risk_parity] }
+notes: "Integration example for docs/platform_integration.md"

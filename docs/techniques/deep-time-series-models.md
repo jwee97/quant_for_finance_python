@@ -5,10 +5,10 @@ difficulty: 3
 chapter: Ch. 23
 prerequisites: [machine-learning-for-returns, probabilistic-forecasting]
 stages: [27, 33]
-files: [src/models/deep_forecast.py, src/models/deep_family.py, experiments/stage27_deep.py, experiments/stage33_frontier.py]
+files: [src/models/deep_forecast.py, src/models/deep_family.py, experiments/stage27_deep.py, experiments/stage33_frontier.py, src/strategies/deep.py]
 figures: [54, 55, 66]
-tests: [tests/test_deep_forecast.py, tests/test_frontier_models.py]
-models: []
+tests: [tests/test_deep_forecast.py, tests/test_frontier_models.py, tests/test_deep_models.py]
+models: [deep_window]
 ---
 
 # Deep learning for time series: transformers, mixers, N-BEATS, N-HiTS
@@ -32,6 +32,8 @@ matters: beating a weak benchmark proves nothing.
 
 Stage 27 tests a patch transformer and an MLP-mixer against the annually refitted ridge. Stage 33 re-tests four models (N-BEATS, N-HiTS, TimeMixer-style, graph attention) against the asset's historical
 mean, declared as the primary benchmark because Stage 27 showed that the ridge was the weak one.
+
+The `deep_window` model puts the five networks (`kind: patchtst | tsmixer | nbeats | nhits | timemixer`) behind the plugin interface: refit yearly on matured origins with a 21-day embargo, early stopping on the last fifth, forecast = predicted z-score times the EWMA volatility. `quant backtest --model deep_window --param kind=nbeats` gives it the same costs, tear sheet and causality check as any strategy.
 
 ## What we found
 

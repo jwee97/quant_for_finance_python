@@ -7,7 +7,7 @@ prerequisites: []
 stages: [29]
 files: [src/research_db/builder.py, src/framework/experiments.py, experiments/stage29_research_db.py, src/utils/config.py]
 figures: [58]
-tests: [tests/test_research_db.py, tests/test_config_identity.py]
+tests: [tests/test_research_db.py, tests/test_config_identity.py, tests/test_experiment_manager.py]
 models: []
 ---
 
@@ -29,6 +29,8 @@ Without a ledger of everything tried, including failures, no one can tell how mu
 ## How this repo uses it
 
 `quant sql "SELECT ..."` queries the SQLite database rebuilt from the files in Stage 29; `quant leaderboard` queries your own experiment runs; the dashboard shows the whole ledger. Configuration fingerprints for each generation are pinned by a test.
+
+The experiment manager stores for every run its specification, a config fingerprint, the git commit, metrics, tables, the combined forecasts (`forecasts.csv.gz`) and a `meta.json`; `quant sql --db runs "SELECT ..."` queries them read-only. Re-running an identical specification at the same commit returns the stored run.
 
 ## What we found
 

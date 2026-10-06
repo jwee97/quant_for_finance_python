@@ -5,9 +5,9 @@ difficulty: 2
 chapter: Ch. 22
 prerequisites: [backtest-engine-and-costs]
 stages: [20, 40]
-files: [src/backtest/attribution.py, experiments/stage20_attribution.py, experiments/stage40_factors.py]
+files: [src/backtest/attribution.py, experiments/stage20_attribution.py, experiments/stage40_factors.py, src/framework/analytics.py]
 figures: [40, 41, 79]
-tests: [tests/test_attribution.py, tests/test_factors.py]
+tests: [tests/test_attribution.py, tests/test_factors.py, tests/test_adaptive_integration.py]
 models: []
 ---
 
@@ -29,6 +29,8 @@ A strategy you cannot explain is a strategy you cannot defend, and an explanatio
 ## How this repo uses it
 
 Stage 20 asserts every identity to 1e-9 on the live books and reconciles monthly effects with the engine; Stage 40 regresses the Generation 1 books on the Fama-French five factors plus momentum.
+
+Every tear sheet now carries a Brinson-Fachler table against the equal-weight benchmark (asset classes plus cash, Carino-linked so effects sum to the active return) and, when several models are combined, a model-level attribution that reconciles exactly to the portfolio return.
 
 ## What we found
 

@@ -5,9 +5,9 @@ difficulty: 2
 chapter: Ch. 20
 prerequisites: [probabilistic-forecasting]
 stages: [19, 35]
-files: [src/models/probabilistic.py, experiments/stage35_explain.py]
+files: [src/models/probabilistic.py, experiments/stage35_explain.py, src/framework/adaptive.py]
 figures: [38, 70]
-tests: [tests/test_probabilistic.py, tests/test_explain.py]
+tests: [tests/test_probabilistic.py, tests/test_explain.py, tests/test_adaptive_integration.py]
 models: []
 ---
 
@@ -30,6 +30,8 @@ Sizing a bet by a probability only works if the probability is honest. But calib
 
 Stage 19 applies Platt scaling to a direction classifier. Stage 35 refits Platt and isotonic calibrators each month on only the outcomes that had matured, and compares them with the raw
 probabilities by log loss, Brier score and expected calibration error.
+
+`forecast: {confidence: {method: platt | isotonic}}` recalibrates P(up) walk-forward inside the pipeline: each month the map from the forecast's z-score to the probability of a positive 21-day return is refit on matured labels only, and the Brier score and reliability table in the tear sheet use the calibrated probability.
 
 ## What we found
 

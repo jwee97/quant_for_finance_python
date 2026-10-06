@@ -5,10 +5,10 @@ difficulty: 3
 chapter: Ch. 23
 prerequisites: [deep-time-series-models]
 stages: [34]
-files: [experiments/stage34_foundation.py]
+files: [experiments/stage34_foundation.py, src/strategies/deep.py]
 figures: [68]
-tests: [tests/test_frontier_models.py]
-models: []
+tests: [tests/test_frontier_models.py, tests/test_deep_models.py]
+models: [chronos, timesfm]
 ---
 
 # Foundation models for time series (zero-shot Chronos)
@@ -31,6 +31,8 @@ not be clean evidence, a bad result is.
 
 Stage 34 feeds the 252 normalised returns before each origin to Chronos-Bolt (small), sums the median path over 21 days and scales by volatility. The stage is descriptive by declaration, and the model revision hash is
 stored with the results.
+
+Two zero-shot plug-ins read the same window: `chronos` (Chronos-Bolt) and `timesfm` (TimesFM 2.5, 200M parameters). Both are optional dependencies (`pip install chronos-forecasting einops`, `pip install 'timesfm[torch]'`) and download their weights from the Hugging Face hub; without them the model raises an error naming what to install. Both pass the repository's causality check on real weights; the contamination caveat above applies to both.
 
 ## What we found
 

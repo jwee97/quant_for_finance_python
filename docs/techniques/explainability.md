@@ -5,9 +5,9 @@ difficulty: 3
 chapter: Ch. 23
 prerequisites: [calibration]
 stages: [35]
-files: [src/models/explain.py, experiments/stage35_explain.py]
+files: [src/models/explain.py, experiments/stage35_explain.py, src/strategies/ml.py]
 figures: [69]
-tests: [tests/test_explain.py]
+tests: [tests/test_explain.py, tests/test_positioning_explain.py]
 models: []
 ---
 
@@ -31,6 +31,8 @@ A black box that makes money cannot be risk managed. And an explanation method t
 
 Stage 35 fits a small MLP and a gradient-boosted model on the twelve price features, explains 202 out-of-sample rows with all three methods, tests both identities on every row, and compares the
 rankings.
+
+Setting `evaluation: {explain: true}` in a specification asks every model that can explain itself (today `ml_ridge`) for a permutation-importance table of its final fit, which the tear sheet prints under "What drives the forecast". It is descriptive: the rows it is measured on overlap the training set.
 
 ## What we found
 

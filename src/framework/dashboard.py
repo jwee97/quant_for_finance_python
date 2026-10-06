@@ -26,6 +26,35 @@ def _records(frame: pd.DataFrame) -> list[dict]:
     return json.loads(frame.replace([np.inf, -np.inf], np.nan).to_json(orient="records"))
 
 
+def _parse_name(name: str) -> tuple[str, dict]:
+    m = re.match(r"^(?P<base>[^\[]+)(\[(?P<params>.*)\])?$", str(name))
+    params = {}
+    if m and m.group("params"):
+        for part in m.group("params").split(","):
+            k, _, v = part.partition("=")
+            try:
+                params[k.strip()] = float(v)
+            except ValueError:
+                params[k.strip()] = v.strip()
+    return (m.group("base") if m else str(name)), params
+
+
+def _parsed_entry(name, family, sharpe, cagr, vol, max_drawdown, turnover) -> dict:
+    base, params = _parse_name(name)
+    return {"name": name, "base": base, "params": params, "family": family, "sharpe": sharpe, "cagr": cagr, "vol": vol, "max_drawdown": max_drawdown, "turnover": turnover}
+
+
+def _all_runs(config) -> list[dict]:
+    db = config.root / str(config.get("framework.experiment_db.path", "data/experiments.db"))
+    if not db.exists():
+        return []
+    import sqlite3
+
+    with sqlite3.connect(db) as con:
+        frame = pd.read_sql_query("SELECT name, sharpe, cagr, ann_vol, max_drawdown, ann_turnover FROM runs", con)
+    return _records(frame)
+
+
 def collect(config) -> dict:
     root, tables, figures = config.root, config.reports_dir("tables"), config.reports_dir("figures")
     ledger = []
@@ -39,19 +68,8 @@ def collect(config) -> dict:
             ledger.append({"id": d["experiment_id"], "stage": d.get("stage", ""), "hypothesis": d["hypothesis"], "decision": d["decision"], "notes": d.get("notes", ""),
                            "results": dict(list(results.items())[:6]), "date": d.get("date", "")[:10]})
     specs = _read(tables / "stage30_specs.csv", index_col=0)
-    library = []
-    for name, row in specs.iterrows():
-        m = re.match(r"^(?P<base>[^\[]+)(\[(?P<params>.*)\])?$", str(name))
-        params = {}
-        if m and m.group("params"):
-            for part in m.group("params").split(","):
-                k, _, v = part.partition("=")
-                try:
-                    params[k.strip()] = float(v)
-                except ValueError:
-                    params[k.strip()] = v.strip()
-        library.append({"name": name, "base": m.group("base") if m else name, "params": params, "family": row.get("family", ""),
-                        "sharpe": row.get("sharpe"), "cagr": row.get("cagr"), "vol": row.get("ann_vol"), "max_drawdown": row.get("max_drawdown"), "turnover": row.get("ann_turnover")})
+    library = [_parsed_entry(name, row.get("family", ""), row.get("sharpe"), row.get("cagr"), row.get("ann_vol"), row.get("max_drawdown"), row.get("ann_turnover"))
+               for name, row in specs.iterrows()]
     runs, curves = [], {}
     db = config.root / str(config.get("framework.experiment_db.path", "data/experiments.db"))
     if db.exists():
@@ -66,6 +84,8 @@ def collect(config) -> dict:
                 curves[run_id] = {"x": [d.strftime("%Y-%m") for d in curve.index], "y": [round(float(v), 4) for v in curve]}
             except Exception:
                 pass
+    for r in _all_runs(config):                                      # your own sweeps appear in the parameter-sensitivity chart next to the library
+        library.append(_parsed_entry(r["name"], "your runs", r["sharpe"], r["cagr"], r["ann_vol"], r["max_drawdown"], r["ann_turnover"]))
     ic = _read(tables / "stage05_ic_decay_all.csv")
     walk = _read(tables / "stage11_walk_forward_summary.csv", index_col=0)
     risk = _read(tables / "stage09_risk_summary.csv", index_col=0)

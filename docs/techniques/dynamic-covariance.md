@@ -5,9 +5,9 @@ difficulty: 3
 chapter: Ch. 20.2
 prerequisites: [volatility-forecasting]
 stages: [17]
-files: [src/portfolio/dynamic_covariance.py, experiments/stage17_dynamic_covariance.py]
+files: [src/portfolio/dynamic_covariance.py, experiments/stage17_dynamic_covariance.py, src/framework/allocators_portfolio.py]
 figures: [34, 35]
-tests: [tests/test_dynamic_covariance.py]
+tests: [tests/test_dynamic_covariance.py, tests/test_portfolio_allocators.py]
 models: []
 ---
 
@@ -29,6 +29,8 @@ A rolling covariance is slow to see a crisis. A good dynamic covariance matters 
 ## How this repo uses it
 
 `src/portfolio/dynamic_covariance.py` has both models; Stage 17 compares them with sample, EWMA and shrinkage estimators, pooled and inside the GFC, COVID and 2022 windows.
+
+The `dynamic_cov` allocator makes the forecast usable: at each month-end it solves the constrained minimum-variance problem on the month-ahead DCC-GARCH, O-GARCH or (control) rolling-shrinkage covariance. Use it as `allocation: {allocator: dynamic_cov, params: {model: dcc}}` in a specification.
 
 ## What we found
 

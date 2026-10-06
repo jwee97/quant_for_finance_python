@@ -6,10 +6,11 @@
     volatility        variance risk premium, variance carry, implied versus realised
     fixed_income      curve steepener, butterfly, carry and roll-down, duration timing
     macro             inflation rotation, yield-curve regimes, dollar strength, commodity supercycle, risk-on/off
-    ml                walk-forward ridge on price and macro features
+    ml                walk-forward ridge on price and macro features; online (monthly-updated) ridge / NLMS / Kalman
+    deep              window networks (patch transformer, mixer, N-BEATS, N-HiTS, TimeMixer-style) refit yearly; zero-shot Chronos-Bolt (optional)
     crypto            funding carry, basis reversion, stablecoin flow (optional branch; needs the crypto bundle)
 
 Run ``quant list models`` to see them with their hypotheses.
 """
 
-from . import crypto, cross_sectional, fixed_income, macro, ml, statarb, time_series, volatility  # noqa: F401
+from . import crypto, cross_sectional, deep, fixed_income, macro, ml, online, statarb, time_series, volatility  # noqa: F401

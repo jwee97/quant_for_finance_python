@@ -5,9 +5,9 @@ difficulty: 3
 chapter: Ch. 22
 prerequisites: [backtest-engine-and-costs]
 stages: [25]
-files: [src/backtest/execution.py, src/backtest/impact.py, experiments/stage25_execution.py]
+files: [src/backtest/execution.py, src/backtest/impact.py, experiments/stage25_execution.py, src/framework/analytics.py]
 figures: [50, 51]
-tests: [tests/test_impact.py]
+tests: [tests/test_impact.py, tests/test_adaptive_integration.py]
 models: []
 ---
 
@@ -29,6 +29,8 @@ Impact is why strategies that work at $10m fail at $1bn. A no-trade band (do not
 ## How this repo uses it
 
 `src/backtest/impact.py` has the square-root model; `execution.py` applies it to the book; Stage 25 reports capacity by book, a Sharpe-by-AUM grid and the effect of no-trade bands.
+
+With `execution: {aum: 5e8}` the pipeline charges the square-root impact model on top of spread and commission and reports a cost breakdown; `execution: {capacity: true}` or `quant capacity --spec SPEC` gives net Sharpe by assets under management and the AUM at which it falls to half.
 
 ## What we found
 

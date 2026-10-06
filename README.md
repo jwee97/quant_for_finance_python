@@ -180,7 +180,7 @@ machine learning, factor-model attribution and reinforcement learning.
 
 ## Generation 5
 
-A plugin framework and a newcomer layer around the earlier research, a library of 34 registered strategies, and thirteen
+A plugin framework and a newcomer layer around the earlier research, a library of 34 registered strategies (39 models after the integration audit below), and thirteen
 stages of new evidence (Stages 30-40), each decision rule committed before its result. The full account, with every commit,
 deviation and post-hoc analysis, is in [`reports/generation5_report.md`](reports/generation5_report.md).
 
@@ -189,6 +189,15 @@ regime detectors and allocators, calibration against matured outcomes, six forec
 allocator and risk policy, a causality test run on every plugin, a persistent experiment database that counts trials for the
 deflated Sharpe ratio, and a tear sheet with fixed red-flag rules. `quant backtest --model dual_momentum --tearsheet` runs one
 strategy through all of it; a new strategy is one class (see `docs/how_to_add_a_strategy.md`).
+
+**Integration audit.** A strict feature audit of the Generation 2-4 roadmap ([`docs/feature_audit.md`](docs/feature_audit.md), with a
+before/after status for every feature) found that most of it lived only in stage scripts. The pieces are now reachable from one
+specification ([`docs/platform_integration.md`](docs/platform_integration.md)): regimes feed the forecast spread, the
+volatility target and risk limits; confidence is calibrated walk-forward; combination can weight by fitted alpha decay;
+impact costs, capacity, Brinson and model-level attribution appear in every tear sheet; runs store their forecasts and git
+commit; `quant sweep` runs parallel grids as counted trials; and online, deep, Chronos, TimesFM, CFTC-positioning,
+dynamic-covariance, Bayesian and evolution-strategy components are plugins. `quant run examples/adaptive_pipeline.yaml --tearsheet`
+runs the whole chain.
 
 **Fourteen decision-bearing hypotheses, four retained, each with its qualification.** A search over 42 library specifications
 finds one that beats cash after the search (dual momentum, Sharpe 0.90; Reality Check p = 0.0015) and none that beats passive
@@ -204,7 +213,7 @@ gain into a Sharpe of 0.21 against 0.75 for equal weight.
 Sharpe test needs a true difference of about 0.35, so most earlier rejections could not have been otherwise. Stage 40 regresses
 the Generation 1 books on the Fama-French five factors plus momentum.
 
-**Not built:** language-model results (no model was called), TimesFM and TimeGPT, causal forests, dispersion trading,
+**Not built:** language-model results (no model was called), TimeGPT, causal forests, dispersion trading,
 cross-exchange crypto spreads, accounting-based value and quality, ETF flows and analyst revisions, a run of the Ray backend,
 Docker and CI runs.
 
@@ -235,7 +244,7 @@ src/
                  diffusion, evolution-strategies policy, explanation methods
   framework/     Generation 5 plugin pipeline: types, registries, data bundle, regimes, calibration and combination, allocators,
                  regime risk, validation, experiment manager, tear sheet, dashboard, demo, generated docs
-  strategies/    the 34 registered forecast models (time-series, cross-sectional, stat-arb, volatility, fixed income, macro, ML, crypto)
+  strategies/    the 39 registered forecast models (time-series, cross-sectional, stat-arb, volatility, fixed income, macro, ML, crypto)
   causal/        double machine learning, R-learner, 2SLS, difference in differences, simulated worlds
   cli.py         the `quant` command
   utils/         config, logging, dates, plotting, experiment registry
@@ -243,7 +252,7 @@ docs/            START_HERE, 47 technique guides, glossary, chapter map, strateg
 experiments/     numbered stage scripts + the experiment registry
 reports/         figures, tables, the data-quality report, the research paper,
                  the Generation 2-5 reports, errata/ (before/after record of the drift fix), the dashboard
-tests/           621 tests
+tests/           746 tests
 Dockerfile, docker-compose.yml, Makefile, .github/workflows/ci.yml, .pre-commit-config.yaml
 ```
 
@@ -262,7 +271,7 @@ python -m experiments.run_all --generation 5  # Generation 5 only (stages 30-40)
 python -m experiments.run_all --from 6 --to 9 # a range of stages
 python -m experiments.run_all --fresh         # clear derived artefacts first
 python -m experiments.stage01_data            # a single stage
-pytest -q                                      # 621 tests
+pytest -q                                      # 746 tests
 quant demo; quant dashboard; quant explain risk parity   # the newcomer layer
 quant docs build                               # regenerate strategy cards, chapter map, findings digest
 make install test lint cov                     # the same through the Makefile; docker compose run --rm tests for the container

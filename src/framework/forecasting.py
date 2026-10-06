@@ -42,6 +42,10 @@ class ForecastModel:
         """Optional: target weights built directly (structured trades such as a duration-neutral curve steepener). ``None`` means use the forecast."""
         return None
 
+    def explain(self, data) -> pd.DataFrame | None:
+        """Optional: which inputs drive the forecast. A frame indexed by feature with ``importance`` (rise in squared error when shuffled) and ``share``. ``None`` = not available."""
+        return None
+
     def require(self, data) -> None:
         missing = [n for n in self.requires if n not in data.macro.columns or data.macro[n].dropna().empty]
         if missing:

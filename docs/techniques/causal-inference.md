@@ -5,9 +5,9 @@ difficulty: 3
 chapter: Ch. 23
 prerequisites: [multiple-testing]
 stages: [37]
-files: [src/causal/estimators.py, src/causal/simulate.py, experiments/stage37_causal.py]
+files: [src/causal/estimators.py, src/causal/simulate.py, experiments/stage37_causal.py, src/causal/check.py]
 figures: [73, 74]
-tests: [tests/test_causal.py]
+tests: [tests/test_causal.py, tests/test_cli_tools.py]
 models: []
 ---
 
@@ -31,6 +31,8 @@ Every backtest signal is a correlation. Strategies built on spurious relationshi
 
 Stage 37 first validates each estimator on simulated data with a known effect, next to the naive estimate, then applies double machine learning to FOMC statement tone and same-day ETF returns. IV is
 validated but not applied (no credible instrument); difference in differences is applied to one announcement-day design only.
+
+`quant causal` prints the estimators against simulated worlds with a known effect, including the world where the difference-in-differences assumption is violated and the estimator duly misses.
 
 ## What we found
 
