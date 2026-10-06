@@ -1,0 +1,1 @@
+Figure 66. Does any modern deep forecaster beat an asset's own historical mean for the 21-day return, once the volatility forecast is held fixed?

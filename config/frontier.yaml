@@ -15,6 +15,7 @@ deep_family:
   training: { learning_rate: 1.0e-3, weight_decay: 1.0e-2, batch_size: 256, max_epochs: 30, patience: 5, validation_fraction: 0.20, ensemble_seeds: [11, 12, 13], rows: "every 5th trading day, all assets pooled" }
   bayesian:
     method: "deep ensemble (three seeds) plus Monte Carlo dropout (30 stochastic passes) for the best model by primary-benchmark CRPS difference; epistemic variance of the z-score forecast = variance across the 3 x 30 predictions"
+    mc_samples: 30        # machine-readable form of "30 stochastic passes" above; no value changed
     combine: "forecast std = EWMA sigma * sqrt(1 + epistemic variance of z); no free parameter"
   decisions:
     fdr: 0.10

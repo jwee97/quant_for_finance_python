@@ -57,7 +57,11 @@ class TrainSettings:
 
 
 def build_network(kind: str, n_assets: int, window: int = 252, d_model: int = 32, layers: int = 2, heads: int = 4,
-                  ff: int = 64, dropout: float = 0.2):
+                  ff: int = 64, dropout: float = 0.2, family: dict | None = None):
+    from .deep_family import FAMILY, build_family_network
+
+    if kind in FAMILY:                                   # Generation 5 (Stage 33); the Stage 27 networks below are untouched
+        return build_family_network(kind, n_assets, window, **(family or {}))
     import torch
     from torch import nn
 
@@ -104,10 +108,12 @@ def parameter_count(kind: str, n_assets: int, **kwargs) -> int:
 
 
 def train_and_predict(kind: str, X_train, a_train, y_train, X_val, a_val, y_val, X_test, a_test, seed: int, n_assets: int,
-                      net_kwargs: dict | None = None, settings: TrainSettings = TrainSettings()) -> dict:
+                      net_kwargs: dict | None = None, settings: TrainSettings = TrainSettings(), mc_samples: int = 0) -> dict:
     """Train one network with early stopping on a validation block and predict the test rows.
 
     Returns ``{"pred": mu_z for the test rows, "val_loss": per-epoch validation MSE, "best_epoch": int, "train_loss": [...]}``.
+    With ``mc_samples > 0`` it also returns ``"mc_pred"`` of shape (mc_samples, n_test): predictions with dropout left ON
+    (Monte Carlo dropout, Gal and Ghahramani 2016). With the default 0 nothing extra is drawn, so Stage 27 is unchanged.
     """
     import torch
 
@@ -145,7 +151,23 @@ def train_and_predict(kind: str, X_train, a_train, y_train, X_val, a_val, y_val,
     net.eval()
     with torch.no_grad():
         pred = net(torch.as_tensor(X_test, dtype=torch.float32), torch.as_tensor(a_test, dtype=torch.long)).numpy().astype(float)
-    return {"pred": pred, "val_loss": history, "train_loss": train_history, "best_epoch": int(best_epoch)}
+    out = {"pred": pred, "val_loss": history, "train_loss": train_history, "best_epoch": int(best_epoch)}
+    if mc_samples > 0:
+        out["mc_pred"] = mc_dropout_predict(net, X_test, a_test, mc_samples, seed)
+    return out
+
+
+def mc_dropout_predict(net, X_test, a_test, samples: int, seed: int) -> np.ndarray:
+    """``samples`` stochastic forward passes with dropout active (the nets use LayerNorm, never batch norm, so train mode only switches dropout on)."""
+    import torch
+
+    torch.manual_seed(seed + 100_003)
+    net.train()
+    tx, ta = torch.as_tensor(X_test, dtype=torch.float32), torch.as_tensor(a_test, dtype=torch.long)
+    with torch.no_grad():
+        draws = np.stack([net(tx, ta).numpy().astype(float) for _ in range(samples)])
+    net.eval()
+    return draws
 
 
 def ridge_window(X_train, y_train, X_test, alpha: float = 1000.0) -> np.ndarray:

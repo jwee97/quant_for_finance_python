@@ -62,6 +62,7 @@ STAGES = [
     (30, "stage30_library", "The strategy library as a search", 5),
     (31, "stage31_adaptive", "The adaptive pipeline", 5),
     (32, "stage32_crypto", "The optional crypto branch", 5),
+    (33, "stage33_frontier", "Deep-forecasting family, graph and Bayesian deep learning", 5),
     (29, "stage29_research_db", "Research database", 4),
 
 ]

@@ -1,0 +1,9 @@
+model,against,n_origins,mean_crps_difference_model_minus_other,p_value
+nbeats,patchtst,187,-0.000360,0.006566
+nhits,patchtst,187,-0.000333,0.015552
+timemixer,patchtst,187,-0.000354,0.005166
+gat,patchtst,187,-0.000175,0.267560
+nbeats,tsmixer,187,-0.000144,0.114303
+nhits,tsmixer,187,-0.000117,0.233633
+timemixer,tsmixer,187,-0.000138,0.106097
+gat,tsmixer,187,0.000041,0.745523
