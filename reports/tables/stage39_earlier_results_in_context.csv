@@ -1,0 +1,7 @@
+source,a,b,observed_difference,p_value,years,implied_tracking_error,grid_tracking_error,grid_years,min_detectable_difference_at_grid
+stage31_allocation,regime switch (soft),risk parity (M2),0.071770,0.650000,18.603175,0.072069,0.060000,15.700000,0.347222
+stage31_allocation,regime switch (soft),equal weight (M0),0.192008,0.204000,18.603175,0.074016,0.060000,15.700000,0.347222
+stage38_rl,RL policy (3-seed average),equal weight (M0),-0.541372,0.004500,15.607143,0.081783,0.060000,15.700000,0.347222
+stage38_rl,RL seed 1,equal weight (M0),-0.651441,0.000500,15.607143,0.083958,0.060000,15.700000,0.347222
+stage38_rl,RL seed 2,equal weight (M0),-0.407417,0.041000,15.607143,0.094079,0.060000,15.700000,0.347222
+stage38_rl,RL seed 3,equal weight (M0),-0.595968,0.001500,15.607143,0.080967,0.060000,15.700000,0.347222

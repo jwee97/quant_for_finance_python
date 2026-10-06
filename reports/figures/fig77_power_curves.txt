@@ -1,0 +1,1 @@
+Figure 77. How large does a true Sharpe edge or forecast R-squared have to be before the platform's tests would notice it?
