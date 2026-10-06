@@ -1,0 +1,1 @@
+Figure 56. What does the FOMC statement corpus look like through the offline lexicon: how many statements, what tone, and how much does each statement rewrite the last?
