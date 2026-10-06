@@ -1,0 +1,1 @@
+Figure 65. Does timing the funding carry, trading the basis, or following stablecoin supply growth beat the unconditioned alternative (always-on carry, buy and hold) on Deribit perpetual data?
