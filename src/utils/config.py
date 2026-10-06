@@ -52,7 +52,16 @@ GEN4_NAMESPACES = (
     "research_db",
 )
 
-CONFIG_FILES = CORE_NAMESPACES + GEN2_NAMESPACES + GEN3_NAMESPACES + GEN4_NAMESPACES
+# Generation 5 (the platform layer and the remaining research capabilities).
+GEN5_NAMESPACES = (
+    "framework",
+    "strategy_library",
+    "adaptive",
+    "frontier",
+    "diagnostics",
+)
+
+CONFIG_FILES = CORE_NAMESPACES + GEN2_NAMESPACES + GEN3_NAMESPACES + GEN4_NAMESPACES + GEN5_NAMESPACES
 
 
 def project_root() -> Path:
@@ -107,6 +116,11 @@ class Config:
     deeplearning: dict = field(default_factory=dict)
     assistant: dict = field(default_factory=dict)
     research_db: dict = field(default_factory=dict)
+    framework: dict = field(default_factory=dict)
+    strategy_library: dict = field(default_factory=dict)
+    adaptive: dict = field(default_factory=dict)
+    frontier: dict = field(default_factory=dict)
+    diagnostics: dict = field(default_factory=dict)
     root: Path = field(default_factory=project_root)
 
     # -- construction -----------------------------------------------------
@@ -175,7 +189,7 @@ class Config:
         ``scope="all"`` additionally hashes the Generation 2 namespaces and is
         what Generation 2 stages stamp into the experiment registry (its value
         is pinned by a test: Generation 3 files must not rename a Generation 2
-        result). ``scope="gen3"`` adds the Generation 3 namespaces (pinned too), ``scope="gen4"`` the Generation 4 ones. An
+        result). ``scope="gen3"`` adds the Generation 3 namespaces (pinned too), ``scope="gen4"`` the Generation 4 ones (pinned), ``scope="gen5"`` all of them. An
         explicit iterable of namespace names is also accepted.
 
         A result's identity should be the hash of exactly the configuration it
@@ -189,6 +203,8 @@ class Config:
         elif scope == "gen3":
             names = CORE_NAMESPACES + GEN2_NAMESPACES + GEN3_NAMESPACES
         elif scope == "gen4":
+            names = CORE_NAMESPACES + GEN2_NAMESPACES + GEN3_NAMESPACES + GEN4_NAMESPACES
+        elif scope == "gen5":
             names = CONFIG_FILES
         else:
             names = tuple(scope)

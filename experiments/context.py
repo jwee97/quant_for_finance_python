@@ -72,7 +72,7 @@ def build_context(stage: str, rebuild_config: dict | None = None, generation: in
 
     registry = ExperimentRegistry(
         data_version=data_version(config.path("metadata")),
-        config_fingerprint=config.fingerprint({1: "core", 2: "all", 3: "gen3"}.get(generation, "gen4")),
+        config_fingerprint=config.fingerprint({1: "core", 2: "all", 3: "gen3", 4: "gen4"}.get(generation, "gen5")),
     )
     if generation >= 2:
         replaced = registry.drop_stage(stage)
