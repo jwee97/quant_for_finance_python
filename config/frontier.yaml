@@ -24,3 +24,25 @@ deep_family:
     # h_bayesian: for the best of the four, replacing the EWMA forecast std by the ensemble-widened std lowers the mean CRPS (Diebold-Mariano, p <= 0.10, negative difference).
     # Reported, not judged: each model against the Stage 19 ridge and against the Stage 27 mixer and transformer; rank IC; parameter counts; seed dispersion;
     #   coverage of the 50% and 90% predictive intervals with and without the epistemic term.
+
+# ===== Stage 34: a zero-shot time-series foundation model =====
+foundation:
+  model: "Chronos-Bolt (small), amazon/chronos-bolt-small, run zero-shot: no fine-tuning, no parameter touches any ETF data"
+  task: "the 252 normalised daily returns before each Stage 19 origin (same window and normalisation as Stage 27) are the context; the model's median path for the next 21 days is summed and multiplied by the daily EWMA volatility at the origin to give a 21-day return forecast; the Stage 19 EWMA 21-day sigma is the spread, as in every other forecast stage"
+  rows: "the Stage 19 (origin, asset) rows, identical to Stages 27 and 33"
+  contamination: "The pre-training corpus of Chronos models is large and only partly documented, and covers dates that overlap this sample. Whether it contains these ETFs' prices is unknown. A good result would therefore not be clean evidence; a bad one is clean evidence of no skill. This asymmetry is stated before the result."
+  decisions: "None. The stage is descriptive: mean CRPS against the historical mean and the Stage 19 ridge (Diebold-Mariano, two-sided), rank IC, and the share of the median-path sum that is distinguishable from zero. No decision is registered, so no hypothesis can be retained or rejected on this stage."
+
+# ===== Stage 35: explainability and calibration of the forecasts =====
+explain_calibrate:
+  explain:
+    purpose: "Teaching and auditing, not a hypothesis. Explain two models fitted on the twelve Stage 19 price features to a 21-day z-score target, annually refitted on the Stage 19 schedule: a small MLP (hidden 16, ReLU, weight decay 1e-2) and a gradient-boosted tree model (sklearn HistGradientBoosting, depth 3, 100 iterations, learning rate 0.05)."
+    methods: ["permutation importance on the out-of-sample rows (mean rise in MSE over 20 shuffles, seed 7)", "exact interventional Shapley values by enumerating all 2^12 feature subsets against a background of 50 training rows (on 200 out-of-sample rows)", "integrated gradients on the MLP with a zero (= training-mean) baseline and 100 trapezoid steps"]
+    checks: "Completeness is tested, not assumed: for every explained row the Shapley values must sum to f(x) minus the mean background prediction (tolerance 1e-6) and the integrated gradients to f(x) minus f(baseline) (tolerance 1e-2 of the range). Failures are reported. Global importance rankings are compared across methods with Spearman correlation; disagreement is reported, not resolved."
+  calibration:
+    task: "Stage 19's price-only classifier gives p_raw for 'the asset's 21-day return is positive'. Starting 2016-01-31 (60 months of matured history), at each monthly origin fit Platt scaling and isotonic regression on the p_raw and outcomes of all earlier origins whose 21-day outcome had matured before the origin, then apply them to that origin's p_raw. Raw p_raw is the third arm."
+    metrics: ["log loss", "Brier score", "expected calibration error (10 equal-count bins)"]
+    decisions:
+      fdr: 0.10
+      # h_isotonic: isotonic recalibration has a lower mean log loss than Platt scaling (Diebold-Mariano on monthly cross-asset means, two-sided, p <= 0.10, negative difference).
+      # Reported, not judged: Platt vs raw; isotonic vs raw; Brier; ECE; reliability tables; Stage 19's own p_cal.
