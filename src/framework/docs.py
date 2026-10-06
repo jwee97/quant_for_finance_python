@@ -103,6 +103,17 @@ def chapter_map(config) -> str:
     return "\n".join(lines) + "\n"
 
 
+def technique_index(config) -> str:
+    guides = load_guides(config)
+    lines = ["# Technique guides", "", "Each guide answers: what is it in one sentence, the idea, why it matters, how this repository uses it, what was found, what goes wrong, and how to run it. Difficulty 1 needs no prior knowledge; 3 assumes the guides it lists as prerequisites.", ""]
+    for level, label in ((1, "Difficulty 1: start here"), (2, "Difficulty 2"), (3, "Difficulty 3")):
+        lines += [f"## {label}", ""]
+        for g in sorted((g for g in guides.values() if g.meta["difficulty"] == level), key=lambda g: g.title.lower()):
+            lines.append(f"- [{g.title}]({g.slug}.md): {g.section('In one sentence')}")
+        lines.append("")
+    return "\n".join(lines)
+
+
 def findings(config) -> str:
     path = config.root / "experiments" / "registry.jsonl"
     rows = [json.loads(l) for l in path.read_text().splitlines() if l.strip()] if path.exists() else []
@@ -124,7 +135,7 @@ def build_docs(config) -> list[Path]:
         p = root / "strategies" / name
         p.write_text(text, encoding="utf-8")
         written.append(p)
-    for rel, text in (("chapter_map.md", chapter_map(config)), ("generated/findings.md", findings(config))):
+    for rel, text in (("chapter_map.md", chapter_map(config)), ("generated/findings.md", findings(config)), ("techniques/index.md", technique_index(config))):
         p = root / rel
         p.write_text(text, encoding="utf-8")
         written.append(p)

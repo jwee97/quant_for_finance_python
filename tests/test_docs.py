@@ -10,7 +10,7 @@ import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
-GUIDES = sorted((ROOT / "docs" / "techniques").glob("*.md"))
+GUIDES = sorted(p for p in (ROOT / "docs" / "techniques").glob("*.md") if p.stem != "index")
 SECTIONS = ["In one sentence", "The idea", "Why it matters", "How this repo uses it", "What we found", "Pitfalls", "Try it"]
 
 
@@ -43,7 +43,7 @@ def test_guide_structure_and_references(guide):
     if figures.exists():
         for n in meta["figures"]:
             assert list(figures.glob(f"fig{int(n):02d}_*.png")), (guide.name, n)
-    known = {p.stem for p in (ROOT / "docs" / "techniques").glob("*.md")}
+    known = {p.stem for p in GUIDES}
     for pre in meta["prerequisites"]:
         assert pre in known, (guide.name, pre)
     assert len(body.split()) > 250, guide.name
@@ -128,7 +128,7 @@ def test_explain_answers_terms_models_experiments_and_stages():
 
 def test_generated_docs_are_up_to_date():
     """`quant docs build` is deterministic; a stale committed copy means someone changed results or code without regenerating."""
-    from src.framework.docs import chapter_map, findings, strategy_cards
+    from src.framework.docs import chapter_map, findings, strategy_cards, technique_index
     from src.utils.config import load_config
 
     config = load_config()
@@ -138,6 +138,7 @@ def test_generated_docs_are_up_to_date():
         assert (ROOT / "docs" / "strategies" / name).read_text(encoding="utf-8") == text, name
     assert (ROOT / "docs" / "chapter_map.md").read_text(encoding="utf-8") == chapter_map(config)
     assert (ROOT / "docs" / "generated" / "findings.md").read_text(encoding="utf-8") == findings(config)
+    assert (ROOT / "docs" / "techniques" / "index.md").read_text(encoding="utf-8") == technique_index(config)
 
 
 def test_chapter_map_and_internal_links_resolve():

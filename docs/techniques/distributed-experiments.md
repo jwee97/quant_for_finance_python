@@ -44,7 +44,7 @@ A task function must be a pure function of its arguments: build everything it ne
 
 - Unseeded randomness makes parallel runs irreproducible.
 - Sending large shared data to every task can cost more than the work.
-- Ray is not used here; joblib and dask are.
+- A Ray adapter exists in the executor but was never run (Ray is not installed here); serial, joblib and dask were run and agree.
 
 ## Try it
 

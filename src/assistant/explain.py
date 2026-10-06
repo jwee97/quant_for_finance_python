@@ -43,6 +43,8 @@ def _docs(config) -> Path:
 def load_guides(config) -> dict[str, Guide]:
     guides = {}
     for path in sorted((_docs(config) / "techniques").glob("*.md")):
+        if path.stem == "index":
+            continue
         _, fm, body = path.read_text(encoding="utf-8").split("---", 2)
         meta = yaml.safe_load(fm)
         guides[meta["slug"]] = Guide(meta["slug"], meta["title"], meta, body)

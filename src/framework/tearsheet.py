@@ -39,7 +39,7 @@ def red_flags(result) -> list[dict]:
         for _, r in bench.dropna(subset=["p_value"]).iterrows():
             add(f"Beats {r['benchmark']} (paired bootstrap, p <= 0.10, positive difference)", f"diff {r['difference']:+.2f}, p = {r['p_value']:.2f}",
                 not (r["p_value"] <= 0.10 and r["difference"] > 0), "A strategy should earn more per unit of risk than a rule that needs no forecasts.")
-    add("Deflated Sharpe probability >= 0.95", f"{v['deflated_sharpe_probability']:.2f} with {v['n_trials']} trial(s)", v["deflated_sharpe_probability"] < 0.95,
+    add("Deflated Sharpe probability >= 0.95", f"{v['deflated_sharpe_probability']:.2f} with {v['n_trials']} trial(s)" + (" (one trial: the probability the true Sharpe is above zero)" if v["n_trials"] == 1 else ""), v["deflated_sharpe_probability"] < 0.95,
         "The probability the Sharpe exceeds what the best of the ideas tried would show by chance.")
     gross = m["gross_sharpe"]
     add("Costs take less than half of the gross Sharpe", f"gross {gross:+.2f} -> net {m['sharpe']:+.2f}", gross > 0 and m["sharpe"] < 0.5 * gross,

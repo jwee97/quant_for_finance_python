@@ -31,3 +31,4 @@ reports/logs/
 data/experiments.db
 data/experiments/
 reports/tearsheets/
+site/

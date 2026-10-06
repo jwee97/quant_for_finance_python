@@ -1,0 +1,25 @@
+site_name: Systematic Multi-Asset Research Platform
+site_description: A research platform and a teaching tool for systematic investing, with honest results.
+docs_dir: docs
+theme:
+  name: material
+  palette:
+    - scheme: default
+    - scheme: slate
+markdown_extensions:
+  - tables
+  - admonition
+  - toc:
+      permalink: true
+nav:
+  - Home: index.md
+  - Start here: START_HERE.md
+  - Learn:
+      - A tour of one backtest day: tour_of_a_backtest_day.md
+      - How to add a strategy: how_to_add_a_strategy.md
+      - Glossary: glossary.md
+      - Chapter map: chapter_map.md
+  - Technique guides: techniques/index.md
+  - Strategy cards: strategies/index.md
+  - What was built: roadmap_coverage.md
+  - Findings digest: generated/findings.md

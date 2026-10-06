@@ -33,7 +33,7 @@ Nothing here claims that a built item *works* as a way to make money; the [findi
 | Bayesian portfolio construction | Built | [bayesian-portfolio-construction](techniques/bayesian-portfolio-construction.md), Stage 21 |
 | Explainable AI: SHAP, integrated gradients, feature importance | Built | [explainability](techniques/explainability.md), Stage 35 (Shapley values exact by enumeration, not the `shap` library) |
 | Forecast calibration: Platt, isotonic, reliability diagrams | Built | [calibration](techniques/calibration.md), Stages 19 and 35 |
-| Distributed research: Joblib, Dask | Built | [distributed-experiments](techniques/distributed-experiments.md), Stage 26. Ray was not used |
+| Distributed research: Joblib, Dask, Ray | Built (Ray untested) | [distributed-experiments](techniques/distributed-experiments.md), Stage 26. Serial, joblib and dask were run and agree exactly; the Ray adapter exists in the executor but Ray is not installed here, so it was never run |
 | Research dashboard | Built | `quant dashboard` (a self-contained HTML page: ledger, leaderboard, parameter sensitivity, IC, walk-forward, risk, figures, power). Not a live server |
 
 ## Generation 4: cutting-edge research
