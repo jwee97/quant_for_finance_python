@@ -1,0 +1,6 @@
+,start,end,n_obs,cagr,ann_return_arith,ann_vol,sharpe,sortino,calmar,omega,max_drawdown,max_drawdown_date,time_underwater_share,hit_rate,best_day,worst_day,skew,excess_kurtosis,var_95,cvar_95,tail_ratio,total_return,ann_turnover,ann_cost_bps
+funding_carry,2021-08-25,2026-10-02,1333,0.0,0.0,0.0,,,,,0.0,2021-08-25,0.0,0.0,0.0,0.0,,,-0.0,-0.0,,0.0,0.000000,0.000000
+basis_reversion,2021-08-25,2026-10-02,1333,0.0,0.0,0.0,,,,,0.0,2021-08-25,0.0,0.0,0.0,0.0,,,-0.0,-0.0,,0.0,0.000000,0.000000
+stablecoin_flow,2021-08-25,2026-10-02,1333,0.0,0.0,0.0,,,,,0.0,2021-08-25,0.0,0.0,0.0,0.0,,,-0.0,-0.0,,0.0,0.000000,0.000000
+always-on carry,2021-08-25,2026-10-02,1333,0.0,0.0,0.0,,,,,0.0,2021-08-25,0.0,0.0,0.0,0.0,,,-0.0,-0.0,,0.0,,
+buy and hold,2021-08-25,2026-10-02,1333,0.0,0.0,0.0,,,,,0.0,2021-08-25,0.0,0.0,0.0,0.0,,,-0.0,-0.0,,0.0,,

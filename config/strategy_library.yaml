@@ -85,7 +85,7 @@ decisions:
 # venues and are not built.
 # ---------------------------------------------------------------------------
 crypto:
-  execution: { rebalance: weekly, signal_lag: 1 }
+  execution: { rebalance: weekly, signal_lag: 1, min_assets: 1 }     # min_assets: the engine's default of 5 would zero a four-asset book (found before any result)
   allocation: { allocator: forecast_stack, params: { mode: time_series, gross: 1.0, max_weight: 0.5 } }
   risk: { mode: none }
   specs: [funding_carry, basis_reversion, stablecoin_flow]

@@ -96,6 +96,8 @@ def _engine(config, spec: PipelineSpec) -> BacktestEngine:
         overrides["rebalance"] = spec.execution["rebalance"]
     if spec.execution.get("signal_lag") is not None:
         overrides["signal_lag"] = int(spec.execution["signal_lag"])
+    if spec.execution.get("min_assets") is not None:                       # the platform default of 5 zeroes a book of fewer than five assets
+        overrides["min_assets"] = int(spec.execution["min_assets"])
     return replace(engine, **overrides) if overrides else engine
 
 
