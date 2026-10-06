@@ -1,0 +1,4 @@
+a,b,sharpe_a,sharpe_b,difference,ci_lower_5pct,ci_upper_95pct,p_value,return_correlation,n_obs,n_samples
+combination:ic_weighted,combination:equal,0.635949,0.612825,0.023124,-0.178670,0.252298,0.871500,0.904486,3427,2000
+combination:cost_aware,combination:equal,0.646774,0.612825,0.033949,-0.123217,0.182912,0.716000,0.906824,3427,2000
+combination:confidence,equal weight (M0),0.344877,0.735978,-0.391101,-0.711763,-0.063493,0.047000,0.686709,3427,2000

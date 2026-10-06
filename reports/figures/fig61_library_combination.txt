@@ -1,0 +1,1 @@
+Figure 61. Does the confidence-weighted combination of all 31 library models beat the equal-weight combination and Generation 1 momentum, net of costs?

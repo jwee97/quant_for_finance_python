@@ -59,13 +59,12 @@ def figure_search(table: pd.DataFrame, expected_best: float, passive_sharpe: flo
     ax.axvline(0, color="black", linewidth=0.8)
     ax.axvline(passive_sharpe, color="#009E73", linestyle="--", linewidth=1.2)
     ax.axvline(expected_best, color="#CC0000", linestyle="--", linewidth=1.2)
-    ax.text(passive_sharpe, len(ordered) - 0.5, " equal weight", color="#009E73", fontsize=8, va="top")
-    ax.text(expected_best, len(ordered) - 3, " best of 42 noise rules", color="#CC0000", fontsize=8, va="top")
+    ax.text(passive_sharpe, 0.99, " equal weight", color="#009E73", fontsize=8, va="top", transform=ax.get_xaxis_transform())
+    ax.text(expected_best, 0.93, " expected best of\n 42 noise rules", color="#CC0000", fontsize=8, va="top", ha="right", transform=ax.get_xaxis_transform())
     ax.set_xlabel("Net Sharpe, common window")
     ax.set_title("The library as a search: 42 specifications")
-    for f in families:
-        ax.barh([], [], color=colour[f], label=f)
-    ax.legend(fontsize=7, loc="lower right")
+    from matplotlib.patches import Patch
+    ax.legend(handles=[Patch(color=colour[f], label=f) for f in families], fontsize=7, loc="lower right")
     ax = axes[1]
     labels = ["RC vs cash", "SPA vs cash", "RC vs equal weight", "SPA vs equal weight"]
     values = [verdict["rc_cash"], verdict["spa_cash"], verdict["rc_passive"], verdict["spa_passive"]]
@@ -199,8 +198,8 @@ def main(argv: list[str] | None = None) -> int:
     by_family = table.groupby("family")["sharpe"].agg(["count", "median", "max", lambda s: (s > 0).mean()])
     by_family.columns = ["specifications", "median_sharpe", "best_sharpe", "share_positive"]
     context.save_table(by_family, "stage30_by_family.csv")
-    corr = common.corr().fillna(0.0)
-    np.fill_diagonal(corr.values, 1.0)
+    corr = common.corr()
+    corr = pd.DataFrame(np.where(np.eye(len(corr), dtype=bool), 1.0, corr.fillna(0.0).to_numpy()), index=corr.index, columns=corr.columns)
     context.save_table(corr, "stage30_correlation.csv")
     off_diagonal = corr.to_numpy()[np.triu_indices(len(corr), 1)]
     ev = np.linalg.eigvalsh(corr.to_numpy())[::-1]

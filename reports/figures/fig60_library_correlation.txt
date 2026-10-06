@@ -1,0 +1,1 @@
+Figure 60. How correlated are the 42 specifications' net returns, and so how many independent bets does the library contain?

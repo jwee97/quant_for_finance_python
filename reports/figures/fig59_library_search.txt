@@ -1,0 +1,1 @@
+Figure 59. Across 42 specifications of the strategy library, how are net Sharpe ratios distributed against what a search of that size finds in noise, and does any specification have an edge over cash or over passive equal weight after the search?

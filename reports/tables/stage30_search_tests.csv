@@ -1,7 +1,7 @@
 benchmark,test,p_value,best
-cash,reality_check,0.039500,dual_momentum
-cash,spa_lower,0.082500,dual_momentum
-cash,spa_consistent,0.108000,dual_momentum
-cash,spa_upper,0.118000,dual_momentum
-equal_weight,reality_check,0.726500,dual_momentum
-equal_weight,spa_consistent,0.569500,dual_momentum
+cash,reality_check,0.001500,dual_momentum
+cash,spa_lower,0.004000,dual_momentum
+cash,spa_consistent,0.008500,dual_momentum
+cash,spa_upper,0.008500,dual_momentum
+equal_weight,reality_check,0.610500,dual_momentum
+equal_weight,spa_consistent,0.279500,dual_momentum
