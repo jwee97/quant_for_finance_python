@@ -65,6 +65,7 @@ STAGES = [
     (33, "stage33_frontier", "Deep-forecasting family, graph and Bayesian deep learning", 5),
     (34, "stage34_foundation", "Zero-shot foundation model (descriptive)", 5),
     (35, "stage35_explain", "Explainability and calibration", 5),
+    (36, "stage36_diffusion", "Diffusion scenarios for tail risk", 5),
     (29, "stage29_research_db", "Research database", 4),
 
 ]

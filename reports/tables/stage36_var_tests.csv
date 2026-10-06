@@ -1,0 +1,9 @@
+book,level,a,b,mean_pinball_difference,p_value,status,bh_significant,passes
+equal,0.050000,diffusion,gaussian,0.000045,0.753891,declared,False,False
+equal,0.050000,diffusion,bootstrap,-0.000136,0.491877,declared,False,False
+equal,0.010000,diffusion,gaussian,0.000079,0.346822,reported,,
+equal,0.010000,diffusion,bootstrap,-0.000011,0.863846,reported,,
+inverse_vol,0.050000,diffusion,gaussian,-0.000066,0.460353,reported,,
+inverse_vol,0.050000,diffusion,bootstrap,-0.000088,0.406803,reported,,
+inverse_vol,0.010000,diffusion,gaussian,-0.000077,0.290249,reported,,
+inverse_vol,0.010000,diffusion,bootstrap,0.000010,0.784500,reported,,

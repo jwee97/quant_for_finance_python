@@ -1,0 +1,1 @@
+Figure 71. Do scenarios drawn from a trained diffusion model give better tail-risk forecasts for the equal-weight portfolio than a normal or the empirical distribution?

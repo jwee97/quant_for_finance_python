@@ -1,0 +1,5 @@
+,excess_kurtosis_mean,corr_distance,share_outside_training_range
+diffusion,2.221367,0.075668,0.028563
+gaussian,0.027474,0.008517,0.049687
+bootstrap,2.159920,0.015782,0.000000
+training,2.150861,0.000000,0.000000

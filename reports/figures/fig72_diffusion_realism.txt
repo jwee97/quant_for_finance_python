@@ -1,0 +1,1 @@
+Figure 72. Does the diffusion model reproduce the fat tails and correlations of the training z-vectors, and does it invent extremes outside them?
