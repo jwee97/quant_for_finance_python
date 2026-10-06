@@ -1,0 +1,4 @@
+model,kind,max_gap,max_relative_gap,n
+gbm,shapley_efficiency,0.000000,0.000000,202
+mlp,ig_completeness,0.001458,0.002601,202
+mlp,shapley_efficiency,0.000000,0.000000,202

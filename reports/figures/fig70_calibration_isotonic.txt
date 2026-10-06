@@ -1,0 +1,1 @@
+Figure 70. Does the more flexible isotonic recalibration improve on Platt scaling for monthly up/down probabilities?

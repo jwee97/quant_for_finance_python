@@ -1,0 +1,5 @@
+a,b,status,mean_log_loss_difference,p_value,n_origins
+isotonic,platt,declared,0.001179,0.382578,126
+platt,raw,reported,0.001499,0.762722,126
+isotonic,raw,reported,0.002678,0.532886,126
+isotonic_clipped_posthoc,platt,post-hoc,0.001179,0.382578,126
