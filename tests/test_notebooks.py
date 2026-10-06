@@ -15,7 +15,6 @@ sys.path.insert(0, str(ROOT / "docs" / "notebooks"))
 
 
 def _execute(name: str):
-    import nbformat
     from nbclient import NotebookClient
     from nbformat.v4 import new_notebook
 

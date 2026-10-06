@@ -13,7 +13,7 @@ from ..features.mean_reversion import price_zscore
 from ..features.momentum import volatility_scaled_momentum
 from ..framework.forecasting import ForecastModel
 from ..framework.registry import register_model
-from ._common import atr_pct, daily_vol, present, stateful, tanh_score
+from ._common import atr_pct, daily_vol, stateful, tanh_score
 
 
 @register_model("momentum", "time-series/cross-sectional", "Generation 1 momentum: 126-day return, skipping the last day, divided by volatility")

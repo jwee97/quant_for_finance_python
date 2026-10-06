@@ -16,7 +16,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from ..utils.plotting import PALETTE, apply_style, save_figure
+from ..utils.plotting import PALETTE, apply_style
 
 REGIME_COLOUR = {"Crisis": "#D55E00", "HighVol": "#E69F00", "LowVol": "#BBBBBB", "Inflation": "#CC79A7", "Deflation": "#56B4E9"}
 
@@ -162,7 +162,7 @@ def make_tearsheet(result, directory: Path, run_id: str = "") -> Path:
     m, flags = result.metrics, red_flags(result)
     lines = [f"# Tear sheet: {result.spec.name}", "", f"Run `{run_id}` on `{result.bundle_name}`, {m['start']} to {m['end']} ({m['n_days'] / 252:.1f} years), all numbers net of costs unless stated.", "",
              "![tear sheet](tearsheet.png)", "", "## Headline", "",
-             f"| Net Sharpe | CAGR | Volatility | Max drawdown | Gross Sharpe | Turnover | Cost drag |", "|---|---|---|---|---|---|---|",
+             "| Net Sharpe | CAGR | Volatility | Max drawdown | Gross Sharpe | Turnover | Cost drag |", "|---|---|---|---|---|---|---|",
              f"| {m['sharpe']:+.2f} | {m['cagr']:.1%} | {m['ann_vol']:.1%} | {m['max_drawdown']:.1%} | {m['gross_sharpe']:+.2f} | {m['ann_turnover']:.1f}x/yr | {m['ann_cost_bps']:.0f} bps/yr |", "",
              "## Red flags (fixed rules)", "", "| Rule | Observed | Result | Why it matters |", "|---|---|---|---|"]
     for f in flags:

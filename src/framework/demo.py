@@ -41,7 +41,7 @@ def run_demo(config) -> int:
     run_id, result = manager.run(spec, bundle, tearsheet=True, force=True)
     m = result.metrics
     _say(f"   {m['start']} to {m['end']}:  net Sharpe {m['sharpe']:+.2f}  (before costs {m['gross_sharpe']:+.2f}),  CAGR {m['cagr']:.1%},  volatility {m['ann_vol']:.1%},  worst drawdown {m['max_drawdown']:.1%}")
-    _say(f"   Costs are charged on every trade and the weights are applied one day after the decision, so the number is net and cannot see the future.")
+    _say("   Costs are charged on every trade and the weights are applied one day after the decision, so the number is net and cannot see the future.")
 
     _say("\n3. The red-flag list (fixed rules, each with its threshold; this is what a sceptical reviewer asks first):")
     flags = red_flags(result)

@@ -11,7 +11,6 @@ and returns are measured between weekday 08:00 UTC marks (Deribit's daily settle
 
 from __future__ import annotations
 
-import gzip
 import hashlib
 import json
 import time
@@ -19,7 +18,6 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 
 DERIBIT = "https://www.deribit.com/api/v2/public"

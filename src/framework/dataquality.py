@@ -6,7 +6,6 @@ platform's rule since Generation 1 is that an anomaly is flagged and adjudicated
 
 from __future__ import annotations
 
-import numpy as np
 import pandas as pd
 
 

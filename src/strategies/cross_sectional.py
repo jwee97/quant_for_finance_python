@@ -12,7 +12,7 @@ import pandas as pd
 from ..framework.forecasting import ForecastModel
 from ..framework.regimes import market_proxy
 from ..framework.registry import register_model
-from ._common import only, present
+from ._common import present
 
 
 @register_model("xs_momentum", "cross-sectional", "Classic 12-1 month cross-sectional momentum: rank by the return from 12 months ago to 1 month ago")

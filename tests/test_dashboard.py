@@ -3,7 +3,7 @@ import re
 
 import pytest
 
-from src.framework.dashboard import build_dashboard, collect
+from src.framework.dashboard import build_dashboard
 from src.utils.config import load_config
 
 

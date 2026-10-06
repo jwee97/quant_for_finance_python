@@ -7,7 +7,6 @@ from several venues; only one venue is reachable here) and the Binance/Bybit fun
 from __future__ import annotations
 
 import numpy as np
-import pandas as pd
 
 from ..framework.forecasting import ForecastModel
 from ..framework.registry import register_model

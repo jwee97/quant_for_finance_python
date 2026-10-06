@@ -12,7 +12,6 @@ import pandas as pd
 from ..framework.forecasting import ForecastModel
 from ..framework.registry import register_model
 from ..signals.pca_strategy import pca_stat_arb_signal
-from ._common import present
 
 DEFAULT_PAIRS = (("EEM", "EFA"), ("GLD", "SLV"), ("IEF", "TLT"), ("LQD", "HYG"), ("SPY", "QQQ"), ("IWM", "SPY"))
 

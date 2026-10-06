@@ -8,7 +8,7 @@ import pytest
 
 from src.backtest.execution import vol_target_scaling
 from src.framework import (ALLOCATORS, DETECTORS, MODELS, Forecast, ForecastModel, ForecastPanel, Pipeline, RegimeSeries, bundle_from_prices,
-                           combine_forecasts, register_allocator, register_model, score_to_forecast)
+                           combine_forecasts, register_allocator, register_model)
 from src.framework.allocation import Allocator, Context
 from src.framework.forecasting import calibration_slope
 from src.framework.regimes import ramp

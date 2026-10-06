@@ -6,7 +6,6 @@ perpetual (the basis). The macro frame carries the signals (trailing funding, th
 
 from __future__ import annotations
 
-import numpy as np
 import pandas as pd
 
 from ..data.crypto import build_crypto_frames, crypto_version, ensure_crypto_raw

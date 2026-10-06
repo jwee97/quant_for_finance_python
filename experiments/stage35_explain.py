@@ -19,7 +19,6 @@ import argparse
 
 import numpy as np
 import pandas as pd
-from scipy.stats import spearmanr
 
 from experiments.context import build_context
 from src.models.deep_forecast import TrainSettings

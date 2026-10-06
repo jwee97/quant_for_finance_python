@@ -11,14 +11,13 @@ from __future__ import annotations
 
 import argparse
 import time
-from dataclasses import replace
 
 import numpy as np
 import pandas as pd
 
 from src.backtest.engine import BacktestEngine
 from src.backtest.metrics import performance_summary
-from src.framework import ALLOCATORS, DETECTORS, MODELS, Pipeline, PipelineSpec, RegimeSeries, load_default_bundle, load_library
+from src.framework import ALLOCATORS, DETECTORS, Pipeline, PipelineSpec, RegimeSeries, load_default_bundle, load_library
 from src.framework.allocation import Context, book
 from src.framework.risk import RegimeRiskPolicy, vol_target_series
 from src.utils.plotting import PALETTE, new_axes, save_figure
