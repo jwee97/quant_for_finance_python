@@ -1,0 +1,15 @@
+{
+ "fetched": "2026-10-06T10:49:27+00:00",
+ "sources": {
+  "deribit": "https://www.deribit.com/api/v2/public",
+  "defillama": "https://stablecoins.llama.fi/stablecoincharts/all"
+ },
+ "files": {
+  "BTC_funding.csv.gz": "b9bdb7ff3258865598b8a6b12b993c5f33c624872953bfc513602a393f50032d",
+  "ETH_funding.csv.gz": "73c41e9e95a4493dca9e83278c8823857389dd787e93428f368c7ed77904d6dd",
+  "BTC_perp_daily.csv": "eba850d949648557cd2f9cd085db0b20580877910579c6fecd5df7345c344061",
+  "ETH_perp_daily.csv": "e4e4515abea984f22266a654879f04c324758ebca8483d71e0d24e093c20b5c8",
+  "stablecoin_supply.csv": "ad58a42b291918008bcdda7da8c9b1fb73aa39697030c1014492f7e205130a12"
+ },
+ "data_version": "0d69950db703"
+}

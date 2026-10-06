@@ -7,8 +7,9 @@
     fixed_income      curve steepener, butterfly, carry and roll-down, duration timing
     macro             inflation rotation, yield-curve regimes, dollar strength, commodity supercycle, risk-on/off
     ml                walk-forward ridge on price and macro features
+    crypto            funding carry, basis reversion, stablecoin flow (optional branch; needs the crypto bundle)
 
 Run ``quant list models`` to see them with their hypotheses.
 """
 
-from . import cross_sectional, fixed_income, macro, ml, statarb, time_series, volatility  # noqa: F401
+from . import crypto, cross_sectional, fixed_income, macro, ml, statarb, time_series, volatility  # noqa: F401

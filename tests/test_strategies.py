@@ -13,7 +13,7 @@ from src.strategies.fixed_income import LEG, rolling_duration
 from src.strategies.statarb import kalman_spread, simulate_nav_arbitrage
 
 load_library()
-LIBRARY = [n for n in MODELS.names() if not n.startswith("test_")]
+LIBRARY = [e.name for e in MODELS.entries() if not e.name.startswith("test_") and e.family != "crypto"]      # crypto models have their own bundle (tests/test_crypto.py)
 CLASSES = {"SPY": "equity", "QQQ": "equity", "IWM": "equity", "EFA": "equity", "EEM": "equity", "SHY": "rates", "IEF": "rates", "TLT": "rates", "AGG": "fixed_income",
            "LQD": "credit", "HYG": "credit", "GLD": "commodity", "SLV": "commodity", "DBC": "commodity", "VNQ": "real_estate"}
 
