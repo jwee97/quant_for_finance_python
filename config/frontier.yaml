@@ -1,0 +1,25 @@
+# ---------------------------------------------------------------------------
+# Frontier research models (Generation 5). One section per stage, each committed BEFORE its stage was run.
+# ---------------------------------------------------------------------------
+
+# ===== Stage 33: the deep-forecasting family, graph networks and Bayesian deep learning =====
+deep_family:
+  # Stage 27 found that its "win" over the Stage 19 ridge was the ridge's weakness: the mixer was no better than each asset's historical mean.
+  # This stage therefore declares the historical mean as the PRIMARY benchmark, and the ridge as the secondary.
+  task: "identical to Stage 27: 21-day return / EWMA volatility forecast at the origin, 252 normalised daily returns, annual walk-forward refits from the Stage 19 schedule, same rows"
+  models:
+    nbeats:    { description: "N-BEATS (Oreshkin et al. 2020), generic: 3 blocks of 4 fully connected layers (width 64) with backcast residuals and a summed forecast", blocks: 3, layers: 4, width: 64, dropout: 0.2, asset_embedding: 8 }
+    nhits:     { description: "N-HiTS (Challu et al. 2023): N-BEATS blocks that see the window pooled at three rates (12, 3, 1 days), so slow structure is read from a short summary", pools: [12, 3, 1], layers: 3, width: 64, dropout: 0.2, asset_embedding: 8 }
+    timemixer: { description: "TimeMixer-style multiscale mixing (Wang et al. 2024), simplified: the window at scales 1, 3 and 7 days each through an MLP, mixed by a head. Not the full decomposable-mixing architecture", scales: [1, 3, 7], width: 32, dropout: 0.2, asset_embedding: 8 }
+    gat:       { description: "Graph attention network (Velickovic et al. 2018) over the 15 ETFs: nodes carry the twelve Stage 19 price features and an asset embedding; edges join each ETF to its 4 most correlated others over the previous 252 days, recomputed at every row", heads: 2, hidden: 32, k_neighbours: 4, dropout: 0.2 }
+  training: { learning_rate: 1.0e-3, weight_decay: 1.0e-2, batch_size: 256, max_epochs: 30, patience: 5, validation_fraction: 0.20, ensemble_seeds: [11, 12, 13], rows: "every 5th trading day, all assets pooled" }
+  bayesian:
+    method: "deep ensemble (three seeds) plus Monte Carlo dropout (30 stochastic passes) for the best model by primary-benchmark CRPS difference; epistemic variance of the z-score forecast = variance across the 3 x 30 predictions"
+    combine: "forecast std = EWMA sigma * sqrt(1 + epistemic variance of z); no free parameter"
+  decisions:
+    fdr: 0.10
+    # h_frontier: at least one of {nbeats, nhits, timemixer, gat} has a significantly LOWER mean CRPS than the HISTORICAL-MEAN forecast (Diebold-Mariano
+    #   on the 187 monthly cross-asset means, two-sided, Benjamini-Hochberg across the four, negative loss difference).
+    # h_bayesian: for the best of the four, replacing the EWMA forecast std by the ensemble-widened std lowers the mean CRPS (Diebold-Mariano, p <= 0.10, negative difference).
+    # Reported, not judged: each model against the Stage 19 ridge and against the Stage 27 mixer and transformer; rank IC; parameter counts; seed dispersion;
+    #   coverage of the 50% and 90% predictive intervals with and without the epistemic term.
