@@ -76,3 +76,26 @@ decisions:
   #   positive differences required. Retained only if both pass.
   # Reported, not judged: every specification's net Sharpe, turnover and cost drag; by family; PBO; deflated Sharpe probability of the best
   #   (42 trials); the share positive by sample; the correlation of the specifications' net returns; the IC-weighted and cost-aware combinations.
+
+# ---------------------------------------------------------------------------
+# The optional crypto branch (Stage 32). Rules committed before any Stage 32 result.
+# Data: Deribit BTC and ETH perpetuals (hourly funding history, index price, daily perpetual candles) and the DefiLlama total stablecoin supply,
+# raw files hashed in data/metadata/crypto_manifest.json. The "carry" assets BTC_CARRY and ETH_CARRY are long spot / short perpetual (linear
+# approximation of the inverse perpetual). Binance and Bybit refuse connections from this environment; cross-exchange spreads need several
+# venues and are not built.
+# ---------------------------------------------------------------------------
+crypto:
+  execution: { rebalance: weekly, signal_lag: 1 }
+  allocation: { allocator: forecast_stack, params: { mode: time_series, gross: 1.0, max_weight: 0.5 } }
+  risk: { mode: none }
+  specs: [funding_carry, basis_reversion, stablecoin_flow]
+  benchmarks:
+    always_on_carry: "50% BTC_CARRY + 50% ETH_CARRY, rebalanced weekly: the carry premium without timing"
+    buy_and_hold: "50% BTC + 50% ETH spot, rebalanced weekly"
+  bootstrap: { n_samples: 2000, block_length: 21, seed: 7 }
+  decisions:
+    fdr: 0.10
+    # h_crypto: after Benjamini-Hochberg control at 10% across three paired stationary-bootstrap tests, at least one of
+    #   (funding_carry vs always_on_carry), (basis_reversion vs always_on_carry), (stablecoin_flow vs buy_and_hold)
+    #   has a higher net Sharpe with a positive difference.
+    # Reported, not judged: the carry premium itself (always-on carry vs cash), costs, drawdowns, the funding and basis path, sample splits.
