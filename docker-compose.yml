@@ -1,0 +1,15 @@
+# docker compose run --rm tests
+# docker compose run --rm pipeline                       # all 29 stages (about 80 minutes on 4 cores)
+# docker compose run --rm pipeline python -m experiments.run_all --generation 4
+services:
+  tests:
+    build: .
+    command: python -m pytest -q
+  pipeline:
+    build: .
+    command: python -m experiments.run_all
+    volumes:
+      - ./reports:/app/reports
+      - ./data:/app/data
+      - ./experiments/registry.jsonl:/app/experiments/registry.jsonl
+      - ./experiments/registry.md:/app/experiments/registry.md

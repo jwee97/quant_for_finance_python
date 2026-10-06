@@ -203,7 +203,7 @@ def write_markdown_report(context, market, report, cleaned, jumps, imputation, m
         "**Policy applied.** Pre-inception NaNs are never filled: HYG did not",
         "exist before 2007-04-11, so the honest statement is that the asset was",
         "not investable, not that its price is unknown. Interior gaps on a",
-        f"universe trading day are forward filled for at most",
+        "universe trading day are forward filled for at most",
         f"{cfg.get('data.missing_data.max_ffill_days')} days and the fill is recorded",
         "in `filled_mask.csv`; `MarketData.returns()` blanks any return that",
         "touches a filled price, so a provider gap can never enter the research",

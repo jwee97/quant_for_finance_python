@@ -21,7 +21,6 @@ from src.features.regime_rules import (
 from src.models.regimes import (
     HMMFit,
     alarm_episodes,
-    backward_smooth,
     bocpd,
     evaluate_detector,
     fit_hmm,

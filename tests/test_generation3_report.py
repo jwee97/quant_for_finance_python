@@ -30,7 +30,7 @@ def _text() -> str:
 
 def _entries() -> list[dict]:
     rows = [json.loads(line) for line in REGISTRY.read_text().splitlines() if line.strip()]
-    return [d for d in rows if d["stage"] >= "stage21"]
+    return [d for d in rows if "stage21" <= d["stage"] < "stage26"]
 
 
 def _signed(x: float, digits: int = 3) -> str:

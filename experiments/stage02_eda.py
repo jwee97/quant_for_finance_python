@@ -23,7 +23,6 @@ from src.features.returns import (
     describe_returns,
     drawdown_table,
     ljung_box,
-    rolling_correlation,
 )
 from src.features.mean_reversion import variance_ratio_table
 from src.features.volatility import (
@@ -38,10 +37,8 @@ from src.features.volatility import (
 from src.utils.plotting import (
     ASSET_CLASS_COLOURS,
     PALETTE,
-    bar_with_values,
     new_axes,
     plot_heatmap,
-    plot_lines,
     save_figure,
 )
 from experiments.context import build_context

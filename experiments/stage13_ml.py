@@ -12,7 +12,6 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from src.backtest.engine import BacktestEngine
 from src.models.machine_learning import (
     build_dataset,
     cross_validate,
@@ -22,7 +21,7 @@ from src.models.machine_learning import (
     predictions_to_signal,
     walk_forward_predictions,
 )
-from src.utils.plotting import PALETTE, bar_with_values, new_axes, save_figure, write_figure_index
+from src.utils.plotting import bar_with_values, new_axes, save_figure, write_figure_index
 from experiments.context import build_context
 from experiments.strategies import transform_config
 

@@ -34,7 +34,6 @@ from matplotlib.patches import Patch
 
 from src.backtest.attribution import (
     brinson_fachler,
-    carino_factor,
     contribution_by_asset,
     cost_by_asset,
     cumulative,

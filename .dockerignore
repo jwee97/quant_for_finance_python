@@ -1,0 +1,15 @@
+.git
+.github
+**/__pycache__
+*.pyc
+.pytest_cache
+.ruff_cache
+.coverage
+coverage.xml
+.venv
+venv
+data/processed
+data/features
+data/raw/altdata/cftc/*.zip
+reports/logs
+notebooks/.ipynb_checkpoints

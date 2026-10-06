@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-import pytest
 
 from src.models.online import KalmanRW, NLMS, OnlineRidge, hedge_aggregate, run_online_forecasts
 

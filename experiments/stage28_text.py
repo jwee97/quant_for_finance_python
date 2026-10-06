@@ -22,11 +22,10 @@ from scipy.stats import spearmanr
 from src.assistant.documents import corpus_version, ensure_fomc_corpus
 from src.assistant.extraction import ExtractionCache, LexiconBackend, extract_corpus, schema_hash
 from src.data.macro import ensure_macro_raw
-from src.features.macro import expanding_zscore, macro_feature_panel
+from src.features.macro import macro_feature_panel
 from src.features.sleeves import month_end_dates, monthly_compound, sleeve_returns
 from src.models.macro_forecast import build_monthly_panel, evaluate_nested, walk_forward_forecasts
 from src.utils.plotting import PALETTE, new_axes, save_figure
-from src.validation.forecast_tests import benjamini_hochberg
 from experiments.context import build_context
 
 STAGE = "stage28_text"

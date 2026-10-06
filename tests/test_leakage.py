@@ -7,9 +7,7 @@ fails. A leakage test that cannot fail proves nothing.
 
 from __future__ import annotations
 
-import numpy as np
 import pandas as pd
-import pytest
 
 from src.features.momentum import total_return_momentum
 from src.features.volatility import rolling_volatility

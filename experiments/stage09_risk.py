@@ -23,8 +23,8 @@ from src.risk.stress import (
     scenario_table,
     worst_windows,
 )
-from src.risk.var import compare_var_methods, rolling_var, rolling_var_backtest, var_comparison
-from src.utils.plotting import PALETTE, bar_with_values, new_axes, new_axes as _na, plot_heatmap, save_figure
+from src.risk.var import compare_var_methods, rolling_var, var_comparison
+from src.utils.plotting import PALETTE, bar_with_values, new_axes, plot_heatmap, save_figure
 from experiments.context import build_context
 from experiments.strategies import cached_ladder
 

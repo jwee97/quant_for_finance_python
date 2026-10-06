@@ -15,7 +15,7 @@ import pandas as pd
 
 from src.features.momentum import momentum_family
 from src.features.returns import forward_returns
-from src.models.regression import cross_sectional_ic, rolling_ic
+from src.models.regression import cross_sectional_ic
 from src.utils.plotting import PALETTE, bar_with_values, new_axes, plot_heatmap, save_figure
 from experiments.alpha_research import decide, evaluate_family, family_verdict, regression_study
 from experiments.context import build_context

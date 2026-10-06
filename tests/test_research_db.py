@@ -5,9 +5,7 @@ from __future__ import annotations
 import json
 import sqlite3
 
-import numpy as np
 import pandas as pd
-import pytest
 
 from src.assistant.sqlguard import ResearchAssistant
 from src.research_db.builder import build_database, load_registry, sha256_file, stage_of, verify_database

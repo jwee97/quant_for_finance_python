@@ -47,7 +47,7 @@ from src.portfolio.dynamic_covariance import (
 from src.portfolio.mean_variance import minimum_variance_weights
 from src.portfolio.risk_parity import risk_parity_weights
 from src.utils.dates import slice_dates
-from src.utils.plotting import PALETTE, new_axes, save_figure
+from src.utils.plotting import new_axes, save_figure
 from src.validation.forecast_tests import benjamini_hochberg, diebold_mariano
 from src.validation.robustness import paired_sharpe_test, paired_volatility_test
 from experiments.context import build_context

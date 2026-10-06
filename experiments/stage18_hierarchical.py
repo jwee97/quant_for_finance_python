@@ -30,7 +30,6 @@ from src.backtest.metrics import performance_summary
 from src.portfolio.constraints import Constraints
 from src.portfolio.covariance import estimate_covariance
 from src.portfolio.hierarchical import (
-    correlation_distance,
     correlation_matrix,
     herc_weights,
     hierarchical_linkage,
@@ -49,7 +48,7 @@ from src.utils.plotting import (
     plot_heatmap,
     save_figure,
 )
-from src.validation.robustness import pairwise_sharpe_tests, paired_sharpe_test
+from src.validation.robustness import pairwise_sharpe_tests
 from src.validation.walk_forward import WalkForwardSplitter
 from experiments.context import build_context
 from experiments.strategies import cached_ladder

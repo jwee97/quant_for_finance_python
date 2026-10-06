@@ -5,7 +5,6 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import numpy as np
-import pandas as pd
 
 from experiments.stage26_distributed import evaluate_rule, expand_grid
 from src.backtest.costs import LinearCostModel

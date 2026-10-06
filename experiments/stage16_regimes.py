@@ -50,7 +50,6 @@ from src.models.regimes import (
     evaluate_detector,
     full_sample_hmm,
     naive_shock_detector,
-    persistence,
     walk_forward_gmm,
     walk_forward_hmm,
 )
@@ -61,8 +60,8 @@ from src.portfolio.regime_aware import (
     gate_book,
     training_gate,
 )
-from src.utils.dates import rebalance_dates, slice_dates
-from src.utils.plotting import PALETTE, new_axes, plot_heatmap, save_figure
+from src.utils.dates import slice_dates
+from src.utils.plotting import PALETTE, new_axes, save_figure
 from src.validation.forecast_tests import benjamini_hochberg
 from src.validation.leakage import check_no_lookahead
 from src.validation.permutation import circular_shift_test, lagged_pair, shuffle_test

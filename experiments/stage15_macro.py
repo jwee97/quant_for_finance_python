@@ -27,13 +27,12 @@ from src.backtest.engine import BacktestEngine
 from src.data.macro import (
     MacroDownloader,
     MacroSeriesSpec,
-    asof_series,
     load_macro_raw,
     load_specs,
     macro_data_version,
     staleness,
 )
-from src.features.macro import FEATURE_COLUMNS, macro_feature_panel, monthly_grid, monthly_transforms
+from src.features.macro import FEATURE_COLUMNS, macro_feature_panel, monthly_grid
 from src.features.sleeves import sleeve_returns
 from src.features.volatility import rolling_volatility
 from src.models.macro_forecast import build_monthly_panel, evaluate_nested, walk_forward_forecasts

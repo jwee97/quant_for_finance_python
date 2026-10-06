@@ -14,7 +14,7 @@ import pandas as pd
 
 from src.features.momentum import total_return_momentum, volatility_scaled_momentum
 from src.features.mean_reversion import price_zscore
-from src.features.volatility import ewma_volatility, rolling_volatility
+from src.features.volatility import rolling_volatility
 from src.models.regression import signal_to_expected_returns
 from src.portfolio.black_litterman import black_litterman_weights
 from src.portfolio.constraints import Constraints

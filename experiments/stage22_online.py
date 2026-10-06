@@ -27,7 +27,6 @@ from src.features.sleeves import month_end_dates
 from src.models.online import KalmanRW, NLMS, OnlineRidge, hedge_aggregate, run_online_forecasts
 from src.models.probabilistic import build_panel, crps_gaussian, design_matrix
 from src.signals.combine import combine_strategy_returns
-from src.utils.dates import DateWindow
 from src.utils.plotting import PALETTE, new_axes, save_figure
 from src.validation.forecast_tests import benjamini_hochberg, diebold_mariano
 from src.validation.robustness import paired_sharpe_test

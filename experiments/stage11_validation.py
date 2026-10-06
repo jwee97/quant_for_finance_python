@@ -19,7 +19,7 @@ import numpy as np
 import pandas as pd
 
 from src.backtest.costs import LinearCostModel
-from src.backtest.engine import BacktestEngine, buy_and_hold
+from src.backtest.engine import BacktestEngine
 from src.backtest.metrics import sharpe_ratio
 from src.features.momentum import total_return_momentum, volatility_scaled_momentum
 from src.features.mean_reversion import price_zscore

@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 import pandas as pd
 
 from ..features.momentum import ranked_momentum, total_return_momentum, volatility_scaled_momentum
-from ..features.volatility import ewma_volatility, rolling_volatility
+from ..features.volatility import rolling_volatility
 from .transform import signal_to_positions
 
 VARIANTS = ("raw", "vol_scaled", "ranked")

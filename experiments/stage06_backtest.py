@@ -10,7 +10,6 @@ Figures 14-15: gross vs net returns, transaction-cost sensitivity.
 
 from __future__ import annotations
 
-import numpy as np
 import pandas as pd
 
 from src.backtest.costs import breakeven_cost, cost_sensitivity, turnover_statistics

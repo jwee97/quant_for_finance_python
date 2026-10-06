@@ -6,14 +6,13 @@ import json
 import sqlite3
 from types import SimpleNamespace
 
-import numpy as np
 import pandas as pd
 import pytest
 
-from src.assistant.documents import ensure_fomc_corpus, is_statement, load_corpus, parse_statement, statement_links
+from src.assistant.documents import ensure_fomc_corpus, is_statement, parse_statement, statement_links
 from src.assistant.extraction import (AnthropicBackend, ExtractionCache, ExtractionError, LexiconBackend, SCHEMA, extract_corpus,
                                       schema_hash, validate)
-from src.assistant.sqlguard import (ALLOWED_TABLES, Refused, ResearchAssistant, SQLBackend, TemplateBackend, UnsafeSQL, check_select,
+from src.assistant.sqlguard import (ALLOWED_TABLES, Refused, ResearchAssistant, SQLBackend, UnsafeSQL, check_select,
                                     open_readonly)
 
 HTML = """<html><head><title>Federal Reserve Board - FOMC statement</title></head><body><div id="article">

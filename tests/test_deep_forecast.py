@@ -8,7 +8,7 @@ import pytest
 
 pytest.importorskip("torch")
 
-from src.models.deep_forecast import (PATCH, TrainSettings, build_network, daily_sigma, normalised_windows, parameter_count,
+from src.models.deep_forecast import (TrainSettings, build_network, daily_sigma, normalised_windows, parameter_count,
                                        ridge_window, train_and_predict)
 
 

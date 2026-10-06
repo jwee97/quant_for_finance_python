@@ -9,7 +9,6 @@ Figure 25: final strategy comparison.
 
 from __future__ import annotations
 
-import numpy as np
 import pandas as pd
 
 from src.backtest.engine import BacktestEngine, buy_and_hold
@@ -22,7 +21,6 @@ from src.backtest.metrics import (
 )
 from src.features.returns import cumulative_returns, drawdown
 from src.risk.cvar import historical_cvar
-from src.utils.dates import slice_dates
 from src.utils.plotting import PALETTE, bar_with_values, new_axes, save_figure, write_figure_index
 from experiments.context import build_context
 from experiments.strategies import cached_ladder

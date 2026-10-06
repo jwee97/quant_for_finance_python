@@ -22,7 +22,6 @@ import argparse
 
 import numpy as np
 import pandas as pd
-from scipy import stats
 
 from src.backtest.engine import BacktestEngine
 from src.backtest.metrics import performance_summary
@@ -46,7 +45,7 @@ from src.models.probabilistic import (
     walk_forward_probabilistic,
 )
 from src.utils.dates import slice_dates
-from src.utils.plotting import PALETTE, new_axes, save_figure
+from src.utils.plotting import new_axes, save_figure
 from src.validation.forecast_tests import benjamini_hochberg, diebold_mariano
 from src.validation.robustness import paired_sharpe_test
 from experiments.context import build_context

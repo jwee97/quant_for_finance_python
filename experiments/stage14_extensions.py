@@ -27,7 +27,7 @@ from src.signals.pca_strategy import (
     pca_stat_arb_signal,
 )
 from src.signals.transform import signal_to_positions
-from src.utils.plotting import PALETTE, bar_with_values, new_axes, save_figure, write_figure_index
+from src.utils.plotting import bar_with_values, new_axes, save_figure, write_figure_index
 from experiments.context import build_context
 from experiments.strategies import transform_config
 

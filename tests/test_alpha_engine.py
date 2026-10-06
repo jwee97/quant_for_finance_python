@@ -4,11 +4,9 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-import pytest
 
 from src.signals.alpha_engine import (
     combine_alphas, forward_returns, matured_ic, standardise_alpha, trailing_ir, trust_weights)
-from src.signals.transform import signal_to_positions
 
 
 def _panel(n=600, k=8, seed=0):

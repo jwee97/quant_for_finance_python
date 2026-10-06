@@ -7,7 +7,7 @@ import pandas as pd
 import pytest
 
 from src.features.mean_reversion import half_life_of_reversion, price_zscore, variance_ratio
-from src.features.momentum import total_return_momentum, volatility_scaled_momentum
+from src.features.momentum import total_return_momentum
 from src.signals.combine import combine_signals, combine_strategy_returns
 from src.signals.transform import (
     apply_weight_cap,

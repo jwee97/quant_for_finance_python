@@ -13,7 +13,6 @@ import pytest
 from src.data.macro import (
     MacroDownloader,
     MacroSeriesSpec,
-    asof_panel,
     asof_series,
     availability_index,
     staleness,
