@@ -1,0 +1,42 @@
+# ---------------------------------------------------------------------------
+# Diagnostics (Generation 5): tools that ask what the platform's own tests could and could not detect.
+# One section per stage, each committed BEFORE its stage was run. No section here carries a decision.
+# ---------------------------------------------------------------------------
+
+# ===== Stage 39: statistical power of the platform's tests (a ground-truth harness) =====
+power:
+  purpose: "Every Generation 1-5 decision that ended in 'reject' is only as informative as the test's power. Here the tests are run on data where the truth is KNOWN, so that 'not significant' can be read as 'no effect larger than X' or as 'could not have told'."
+  sharpe_test:
+    test: "the platform's paired stationary-bootstrap Sharpe-difference test (src.validation.robustness.paired_sharpe_test), 400 bootstrap samples, mean block 21 days, two-sided, alpha 0.10 (the declared FDR of every stage)"
+    benchmark: "the real Generation 1 equal-weight net daily return series (real volatility, fat tails and autocorrelation), resampled in blocks of 21 days to the required length"
+    alternative: "benchmark + a constant daily alpha + independent Student-t(5) tracking noise; the designed Sharpe difference is computed from the population formula, not from the sample"
+    grid:
+      sharpe_difference: [0.0, 0.15, 0.30, 0.45, 0.60]
+      tracking_error_annual: [0.03, 0.06]
+      years: [4.0, 8.0, 15.7]
+    replications: 200
+    seed: 11
+    reported: ["rejection rate per cell (power; at difference 0 it is the false-positive rate and should be close to 0.10)", "smallest grid difference with power >= 0.80 (the minimum detectable difference), linearly interpolated between grid points"]
+  forecast_test:
+    test: "Diebold-Mariano on the mean CRPS of 187 monthly origins (each the cross-asset mean over 15 assets), two-sided, alpha 0.10, as in Stages 19, 22, 27 and 33"
+    world: "y_ta = sigma * (sqrt(r2) * s_ta + sqrt(1 - r2) * eps_ta); the skilled forecaster knows sqrt(r2) * s_ta, the benchmark forecasts zero; eps has a common monthly factor with cross-asset correlation 0.4; Gaussian forecast spread sigma"
+    grid:
+      r2: [0.0, 0.002, 0.005, 0.01, 0.02, 0.04]
+      origins: [100, 187, 400]
+    replications: 400
+    seed: 12
+    reported: ["power per cell (at r2 = 0 the false-positive rate)", "smallest r2 on the grid with power >= 0.80 at 187 origins"]
+  decisions: "none (a diagnostic). Whatever the grid says is printed next to the earlier stages' rejections in the report; no earlier decision is changed."
+
+# ===== Stage 40: factor attribution of the platform's books =====
+factor_attribution:
+  purpose: "What share of each book's return is exposure to known equity factors, and is there an intercept left? Descriptive, no decision."
+  factors:
+    source: "Kenneth French data library, daily: Fama-French 5 factors (2x3) F-F_Research_Data_5_Factors_2x3_daily and Momentum F-F_Momentum_Factor_daily (Mkt-RF, SMB, HML, RMW, CMA, RF, Mom)"
+    cached_as: "data/raw/factors/ with a manifest of source URL and sha256"
+  books: ["M0_equal_weight", "M2_risk_parity", "M3_momentum", "M5_momentum_plus_mr", "M9_mean_cvar"]
+  returns: "Generation 1 engine net daily returns of each book"
+  regression: "(book net return - RF) on Mkt-RF, SMB, HML, RMW, CMA and Mom; Newey-West (lag 5) standard errors; the overlap of the book's live dates and the factor dates. Intercept annualised by 252."
+  limitation: "These are EQUITY factors. Half of the universe is bonds, gold and commodities, whose returns they do not span, so R-squared is expected to be modest and the intercept is NOT 'alpha' in the sense of unexplained skill; it includes the multi-asset premia. This is stated before the result."
+  reported: ["alpha (annualised) with Newey-West t and p", "factor betas with t", "R-squared", "rolling three-year market beta of the equal-weight book", "share of each book's variance explained"]
+  decisions: "none"

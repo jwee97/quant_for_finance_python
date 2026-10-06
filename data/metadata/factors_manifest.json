@@ -1,0 +1,12 @@
+{
+ "fetched": "2026-10-06T12:01:21+00:00",
+ "sources": {
+  "F-F_Research_Data_5_Factors_2x3_daily.csv": "https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/F-F_Research_Data_5_Factors_2x3_daily_CSV.zip",
+  "F-F_Momentum_Factor_daily.csv": "https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/F-F_Momentum_Factor_daily_CSV.zip"
+ },
+ "files": {
+  "F-F_Momentum_Factor_daily.csv": "d4b3e98cb5afb1533af0d4568aa816de2aadac5bbff9a590c1c65e3392d7b05b",
+  "F-F_Research_Data_5_Factors_2x3_daily.csv": "323ee3426ffa429ea2e3dacaac85a581e3968d319817efe0b4614c5e5adfddc1"
+ },
+ "note": "Kenneth French data library; values are percent per day. Raw, never edited."
+}
