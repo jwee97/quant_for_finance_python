@@ -12,7 +12,7 @@ extra_series:                       # point-in-time FRED series used by the stra
 forecast:
   horizon_days: 21
   calibration:
-    min_observations: 504           # matured DATES (each with a cross-section of at least five assets) before a score is turned into a forecast
+    min_observations: 504           # matured DATES (each with at least one asset that has a score) before a score is turned into a forecast
     allow_negative_slope: false     # an in-sample anti-predictive signal is switched off, not inverted
   volatility_halflife_days: 40      # std of the forecast: the EWMA volatility used everywhere since Generation 2
 

@@ -114,7 +114,9 @@ class Pipeline:
         out = []
         for item in self.spec.models:
             item = {"name": item} if isinstance(item, str) else item
-            out.append(MODELS.create(item["name"], **(item.get("params") or {})))
+            model = MODELS.create(item["name"], **(item.get("params") or {}))
+            model.require(self.bundle)
+            out.append(model)
         return out
 
     def _forecasts(self, models) -> dict:
@@ -150,7 +152,8 @@ class Pipeline:
 
     def _allocator(self, models):
         node = dict(self.spec.allocation or {})
-        name = node.get("allocator") or ("forecast_stack" if models else "static")
+        structured = len(models) == 1 and getattr(models[0], "structured", False)
+        name = node.get("allocator") or ("model_weights" if structured else "forecast_stack" if models else "static")
         params = dict(node.get("params") or {})
         if name in ("forecast_stack", "score_stack"):
             params.setdefault("mode", _position_mode(models))
@@ -182,7 +185,7 @@ class Pipeline:
         timings["allocation"] = time.perf_counter() - t0
 
         risk = dict(spec.risk or {})
-        mode = risk.get("mode") or ("constant" if allocator_name in ("forecast_stack", "confidence") else "none")
+        mode = risk.get("mode") or ("constant" if allocator_name in ("forecast_stack", "confidence", "score_stack", "model_weights") else "none")
         scalar = None
         apply_vol_target = False
         if mode == "constant":

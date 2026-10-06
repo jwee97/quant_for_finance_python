@@ -31,8 +31,21 @@ class ForecastModel:
     def params(self) -> dict:
         return {k: v for k, v in vars(self).items() if not k.startswith("_")}
 
+    structured = False                         # True when ``weights`` IS the strategy (a spread trade), not a by-product
+    position_mode = "cross_sectional"          # how forecasts become positions: "cross_sectional" (ranked, demeaned) or "time_series" (each asset on its own)
+    requires: tuple = ()                       # macro series names the model needs (checked with a clear error)
+
     def score(self, data) -> pd.DataFrame:
         raise NotImplementedError
+
+    def weights(self, data) -> pd.DataFrame | None:
+        """Optional: target weights built directly (structured trades such as a duration-neutral curve steepener). ``None`` means use the forecast."""
+        return None
+
+    def require(self, data) -> None:
+        missing = [n for n in self.requires if n not in data.macro.columns or data.macro[n].dropna().empty]
+        if missing:
+            raise KeyError(f"{self.name} needs macro series {missing}, which this bundle does not have")
 
     def forecast(self, data, min_observations: int = 504, allow_negative: bool = False, halflife: float = 40.0) -> ForecastPanel:
         score = self.score(data)
@@ -48,14 +61,14 @@ def calibration_slope(score: pd.DataFrame, returns: pd.DataFrame, horizon: int, 
     """Pooled no-intercept slope of the forward ``horizon``-day return on the score, using only MATURED pairs.
 
     The value on date ``t`` uses pairs from dates ``s <= t - horizon``, whose forward return was complete by ``t``.
-    NaN until ``min_observations`` such DATES (each with at least five assets) exist.
+    NaN until ``min_observations`` such DATES (each with at least one asset) exist.
     """
     fwd = forward_returns(returns, horizon).reindex_like(score)
     valid = score.notna() & fwd.notna()
     x, y = score.where(valid), fwd.where(valid)
     sxy = (x * y).sum(axis=1).cumsum().shift(horizon)
     sxx = (x * x).sum(axis=1).cumsum().shift(horizon)
-    days = (valid.sum(axis=1) >= 5).cumsum().shift(horizon)            # dates with a usable cross-section whose label has matured
+    days = (valid.sum(axis=1) >= 1).cumsum().shift(horizon)            # dates with at least one usable (score, label) pair whose label has matured
     with np.errstate(divide="ignore", invalid="ignore"):
         slope = (sxy / sxx.where(sxx > 0)).where(days >= min_observations)
     return slope if allow_negative else slope.clip(lower=0.0)

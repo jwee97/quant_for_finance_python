@@ -148,4 +148,13 @@ def load_macro_levels(config, index: pd.DatetimeIndex, download: bool = False) -
         calendar = pd.DatetimeIndex(index)
         for spec in extra:
             levels[spec.id] = asof_series(series[spec.id], spec, calendar).reindex(index)
+    try:                                                     # the Generation 3 non-price series: credit spread and implied-volatility indices
+        from ..data.altdata import ensure_alt_raw
+
+        alt_specs, alt_raw, _ = ensure_alt_raw(config)
+        for spec in alt_specs:
+            if spec.id in ("BAA10Y", "VIX3M", "VXN", "GVZ", "OVX", "ICSA"):
+                levels[spec.id] = asof_series(alt_raw[spec.id], spec, pd.DatetimeIndex(index)).reindex(index)
+    except Exception:                                        # optional: a bundle without them still works; models that need them say so
+        pass
     return levels

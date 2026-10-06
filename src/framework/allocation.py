@@ -127,6 +127,17 @@ class ScoreStack(Allocator):
         return signal_to_positions(signal, volatility, investable=ctx.bundle.investable, **transform)
 
 
+@register_allocator("model_weights", "A structured model's own target weights (e.g. a DV01-neutral curve trade), scaled to a volatility target by the engine")
+class ModelWeights(Allocator):
+    def build(self, ctx: Context) -> pd.DataFrame:
+        if len(ctx.models) != 1:
+            raise ValueError("model_weights takes exactly one model")
+        w = ctx.models[0].weights(ctx.bundle)
+        if w is None:
+            raise ValueError(f"{ctx.models[0].name} does not define target weights")
+        return w.reindex(index=ctx.bundle.index, columns=ctx.bundle.assets).fillna(0.0)
+
+
 @register_allocator("confidence", "Sign of the forecast times its confidence, gross-normalised and capped; forecasts below a confidence floor get nothing")
 class ConfidenceSized(Allocator):
     def __init__(self, min_confidence: float = 0.0, gross: float = 1.0, max_weight: float = 0.25, long_only: bool = False):
