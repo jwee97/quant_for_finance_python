@@ -1,0 +1,1 @@
+Figure 76. How much of the policy's training-period gain survives the next year, and how much does the answer depend on the ES seed?

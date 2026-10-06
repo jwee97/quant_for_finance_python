@@ -1,0 +1,5 @@
+a,b,sharpe_a,sharpe_b,difference,ci_lower_5pct,ci_upper_95pct,p_value,return_correlation,n_obs,n_samples
+RL policy (3-seed average),equal weight (M0),0.213049,0.754421,-0.541372,-0.863721,-0.247740,0.004500,0.719371,3933,2000
+RL seed 1,equal weight (M0),0.102980,0.754421,-0.651441,-0.989143,-0.349370,0.000500,0.704247,3933,2000
+RL seed 2,equal weight (M0),0.347004,0.754421,-0.407417,-0.743415,-0.096342,0.041000,0.628649,3933,2000
+RL seed 3,equal weight (M0),0.158453,0.754421,-0.595968,-0.929175,-0.288900,0.001500,0.724945,3933,2000
