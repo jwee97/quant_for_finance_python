@@ -126,6 +126,17 @@ def events_from_lob(book: pd.DataFrame, instrument_id: str, start="2024-01-02 14
     return normalise_events(df, lag=lag)
 
 
+def events_from_depth(book: pd.DataFrame, instrument_id: str, levels: int = 5, start="2024-01-02 14:30:00", step: str = "1s", lag: str = "0s") -> pd.DataFrame:
+    """Order-book snapshots as quote events that carry the depth. ``book`` has ``bid_px_1 .. bid_px_N``, ``bid_sz_1 ..``, ``ask_px_1 ..`` and ``ask_sz_1 ..`` (level 1 is the touch); the
+    quote's ``bid`` and ``ask`` are level 1 and ``reference_values`` holds the levels, which the engine's fill simulator walks."""
+    ts = pd.Timestamp(start) + pd.to_timedelta(np.arange(len(book)) * pd.Timedelta(step).value, unit="ns")
+    depth = [{"bids": [[float(r[f"bid_px_{k}"]), float(r[f"bid_sz_{k}"])] for k in range(1, levels + 1)], "asks": [[float(r[f"ask_px_{k}"]), float(r[f"ask_sz_{k}"])] for k in range(1, levels + 1)]}
+             for _, r in book.iterrows()]
+    df = pd.DataFrame({"timestamp": ts, "instrument_id": instrument_id, "event_type": "quote", "bid": book["bid_px_1"].to_numpy(dtype=float), "ask": book["ask_px_1"].to_numpy(dtype=float),
+                       "bid_size": book["bid_sz_1"].to_numpy(dtype=float), "ask_size": book["ask_sz_1"].to_numpy(dtype=float), "reference_values": depth, "source": "depth"})
+    return normalise_events(df, lag=lag)
+
+
 def events_from_bundle(bundle, close_time: str = "16:00", lag: str = "0s", spread_bps: float | None = None) -> pd.DataFrame:
     """A framework :class:`MarketBundle`'s prices as bar events (one instrument per asset)."""
     return events_from_prices(bundle.prices, "bar", close_time, lag, spread_bps, source="bundle")

@@ -19,7 +19,7 @@ One simulation loop replays market events and the engine's own events in a fixed
 
 ## The idea
 
-**Event loop.** Market events (delivered at their `available_at`) are interleaved with engine events (strategy decisions, order arrivals, daily marks and accruals, rolls, expiries, funding payments, coupons, margin checks) in a total order `(time, priority, sequence)`, so a replay is deterministic: the same inputs and configuration give the same SHA-256 digest of the event log. An order decided at 16:30 fills at the next tradeable event (`fill_policy="next_event"`) or after a fixed latency, never at the price that triggered it. Market orders pay half the spread (observed from a quote, or an assumed width on a bar), impact and slippage plus a fee; limit orders rest until the market reaches them; stop orders trigger on a trade-through; a participation cap splits large orders over several events.
+**Event loop.** Market events (delivered at their `available_at`) are interleaved with engine events (strategy decisions, order arrivals, daily marks and accruals, rolls, expiries, funding payments, coupons, margin checks) in a total order `(time, priority, sequence)`, so a replay is deterministic: the same inputs and configuration give the same SHA-256 digest of the event log. An order decided at 16:30 fills at the next tradeable event (`fill_policy="next_event"`) or after a fixed latency, never at the price that triggered it. Market orders pay half the spread (observed from a quote, or an assumed width on a bar), impact and slippage plus a fee; limit orders rest until the market reaches them; stop orders trigger on a trade-through; a participation cap splits large orders over several events; when a quote carries depth levels a market order walks the book, paying the volume-weighted price, and what the displayed depth cannot absorb stays unfilled.
 
 **Ledger.** Positions and cash in any number of currencies. A fill is booked as principal at the mid plus separate cost entries, so the journal shows what crossing the market cost. Each journal entry satisfies `cash + change in position value + translation = P&L + transfer`, checked as it is written. Marks settle variation margin in cash for futures and perpetuals, carry options and swaps at value, translate foreign balances at the observed pair prices and fail loudly if no rate links a currency to the base.
 
@@ -43,6 +43,7 @@ The tests recompute a futures buy-and-hold through rolls independently from the 
 - The isolated-margin liquidation check runs at the daily snapshot, not intraday.
 - Constraints apply per strategy, not to the combined portfolio of several strategies.
 - Daily bars give no spread: the cost of crossing one is an explicit assumption, not an observation.
+- Depth-aware fills need quotes that carry book levels (`events_from_depth`); resting limit orders have no queue position, so they fill the moment the market reaches them.
 
 ## Try it
 

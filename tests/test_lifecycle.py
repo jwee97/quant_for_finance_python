@@ -6,6 +6,7 @@ import warnings
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from src.engine import CommissionModel, CostSchedule, Engine, EngineConfig, FinancingModel, Schedule, SpreadModel, Strategy, Target
 from src.instruments import Instrument, InstrumentRegistry, RollSpec, build_chain, make_option
@@ -166,3 +167,59 @@ def test_every_lifecycle_run_conserves_cash_and_positions_with_costs_on():
                  FinancingModel(deposit_rates={"USD": 0.03})).run()
     assert res.reconciliation.ok, res.reconciliation.failures()
     assert not res.reconciliation.expired_held
+
+
+# --------------------------------------------------------------------------------------------------------------- data-driven roll rules
+def roll_market(method, ratio=1.0, cross_day=10):
+    idx = pd.bdate_range("2024-02-01", "2024-03-12")
+    chain = build_chain("ES", "2024-01-01", "2024-06-30", months=(3, 6), multiplier=50.0, tick_size=0.25, calendar="WEEKDAY", roll=RollSpec(method, 3, ratio))
+    front, nxt = chain.contracts[0], chain.contracts[1]
+    reg = InstrumentRegistry()
+    reg.add_chain(chain)
+    base = pd.Series(4500.0, index=idx)
+    prices = pd.DataFrame({front.instrument_id: base.where(idx <= front.expiry), nxt.instrument_id: base})
+    vol = pd.DataFrame({front.instrument_id: np.linspace(1000, 100, len(idx)), nxt.instrument_id: np.r_[np.full(cross_day, 50.0), np.linspace(400, 2000, len(idx) - cross_day)]}, index=idx)
+    ev = events_from_prices(prices, "bar", "16:00", volume=vol if method == "volume" else None)
+    if method == "open_interest":
+        from src.marketdata import concat_events, normalise_events
+
+        rows = [{"timestamp": t + pd.Timedelta(hours=16), "instrument_id": iid, "event_type": "open_interest", "open_interest": float(v)}
+                for iid in vol.columns for t, v in vol[iid].items()]
+        ev = concat_events(ev, normalise_events(pd.DataFrame(rows), lag="0s"))
+    return idx, chain, reg, ev, front, nxt
+
+
+@pytest.mark.parametrize("method", ["volume", "open_interest"])
+def test_volume_and_open_interest_rolls_happen_when_the_next_contract_becomes_more_active(method):
+    idx, chain, reg, ev, front, nxt = roll_market(method)
+
+    class Hold(Strategy):
+        name = "h"
+        schedule = Schedule("daily", "16:30", 4, "WEEKDAY")
+
+        def on_schedule(self, ctx):
+            ctx.set_targets([Target("ES", quantity=2.0)])
+
+    cfg = EngineConfig(start=idx[0], end=idx[-1] + pd.Timedelta(hours=23, minutes=59), initial_cash={"USD": START})
+    res = Engine(reg, ev, [Hold()], cfg, ZERO).run()
+    rolls = [e for e in res.events if e.kind == "roll"]
+    assert res.reconciliation.ok and len(rolls) == 1
+    # the calendar roll date is 3 business days before 2024-03-15; the data-driven rule must fire EARLIER, when the next contract's activity overtook the front's
+    calendar_roll = chain.roll_date(front)
+    assert rolls[0].ts.normalize() < calendar_roll
+
+
+def test_calendar_roll_is_the_fallback_when_activity_never_crosses():
+    idx, chain, reg, ev, front, nxt = roll_market("volume", ratio=1e9)
+
+    class Hold(Strategy):
+        name = "h"
+        schedule = Schedule("daily", "16:30", 4, "WEEKDAY")
+
+        def on_schedule(self, ctx):
+            ctx.set_targets([Target("ES", quantity=2.0)])
+
+    cfg = EngineConfig(start=idx[0], end=idx[-1] + pd.Timedelta(hours=23, minutes=59), initial_cash={"USD": START})
+    res = Engine(reg, ev, [Hold()], cfg, ZERO).run()
+    rolls = [e for e in res.events if e.kind == "roll"]
+    assert len(rolls) == 1 and rolls[0].ts.normalize() == chain.roll_date(front)

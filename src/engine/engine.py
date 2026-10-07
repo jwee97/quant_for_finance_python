@@ -38,6 +38,14 @@ from .strategy import InstrumentEvent, Strategy, StrategyContext, Target
 TRADEABLE = ("quote", "trade", "bar", "settlement")
 
 
+def _depth(row):
+    """The displayed depth of a quote event (``reference_values = {"bids": [[p, size], ...], "asks": [...]}``) as ``(bids, asks)`` tuples, or None."""
+    rv = row.reference_values
+    if isinstance(rv, dict) and rv.get("bids") is not None and rv.get("asks") is not None:
+        return tuple((float(p), float(q)) for p, q in rv["bids"]), tuple((float(p), float(q)) for p, q in rv["asks"])
+    return None
+
+
 @dataclass
 class EngineConfig:
     start: pd.Timestamp | None = None
@@ -204,7 +212,8 @@ class Engine:
         if event_row is not None:
             et = event_row.event_type
             if et == "quote":
-                return Quote((event_row.bid + event_row.ask) / 2.0, float(event_row.bid), float(event_row.ask), float(event_row.trade), float(event_row.volume), adv=adv, sigma=sigma)
+                return Quote((event_row.bid + event_row.ask) / 2.0, float(event_row.bid), float(event_row.ask), float(event_row.trade), float(event_row.volume), adv=adv, sigma=sigma,
+                             depth=_depth(event_row))
             if et == "bar":
                 return Quote(float(event_row.close), last=float(event_row.close), volume=float(event_row.volume), low=float(event_row.low), high=float(event_row.high), adv=adv, sigma=sigma)
             if et == "trade":

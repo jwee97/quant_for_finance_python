@@ -505,3 +505,68 @@ def test_stale_marks_are_reported_not_hidden():
 
     res = run(reg, ev, [HoldB()], cfg(idx, max_mark_age="3D"))
     assert res.diagnostics.get("stale_marks", 0) > 0 or res.diagnostics.get("missing_marks", 0) > 0
+
+
+# ------------------------------------------------------------------------------------------------------------------------------- book depth
+def book_events(idx, bids, asks, instrument="AAA"):
+    from src.marketdata import normalise_events
+
+    rows = [{"timestamp": t + pd.Timedelta(hours=16), "instrument_id": instrument, "event_type": "quote", "bid": bids[0][0], "ask": asks[0][0], "bid_size": bids[0][1], "ask_size": asks[0][1],
+             "reference_values": {"bids": bids, "asks": asks}} for t in idx]
+    return normalise_events(pd.DataFrame(rows), lag="0s")
+
+
+def depth_run(order_kwargs, bids=((99.9, 100.0), (99.8, 200.0)), asks=((100.1, 100.0), (100.2, 200.0), (100.5, 500.0)), n=5):
+    idx = pd.bdate_range("2024-01-02", periods=n)
+    reg = InstrumentRegistry([Instrument(instrument_id="AAA", asset_class="equity", instrument_type="equity", currency="USD", calendar="WEEKDAY", tick_size=0.01)])
+    holder = []
+
+    class S(Strategy):
+        name = "s"
+        schedule = Schedule("daily", "16:30", 4, "WEEKDAY")
+
+        def on_schedule(self, ctx):
+            if ctx.ts.normalize() == idx[0]:
+                holder.append(ctx.submit(Order("AAA", **order_kwargs)))
+
+    res = run(reg, book_events(idx, [list(b) for b in bids], [list(a) for a in asks]), [S()], cfg(idx))
+    return holder[0], res
+
+
+def test_a_market_order_walks_the_book_and_pays_the_average_price():
+    o, res = depth_run({"quantity": 250.0})                                     # 100 @ 100.1, 150 of the 200 @ 100.2
+    expected = (100 * 100.1 + 150 * 100.2) / 250.0
+    assert o.status == "filled" and abs(o.avg_price - expected) < 1e-9
+    f = res.fills.iloc[0]
+    assert abs(f["price"] - expected) < 1e-9
+    cats = res.attribution("category")
+    assert abs(cats["spread"] + 250 * (100.1 - 100.0)) < 1e-6                     # the touch against the mid
+    assert abs(cats["impact"] + 250 * (expected - 100.1)) < 1e-6                  # the walk beyond the touch is impact
+    assert res.reconciliation.ok
+
+
+def test_an_order_larger_than_the_displayed_depth_fills_partially_then_rests():
+    o, res = depth_run({"quantity": 1000.0}, asks=((100.1, 100.0), (100.2, 100.0)))     # 200 displayed, refreshed every day
+    assert o.status == "filled" and len(res.fills) >= 5 and res.fills["quantity"].max() <= 200.0 + 1e-9
+    assert abs(res.fills["quantity"].sum() - 1000.0) < 1e-9
+
+
+def test_fill_or_kill_needs_the_whole_quantity_in_the_book_and_limits_stop_the_walk():
+    o, res = depth_run({"quantity": 1000.0, "tif": "FOK"}, asks=((100.1, 100.0), (100.2, 100.0)))
+    assert len(res.fills) == 0 and o.status == "cancelled" or o.status in ("cancelled", "expired")
+    o, res = depth_run({"quantity": 250.0, "type": "limit", "limit_price": 100.2, "tif": "IOC"})     # may only take the first two levels: 300 are there up to 100.2
+    assert o.status == "filled" and o.avg_price <= 100.2 + 1e-12
+    o, res = depth_run({"quantity": 500.0, "type": "limit", "limit_price": 100.1, "tif": "IOC"})
+    assert abs(res.fills["quantity"].sum() - 100.0) < 1e-9 and o.avg_price == 100.1                  # only the touch is marketable
+
+
+def test_selling_walks_the_bids_and_depth_adapter_round_trips():
+    o, res = depth_run({"quantity": -250.0})
+    expected = (100 * 99.9 + 150 * 99.8) / 250.0
+    assert abs(o.avg_price - expected) < 1e-9
+    from src.marketdata import events_from_depth
+
+    book = pd.DataFrame({"bid_px_1": [99.9, 99.8], "bid_sz_1": [10.0, 20.0], "ask_px_1": [100.1, 100.2], "ask_sz_1": [5.0, 6.0], "bid_px_2": [99.8, 99.7], "bid_sz_2": [30.0, 40.0],
+                         "ask_px_2": [100.2, 100.3], "ask_sz_2": [7.0, 8.0]})
+    ev = events_from_depth(book, "AAA", levels=2)
+    assert len(ev) == 2 and ev["reference_values"].iloc[0]["asks"] == [[100.1, 5.0], [100.2, 7.0]] and ev["bid"].iloc[1] == 99.8

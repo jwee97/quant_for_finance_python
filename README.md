@@ -268,7 +268,7 @@ print(demo.report())            # P&L by asset class and category, costs, diagno
 print(demo.result.digest)       # the same inputs always give the same digest
 ```
 
-**What the evidence says, honestly.** All of this is exercised on a **synthetic market with a known generating process**: the tests prove that the machinery recovers what was built in (independent P&L recomputation through futures rolls, cash and position conservation, exercise and assignment against analytic P&L, swap identities, no dependence on the future, deterministic replay, a paper session that reproduces a backtest), and the demo's numbers say nothing about real markets. Real option, futures, FX-forward, swap-curve and tick data are not available here; the loaders and schemas exist. Broker adapters need credentials and are not built (the interface, a paper broker and a position reconciliation are). Constraints are applied per strategy, the isolated-margin liquidation check runs at the daily snapshot, partial option exercise is not supported, and the engine does not fill against a limit order book.
+**What the evidence says, honestly.** All of this is exercised on a **synthetic market with a known generating process**: the tests prove that the machinery recovers what was built in (independent P&L recomputation through futures rolls, cash and position conservation, exercise and assignment against analytic P&L, swap identities, no dependence on the future, deterministic replay, a paper session that reproduces a backtest), and the demo's numbers say nothing about real markets. Real option, futures, FX-forward, swap-curve and tick data are not available here; the loaders and schemas exist. Broker adapters need credentials and are not built (the interface, a paper broker and a position reconciliation are). Constraints are applied per strategy, the isolated-margin liquidation check runs at the daily snapshot, partial option exercise is not supported, and resting orders have no queue-position model (market orders do walk displayed book depth when the data carry it).
 
 ## Repository layout
 
@@ -315,7 +315,7 @@ docs/            START_HERE, 81 technique guides, glossary, chapter map, strateg
 experiments/     numbered stage scripts + the experiment registry
 reports/         figures, tables, the data-quality report, the research paper,
                  the Generation 2-5 reports, errata/ (before/after record of the drift fix), the dashboard
-tests/           1437 tests
+tests/           1444 tests
 Dockerfile, docker-compose.yml, Makefile, .github/workflows/ci.yml and benchmark.yml, .pre-commit-config.yaml
 ```
 
@@ -334,7 +334,7 @@ python -m experiments.run_all --generation 5  # Generation 5 only (stages 30-40)
 python -m experiments.run_all --from 6 --to 9 # a range of stages
 python -m experiments.run_all --fresh         # clear derived artefacts first
 python -m experiments.stage01_data            # a single stage
-pytest -q                                      # 1437 tests
+pytest -q                                      # 1444 tests
 quant demo; quant dashboard; quant explain risk parity   # the newcomer layer
 quant serve                                    # the interactive dashboard: your tickers, your strategies
 quant new-strategy my_idea                     # a template for your own strategy in user_strategies/
