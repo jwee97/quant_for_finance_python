@@ -55,7 +55,7 @@ def implied_vol(price, S, K, T, r=0.0, q=0.0, call=True, tol: float = 1e-10, max
         hi[idx] = np.where(too_high, s_i, hi[idx])
         lo[idx] = np.where(~too_high, s_i, lo[idx])
         vega = _vega_bsm(S[idx], K[idx], T[idx], r[idx], q[idx], s_i)
-        with np.errstate(divide="ignore", invalid="ignore"):
+        with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
             newton = s_i - diff / vega
         inside = np.isfinite(newton) & (newton > lo[idx]) & (newton < hi[idx])
         sigma[idx] = np.where(inside, newton, 0.5 * (lo[idx] + hi[idx]))

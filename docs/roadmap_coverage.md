@@ -70,6 +70,32 @@ Nothing here claims that a built item *works* as a way to make money; the [findi
 Market data, feature factory (`src/features`), regime detection, forecast models, forecast confidence, forecast combination, portfolio construction, execution model, risk engine, walk-forward validation, attribution and the experiment database are all
 built and run end to end by `Pipeline.run`; adding a strategy is writing one forecast model ([how to add a strategy](how_to_add_a_strategy.md)).
 
+## Generation 7: one engine, one ledger, one strategy interface
+
+The request: unify instruments, market data, engine, ledger, strategies, risk and costs, and analysis so FX, futures, crypto, options and swaps run in one portfolio. See the [architecture](architecture.md#the-multi-asset-engine-one-engine-one-ledger-one-strategy-interface) and the [capability matrix](capability_matrix.md).
+
+| Item | Status | Where |
+|---|---|---|
+| Unified instrument layer with the core fields and FX, futures, crypto, option and swap families | Built | [unified-instrument-model](techniques/unified-instrument-model.md), `src/instruments` |
+| Vendor-neutral point-in-time market data; CSV, Parquet, Arrow, JSONL, SQL, REST polling, WebSocket loaders; data contracts | Built | [point-in-time-market-data](techniques/point-in-time-market-data.md), `src/marketdata` |
+| Deterministic event-driven engine (order, fill, funding, margin, roll, expiry, exercise, assignment, coupon, corporate-action events) | Built | [event-driven-engine-and-ledger](techniques/event-driven-engine-and-ledger.md), `src/engine` |
+| One ledger with reconciliation and invariant tests | Built | `src/ledger`, `tests/test_ledger.py`, `tests/test_engine.py` |
+| Futures rolls (calendar, volume, open interest), back-adjusted histories, roll costs | Built | [contract-lifecycle](techniques/contract-lifecycle.md); only the calendar rule is exercised by tests |
+| Perpetuals: funding, mark price, liquidation, isolated and cross margin, inverse contracts | Built | [contract-lifecycle](techniques/contract-lifecycle.md) |
+| Options: chains, expiry, exercise, assignment, hedging, premium and margin modes | Built | [contract-lifecycle](techniques/contract-lifecycle.md), `strategies/volatility.py` |
+| Swaps module: contracts, schedules, cashflows, curves, pricing, risk, strategies; PV01, carry, roll-down, basis swaps | Built | [interest-rate-swaps](techniques/interest-rate-swaps.md), `src/swaps` |
+| Cross-currency basis swaps in an engine run | Partly | priced and par-spread solved; never traded in a run |
+| Common strategy API (Signal, Target, Order; all hooks) | Built | [multi-asset-strategy-api](techniques/multi-asset-strategy-api.md) |
+| Strategy families: trend, carry, basis, relative value, volatility, regime ensembles, ML | Built | `src/engine/strategies/` |
+| Bayesian regime filters | Partly | a two-state HMM and a volatility-quantile filter are built; a Bayesian change-point filter exists in `src/models/regimes.py` but is not wired to the ensemble |
+| First-class costs, constraints, mixed-portfolio risk | Built | [costs-constraints-and-capacity](techniques/costs-constraints-and-capacity.md) |
+| Cost-aware optimisation, capacity, stress scenarios | Built | `src/engine/optimise.py`, `src/engine/risk.py` |
+| Paper-trading mode | Built | [paper-trading-and-replay](techniques/paper-trading-and-replay.md) |
+| Broker adapters | Not built | an adapter needs credentials and a sandbox; the interface, a paper broker and a position reconciliation exist |
+| Tick data / limit-order-book fills in the engine | Not built | needs tick data; the engine's event schema can carry depth, a book fill model is not written |
+| Dashboard support for futures, derivatives and swaps | Not built | result tables are available; the dashboard shows the ETF pipeline only |
+| Mixed-asset example with a modern strategy | Built | `src/engine/demo.py` (`run_mixed_asset_demo`) |
+
 ## Run but not demonstrated
 
 Docker and the continuous-integration workflow exist as files; no Docker daemon was available to build the image, and the workflow has not run on a hosted runner.

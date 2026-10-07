@@ -62,7 +62,10 @@ def expiry_time(engine, inst) -> pd.Timestamp:
 
 def setup(engine) -> None:
     cfg = engine.config
-    dates = pd.DatetimeIndex(engine.store.events["available_at"].dt.normalize().unique()).sort_values()
+    if cfg.session_days is not None:
+        dates = pd.DatetimeIndex(pd.to_datetime(list(cfg.session_days))).normalize().unique().sort_values()
+    else:
+        dates = pd.DatetimeIndex(engine.store.events["available_at"].dt.normalize().unique()).sort_values()
     dates = dates[(dates >= engine.start.normalize()) & (dates <= engine.end.normalize())]
     h, m = (int(x) for x in cfg.snapshot_time.split(":"))
     rh, rm = (int(x) for x in cfg.roll_time.split(":"))
@@ -215,6 +218,8 @@ def on_mark(engine, ev) -> None:
     need_risk = engine.risk_model is not None and (engine.config.risk_every_snapshot or any(type(s).on_risk_update.__qualname__ != "Strategy.on_risk_update" for s in engine.strategies))
     if need_risk:
         engine.last_risk = engine.risk_model.report(engine)
+        if engine.config.risk_every_snapshot:
+            engine.risk_rows.append({"ts": ts, **engine.last_risk.summary().to_dict()})
         for s in engine.strategies:
             s.on_risk_update(engine.contexts[s.name], engine.last_risk)
     engine.log.add(ts, "mark", f"{row['equity']:.6f}")

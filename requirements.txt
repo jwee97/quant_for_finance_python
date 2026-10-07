@@ -21,6 +21,11 @@ hmmlearn>=0.3
 # Market data provider (Ch. 7)
 yfinance>=0.2.40
 
+# Vendor-neutral market-data layer: Parquet/Arrow files, REST polling and WebSocket streams
+pyarrow>=14.0
+requests>=2.31
+websockets>=12.0
+
 # Figures
 matplotlib>=3.8
 

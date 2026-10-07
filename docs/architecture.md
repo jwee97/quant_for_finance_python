@@ -37,6 +37,32 @@ How the platform is organised, what each layer guarantees, and how to extend it.
 
 Options are the exception, by necessity: an option position is a contract with an expiry and a strike, not a return series, so `src.derivatives` has its own engine (`OptionBacktester`) with the same discipline (no look-ahead, explicit costs) and its own strategy interface. Microstructure is a set of simulators and estimators, not a backtest layer.
 
+## The multi-asset engine: one engine, one ledger, one strategy interface
+
+The research pipeline above works on return series. The second half of the platform works on **contracts**: things with a multiplier, an expiry, a margin rule and a cash flow calendar, traded through an event-driven engine. Its governing principle is one engine for all instruments, one ledger for all portfolios and one strategy interface for all signal types, with seven concerns kept apart:
+
+```
+ instruments        market data          engine               ledger              strategies           risk and costs        analysis
+ src/instruments    src/marketdata       src/engine           src/ledger          src/engine/          src/engine/costs      src/engine/analysis
+ what is traded     what is known,       events, orders,      positions, cash,    strategies/*,        constraints, risk,    attribution, tear
+ (specification)    and when             fills, lifecycle     journal, margin,    src/swaps/           optimise, capacity    sheet, comparison,
+                    (point in time)      (deterministic)      reconciliation      strategies           (src/engine/*)        replay digest
+```
+
+| Package | Role | Key invariant |
+|---|---|---|
+| `src/instruments` | the unified specification: FX (spot, forwards, swaps), futures chains, crypto spot/perps/dated futures, options, rate swaps; calendars; the registry | every instrument serialises and rebuilds; the cash style, not the asset class, decides the ledger arithmetic |
+| `src/marketdata` | normalised point-in-time events, data contracts, loaders (CSV, Parquet, Arrow, JSONL, SQL, REST, WebSocket), adapters | an event is delivered at `available_at`, never earlier; a missing `available_at` is an error |
+| `src/ledger` | multi-currency positions and cash, a journal with a per-entry identity, margin, reconciliation | cash conservation, equity = start + P&L + transfers, independent position book, no held expired contract |
+| `src/engine` | the event loop, orders and execution, cost models, lifecycle handlers, the strategy API, constraints, portfolio risk, analysis, paper trading | same inputs, same SHA-256 digest; a decision sees only data available at its time |
+| `src/swaps` | schedules, curves, cashflows, pricing, PV01, carry and roll-down, swap strategies | par swap has zero value; carry plus roll-down equals the total; every coupon is a journal entry |
+
+The two halves are connected by design, not by code: the research pipeline answers "is there a signal?" on total-return indices with a daily engine, and the contract engine answers "what would holding this book of FX, futures, perpetuals, options and swaps have done, to the cent, with funding, margin, rolls and expiries?". A research finding becomes a `Strategy` on the common API; the same class runs in a backtest, in a paper-trading session and (given a real broker adapter, which needs credentials) against a venue.
+
+**Cash styles.** `full_payment` (shares), `premium` (options), `variation_margin` (futures, perpetuals: every mark-to-market change is settled in cash), `otc_mtm` (swaps, forwards: carried at present value, cash moves at coupons), `currency_exchange` (the balances are the position). The ledger's arithmetic follows the cash style alone, which is why one set of invariant tests covers every asset class.
+
+**Event order.** Market events (at `available_at`) and engine events (schedule, arrival, mark, accrual, roll, expiry, funding, cashflow, margin) are processed in `(time, priority, sequence)` order. A strategy decision at 16:30 sees the 16:00 close if it was published by then; the order fills at the next tradeable event; the daily mark and accrual run at 23:59; expiry is processed at the end of the expiry day.
+
 ## Packages
 
 | Package | Role | Key invariant |
@@ -74,6 +100,10 @@ Options are the exception, by necessity: an option position is a contract with a
 | real option chains | `src.derivatives.synthetic.load_option_csv` maps a vendor CSV onto the option schema, `validate_chain` rejects bad quotes, then use `OptionBacktester` as for the synthetic market | [option pricing](techniques/option-pricing-and-greeks.md) |
 | an option strategy | subclass `OptionStrategy`; return `Order` and `Hedge` objects from the chain, positions and history | [option strategies](techniques/option-strategies-and-vol-premium.md) |
 | an allocator | register in `ALLOCATORS`; receive the forecasts, regimes and covariance in a `Context` | `src/framework/allocators_portfolio.py` |
+| an instrument type | subclass `Instrument` with `@register_kind`, choose its `CASH_STYLE`, give it `notional`/`pnl` if they differ; add a mark model and a cashflow-date function if it needs them | `src/instruments/rates.py`, `src/engine/marks.py` |
+| a contract strategy | subclass `src.engine.Strategy`; implement `generate_signals` and `map_to_targets` (or `on_schedule`); declare targets, never orders | [multi-asset strategy API](techniques/multi-asset-strategy-api.md), `src/engine/strategies/` |
+| a data source | produce normalised events with `available_at` (a loader, a `RestPollingAdapter`, a `StreamAdapter`) | [point-in-time market data](techniques/point-in-time-market-data.md) |
+| a broker | implement `LiveBroker` (needs credentials; none are in this repository) | [paper trading](techniques/paper-trading-and-replay.md) |
 | a hyperparameter search | `Study(space).optimize(objective, method=...)` or `quant tune`; read `selection_report()` | [research operations](techniques/research-operations.md) |
 
 ## Testing strategy
@@ -81,8 +111,10 @@ Options are the exception, by necessity: an option position is a contract with a
 | Kind | What it checks | Where |
 |---|---|---|
 | Unit and reference | each estimator against `statsmodels`, `arch`, `scipy` or a closed form to numerical precision | `tests/test_stats.py`, `test_econometrics.py`, `test_probability.py`, `test_derivatives.py`, `test_assets.py`, `test_microstructure.py`, `test_ops.py` |
+| Replay and look-ahead (engine) | the same run twice gives the same digest; changing the future leaves the past equity curve and fills identical; the store audit sees no data returned before its availability; a paper session reproduces the backtest digest; ML strategies do not depend on the future | `tests/test_engine.py`, `test_marketdata.py`, `test_engine_strategies.py` |
 | Leakage and causality | change the future, the past must not change; embargo and purging leave no overlap; estimation windows end before events | `tests/test_strategies.py`, `test_framework.py`, the causality tests in each package |
 | Synthetic ground truth | the machinery recovers what the simulation built in (Schwartz-Smith factors, the FX carry premium, the variance premium, order-flow impact, planted slopes and jumps) | the `synthetic` tests in `test_assets.py`, `test_derivatives.py`, `test_microstructure.py`, `test_stats.py` |
+| Multi-asset accounting | independent recomputation of futures P&L through rolls, cash and position conservation, no self-generated P&L at constant prices, costs as the only drag, option exercise and assignment against analytic P&L, swap identities | `tests/test_engine.py`, `test_ledger.py`, `test_lifecycle.py`, `test_swaps.py` |
 | Backtest accounting | the sum of daily P&L equals the change in equity; orders fill at the stated prices; expiries settle at intrinsic value | `tests/test_derivatives.py`, `test_backtest.py` |
 | Integration | every registered model runs through the pipeline; documentation, examples and notebooks agree with the code | `tests/test_strategies.py`, `test_docs.py`, `test_webapp.py`, `test_cli_ops.py` |
 | Performance | profiling and scaling exponents; a weekly benchmark workflow keeps timings as an artifact | `src/ops/profiling.py`, `.github/workflows/benchmark.yml` |

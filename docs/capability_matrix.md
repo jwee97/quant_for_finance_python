@@ -1,4 +1,4 @@
-# Capability matrix: the platform after Generation 6
+# Capability matrix: the platform after Generation 7
 
 An audit against the target of an *institutional multi-asset quantitative research platform*. Companion to [the Generation 2-4 audit](feature_audit.md); see the [research survey](research_survey.md) for why each capability matters and [the architecture](architecture.md) for how it fits together.
 
@@ -129,6 +129,38 @@ The state of the repository when this generation started (commit `0b67953`: 15 E
 | Dashboards | COMPLETE | `quant dashboard` (static), `quant serve` (interactive), `tests/test_webapp.py` | the dashboard does not yet show options or futures analytics | Low |
 | Documentation per module | COMPLETE | 19 new technique guides with theory, repository use, findings, pitfalls and a runnable example; this page, the survey, the architecture | n/a | n/a |
 
+### Multi-asset engine (Generation 7)
+
+The contract-level engine: one engine, one ledger, one strategy interface for FX, futures, crypto, options and swaps. See the [architecture](architecture.md#the-multi-asset-engine-one-engine-one-ledger-one-strategy-interface) and the guides on the [instrument model](techniques/unified-instrument-model.md), [point-in-time data](techniques/point-in-time-market-data.md), [the engine and ledger](techniques/event-driven-engine-and-ledger.md), [contract lifecycle](techniques/contract-lifecycle.md), [swaps](techniques/interest-rate-swaps.md), [the strategy API](techniques/multi-asset-strategy-api.md), [costs and constraints](techniques/costs-constraints-and-capacity.md) and [paper trading](techniques/paper-trading-and-replay.md).
+
+| Capability | Status | Evidence | Missing | Priority |
+|---|---|---|---|---|
+| Unified instrument layer (core fields, cash styles, calendars, registry, JSON round trip) | COMPLETE | `src/instruments`, `tests/test_instruments.py` | holiday rules are generated, not a vendor calendar; ad-hoc closures need `extra_holidays` | Low |
+| FX spot, forwards, FX swaps | COMPLETE | `src/instruments/fx.py`; a forward is marked from the two discount curves and the spot, and settles by exchanging the currencies (`tests/test_swaps.py`) | non-deliverable forwards are specified and settle against a fixing but are not exercised in an engine run | Low |
+| Cross-currency basis swaps | PARTIAL | `CrossCurrencyBasisSwap`: priced with notional exchanges, par spread solved and checked (`tests/test_swaps.py`); marked in the engine through the same model | no engine run with a cross-currency position; no cross-currency curve construction (the basis is a spread on the second leg) | Medium |
+| Futures chains, roll methods, back-adjusted histories, roll cost attribution | COMPLETE | `src/instruments/futures.py`, `lifecycle.py`, `strategies/common.py`; independent recomputation through rolls (`tests/test_engine.py`) | volume and open-interest roll rules are implemented but tested only on the calendar rule | Medium |
+| Crypto spot, perpetuals (funding, mark, liquidation, margin modes), dated futures, venue conventions | COMPLETE | `src/instruments/crypto.py`, funding and liquidation tests | five venues' conventions are parameters, not live-verified; one venue's historical data (Deribit) | Medium |
+| Crypto options | PARTIAL | the `Option` model carries an `inverse` flag for coin-settled options | no engine run or data for coin-settled options | Low |
+| Listed options on spot, index and futures: exercise, assignment, expiry, Greeks | COMPLETE | `lifecycle.py`; analytic P&L tests for every settlement type (`tests/test_lifecycle.py`) | partial exercise of a position; early assignment is a configurable rule, not a model | Medium |
+| Rate swaps: schedules, curves, cashflows, PV01, key rates, carry and roll-down, basis swaps | COMPLETE | `src/swaps`, `tests/test_swaps.py` | amortizing profiles are covered by unit tests but not by an engine run; no inflation or OIS-compounded legs | Medium |
+| Bonds | PARTIAL | `Bond` specification; the cashflow dates function is shared with swaps | no engine run with a bond position; no yield-based marking in the engine | Medium |
+| Vendor-neutral market data: events, availability, contracts, five file formats, SQL, REST, WebSocket | COMPLETE | `src/marketdata`, `tests/test_marketdata.py` (REST over a local HTTP server, WebSocket over a local server) | no real vendor adapters (each needs credentials and a licence) | n/a (data) |
+| Event-driven engine: ordering, custom clock, latency, partial fills, bid/ask fills, limit/market/stop, accrual | COMPLETE | `src/engine`, `tests/test_engine.py` | no intraday limit-order-book fill model (queue position, depth); a book-based fill model is not built | Medium |
+| One ledger: multi-currency, margin, journal identity, reconciliation | COMPLETE | `src/ledger`, `tests/test_ledger.py` | portfolio margin is a scenario-scan approximation, not an exchange model | Medium |
+| Invariants: cash and position conservation, no self-generated P&L, attributable P&L, no look-ahead, expired contracts, deterministic replay | COMPLETE | `tests/test_engine.py`, `test_ledger.py`, `test_marketdata.py` | n/a | n/a |
+| Common strategy API with signals, targets, orders and the full hook set | COMPLETE | `src/engine/strategy.py` | n/a | n/a |
+| Strategy families: trend, carry (futures, FX, funding), cash-and-carry and basis reversion, calendar, butterfly and FX-triangle relative value | COMPLETE | `src/engine/strategies/`, `tests/test_engine_strategies.py` (constructed data with a known answer) | cross-venue crypto spreads and curve-steepener futures are not built (swap curve trades are) | Medium |
+| Volatility: variance premium, gamma, skew, term structure with vega sizing and delta hedging | COMPLETE | `strategies/volatility.py` | dispersion needs single-name option data; hedging is daily, not intraday | Medium (data) |
+| Regime-aware ensemble (volatility and HMM regime filters, risk overlay, volatility target, drawdown brake) | COMPLETE | `strategies/ensemble.py` | Bayesian regime filters beyond the HMM; risk-parity overlay uses shadow returns, which ignore costs | Low |
+| Machine learning on the common API: walk-forward ridge/lasso/trees, regime-conditioned models, online forecast combination, meta-labelling | COMPLETE | `strategies/ml.py`; causality and no-future-dependence tests | tree learners are small and shallow; no deep models on this API | Low |
+| First-class costs and financing (commission, exchange fees, spread, slippage, impact, funding, borrow, margin interest, roll and FX conversion costs, participation limits) | COMPLETE | `src/engine/costs.py`, `tests/test_engine_risk.py` | calibration needs real fills (a regression is provided and tested on simulated trades) | Medium (data) |
+| Constraints and mixed-portfolio risk (gross, net, leverage, margin, turnover, class, currency, factor, liquidity, concentration, drawdown and volatility targets; VaR, CVaR, Greeks, PV01, scenarios, funding and rollover risk) | COMPLETE | `constraints.py`, `risk.py`, `tests/test_engine_risk.py` | constraints apply per strategy, not across strategies | Medium |
+| Cost-aware optimisation, impact calibration, capacity | COMPLETE | `src/engine/optimise.py` | capacity needs real volume data; the synthetic data has none | Medium (data) |
+| Paper trading, deterministic replay, broker interface | PARTIAL | `src/engine/broker.py`; a paper session reproduces the backtest digest (`tests/test_engine.py`); `PaperBroker` | no real broker adapter: an implementation needs credentials and a sandbox account | High (credentials) |
+| Mixed-asset example: FX, futures, crypto, options, swaps in one portfolio with a modern strategy | COMPLETE | `src/engine/demo.py`, `tests/test_engine_risk.py::test_the_mixed_asset_demo_meets_the_success_criteria` | runs on a synthetic market only | n/a (data) |
+| Tick data and limit-order-book simulation in the engine | NOT IMPLEMENTED | `src/microstructure` has a standalone book simulator; the engine's events can carry depth levels | the engine does not fill against a book; needs tick data to be meaningful | Medium (data) |
+| Dashboard support for futures, derivatives and swaps | NOT IMPLEMENTED | the result's tables (`pnl_matrix`, `cost_summary`, `last_risk`) are the inputs | the dashboard still shows the ETF pipeline only | Low |
+
 ## What cannot be completed in this environment
 
 | Item | Why | What exists instead |
@@ -138,6 +170,8 @@ The state of the repository when this generation started (commit `0b67953`: 15 E
 | Tick data, level-2 books, trades and quotes | proprietary | estimators and a Poisson limit-order-book simulator |
 | Fundamentals, point-in-time constituents, earnings and revision data | proprietary | price-based proxies, the event-study estimator |
 | Single-stock options (real dispersion), CDS | proprietary | a model-consistent dispersion world |
+| Real broker or exchange adapters | an adapter needs credentials, a sandbox account and the venue's own error handling | the `Broker` interface, a paper broker on the same simulator and a position reconciliation (`LiveBroker` refuses to run) |
+| Real vendor feeds for options, futures contracts, FX forwards, swap curves, tick data | licences | loaders, schemas, contracts, a point-in-time store and a synthetic multi-asset market with a known generating process |
 | Live LLM calls | no API credentials in this environment | the template backend and the read-only SQL guard are tested; the `--llm` path is unexercised |
 | Foundation-model fine-tuning, large transformer runs | compute | zero-shot plug-ins; compact networks on CPU |
 | Ray, Docker and GitHub Actions executed locally | not available in the sandbox | the code and config are in place; CI is the evidence (see the commit status) |

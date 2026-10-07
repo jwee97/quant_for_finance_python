@@ -129,12 +129,15 @@ class ConstraintSet:
                 elif shorts > 0:
                     n[n < 0] *= (shorts - excess) / shorts
                 note("net")
-        # 7 concentration
+        # 7 concentration: no instrument above ``max_concentration`` of the gross AFTER the cap (capping lowers the gross, so iterate; infeasible when fewer instruments than 1 / limit)
         if self.max_concentration is not None:
-            gross = np.abs(n).sum()
-            if gross > 0:
-                big = np.abs(n) > self.max_concentration * gross
-                if big.any():
+            active = int((np.abs(n) > 0).sum())
+            if active and self.max_concentration * active >= 1.0:
+                for _ in range(60):
+                    gross = np.abs(n).sum()
+                    big = np.abs(n) > self.max_concentration * gross * (1.0 + 1e-9)
+                    if gross <= 0 or not big.any():
+                        break
                     n[big] = np.sign(n[big]) * self.max_concentration * gross
                     note("concentration")
         # 8 volatility target

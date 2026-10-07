@@ -28,6 +28,8 @@ Then open `reports/dashboard.html` and look at the **Decision ledger**: every hy
 **You know machine learning but not finance.** The difference is signal-to-noise: monthly asset returns are almost pure noise, samples are tiny, and every "feature" you try is a trial. Read [multiple-testing](techniques/multiple-testing.md),
 [power-analysis](techniques/power-analysis.md), [probabilistic-forecasting](techniques/probabilistic-forecasting.md), then [deep-time-series-models](techniques/deep-time-series-models.md) to see why a model that wins in other domains has to fight for a tie here.
 
+**You want to backtest futures, FX, crypto, options or swaps in one portfolio.** Read the [architecture](architecture.md#the-multi-asset-engine-one-engine-one-ledger-one-strategy-interface), then [the instrument model](techniques/unified-instrument-model.md), [the engine and ledger](techniques/event-driven-engine-and-ledger.md), [contract lifecycle](techniques/contract-lifecycle.md) and [the strategy API](techniques/multi-asset-strategy-api.md), and run `from src.engine.demo import run_mixed_asset_demo; print(run_mixed_asset_demo(200).report())`.
+
 **You are interviewing for a quant role.** Be able to explain, from this repository, [attribution](techniques/attribution.md), [multiple-testing](techniques/multiple-testing.md), [execution-and-impact](techniques/execution-and-impact.md) and
 [regime-adaptive-allocation](techniques/regime-adaptive-allocation.md), and to say what each result does and does not show.
 

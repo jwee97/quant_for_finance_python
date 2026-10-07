@@ -19,6 +19,17 @@ FINANCING_CATEGORIES = ("funding", "borrow", "interest", "financing")
 PRICE_CATEGORIES = ("mtm", "variation_margin")
 
 
+def md_table(frame: pd.DataFrame | pd.Series, digits: int = 2) -> str:
+    """A GitHub-markdown table of a frame or series (no optional dependency)."""
+    df = frame.to_frame() if isinstance(frame, pd.Series) else frame
+    head = [str(df.index.name or "")] + [str(c) for c in df.columns]
+    rows = ["| " + " | ".join(head) + " |", "|" + "|".join("---" for _ in head) + "|"]
+    for idx, r in df.iterrows():
+        cells = [f"{v:,.{digits}f}" if isinstance(v, float) else str(v) for v in r]
+        rows.append("| " + " | ".join([str(idx)] + cells) + " |")
+    return "\n".join(rows)
+
+
 @dataclass
 class BacktestResult:
     equity: pd.DataFrame
@@ -31,6 +42,8 @@ class BacktestResult:
     start_equity: float
     events: list = field(default_factory=list)
     config: dict = field(default_factory=dict)
+    risk: pd.DataFrame = field(default_factory=pd.DataFrame)       # one row of risk-report headline numbers per mark (when the engine has a risk model and risk_every_snapshot)
+    last_risk: object = None                                         # the final RiskReport (positions, Greeks, scenarios, tail contributions)
 
     @classmethod
     def from_engine(cls, engine) -> "BacktestResult":
@@ -40,7 +53,8 @@ class BacktestResult:
         orders = pd.DataFrame([{"id": o.id, "ts": o.submitted_at, "instrument_id": o.instrument_id, "quantity": o.quantity, "type": o.type, "status": o.status, "filled": o.filled,
                                 "avg_price": o.avg_price, "fees": o.fees, "strategy": o.strategy, "tags": ",".join(o.tags), "reason": o.reason} for o in engine.orders.values()])
         return cls(eq, engine.ledger.journal_frame(), engine.ledger.fills_frame(), orders, dict(engine.diagnostics), engine.log.digest, engine.reconciliation(), engine.start_equity,
-                   list(engine.instrument_events), {"start": str(engine.start), "end": str(engine.end), "base": engine.config.base_currency})
+                   list(engine.instrument_events), {"start": str(engine.start), "end": str(engine.end), "base": engine.config.base_currency},
+                   pd.DataFrame(engine.risk_rows).set_index("ts") if engine.risk_rows else pd.DataFrame(), engine.last_risk)
 
     # ---------------------------------------------------------------------------------------------------------------------------- performance
     @property
@@ -114,9 +128,9 @@ class BacktestResult:
             if k in s:
                 v = s[k]
                 lines.append(f"- {k}: {v:,.4f}" if isinstance(v, float) else f"- {k}: {v}")
-        lines += ["", "## P&L by category (base currency)", "", self.attribution("category").round(2).to_frame("pnl").to_markdown(), "",
-                  "## P&L by asset class", "", self.attribution("asset_class").round(2).to_frame("pnl").to_markdown(), "",
-                  "## Costs", "", self.cost_summary().round(2).to_frame("amount").to_markdown(), "",
+        lines += ["", "## P&L by category (base currency)", "", md_table(self.attribution("category").to_frame("pnl")), "",
+                  "## P&L by asset class", "", md_table(self.attribution("asset_class").to_frame("pnl")), "",
+                  "## Costs", "", md_table(self.cost_summary().to_frame("amount")), "",
                   "## Reconciliation", "", f"- ok: {self.reconciliation.ok}", f"- journal entries: {len(self.journal)}", f"- fills: {len(self.fills)}"]
         if self.diagnostics:
             lines += ["", "## Diagnostics", ""] + [f"- {k}: {v}" for k, v in sorted(self.diagnostics.items())]

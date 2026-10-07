@@ -87,3 +87,17 @@ Three themes recur across the literature and across practitioner post-mortems, a
 1. **Methodology before models.** The largest risks in the sources are selection bias, leakage and cost realism; the largest additions here are inference tools, trial accounting, leakage-safe validation and honest simulators.
 2. **Know the truth before trusting the machine.** Where free data does not exist (options, futures curves, FX forwards, order books) each capability is built against a synthetic world with a known answer, which tests the *code* and is labelled as saying nothing about markets.
 3. **A cheap, honest baseline beats a clever model.** The repository's own results are consistent with this: equal weight and a 60/40 mix are hard to beat net of costs, and the most complex learners did worst.
+
+## 11. Contract-level multi-asset engines
+
+What the literature and practice say a mixed futures, FX, crypto, options and swaps backtest has to get right, and what the engine here does about each:
+
+- **Contract mechanics are the P&L.** For futures the return is the change in the held contract's price, and the roll is a trade between two contracts, not a return (Gorton and Rouwenhorst; Koijen et al. on carry). For perpetuals the funding rate is a large and persistent term (He, Manela, Ross and von Wachter on perpetual futures pricing). The engine therefore books variation margin, roll trades and funding as separate journal categories, so each can be attributed and tested.
+- **A ledger beats a returns table.** Cash, margin, collateral and financing in each currency are state, not a return. One journal with a per-entry accounting identity makes "no money from nowhere" a checkable property rather than a hope.
+- **Point-in-time discipline.** The look-ahead failures documented in empirical finance (publication lags, revisions, survivorship) are about WHEN a value became known. The event schema carries both times and the store refuses to answer from the future.
+- **Costs are structural.** The square-root impact law (Almgren and Chriss; Toth et al.), bid-ask spreads for options and the carry cost of financing decide whether carry and volatility premia survive; they are modelled per instrument class, not as one basis-point charge.
+- **Meta-labelling and walk-forward learning** (Lopez de Prado) keep a learner's training labels realised and its decisions out of sample; the ML strategies here train only on labels whose horizon has elapsed.
+- **Deterministic replay** is how a research system is audited: the engine hashes its own event log, so a result can be reproduced bit for bit and a change of code or data is visible as a change of digest.
+
+What the survey could not settle without data: how large the equity, volatility and carry premia are in real markets after these costs. The synthetic market built for the engine has a known generating process, so tests can check that machinery recovers what was built in; the sizes of its premia are assumptions, not estimates.
+

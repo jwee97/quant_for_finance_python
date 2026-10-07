@@ -68,6 +68,7 @@ class EngineConfig:
     tolerance: float = 1e-6
     risk_every_snapshot: bool = False
     curve_ids: dict = field(default_factory=dict)             # currency -> discount curve id; overrides the "{ccy}-DISCOUNT" convention
+    session_days: object = None                               # days on which to mark, accrue and check rolls (default: the days that have data; a streaming session needs it explicit)
 
 
 class Engine:
@@ -86,7 +87,7 @@ class Engine:
         self.liquidity = liquidity or LiquidityModel()
         self.constraints = constraints if isinstance(constraints, dict) or constraints is None else {"*": constraints}
         self.risk_model = risk_model
-        lo, hi = self.store.span
+        lo, hi = self.store.span if len(self.store.events) else (pd.Timestamp(cfg.start), pd.Timestamp(cfg.end))
         self.start = pd.Timestamp(cfg.start) if cfg.start is not None else lo
         self.end = pd.Timestamp(cfg.end) if cfg.end is not None else hi
         self.clock = SimulationClock()
@@ -110,6 +111,7 @@ class Engine:
         self.instrument_events: list[InstrumentEvent] = []
         self.last_margin = None
         self.last_risk = None
+        self.risk_rows: list[dict] = []
         self.peak_equity = 0.0
         self.last_accrual: pd.Timestamp | None = None
         self.chain_current: dict[str, str] = {}
@@ -388,22 +390,29 @@ class Engine:
             s.on_start(self.contexts[s.name])
         self._equity_record(self.start)
 
-    def run(self):
-        from .analysis import BacktestResult
-
+    def begin(self) -> None:
+        """Set up a run: initial cash, strategy schedules, lifecycle events and the ``on_start`` hooks. ``run`` calls it; a live or paper session calls it once and then ``advance``."""
         self._setup()
-        cols = self.store._cols
+        self._cursor = int(np.searchsorted(self.store._avail_all, self.start.value, side="right"))
+        self._subs = {s.name: set(s.subscriptions) for s in self.strategies}
+
+    def advance(self, until=None) -> None:
+        """Process everything that happens up to and including ``until`` (default: the end): market events in the order they became available, interleaved with the engine's own events.
+
+        With a streaming feed the contract is: add every event available up to ``until`` to the store (``store.extend``) BEFORE advancing to ``until``; the engine then never decides on
+        a clock that is ahead of its data."""
+        until_ns = self.end.value if until is None else min(pd.Timestamp(until).value, self.end.value)
         avail = self.store._avail_all
-        lo = int(np.searchsorted(avail, self.start.value, side="right"))
-        hi = int(np.searchsorted(avail, self.end.value, side="right"))
-        subs = {s.name: set(s.subscriptions) for s in self.strategies}
-        i = lo
+        hi = int(np.searchsorted(avail, until_ns, side="right"))
+        i = self._cursor
         while True:
             nm = int(avail[i]) if i < hi else None
             top = self.queue.peek()
             if top is not None and top.ts_ns > self.end.value:
                 self.queue.pop()
                 continue
+            if top is not None and top.ts_ns > until_ns:
+                top = None
             if nm is None and top is None:
                 break
             if top is not None and (nm is None or top.ts_ns < nm):
@@ -414,10 +423,22 @@ class Engine:
             ts = pd.Timestamp(nm)
             self.clock.advance(ts)
             while i < hi and int(avail[i]) == nm:
-                self._on_market(i, subs)
+                self._on_market(i, self._subs)
                 i += 1
+            self._cursor = i
+        self._cursor = i
+
+    def finish(self):
+        """Close the run (final marks, ``on_end`` hooks) and return the :class:`~src.engine.analysis.BacktestResult`."""
+        from .analysis import BacktestResult
+
         self._finish()
         return BacktestResult.from_engine(self)
+
+    def run(self):
+        self.begin()
+        self.advance(self.end)
+        return self.finish()
 
     def _on_market(self, i: int, subs: dict) -> None:
         from ..marketdata.store import Obs

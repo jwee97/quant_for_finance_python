@@ -74,6 +74,14 @@ Area under the ROC curve: the probability that a randomly chosen positive case r
 
 See: [machine-learning-for-returns](techniques/machine-learning-for-returns.md)
 
+### Availability time
+
+*Also: available_at*
+
+The time a value could first have been known to a trader, as opposed to the time it describes. The engine delivers every market event at its availability time, never earlier, which is what keeps a backtest free of look-ahead.
+
+See: [point-in-time-market-data](techniques/point-in-time-market-data.md)
+
 ### Backcast
 
 In N-BEATS, the part of the input window a block explains; it is subtracted before the next block sees the window.
@@ -190,6 +198,20 @@ The return you earn from holding an asset if prices do not change, such as a bon
 
 See: [cross-sectional-factors](techniques/cross-sectional-factors.md), [crypto-carry](techniques/crypto-carry.md)
 
+### Cash style
+
+How a position's value and cash relate: pay in full (shares), premium (options), variation margin (futures and perpetuals: every mark-to-market change is settled in cash), over-the-counter at present value (swaps and forwards) or currency exchange (spot FX and crypto: the balances are the position). The ledger's arithmetic follows the cash style alone.
+
+See: [unified-instrument-model](techniques/unified-instrument-model.md), [event-driven-engine-and-ledger](techniques/event-driven-engine-and-ledger.md)
+
+### Cash-and-carry
+
+*Also: reverse cash-and-carry*
+
+Buying an asset and selling its future or perpetual in the same notional to earn the basis (and, for a perpetual, the funding the short receives) until the prices converge. The reverse trade sells the asset and buys the derivative when the derivative is cheap.
+
+See: [multi-asset-strategy-api](techniques/multi-asset-strategy-api.md)
+
 ### Causality test
 
 *Also: look-ahead test*
@@ -262,6 +284,12 @@ A single price series stitched from successive futures contracts; ratio or diffe
 
 See: [futures-and-commodity-curves](techniques/futures-and-commodity-curves.md)
 
+### Contract multiplier
+
+The currency value of one price point of one contract: 50 dollars per index point for an equity-index future, 100 shares for a listed option. Notional is quantity times multiplier times price.
+
+See: [unified-instrument-model](techniques/unified-instrument-model.md)
+
 ### Copula
 
 A function that joins separate return distributions into a joint one, so that the dependence can be modelled apart from the marginals. Tail dependence, how often assets crash together, depends on the copula family.
@@ -300,6 +328,12 @@ Conditional value at risk, or expected shortfall: the average loss on the days w
 
 See: [mean-cvar](techniques/mean-cvar.md), [var-cvar-and-backtests](techniques/var-cvar-and-backtests.md)
 
+### Data contract
+
+The promises a data feed makes, written down and enforced: time zone, calendar and session, publication lags, how stale a quote may be, what to do about gaps and revisions. Applying a contract converts a raw file to UTC and reports what it changed.
+
+See: [point-in-time-market-data](techniques/point-in-time-market-data.md)
+
 ### DCC-GARCH
 
 Dynamic conditional correlation: GARCH volatilities combined with a time-varying correlation matrix.
@@ -319,6 +353,12 @@ See: [multiple-testing](techniques/multiple-testing.md)
 Trading the underlying so that the option position's delta is close to zero; the remaining profit comes from gamma and the difference between realised and implied volatility.
 
 See: [option-strategies-and-vol-premium](techniques/option-strategies-and-vol-premium.md)
+
+### Deterministic replay
+
+Running the same data, configuration and strategy twice and getting the same result bit for bit. The engine hashes its event log (a digest); a different digest means different data, code or settings.
+
+See: [event-driven-engine-and-ledger](techniques/event-driven-engine-and-ledger.md), [paper-trading-and-replay](techniques/paper-trading-and-replay.md)
 
 ### Diebold-Mariano test
 
@@ -486,9 +526,9 @@ See: [information-coefficient](techniques/information-coefficient.md)
 
 ### Funding rate
 
-The periodic payment between longs and shorts of a perpetual futures contract that keeps it near spot.
+The periodic payment between longs and shorts of a perpetual future that keeps its price near the spot price. When the rate is positive longs pay shorts. It is the main carrying cost or income of a crypto perpetual position.
 
-See: [crypto-carry](techniques/crypto-carry.md)
+See: [contract-lifecycle](techniques/contract-lifecycle.md), [crypto-carry](techniques/crypto-carry.md)
 
 ### GARCH
 
@@ -614,6 +654,12 @@ Fitting a non-decreasing step function; used to recalibrate probabilities withou
 
 See: [calibration](techniques/calibration.md)
 
+### Journal
+
+The ledger's record of every movement of cash and value, one entry per cause (a fill, a cost, a mark, a coupon, a funding payment). Each entry satisfies an accounting identity, and attribution is a grouping of the journal.
+
+See: [event-driven-engine-and-ledger](techniques/event-driven-engine-and-ledger.md)
+
 ### Kalman filter
 
 A recursive estimator of a hidden state that updates as each observation arrives; used here for time-varying hedge ratios and coefficients.
@@ -699,6 +745,12 @@ See: [bayesian-inference-and-markov-models](techniques/bayesian-inference-and-ma
 Choosing weights to maximise expected return for a given variance.
 
 See: [mean-variance-and-shrinkage](techniques/mean-variance-and-shrinkage.md)
+
+### Meta-labelling
+
+A second model that decides whether to act on a primary model's signal, trained on whether the primary's past calls were profitable. The bet size follows the estimated probability of being right.
+
+See: [multi-asset-strategy-api](techniques/multi-asset-strategy-api.md)
 
 ### Minimum detectable effect
 
@@ -786,6 +838,12 @@ Taking opposite positions in two related assets to profit when the gap between t
 
 See: [pairs-and-statistical-arbitrage](techniques/pairs-and-statistical-arbitrage.md)
 
+### Paper trading
+
+Running a strategy against live or streamed data with simulated fills and no real money. Here it is the backtest engine fed a stream, so research code runs unchanged.
+
+See: [paper-trading-and-replay](techniques/paper-trading-and-replay.md)
+
 ### PBO
 
 Probability of backtest overfitting: how often the best in-sample rule ranks below the median out of sample.
@@ -872,6 +930,14 @@ Cross-validation for overlapping labels: training rows whose labels overlap the 
 
 See: [research-operations](techniques/research-operations.md)
 
+### PV01
+
+*Also: DV01*
+
+The change in a position's present value for a one basis point rise in rates. Swap trades are sized in PV01 so that the risk, not the notional, is the budget.
+
+See: [interest-rate-swaps](techniques/interest-rate-swaps.md)
+
 ### QLIKE
 
 A loss function for comparing variance forecasts that is robust to noise in the realised-variance proxy; lower is better.
@@ -885,6 +951,12 @@ See: [time-series-econometrics](techniques/time-series-econometrics.md)
 White's bootstrap test of whether the best of many strategies beats a benchmark after accounting for the search.
 
 See: [reality-check-spa-pbo](techniques/reality-check-spa-pbo.md)
+
+### Reconciliation
+
+The independent re-computation of what the ledger says: cash equals starting cash plus the journal, equity equals start plus P&L plus transfers, positions equal the sum of fills, and no expired contract is held.
+
+See: [event-driven-engine-and-ledger](techniques/event-driven-engine-and-ledger.md)
 
 ### Regime-switching allocation
 
@@ -930,6 +1002,12 @@ Recursive least squares: an exact online update of a linear regression with forg
 
 See: [online-learning](techniques/online-learning.md)
 
+### Roll
+
+Replacing an expiring futures contract with the next one. The roll is a trade (with costs), not a return; a continuous series must be adjusted so the gap between the two contracts does not appear as profit.
+
+See: [contract-lifecycle](techniques/contract-lifecycle.md), [futures-and-commodity-curves](techniques/futures-and-commodity-curves.md)
+
 ### Roll yield
 
 The return from rolling a futures position when the curve is not flat: positive in backwardation (the next contract is cheaper) and negative in contango.
@@ -938,9 +1016,9 @@ See: [futures-and-commodity-curves](techniques/futures-and-commodity-curves.md)
 
 ### Roll-down
 
-The price gain from a bond ageing along an upward-sloping curve to a lower yield, if the curve does not move. Added to coupon carry it gives the expected holding return.
+The change in a bond or swap's value as it ages along an unchanged yield curve: a ten-year swap on a steep curve becomes a nine-and-a-half-year swap that prices at a lower rate. Together with carry it is what a position earns if nothing moves.
 
-See: [yield-curves-and-fixed-income](techniques/yield-curves-and-fixed-income.md)
+See: [interest-rate-swaps](techniques/interest-rate-swaps.md), [yield-curves-and-fixed-income](techniques/yield-curves-and-fixed-income.md)
 
 ### Shapley value
 
@@ -1076,6 +1154,12 @@ The amount by which implied variance exceeds the variance later realised. It is 
 
 See: [option-strategies-and-vol-premium](techniques/option-strategies-and-vol-premium.md), [volatility-surfaces](techniques/volatility-surfaces.md)
 
+### Variation margin
+
+The daily cash settlement of a futures or perpetual position's gain or loss. A futures contract has no value on the balance sheet: it is a stream of daily cash payments.
+
+See: [unified-instrument-model](techniques/unified-instrument-model.md), [event-driven-engine-and-ledger](techniques/event-driven-engine-and-ledger.md)
+
 ### Vector autoregression
 
 *Also: VAR*
@@ -1103,6 +1187,12 @@ See: [risk-parity](techniques/risk-parity.md), [regime-adaptive-allocation](tech
 Testing by repeatedly fitting on the past and predicting the next block of the future.
 
 See: [walk-forward-and-leakage](techniques/walk-forward-and-leakage.md)
+
+### Walk-forward learning
+
+Refitting a model on a rolling window of data known at the time, using only labels whose horizon has already elapsed, and predicting the next period. It is the only honest way to evaluate a learner on time series.
+
+See: [multi-asset-strategy-api](techniques/multi-asset-strategy-api.md)
 
 ### Yield curve
 

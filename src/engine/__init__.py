@@ -2,12 +2,14 @@
 
 from .analysis import BacktestResult, compare
 from .constraints import ConstraintInputs, ConstraintSet
+from .broker import Broker, BrokerUnavailable, LiveBroker, PaperBroker, PaperSession, PollingFeed, ReplayFeed, StreamFeed, reconcile_positions, run_session
 from .costs import CommissionModel, CostBreakdown, CostSchedule, FinancingModel, ImpactModel, LiquidityModel, SlippageModel, SpreadModel
 from .data import PITData
 from .engine import Engine, EngineConfig
 from .events import EventLog, EventQueue, SimulationClock
 from .execution import FillResult, Quote, simulate_fill
 from .marks import MARK_MODELS, MarkProvider, MarkResult, register_mark_model
+from .optimise import calibrate_sqrt_impact, capacity_curve, capacity_estimate, cost_aware_weights, proportional_costs
 from .orders import Order, validate_order
 from .strategy import InstrumentEvent, PortfolioView, Schedule, Signal, Strategy, StrategyContext, Target
 

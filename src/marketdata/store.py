@@ -88,13 +88,19 @@ class PointInTimeStore:
     def __init__(self, events: pd.DataFrame, revision_policy: str = "latest_known", max_age: str | pd.Timedelta | None = None):
         if revision_policy not in REVISION_POLICIES:
             raise ValueError(f"revision_policy must be one of {REVISION_POLICIES}")
+        self.revision_policy = revision_policy
+        self.max_age = None if max_age is None else pd.Timedelta(max_age)
+        self.max_available_returned = pd.Timestamp.min
+        self.violations = 0
+        self.queries = 0
+        self._build(events)
+
+    def _build(self, events: pd.DataFrame) -> None:
         df = events
-        if revision_policy == "first_release":
+        if self.revision_policy == "first_release":
             df = df.sort_values(["available_at", "timestamp"], kind="stable").drop_duplicates(["instrument_id", "event_type", "timestamp"], keep="first")
         df = df.sort_values(["available_at", "timestamp", "instrument_id", "event_type", "revision"], kind="stable").reset_index(drop=True)
         self.events = df
-        self.revision_policy = revision_policy
-        self.max_age = None if max_age is None else pd.Timedelta(max_age)
         self._cols = {c: df[c].to_numpy() for c in COLUMNS}
         avail = df["available_at"].to_numpy().astype("datetime64[ns]").astype(np.int64)
         obs = df["timestamp"].to_numpy().astype("datetime64[ns]").astype(np.int64)
@@ -107,9 +113,18 @@ class PointInTimeStore:
         for k, rows in positions.items():
             rows = np.asarray(rows, dtype=np.int64)
             self._groups[k] = _Group(avail[rows], obs[rows], rows)
-        self.max_available_returned = pd.Timestamp.min
-        self.violations = 0
-        self.queries = 0
+
+    def extend(self, events: pd.DataFrame) -> int:
+        """Append newly arrived events (a live or paper-trading feed). Every new row must become available STRICTLY after the last stored one, so the rows already consumed by an engine
+        keep their positions; data that arrives late with an older ``available_at`` is rejected, not silently re-ordered. Returns the number of rows added."""
+        if events is None or not len(events):
+            return 0
+        last = int(self._avail_all[-1]) if len(self._avail_all) else None
+        first_new = int(events["available_at"].to_numpy().astype("datetime64[ns]").astype(np.int64).min())
+        if last is not None and first_new <= last:
+            raise ValueError(f"extend: new events must be available after {pd.Timestamp(last)} (got {pd.Timestamp(first_new)}); late data cannot be inserted behind the clock")
+        self._build(pd.concat([self.events, events], ignore_index=True) if len(self.events) else events)
+        return len(events)
 
     # -------------------------------------------------------------------------------------------------------------------------------- basics
     def instruments(self, event_type: str | None = None) -> list[str]:

@@ -18,7 +18,7 @@ result.
 **New here?** `pip install -e .`, then `quant demo` (thirteen seconds on the cached data), `quant dashboard` (an offline
 explorer of every hypothesis the project declared, most of them rejected) and `quant explain deflated sharpe` (any term,
 technique, strategy or experiment, in plain language). Read [`docs/START_HERE.md`](docs/START_HERE.md) for a learning path
-by background, the [technique guides](docs/techniques/index.md) (73 of them, from PCA to diffusion models and from HAC errors to option surfaces), the
+by background, the [technique guides](docs/techniques/index.md) (81 of them, from PCA to diffusion models and from HAC errors to option surfaces), the
 [chapter map](docs/chapter_map.md) from the book to the code, and [what was and was not built](docs/roadmap_coverage.md).
 Adding a strategy is writing one forecast model: [how to](docs/how_to_add_a_strategy.md).
 
@@ -249,6 +249,27 @@ The platform was widened from "15 ETFs" to the methods and asset classes a multi
 
 **What the evidence says, honestly.** On the 15 ETFs none of the new learners earned a tradable net Sharpe ratio (the gradient-boosting, forest and representation models range from -0.32 to +0.07), the EVT-sized long book earned +0.68 against +0.76 for equal weight over the same dates, with the same drawdown, and conditional EVT passed a 99% VaR backtest where an EWMA-normal model did not (breach rates 0.97% and 2.14%). Futures, FX, options and market-making results come from **synthetic** markets built with a stated truth: they show that the code recovers what was built in, and say nothing about real markets. Real option chains, contract-level futures data, tick data and fundamentals are not available here; the loaders and schemas for them exist and are documented.
 
+## Generation 7: one engine, one ledger, one strategy interface
+
+The platform now has a second half that works on **contracts** instead of return series: an event-driven engine that holds FX, futures, crypto spot and perpetuals, listed options and interest-rate swaps in one portfolio, with one ledger and one strategy API. Start with the [architecture](docs/architecture.md#the-multi-asset-engine-one-engine-one-ledger-one-strategy-interface), the [capability matrix](docs/capability_matrix.md) and the eight new guides ([instrument model](docs/techniques/unified-instrument-model.md), [point-in-time data](docs/techniques/point-in-time-market-data.md), [engine and ledger](docs/techniques/event-driven-engine-and-ledger.md), [contract lifecycle](docs/techniques/contract-lifecycle.md), [swaps](docs/techniques/interest-rate-swaps.md), [strategy API](docs/techniques/multi-asset-strategy-api.md), [costs and constraints](docs/techniques/costs-constraints-and-capacity.md), [paper trading](docs/techniques/paper-trading-and-replay.md)).
+
+- **`src/instruments`**: one immutable specification for every tradable thing (currency, tick and lot size, multiplier, calendar, underlying, expiry, settlement and margin type): FX spot, forwards and swaps; futures chains with roll rules; crypto spot, perpetuals and dated futures; options; interest-rate, basis and cross-currency swaps; generated holiday calendars and ISDA conventions.
+- **`src/marketdata`**: normalised point-in-time events with an observation time and an availability time; data contracts (time zone, sessions, publication lags, staleness, missing data, revisions, survivorship); loaders for CSV, Parquet, Arrow, JSON Lines, SQL, REST polling and WebSocket.
+- **`src/ledger`**: multi-currency positions and cash, a journal whose entries obey an accounting identity, margin, and a reconciliation that checks cash and position conservation, equity and expired contracts.
+- **`src/engine`**: the deterministic event loop (replay digest), orders and fills with spread, impact, slippage and fees, contract lifecycle (rolls, expiry, funding, liquidation, exercise, assignment, coupons), the strategy API, constraints, a portfolio risk model, attribution, cost-aware optimisation and capacity, paper trading and a broker interface.
+- **`src/engine/strategies`**: trend, carry, cash-and-carry and basis reversion, calendar and butterfly relative value, variance-premium and other volatility strategies with delta hedging, a regime-aware ensemble (volatility and HMM regimes, risk overlay, volatility target, drawdown brake), and machine-learning strategies (walk-forward ridge and trees, online forecast combination, meta-labelling), all on the same API; **`src/swaps`**: schedules, curves, cashflows, pricing, PV01, carry and roll-down and swap strategies.
+- **`src/engine/demo.py`**: `run_mixed_asset_demo()` runs every instrument family through one engine on a synthetic market (`src/engine/synthetic.py`) and reports P&L by asset class, costs, funding, risk and the replay digest.
+
+```python
+from src.engine.demo import run_mixed_asset_demo
+
+demo = run_mixed_asset_demo(n_days=300)
+print(demo.report())            # P&L by asset class and category, costs, diagnostics, risk and scenarios
+print(demo.result.digest)       # the same inputs always give the same digest
+```
+
+**What the evidence says, honestly.** All of this is exercised on a **synthetic market with a known generating process**: the tests prove that the machinery recovers what was built in (independent P&L recomputation through futures rolls, cash and position conservation, exercise and assignment against analytic P&L, swap identities, no dependence on the future, deterministic replay, a paper session that reproduces a backtest), and the demo's numbers say nothing about real markets. Real option, futures, FX-forward, swap-curve and tick data are not available here; the loaders and schemas exist. Broker adapters need credentials and are not built (the interface, a paper broker and a position reconciliation are). Constraints are applied per strategy, the isolated-margin liquidation check runs at the daily snapshot, partial option exercise is not supported, and the engine does not fill against a limit order book.
+
 ## Repository layout
 
 ```
@@ -282,14 +303,19 @@ src/
   assets/        Generation 6: futures, commodity curves, FX, rates and bonds, market bundles
   microstructure/ Generation 6: order flow, limit-order-book simulator, market making, optimal execution
   ops/           Generation 6: artifact store, model registry, hyperparameter optimisation, purged/CPCV cross-validation, profiling
+  instruments/   Generation 7: the unified instrument model (FX, futures, crypto, options, swaps), calendars, registry
+  marketdata/    Generation 7: point-in-time events, data contracts, loaders (files, SQL, REST, WebSocket), adapters
+  ledger/        Generation 7: multi-currency ledger, journal, margin, reconciliation
+  engine/        Generation 7: event-driven engine, lifecycle, strategy API, strategies, costs, constraints, risk, optimisation, paper trading, demo
+  swaps/         Generation 7: swap schedules, curves, cashflows, pricing, risk and strategies
   causal/        double machine learning, R-learner, 2SLS, difference in differences, simulated worlds
   cli.py         the `quant` command
   utils/         config, logging, dates, plotting, experiment registry
-docs/            START_HERE, 73 technique guides, glossary, chapter map, strategy cards, capability matrix, research survey, architecture, notebooks, roadmap coverage (mkdocs.yml)
+docs/            START_HERE, 81 technique guides, glossary, chapter map, strategy cards, capability matrix, research survey, architecture, notebooks, roadmap coverage (mkdocs.yml)
 experiments/     numbered stage scripts + the experiment registry
 reports/         figures, tables, the data-quality report, the research paper,
                  the Generation 2-5 reports, errata/ (before/after record of the drift fix), the dashboard
-tests/           1267 tests
+tests/           1437 tests
 Dockerfile, docker-compose.yml, Makefile, .github/workflows/ci.yml and benchmark.yml, .pre-commit-config.yaml
 ```
 
@@ -308,7 +334,7 @@ python -m experiments.run_all --generation 5  # Generation 5 only (stages 30-40)
 python -m experiments.run_all --from 6 --to 9 # a range of stages
 python -m experiments.run_all --fresh         # clear derived artefacts first
 python -m experiments.stage01_data            # a single stage
-pytest -q                                      # 1267 tests
+pytest -q                                      # 1437 tests
 quant demo; quant dashboard; quant explain risk parity   # the newcomer layer
 quant serve                                    # the interactive dashboard: your tickers, your strategies
 quant new-strategy my_idea                     # a template for your own strategy in user_strategies/

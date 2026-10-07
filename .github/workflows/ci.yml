@@ -30,7 +30,7 @@ jobs:
           path: coverage.xml
 
   compat:
-    # The numerical packages (statistics, probability, econometrics, derivatives, assets, microstructure, research operations) on the oldest and newest supported Pythons.
+    # The numerical packages (statistics, probability, econometrics, derivatives, assets, microstructure, research operations, and the multi-asset engine) on the oldest and newest supported Pythons.
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
@@ -51,7 +51,7 @@ jobs:
           pip install -e . --no-deps
           pip install pytest
       - name: Numerical packages
-        run: python -m pytest tests/test_stats.py tests/test_probability.py tests/test_econometrics.py tests/test_derivatives.py tests/test_assets.py tests/test_microstructure.py tests/test_ops.py
+        run: python -m pytest tests/test_stats.py tests/test_probability.py tests/test_econometrics.py tests/test_derivatives.py tests/test_assets.py tests/test_microstructure.py tests/test_ops.py tests/test_instruments.py tests/test_marketdata.py tests/test_ledger.py tests/test_engine.py tests/test_lifecycle.py tests/test_swaps.py tests/test_engine_risk.py
 
   lint:
     runs-on: ubuntu-latest

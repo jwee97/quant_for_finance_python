@@ -260,7 +260,7 @@ class PortfolioRisk:
                 ret = sc.get("returns", {}).get(iid, sc.get("returns", {}).get(inst.asset_class, 0.0))
                 if "fx_base" in sc and hasattr(inst, "base_currency") and inst.cash_style == "currency_exchange":
                     ccy, mv = sc["fx_base"]
-                    ret = -mv if inst.base_currency == ccy else (mv if inst.quote_currency == ccy else 0.0)
+                    ret = mv if inst.base_currency == ccy else (-mv if inst.quote_currency == ccy else 0.0)         # the pair rises when its base currency does
                 if isinstance(inst, Option) and iid in greek:
                     g = greek[iid]
                     total += self._reprice_option(engine, inst, positions.loc[iid], g, ret, sc.get("vol", 0.0), ts)
