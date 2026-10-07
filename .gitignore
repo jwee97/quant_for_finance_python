@@ -35,3 +35,7 @@ site/
 
 # Tickers downloaded by the dashboard (cached for a day) and nothing else under data/user
 data/user/
+
+# Coverage data
+.coverage
+coverage.xml

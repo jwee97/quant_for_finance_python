@@ -19,6 +19,10 @@ An asset whose price ratio to the market is rising is gaining leadership.
 quant backtest --model relative_strength --tearsheet
 ```
 
+## In the strategy survey
+
+Default parameters on the 15 ETFs, net of costs, traded as written: net Sharpe +0.24, CAGR 1.5%, volatility 7.5%, max drawdown -20.6%, turnover 9.3 times a year, deflated Sharpe probability 0.08 counting every strategy in the survey as a trial. One run, not a test: see [the survey](../strategy_survey.md) for how to read it.
+
 ## What happened in this repository
 
 Net of costs on the window the search used: Sharpe nan (0.14 over its own, longer live window), CAGR 0.0%, volatility 0.0%, max drawdown 0.0%, turnover 0.0 times a year. This is one backtest among those in a search; read the search-aware tests in the Generation 5 report before treating any row as evidence.

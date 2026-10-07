@@ -71,3 +71,26 @@ def zero_except(index: pd.DatetimeIndex, columns, values: dict[str, pd.Series]) 
         if asset in out.columns:
             out[asset] = series.reindex(index)
     return out
+
+
+def high_low(data) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Daily high and low, or the close for both when the bundle has none (so range indicators degrade to close-to-close ones)."""
+    close = data.prices
+    return (data.high if data.high is not None else close), (data.low if data.low is not None else close)
+
+
+def wilder(x: pd.DataFrame, n: int) -> pd.DataFrame:
+    """Wilder's smoothing (an exponential average with alpha = 1/n), causal."""
+    return x.ewm(alpha=1.0 / n, adjust=False, min_periods=n).mean()
+
+
+def month_end_flags(index: pd.DatetimeIndex) -> pd.Series:
+    """True on the last trading day of each calendar month. The exchange calendar is public in advance, so this is not look-ahead."""
+    idx = pd.DatetimeIndex(index)
+    period = idx.to_period("M")
+    return pd.Series(np.r_[period[1:] != period[:-1], False], index=idx)
+
+
+def monthly_weights(weights_at_month_end: pd.DataFrame, index: pd.DatetimeIndex) -> pd.DataFrame:
+    """Hold month-end target weights until the next month-end (the weights are stamped on the decision day; the engine applies the lag)."""
+    return weights_at_month_end.reindex(index).ffill()

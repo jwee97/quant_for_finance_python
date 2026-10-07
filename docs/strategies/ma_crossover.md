@@ -16,8 +16,12 @@ Prices above their long average are in an up-trend; a smooth version of the gold
 ## Run it
 
 ```bash
-quant backtest --model ma_crossover --tearsheet
+quant backtest --model ma_crossover --allocator sleeves --tearsheet
 ```
+
+## In the strategy survey
+
+Default parameters on the 15 ETFs, net of costs, traded as written: net Sharpe +0.37, CAGR 2.1%, volatility 6.1%, max drawdown -13.7%, turnover 1.9 times a year, deflated Sharpe probability 0.20 counting every strategy in the survey as a trial. One run, not a test: see [the survey](../strategy_survey.md) for how to read it.
 
 ## What happened in this repository
 

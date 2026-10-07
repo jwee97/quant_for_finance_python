@@ -19,6 +19,10 @@ Where fear (implied) runs ahead of experience (realised), the premium paid for p
 quant backtest --model implied_vs_realized --tearsheet
 ```
 
+## In the strategy survey
+
+Default parameters on the 15 ETFs, net of costs, traded as written: net Sharpe -0.53, CAGR -6.2%, volatility 11.0%, max drawdown -75.3%, turnover 8.9 times a year, deflated Sharpe probability 0.00 counting every strategy in the survey as a trial. One run, not a test: see [the survey](../strategy_survey.md) for how to read it.
+
 ## What happened in this repository
 
 Net of costs on the window the search used: Sharpe -0.48 (-0.47 over its own, longer live window), CAGR -5.7%, volatility 10.9%, max drawdown -62.4%, turnover 9.0 times a year. This is one backtest among those in a search; read the search-aware tests in the Generation 5 report before treating any row as evidence.

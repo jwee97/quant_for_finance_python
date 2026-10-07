@@ -24,11 +24,15 @@ COPY requirements.txt ./
 RUN pip install --index-url https://download.pytorch.org/whl/cpu "torch>=2.2" \
  && pip install -r requirements.txt
 
-COPY pyproject.toml README.md ./
+# The test suite reads the documentation, the example specifications, the notebooks and the mkdocs configuration, so they belong in the image.
+COPY pyproject.toml README.md mkdocs.yml ./
 COPY src ./src
 COPY config ./config
 COPY experiments ./experiments
 COPY tests ./tests
+COPY docs ./docs
+COPY examples ./examples
+COPY notebooks ./notebooks
 COPY data ./data
 COPY reports ./reports
 RUN pip install --no-deps -e .

@@ -16,8 +16,12 @@ A move beyond what recent volatility explains marks a new regime of trend (Keltn
 ## Run it
 
 ```bash
-quant backtest --model vol_breakout --tearsheet
+quant backtest --model vol_breakout --allocator sleeves --tearsheet
 ```
+
+## In the strategy survey
+
+Default parameters on the 15 ETFs, net of costs, traded as written: net Sharpe -0.05, CAGR -0.2%, volatility 2.7%, max drawdown -10.8%, turnover 1.6 times a year, deflated Sharpe probability 0.00 counting every strategy in the survey as a trial. One run, not a test: see [the survey](../strategy_survey.md) for how to read it.
 
 ## What happened in this repository
 

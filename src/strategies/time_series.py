@@ -66,6 +66,7 @@ class VolatilityBreakout(ForecastModel):
     """A move beyond what recent volatility explains marks a new regime of trend (Keltner-channel logic)."""
 
     name, family, position_mode = "vol_breakout", "trend", "time_series"
+    book = "sleeves"
 
     def __init__(self, window: int = 20, k: float = 2.0, atr_window: int = 14):
         self.window, self.k, self.atr_window = window, k, atr_window
@@ -84,6 +85,7 @@ class Donchian(ForecastModel):
     """Trends are long enough that buying new highs and selling new lows earns more than it costs."""
 
     name, family, position_mode = "donchian", "trend", "time_series"
+    book = "sleeves"
 
     def __init__(self, entry: int = 55, exit: int = 20):
         self.entry, self.exit = entry, exit
@@ -106,6 +108,7 @@ class MovingAverageCrossover(ForecastModel):
     """Prices above their long average are in an up-trend; a smooth version of the golden/death cross."""
 
     name, family, position_mode = "ma_crossover", "trend", "time_series"
+    book = "sleeves"
 
     def __init__(self, fast: int = 50, slow: int = 200):
         self.fast, self.slow = fast, slow
@@ -122,6 +125,7 @@ class TrendATR(ForecastModel):
     """A moving-average cross inside the noise band is noise; require the trend to be large relative to daily range."""
 
     name, family, position_mode = "trend_atr", "trend", "time_series"
+    book = "sleeves"
 
     def __init__(self, fast: int = 50, slow: int = 200, k: float = 0.5, atr_window: int = 14):
         self.fast, self.slow, self.k, self.atr_window = fast, slow, k, atr_window

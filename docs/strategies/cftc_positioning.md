@@ -20,6 +20,10 @@ significant predictive power for the next month, so treat this as a documented n
 quant backtest --model cftc_positioning --tearsheet
 ```
 
+## In the strategy survey
+
+Default parameters on the 15 ETFs, net of costs, traded as written: net Sharpe +0.19, CAGR 1.4%, volatility 9.9%, max drawdown -28.7%, turnover 7.4 times a year, deflated Sharpe probability 0.05 counting every strategy in the survey as a trial. One run, not a test: see [the survey](../strategy_survey.md) for how to read it.
+
 ## Caveats
 
 Macro series enter with their publication lags; revisions are not modelled.

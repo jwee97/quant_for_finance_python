@@ -19,6 +19,10 @@ Investors pay more for protection than realised volatility justifies; that premi
 quant backtest --model vrp_timing --tearsheet
 ```
 
+## In the strategy survey
+
+Default parameters on the 15 ETFs, net of costs, traded as written: net Sharpe +0.18, CAGR 1.4%, volatility 12.0%, max drawdown -49.4%, turnover 8.5 times a year, deflated Sharpe probability 0.05 counting every strategy in the survey as a trial. One run, not a test: see [the survey](../strategy_survey.md) for how to read it.
+
 ## What happened in this repository
 
 Net of costs on the window the search used: Sharpe 0.06 (0.22 over its own, longer live window), CAGR 0.0%, volatility 12.0%, max drawdown -49.7%, turnover 9.8 times a year. This is one backtest among those in a search; read the search-aware tests in the Generation 5 report before treating any row as evidence.

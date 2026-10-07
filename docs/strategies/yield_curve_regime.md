@@ -19,6 +19,10 @@ An inverted curve has preceded most recessions; the market's own forecast of wea
 quant backtest --model yield_curve_regime --tearsheet
 ```
 
+## In the strategy survey
+
+Default parameters on the 15 ETFs, net of costs, traded as written: net Sharpe +0.45, CAGR 3.9%, volatility 9.4%, max drawdown -27.7%, turnover 2.6 times a year, deflated Sharpe probability 0.33 counting every strategy in the survey as a trial. One run, not a test: see [the survey](../strategy_survey.md) for how to read it.
+
 ## What happened in this repository
 
 Net of costs on the window the search used: Sharpe 0.50 (0.52 over its own, longer live window), CAGR 3.1%, volatility 6.6%, max drawdown -23.4%, turnover 3.0 times a year. This is one backtest among those in a search; read the search-aware tests in the Generation 5 report before treating any row as evidence.

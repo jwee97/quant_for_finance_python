@@ -34,6 +34,8 @@ class ForecastModel:
     structured = False                         # True when ``weights`` IS the strategy (a spread trade), not a by-product
     position_mode = "cross_sectional"          # how forecasts become positions: "cross_sectional" (ranked, demeaned) or "time_series" (each asset on its own)
     requires: tuple = ()                       # macro series names the model needs (checked with a clear error)
+    book: str | None = None                    # "sleeves" for per-asset rules (each asset is its own small strategy); None = a cross-sectional book. A default for the dashboard and the survey, not for Pipeline
+    rebalance: str | None = None               # "daily" or "weekly" for rules whose signal changes faster than the platform's monthly rebalance; None = the configured default
 
     def score(self, data) -> pd.DataFrame:
         raise NotImplementedError

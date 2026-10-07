@@ -51,6 +51,10 @@ def library_models(registry) -> list:
     return [e for e in registry.entries() if getattr(e.factory, "__module__", "").startswith("src.strategies")]
 
 
+def _book_flag(cls) -> str:
+    return "--allocator sleeves " if getattr(cls, "book", None) == "sleeves" else ""
+
+
 def strategy_cards(config) -> dict[str, str]:
     from ..framework import MODELS, load_library
 
@@ -59,6 +63,7 @@ def strategy_cards(config) -> dict[str, str]:
     tables = config.reports_dir("tables")
     lib = pd.read_csv(tables / "stage30_specs.csv", index_col=0) if (tables / "stage30_specs.csv").exists() else pd.DataFrame()
     crypto = pd.read_csv(tables / "stage32_performance.csv", index_col=0) if (tables / "stage32_performance.csv").exists() else pd.DataFrame()
+    survey = pd.read_csv(tables / "library_survey.csv", index_col=0) if (tables / "library_survey.csv").exists() else pd.DataFrame()
     cards = {}
     for entry in sorted(library_models(MODELS), key=lambda e: e.name):
         cls = entry.factory
@@ -67,7 +72,15 @@ def strategy_cards(config) -> dict[str, str]:
         doc = inspect.getdoc(cls) or ""
         lines = [f"# {entry.name}", "", f"*Family: {entry.family}*", "", "## What it bets on", "", entry.description, "", doc.split("\n\n")[0] if doc else "", "",
                  "## Inputs", "", f"- Macro or alternative series required: {', '.join(getattr(cls, 'requires', ()) or ()) or 'none (prices only)'}",
-                 f"- Parameters: {_params(cls)}", "", "## Run it", "", "```bash", f"quant backtest --model {entry.name} --tearsheet", "```", ""]
+                 f"- Parameters: {_params(cls)}", "", "## Run it", "", "```bash", f"quant backtest --model {entry.name} {_book_flag(cls)}--tearsheet", "```", ""]
+        if getattr(cls, "rebalance", None):
+            lines[-1:-1] = [f"This rule declares a {cls.rebalance} rebalance; pass `execution: {{rebalance: monthly}}` in a spec to override it.", ""]
+        if entry.name in survey.index and survey.loc[entry.name, "error"] != survey.loc[entry.name, "error"]:
+            r = survey.loc[entry.name]
+            lines += ["## In the strategy survey", "",
+                      f"Default parameters on the 15 ETFs, net of costs, traded as written: net Sharpe {float(r['net_sharpe']):+.2f}, CAGR {float(r['cagr']):.1%}, volatility {float(r['volatility']):.1%}, "
+                      f"max drawdown {float(r['max_drawdown']):.1%}, turnover {float(r['turnover']):.1f} times a year, deflated Sharpe probability {float(r['deflated_sharpe_probability']):.2f} "
+                      "counting every strategy in the survey as a trial. One run, not a test: see [the survey](../strategy_survey.md) for how to read it.", ""]
         if row is not None:
             own = f" ({float(row['own_window_sharpe']):.2f} over its own, longer live window)" if "own_window_sharpe" in row.index and pd.notna(row["own_window_sharpe"]) else ""
             lines += ["## What happened in this repository", "",
@@ -84,6 +97,8 @@ def strategy_cards(config) -> dict[str, str]:
     for entry in sorted(library_models(MODELS), key=lambda e: (e.family, e.name)):
         row = lib.loc[entry.name] if entry.name in lib.index else (crypto.loc[entry.name] if entry.name in crypto.index else None)
         sharpe = "" if row is None else format(float(row["sharpe"]), ".2f")
+        if row is None and entry.name in survey.index and survey.loc[entry.name, "error"] != survey.loc[entry.name, "error"]:
+            sharpe = format(float(survey.loc[entry.name, "net_sharpe"]), ".2f")
         index.append(f"| [{entry.name}]({entry.name}.md) | {entry.family} | {sharpe} | {entry.description.split(':')[0][:80]} |")
     index += ["", NOT_BUILT]
     cards["index.md"] = "\n".join(index)

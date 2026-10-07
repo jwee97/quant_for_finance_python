@@ -19,6 +19,10 @@ A pair's hedge ratio drifts; filtering it avoids the stale-regression problem of
 quant backtest --model kalman_pairs --tearsheet
 ```
 
+## In the strategy survey
+
+Default parameters on the 15 ETFs, net of costs, traded as written: net Sharpe +0.03, CAGR 0.0%, volatility 4.7%, max drawdown -17.0%, turnover 25.0 times a year, deflated Sharpe probability 0.01 counting every strategy in the survey as a trial. One run, not a test: see [the survey](../strategy_survey.md) for how to read it.
+
 ## What happened in this repository
 
 Net of costs on the window the search used: Sharpe -0.06 (0.01 over its own, longer live window), CAGR -0.3%, volatility 3.6%, max drawdown -8.4%, turnover 24.5 times a year. This is one backtest among those in a search; read the search-aware tests in the Generation 5 report before treating any row as evidence.

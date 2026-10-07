@@ -19,6 +19,10 @@ Assets that pay more than cash earn that extra yield if prices do not move; carr
 quant backtest --model carry --tearsheet
 ```
 
+## In the strategy survey
+
+Default parameters on the 15 ETFs, net of costs, traded as written: net Sharpe +0.20, CAGR 1.0%, volatility 6.2%, max drawdown -17.5%, turnover 0.9 times a year, deflated Sharpe probability 0.06 counting every strategy in the survey as a trial. One run, not a test: see [the survey](../strategy_survey.md) for how to read it.
+
 ## What happened in this repository
 
 Net of costs on the window the search used: Sharpe 0.25 (0.15 over its own, longer live window), CAGR 1.4%, volatility 6.7%, max drawdown -15.5%, turnover 3.7 times a year. This is one backtest among those in a search; read the search-aware tests in the Generation 5 report before treating any row as evidence.

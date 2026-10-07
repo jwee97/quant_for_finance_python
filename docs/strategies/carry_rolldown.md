@@ -19,6 +19,10 @@ A bond earns its yield and, if the curve is unchanged, ages down it: price gains
 quant backtest --model carry_rolldown --tearsheet
 ```
 
+## In the strategy survey
+
+Default parameters on the 15 ETFs, net of costs, traded as written: net Sharpe +0.17, CAGR 0.9%, volatility 6.1%, max drawdown -18.1%, turnover 0.9 times a year, deflated Sharpe probability 0.05 counting every strategy in the survey as a trial. One run, not a test: see [the survey](../strategy_survey.md) for how to read it.
+
 ## What happened in this repository
 
 Net of costs on the window the search used: Sharpe 0.17 (0.09 over its own, longer live window), CAGR 0.9%, volatility 6.4%, max drawdown -15.0%, turnover 4.0 times a year. This is one backtest among those in a search; read the search-aware tests in the Generation 5 report before treating any row as evidence.

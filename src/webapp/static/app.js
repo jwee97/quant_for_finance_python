@@ -127,13 +127,14 @@
       if (S.models.length > 1) { const rm = h("button", "btn", row, "Remove"); rm.addEventListener("click", () => { S.models.splice(idx, 1); autoAllocator(); renderStrategies(); renderPortfolio(); }); }
       if (!info) return;
       h("p", "hint", block, info.description);
+      if (info.rebalance) h("p", "hint", block, "This rule rebalances " + info.rebalance + " unless you change it in the spec.");
       if (info.requires.length) h("p", "hint", block, "Needs macro series: " + info.requires.join(", ") + " (included for the platform ETFs, and attached to any universe).");
       if (info.slow) { const w = h("p", "hint", block, "⏱ Slow: " + info.slow + "."); w.style.color = css("--warn"); }
       if (info.params.length) {
         const grid = h("div", "params", block);
         for (const p of info.params) {
           const cur = p.name in entry.params ? entry.params[p.name] : p.default;
-          grid.appendChild(fieldFor(p, cur, (v) => { if (JSON.stringify(v) === JSON.stringify(p.default)) delete entry.params[p.name]; else entry.params[p.name] = v; }, { wide: p.name === "expr" || p.kind === "json" }));
+          grid.appendChild(fieldFor(p, cur, (v) => { if (JSON.stringify(v) === JSON.stringify(p.default)) delete entry.params[p.name]; else entry.params[p.name] = v; if (p.name === "mode") { autoAllocator(); renderPortfolio(); } }, { wide: p.name === "expr" || p.kind === "json" }));
         }
       }
       if (entry.name === "expression") {
@@ -153,9 +154,12 @@
   }
   function autoAllocator() {
     if (S.allocatorTouched) return;
-    const only = S.models.length === 1 ? modelInfo(S.models[0].name) : null;
-    S.allocator = only && only.family === "custom" ? "score_stack" : "";
-    S.allocParams = {};
+    const entry = S.models.length === 1 ? S.models[0] : null, only = entry ? modelInfo(entry.name) : null;
+    let pick = "";
+    if (only && only.book === "sleeves") pick = "sleeves";
+    else if (only && only.family === "custom") pick = (entry.params.mode || (only.params.find((p) => p.name === "mode") || {}).default) === "time_series" ? "sleeves" : "score_stack";
+    else if (only && only.user) pick = only.position_mode === "time_series" ? "sleeves" : "score_stack";
+    S.allocator = pick; S.allocParams = {};
   }
   function renderPortfolio() {
     const box = $("#p-body"); box.replaceChildren();

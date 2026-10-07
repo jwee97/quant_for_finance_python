@@ -4,6 +4,7 @@ An allocator returns TARGET weights stamped at the decision date (the backtest e
 
     static          one of the existing books: equal weight, inverse volatility, risk parity, mean-CVaR, HRP, HERC or plug-in MVO
     forecast_stack  the Generation 1 position stack applied to the combined forecast (mean / std)
+    sleeves         independent per-asset sleeves: the signal times an equal slice of capital, cash when flat (nothing is renormalised across assets)
     confidence      sign of the forecast times its confidence: low-confidence forecasts get small positions
     regime_switch   a probability-weighted blend of other allocators, one per regime: "in a crisis use mean-CVaR, in calm use MVO,
                     in an inflation shock tilt to commodities"
@@ -128,6 +129,30 @@ class ScoreStack(Allocator):
             transform.update(cross_sectional=False, scale="none")
         volatility = rolling_volatility(ctx.bundle.returns, int(ctx.config.get("portfolio.volatility.lookback", 63)))
         return signal_to_positions(signal, volatility, investable=ctx.bundle.investable, **transform)
+
+
+@register_allocator("sleeves", "Independent sleeves: each asset gets an equal slice of capital times its own signal (cash when flat), optionally scaled to a common volatility; one asset's entry never resizes another's position")
+class Sleeves(Allocator):
+    """The natural book for per-asset rules (a pullback entry, a trend filter, a calendar window): each asset is its own small strategy. Nothing is renormalised across assets,
+    so the position in one ETF does not change because another ETF's signal switched on, which is what a published single-asset rule assumes."""
+
+    def __init__(self, gross: float = 1.0, vol_scale: bool = False, target_vol: float = 0.10, max_scale: float = 3.0, clip: float = 3.0, long_only: bool = False):
+        if gross <= 0 or target_vol <= 0 or max_scale <= 0 or clip <= 0:
+            raise ValueError("gross, target_vol, max_scale and clip must be positive")
+        self.gross, self.vol_scale, self.target_vol, self.max_scale, self.clip, self.long_only = gross, vol_scale, target_vol, max_scale, clip, long_only
+
+    def build(self, ctx: Context) -> pd.DataFrame:
+        if len(ctx.models) != 1:
+            raise ValueError("sleeves takes exactly one model")
+        investable = ctx.bundle.investable
+        signal = ctx.models[0].score(ctx.bundle).where(investable)
+        if self.long_only:
+            signal = signal.clip(lower=0.0)
+        weights = signal.clip(-self.clip, self.clip).mul(self.gross).div(investable.sum(axis=1).replace(0, np.nan), axis=0)
+        if self.vol_scale:
+            vol = rolling_volatility(ctx.bundle.returns, int(ctx.config.get("portfolio.volatility.lookback", 63)))
+            weights = weights * (self.target_vol / vol).clip(0.0, self.max_scale)
+        return weights.fillna(0.0).where(signal.notna().any(axis=1), np.nan)
 
 
 @register_allocator("model_weights", "A structured model's own target weights (e.g. a DV01-neutral curve trade), scaled to a volatility target by the engine")

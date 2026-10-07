@@ -16,8 +16,12 @@ A moving-average cross inside the noise band is noise; require the trend to be l
 ## Run it
 
 ```bash
-quant backtest --model trend_atr --tearsheet
+quant backtest --model trend_atr --allocator sleeves --tearsheet
 ```
+
+## In the strategy survey
+
+Default parameters on the 15 ETFs, net of costs, traded as written: net Sharpe +0.24, CAGR 1.2%, volatility 5.8%, max drawdown -14.6%, turnover 1.1 times a year, deflated Sharpe probability 0.08 counting every strategy in the survey as a trial. One run, not a test: see [the survey](../strategy_survey.md) for how to read it.
 
 ## What happened in this repository
 

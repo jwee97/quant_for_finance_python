@@ -39,7 +39,8 @@ COMBINATIONS = {
 CHOICES = {"mode": ["cross_sectional", "time_series"], "features": ["price", "price_macro"], "updater": ["ridge", "nlms", "kalman"],
            ("deep_window", "kind"): ["nbeats", "nhits", "patchtst", "tsmixer", "timemixer"], ("bayesian", "kind"): ["mvo_sample", "bayes_stein", "bayes_predictive"],
            ("dynamic_cov", "model"): ["dcc", "ogarch", "static"], ("static", "book"): ["equal_weight", "inverse_vol", "risk_parity", "mean_cvar", "hrp", "herc", "mvo"]}
-ALLOCATOR_TEXT = {"score_stack": "Trade the signal as written: rank and scale the raw score, with no calibration against history (needs exactly one strategy; best for your own formulas)",
+ALLOCATOR_TEXT = {"sleeves": "Independent sleeves: every asset is its own small strategy with an equal slice of capital times its signal, cash when flat (needs exactly one strategy; best for pullback, trend-filter and calendar rules)",
+                  "score_stack": "Trade the signal as written: rank and scale the raw score, with no calibration against history (needs exactly one strategy; best for your own formulas)",
                   "forecast_stack": "Calibrated forecast: learn from matured history how much a unit of the score has paid, then size positions (a signal that has not paid gets no position)"}
 SLOW = {"deep_window": "trains a neural network every year of history: about 10-20 seconds", "chronos": "downloads and runs a foundation model: about a minute on CPU",
         "timesfm": "runs a 200M-parameter model on CPU: many minutes on a long history", "es_policy": "trains a policy: about 10 seconds"}
@@ -109,7 +110,8 @@ class App:
                 continue
             instance_requires = list(getattr(e.factory, "requires", ()) or ())
             models.append({"name": e.name, "family": e.family or "other", "description": e.description, "params": parameters("model", e.name, e.factory), "requires": instance_requires,
-                           "slow": SLOW.get(e.name), "user": not getattr(e.factory, "__module__", "").startswith("src.strategies"), "structured": bool(getattr(e.factory, "structured", False))})
+                           "slow": SLOW.get(e.name), "user": not getattr(e.factory, "__module__", "").startswith("src.strategies"), "structured": bool(getattr(e.factory, "structured", False)),
+                           "book": getattr(e.factory, "book", None), "rebalance": getattr(e.factory, "rebalance", None), "position_mode": getattr(e.factory, "position_mode", None)})
         allocators = [{"name": e.name, "description": e.description, "params": parameters("allocator", e.name, e.factory), "slow": SLOW.get(e.name)} for e in ALLOCATORS.entries()
                       if e.name not in ("model_weights", "regime_switch")]
         for a in allocators:
@@ -176,8 +178,8 @@ class App:
             if name not in ALLOCATORS:
                 raise ApiError(f"unknown allocator '{name}'")
             params = dict(body.get("allocator_params") or {})
-            if name == "score_stack" and len(spec_models) != 1:
-                raise ApiError("'trade the signal as written' needs exactly one strategy")
+            if name in ("score_stack", "sleeves") and len(spec_models) != 1:
+                raise ApiError(f"'{name}' needs exactly one strategy")
             try:
                 ALLOCATORS.create(name, **params)
             except (TypeError, ValueError, KeyError) as error:

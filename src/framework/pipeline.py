@@ -89,11 +89,18 @@ class PipelineResult:
         return self.net_returns.loc[self.start:] if self.start is not None else self.net_returns
 
 
-def _engine(config, spec: PipelineSpec) -> BacktestEngine:
+_FREQUENCY_ORDER = {"daily": 0, "weekly": 1, "monthly": 2}
+
+
+def _engine(config, spec: PipelineSpec, models=()) -> BacktestEngine:
+    """The backtest engine for a spec. A rule that acts on a daily or weekly signal declares so (``ForecastModel.rebalance``); the fastest such hint is used unless the spec says otherwise."""
     engine = BacktestEngine.from_config(config)
     overrides = {}
+    hints = [m.rebalance for m in models if getattr(m, "rebalance", None) in _FREQUENCY_ORDER]
     if spec.execution.get("rebalance"):
         overrides["rebalance"] = spec.execution["rebalance"]
+    elif hints:
+        overrides["rebalance"] = min(hints, key=_FREQUENCY_ORDER.get)
     if spec.execution.get("signal_lag") is not None:
         overrides["signal_lag"] = int(spec.execution["signal_lag"])
     if spec.execution.get("min_assets") is not None:                       # the platform default of 5 zeroes a book of fewer than five assets
@@ -206,8 +213,8 @@ class Pipeline:
         t0 = time.perf_counter()
         spec, bundle, config = self.spec, self.bundle, self.config
         timings: dict = {}
-        engine = _engine(config, spec)
         models = self._models()
+        engine = _engine(config, spec, models)
         regimes = None
         if spec.regime:
             regimes = DETECTORS.create(spec.regime["detector"], **(spec.regime.get("params") or {})).detect(bundle)

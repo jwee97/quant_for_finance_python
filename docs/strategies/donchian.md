@@ -16,8 +16,12 @@ Trends are long enough that buying new highs and selling new lows earns more tha
 ## Run it
 
 ```bash
-quant backtest --model donchian --tearsheet
+quant backtest --model donchian --allocator sleeves --tearsheet
 ```
+
+## In the strategy survey
+
+Default parameters on the 15 ETFs, net of costs, traded as written: net Sharpe -0.52, CAGR -5.5%, volatility 9.8%, max drawdown -73.9%, turnover 1.4 times a year, deflated Sharpe probability 0.00 counting every strategy in the survey as a trial. One run, not a test: see [the survey](../strategy_survey.md) for how to read it.
 
 ## What happened in this repository
 

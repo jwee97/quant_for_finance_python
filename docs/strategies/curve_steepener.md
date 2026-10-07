@@ -19,6 +19,10 @@ Curve moves persist: a slope that has been steepening keeps steepening while the
 quant backtest --model curve_steepener --tearsheet
 ```
 
+## In the strategy survey
+
+Default parameters on the 15 ETFs, net of costs, traded as written: net Sharpe -0.17, CAGR -2.3%, volatility 10.7%, max drawdown -59.2%, turnover 14.5 times a year, deflated Sharpe probability 0.00 counting every strategy in the survey as a trial. One run, not a test: see [the survey](../strategy_survey.md) for how to read it.
+
 ## What happened in this repository
 
 Net of costs on the window the search used: Sharpe -0.36 (-0.17 over its own, longer live window), CAGR -4.1%, volatility 10.3%, max drawdown -59.2%, turnover 14.9 times a year. This is one backtest among those in a search; read the search-aware tests in the Generation 5 report before treating any row as evidence.

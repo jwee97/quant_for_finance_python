@@ -22,5 +22,6 @@ nav:
       - Chapter map: chapter_map.md
   - Technique guides: techniques/index.md
   - Strategy cards: strategies/index.md
+  - Strategy survey: strategy_survey.md
   - What was built: roadmap_coverage.md
   - Findings digest: generated/findings.md

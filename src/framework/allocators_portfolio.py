@@ -2,6 +2,7 @@
 
     dynamic_cov   Global minimum variance on a month-ahead covariance FORECAST (DCC-GARCH, O-GARCH) or, as the control, a rolling shrinkage estimate
     bayesian      Constrained mean-variance under parameter uncertainty (Bayes-Stein, posterior-predictive) or the plug-in sample control
+    min_variance, max_diversification   Risk-based books on a trailing shrinkage covariance
     es_policy     A linear softmax policy over price features trained by evolution strategies (the reinforcement-learning allocator)
 
 Both stamp weights at month-end origins from data up to that origin, so the engine's execution lag keeps them causal.
@@ -133,3 +134,50 @@ class EvolutionStrategyPolicy(Allocator):
                 w = np.mean([softmax_weights(standardised[i][None], p[:n_features], p[n_features:], mask[None])[0] for p in fits], axis=0)
                 out.iloc[pos[i]] = w
         return out.ffill().fillna(0.0)
+
+
+class _RollingRiskBook(Allocator):
+    """Month-end weights from a trailing shrinkage covariance of the investable assets; zero until ``lookback`` days of history exist."""
+
+    solver = None
+
+    def __init__(self, lookback: int = 252, min_assets: int = 3):
+        if lookback < 60 or min_assets < 2:
+            raise ValueError("lookback >= 60 and min_assets >= 2")
+        self.lookback, self.min_assets = lookback, min_assets
+
+    def build(self, ctx: Context) -> pd.DataFrame:
+        from ..portfolio.covariance import estimate_covariance
+
+        bundle = ctx.bundle
+        constraints = ctx.constraints()
+        out = pd.DataFrame(np.nan, index=bundle.index, columns=bundle.assets)
+        for origin in month_end_dates(bundle.index):
+            position = bundle.index.get_loc(origin)
+            if position < self.lookback:
+                continue
+            window = bundle.returns.iloc[position - self.lookback + 1:position + 1]
+            live = [a for a in bundle.assets if bool(bundle.investable.loc[origin, a]) and window[a].notna().mean() > 0.9]
+            if len(live) < self.min_assets:
+                continue
+            cov = estimate_covariance(window[live].fillna(0.0), "shrinkage", self.lookback, annualise=True)
+            result = self.solver(cov, constraints)
+            if result.success:
+                out.loc[origin, live] = result.weights.reindex(live).to_numpy()
+        return out.ffill().fillna(0.0)
+
+
+@register_allocator("min_variance", "Global minimum variance on a trailing shrinkage covariance, long-only within the configured weight limits, rebalanced monthly")
+class MinimumVariance(_RollingRiskBook):
+    @staticmethod
+    def solver(cov, constraints):
+        from ..portfolio.mean_variance import minimum_variance_weights
+        return minimum_variance_weights(cov, constraints)
+
+
+@register_allocator("max_diversification", "Maximum diversification (Choueifaty-Coignard): maximise weighted-average volatility over portfolio volatility, rebalanced monthly")
+class MaximumDiversification(_RollingRiskBook):
+    @staticmethod
+    def solver(cov, constraints):
+        from ..portfolio.diversification import maximum_diversification_weights
+        return maximum_diversification_weights(cov, constraints)
