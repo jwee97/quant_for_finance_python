@@ -112,9 +112,10 @@ class Ledger:
         inst = self._inst(instrument_id) if instrument_id else None
         return self._post(ts, category, inst, ccy, {ccy: amount}, tags=tags, strategy=strategy, note=note)
 
-    def revalue(self, ts, marks: Mapping[str, float], strategy: str = "") -> None:
+    def revalue(self, ts, marks: Mapping[str, float], strategy: str = "", category: str | None = None) -> None:
         """Mark positions to ``marks`` (instrument id -> mark in price terms): updates exchange rates from currency-pair marks, translates foreign balances, settles variation margin in
-        cash and carries other positions at their new value. Positions with no mark keep their last one."""
+        cash and carries other positions at their new value. Positions with no mark keep their last one. ``category`` relabels the profit entries (the engine uses
+        ``lifecycle_settlement`` for the first mark of a position delivered by exercise, so that the gain of exercising stays in one category)."""
         ts = pd.Timestamp(ts)
         for iid, m in marks.items():
             if iid not in self.registry:
@@ -150,7 +151,7 @@ class Ledger:
             if style == "variation_margin":
                 if pos.last_mark == pos.last_mark and m != pos.last_mark:
                     delta = inst.pnl(pos.last_mark, m, pos.quantity)
-                    self._post(ts, "variation_margin", inst, ccy, {ccy: delta}, strategy=strategy)
+                    self._post(ts, category or "variation_margin", inst, ccy, {ccy: delta}, strategy=strategy)
                 pos.last_mark = m
             elif style == "currency_exchange":
                 pos.last_mark = m
@@ -159,7 +160,7 @@ class Ledger:
                 delta = new_value - pos.last_value
                 if delta != 0.0:
                     pos.last_value = new_value
-                    self._post(ts, "mtm", inst, ccy, None, delta * self.rate(ccy), 0.0, None, 0.0, strategy=strategy)
+                    self._post(ts, category or "mtm", inst, ccy, None, delta * self.rate(ccy), 0.0, None, 0.0, strategy=strategy)
                 pos.last_mark = m
         self.ts = ts
 
@@ -209,7 +210,8 @@ class Ledger:
             self._post(ts, "trade", inst, quote_ccy, {base_ccy: q * mult, quote_ccy: -q * mult * mid}, 0.0, 0.0, None, 0.0, fill.tags, strategy, f"qty {q:g} @ mid {mid:g}")
         # variation margin: nothing moves at entry; the position is carried from the mid
         pos.last_mark = mid
-        for category, amount in (("spread", spread_c), ("impact", impact_c), ("slippage", slip_c)):
+        parts = (("lifecycle_settlement", total_c),) if fill.settlement else (("spread", spread_c), ("impact", impact_c), ("slippage", slip_c))
+        for category, amount in parts:
             if abs(amount) > 1e-14:
                 self._post(ts, category, inst, ccy, {ccy: -amount}, tags=fill.tags, strategy=strategy)
         if fill.fee:
@@ -364,8 +366,9 @@ class Ledger:
     def snapshot(self, ts, marks: Mapping[str, float] | None = None) -> dict:
         d = {"ts": pd.Timestamp(ts), "equity": self.equity(), "cash_base": self.cash_base(), "n_positions": len(self.positions), "journal_entries": len(self.journal)}
         if marks is not None:
-            d["gross_exposure"] = self.gross_exposure(marks)
-            d["net_exposure"] = self.net_exposure(marks)
+            e = self.exposures(marks)
+            d["gross_exposure"] = float(e["notional_base"].sum()) if len(e) else 0.0
+            d["net_exposure"] = float(e["signed_notional_base"].sum()) if len(e) else 0.0
         return d
 
     def journal_frame(self) -> pd.DataFrame:

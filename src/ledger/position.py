@@ -11,7 +11,8 @@ import pandas as pd
 class Fill:
     """One execution. ``price`` is the all-in fill price; ``spread_price`` and ``impact_price`` are the per-unit components of the distance from the mid (always >= 0, both costs).
 
-    ``quantity`` is signed (positive buys). ``fee`` is in ``fee_currency`` (the instrument's currency if empty)."""
+    ``quantity`` is signed (positive buys). ``fee`` is in ``fee_currency`` (the instrument's currency if empty). ``settlement`` marks a delivery at a contractual price (exercise or
+    assignment), whose distance from the market goes to ``lifecycle_settlement`` instead of ``spread``/``impact``/``slippage``."""
 
     ts: pd.Timestamp
     instrument_id: str
@@ -24,6 +25,7 @@ class Fill:
     impact_price: float = 0.0
     tags: tuple = ()
     strategy: str = ""
+    settlement: bool = False                  # a delivery at a contractual price (exercise, assignment): the gap to the market is lifecycle P&L, not a trading cost
 
 
 @dataclass

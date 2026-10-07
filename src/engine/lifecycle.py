@@ -289,10 +289,10 @@ def _settle_option(engine, inst: Option, ts, S: float, intrinsic: float, slices,
     if under_id not in engine.registry:
         raise LifecycleError(f"{iid} delivers {under_id}, which is not a registered instrument")
     under = engine.registry.get(under_id)
-    dq = dq_option_units * (inst.contract_multiplier / under.contract_multiplier) if inst.underlying_kind != "future" else dq_option_units
+    dq = dq_option_units if inst.underlying_kind == "future" else dq_option_units / under.contract_multiplier          # shares -> underlying contracts
     led.remove_position_value(ts, iid, intrinsic, note=f"physical {kind}")
-    fill = Fill(ts, under_id, dq, price, order_id=-1, tags=(kind,))
-    led.apply_fill(ts, fill, mid=price, strategy="")
+    fill = Fill(ts, under_id, dq, price, order_id=-1, tags=(kind,), settlement=True)
+    led.apply_fill(ts, fill, mid=S, strategy="")
     engine.qty_book[under_id] = engine.qty_book.get(under_id, 0.0) + dq
     total_q = sum(s for _, s in slices) or q
     for name, sq in slices:                                              # the delivered position goes to the strategies that held the option, pro rata
@@ -300,7 +300,7 @@ def _settle_option(engine, inst: Option, ts, S: float, intrinsic: float, slices,
             b = engine.strategy_qty[name]
             b[under_id] = b.get(under_id, 0.0) + dq * (sq / total_q)
     _zero_quantities(engine, iid)
-    engine.mark_positions(ts, only={under_id})
+    engine.current_marks[under_id] = S
     engine.notify(InstrumentEvent(kind, iid, ts, {"underlying": S, "intrinsic": intrinsic, "quantity": q, "delivery": (under_id, dq, price)}))
 
 

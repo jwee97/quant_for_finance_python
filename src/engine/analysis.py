@@ -47,17 +47,26 @@ class BacktestResult:
     def equity_curve(self) -> pd.Series:
         return self.equity["equity"]
 
-    def returns(self, freq: str = "D") -> pd.Series:
-        """Simple returns of the equity curve (one per day by default), with external transfers removed."""
+    def returns(self, freq: str = "D", ex_interest: bool = False) -> pd.Series:
+        """Simple returns of the equity curve (one per day by default). With ``ex_interest`` the interest earned on idle cash is taken out of each day's change, so the returns
+        measure what the positions earned (what an excess-return Sharpe ratio needs); funding, financing and borrow stay in because they belong to the strategy."""
         eq = self.equity_curve
+        if ex_interest:
+            j = self.journal
+            if len(j):
+                cash = j[j["category"] == "interest"].set_index(pd.to_datetime(j.loc[j["category"] == "interest", "ts"]))["pnl"]
+                paid = cash.groupby(cash.index.normalize()).sum().cumsum()
+                daily = eq.groupby(eq.index.normalize()).last()
+                eq = daily - paid.reindex(daily.index, method="ffill").fillna(0.0)
+                eq.index = pd.DatetimeIndex(eq.index)
         if freq != "D":
             eq = eq.resample(freq).last().dropna()
-        else:
+        elif not ex_interest:
             eq = eq.groupby(eq.index.normalize()).last()
         return eq.pct_change().dropna()
 
-    def summary(self, periods_per_year: int = 252) -> dict:
-        r = self.returns()
+    def summary(self, periods_per_year: int = 252, ex_interest: bool = False) -> dict:
+        r = self.returns(ex_interest=ex_interest)
         out = performance_summary(r, periods_per_year=periods_per_year) if len(r) > 2 else {}
         out["final_equity"] = float(self.equity_curve.iloc[-1])
         out["total_pnl"] = float(self.equity_curve.iloc[-1] - self.start_equity)
