@@ -281,6 +281,31 @@ def test_the_page_carries_the_token_and_security_headers(live):
         assert _http(live, path, token=False)[0] == 404
 
 
+def test_replit_preview_can_be_embedded_without_removing_api_token_checks(app, monkeypatch):
+    monkeypatch.setenv("REPLIT_DEV_DOMAIN", "example.replit.dev")
+    running = server.start(app, "0.0.0.0", 0)
+    running.url = running.url.replace("0.0.0.0", "127.0.0.1")
+    try:
+        status, _, headers = _http(running, "/", token=False)
+        assert status == 200
+        policy = headers["Content-Security-Policy"]
+        assert "frame-ancestors https://replit.com https://*.replit.com https://*.replit.dev" in policy
+        assert _http(running, "/api/catalog", token=False)[0] == 403
+        assert _http(running, "/api/catalog")[0] == 200
+    finally:
+        running.stop()
+
+
+def test_exposed_server_outside_replit_still_blocks_embedding(app, monkeypatch):
+    monkeypatch.delenv("REPLIT_DEV_DOMAIN", raising=False)
+    running = server.start(app, "0.0.0.0", 0)
+    running.url = running.url.replace("0.0.0.0", "127.0.0.1")
+    try:
+        assert "frame-ancestors 'none'" in _http(running, "/", token=False)[2]["Content-Security-Policy"]
+    finally:
+        running.stop()
+
+
 def test_the_api_needs_the_token_the_right_host_and_a_json_body(live):
     assert _http(live, "/api/catalog", token=False)[0] == 403
     assert _http(live, "/api/catalog", headers={"X-Token": "wrong"})[0] == 403

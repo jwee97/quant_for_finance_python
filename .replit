@@ -2,6 +2,31 @@ modules = ["python-3.10", "web", "nodejs-20"]
 
 [nix]
 channel = "stable-25_05"
+packages = ["arrow-cpp", "cairo", "ffmpeg-full", "freetype", "ghostscript", "glibcLocales", "gobject-introspection", "gtk3", "libxcrypt", "ocl-icd", "opencl-headers", "pkg-config", "qhull", "tcl", "tk", "xcodebuild", "xsimd", "zlib"]
 
 [agent]
 expertMode = true
+
+[workflows]
+runButton = "Project"
+
+[[workflows.workflow]]
+name = "Project"
+mode = "parallel"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Quant Lab"
+
+[[workflows.workflow]]
+name = "Quant Lab"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "python -u -m src serve --host 0.0.0.0 --port 5000 --no-browser"
+waitForPort = 5000
+
+[workflows.workflow.metadata]
+outputType = "webview"

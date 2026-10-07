@@ -7,6 +7,7 @@ cannot drive it), the Host and Origin headers must be this server, and POST bodi
 from __future__ import annotations
 
 import json
+import os
 import secrets
 import threading
 import webbrowser
@@ -37,7 +38,11 @@ def make_handler(app: App, token: str, port_holder: list):
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
             self.send_header("X-Content-Type-Options", "nosniff")
-            self.send_header("Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'")
+            # Only the exposed Replit preview may be embedded; local use stays frame-blocked.
+            ancestors = "'none'"
+            if self.server.server_address[0] not in LOOPBACK and os.environ.get("REPLIT_DEV_DOMAIN"):
+                ancestors = "https://replit.com https://*.replit.com https://*.replit.dev"
+            self.send_header("Content-Security-Policy", f"default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors {ancestors}")
             for k, v in (extra or {}).items():
                 self.send_header(k, v)
             self.end_headers()
