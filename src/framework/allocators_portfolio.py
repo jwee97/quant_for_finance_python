@@ -4,6 +4,8 @@
     bayesian      Constrained mean-variance under parameter uncertainty (Bayes-Stein, posterior-predictive) or the plug-in sample control
     min_variance, max_diversification   Risk-based books on a trailing shrinkage covariance
     es_policy     A linear softmax policy over price features trained by evolution strategies (the reinforcement-learning allocator)
+    kelly         Fractional Kelly (growth-optimal) weights from the forecast mean and a trailing covariance, with a gross-leverage cap
+    black_litterman   The model forecasts as views on an equilibrium prior, with view uncertainty from the forecast confidence (Idzorek), then mean-variance
 
 Both stamp weights at month-end origins from data up to that origin, so the engine's execution lag keeps them causal.
 """
@@ -181,3 +183,88 @@ class MaximumDiversification(_RollingRiskBook):
     def solver(cov, constraints):
         from ..portfolio.diversification import maximum_diversification_weights
         return maximum_diversification_weights(cov, constraints)
+
+
+class _ForecastBook(Allocator):
+    """Month-end weights built from the forecast panel and a trailing shrinkage covariance; the forecast row at the origin uses data through the origin."""
+
+    def __init__(self, lookback: int = 252, min_assets: int = 3):
+        if lookback < 60 or min_assets < 2:
+            raise ValueError("lookback >= 60 and min_assets >= 2")
+        self.lookback, self.min_assets = lookback, min_assets
+
+    def solve(self, mu: pd.Series, cov: pd.DataFrame, confidence: pd.Series, ctx: Context) -> pd.Series | None:
+        raise NotImplementedError
+
+    def build(self, ctx: Context) -> pd.DataFrame:
+        from ..portfolio.covariance import estimate_covariance
+
+        if ctx.forecasts is None:
+            raise ValueError(f"{type(self).__name__} needs forecasts")
+        fc, bundle = ctx.forecasts, ctx.bundle
+        scale = 252.0 / fc.horizon
+        out = pd.DataFrame(np.nan, index=bundle.index, columns=bundle.assets)
+        for origin in month_end_dates(bundle.index):
+            position = bundle.index.get_loc(origin)
+            if position < self.lookback or origin not in fc.mean.index:
+                continue
+            window = bundle.returns.iloc[position - self.lookback + 1:position + 1]
+            mu_row = fc.mean.loc[origin]
+            live = [a for a in bundle.assets if bool(bundle.investable.loc[origin, a]) and window[a].notna().mean() > 0.9 and np.isfinite(mu_row.get(a, np.nan))]
+            if len(live) < self.min_assets:
+                continue
+            cov = estimate_covariance(window[live].fillna(0.0), "shrinkage", self.lookback, annualise=True)
+            w = self.solve(mu_row[live] * scale, cov, fc.confidence.loc[origin, live].fillna(0.5), ctx)
+            if w is not None:
+                out.loc[origin, live] = w.reindex(live).to_numpy()
+        return out.ffill().fillna(0.0)
+
+
+@register_allocator("kelly", "Fractional Kelly: weights proportional to the inverse covariance times the forecast mean, scaled by a Kelly fraction and capped in gross leverage")
+class FractionalKelly(_ForecastBook):
+    """Full Kelly maximises long-run growth but is extremely sensitive to the inputs, so ``fraction`` of 0.25 to 0.5 is the practitioner's choice (MacLean, Thorp &
+    Ziemba 2010). Long-only by default, with the per-asset limit of the configured constraints."""
+
+    def __init__(self, fraction: float = 0.25, max_gross: float = 1.0, long_only: bool = True, lookback: int = 252, confidence_weighted: bool = True):
+        super().__init__(lookback)
+        if not 0.0 < fraction <= 1.0 or max_gross <= 0:
+            raise ValueError("fraction must be in (0, 1] and max_gross > 0")
+        self.fraction, self.max_gross, self.long_only, self.confidence_weighted = fraction, max_gross, long_only, confidence_weighted
+
+    def solve(self, mu, cov, confidence, ctx):
+        from ..probability.ruin import multi_asset_kelly
+
+        m = mu * (confidence if self.confidence_weighted else 1.0)
+        w = pd.Series(self.fraction * multi_asset_kelly(m.to_numpy(), cov.to_numpy()), index=mu.index)
+        if self.long_only:
+            w = w.clip(lower=0.0)
+        w = w.clip(-ctx.constraints().max_weight, ctx.constraints().max_weight)
+        gross = w.abs().sum()
+        return w * (self.max_gross / gross) if gross > self.max_gross else w
+
+
+@register_allocator("black_litterman", "Black-Litterman with the model forecasts as absolute views on an equilibrium prior; view uncertainty from the forecast confidence (Idzorek); constrained mean-variance")
+class BlackLittermanForecast(_ForecastBook):
+    """The prior is the return the (equal-weight) market portfolio implies; each forecast moves the posterior toward itself in proportion to its confidence.
+    With zero confidence the portfolio is the market; with full confidence it follows the forecasts."""
+
+    def __init__(self, tau: float = 0.05, risk_aversion: float = 2.5, lookback: int = 252, optimiser_risk_aversion: float = 5.0):
+        super().__init__(lookback)
+        if tau <= 0 or risk_aversion <= 0 or optimiser_risk_aversion <= 0:
+            raise ValueError("tau, risk_aversion and optimiser_risk_aversion must be positive")
+        self.tau, self.risk_aversion, self.optimiser_risk_aversion = tau, risk_aversion, optimiser_risk_aversion
+
+    def solve(self, mu, cov, confidence, ctx):
+        from ..portfolio.mean_variance import mean_variance_weights
+
+        sigma = cov.to_numpy()
+        n = len(mu)
+        w_mkt = np.full(n, 1.0 / n)
+        pi = self.risk_aversion * sigma @ w_mkt
+        c = np.clip(confidence.to_numpy(), 0.01, 0.99)
+        tau_sigma = self.tau * sigma
+        omega = np.diag((1.0 - c) / c * np.diag(tau_sigma))              # Idzorek: view variance = (1 - c) / c times the prior variance of the view
+        ts_inv, om_inv = np.linalg.inv(tau_sigma), np.linalg.inv(omega)
+        posterior = np.linalg.solve(ts_inv + om_inv, ts_inv @ pi + om_inv @ mu.to_numpy())
+        result = mean_variance_weights(pd.Series(posterior, index=mu.index), cov, self.optimiser_risk_aversion, ctx.constraints())
+        return result.weights if result.success else None

@@ -14,7 +14,8 @@ from src.strategies.statarb import kalman_spread, simulate_nav_arbitrage
 
 load_library()
 FOUNDATION = {"chronos", "timesfm"}                                                                         # optional pre-trained models: slow on CPU, tested in tests/test_deep_models.py
-LIBRARY = [e.name for e in MODELS.entries() if not e.name.startswith("test_") and e.family != "crypto" and e.name not in FOUNDATION]      # crypto models have their own bundle (tests/test_crypto.py)
+HEAVY = {"garch_vol_managed", "evt_risk_managed"}                                                            # fit a likelihood per asset: tested on a small bundle in tests/test_econometric_strategies.py
+LIBRARY = [e.name for e in MODELS.entries() if not e.name.startswith("test_") and e.family != "crypto" and e.name not in FOUNDATION | HEAVY]      # crypto models have their own bundle (tests/test_crypto.py)
 CLASSES = {"SPY": "equity", "QQQ": "equity", "IWM": "equity", "EFA": "equity", "EEM": "equity", "SHY": "rates", "IEF": "rates", "TLT": "rates", "AGG": "fixed_income",
            "LQD": "credit", "HYG": "credit", "GLD": "commodity", "SLV": "commodity", "DBC": "commodity", "VNQ": "real_estate"}
 

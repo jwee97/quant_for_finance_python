@@ -15,10 +15,11 @@
     factors           betting against beta, low idiosyncratic volatility, MAX, illiquidity, value with momentum
     risk_timing       volatility-managed long, buy-the-VIX-spike, credit risk appetite
     taa               Faber GTAA, Protective / Vigilant / Defensive / Adaptive asset allocation, static model portfolios
+    econometric       Kalman trend, GARCH- and EVT-managed exposure, shrunk-VAR lead-lag
     crypto            funding carry, basis reversion, stablecoin flow (optional branch; needs the crypto bundle)
 
 Run ``quant list models`` to see them with their hypotheses.
 """
 
-from . import (crypto, cross_sectional, deep, expression, factors, fixed_income, macro, ml, online, reversion, risk_timing, seasonal, statarb, taa,  # noqa: F401
-               time_series, trend, volatility)
+from . import (crypto, cross_sectional, deep, econometric, expression, factors, fixed_income, macro, ml, online, reversion, risk_timing, seasonal, statarb,  # noqa: F401
+               taa, time_series, trend, volatility)
