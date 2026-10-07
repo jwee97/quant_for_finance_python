@@ -93,7 +93,7 @@ The state of the repository when this generation started (commit `0b67953`: 15 E
 |---|---|---|---|---|
 | AR, ARMA, ARIMA with exact likelihood and order selection | COMPLETE | `src/econometrics/arima.py`; matches `statsmodels` | seasonal ARIMA | Low |
 | VAR, Bayesian (Minnesota) VAR, VECM, ECM | COMPLETE | `src/econometrics/var.py`, `factor.py::fit_bvar` | n/a | n/a |
-| GARCH, GJR (threshold), EGARCH, Student-t, walk-forward forecasts | COMPLETE | `src/econometrics/garch.py`; matches `arch` | Zakoian TGARCH as a separate form; FIGARCH; realised GARCH | Low |
+| GARCH, GJR, TGARCH (Zakoian), EGARCH, Student-t, walk-forward forecasts | COMPLETE | `src/econometrics/garch.py`; matches `arch` | FIGARCH; realised GARCH | Low |
 | DCC and multivariate GARCH | COMPLETE | `src/portfolio/dynamic_covariance.py`, allocator `dynamic_cov` | n/a | n/a |
 | State space, Kalman filter and smoother, time-varying regression, dynamic factor models, nowcasting | COMPLETE | `src/econometrics/statespace.py`, `factor.py` | n/a | n/a |
 

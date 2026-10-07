@@ -96,8 +96,8 @@ class GarchVolManaged(ForecastModel):
     book = "sleeves"
 
     def __init__(self, model: str = "garch", dist: str = "normal", min_train: int = 750, refit_every: int = 504, max_scale: float = 3.0):
-        if model not in ("garch", "gjr", "egarch") or dist not in ("normal", "t") or min_train < 250 or refit_every < 21 or max_scale <= 0:
-            raise ValueError("model in {garch, gjr, egarch}, dist in {normal, t}, min_train >= 250, refit_every >= 21, max_scale > 0")
+        if model not in ("garch", "gjr", "tgarch", "egarch") or dist not in ("normal", "t") or min_train < 250 or refit_every < 21 or max_scale <= 0:
+            raise ValueError("model in {garch, gjr, tgarch, egarch}, dist in {normal, t}, min_train >= 250, refit_every >= 21, max_scale > 0")
         self.model, self.dist, self.min_train, self.refit_every, self.max_scale = model, dist, min_train, refit_every, max_scale
 
     def score(self, data):

@@ -1,13 +1,14 @@
-"""Conditional-volatility models by maximum likelihood: GARCH, GJR-GARCH (threshold) and EGARCH with Gaussian or Student-t innovations.
+"""Conditional-volatility models by maximum likelihood: GARCH, GJR-GARCH, TGARCH (Zakoian) and EGARCH with Gaussian or Student-t innovations.
 
 ``r_t = mu + e_t``, ``e_t = sigma_t z_t``, ``z_t`` unit-variance Gaussian or Student-t(nu). The variance equations (all first order here):
 
 ``garch``  ``sigma2_t = omega + alpha e_{t-1}^2 + beta sigma2_{t-1}``                                       (Bollerslev 1986)
-``gjr``    ``sigma2_t = omega + (alpha + gamma 1[e_{t-1} < 0]) e_{t-1}^2 + beta sigma2_{t-1}``               (Glosten, Jagannathan & Runkle 1993; the TGARCH family)
+``gjr``    ``sigma2_t = omega + (alpha + gamma 1[e_{t-1} < 0]) e_{t-1}^2 + beta sigma2_{t-1}``               (Glosten, Jagannathan & Runkle 1993)
+``tgarch`` ``sigma_t = omega + (alpha + gamma 1[e_{t-1} < 0]) |e_{t-1}| + beta sigma_{t-1}``                (Zakoian 1994: the threshold model on the standard deviation, GJR's power-one cousin)
 ``egarch`` ``ln sigma2_t = omega + alpha (|z_{t-1}| - sqrt(2/pi)) + gamma z_{t-1} + beta ln sigma2_{t-1}``  (Nelson 1991; no positivity constraints)
 
-Leverage: ``gamma > 0`` in GJR (or ``gamma < 0`` in EGARCH) means a fall raises volatility more than an equal rise. The recursions are started from the same
-exponentially weighted back-cast of ``e^2`` that ``arch`` uses, so the fitted likelihoods agree with that library to optimiser tolerance (checked in the tests).
+Leverage: ``gamma > 0`` in GJR and TGARCH (or ``gamma < 0`` in EGARCH) means a fall raises volatility more than an equal rise. The recursions are started from the same
+exponentially weighted back-cast of ``e^2`` (``|e|`` for TGARCH) that ``arch`` uses, so the fitted likelihoods agree with that library to optimiser tolerance (checked in the tests).
 
 Everything that goes into a forecast for date ``t + 1`` uses returns up to ``t``: ``walk_forward_volatility`` refits on an expanding window and compares the forecasts
 with the EWMA baseline on QLIKE, the loss that ranks variance forecasts consistently (Patton 2011).
@@ -23,6 +24,22 @@ import pandas as pd
 from scipy import optimize, special
 
 SQRT2PI = math.sqrt(2.0 / math.pi)
+MODELS = ("garch", "gjr", "tgarch", "egarch")
+
+
+def mean_abs_innovation(dist: str, nu: float = float("inf")) -> float:
+    """``E|z|`` for a unit-variance innovation: ``sqrt(2/pi)`` for the normal, ``sqrt((nu - 2)/pi) Gamma((nu - 1)/2) / Gamma(nu/2)`` for the Student-t."""
+    if dist == "normal" or not np.isfinite(nu):
+        return SQRT2PI
+    return float(math.sqrt((nu - 2.0) / math.pi) * math.exp(special.gammaln((nu - 1.0) / 2.0) - special.gammaln(nu / 2.0)))
+
+
+def tgarch_moments(alpha: float, gamma: float, beta: float, m1: float) -> tuple[float, float]:
+    """``E[c]`` and ``E[c^2]`` of the random multiplier ``c = (alpha + gamma 1[z < 0]) |z| + beta`` in ``sigma_t = omega + c_{t-1} sigma_{t-1}``, for symmetric ``z``
+    with ``E|z| = m1`` and ``E z^2 = 1``. The variance of the returns is finite when ``E[c^2] < 1``."""
+    ec = beta + (alpha + 0.5 * gamma) * m1
+    ec2 = beta ** 2 + 2.0 * beta * (alpha + 0.5 * gamma) * m1 + alpha ** 2 + alpha * gamma + 0.5 * gamma ** 2
+    return ec, ec2
 
 
 def backcast(e2: np.ndarray, tau: int = 75, decay: float = 0.94) -> float:
@@ -46,6 +63,14 @@ def _variance_path(model: str, e: np.ndarray, omega: float, alpha: float, gamma:
             z_prev = e[t] / math.sqrt(s2[t])
             abs_prev = abs(z_prev)
         return s2
+    if model == "tgarch":                                         # recursion on sigma; ``bc`` is the back-cast of |e|
+        prev_sig, prev_abs, prev_neg = bc, bc, 0.5
+        for t in range(n):
+            sig = omega + (alpha + gamma * prev_neg) * prev_abs + beta * prev_sig
+            sig = max(sig, 1e-12)
+            s2[t] = sig * sig
+            prev_sig, prev_abs, prev_neg = sig, abs(e[t]), 1.0 if e[t] < 0 else 0.0
+        return s2
     prev_s2, prev_e2, prev_neg = bc, bc, 0.5                      # pre-sample: back-cast variance, half of it counted as "negative" (arch convention)
     for t in range(n):
         s2[t] = omega + (alpha + gamma * prev_neg) * prev_e2 + beta * prev_s2 if model == "gjr" else omega + alpha * prev_e2 + beta * prev_s2
@@ -53,6 +78,10 @@ def _variance_path(model: str, e: np.ndarray, omega: float, alpha: float, gamma:
         prev_e2 = e[t] * e[t]
         prev_neg = 1.0 if e[t] < 0 else 0.0
     return s2
+
+
+def _backcast_for(model: str, e: np.ndarray) -> float:
+    return backcast(np.abs(e)) if model == "tgarch" else backcast(e * e)
 
 
 def _loglik_terms(e: np.ndarray, s2: np.ndarray, dist: str, nu: float) -> np.ndarray:
@@ -84,6 +113,8 @@ class GARCHResult:
             return p["alpha"] + p["beta"]
         if self.model == "gjr":
             return p["alpha"] + 0.5 * p["gamma"] + p["beta"]
+        if self.model == "tgarch":                                  # decay of the expected standard deviation
+            return tgarch_moments(p["alpha"], p["gamma"], p["beta"], mean_abs_innovation(self.dist, p.get("nu", float("inf"))))[0]
         return p["beta"]
 
     @property
@@ -91,6 +122,9 @@ class GARCHResult:
         p = self.params
         if self.model == "egarch":
             return float("nan")
+        if self.model == "tgarch":
+            ec, ec2 = tgarch_moments(p["alpha"], p["gamma"], p["beta"], mean_abs_innovation(self.dist, p.get("nu", float("inf"))))
+            return (p["omega"] ** 2 * (1.0 + 2.0 * ec / (1.0 - ec))) / (1.0 - ec2) if ec2 < 1 and ec < 1 else float("inf")
         return p["omega"] / (1.0 - self.persistence) if self.persistence < 1 else float("inf")
 
     @property
@@ -106,6 +140,15 @@ class GARCHResult:
         pr = self._params_scaled()
         s2 = _variance_path(self.model, e, pr["omega"], pr["alpha"], pr.get("gamma", 0.0), pr["beta"], self._bc)
         last_e2, last_neg, last_s2 = e[-1] ** 2, float(e[-1] < 0), s2[-1]
+        if self.model == "tgarch":
+            rng = np.random.default_rng(seed)
+            sig = np.full(n_sim, pr["omega"] + (pr["alpha"] + pr["gamma"] * last_neg) * abs(e[-1]) + pr["beta"] * math.sqrt(last_s2))
+            out = np.zeros(steps)
+            for h in range(steps):
+                out[h] = float(np.mean(sig ** 2))
+                z = rng.standard_normal(n_sim) if self.dist == "normal" else rng.standard_t(p["nu"], n_sim) * math.sqrt((p["nu"] - 2) / p["nu"])
+                sig = pr["omega"] + (pr["alpha"] + pr["gamma"] * (z < 0)) * np.abs(z) * sig + pr["beta"] * sig
+            return out * self.scale ** 2
         if self.model == "egarch":
             rng = np.random.default_rng(seed)
             out = np.zeros(steps)
@@ -125,7 +168,10 @@ class GARCHResult:
     def _params_scaled(self) -> dict:
         s = self.scale
         out = dict(self.params)
-        out["omega"] = out["omega"] / s ** 2 if self.model != "egarch" else out["omega"] - 2 * math.log(s) * (1 - out["beta"])
+        if self.model == "tgarch":
+            out["omega"] = out["omega"] / s
+        else:
+            out["omega"] = out["omega"] / s ** 2 if self.model != "egarch" else out["omega"] - 2 * math.log(s) * (1 - out["beta"])
         return out
 
     def news_impact(self, shocks: np.ndarray | None = None) -> pd.Series:
@@ -137,6 +183,8 @@ class GARCHResult:
             v = p["omega"] + p["alpha"] * e ** 2 + p["beta"] * s2bar
         elif self.model == "gjr":
             v = p["omega"] + (p["alpha"] + p["gamma"] * (e < 0)) * e ** 2 + p["beta"] * s2bar
+        elif self.model == "tgarch":
+            v = (p["omega"] + (p["alpha"] + p["gamma"] * (e < 0)) * np.abs(e) + p["beta"] * math.sqrt(s2bar)) ** 2
         else:
             z = e / math.sqrt(s2bar)
             v = np.exp(p["omega"] + p["alpha"] * (np.abs(z) - SQRT2PI) + p["gamma"] * z + p["beta"] * math.log(s2bar))
@@ -144,17 +192,17 @@ class GARCHResult:
 
 
 def fit_garch(returns: pd.Series, model: str = "garch", dist: str = "normal", mean: str = "constant") -> GARCHResult:
-    """Maximum-likelihood fit. ``model``: ``garch``, ``gjr`` or ``egarch``; ``dist``: ``normal`` or ``t``; ``mean``: ``constant`` or ``zero``.
+    """Maximum-likelihood fit. ``model``: ``garch``, ``gjr``, ``tgarch`` or ``egarch``; ``dist``: ``normal`` or ``t``; ``mean``: ``constant`` or ``zero``.
 
     Returns are rescaled internally to unit standard deviation (the optimiser works far better there) and the parameters are reported in the INPUT units.
     """
-    if model not in ("garch", "gjr", "egarch") or dist not in ("normal", "t") or mean not in ("constant", "zero"):
-        raise ValueError("model in {garch, gjr, egarch}, dist in {normal, t}, mean in {constant, zero}")
+    if model not in MODELS or dist not in ("normal", "t") or mean not in ("constant", "zero"):
+        raise ValueError("model in {garch, gjr, tgarch, egarch}, dist in {normal, t}, mean in {constant, zero}")
     r = returns.dropna().astype(float)
     scale = float(r.std())
     x = r.to_numpy() / scale
     n = len(x)
-    has_gamma = model in ("gjr", "egarch")
+    has_gamma = model in ("gjr", "tgarch", "egarch")
 
     def split(th):
         i = 0
@@ -172,7 +220,7 @@ def fit_garch(returns: pd.Series, model: str = "garch", dist: str = "normal", me
     def nll(th):
         mu, omega, alpha, gamma, beta, nu = split(th)
         e = x - mu
-        bc = backcast(e * e)
+        bc = _backcast_for(model, e)
         s2 = _variance_path(model, e, omega, alpha, gamma, beta, bc)
         if not np.all(np.isfinite(s2)) or np.any(s2 <= 0):
             return 1e12
@@ -183,6 +231,9 @@ def fit_garch(returns: pd.Series, model: str = "garch", dist: str = "normal", me
     if model == "egarch":
         th0 = [0.0, 0.1, -0.05, 0.95]
         bounds = [(-1.0, 1.0), (-0.5, 1.0), (-1.0, 1.0), (0.0, 0.9999)]
+    elif model == "tgarch":
+        th0 = [0.03, 0.03, 0.05, 0.9]
+        bounds = [(1e-8, 2.0), (0.0, 1.0), (-0.5, 1.0), (0.0, 0.9999)]
     elif model == "gjr":
         th0 = [0.05, 0.03, 0.05, 0.9]
         bounds = [(1e-8, 5.0), (0.0, 1.0), (-0.5, 1.0), (0.0, 0.9999)]
@@ -195,9 +246,11 @@ def fit_garch(returns: pd.Series, model: str = "garch", dist: str = "normal", me
         th0, bounds = th0 + [8.0], bounds + [(2.05, 200.0)]
 
     def persistence_ok(th):
-        _, _, alpha, gamma, beta, _ = split(th)
+        _, _, alpha, gamma, beta, nu_ = split(th)
         if model == "egarch":
             return 0.9999 - beta
+        if model == "tgarch":
+            return 0.9999 - tgarch_moments(alpha, gamma, beta, mean_abs_innovation(dist, nu_))[1]
         return 0.9999 - (alpha + max(gamma, 0.0) * 0.5 + beta) if model == "gjr" else 0.9999 - (alpha + beta)
 
     cons = [{"type": "ineq", "fun": persistence_ok}]
@@ -213,11 +266,11 @@ def fit_garch(returns: pd.Series, model: str = "garch", dist: str = "normal", me
             best = res
     mu, omega, alpha, gamma, beta, nu = split(best.x)
     e = x - mu
-    bc = backcast(e * e)
+    bc = _backcast_for(model, e)
     s2 = _variance_path(model, e, omega, alpha, gamma, beta, bc)
     ll = -best.fun - n * math.log(scale)                         # likelihood of the ORIGINAL series (Jacobian of the rescaling)
     k = len(best.x)
-    out_omega = omega * scale ** 2 if model != "egarch" else omega + 2 * math.log(scale) * (1 - beta)
+    out_omega = omega * scale if model == "tgarch" else omega * scale ** 2 if model != "egarch" else omega + 2 * math.log(scale) * (1 - beta)
     params = {"mu": mu * scale, "omega": out_omega, "alpha": alpha, "beta": beta}
     if has_gamma:
         params["gamma"] = gamma

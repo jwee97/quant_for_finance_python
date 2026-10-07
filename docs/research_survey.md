@@ -38,7 +38,7 @@ Three themes recur across the literature and across practitioner post-mortems, a
 
 **Open source.** `statsmodels.tsa` (ARIMA, VAR, VECM, state space, dynamic factor), `arch`.
 
-**Decision.** Exact Gaussian likelihood through a Kalman filter for ARMA (with a steady-state shortcut that equals the full filter to 1e-12), the Minnesota prior for large systems, GJR and EGARCH as the threshold and asymmetric variants, QLIKE for comparing variance forecasts. **Considered and not done:** Zakoian's TGARCH (the same threshold idea as GJR on the standard deviation) and stochastic-volatility particle filters.
+**Decision.** Exact Gaussian likelihood through a Kalman filter for ARMA (with a steady-state shortcut that equals the full filter to 1e-12), the Minnesota prior for large systems, GJR, TGARCH and EGARCH as the threshold and asymmetric variants, QLIKE for comparing variance forecasts. **Considered and not done:** stochastic-volatility particle filters, FIGARCH and realised GARCH.
 
 ## 5. Derivatives
 

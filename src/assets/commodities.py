@@ -35,8 +35,10 @@ def _ss_model(theta, ttm: np.ndarray, dt: float, y_dim: int, p0_xi: float) -> St
     return StateSpace(T, Z, H, Q, c=c, d=d, a0=np.array([0.0, p0_xi]), P0=np.diag([sd_chi2 / max(1 - a ** 2, 1e-9) * (1 - a ** 2), 10.0]))
 
 
-def fit_schwartz_smith(long: pd.DataFrame, depth: int = 6, x0: tuple | None = None, max_iter: int = 80) -> dict:
+def fit_schwartz_smith(long: pd.DataFrame, depth: int = 6, x0: tuple | None = None, max_iter: int = 80, n_starts: int = 1) -> dict:
     """Maximum-likelihood Schwartz-Smith fit to the nearest ``depth`` contracts. ``x0`` = starting ``(kappa, sigma_chi, sigma_xi, rho, mu_xi, lambda_chi, mu_xi_star, sigma_eps)``.
+    The likelihood is rugged in the mean-reversion speed, the short-term volatility and the measurement noise (different optimisers stop at different local maxima), so the
+    likelihood is first evaluated on a grid over those three parameters around ``x0`` and the ``n_starts`` best points, with ``x0`` itself, are optimised; the best result is kept.
     Returns the parameters (as ``SchwartzSmithParams`` plus the measurement noise), the log-likelihood and the FILTERED factors (causal)."""
     ts = term_structure(long, depth)
     price, ttm = ts["price"].dropna(), ts["ttm"].reindex(ts["price"].dropna().index)
@@ -55,7 +57,20 @@ def fit_schwartz_smith(long: pd.DataFrame, depth: int = 6, x0: tuple | None = No
         except (np.linalg.LinAlgError, ValueError):
             return 1e12
 
-    res = optimize.minimize(nll, start, method="L-BFGS-B", bounds=list(zip(lower, upper)), options={"maxiter": max_iter, "maxfun": 4000})
+    candidates = [list(start)]
+    for kappa in (0.5, 1.0, 1.5, 2.5):
+        for sig_chi in (0.2, 0.35, 0.5):
+            for sig_eps in (0.002, 0.005):
+                c = list(start)
+                c[0], c[1], c[7] = kappa, sig_chi, sig_eps
+                candidates.append(c)
+    scored = sorted(((nll(np.clip(c, lower, upper)), i) for i, c in enumerate(candidates)))
+    starts = [candidates[0]] + [candidates[i] for _, i in scored if i != 0][: max(int(n_starts), 1)]
+    res = None
+    for s in starts:
+        r = optimize.minimize(nll, np.clip(s, lower, upper), method="L-BFGS-B", bounds=list(zip(lower, upper)), options={"maxiter": max_iter, "maxfun": 4000, "ftol": 1e-10})
+        if res is None or r.fun < res.fun:
+            res = r
     model = _ss_model(res.x, tau, dt, p, p0_xi)
     f = model.filter(y, n_diffuse=1)
     kappa, sig_chi, sig_xi, rho, mu_xi, lam, mu_star, sig_eps = res.x

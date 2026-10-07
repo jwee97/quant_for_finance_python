@@ -376,3 +376,47 @@ def test_bvar_recovers_ols_without_shrinkage_and_shrinks_with_a_tight_prior(fact
     assert np.abs(tight.coefs).max() < np.abs(ols.coefs).max() and tight.is_stable()
     assert np.abs(tight.coefs).sum() < np.abs(loose.coefs).sum()
     assert fit_bvar(X, 2, lam=0.2, sum_coef_mu=1.0, co_persistence=1.0).coefs.shape == (2, 5, 5)
+
+
+def test_tgarch_moments_leverage_and_forecasts():
+    from src.econometrics.garch import mean_abs_innovation, tgarch_moments
+
+    assert mean_abs_innovation("normal") == pytest.approx(np.sqrt(2 / np.pi)) and mean_abs_innovation("t", 1e6) == pytest.approx(np.sqrt(2 / np.pi), rel=1e-4)
+    z = np.random.default_rng(0).standard_t(7, 2_000_000) * np.sqrt(5 / 7)
+    assert mean_abs_innovation("t", 7.0) == pytest.approx(np.abs(z).mean(), rel=2e-3)
+    ec, ec2 = tgarch_moments(0.05, 0.08, 0.9, np.sqrt(2 / np.pi))
+    zz = np.random.default_rng(1).standard_normal(2_000_000)
+    cc = (0.05 + 0.08 * (zz < 0)) * np.abs(zz) + 0.9
+    assert ec == pytest.approx(cc.mean(), rel=2e-3) and ec2 == pytest.approx((cc ** 2).mean(), rel=5e-3)
+    rng = np.random.default_rng(2)
+    n = 3000
+    e = rng.standard_normal(n)
+    sig, r = np.full(n, 0.01), np.zeros(n)
+    for t in range(1, n):
+        sig[t] = 4e-4 + (0.03 + 0.10 * (r[t - 1] < 0)) * abs(r[t - 1]) + 0.9 * sig[t - 1]
+        r[t] = sig[t] * e[t]
+    ret = pd.Series(r, index=pd.bdate_range("2008", periods=n))
+    g = fit_garch(ret, "tgarch", "normal")
+    assert g.params["gamma"] > 0.04 and 0.8 < g.params["beta"] < 0.97 and g.persistence < 1 and np.isfinite(g.unconditional_variance)
+    ni = g.news_impact()
+    assert ni.iloc[0] > ni.iloc[-1]                                        # a fall raises volatility more than an equal rise
+    f = g.forecast_variance(5, 40000)
+    e_last, p = float(ret.iloc[-1] - g.params["mu"]), g.params
+    one_step = (p["omega"] + (p["alpha"] + p["gamma"] * (e_last < 0)) * abs(e_last) + p["beta"] * g.volatility.iloc[-1]) ** 2
+    assert f.shape == (5,) and np.all(f > 0) and f[0] == pytest.approx(one_step, rel=1e-6)
+    wf = walk_forward_volatility(ret.iloc[:1300], "tgarch", "normal", min_train=800, refit_every=250)
+    assert wf["forecast"].notna().all() and (wf["forecast"] > 0).all()
+
+
+@pytest.mark.parametrize("dist", ["normal", "t"])
+def test_tgarch_likelihood_and_volatility_equal_arch_at_the_same_parameters(garch_returns, dist):
+    """``arch`` (power = 1) constrains alpha + gamma/2 + beta < 1, which excludes some admissible TGARCH solutions, so its own optimum can be lower; evaluated at OUR parameters its
+    likelihood must equal ours to within the pre-sample convention (arch starts a power-one recursion from a slightly different initial value; the difference decays geometrically and is below 1e-5 after 100 observations), and so must the conditional volatility from then on."""
+    m = fit_garch(garch_returns, "tgarch", dist)
+    p = m.params
+    vec = [p["mu"] * 100, p["omega"] * 100, p["alpha"], p["gamma"], p["beta"]] + ([p["nu"]] if dist == "t" else [])
+    fixed = arch_model(garch_returns * 100, mean="Constant", vol="GARCH", p=1, o=1, q=1, power=1.0, dist=dist).fix(vec)
+    assert m.loglik == pytest.approx(fixed.loglikelihood + len(garch_returns) * np.log(100), abs=0.1)
+    assert m.volatility.to_numpy()[100:] * 100 == pytest.approx(fixed.conditional_volatility.to_numpy()[100:], rel=1e-5)
+    assert m.volatility.to_numpy()[0] * 100 == pytest.approx(fixed.conditional_volatility.to_numpy()[0], rel=0.01)
+    assert m.params["alpha"] == pytest.approx(0.08, abs=0.05) and m.params["beta"] > 0.8
