@@ -31,7 +31,7 @@ This is how systematic firms actually run: many small alphas, one portfolio. The
 `src/framework/forecasting.py` has `combine_forecasts` with every rule; the Generation 3 alpha engine in `src/signals/alpha_engine.py` is the cost-aware one; Stage 31 adds regime-conditional
 trust. Adding a strategy means registering a forecast model; it joins the combination automatically.
 
-The `decay_weighted` combination rule weights each model by its information coefficient at the holding period implied by an exponential decay fitted to its incremental IC at lags 1 to 20 (matured labels only); the fitted half-lives appear in the tear sheet as "alpha decay". It sits beside `equal`, `confidence`, `precision`, `ic_trust` and `regime_trust`.
+The `decay_weighted` combination rule weights each model by its information coefficient at the holding period implied by an exponential decay fitted to its incremental IC at lags 1 to 20 (matured labels only); the fitted half-lives appear in the tear sheet as "alpha decay". It sits beside `equal`, `confidence`, `precision`, `ic_weighted`, `regime_conditional` and `cost_aware`.
 
 ## What we found
 

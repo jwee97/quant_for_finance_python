@@ -42,6 +42,9 @@ class Registry:
             raise KeyError(f"unknown {self.kind} '{name}'; available: {sorted(self._entries)}")
         return self._entries[name].factory(**params)
 
+    def unregister(self, name: str) -> None:
+        self._entries.pop(name, None)
+
     def names(self) -> list[str]:
         return sorted(self._entries)
 

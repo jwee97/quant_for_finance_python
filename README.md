@@ -180,7 +180,7 @@ machine learning, factor-model attribution and reinforcement learning.
 
 ## Generation 5
 
-A plugin framework and a newcomer layer around the earlier research, a library of 34 registered strategies (39 models after the integration audit below), and thirteen
+A plugin framework and a newcomer layer around the earlier research, a library of 34 registered strategies (40 models after the integration audit and the formula strategy below), and thirteen
 stages of new evidence (Stages 30-40), each decision rule committed before its result. The full account, with every commit,
 deviation and post-hoc analysis, is in [`reports/generation5_report.md`](reports/generation5_report.md).
 
@@ -189,6 +189,12 @@ regime detectors and allocators, calibration against matured outcomes, six forec
 allocator and risk policy, a causality test run on every plugin, a persistent experiment database that counts trials for the
 deflated Sharpe ratio, and a tear sheet with fixed red-flag rules. `quant backtest --model dual_momentum --tearsheet` runs one
 strategy through all of it; a new strategy is one class (see `docs/how_to_add_a_strategy.md`).
+
+**Dashboard.** `quant serve` opens a local dashboard ([`docs/dashboard.md`](docs/dashboard.md)): add any Yahoo Finance tickers next to the
+platform's 15 ETFs, pick a strategy (or type a one-line formula, or drop a Python file into `user_strategies/`), and see net growth
+against equal weight and risk parity, drawdowns, rolling Sharpe, annual and monthly returns, exposure, attribution, red flags and a
+deflated Sharpe ratio that counts how many ideas you tried. It also compares runs and renders the guides, including
+[how to add a strategy](docs/how_to_add_a_strategy.md). Runs on localhost with a per-launch token; the browser never sends code.
 
 **Integration audit.** A strict feature audit of the Generation 2-4 roadmap ([`docs/feature_audit.md`](docs/feature_audit.md), with a
 before/after status for every feature) found that most of it lived only in stage scripts. The pieces are now reachable from one
@@ -244,7 +250,7 @@ src/
                  diffusion, evolution-strategies policy, explanation methods
   framework/     Generation 5 plugin pipeline: types, registries, data bundle, regimes, calibration and combination, allocators,
                  regime risk, validation, experiment manager, tear sheet, dashboard, demo, generated docs
-  strategies/    the 39 registered forecast models (time-series, cross-sectional, stat-arb, volatility, fixed income, macro, ML, crypto)
+  strategies/    the 40 registered forecast models (time-series, cross-sectional, stat-arb, volatility, fixed income, macro, ML, crypto)
   causal/        double machine learning, R-learner, 2SLS, difference in differences, simulated worlds
   cli.py         the `quant` command
   utils/         config, logging, dates, plotting, experiment registry
@@ -252,7 +258,7 @@ docs/            START_HERE, 47 technique guides, glossary, chapter map, strateg
 experiments/     numbered stage scripts + the experiment registry
 reports/         figures, tables, the data-quality report, the research paper,
                  the Generation 2-5 reports, errata/ (before/after record of the drift fix), the dashboard
-tests/           746 tests
+tests/           839 tests
 Dockerfile, docker-compose.yml, Makefile, .github/workflows/ci.yml, .pre-commit-config.yaml
 ```
 
@@ -271,8 +277,10 @@ python -m experiments.run_all --generation 5  # Generation 5 only (stages 30-40)
 python -m experiments.run_all --from 6 --to 9 # a range of stages
 python -m experiments.run_all --fresh         # clear derived artefacts first
 python -m experiments.stage01_data            # a single stage
-pytest -q                                      # 746 tests
+pytest -q                                      # 839 tests
 quant demo; quant dashboard; quant explain risk parity   # the newcomer layer
+quant serve                                    # the interactive dashboard: your tickers, your strategies
+quant new-strategy my_idea                     # a template for your own strategy in user_strategies/
 quant docs build                               # regenerate strategy cards, chapter map, findings digest
 make install test lint cov                     # the same through the Makefile; docker compose run --rm tests for the container
 ```

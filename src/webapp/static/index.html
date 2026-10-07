@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="token" content="__TOKEN__">
+<title>Quant Lab</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M1 12l4-5 3 3 5-7' fill='none' stroke='%232a78d6' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">Quant Lab<small>backtest your ideas honestly</small></div>
+  <nav class="tabs" role="tablist" aria-label="Sections">
+    <button role="tab" id="tab-backtest" aria-selected="true" aria-controls="view-backtest">Backtest</button>
+    <button role="tab" id="tab-compare" aria-selected="false" aria-controls="view-compare">Compare <span class="pill" id="runcount">0</span></button>
+    <button role="tab" id="tab-builder" aria-selected="false" aria-controls="view-builder">Strategy builder</button>
+    <button role="tab" id="tab-guides" aria-selected="false" aria-controls="view-guides">Guides</button>
+  </nav>
+  <div class="grow"></div>
+  <span class="pill" id="trials" title="Every distinct idea you test on the same tickers counts as a trial. The deflated Sharpe probability is penalised for the number of trials, because the best of many tries looks good by luck."></span>
+  <button class="iconbtn" id="theme" aria-label="Switch between light and dark theme">Theme</button>
+</header>
+<main>
+  <section role="tabpanel" id="view-backtest" aria-labelledby="tab-backtest">
+    <div class="layout">
+      <aside class="card panel" id="panel" aria-label="Backtest setup"></aside>
+      <div class="stack" id="results" aria-live="polite"></div>
+    </div>
+  </section>
+  <section role="tabpanel" id="view-compare" aria-labelledby="tab-compare" hidden><div class="stack" id="compare"></div></section>
+  <section role="tabpanel" id="view-builder" aria-labelledby="tab-builder" hidden><div class="stack" id="builder"></div></section>
+  <section role="tabpanel" id="view-guides" aria-labelledby="tab-guides" hidden><div class="guides" id="guides"></div></section>
+</main>
+<script src="/static/charts.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>

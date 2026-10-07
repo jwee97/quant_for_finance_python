@@ -144,8 +144,11 @@ def evaluate(out, pipeline, engine, ctx, models, validate: bool, trust) -> None:
             rows.append({"benchmark": name, "error": str(error)})
             continue
         common = net.index.intersection(b.index)
+        if len(common) < 2 or not (b.loc[common].abs() > 0).any():
+            rows.append({"benchmark": name, "error": "the benchmark held nothing on these dates (the portfolio builders need at least five investable assets)"})
+            continue
         out.benchmarks[name] = b.loc[common]
-        if len(common) > 250:
+        if len(common) > 250 and net.loc[common].std(ddof=1) > 0:
             t = paired_sharpe_test(net.loc[common], b.loc[common], n_samples=int(boot.get("n_samples", 2000)), block_length=int(boot.get("block_length", 21)),
                                    seed=int(boot.get("seed", 7)))
             rows.append({"benchmark": name, "sharpe_strategy": t["sharpe_a"], "sharpe_benchmark": t["sharpe_b"], "difference": t["difference"], "p_value": t["p_value"]})

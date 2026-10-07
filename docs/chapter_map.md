@@ -29,6 +29,7 @@ Where each topic of *Quantitative Finance with Case Studies in Python* is implem
 | Ch. 22 | [How a backtest turns signals into returns](techniques/backtest-engine-and-costs.md) | 6 | `src/backtest/engine.py`, `src/backtest/costs.py` | 14, 15 | `tests/test_backtest.py` |
 | Ch. 22 | [Cross-sectional factors: low volatility, value, quality, carry, defensive beta](techniques/cross-sectional-factors.md) | 30 | `src/strategies/cross_sectional.py`, `src/strategies/_common.py` | 59, 60 | `tests/test_strategies.py` |
 | Ch. 22 | [Crypto carry: funding, basis and stablecoin flows](techniques/crypto-carry.md) | 32 | `src/data/crypto.py`, `src/strategies/crypto.py` | 65 | `tests/test_crypto.py` |
+| Ch. 22 | [Your own strategies: formulas and Python files](techniques/custom-strategies.md) |  | `src/strategies/expression.py`, `src/strategies/user.py` | n/a | `tests/test_custom_strategies.py`, `tests/test_webapp.py` |
 | Ch. 22 | [Execution: spread, impact and capacity](techniques/execution-and-impact.md) | 25 | `src/backtest/execution.py`, `src/backtest/impact.py` | 50, 51 | `tests/test_impact.py`, `tests/test_adaptive_integration.py` |
 | Ch. 22 | [Fixed income and volatility strategy families](techniques/fixed-income-and-volatility-strategies.md) | 30 | `src/strategies/fixed_income.py`, `src/strategies/volatility.py` | 59, 60 | `tests/test_strategies.py` |
 | Ch. 22 | [Mean reversion and z-scores](techniques/mean-reversion.md) | 4, 30 | `src/signals/mean_reversion.py`, `src/features/mean_reversion.py` | 11, 12 | `tests/test_signals.py` |

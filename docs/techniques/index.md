@@ -25,6 +25,7 @@ Each guide answers: what is it in one sentence, the idea, why it matters, how th
 - [The research database and reproducibility](experiment-database-and-reproducibility.md): Every experiment is stored with its hypothesis, data version, configuration fingerprint and decision, so results can be queried and reproduced.
 - [Value at risk, expected shortfall and how to test them](var-cvar-and-backtests.md): VaR is a quantile of the loss distribution, and the only honest way to judge it is to count how often reality breaches it.
 - [Walk-forward testing and look-ahead leakage](walk-forward-and-leakage.md): Walk-forward testing refits a model only on the past and scores it on the future in rolling steps, and a leakage test proves the code cannot see tomorrow.
+- [Your own strategies: formulas and Python files](custom-strategies.md): A strategy is a rule that gives every asset a score each day; you can write that rule as a one-line formula or as a small Python class, and either way it is tested with the same costs, benchmarks and look-ahead checks as the built-in strategies.
 
 ## Difficulty 3
 

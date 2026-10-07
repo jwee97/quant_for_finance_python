@@ -188,6 +188,22 @@ def cmd_sql(args, config) -> int:
     return sql_main([args.sql, "--db", args.db])
 
 
+def cmd_serve(args, config) -> int:
+    from .webapp.server import serve
+    return serve(config, args.host, args.port, not args.no_browser)
+
+
+def cmd_new_strategy(args, config) -> int:
+    from .strategies.user import new_strategy
+    try:
+        path = new_strategy(config.root, args.name)
+    except (ValueError, FileExistsError) as error:
+        print(error)
+        return 1
+    print(f"wrote {path}\nedit `score`, then:  quant backtest --model {args.name} --tearsheet   (or pick it in `quant serve`)")
+    return 0
+
+
 def cmd_ask(args, config) -> int:
     """Ask the research database a recognised question (templates) or, with --llm, let a model write the SQL (read-only, validated like any other statement)."""
     from .assistant.sqlguard import Refused, ResearchAssistant, SQLBackend
@@ -275,6 +291,9 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("docs", help="regenerate strategy cards, the chapter map and the findings digest"); p.add_argument("action", choices=["build"]); p.set_defaults(func=cmd_docs)
     p = sub.add_parser("sql", help="a read-only query on the research database (--db runs: your own experiment runs)"); p.add_argument("sql")
     p.add_argument("--db", choices=["research", "runs"], default="research"); p.set_defaults(func=cmd_sql)
+    p = sub.add_parser("serve", help="open the dashboard: backtest on your own tickers, compare runs, build formula strategies, read the guides")
+    p.add_argument("--host", default="127.0.0.1"); p.add_argument("--port", type=int, default=8765); p.add_argument("--no-browser", action="store_true"); p.set_defaults(func=cmd_serve)
+    p = sub.add_parser("new-strategy", help="write a template for your own strategy into user_strategies/"); p.add_argument("name"); p.set_defaults(func=cmd_new_strategy)
     p = sub.add_parser("ask", help="ask the research database a question in words"); p.add_argument("question", nargs="+"); p.add_argument("--llm", help="model that writes the SQL (needs the anthropic package and an API key)"); p.set_defaults(func=cmd_ask)
     p = sub.add_parser("causal", help="causal estimators against simulated worlds with a known effect"); p.add_argument("--n", type=int, default=3000); p.add_argument("--seed", type=int, default=7); p.set_defaults(func=cmd_causal)
     p = sub.add_parser("sweep", help="a parallel grid of variations of one specification, counted as trials")

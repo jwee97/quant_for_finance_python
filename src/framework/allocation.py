@@ -65,10 +65,13 @@ def book(name: str, ctx: Context) -> pd.DataFrame:
     else:
         from experiments.strategies import build_ladder, cached_ladder          # the Generation 1-2 builders live with their stage code
 
-        try:
-            weights = cached_ladder(market, ctx.config, ctx.config.path("processed"), [LADDER[name]])[LADDER[name]]
-        except Exception:
+        if ctx.bundle.market is None:          # your own prices: never touch the platform's on-disk cache (it would be wiped and rebuilt for your universe)
             weights = build_ladder(market, ctx.config, [LADDER[name]])[LADDER[name]]
+        else:
+            try:
+                weights = cached_ladder(market, ctx.config, ctx.config.path("processed"), [LADDER[name]])[LADDER[name]]
+            except Exception:
+                weights = build_ladder(market, ctx.config, [LADDER[name]])[LADDER[name]]
     ctx.cache[key] = weights.reindex(ctx.bundle.index).ffill()
     return ctx.cache[key]
 

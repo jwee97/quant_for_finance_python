@@ -304,3 +304,23 @@ def test_regime_trust_weights_follow_the_model_that_works_in_the_current_regime_
     assert np.allclose(w.loc[:cut], w2.loc[:cut])
     # with too little history in the regime the weights are equal
     assert np.allclose(regime_trust_weights(streams.iloc[:150], labels.iloc[:150], idx[:150][::21], 200, 0.0).iloc[-1], 0.5)
+
+
+def test_books_for_your_own_prices_never_touch_the_platform_ladder_cache(tmp_path):
+    """A universe built from user prices must not wipe or rewrite the platform's cached books."""
+    import numpy as np
+    import pandas as pd
+
+    from src.framework import bundle_from_prices
+    from src.framework.allocation import Context, book
+    from src.utils.config import load_config
+
+    config = load_config()
+    stamp = config.path("processed") / "books" / "cache_key.txt"
+    before = stamp.read_text() if stamp.exists() else None
+    rng = np.random.default_rng(0)
+    idx = pd.bdate_range("2012-01-02", periods=600)
+    mine = bundle_from_prices(pd.DataFrame(100 * np.cumprod(1 + rng.normal(0.0003, 0.01, (600, 5)), axis=0), index=idx, columns=list("ABCDE")), name="mine")
+    weights = book("equal_weight", Context(bundle=mine, config=config))
+    assert weights.shape[1] == 5 and np.isfinite(weights.iloc[-1]).all()
+    assert (stamp.read_text() if stamp.exists() else None) == before

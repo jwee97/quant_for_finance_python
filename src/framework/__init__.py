@@ -21,3 +21,8 @@ def load_library() -> None:
     except ModuleNotFoundError as error:                       # the library is optional; anything else is a real error
         if error.name != "src.strategies":
             raise
+        return
+    from ..strategies.user import load_user_strategies
+    from ..utils.config import project_root
+
+    load_user_strategies(project_root())                   # the user_strategies/ folder, if there is one

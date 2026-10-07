@@ -16,6 +16,7 @@ nav:
   - Start here: START_HERE.md
   - Learn:
       - A tour of one backtest day: tour_of_a_backtest_day.md
+      - Using the dashboard: dashboard.md
       - How to add a strategy: how_to_add_a_strategy.md
       - Glossary: glossary.md
       - Chapter map: chapter_map.md
