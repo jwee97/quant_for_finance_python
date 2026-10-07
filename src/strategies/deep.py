@@ -1,6 +1,6 @@
 """Deep forecasters as plug-in models: window networks refit walk-forward, and a zero-shot foundation model.
 
-``deep_window`` runs one of the Generation 4/5 networks (patch transformer, MLP-mixer, N-BEATS, N-HiTS, TimeMixer-style) on the 252 daily returns before each
+``deep_window`` runs one of the Generation 4/5 networks (patch transformer, MLP-mixer, N-BEATS, N-HiTS, TimeMixer-style, Temporal Fusion Transformer) on the 252 daily returns before each
 month-end origin, each divided by the EWMA daily volatility at the origin. The target is the next 21-day return in the same units (a z-score), so the forecast
 is ``mu_z * sigma`` and only the conditional mean is learned. The network is refit once a year on origins whose label (plus a 21-day embargo) was complete by the
 refit date; the last fifth of those origins (after a 42-day gap) is the early-stopping block.
@@ -20,7 +20,7 @@ from ..framework.types import ForecastPanel
 from ..models.deep_forecast import TrainSettings, daily_sigma, normalised_windows, train_and_predict
 from ..models.probabilistic import ewma_sigma
 
-KINDS = ("patchtst", "tsmixer", "nbeats", "nhits", "timemixer")
+KINDS = ("patchtst", "tsmixer", "nbeats", "nhits", "timemixer", "tft")
 WINDOW = 252
 
 
@@ -49,7 +49,7 @@ def _panel(model, data, origins, mean: np.ndarray, halflife: float) -> ForecastP
     return ForecastPanel.from_mean_std(out, std.where(out.notna()), model.horizon, model.name)
 
 
-@register_model("deep_window", "machine learning", "A small neural network (patch transformer, MLP-mixer, N-BEATS, N-HiTS or TimeMixer-style) on the volatility-normalised 252-day return window, refit yearly")
+@register_model("deep_window", "machine learning", "A small neural network (patch transformer, MLP-mixer, N-BEATS, N-HiTS, TimeMixer-style or Temporal Fusion Transformer) on the volatility-normalised 252-day return window, refit yearly")
 class DeepWindow(ForecastModel):
     """If a flexible sequence model finds structure in the last year of returns that a ridge on twelve features cannot, it should beat the ridge out of sample.
     Stage 27 and 33 found it did not; the plug-in makes that test repeatable on any bundle."""

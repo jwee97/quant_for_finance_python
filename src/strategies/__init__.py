@@ -6,8 +6,9 @@
     volatility        variance risk premium, variance carry, implied versus realised
     fixed_income      curve steepener, butterfly, carry and roll-down, duration timing
     macro             inflation rotation, yield-curve regimes, dollar strength, commodity supercycle, risk-on/off
-    ml                walk-forward ridge on price and macro features; online (monthly-updated) ridge / NLMS / Kalman
-    deep              window networks (patch transformer, mixer, N-BEATS, N-HiTS, TimeMixer-style) refit yearly; zero-shot Chronos-Bolt (optional)
+    ml                walk-forward ridge on price and macro features, tree ensembles (gradient boosting, forests, LightGBM, XGBoost); online (monthly-updated) ridge / NLMS / Kalman
+    deep              window networks (patch transformer, mixer, N-BEATS, N-HiTS, TimeMixer-style, Temporal Fusion Transformer) refit yearly; zero-shot Chronos-Bolt (optional)
+    representation    autoencoder / contrastive encoders trained without labels, then a ridge on the embedding
     custom            `expression`: a strategy written as a one-line formula; your own files in user_strategies/ (see user.py)
     trend             time-series momentum, MA ensemble, breakouts, KAMA, ADX, SuperTrend, Keltner, MACD, Ichimoku; 52-week high, residual and smooth momentum, 13612W
     reversion         RSI(2), IBS, Bollinger, stochastic, down-streaks, Ornstein-Uhlenbeck, range-bound reversion, short-term reversal
@@ -15,11 +16,12 @@
     factors           betting against beta, low idiosyncratic volatility, MAX, illiquidity, value with momentum
     risk_timing       volatility-managed long, buy-the-VIX-spike, credit risk appetite
     taa               Faber GTAA, Protective / Vigilant / Defensive / Adaptive asset allocation, static model portfolios
+    multi_asset       cross-asset carry (cross-sectional and time-series), basis momentum, long-term reversal (need CARRY_<asset> signals: src.assets.bundles)
     econometric       Kalman trend, GARCH- and EVT-managed exposure, shrunk-VAR lead-lag
     crypto            funding carry, basis reversion, stablecoin flow (optional branch; needs the crypto bundle)
 
 Run ``quant list models`` to see them with their hypotheses.
 """
 
-from . import (crypto, cross_sectional, deep, econometric, expression, factors, fixed_income, macro, ml, online, reversion, risk_timing, seasonal, statarb,  # noqa: F401
-               taa, time_series, trend, volatility)
+from . import (crypto, cross_sectional, deep, econometric, expression, factors, fixed_income, macro, ml, multi_asset, online, representation, reversion, risk_timing,  # noqa: F401
+               seasonal, statarb, taa, time_series, trend, volatility)

@@ -45,9 +45,13 @@ class MLRidge(ForecastModel):
         sigma = ewma_sigma(data.returns, 40.0, h).loc[origins].stack(future_stack=True)
         return X, forward, sigma
 
-    def forecast(self, data, min_observations: int = 504, allow_negative: bool = False, halflife: float = 40.0) -> ForecastPanel:
+    def _fit(self, X: np.ndarray, y: np.ndarray):
+        """The learner: anything with ``predict``. Subclasses swap this to run the same walk-forward protocol with a different model."""
         from sklearn.linear_model import Ridge
 
+        return Ridge(alpha=self.alpha).fit(X, y)
+
+    def forecast(self, data, min_observations: int = 504, allow_negative: bool = False, halflife: float = 40.0) -> ForecastPanel:
         self.require(data)
         h = self.horizon
         index = data.index
@@ -64,7 +68,7 @@ class MLRidge(ForecastModel):
             if train.sum() < 100 or not test.any():
                 continue
             mu, sd = X[train].mean(), X[train].std(ddof=1).replace(0.0, 1.0)
-            model = Ridge(alpha=self.alpha).fit(((X[train] - mu) / sd).to_numpy(), z[train].to_numpy())
+            model = self._fit(((X[train] - mu) / sd).to_numpy(), z[train].to_numpy())
             mean_at_origin[test] = model.predict(((X[test] - mu) / sd).to_numpy()) * sigma[test].to_numpy()
         monthly = mean_at_origin.unstack()
         mean = monthly.reindex(index).ffill().reindex(columns=data.assets)
@@ -77,8 +81,6 @@ class MLRidge(ForecastModel):
 
         Descriptive, not a performance claim: it says which features the model leans on, and the rows it is measured on are partly in its training set.
         """
-        from sklearn.linear_model import Ridge
-
         from ..models.explain import permutation_importance
 
         self.require(data)
@@ -93,7 +95,7 @@ class MLRidge(ForecastModel):
             raise ValueError("not enough matured rows to explain the model")
         mu, sd = X[ok].mean(), X[ok].std(ddof=1).replace(0.0, 1.0)
         Xs, target = ((X[ok] - mu) / sd).to_numpy(), z[ok].to_numpy()
-        model = Ridge(alpha=self.alpha).fit(Xs, target)
+        model = self._fit(Xs, target)
         recent = X.index.get_level_values(0)[ok] >= index[-1] - pd.DateOffset(years=recent_years)
         sample = recent if recent.sum() >= 50 else np.ones(len(target), dtype=bool)
         importance = permutation_importance(model.predict, Xs[sample], target[sample], n_repeats=n_repeats)
@@ -104,3 +106,61 @@ class MLRidge(ForecastModel):
 
     def score(self, data):
         return self.forecast(data).mean
+
+
+LEARNERS = ("hgb", "random_forest", "extra_trees", "lightgbm", "xgboost", "catboost")
+
+
+def make_tree_learner(learner: str, n_estimators: int, max_depth: int, learning_rate: float, min_samples_leaf: int, seed: int):
+    """A regressor for the walk-forward protocol. The scikit-learn learners are always available; ``lightgbm``, ``xgboost`` and ``catboost`` are optional dependencies (extra ``boosting``) and
+    raise an ImportError that says so."""
+    if learner == "hgb":
+        from sklearn.ensemble import HistGradientBoostingRegressor
+
+        return HistGradientBoostingRegressor(max_iter=n_estimators, max_depth=max_depth, learning_rate=learning_rate, min_samples_leaf=min_samples_leaf, l2_regularization=10.0, random_state=seed)
+    if learner == "random_forest":
+        from sklearn.ensemble import RandomForestRegressor
+
+        return RandomForestRegressor(n_estimators=n_estimators, max_depth=max_depth, min_samples_leaf=min_samples_leaf, max_features=0.5, random_state=seed, n_jobs=1)
+    if learner == "extra_trees":
+        from sklearn.ensemble import ExtraTreesRegressor
+
+        return ExtraTreesRegressor(n_estimators=n_estimators, max_depth=max_depth, min_samples_leaf=min_samples_leaf, max_features=0.5, random_state=seed, n_jobs=1)
+    try:
+        if learner == "lightgbm":
+            import lightgbm as lgb
+
+            return lgb.LGBMRegressor(n_estimators=n_estimators, max_depth=max_depth, learning_rate=learning_rate, min_child_samples=min_samples_leaf, reg_lambda=10.0, subsample=0.8, subsample_freq=1,
+                                     colsample_bytree=0.8, random_state=seed, n_jobs=1, verbose=-1)
+        if learner == "xgboost":
+            import xgboost as xgb
+
+            return xgb.XGBRegressor(n_estimators=n_estimators, max_depth=max_depth, learning_rate=learning_rate, min_child_weight=min_samples_leaf, reg_lambda=10.0, subsample=0.8, colsample_bytree=0.8,
+                                    random_state=seed, n_jobs=1, tree_method="hist")
+        if learner == "catboost":
+            import catboost as cb
+
+            return cb.CatBoostRegressor(iterations=n_estimators, depth=max_depth, learning_rate=learning_rate, l2_leaf_reg=10.0, random_seed=seed, verbose=False, thread_count=1)
+    except ImportError as exc:
+        raise ImportError(f"learner '{learner}' needs the optional package: pip install \"systematic-multi-asset-research[boosting]\" ({exc})") from exc
+    raise ValueError(f"learner must be one of {LEARNERS}")
+
+
+@register_model("ml_trees", "machine learning", "Walk-forward tree ensemble (gradient boosting, random forest, extra trees, LightGBM, XGBoost or CatBoost) on the same price features as the ridge")
+class MLTrees(MLRidge):
+    """Trees can capture interactions and non-linearities a ridge cannot (momentum matters more when volatility is low); with a signal-to-noise ratio this small they usually overfit unless the
+    leaves are large and the learning rate small, which is what the defaults enforce."""
+
+    name, family = "ml_trees", "machine learning"
+
+    def __init__(self, learner: str = "hgb", n_estimators: int = 150, max_depth: int = 3, learning_rate: float = 0.05, min_samples_leaf: int = 100, seed: int = 0,
+                 features: str = "price", min_train: int = 1260, refit_every: int = 252, embargo: int = 21):
+        if learner not in LEARNERS:
+            raise ValueError(f"learner must be one of {LEARNERS}")
+        if n_estimators < 1 or max_depth < 1 or not 0 < learning_rate <= 1 or min_samples_leaf < 1:
+            raise ValueError("n_estimators >= 1, max_depth >= 1, 0 < learning_rate <= 1, min_samples_leaf >= 1")
+        super().__init__(features, min_train, refit_every, embargo, alpha=0.0)
+        self.learner, self.n_estimators, self.max_depth, self.learning_rate, self.min_samples_leaf, self.seed = learner, n_estimators, max_depth, learning_rate, min_samples_leaf, seed
+
+    def _fit(self, X, y):
+        return make_tree_learner(self.learner, self.n_estimators, self.max_depth, self.learning_rate, self.min_samples_leaf, self.seed).fit(X, y)

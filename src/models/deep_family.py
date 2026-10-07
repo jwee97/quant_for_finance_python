@@ -8,13 +8,18 @@
 * ``timemixer`` - a simplified multiscale mixer in the spirit of TimeMixer (Wang et al. 2024): the window at several scales, each through
   its own MLP, mixed by a head. It does NOT implement the decomposable past/future mixing of the paper; the name says "style".
 
+* ``tft``       - a compact Temporal Fusion Transformer (Lim et al. 2021) for ONE observed series plus a static asset identity: gated residual networks (GRN), a variable-selection
+  network over three per-step inputs (the normalised return, its absolute value and the running sum), an LSTM encoder, static enrichment, interpretable multi-head attention (one
+  value projection shared across heads) with a gate and layer norm, and a position-wise GRN. The window is average-pooled by ``stride`` first so the LSTM runs on 84 steps, not 252.
+  Known-future inputs and multi-horizon quantile outputs of the paper are not used: the target is a single z-score.
+
 Every network takes ``(x, asset)`` with ``x`` of shape (batch, window) and returns a z-score forecast of shape (batch,), so it plugs into
 ``deep_forecast.train_and_predict`` unchanged. The asset enters as a learned embedding concatenated to each block's input.
 """
 
 from __future__ import annotations
 
-FAMILY = ("nbeats", "nhits", "timemixer")
+FAMILY = ("nbeats", "nhits", "timemixer", "tft")
 
 
 def build_family_network(kind: str, n_assets: int, window: int = 252, **cfg):
@@ -73,6 +78,86 @@ def build_family_network(kind: str, n_assets: int, window: int = 252, **cfg):
             parts = [b(x if s == 1 else x.reshape(x.shape[0], -1, s).mean(dim=2)) for s, b in zip(self.scales, self.branches)]
             return self.head(torch.cat(parts + [self.asset(asset)], dim=1)).squeeze(-1)
 
+    class GLU(nn.Module):
+        def __init__(self, d_in: int, d_out: int):
+            super().__init__()
+            self.lin = nn.Linear(d_in, 2 * d_out)
+
+        def forward(self, x):
+            a, b = self.lin(x).chunk(2, dim=-1)
+            return a * torch.sigmoid(b)
+
+    class GRN(nn.Module):
+        """Gated residual network: ``LayerNorm(skip(x) + GLU(W2 ELU(W1 x + W3 c)))``; the optional context ``c`` is a static covariate."""
+
+        def __init__(self, d_in: int, d_hidden: int, d_out: int, d_ctx: int = 0):
+            super().__init__()
+            self.fc1 = nn.Linear(d_in, d_hidden)
+            self.ctx = nn.Linear(d_ctx, d_hidden, bias=False) if d_ctx else None
+            self.fc2 = nn.Linear(d_hidden, d_hidden)
+            self.glu = GLU(d_hidden, d_out)
+            self.skip = nn.Linear(d_in, d_out) if d_in != d_out else nn.Identity()
+            self.norm = nn.LayerNorm(d_out)
+            self.drop = nn.Dropout(dropout)
+
+        def forward(self, x, c=None):
+            h = self.fc1(x) + (self.ctx(c) if self.ctx is not None and c is not None else 0.0)
+            h = self.fc2(nn.functional.elu(h))
+            return self.norm(self.skip(x) + self.glu(self.drop(h)))
+
+    class TFT(nn.Module):
+        def __init__(self, d: int, heads: int, stride: int):
+            super().__init__()
+            if window % stride:
+                raise ValueError(f"stride {stride} does not divide the window {window}")
+            if d % heads:
+                raise ValueError("d_model must be divisible by heads")
+            self.stride, self.heads, self.d = stride, heads, d
+            self.asset = nn.Embedding(n_assets, emb_dim)
+            nn.init.normal_(self.asset.weight, std=0.02)
+            self.static = GRN(emb_dim, d, d)
+            self.var_in = nn.ModuleList(nn.Linear(1, d) for _ in range(3))                          # one embedding per observed input variable
+            self.var_weights = GRN(3 * d, d, 3, d_ctx=d)                                               # variable selection weights, conditioned on the static context
+            self.var_grn = nn.ModuleList(GRN(d, d, d) for _ in range(3))
+            self.lstm = nn.LSTM(d, d, batch_first=True)
+            self.post_lstm = GLU(d, d)
+            self.norm_lstm = nn.LayerNorm(d)
+            self.enrich = GRN(d, d, d, d_ctx=d)
+            self.q, self.k = nn.Linear(d, d), nn.Linear(d, d)
+            self.v = nn.Linear(d, d // heads)                                                           # one value projection shared by the heads (interpretable attention)
+            self.out = nn.Linear(d // heads, d)
+            self.post_attn = GLU(d, d)
+            self.norm_attn = nn.LayerNorm(d)
+            self.ff = GRN(d, d, d)
+            self.head = nn.Linear(d, 1)
+            self.last_selection = None
+
+        def forward(self, x, asset):
+            b = x.shape[0]
+            xp = x.reshape(b, -1, self.stride).sum(dim=2)                                              # sum of the stride returns: the coarser return series
+            feats = torch.stack([xp, xp.abs(), xp.cumsum(dim=1) / (xp.shape[1] ** 0.5)], dim=-1)       # (b, T, 3)
+            ctx = self.static(self.asset(asset))
+            emb = [lin(feats[..., i:i + 1]) for i, lin in enumerate(self.var_in)]                      # three (b, T, d)
+            w = torch.softmax(self.var_weights(torch.cat(emb, dim=-1), ctx.unsqueeze(1)), dim=-1)     # (b, T, 3)
+            self.last_selection = w.detach().mean(dim=(0, 1))
+            sel = sum(w[..., i:i + 1] * grn(e) for i, (e, grn) in enumerate(zip(emb, self.var_grn)))
+            h, _ = self.lstm(sel)
+            h = self.norm_lstm(sel + self.post_lstm(h))
+            h = self.enrich(h, ctx.unsqueeze(1))
+            T = h.shape[1]
+            mask = torch.triu(torch.ones(T, T, dtype=torch.bool, device=h.device), diagonal=1)           # causal attention within the window
+            q = self.q(h).reshape(b, T, self.heads, -1).transpose(1, 2)
+            k = self.k(h).reshape(b, T, self.heads, -1).transpose(1, 2)
+            attn = (q @ k.transpose(-1, -2)) / (q.shape[-1] ** 0.5)
+            attn = torch.softmax(attn.masked_fill(mask, float("-inf")), dim=-1)
+            v = self.v(h).unsqueeze(1)                                                                  # (b, 1, T, d/h) shared across heads
+            mixed = self.out((attn @ v).mean(dim=1))
+            h = self.norm_attn(h + self.post_attn(mixed))
+            h = self.ff(h)
+            return self.head(h[:, -1]).squeeze(-1)
+
+    if kind == "tft":
+        return TFT(int(cfg.get("d_model", 16)), int(cfg.get("heads", 2)), int(cfg.get("stride", 3)))
     if kind == "nbeats":
         return Residual([1] * int(cfg.get("blocks", 3)), int(cfg.get("layers", 4)), int(cfg.get("width", 64)))
     if kind == "nhits":
