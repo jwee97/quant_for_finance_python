@@ -20,3 +20,7 @@ quant backtest --model carry_ts --allocator sleeves --tearsheet
 ```
 This rule declares a weekly rebalance; pass `execution: {rebalance: monthly}` in a spec to override it.
 
+
+## Learn more
+
+[Cross-asset carry, basis momentum and long-term reversal](../techniques/cross-asset-carry.md)

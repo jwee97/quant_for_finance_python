@@ -21,7 +21,7 @@ quant backtest --model cointegration_pairs --tearsheet
 
 ## In the strategy survey
 
-Default parameters on the 15 ETFs, net of costs, traded as written: net Sharpe -0.04, CAGR -0.2%, volatility 3.4%, max drawdown -10.6%, turnover 8.0 times a year, deflated Sharpe probability 0.01 counting every strategy in the survey as a trial. One run, not a test: see [the survey](../strategy_survey.md) for how to read it.
+Default parameters on the 15 ETFs, net of costs, traded as written: net Sharpe -0.04, CAGR -0.2%, volatility 3.4%, max drawdown -10.6%, turnover 8.0 times a year, deflated Sharpe probability 0.00 counting every strategy in the survey as a trial. One run, not a test: see [the survey](../strategy_survey.md) for how to read it.
 
 ## What happened in this repository
 

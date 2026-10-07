@@ -1,0 +1,11 @@
+,value
+best_trial,22.0
+best_annual_sharpe,0.6707383762474114
+n_trials,24.0
+n_with_returns,24.0
+deflated_sharpe_probability,0.8972407506993771
+deflated_benchmark_sharpe_annual,0.35766208389474513
+pbo,0.42857142857142855
+mean_oos_sharpe_of_is_winner,0.599316824169443
+romano_wolf_p_best,0.013333333333333334
+survivors_at_5pct,13.0

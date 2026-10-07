@@ -18,7 +18,7 @@ result.
 **New here?** `pip install -e .`, then `quant demo` (thirteen seconds on the cached data), `quant dashboard` (an offline
 explorer of every hypothesis the project declared, most of them rejected) and `quant explain deflated sharpe` (any term,
 technique, strategy or experiment, in plain language). Read [`docs/START_HERE.md`](docs/START_HERE.md) for a learning path
-by background, the [technique guides](docs/techniques/index.md) (47 of them, from PCA to diffusion models), the
+by background, the [technique guides](docs/techniques/index.md) (73 of them, from PCA to diffusion models and from HAC errors to option surfaces), the
 [chapter map](docs/chapter_map.md) from the book to the code, and [what was and was not built](docs/roadmap_coverage.md).
 Adding a strategy is writing one forecast model: [how to](docs/how_to_add_a_strategy.md).
 
@@ -197,7 +197,7 @@ calendar rules, betting against beta, low idiosyncratic volatility, MAX, illiqui
 buy-the-VIX-spike, credit risk appetite, Faber's GTAA, Protective, Vigilant and Defensive Asset Allocation, adaptive asset allocation and
 the classic model portfolios) plus `min_variance`, `max_diversification` and `sleeves` allocators. [`docs/strategy_survey.md`](docs/strategy_survey.md)
 runs all of them once on the 15 ETFs with the deflated Sharpe ratio counting every one as a trial; the honest reading is that few beat
-equal weight and none clears 0.95.
+equal weight and none clears 0.95 (with the same-dates comparison added in Generation 6, only the static 60/40 mix clearly beats it and `dual_momentum` ties).
 
 **Dashboard.** `quant serve` opens a local dashboard ([`docs/dashboard.md`](docs/dashboard.md)): add any Yahoo Finance tickers next to the
 platform's 15 ETFs, pick a strategy (or type a one-line formula, or drop a Python file into `user_strategies/`), and see net growth
@@ -234,6 +234,21 @@ Docker and CI runs.
 
 ---
 
+## Generation 6: an institutional multi-asset research toolkit
+
+The platform was widened from "15 ETFs" to the methods and asset classes a multi-asset research desk uses, with the same discipline: no look-ahead, trials counted, every estimator checked against a reference or a known truth, and results reported as they came out. Start with the [capability matrix](docs/capability_matrix.md) (what is COMPLETE, PARTIAL or NOT IMPLEMENTED and why), the [research survey](docs/research_survey.md) and the [architecture](docs/architecture.md); the exploratory results are in [`docs/institutional_findings.md`](docs/institutional_findings.md).
+
+- **`src/stats`**: OLS/WLS/GLS with HC, HAC, one- and two-way clustered covariances, rolling regression and diagnostics; panel regression, Hausman, Fama-MacBeth with Shanken, GRS; ADF, Phillips-Perron, KPSS, variance ratios, Engle-Granger, Granger; event studies; Benjamini-Hochberg, Storey, Romano-Wolf, haircut and deflated Sharpe, BCa and block bootstrap.
+- **`src/probability`**: block and stationary bootstrap with Politis-White block length, Monte Carlo with variance reduction, importance sampling, extreme value theory (GPD, Hill, GEV, conditional EVT), copulas, drawdown, ruin and Kelly, MCMC with R-hat and ESS, Bayesian Sharpe, Markov chains and Markov switching.
+- **`src/econometrics`**: exact-likelihood ARIMA, VAR, Bayesian (Minnesota) VAR, Johansen and VECM, GARCH/GJR/EGARCH, state space and Kalman filters, dynamic factors.
+- **`src/derivatives`**: Black-Scholes, Black-76, Bachelier, binomial, Longstaff-Schwartz, Heston, Merton, SABR; Greeks; an implied-volatility solver; SVI and SSVI with arbitrage checks; local volatility; a VIX-style index; a synthetic option market with a stated variance premium; an options backtester (bid/ask fills, hedging, settlement, Greek attribution); eight volatility strategies and a dispersion study.
+- **`src/assets`**: futures calendars, continuous contracts and roll yield, Schwartz-Smith commodity curves, FX forwards and carry, Nelson-Siegel curves and bond analytics, and market bundles that make futures, FX, bonds and a mixed book run through the unchanged pipeline.
+- **`src/microstructure`**: order-flow imbalance, Kyle and Amihud measures, a limit-order-book simulator, Avellaneda-Stoikov market making, Almgren-Chriss execution.
+- **`src/ops`**: a content-addressed artifact store, a model registry, a hyperparameter optimiser that reports the selection bias of its own winner, purged and combinatorial cross-validation, profiling; `quant tune`, `quant benchmark`, `quant registry`.
+- **Ten new models** (90 in all): `kalman_trend`, `garch_vol_managed`, `evt_risk_managed`, `bvar_lead_lag`, `carry_xs`, `carry_ts`, `basis_momentum`, `long_term_reversal`, `ml_trees` (gradient boosting and forests) and `deep_representation` (autoencoder and contrastive), plus the `kelly` and `black_litterman` allocators and a Temporal Fusion Transformer in `deep_window`.
+
+**What the evidence says, honestly.** On the 15 ETFs none of the new learners earned a tradable net Sharpe ratio (the gradient-boosting, forest and representation models range from -0.32 to +0.07), the EVT-sized long book earned +0.68 against +0.76 for equal weight over the same dates, with the same drawdown, and conditional EVT passed a 99% VaR backtest where an EWMA-normal model did not (breach rates 0.97% and 2.14%). Futures, FX, options and market-making results come from **synthetic** markets built with a stated truth: they show that the code recovers what was built in, and say nothing about real markets. Real option chains, contract-level futures data, tick data and fundamentals are not available here; the loaders and schemas for them exist and are documented.
+
 ## Repository layout
 
 ```
@@ -259,16 +274,23 @@ src/
                  diffusion, evolution-strategies policy, explanation methods
   framework/     Generation 5 plugin pipeline: types, registries, data bundle, regimes, calibration and combination, allocators,
                  regime risk, validation, experiment manager, tear sheet, dashboard, demo, generated docs
-  strategies/    the 80 registered forecast models (time-series, cross-sectional, stat-arb, volatility, fixed income, macro, ML, crypto)
+  strategies/    the 90 registered forecast models (time-series, cross-sectional, stat-arb, volatility, fixed income, macro, ML, crypto, econometric, multi-asset carry)
+  stats/         Generation 6: regression and HAC, panels, unit roots, cointegration, event studies, multiple testing, Sharpe inference
+  probability/   Generation 6: resampling, Monte Carlo, EVT, copulas, drawdown and Kelly, Bayesian inference, Markov models
+  econometrics/  Generation 6: ARIMA, VAR/VECM, GARCH family, state space, dynamic factors
+  derivatives/   Generation 6: pricing, Greeks, implied vol, SVI/SSVI, synthetic option market, options backtester, volatility strategies
+  assets/        Generation 6: futures, commodity curves, FX, rates and bonds, market bundles
+  microstructure/ Generation 6: order flow, limit-order-book simulator, market making, optimal execution
+  ops/           Generation 6: artifact store, model registry, hyperparameter optimisation, purged/CPCV cross-validation, profiling
   causal/        double machine learning, R-learner, 2SLS, difference in differences, simulated worlds
   cli.py         the `quant` command
   utils/         config, logging, dates, plotting, experiment registry
-docs/            START_HERE, 47 technique guides, glossary, chapter map, strategy cards, notebooks, roadmap coverage (mkdocs.yml)
+docs/            START_HERE, 73 technique guides, glossary, chapter map, strategy cards, capability matrix, research survey, architecture, notebooks, roadmap coverage (mkdocs.yml)
 experiments/     numbered stage scripts + the experiment registry
 reports/         figures, tables, the data-quality report, the research paper,
                  the Generation 2-5 reports, errata/ (before/after record of the drift fix), the dashboard
 tests/           973 tests
-Dockerfile, docker-compose.yml, Makefile, .github/workflows/ci.yml, .pre-commit-config.yaml
+Dockerfile, docker-compose.yml, Makefile, .github/workflows/ci.yml and benchmark.yml, .pre-commit-config.yaml
 ```
 
 ---

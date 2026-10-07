@@ -29,6 +29,30 @@ jobs:
           name: coverage
           path: coverage.xml
 
+  compat:
+    # The numerical packages (statistics, probability, econometrics, derivatives, assets, microstructure, research operations) on the oldest and newest supported Pythons.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - name: Install (CPU-only PyTorch)
+        run: |
+          pip install --index-url https://download.pytorch.org/whl/cpu "torch>=2.2"
+          pip install -r requirements.txt
+          pip install -e . --no-deps
+          pip install pytest
+      - name: Numerical packages
+        run: python -m pytest tests/test_stats.py tests/test_probability.py tests/test_econometrics.py tests/test_derivatives.py tests/test_assets.py tests/test_microstructure.py tests/test_ops.py
+
   lint:
     runs-on: ubuntu-latest
     steps:

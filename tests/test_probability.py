@@ -341,6 +341,9 @@ def test_bayesian_sharpe_properties():
     sample = r.mean() / r.std() * np.sqrt(252)
     lo, hi = b["hpd95"]
     assert lo < sample < hi and b["rhat"].max() < 1.1 and 3 < b["nu_median"] < 12
+    heavy = rng.standard_t(3, 8000) * 0.01 + 0.0008                               # true Sharpe = mean / STANDARD DEVIATION = 0.0008 / (0.01 sqrt(3)) * sqrt(252), not mean / scale
+    truth = 0.0008 / (0.01 * np.sqrt(3.0)) * np.sqrt(252)
+    assert abs(bayes.bayesian_sharpe(heavy, 2000)["median"] - truth) < 0.35
     noise = bayes.bayesian_sharpe(rng.normal(0, 0.01, 1500), 2000)
     assert noise["hpd95"][0] < 0 < noise["hpd95"][1] and 0.05 < noise["prob_positive"] < 0.95
     better = rng.normal(0.0015, 0.01, 1500)

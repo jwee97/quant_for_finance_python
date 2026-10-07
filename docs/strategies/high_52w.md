@@ -21,7 +21,7 @@ quant backtest --model high_52w --tearsheet
 
 ## In the strategy survey
 
-Default parameters on the 15 ETFs, net of costs, traded as written: net Sharpe +0.34, CAGR 1.7%, volatility 5.5%, max drawdown -12.1%, turnover 5.6 times a year, deflated Sharpe probability 0.16 counting every strategy in the survey as a trial. One run, not a test: see [the survey](../strategy_survey.md) for how to read it.
+Default parameters on the 15 ETFs, net of costs, traded as written: net Sharpe +0.34, CAGR 1.7%, volatility 5.5%, max drawdown -12.1%, turnover 5.6 times a year, deflated Sharpe probability 0.15 counting every strategy in the survey as a trial. One run, not a test: see [the survey](../strategy_survey.md) for how to read it.
 
 ## Caveats
 

@@ -21,7 +21,7 @@ quant backtest --model commodity_supercycle --tearsheet
 
 ## In the strategy survey
 
-Default parameters on the 15 ETFs, net of costs, traded as written: net Sharpe +0.34, CAGR 3.3%, volatility 11.5%, max drawdown -34.9%, turnover 1.8 times a year, deflated Sharpe probability 0.13 counting every strategy in the survey as a trial. One run, not a test: see [the survey](../strategy_survey.md) for how to read it.
+Default parameters on the 15 ETFs, net of costs, traded as written: net Sharpe +0.34, CAGR 3.3%, volatility 11.5%, max drawdown -34.9%, turnover 1.8 times a year, deflated Sharpe probability 0.12 counting every strategy in the survey as a trial. One run, not a test: see [the survey](../strategy_survey.md) for how to read it.
 
 ## What happened in this repository
 

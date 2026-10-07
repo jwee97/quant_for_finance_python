@@ -2,6 +2,12 @@
 
 Plain-language definitions of every term the guides and reports use. Each entry says where in the guides to read more. `quant explain <term>` prints an entry from the terminal.
 
+### Abnormal return
+
+The actual return minus the return a model expected for the same day, such as a market-model prediction. Cumulated over a window it gives the cumulative abnormal return.
+
+See: [event-studies](techniques/event-studies.md)
+
 ### ADV
 
 *Also: average daily volume*
@@ -10,11 +16,23 @@ Average daily volume: the typical amount of an asset traded per day, which sets 
 
 See: [execution-and-impact](techniques/execution-and-impact.md)
 
+### Adverse selection
+
+The loss a liquidity provider suffers when the traders it fills are better informed, so the price moves against it after the trade.
+
+See: [market-making-and-order-flow](techniques/market-making-and-order-flow.md)
+
 ### Allocator
 
 In this repo, a component that turns forecasts and regimes into portfolio weights (static books, forecast stack, confidence, regime switch).
 
 See: [plugin-framework](techniques/plugin-framework.md), [regime-adaptive-allocation](techniques/regime-adaptive-allocation.md)
+
+### Almgren-Chriss
+
+The optimal-execution model that trades off temporary impact against price risk, giving a closed-form liquidation schedule between immediate and equal-sized trading.
+
+See: [market-making-and-order-flow](techniques/market-making-and-order-flow.md), [execution-and-impact](techniques/execution-and-impact.md)
 
 ### Alpha
 
@@ -35,6 +53,14 @@ See: [performance-metrics](techniques/performance-metrics.md)
 Drawing random perturbations in plus/minus pairs so their sampling noise cancels; used in evolution strategies.
 
 See: [reinforcement-learning](techniques/reinforcement-learning.md)
+
+### ARIMA
+
+*Also: ARMA*
+
+A time-series model in which the next value depends on past values (autoregressive terms) and past shocks (moving-average terms), after differencing d times to remove a unit root.
+
+See: [time-series-econometrics](techniques/time-series-econometrics.md)
 
 ### Attention
 
@@ -97,6 +123,14 @@ See: [attribution](techniques/attribution.md), [cross-sectional-factors](techniq
 A way to combine market-implied expected returns with an investor's views, weighted by their confidence, to get steadier optimiser inputs.
 
 See: [mean-variance-and-shrinkage](techniques/mean-variance-and-shrinkage.md)
+
+### Black-Scholes
+
+*Also: BSM*
+
+The closed-form price of a European option when the underlying follows geometric Brownian motion with constant volatility. Its inverse maps an option price to an implied volatility.
+
+See: [option-pricing-and-greeks](techniques/option-pricing-and-greeks.md)
 
 ### Block bootstrap
 
@@ -212,11 +246,39 @@ When a model's training data includes the period or series you test it on, so a 
 
 See: [foundation-models](techniques/foundation-models.md)
 
+### Content-addressed store
+
+*Also: artifact store*
+
+A store that names each object by the hash of its content, so identical content is stored once and a reference proves what was saved.
+
+See: [research-operations](techniques/research-operations.md)
+
+### Continuous contract
+
+*Also: back-adjustment*
+
+A single price series stitched from successive futures contracts; ratio or difference adjustment removes the gap at each roll so that returns are right.
+
+See: [futures-and-commodity-curves](techniques/futures-and-commodity-curves.md)
+
+### Copula
+
+A function that joins separate return distributions into a joint one, so that the dependence can be modelled apart from the marginals. Tail dependence, how often assets crash together, depends on the copula family.
+
+See: [tail-risk-evt-and-copulas](techniques/tail-risk-evt-and-copulas.md)
+
 ### Covariance matrix
 
 A table of how every pair of assets' returns vary together; the foundation of portfolio risk.
 
 See: [volatility-forecasting](techniques/volatility-forecasting.md)
+
+### Covered interest parity
+
+The no-arbitrage relation that the forward exchange rate equals spot adjusted by the interest differential, so a forward discount is the rate difference.
+
+See: [fx-carry-and-momentum](techniques/fx-carry-and-momentum.md)
 
 ### CRPS
 
@@ -251,6 +313,12 @@ See: [dynamic-covariance](techniques/dynamic-covariance.md)
 The probability that a strategy's Sharpe exceeds what the best of N random trials would show, given sample length, skew and kurtosis.
 
 See: [multiple-testing](techniques/multiple-testing.md)
+
+### Delta hedging
+
+Trading the underlying so that the option position's delta is close to zero; the remaining profit comes from gamma and the difference between realised and implied volatility.
+
+See: [option-strategies-and-vol-premium](techniques/option-strategies-and-vol-premium.md)
 
 ### Diebold-Mariano test
 
@@ -298,6 +366,14 @@ Randomly zeroing parts of a network during training to reduce overfitting; kept 
 
 See: [bayesian-deep-learning](techniques/bayesian-deep-learning.md)
 
+### Duration
+
+*Also: DV01, convexity*
+
+A bond's sensitivity to yield: duration is the percentage price change per unit yield, DV01 the dollar change per basis point, and convexity the second-order correction.
+
+See: [yield-curves-and-fixed-income](techniques/yield-curves-and-fixed-income.md)
+
 ### DV01
 
 The change in a bond's value for a one-basis-point move in yield; used to make bond trades neutral to parallel rate moves.
@@ -328,6 +404,12 @@ Uncertainty from not knowing the right model or parameters, as opposed to irredu
 
 See: [bayesian-deep-learning](techniques/bayesian-deep-learning.md)
 
+### Event study
+
+A method that measures the abnormal return of assets around the date of an event, relative to what a model fitted on an earlier window expected, and tests whether the average is more than noise.
+
+See: [event-studies](techniques/event-studies.md)
+
 ### Evolution strategies
 
 *Also: ES*
@@ -350,17 +432,45 @@ The weighted average gap between forecast probability and observed frequency acr
 
 See: [calibration](techniques/calibration.md)
 
+### Expected shortfall
+
+*Also: ES, CVaR*
+
+The average loss on the days when the loss exceeds the value-at-risk level. It looks at how bad the tail is, not only where it starts.
+
+See: [tail-risk-evt-and-copulas](techniques/tail-risk-evt-and-copulas.md)
+
+### Extreme value theory
+
+*Also: EVT*
+
+Statistics of the far tail. Losses above a high threshold follow approximately a generalised Pareto distribution, which gives value-at-risk and expected shortfall beyond the range of the sample.
+
+See: [tail-risk-evt-and-copulas](techniques/tail-risk-evt-and-copulas.md)
+
 ### Factor
 
 A systematic source of return shared across many assets, such as market, size, value, momentum.
 
 See: [attribution](techniques/attribution.md), [cross-sectional-factors](techniques/cross-sectional-factors.md)
 
+### Fama-MacBeth regression
+
+Run one cross-sectional regression of returns on characteristics per date, then average the slopes over time and use the time-series standard error: the standard way to estimate a priced factor or characteristic premium.
+
+See: [regression-and-panel-statistics](techniques/regression-and-panel-statistics.md)
+
 ### Forecast
 
 In this repo, an object with a mean, a standard deviation and a confidence, rather than a single number.
 
 See: [probabilistic-forecasting](techniques/probabilistic-forecasting.md), [plugin-framework](techniques/plugin-framework.md)
+
+### Forward premium puzzle
+
+The empirical finding that high-interest currencies do not depreciate by the interest differential, as uncovered interest parity says, so the carry trade has earned a premium.
+
+See: [fx-carry-and-momentum](techniques/fx-carry-and-momentum.md)
 
 ### Foundation model
 
@@ -392,6 +502,12 @@ A distribution made of several weighted normal distributions; used to combine fo
 
 See: [forecast-combination](techniques/forecast-combination.md)
 
+### Gradient boosting
+
+An ensemble of shallow trees fitted one after another, each correcting the errors of the previous; the default learner for tabular data and prone to overfitting at low signal-to-noise.
+
+See: [gradient-boosting-and-representation-learning](techniques/gradient-boosting-and-representation-learning.md)
+
 ### Graph attention network
 
 *Also: GAT*
@@ -399,6 +515,20 @@ See: [forecast-combination](techniques/forecast-combination.md)
 A neural network that lets each node of a graph weight its neighbours' features by learned attention.
 
 See: [graph-neural-networks](techniques/graph-neural-networks.md)
+
+### Greeks
+
+Sensitivities of an option's value: delta to the underlying, gamma to delta, vega to volatility, theta to time and rho to interest rates.
+
+See: [option-pricing-and-greeks](techniques/option-pricing-and-greeks.md)
+
+### HAC standard errors
+
+*Also: Newey-West*
+
+A covariance estimate for regression coefficients that stays valid when the errors are autocorrelated and heteroskedastic, as they are for overlapping or serially dependent returns. Newey-West is the usual Bartlett-weighted version.
+
+See: [regression-and-panel-statistics](techniques/regression-and-panel-statistics.md)
 
 ### Half-life
 
@@ -435,6 +565,18 @@ See: [hierarchical-risk-parity](techniques/hierarchical-risk-parity.md)
 The price movement caused by your own trading, approximated here as proportional to volatility times the square root of size over volume.
 
 See: [execution-and-impact](techniques/execution-and-impact.md)
+
+### Implied volatility
+
+The volatility that makes an option model match the market price of the option. The implied volatilities of all strikes and expiries form the volatility surface.
+
+See: [option-pricing-and-greeks](techniques/option-pricing-and-greeks.md), [volatility-surfaces](techniques/volatility-surfaces.md)
+
+### Importance sampling
+
+A Monte Carlo method for rare events: draw from a distribution that makes the event common and reweight each draw by the likelihood ratio.
+
+See: [resampling-and-monte-carlo](techniques/resampling-and-monte-carlo.md)
 
 ### Information coefficient
 
@@ -504,6 +646,18 @@ A formula that blends the sample covariance matrix with a structured target to r
 
 See: [mean-variance-and-shrinkage](techniques/mean-variance-and-shrinkage.md)
 
+### Limit order book
+
+The list of resting buy and sell orders at each price. Its depth and the arrival of market orders determine spread and price impact.
+
+See: [market-making-and-order-flow](techniques/market-making-and-order-flow.md)
+
+### Local volatility
+
+The instantaneous volatility, a function of price and time, that reproduces all vanilla option prices; computed from the surface with Dupire's formula.
+
+See: [volatility-surfaces](techniques/volatility-surfaces.md)
+
 ### Log loss
 
 The negative average log probability assigned to what actually happened; a proper score for probability forecasts.
@@ -524,6 +678,20 @@ A persistent state of the market (such as high volatility or inflation) in which
 
 See: [regime-detection](techniques/regime-detection.md)
 
+### Markov chain
+
+A model in which the next state depends only on the current one. Transition probabilities give expected holding times and the long-run share of time in each state.
+
+See: [bayesian-inference-and-markov-models](techniques/bayesian-inference-and-markov-models.md)
+
+### MCMC
+
+*Also: Markov chain Monte Carlo*
+
+A way to sample from a posterior distribution that has no closed form by running a chain whose long-run distribution is the posterior. R-hat and the effective sample size say whether it has converged.
+
+See: [bayesian-inference-and-markov-models](techniques/bayesian-inference-and-markov-models.md)
+
 ### Mean-variance optimisation
 
 *Also: MVO*
@@ -540,6 +708,18 @@ The smallest true effect a test detects with a chosen probability (usually 80%) 
 
 See: [power-analysis](techniques/power-analysis.md)
 
+### Minnesota prior
+
+A prior for vector autoregressions that shrinks every coefficient toward a random walk, more strongly for distant lags and for other variables' lags. It makes large systems estimable on short samples.
+
+See: [time-series-econometrics](techniques/time-series-econometrics.md), [econometric-strategies](techniques/econometric-strategies.md)
+
+### Model registry
+
+A versioned record of trained models with their parameters, data, code version, metrics and lifecycle stage, so that any production number can be traced to its origin.
+
+See: [research-operations](techniques/research-operations.md)
+
 ### Momentum
 
 The tendency of recent winners to keep winning over the following weeks to months.
@@ -553,6 +733,12 @@ See: [momentum](techniques/momentum.md)
 A neural forecaster of stacked fully connected blocks that each model part of a series and subtract it before the next.
 
 See: [deep-time-series-models](techniques/deep-time-series-models.md)
+
+### Nelson-Siegel
+
+A three-factor model of the yield curve whose coefficients are the level, slope and curvature. The dynamic version forecasts the betas as a VAR.
+
+See: [yield-curves-and-fixed-income](techniques/yield-curves-and-fixed-income.md)
 
 ### Net return
 
@@ -579,6 +765,14 @@ See: [execution-and-impact](techniques/execution-and-impact.md)
 Updating a model after each new observation instead of training once.
 
 See: [online-learning](techniques/online-learning.md)
+
+### Order-flow imbalance
+
+*Also: OFI*
+
+The net change in resting buy and sell interest at the best quotes over an interval. It explains much of short-horizon mid-price change.
+
+See: [market-making-and-order-flow](techniques/market-making-and-order-flow.md)
 
 ### Overfitting
 
@@ -664,6 +858,26 @@ The probability that the true Sharpe exceeds a threshold, given the estimate's u
 
 See: [multiple-testing](techniques/multiple-testing.md)
 
+### Probability of ruin
+
+The probability that wealth ever falls to a given fraction of its starting level. It has closed forms for Brownian motion and depends on leverage, drift and volatility.
+
+See: [drawdown-ruin-and-kelly](techniques/drawdown-ruin-and-kelly.md)
+
+### Purged cross-validation
+
+*Also: CPCV*
+
+Cross-validation for overlapping labels: training rows whose labels overlap the test period are removed, with an embargo after it. The combinatorial version builds many out-of-sample paths.
+
+See: [research-operations](techniques/research-operations.md)
+
+### QLIKE
+
+A loss function for comparing variance forecasts that is robust to noise in the realised-variance proxy; lower is better.
+
+See: [time-series-econometrics](techniques/time-series-econometrics.md)
+
 ### Reality Check
 
 *Also: SPA*
@@ -684,6 +898,20 @@ A plot of observed frequency against forecast probability; the diagonal is perfe
 
 See: [calibration](techniques/calibration.md)
 
+### Representation learning
+
+*Also: contrastive learning, autoencoder*
+
+Learning a compact description of the inputs without labels, by reconstructing them (autoencoder) or by pulling similar views together and pushing others apart (contrastive learning).
+
+See: [gradient-boosting-and-representation-learning](techniques/gradient-boosting-and-representation-learning.md)
+
+### Reservation price
+
+The price at which a market maker is indifferent to trading, shifted from the mid-price against its inventory so that it tends to unwind a position.
+
+See: [market-making-and-order-flow](techniques/market-making-and-order-flow.md)
+
 ### Ridge regression
 
 Linear regression with a penalty on the size of coefficients, which stabilises estimates when predictors are noisy or correlated.
@@ -701,6 +929,18 @@ See: [risk-parity](techniques/risk-parity.md)
 Recursive least squares: an exact online update of a linear regression with forgetting.
 
 See: [online-learning](techniques/online-learning.md)
+
+### Roll yield
+
+The return from rolling a futures position when the curve is not flat: positive in backwardation (the next contract is cheaper) and negative in contango.
+
+See: [futures-and-commodity-curves](techniques/futures-and-commodity-curves.md)
+
+### Roll-down
+
+The price gain from a bond ageing along an upward-sloping curve to a lower yield, if the curve does not move. Added to coupon carry it gives the expected holding return.
+
+See: [yield-curves-and-fixed-income](techniques/yield-curves-and-fixed-income.md)
 
 ### Shapley value
 
@@ -752,11 +992,33 @@ Testing only on assets that still exist, which overstates past performance.
 
 See: [data-integrity](techniques/data-integrity.md)
 
+### SVI
+
+*Also: SSVI*
+
+The stochastic volatility inspired parametrisation of total implied variance in log-moneyness, with a surface version (SSVI) whose parameters have simple conditions for no static arbitrage.
+
+See: [volatility-surfaces](techniques/volatility-surfaces.md)
+
+### Tail dependence
+
+The probability that one asset is in its extreme tail given that another is. A Gaussian copula has none; Student-t and Clayton copulas do.
+
+See: [tail-risk-evt-and-copulas](techniques/tail-risk-evt-and-copulas.md)
+
 ### Tear sheet
 
 A one-page summary of a strategy with a rule-based red-flag list.
 
 See: [plugin-framework](techniques/plugin-framework.md)
+
+### Temporal Fusion Transformer
+
+*Also: TFT*
+
+A forecasting network that combines variable selection, gated residual blocks, a recurrent encoder and interpretable attention.
+
+See: [deep-time-series-models](techniques/deep-time-series-models.md)
 
 ### Tracking error
 
@@ -772,11 +1034,25 @@ A neural network built on attention, now standard for sequences.
 
 See: [deep-time-series-models](techniques/deep-time-series-models.md)
 
+### Tree-structured Parzen estimator
+
+*Also: TPE*
+
+A hyperparameter search that models good and bad trials with density estimates and proposes the candidate with the highest ratio of the two.
+
+See: [research-operations](techniques/research-operations.md)
+
 ### Turnover
 
 The amount traded per year as a multiple of the portfolio; it drives trading cost.
 
 See: [backtest-engine-and-costs](techniques/backtest-engine-and-costs.md)
+
+### Unit root
+
+A series that accumulates shocks forever (a random walk) instead of returning to a mean. Prices usually have one, returns do not, and regressing one unit-root series on another can give a spurious relationship.
+
+See: [unit-roots-and-cointegration](techniques/unit-roots-and-cointegration.md)
 
 ### Value at risk
 
@@ -785,6 +1061,34 @@ See: [backtest-engine-and-costs](techniques/backtest-engine-and-costs.md)
 A quantile of the loss distribution: the loss exceeded only (1 - confidence) of the time.
 
 See: [var-cvar-and-backtests](techniques/var-cvar-and-backtests.md)
+
+### Variance ratio
+
+The variance of q-period returns divided by q times the one-period variance. Above one signals momentum, below one mean reversion, and one a random walk.
+
+See: [unit-roots-and-cointegration](techniques/unit-roots-and-cointegration.md)
+
+### Variance risk premium
+
+*Also: VRP*
+
+The amount by which implied variance exceeds the variance later realised. It is positive on average in equity indices and is what short-volatility strategies collect, with crash risk.
+
+See: [option-strategies-and-vol-premium](techniques/option-strategies-and-vol-premium.md), [volatility-surfaces](techniques/volatility-surfaces.md)
+
+### Vector autoregression
+
+*Also: VAR*
+
+A model in which every series in a vector depends on the lags of all of them. It gives forecasts, impulse responses and Granger tests, and needs shrinkage when there are many series.
+
+See: [time-series-econometrics](techniques/time-series-econometrics.md)
+
+### Volatility surface
+
+Implied volatility as a function of strike and expiry. It must satisfy no-arbitrage conditions; SVI and SSVI are parametric forms that can.
+
+See: [volatility-surfaces](techniques/volatility-surfaces.md)
 
 ### Volatility targeting
 

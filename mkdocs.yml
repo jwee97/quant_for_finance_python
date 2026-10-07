@@ -21,6 +21,10 @@ nav:
       - Glossary: glossary.md
       - Chapter map: chapter_map.md
   - Technique guides: techniques/index.md
+  - Architecture: architecture.md
+  - Research survey: research_survey.md
+  - Capability matrix: capability_matrix.md
+  - Institutional findings: institutional_findings.md
   - Strategy cards: strategies/index.md
   - Strategy survey: strategy_survey.md
   - What was built: roadmap_coverage.md

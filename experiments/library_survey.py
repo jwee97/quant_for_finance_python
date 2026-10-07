@@ -56,14 +56,15 @@ def render(table: pd.DataFrame, first: str, last: str, years: float) -> str:
         "# Strategy survey: every rule-based strategy, once, on the same 15 ETFs", "",
         f"{n} strategies, the platform's 15 ETFs, {first} to {last} ({years:.1f} years), net of costs. **This is a survey, not a study.** Nothing was tuned: every strategy uses its default parameters,",
         "rules are traded as written (no calibration against history) at the rebalance frequency each rule declares (daily, weekly or monthly): per-asset rules such as a pullback entry or a trend filter run as independent sleeves with an equal slice of capital each and cash when flat, selection and cross-sectional rules as a ranked book; costs are the platform's 10 bps per unit traded,",
-        f"and the deflated Sharpe probability counts all {n} strategies as trials. Equal weight over the same ETFs earns a net Sharpe of about {eq:.2f} on these dates.", "",
+        f"and the deflated Sharpe probability counts all {n} strategies as trials. Equal weight over the same ETFs earns a net Sharpe of about {eq:.2f} (the median over the windows below). **Each strategy starts on a different day** (it needs history before its first signal), so compare it with the *Equal weight, same dates* column, not with a single number.", "",
         "How to read it: with this many strategies, some at the top are there by luck. Look for a rule that beats equal weight **and** has a deflated probability near or above 0.95, then ask whether its mechanism is plausible and "
         "whether it survives your own tickers, a different period and a higher cost. Several rules (calendar effects, single-stock factors) are weaker on a 15-ETF universe than in the papers that made them famous.", "",
-        "| Strategy | Family | Net Sharpe | CAGR | Volatility | Max drawdown | Turnover (x/yr) | Deflated Sharpe | First day |", "|---|---|---|---|---|---|---|---|---|"]
+        "| Strategy | Family | Net Sharpe | Equal weight, same dates | CAGR | Volatility | Max drawdown | Turnover (x/yr) | Deflated Sharpe | First day |", "|---|---|---|---|---|---|---|---|---|---|"]
     for _, r in ok.iterrows():
         dsr = "n/a" if pd.isna(r["deflated_sharpe_probability"]) else f"{r['deflated_sharpe_probability']:.2f}"
         sharpe = "n/a" if pd.isna(r["net_sharpe"]) else f"{r['net_sharpe']:+.2f}"
-        lines.append(f"| [{r['strategy']}](strategies/{r['strategy']}.md) | {r['family']} | {sharpe} | {r['cagr']:.1%} | {r['volatility']:.1%} | {r['max_drawdown']:.1%} | {r['turnover']:.1f} | {dsr} | {r['start']} |")
+        ew = "n/a" if pd.isna(r["equal_weight_sharpe"]) else f"{r['equal_weight_sharpe']:+.2f}"
+        lines.append(f"| [{r['strategy']}](strategies/{r['strategy']}.md) | {r['family']} | {sharpe} | {ew} | {r['cagr']:.1%} | {r['volatility']:.1%} | {r['max_drawdown']:.1%} | {r['turnover']:.1f} | {dsr} | {r['start']} |")
     failed = table[table["error"] != ""]
     if len(failed):
         lines += ["", "Could not run on this bundle:", ""] + [f"- `{r['strategy']}`: {r['error']}" for _, r in failed.iterrows()]

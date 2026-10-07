@@ -4,7 +4,7 @@
 
 ## What it bets on
 
-A small neural network (patch transformer, MLP-mixer, N-BEATS, N-HiTS or TimeMixer-style) on the volatility-normalised 252-day return window, refit yearly
+A small neural network (patch transformer, MLP-mixer, N-BEATS, N-HiTS, TimeMixer-style or Temporal Fusion Transformer) on the volatility-normalised 252-day return window, refit yearly
 
 If a flexible sequence model finds structure in the last year of returns that a ridge on twelve features cannot, it should beat the ridge out of sample.
 Stage 27 and 33 found it did not; the plug-in makes that test repeatable on any bundle.

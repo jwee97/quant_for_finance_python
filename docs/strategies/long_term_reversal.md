@@ -19,6 +19,14 @@ Prices revert toward fundamental value over multi-year horizons, so a five-year 
 quant backtest --model long_term_reversal --tearsheet
 ```
 
+## In the strategy survey
+
+Default parameters on the 15 ETFs, net of costs, traded as written: net Sharpe -0.37, CAGR -1.4%, volatility 3.5%, max drawdown -20.5%, turnover 3.6 times a year, deflated Sharpe probability 0.00 counting every strategy in the survey as a trial. One run, not a test: see [the survey](../strategy_survey.md) for how to read it.
+
 ## Caveats
 
 Ranks 15 ETFs across asset classes, so the ranking is partly a ranking of asset classes.
+
+## Learn more
+
+[Cross-asset carry, basis momentum and long-term reversal](../techniques/cross-asset-carry.md)

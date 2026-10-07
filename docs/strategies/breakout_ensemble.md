@@ -23,7 +23,7 @@ This rule declares a weekly rebalance; pass `execution: {rebalance: monthly}` in
 
 ## In the strategy survey
 
-Default parameters on the 15 ETFs, net of costs, traded as written: net Sharpe +0.16, CAGR 0.7%, volatility 5.2%, max drawdown -10.4%, turnover 9.5 times a year, deflated Sharpe probability 0.05 counting every strategy in the survey as a trial. One run, not a test: see [the survey](../strategy_survey.md) for how to read it.
+Default parameters on the 15 ETFs, net of costs, traded as written: net Sharpe +0.16, CAGR 0.7%, volatility 5.2%, max drawdown -10.4%, turnover 9.5 times a year, deflated Sharpe probability 0.04 counting every strategy in the survey as a trial. One run, not a test: see [the survey](../strategy_survey.md) for how to read it.
 
 ## Learn more
 

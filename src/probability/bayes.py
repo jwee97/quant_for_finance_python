@@ -128,10 +128,11 @@ def bayes_factor(logml_a: float, logml_b: float) -> float:
 
 # ------------------------------------------------------------------------------------------------------------------------ Sharpe
 def bayesian_sharpe(returns, n_samples: int = 4000, annualisation: float = 252.0, seed: int = 0, burn: int = 2500) -> dict:
-    """Posterior of the Sharpe ratio under a Student-t likelihood (heavy tails) with weak priors, sampled by MCMC on ``(mu, log sigma, log (nu - 1))``.
+    """Posterior of the Sharpe ratio under a Student-t likelihood (heavy tails) with weak priors, sampled by MCMC on ``(mu, log sigma, log (nu - 2))``.
 
     The returns are standardised first so the sampler works on an O(1) scale whatever the units. Priors: ``mu ~ N(0, 10^2)`` and ``log sigma ~ N(0, 5^2)`` on
-    the standardised scale, ``nu - 1 ~ Exponential(mean 29)``. Returns the draws of the ANNUALISED Sharpe ratio, its HPD interval, ``P(Sharpe > 0)`` and the
+    the standardised scale (``sigma`` is the t SCALE), ``nu - 2 ~ Exponential(mean 28)``: the variance must exist for a Sharpe ratio to mean anything, so ``nu > 2``,
+    and the Sharpe ratio is ``mu`` over the standard deviation ``sigma sqrt(nu / (nu - 2))``, not over the scale. Returns the draws of the ANNUALISED Sharpe ratio, its HPD interval, ``P(Sharpe > 0)`` and the
     convergence diagnostics (check ``rhat < 1.05`` and ``ess``).
     """
     r = np.asarray(returns, dtype=float)
@@ -143,16 +144,17 @@ def bayesian_sharpe(returns, n_samples: int = 4000, annualisation: float = 252.0
         mu, ls, lnu = p
         if not -3 < lnu < 6 or not -5 < ls < 5:
             return -np.inf
-        nu = 1.0 + np.exp(lnu)
-        return sps.t.logpdf(z, nu, mu, np.exp(ls)).sum() + sps.norm.logpdf(mu, 0, 10.0) + sps.norm.logpdf(ls, 0.0, 5.0) + sps.expon.logpdf(nu - 1.0, scale=29.0) + lnu
+        nu = 2.0 + np.exp(lnu)
+        return sps.t.logpdf(z, nu, mu, np.exp(ls)).sum() + sps.norm.logpdf(mu, 0, 10.0) + sps.norm.logpdf(ls, 0.0, 5.0) + sps.expon.logpdf(nu - 2.0, scale=28.0) + lnu
 
-    out = metropolis_hastings(logpost, [0.0, 0.0, np.log(29.0)], n_samples=n_samples // 4 + 1, n_chains=4, burn=burn, scale=0.15, seed=seed)
+    out = metropolis_hastings(logpost, [0.0, 0.0, np.log(28.0)], n_samples=n_samples // 4 + 1, n_chains=4, burn=burn, scale=0.15, seed=seed)
     d = out["samples"]
     mu = d[:, 0] * s0 + m0
-    sigma = np.exp(d[:, 1]) * s0
+    nu = 2.0 + np.exp(d[:, 2])
+    sigma = np.exp(d[:, 1]) * s0 * np.sqrt(nu / (nu - 2.0))                    # standard deviation of the t, not its scale
     sr = mu / sigma * np.sqrt(annualisation)
     return {"draws": sr, "mean": float(sr.mean()), "median": float(np.median(sr)), "hpd95": hpd_interval(sr), "prob_positive": float((sr > 0).mean()), "rhat": out["rhat"],
-            "ess": out["ess"], "nu_median": float(1.0 + np.median(np.exp(d[:, 2])))}
+            "ess": out["ess"], "nu_median": float(2.0 + np.median(np.exp(d[:, 2])))}
 
 
 def compare_sharpe(a, b, n_samples: int = 4000, annualisation: float = 252.0, seed: int = 0) -> dict:

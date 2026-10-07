@@ -21,7 +21,7 @@ quant backtest --model adaptive_asset_allocation --tearsheet
 
 ## In the strategy survey
 
-Default parameters on the 15 ETFs, net of costs, traded as written: net Sharpe +0.55, CAGR 6.0%, volatility 12.0%, max drawdown -30.5%, turnover 9.3 times a year, deflated Sharpe probability 0.47 counting every strategy in the survey as a trial. One run, not a test: see [the survey](../strategy_survey.md) for how to read it.
+Default parameters on the 15 ETFs, net of costs, traded as written: net Sharpe +0.55, CAGR 6.0%, volatility 12.0%, max drawdown -30.5%, turnover 9.3 times a year, deflated Sharpe probability 0.46 counting every strategy in the survey as a trial. One run, not a test: see [the survey](../strategy_survey.md) for how to read it.
 
 ## Learn more
 

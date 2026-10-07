@@ -11,6 +11,10 @@ scikit-learn>=1.3
 # Volatility modelling (Ch. 20 GARCH extension)
 arch>=6.2
 
+# Gradient-boosting learners for the ml_trees model (Generation 6); CatBoost is optional: pip install ".[boosting]"
+lightgbm>=4.0
+xgboost>=2.0
+
 # Regime detection (Generation 2): hidden Markov models
 hmmlearn>=0.3
 

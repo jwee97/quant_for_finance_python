@@ -12,6 +12,9 @@
     quant sql --db runs "SELECT ..."      query your own runs
     quant capacity --model momentum       net Sharpe by assets under management
     quant docs build                      regenerate the strategy cards, chapter map and findings digest
+    quant tune --model tsmom --space models.0.params.lookback=int:21:504 --trials 24   a hyperparameter search that counts its trials and deflates the winner
+    quant benchmark --models tsmom momentum   score time and peak memory of models on the default bundle
+    quant registry list                   versioned models: stages, lineage, promotion
 """
 
 from __future__ import annotations
@@ -176,6 +179,77 @@ def cmd_capacity(args, config) -> int:
     return 0
 
 
+def _param_from_text(text: str):
+    """``int:21:504``, ``float:0:1``, ``log:1e-4:1`` or ``cat:a,b,c`` -> a search distribution."""
+    from .ops.hpo import Categorical, Float, Int, LogFloat
+
+    kind, _, rest = text.partition(":")
+    if kind == "cat":
+        return Categorical(*[_coerce(v) for v in rest.split(",")])
+    low, _, high = rest.partition(":")
+    factory = {"int": Int, "float": Float, "log": LogFloat}.get(kind)
+    if factory is None or not low or not high:
+        raise SystemExit(f"search space '{text}': use int:LOW:HIGH, float:LOW:HIGH, log:LOW:HIGH or cat:A,B,C")
+    cast = int if kind == "int" else float
+    return factory(cast(low), cast(high))
+
+
+def cmd_tune(args, config) -> int:
+    """A hyperparameter search over a one-model strategy or a YAML spec. Every trial is a full pipeline run and a counted look at the data; the report deflates the winner."""
+    from .ops.hpo import tune_pipeline
+
+    spec = PipelineSpec.from_yaml(args.spec).to_dict() if args.spec else _spec_from_args(args)
+    space = {}
+    for item in args.space:
+        path, _, text = item.partition("=")
+        space[path] = _param_from_text(text)
+    study = tune_pipeline(spec, _bundle(config, args.prices), config, space, n_trials=args.trials, method=args.method, n_blocks=args.blocks, seed=args.seed)
+    frame = study.to_frame().sort_values("value", ascending=False)
+    _print_frame(frame.head(args.top).reset_index(drop=True))
+    best = study.best
+    print(f"\nbest of {study.n_trials} trials: {best.params} (value {best.value:.3f})")
+    report = study.selection_report()
+    for key in ("best_annual_sharpe", "deflated_sharpe_probability", "pbo", "mean_oos_sharpe_of_is_winner", "romano_wolf_p_best", "survivors_at_5pct"):
+        if key in report:
+            print(f"  {key}: {report[key]:.3f}")
+    return 0
+
+
+def cmd_benchmark(args, config) -> int:
+    from .ops.profiling import benchmark_models
+
+    table = benchmark_models(_bundle(config, args.prices), names=args.models, repeats=args.repeats)
+    _print_frame(table.reset_index() if table.index.name else table)
+    if args.csv:
+        table.to_csv(args.csv)
+        print(f"written to {args.csv}")
+    return 0
+
+
+def cmd_registry(args, config) -> int:
+    from .ops.store import ModelRegistry
+
+    registry = ModelRegistry(config.root / "data" / "registry" / "models.db")
+    if args.action == "list":
+        table = registry.versions(args.name)
+        print("no registered models" if table.empty else table.to_string(index=False))
+    elif args.action == "register-run":
+        if not args.run_id:
+            raise SystemExit("register-run needs --run-id")
+        version = registry.register_run(ExperimentManager(config), args.run_id, name=args.name)
+        print(f"registered version {version}")
+    elif args.action == "promote":
+        if not (args.name and args.version and args.stage):
+            raise SystemExit("promote needs --name, --version and --stage")
+        registry.promote(args.name, args.version, args.stage)
+        print(f"{args.name} v{args.version} -> {args.stage}")
+    elif args.action == "lineage":
+        if not args.name:
+            raise SystemExit("lineage needs --name")
+        print(pd.DataFrame(registry.lineage(args.name, args.version)).to_string(index=False))
+    return 0
+
+
 def cmd_docs(args, config) -> int:
     from .framework.docs import build_docs
     for path in build_docs(config):
@@ -302,6 +376,18 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--grid", action="append", required=True, help="dotted.path=v1,v2,... repeatable, e.g. models.0.params.lookback=63,126,252")
     p.add_argument("--backend", default="joblib", choices=["serial", "joblib", "dask", "ray"]); p.add_argument("--jobs", type=int, default=-1)
     p.add_argument("--force", action="store_true"); p.add_argument("--no-validate", action="store_true"); p.set_defaults(func=cmd_sweep)
+    p = sub.add_parser("tune", help="hyperparameter search that counts its trials and deflates the winner")
+    p.add_argument("--spec"); p.add_argument("--model"); p.add_argument("--param", action="append"); p.add_argument("--regime"); p.add_argument("--combine"); p.add_argument("--allocator")
+    p.add_argument("--alloc-param", action="append"); p.add_argument("--name"); p.add_argument("--aum", type=float); p.add_argument("--prices"); p.add_argument("--group")
+    p.add_argument("--space", action="append", required=True, help="dotted.path=int:LOW:HIGH | float:LOW:HIGH | log:LOW:HIGH | cat:A,B,C, repeatable")
+    p.add_argument("--trials", type=int, default=20); p.add_argument("--method", default="tpe", choices=["random", "grid", "tpe", "halving"])
+    p.add_argument("--blocks", type=int, default=4, help="average the Sharpe ratio over this many contiguous blocks and penalise their dispersion (1: the plain Sharpe)")
+    p.add_argument("--seed", type=int, default=0); p.add_argument("--top", type=int, default=8); p.set_defaults(func=cmd_tune)
+    p = sub.add_parser("benchmark", help="score time and peak memory of registered models on the default bundle")
+    p.add_argument("--models", nargs="*"); p.add_argument("--repeats", type=int, default=1); p.add_argument("--prices"); p.add_argument("--csv"); p.set_defaults(func=cmd_benchmark)
+    p = sub.add_parser("registry", help="the model registry: versions, stages, lineage")
+    p.add_argument("action", choices=["list", "register-run", "promote", "lineage"]); p.add_argument("--name"); p.add_argument("--version", type=int)
+    p.add_argument("--stage", choices=["staging", "production", "archived"]); p.add_argument("--run-id"); p.set_defaults(func=cmd_registry)
     return parser
 
 
