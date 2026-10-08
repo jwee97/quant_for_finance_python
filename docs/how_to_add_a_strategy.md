@@ -117,7 +117,11 @@ If the strategy *is* a set of weights, as in a duration-neutral curve steepener,
 
 ## Your own tickers
 
-In the dashboard, add any Yahoo Finance symbol to the Tickers list: `NVDA`, `BTC-USD`, `^GSPC`, `EURUSD=X`. New tickers are downloaded as split- and dividend-adjusted prices and cached under `data/user/prices` for a day. Give each new ticker an asset class if you use macro strategies that tilt by class. From the command line, `quant backtest --prices my_prices.csv ...` takes a wide CSV of prices.
+In the dashboard, add any symbol your data source has to the Tickers list: on Yahoo Finance `NVDA`, `BTC-USD`, `^GSPC`, `EURUSD=X` (downloaded as split- and dividend-adjusted prices and cached under `data/user/prices` for a day), or `AAPL`, `0700.HK`, `BTC-USD` on iTick if you have an iTick key (see [the dashboard guide](dashboard.md#data-sources-yahoo-finance-or-itick)). Give each new ticker an asset class if you use macro strategies that tilt by class. From the command line, `quant backtest --prices my_prices.csv ...` takes a wide CSV of prices.
+
+### How many tickers
+
+Set `position_mode = "time_series"` if each ticker is traded on its own signal: the strategy then runs on a single ticker. The default, `"cross_sectional"`, ranks tickers against each other and needs at least two; the dashboard disables Run (and the server refuses) when you have fewer. If the idea needs more than the mode implies, say so with `min_assets = 3` in the class body (a pair needs 2, a basket 3). `quant list models` and the dashboard's strategy list show what each strategy needs.
 
 ## What you get for free
 

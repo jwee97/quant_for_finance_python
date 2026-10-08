@@ -10,7 +10,9 @@ import pytest
 from src.utils.config import load_config
 from src.webapp import server
 from src.webapp.api import App
-from src.webapp.universe import TickerStore, UniverseBuilder
+from src.webapp.providers import ITickProvider, RateLimiter
+from src.webapp.universe import TickerStore, UniverseBuilder, itick_source
+from tests.fake_itick import KEY, FakeClock, FakeITick
 from tests.test_webapp import _default, _fetch
 
 sync_api = pytest.importorskip("playwright.sync_api")
@@ -30,6 +32,31 @@ def live(tmp_path_factory):
     config = load_config()
     store = TickerStore(tmp_path_factory.mktemp("prices"), fetch=_fetch)
     app = App(config, builder=UniverseBuilder(config, store, default_loader=_default), root=config.root)
+    running = server.start(app, "127.0.0.1", 0)
+    yield running
+    running.stop()
+
+
+def _app_with_itick(tmp, key):
+    config = load_config()
+    fake, clock = FakeITick(), FakeClock()
+    provider = ITickProvider(key=key, base_url="https://api-free.itick.org", limiter=RateLimiter(5, clock=clock.now, sleep=clock.sleep), transport=fake, sleep=clock.sleep)
+    builder = UniverseBuilder(config, TickerStore(tmp / "yahoo", fetch=_fetch), default_loader=_default, sources={"itick": itick_source(tmp, provider, tmp / "itick")})
+    return App(config, builder=builder, root=config.root), fake
+
+
+@pytest.fixture(scope="module")
+def live_itick(tmp_path_factory):
+    app, fake = _app_with_itick(tmp_path_factory.mktemp("with_key"), KEY)
+    running = server.start(app, "127.0.0.1", 0)
+    running.fake = fake
+    yield running
+    running.stop()
+
+
+@pytest.fixture(scope="module")
+def live_no_key(tmp_path_factory):
+    app, fake = _app_with_itick(tmp_path_factory.mktemp("without_key"), "")
     running = server.start(app, "127.0.0.1", 0)
     yield running
     running.stop()
@@ -176,7 +203,7 @@ def test_a_resize_redraws_the_charts_at_the_new_width_and_keeps_what_the_reader_
     assert drawdown.locator("table.data").count() == 1, "the table the reader opened is still open"
     assert page.locator(".chartcard .seg button:text-is('Log')").get_attribute("aria-pressed") == "true"
     assert page.locator(".tabsmall button").nth(2).get_attribute("aria-selected") == "true"
-    assert abs(_scroll_y(page) - y) < 120, "the reader stays near where they were"
+    assert abs(_scroll_y(page) - y) < 250, "the reader stays near where they were (a narrower page re-flows the rows of tiles above, so not to the pixel; the bug sent them to 0)"
     page.click("#theme")                                                            # a theme change redraws too, and keeps the same choices
     page.wait_for_timeout(SETTLE_MS)
     assert drawdown.locator("table.data").count() == 1 and page.locator(".tabsmall button").nth(2).get_attribute("aria-selected") == "true"
@@ -244,3 +271,149 @@ def test_the_page_is_usable_on_a_phone(browser, live):
     pg.wait_for_selector(".chip")
     assert pg.evaluate("document.documentElement.scrollWidth") <= 392
     pg.close()
+
+
+# ------------------------------------------------------------------------------------------------------ one ticker, earnings, trades, data sources
+def _only_tickers(page, text):
+    page.click("button:text-is('Clear')")
+    page.fill("input[aria-label='tickers to add']", text)
+    page.click("button:text-is('Add')")
+    page.wait_for_selector(".chip.pending", state="detached", timeout=30_000)
+
+
+def _choose_strategy(page, name, then=None):
+    """Pick a strategy; the page then asks the server what the choice needs (after a short pause), so wait for the Run button to settle into the state the test expects."""
+    page.locator("#s-body select").first.select_option(name)
+    page.wait_for_selector(then, timeout=15_000) if then else page.wait_for_timeout(800)
+
+
+def test_a_strategy_that_ranks_tickers_cannot_be_run_on_one_ticker_and_one_that_trades_each_ticker_can(page):
+    _only_tickers(page, "AAA")
+    assert page.locator("#u-count").inner_text() == "1 ticker"
+    _choose_strategy(page, "momentum", "#run:disabled")
+    assert page.locator("#run").is_disabled() and page.locator("#guard").is_visible()
+    assert "ranks the tickers against each other" in page.inner_text("#guard") and "at least 2 tickers and you have 1" in page.inner_text("#guard")
+    assert "(needs 2+ tickers)" in page.locator("#s-body select").first.locator("option[value='momentum']").inner_text()
+    page.fill("input[aria-label='tickers to add']", "BBB")
+    page.click("button:text-is('Add')")
+    page.wait_for_selector("#run:not(:disabled)", timeout=15_000)
+    assert not page.locator("#run").is_disabled() and not page.locator("#guard").is_visible()                 # a second ticker is enough for a ranking
+    page.click(".chip:has-text('BBB') button")
+    page.wait_for_selector("#run:disabled", timeout=15_000)
+    assert page.locator("#run").is_disabled()
+    _choose_strategy(page, "ma_crossover", "#run:not(:disabled)")
+    assert not page.locator("#run").is_disabled() and not page.locator("#guard").is_visible()
+    assert "Works on each ticker alone" in page.inner_text("#s-body") and "Trades tab" in page.inner_text("#s-body")
+    _run_and_wait(page)
+    assert "1 ticker ·" in page.inner_text(".head .sub") and "buy and hold" in page.inner_text(".kpis")
+    assert page.locator(".kpis .tile").count() == 6 and page.locator(".earnrow .tile").count() == 6
+
+
+def test_the_earnings_and_trades_tabs_show_dollars_round_trips_and_buys_and_sells(page):
+    _only_tickers(page, "AAA")
+    _choose_strategy(page, "ma_crossover")
+    _run_and_wait(page)
+    tabs = page.locator(".tabsmall button")
+    assert tabs.nth(0).inner_text() == "Earnings" and tabs.nth(1).inner_text() == "Trades" and tabs.nth(0).get_attribute("aria-selected") == "true"
+    details = page.locator(".tabsmall").locator("xpath=..")
+    earnings = details.inner_text().lower()                                         # headings are shown in capitals by the style sheet
+    for text in ("Starting capital", "$100,000", "Net profit", "Profitable months", "Trading costs paid", "Deepest fall from a peak", "Profit by calendar year", "Profit by month"):
+        assert text.lower() in earnings, text
+    assert details.locator("svg.chart").count() == 1 and details.locator("table.data").count() >= 6
+    tabs.nth(1).click()
+    page.wait_for_timeout(300)
+    trades = details.inner_text().lower()
+    for text in ("A round trip is one stretch", "Win rate", "Profit factor", "Average days held", "Buys / sells", "Latest buys and sells", "long", "short"):
+        assert text.lower() in trades, text
+    assert details.locator("table.data").count() >= 5
+    assert "Account value from $100,000" in page.inner_text("#results") and page.locator(".earnrow").inner_text().count("$") >= 4
+    page.fill("input[aria-label='tickers to add']", "")
+
+
+def test_the_starting_capital_changes_the_dollar_figures(page):
+    page.locator("#p-body").locator("xpath=ancestor::details").locator("summary").click()
+    page.fill("#p-body input[placeholder^='blank = the AUM']", "50000")
+    _only_tickers(page, "AAA")
+    _choose_strategy(page, "ma_crossover")
+    _run_and_wait(page)
+    assert "$50,000" in page.inner_text(".earnrow") and "Account value from $50,000" in page.inner_text("#results")
+    page.fill("#p-body input[placeholder^='blank = the AUM']", "")
+
+
+def test_a_wrong_symbol_is_refused_in_the_page_without_spoiling_the_others(page):
+    page.click("button:text-is('Clear')")
+    page.fill("input[aria-label='tickers to add']", "AAA, NO$PE, BBB")
+    page.click("button:text-is('Add')")
+    page.wait_for_selector(".chip.pending", state="detached", timeout=30_000)
+    assert page.locator(".chip.bad").count() == 1 and "NO$PE" in page.locator(".chip.bad").inner_text()
+    assert page.locator(".chip:not(.bad)").count() == 2 and "not a valid ticker" in page.inner_text("#u-chips")
+
+
+def test_the_source_menu_offers_yahoo_alone_when_the_app_has_no_other_source(page):
+    assert page.locator("#u-source-select option").all_inner_texts() == ["Yahoo Finance"]
+    assert "No key needed" in page.inner_text("#u-source")
+
+
+@pytest.fixture()
+def page_itick(browser, live_itick):
+    pg = browser.new_page(viewport={"width": 1400, "height": 1000})
+    pg.problems = []
+    pg.on("pageerror", lambda e: pg.problems.append(f"pageerror: {e}"))
+    pg.on("console", lambda m: pg.problems.append(f"console {m.type}: {m.text}") if m.type == "error" else None)
+    pg.goto(live_itick.url)
+    pg.wait_for_selector(".chip")
+    yield pg
+    assert not pg.problems, pg.problems
+    assert KEY not in pg.content() and KEY not in pg.evaluate("JSON.stringify(Object.assign({}, localStorage))")        # the key is nowhere in the page, not even in what it remembers
+    pg.close()
+
+
+def test_choosing_itick_downloads_when_you_run_waits_for_the_limit_and_never_shows_the_key(page_itick, live_itick):
+    pg, fake = page_itick, live_itick.fake
+    assert pg.locator("#u-source-select option").all_inner_texts() == ["Yahoo Finance", "iTick"]
+    pg.select_option("#u-source-select", "itick")
+    assert "5 calls a minute" in pg.inner_text("#u-source") and "ITICK_API_KEY" in pg.inner_text("#u-source")
+    pg.click("button:text-is('Clear')")
+    pg.fill("input[aria-label='tickers to add']", "NVDA, MSFT")
+    pg.click("button:text-is('Add')")
+    pg.wait_for_selector(".chip.pending", state="detached", timeout=30_000)
+    assert fake.calls == [], "adding a ticker must not spend any of the rate-limited calls"
+    assert "↓" in pg.inner_text("#u-chips") and "downloaded when you run" in pg.inner_text("#u-chips") and "calls" in pg.inner_text("#u-chips")
+    pg.click("text=Test the iTick connection")
+    pg.wait_for_selector("#u-source-result:has-text('iTick works')", timeout=30_000)
+    assert len(fake.calls) == 1
+    _choose_strategy(pg, "ma_crossover")
+    _run_and_wait(pg)
+    assert "· iTick ·" in pg.inner_text(".head .sub") and "2 tickers" in pg.inner_text(".head .sub")
+    pg.wait_for_selector("#u-chips .chip:has-text('✓')")
+    assert "↓" not in pg.inner_text("#u-chips") and len(fake.calls) > 4
+    assert set(fake.tokens) == {KEY}
+
+
+@pytest.fixture()
+def page_no_key(browser, live_no_key, monkeypatch):
+    pg = browser.new_page(viewport={"width": 1400, "height": 1000})
+    pg.problems = []
+    pg.on("pageerror", lambda e: pg.problems.append(f"pageerror: {e}"))
+    pg.on("console", lambda m: pg.problems.append(f"console {m.type}: {m.text}") if m.type == "error" else None)
+    pg.goto(live_no_key.url)
+    pg.wait_for_selector(".chip")
+    yield pg
+    assert not pg.problems, pg.problems
+    pg.close()
+
+
+def test_without_a_key_the_page_says_how_to_set_one_up_and_refuses_the_download(page_no_key, monkeypatch):
+    monkeypatch.delenv("ITICK_API_KEY", raising=False)
+    pg = page_no_key
+    assert pg.locator("#u-source-select option").all_inner_texts() == ["Yahoo Finance", "iTick (not set up)"]
+    pg.select_option("#u-source-select", "itick")
+    text = pg.inner_text("#u-source")
+    assert "ITICK_API_KEY" in text and "Secrets" in text and "never sent to this page" in text and pg.locator("text=Test the iTick connection").count() == 0
+    pg.click("button:text-is('Clear')")
+    pg.fill("input[aria-label='tickers to add']", "NVDA")
+    pg.click("button:text-is('Add')")
+    pg.wait_for_selector(".chip.pending", state="detached", timeout=30_000)
+    assert pg.locator(".chip.bad").count() == 1 and "not set up" in pg.inner_text("#u-chips")
+    pg.select_option("#u-source-select", "yahoo")                                  # Yahoo does not need it: the same ticker is checked again against the other source
+    pg.wait_for_selector(".chip.pending", state="detached", timeout=30_000)

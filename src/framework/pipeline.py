@@ -113,6 +113,19 @@ def _position_mode(models: list) -> str:
     return modes.pop() if len(modes) == 1 else "cross_sectional"
 
 
+def allocator_choice(allocation: dict | None, models: list) -> tuple[str, dict]:
+    """The allocator a spec ends up with, and its parameters: the one named in ``allocation``, else the model's own weights (a structured model), else the forecast stack in the models' position mode."""
+    node = dict(allocation or {})
+    structured = len(models) == 1 and getattr(models[0], "structured", False)
+    name = node.get("allocator") or ("model_weights" if structured else "forecast_stack" if models else "static")
+    params = dict(node.get("params") or {})
+    if name in ("forecast_stack", "score_stack"):
+        params.setdefault("mode", _position_mode(models))
+    if name == "static":
+        params.setdefault("book", "risk_parity")
+    return name, params
+
+
 class Pipeline:
     def __init__(self, spec: PipelineSpec | dict, config, bundle: MarketBundle):
         self.spec = spec if isinstance(spec, PipelineSpec) else PipelineSpec.from_dict(spec)
@@ -197,14 +210,7 @@ class Pipeline:
         return combined, out
 
     def _allocator(self, models):
-        node = dict(self.spec.allocation or {})
-        structured = len(models) == 1 and getattr(models[0], "structured", False)
-        name = node.get("allocator") or ("model_weights" if structured else "forecast_stack" if models else "static")
-        params = dict(node.get("params") or {})
-        if name in ("forecast_stack", "score_stack"):
-            params.setdefault("mode", _position_mode(models))
-        if name == "static":
-            params.setdefault("book", "risk_parity")
+        name, params = allocator_choice(self.spec.allocation, models)
         return name, ALLOCATORS.create(name, **params)
 
     # ------------------------------------------------------------------------------------------- run

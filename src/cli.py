@@ -28,6 +28,7 @@ import pandas as pd
 from .framework import ALLOCATORS, DETECTORS, MODELS, PipelineSpec, bundle_from_prices, load_default_bundle, load_library, load_prices_csv
 from .framework.allocation import BOOKS
 from .framework.experiments import ExperimentManager
+from .framework.requirements import factory_min_assets
 from .utils.config import load_config
 
 
@@ -59,8 +60,10 @@ def cmd_list(args, config) -> int:
         print("\n".join(BOOKS))
         return 0
     registry = registries[args.what]
-    rows = [{"name": e.name, "family": e.family, "description": e.description[:110]} for e in registry.entries()]
+    rows = [{"name": e.name, "family": e.family, **({"tickers": factory_min_assets(e.factory)} if args.what == "models" else {}), "description": e.description[:110]} for e in registry.entries()]
     _print_frame(pd.DataFrame(rows))
+    if args.what == "models":
+        print("\ntickers: the fewest tickers the strategy can run on (1 = it trades each ticker on its own signal)")
     print(f"\n{len(rows)} {args.what}")
     return 0
 
@@ -267,6 +270,14 @@ def cmd_serve(args, config) -> int:
     return serve(config, args.host, args.port, not args.no_browser)
 
 
+def cmd_itick_test(args, config) -> int:
+    from .webapp.providers import ITickProvider
+
+    out = ITickProvider(root=config.root).test(args.symbol)
+    print(("OK: " if out["ok"] else "FAILED: ") + out["message"])
+    return 0 if out["ok"] else 1
+
+
 def cmd_new_strategy(args, config) -> int:
     from .strategies.user import new_strategy
     try:
@@ -367,6 +378,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--db", choices=["research", "runs"], default="research"); p.set_defaults(func=cmd_sql)
     p = sub.add_parser("serve", help="open the dashboard: backtest on your own tickers, compare runs, build formula strategies, read the guides")
     p.add_argument("--host", default="127.0.0.1"); p.add_argument("--port", type=int, default=8765); p.add_argument("--no-browser", action="store_true"); p.set_defaults(func=cmd_serve)
+    p = sub.add_parser("itick-test", help="spend one iTick call to check your ITICK_API_KEY, the host and the daily interval (the key is never printed)")
+    p.add_argument("--symbol", default="AAPL"); p.set_defaults(func=cmd_itick_test)
     p = sub.add_parser("new-strategy", help="write a template for your own strategy into user_strategies/"); p.add_argument("name"); p.set_defaults(func=cmd_new_strategy)
     p = sub.add_parser("ask", help="ask the research database a question in words"); p.add_argument("question", nargs="+"); p.add_argument("--llm", help="model that writes the SQL (needs the anthropic package and an API key)"); p.set_defaults(func=cmd_ask)
     p = sub.add_parser("causal", help="causal estimators against simulated worlds with a known effect"); p.add_argument("--n", type=int, default=3000); p.add_argument("--seed", type=int, default=7); p.set_defaults(func=cmd_causal)

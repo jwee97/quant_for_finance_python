@@ -36,6 +36,12 @@ class ForecastModel:
     requires: tuple = ()                       # macro series names the model needs (checked with a clear error)
     book: str | None = None                    # "sleeves" for per-asset rules (each asset is its own small strategy); None = a cross-sectional book. A default for the dashboard and the survey, not for Pipeline
     rebalance: str | None = None               # "daily" or "weekly" for rules whose signal changes faster than the platform's monthly rebalance; None = the configured default
+    min_assets: int = 1                        # the fewest assets the rule's own arithmetic can work with (a pair needs 2, a basket 3); see ``required_assets``
+
+    def required_assets(self) -> int:
+        """How many tickers a universe needs for this strategy to have anything to trade. A rule that ranks assets against each other (``position_mode == "cross_sectional"``) needs two
+        whatever ``min_assets`` says: with one ticker every rank is the same and the book is empty. A per-asset (time-series) rule needs only what ``min_assets`` declares."""
+        return max(int(self.min_assets), 2 if getattr(self, "position_mode", "cross_sectional") == "cross_sectional" else 1)
 
     def score(self, data) -> pd.DataFrame:
         raise NotImplementedError

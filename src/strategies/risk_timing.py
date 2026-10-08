@@ -69,6 +69,7 @@ class CreditSpreadTiming(ForecastModel):
     name, family, position_mode = "credit_spread_timing", "macro", "time_series"
     rebalance = "weekly"
     book = "sleeves"
+    min_assets = 2                                              # a credit asset and a rates / fixed-income asset to compare it with
 
     def __init__(self, window: int = 63, history: int = 504):
         if window < 10 or history < 2 * window:

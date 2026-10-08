@@ -464,6 +464,12 @@ Exponentially weighted moving average: an average where recent observations weig
 
 See: [volatility-forecasting](techniques/volatility-forecasting.md)
 
+### Expectancy
+
+The average profit of one round trip, wins and losses together: the win rate times the average win, minus the loss rate times the average loss. A strategy that wins rarely can still have a positive expectancy if its wins are big enough.
+
+See: [performance-metrics](techniques/performance-metrics.md)
+
 ### Expected calibration error
 
 *Also: ECE*
@@ -844,6 +850,12 @@ Running a strategy against live or streamed data with simulated fills and no rea
 
 See: [paper-trading-and-replay](techniques/paper-trading-and-replay.md)
 
+### Payoff ratio
+
+The average winning trade divided by the size of the average losing trade. With the win rate it sets the expectancy: winning 30% of the time needs a payoff of about 2.3 to break even.
+
+See: [performance-metrics](techniques/performance-metrics.md)
+
 ### PBO
 
 Probability of backtest overfitting: how often the best in-sample rule ranks below the median out of sample.
@@ -921,6 +933,12 @@ See: [multiple-testing](techniques/multiple-testing.md)
 The probability that wealth ever falls to a given fraction of its starting level. It has closed forms for Brownian motion and depends on leverage, drift and volatility.
 
 See: [drawdown-ruin-and-kelly](techniques/drawdown-ruin-and-kelly.md)
+
+### Profit factor
+
+Everything made in the winning periods divided by everything lost in the losing ones (the dashboard shows it by month and by day, and by trade). Above 1 means a net gain. Over a short sample, or after many tries, a high profit factor is easy to get by luck.
+
+See: [performance-metrics](techniques/performance-metrics.md), [multiple-testing](techniques/multiple-testing.md)
 
 ### Purged cross-validation
 
@@ -1019,6 +1037,12 @@ See: [futures-and-commodity-curves](techniques/futures-and-commodity-curves.md)
 The change in a bond or swap's value as it ages along an unchanged yield curve: a ten-year swap on a steep curve becomes a nine-and-a-half-year swap that prices at a lower rate. Together with carry it is what a position earns if nothing moves.
 
 See: [interest-rate-swaps](techniques/interest-rate-swaps.md), [yield-curves-and-fixed-income](techniques/yield-curves-and-fixed-income.md)
+
+### Round trip
+
+One stretch in which an asset is held on the same side: it opens when the position appears (a purchase, or a short sale) and closes when the position goes to zero or flips. The dashboard's Trades tab lists each one with its dates, prices and profit.
+
+See: [backtest-engine-and-costs](techniques/backtest-engine-and-costs.md)
 
 ### Shapley value
 
@@ -1193,6 +1217,12 @@ See: [walk-forward-and-leakage](techniques/walk-forward-and-leakage.md)
 Refitting a model on a rolling window of data known at the time, using only labels whose horizon has already elapsed, and predicting the next period. It is the only honest way to evaluate a learner on time series.
 
 See: [multi-asset-strategy-api](techniques/multi-asset-strategy-api.md)
+
+### Win rate
+
+The share of trades (or of days or months) that made money. It says nothing alone: a strategy can win 80% of the time and still lose money if the losses are much larger than the wins; read it with the payoff ratio.
+
+See: [performance-metrics](techniques/performance-metrics.md)
 
 ### Yield curve
 

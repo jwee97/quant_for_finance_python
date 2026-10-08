@@ -146,6 +146,7 @@ class BVARLeadLag(ForecastModel):
     """Some assets move first and others follow (credit before equities, bonds before the dollar); a heavily shrunk VAR can pick that up without overfitting."""
 
     name, family, position_mode = "bvar_lead_lag", "cross-sectional", "cross_sectional"
+    min_assets = 3                                              # the VAR is fitted only when at least three assets have enough history
 
     def __init__(self, lags: int = 1, tightness: float = 0.1, min_months: int = 60, refit_every: int = 3):
         if lags < 1 or tightness <= 0 or min_months < 36 or refit_every < 1:

@@ -26,7 +26,8 @@ class {cls}(ForecastModel):
     """Why might this work? Write the economic reason here: the framework asks for it."""
 
     name, family = "{name}", "custom"
-    position_mode = "cross_sectional"          # "cross_sectional": rank assets against each other; "time_series": each asset on its own
+    position_mode = "cross_sectional"          # "cross_sectional": rank assets against each other (needs two or more tickers); "time_series": each asset on its own (runs on one ticker)
+    # min_assets = 3                            # uncomment if the idea needs more tickers than its mode implies (a pair needs 2, a basket 3); the dashboard then refuses a smaller universe
 
     def __init__(self, window: int = 63):
         self.window = window                    # parameters with defaults show up as form fields in the dashboard

@@ -28,6 +28,8 @@ class DynamicCovarianceMinVar(Allocator):
     """The universe is the assets with complete history over the first ``min_train`` days (so the choice never looks ahead); weights are zero before the
     first refit. ``refit_every`` is in trading days: the GARCH parameters are re-estimated that often, the covariance forecast every month-end."""
 
+    min_assets = 3
+
     def __init__(self, model: str = "dcc", min_train: int = 750, refit_every: int = 504, horizon: int = 21, n_factors: int = 3, lookback: int = 252):
         if model not in DYNAMIC_MODELS:
             raise ValueError(f"model must be one of {DYNAMIC_MODELS}")
@@ -72,6 +74,8 @@ class DynamicCovarianceMinVar(Allocator):
 
 @register_allocator("bayesian", "Mean-variance under parameter uncertainty: kind='bayes_stein' (posterior-mean inputs) or 'bayes_predictive' (average of posterior-draw optima)")
 class BayesianMeanVariance(Allocator):
+    min_assets = 2
+
     def __init__(self, kind: str = "bayes_stein", lookback: int = 252, risk_aversion: float = 5.0, nu0: float = 126.0, n_draws: int = 100, seed: int = 11):
         if kind not in BAYES_KINDS:
             raise ValueError(f"kind must be one of {BAYES_KINDS}")
@@ -93,6 +97,8 @@ class EvolutionStrategyPolicy(Allocator):
     """Zero parameters is equal weight, so any tilt has to be earned. Weights are zero until ``min_train`` days have passed; each refit uses only months whose
     next-month-end return was complete by the refit date, and the feature standardisation comes from those same months. Reinforcement learning in the sense of
     policy search on a simulator (the backtest); it is the lowest-priority technique here and Stage 38 found no out-of-sample gain over equal weight."""
+
+    min_assets = 2
 
     def __init__(self, seeds: tuple = (1,), min_train: int = 1260, refit_every: int = 252, cost: float = 0.0005, risk_aversion: float = 5.0,
                  pairs: int = 32, sigma: float = 0.1, lr: float = 0.05, iterations: int = 60):

@@ -79,6 +79,11 @@ def book(name: str, ctx: Context) -> pd.DataFrame:
 
 class Allocator:
     name = "allocator"
+    min_assets: int = 1                        # the fewest assets the allocator can spread a portfolio over
+
+    def required_assets(self) -> int:
+        """How many tickers a universe needs for this allocation to hold anything (a covariance-based book needs several to diversify between)."""
+        return int(self.min_assets)
 
     def build(self, ctx: Context) -> pd.DataFrame:
         raise NotImplementedError
@@ -89,6 +94,9 @@ class StaticAllocator(Allocator):
     def __init__(self, book: str = "risk_parity"):
         self.book = book
 
+    def required_assets(self) -> int:
+        return 1 if self.book in ("equal_weight", "inverse_vol") else 2          # the others weigh assets by their covariance
+
     def build(self, ctx: Context) -> pd.DataFrame:
         return book(self.book, ctx)
 
@@ -97,6 +105,9 @@ class StaticAllocator(Allocator):
 class ForecastStack(Allocator):
     def __init__(self, mode: str = "cross_sectional", long_only: bool = False, gross: float = 1.0, max_weight: float = 0.25, target_vol: float | None = None):
         self.mode, self.long_only, self.gross, self.max_weight, self.target_vol = mode, long_only, gross, max_weight, target_vol
+
+    def required_assets(self) -> int:
+        return 2 if self.mode == "cross_sectional" else 1                          # scoring assets against each other needs at least two
 
     def build(self, ctx: Context) -> pd.DataFrame:
         if ctx.forecasts is None:
@@ -119,6 +130,9 @@ class ForecastStack(Allocator):
 class ScoreStack(Allocator):
     def __init__(self, mode: str = "cross_sectional"):
         self.mode = mode
+
+    def required_assets(self) -> int:
+        return 2 if self.mode == "cross_sectional" else 1
 
     def build(self, ctx: Context) -> pd.DataFrame:
         if len(ctx.models) != 1:

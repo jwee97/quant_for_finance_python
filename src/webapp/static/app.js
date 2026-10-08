@@ -19,11 +19,16 @@
   function download(name, text) { const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([text], { type: "text/plain" })); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000); }
   const num = (v, d = 2) => (v === null || v === undefined || !isFinite(v) ? "n/a" : v.toFixed(d));
   const pct = (v, d = 1) => (v === null || v === undefined || !isFinite(v) ? "n/a" : (v * 100).toFixed(d) + "%");
+  const bad = (v) => v === null || v === undefined || !isFinite(v);
+  /* "\u2060" (word joiner) keeps the minus sign on the same line as the amount. */
+  const money = (v, d = 0) => (bad(v) ? "n/a" : (v < 0 ? "−\u2060$" : "$") + Math.abs(v).toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d }));
+  const smoney = (v) => (bad(v) ? "n/a" : (v >= 0 ? "+\u2060$" : "−\u2060$") + Math.abs(v).toLocaleString("en-US", { maximumFractionDigits: 0 }));
+  const axisMoney = (v) => (v < 0 ? "−" : "") + "$" + (Math.abs(v) >= 1e6 ? (Math.abs(v) / 1e6).toFixed(Math.abs(v) >= 1e7 ? 0 : 1) + "M" : Math.abs(v) >= 1e4 ? (Math.abs(v) / 1e3).toFixed(0) + "k" : Math.round(Math.abs(v)).toLocaleString("en-US"));
 
   /* ================================================================= state */
   const S = {
     catalog: null, tickers: [], start: "", models: [], combination: "equal", allocator: "", allocatorTouched: false, allocParams: {}, regime: "", regimeRisk: false,
-    aum: "", validate: false, refresh: false, label: "", runs: [], selected: new Set(), current: null, range: "all", busy: false, nextSlot: 0, trials: {},
+    aum: "", capital: "", source: "yahoo", guard: { ok: true, message: "" }, validate: false, refresh: false, label: "", runs: [], selected: new Set(), current: null, range: "all", busy: false, nextSlot: 0, trials: {},
     view: freshView(),
   };
   /* What the user has chosen inside a result: which cards show their table, linear or log growth, which details tab is open. A redraw (new window size, theme change) rebuilds the page
@@ -62,36 +67,110 @@
         for (const c of S.catalog.classes) { const o = h("option", "", sel, c.replace("_", " ")); o.value = c; if (c === x.cls) o.selected = true; }
         sel.addEventListener("change", () => { x.cls = sel.value; saveUniverse(); });
       }
-      if (x.status === "ok") { const ok = h("span", "meta", chip, "✓"); ok.style.color = css("--good-text"); chip.title = x.info || ""; }
+      if (x.status === "ok") { const ok = h("span", "meta", chip, x.later ? "↓" : "✓"); ok.style.color = css("--good-text"); chip.title = x.info || ""; }
+      if (x.warn && x.warn.length) { const wn = h("span", "meta", chip, "⚠"); wn.style.color = css("--warn"); wn.title = x.warn.join("\n"); }
       if (x.status === "bad") { h("span", "meta", chip, "✗"); chip.title = x.error || ""; }
       const rm = h("button", "", chip, "×"); rm.setAttribute("aria-label", "remove " + x.t); rm.title = "Remove";
       rm.addEventListener("click", () => { S.tickers = S.tickers.filter((y) => y !== x); saveUniverse(); renderUniverse(); });
     }
-    const bad = S.tickers.filter((x) => x.status === "bad");
-    if (bad.length) { const p = h("p", "hint", box, bad.map((x) => `${x.t}: ${x.error}`).join(" · ")); p.style.color = css("--crit"); p.style.flexBasis = "100%"; }
+    const failed = S.tickers.filter((x) => x.status === "bad"), byError = {};
+    for (const x of failed) (byError[x.error] = byError[x.error] || []).push(x.t);
+    if (failed.length) { const p = h("p", "hint", box, Object.entries(byError).map(([msg, list]) => `${list.join(", ")}: ${msg}`).join(" · ")); p.style.color = css("--crit"); p.style.flexBasis = "100%"; }
+    const warned = S.tickers.filter((x) => x.warn && x.warn.length);
+    if (warned.length) { const p = h("p", "hint", box, "⚠ " + warned.map((x) => `${x.t}: ${x.warn[0]}`).join(" · ")); p.style.color = css("--warn"); p.style.flexBasis = "100%"; }
+    const later = S.tickers.filter((x) => x.later);
+    if (later.length) {
+      const total = later.reduce((a, x) => a + (x.calls || 0), 0), src = S.catalog.sources.find((x) => x.name === S.source), perMin = src && src.calls_per_minute;
+      const cost = total ? `: about ${total} call${total === 1 ? "" : "s"}` + (perMin ? `, around ${Math.max(1, Math.ceil(total / perMin))} minute${Math.ceil(total / perMin) > 1 ? "s" : ""} at ${perMin} a minute` : "") + " (once; a later start date means fewer)" : "";
+      const p = h("p", "hint", box, "↓ " + later.map((x) => x.t).join(", ") + (later.length === 1 ? " is" : " are") + " downloaded when you run" + cost + "."); p.style.flexBasis = "100%";
+    }
     const n = S.tickers.filter((x) => x.status !== "bad").length;
     $("#u-count").textContent = `${n} ticker${n === 1 ? "" : "s"}`;
+    refreshGuard();
   }
+  function applyChecks(list, res) {
+    for (const t of list) {
+      const x = S.tickers.find((y) => y.t === t), r = res.tickers[t]; if (!x || !r) continue;
+      x.later = false; x.warn = r.warnings || [];
+      if (r.ok) { x.status = "ok"; x.cls = r.class && r.class !== "unknown" ? r.class : x.cls; x.error = null; x.later = !!r.pending; x.calls = r.calls || 0; x.info = r.pending ? r.note : `${r.days.toLocaleString()} days from ${r.first.slice(0, 4)}`; }
+      else { x.status = "bad"; x.error = r.error; x.info = null; }
+    }
+  }
+  const TICKER_SYNTAX = /^[A-Z0-9^][A-Z0-9.^=-]{0,11}$/;
   async function addTickers(text) {
     const raw = text.split(/[\s,;]+/).map((s) => s.trim().toUpperCase()).filter(Boolean);
     const fresh = raw.filter((t) => !S.tickers.some((x) => x.t === t));
     if (!fresh.length) { toast(raw.length ? "Those tickers are already in the list" : "Type one or more tickers first"); return; }
-    for (const t of fresh) S.tickers.push({ t, cls: "unknown", status: "pending" });
+    const valid = [];
+    for (const t of fresh) {                                                            // a misspelt symbol is refused here, so it cannot spoil the check of the others
+      if (TICKER_SYNTAX.test(t)) { S.tickers.push({ t, cls: "unknown", status: "pending" }); valid.push(t); }
+      else S.tickers.push({ t, cls: "unknown", status: "bad", error: "not a valid ticker (letters, digits and . ^ = - only, up to 12 characters)" });
+    }
     renderUniverse();
+    if (!valid.length) { toast(`${fresh[0]} is not a valid ticker`); saveUniverse(); return; }
     try {
-      const res = await api("/api/tickers", { tickers: fresh, start: S.start || undefined, refresh: S.refresh });
-      for (const t of fresh) {
-        const x = S.tickers.find((y) => y.t === t), r = res.tickers[t]; if (!x || !r) continue;
-        if (r.ok) { x.status = "ok"; x.cls = r.class && r.class !== "unknown" ? r.class : x.cls; x.info = `${r.days.toLocaleString()} days from ${r.first.slice(0, 4)}`; x.error = null; }
-        else { x.status = "bad"; x.error = r.error; x.info = null; }
-      }
-      const bad = fresh.filter((t) => (res.tickers[t] || {}).ok === false);
-      if (bad.length) toast(`${bad.join(", ")}: ${res.tickers[bad[0]].error}`);
+      const res = await api("/api/tickers", { tickers: valid, start: S.start || undefined, refresh: S.refresh, source: S.source });
+      applyChecks(valid, res);
+      const failed = valid.filter((t) => (res.tickers[t] || {}).ok === false);
+      if (failed.length) toast(`${failed.join(", ")}: ${res.tickers[failed[0]].error}`);
     } catch (e) {
-      for (const t of fresh) { const x = S.tickers.find((y) => y.t === t); if (x) { x.status = "bad"; x.error = "could not check"; } }
+      for (const t of valid) { const x = S.tickers.find((y) => y.t === t); if (x) { x.status = "bad"; x.error = "could not check"; } }
       toast(e.message);
     }
     saveUniverse(); renderUniverse();
+  }
+
+  /* Check the tickers that came from a download source again (the source changed, or a run has downloaded the ones that were waiting). Only a source that downloads while checking is slow. */
+  async function recheckTickers(onlyLater) {
+    const list = S.tickers.filter((x) => x.status !== "default" && (!onlyLater || x.later));
+    if (!list.length) return;
+    if (!onlyLater) { list.forEach((x) => { x.status = "pending"; x.later = false; }); renderUniverse(); }
+    try { applyChecks(list.map((x) => x.t), await api("/api/tickers", { tickers: list.map((x) => x.t), start: S.start || undefined, refresh: false, source: S.source })); }
+    catch (e) { list.forEach((x) => { if (x.status === "pending") { x.status = "bad"; x.error = "could not check"; } }); toast(e.message); }
+    saveUniverse(); renderUniverse();
+  }
+  function renderSource() {
+    const box = $("#u-source"); if (!box) return; box.replaceChildren();
+    const lab = h("label", "f", box, "Download other tickers from"), sel = h("select", "", lab); sel.id = "u-source-select";
+    for (const src of S.catalog.sources) { const o = h("option", "", sel, src.label + (src.available ? "" : " (not set up)")); o.value = src.name; if (src.name === S.source) o.selected = true; }
+    sel.addEventListener("change", () => { S.source = sel.value; store("source", S.source); renderSource(); recheckTickers(false); });
+    const cur = S.catalog.sources.find((x) => x.name === S.source); if (!cur) return;
+    h("p", "hint", box, cur.note);
+    if (!cur.available) {
+      const w = h("p", "hint", box, cur.problem + (cur.name === "itick" ? ". The key is read by the server only and is never sent to this page." : "")); w.style.color = css("--warn");
+    } else if (cur.name === "itick") {
+      h("p", "hint", box, `Your plan allows ${cur.calls_per_minute} call${cur.calls_per_minute === 1 ? "" : "s"} a minute; the app waits between calls and says so while it does. A ticker costs about one call per four years of daily history, once; after that a top-up is one call.`);
+    }
+    if (cur.symbols) { const more = h("button", "link", box, "How to write symbols"), para = h("p", "hint", box, cur.symbols + "."); para.hidden = true; more.addEventListener("click", () => { para.hidden = !para.hidden; }); }
+    if (cur.name === "itick" && cur.available) {
+      const row = h("div", "row tight", box), test = h("button", "btn", row, "Test the iTick connection (one call)"), out = h("span", "hint", row); out.id = "u-source-result";
+      test.addEventListener("click", async () => {
+        test.disabled = true; out.textContent = "Testing…"; out.style.color = "";
+        try { const r = await api("/api/source/test", { source: S.source }); out.textContent = r.message; out.style.color = css(r.ok ? "--good-text" : "--crit"); }
+        catch (e) { out.textContent = e.message; out.style.color = css("--crit"); }
+        test.disabled = false;
+      });
+    }
+  }
+
+  /* ================================================================= how many tickers the chosen strategy needs */
+  let guardSeq = 0, guardTimer = null;
+  function refreshGuard() {
+    clearTimeout(guardTimer);
+    guardTimer = setTimeout(async () => {
+      if (!S.catalog || !S.models.length) return;
+      const seq = ++guardSeq, n = S.tickers.filter((x) => x.status !== "bad").length;
+      try {
+        const r = await api("/api/requirements", { models: S.models.map((m) => ({ name: m.name, params: m.params })), allocator: S.allocator || null, allocator_params: S.allocParams, tickers: n });
+        if (seq === guardSeq) S.guard = { ok: r.ok, message: r.message || "" };
+      } catch (e) { if (seq === guardSeq) S.guard = { ok: false, message: e.message }; }
+      syncRun();
+    }, 120);
+  }
+  function syncRun() {
+    const run = $("#run"); if (!run) return;
+    run.disabled = S.busy || !S.guard.ok;
+    const g = $("#guard"); if (g) { g.textContent = S.guard.ok ? "" : S.guard.message; g.hidden = S.guard.ok; }
   }
 
   /* ================================================================= strategy form */
@@ -118,7 +197,7 @@
     const groups = {};
     for (const m of S.catalog.models) (groups[m.user ? "My strategies" : m.family] = groups[m.user ? "My strategies" : m.family] || []).push(m);
     const order = Object.keys(groups).sort((a, b) => (a === "My strategies" ? -1 : b === "My strategies" ? 1 : a === "custom" ? -1 : b === "custom" ? 1 : a.localeCompare(b)));
-    for (const g of order) { const og = h("optgroup", "", select); og.label = g === "custom" ? "custom (formula)" : g; for (const m of groups[g]) { const o = h("option", "", og, m.name); o.value = m.name; if (m.name === current) o.selected = true; } }
+    for (const g of order) { const og = h("optgroup", "", select); og.label = g === "custom" ? "custom (formula)" : g; for (const m of groups[g]) { const o = h("option", "", og, m.name + (m.min_assets > 1 ? `  (needs ${m.min_assets}+ tickers)` : "")); o.value = m.name; if (m.name === current) o.selected = true; } }
   }
   function renderStrategies() {
     const box = $("#s-body"); box.replaceChildren();
@@ -131,6 +210,8 @@
       if (S.models.length > 1) { const rm = h("button", "btn", row, "Remove"); rm.addEventListener("click", () => { S.models.splice(idx, 1); autoAllocator(); renderStrategies(); renderPortfolio(); }); }
       if (!info) return;
       h("p", "hint", block, info.description);
+      if (info.min_assets > 1) h("p", "hint", block, `Needs at least ${info.min_assets} tickers: it works by comparing them with each other.`);
+      else if (info.book === "sleeves") h("p", "hint", block, "Works on each ticker alone, sized by its own signal and in cash when the signal is off: the Trades tab of the result lists when it bought and sold.");
       if (info.rebalance) h("p", "hint", block, "This rule rebalances " + info.rebalance + " unless you change it in the spec.");
       if (info.requires.length) h("p", "hint", block, "Needs macro series: " + info.requires.join(", ") + " (included for the platform ETFs, and attached to any universe).");
       if (info.slow) { const w = h("p", "hint", block, "⏱ Slow: " + info.slow + "."); w.style.color = css("--warn"); }
@@ -138,7 +219,7 @@
         const grid = h("div", "params", block);
         for (const p of info.params) {
           const cur = p.name in entry.params ? entry.params[p.name] : p.default;
-          grid.appendChild(fieldFor(p, cur, (v) => { if (JSON.stringify(v) === JSON.stringify(p.default)) delete entry.params[p.name]; else entry.params[p.name] = v; if (p.name === "mode") { autoAllocator(); renderPortfolio(); } }, { wide: p.name === "expr" || p.kind === "json" }));
+          grid.appendChild(fieldFor(p, cur, (v) => { if (JSON.stringify(v) === JSON.stringify(p.default)) delete entry.params[p.name]; else entry.params[p.name] = v; if (p.name === "mode") { autoAllocator(); renderPortfolio(); } refreshGuard(); }, { wide: p.name === "expr" || p.kind === "json" }));
         }
       }
       if (entry.name === "expression") {
@@ -155,6 +236,7 @@
       for (const c of S.catalog.combinations) { const o = h("option", "", sel, c.name + ": " + c.description); o.value = c.name; if (c.name === S.combination) o.selected = true; }
       sel.addEventListener("change", () => { S.combination = sel.value; });
     }
+    refreshGuard();
   }
   function autoAllocator() {
     if (S.allocatorTouched) return;
@@ -177,7 +259,7 @@
     if (info && info.slow) h("p", "hint", box, "⏱ " + info.slow + ".");
     if (info && info.params.length) {
       const grid = h("div", "params", box);
-      for (const p of info.params) { const cur = p.name in S.allocParams ? S.allocParams[p.name] : p.default; grid.appendChild(fieldFor(p, cur, (v) => { if (JSON.stringify(v) === JSON.stringify(p.default)) delete S.allocParams[p.name]; else S.allocParams[p.name] = v; }, { wide: p.kind === "json" })); }
+      for (const p of info.params) { const cur = p.name in S.allocParams ? S.allocParams[p.name] : p.default; grid.appendChild(fieldFor(p, cur, (v) => { if (JSON.stringify(v) === JSON.stringify(p.default)) delete S.allocParams[p.name]; else S.allocParams[p.name] = v; refreshGuard(); }, { wide: p.kind === "json" })); }
     }
     const rl = h("label", "f", box, "Market regime detector"), rs = h("select", "", rl); const none = h("option", "", rs, "None"); none.value = "";
     for (const d of S.catalog.detectors) { const o = h("option", "", rs, d.name); o.value = d.name; if (d.name === S.regime) o.selected = true; }
@@ -188,6 +270,9 @@
     rr.appendChild(document.createTextNode("Set the volatility target by regime (lower in crises)")); cb.addEventListener("change", () => { S.regimeRisk = cb.checked; });
     const al = h("label", "f", box, "Assets under management in dollars (adds market-impact costs)"), ai = h("input", "", al); ai.type = "number"; ai.min = "10000"; ai.placeholder = "blank = trading costs only"; ai.value = S.aum;
     ai.addEventListener("input", () => { S.aum = ai.value; });
+    const cl = h("label", "f", box, "Starting capital in dollars (the earnings numbers are shown on this)"), ci = h("input", "", cl); ci.type = "number"; ci.min = "1000"; ci.placeholder = "blank = the AUM above, else $100,000"; ci.value = S.capital;
+    ci.addEventListener("input", () => { S.capital = ci.value; });
+    refreshGuard();
   }
 
   /* ================================================================= panel skeleton */
@@ -196,12 +281,13 @@
     const sec = (id, title, open) => { const d = h("details", "", p); if (open) d.open = true; const s = h("summary", "", d, title); const b = h("div", "body", d); b.id = id; return { d, s, b }; };
     const u = sec("u-body", "1. Tickers", true);
     h("span", "pill", u.s).id = "u-count";
-    h("p", "hint", u.b, "The platform's 15 ETFs, plus anything on Yahoo Finance: NVDA, BTC-USD, ^GSPC, EURUSD=X. New tickers are downloaded as split- and dividend-adjusted prices and cached for a day.");
+    h("p", "hint", u.b, "The platform's 15 ETFs, plus any ticker the data source below has: NVDA, BTC-USD, ^GSPC, EURUSD=X on Yahoo Finance. Downloads are cached for a day. One ticker is enough for a strategy that trades each ticker on its own signal.");
     h("div", "chips", u.b).id = "u-chips";
     const add = h("div", "row", u.b), inp = h("input", "", add); inp.type = "text"; inp.placeholder = "Add tickers, e.g. NVDA, BTC-USD"; inp.style.flex = "1"; inp.setAttribute("aria-label", "tickers to add");
     const go = h("button", "btn primary", add, "Add");
     const doAdd = () => { addTickers(inp.value); inp.value = ""; inp.focus(); };
     go.addEventListener("click", doAdd); inp.addEventListener("keydown", (e) => { if (e.key === "Enter") doAdd(); });
+    h("div", "body", u.b).id = "u-source";
     const r2 = h("div", "row tight", u.b);
     const reset = h("button", "btn", r2, "Reset to the 15 ETFs"); reset.addEventListener("click", () => { S.tickers = defaultTickers(); saveUniverse(); renderUniverse(); });
     const clear = h("button", "btn", r2, "Clear"); clear.addEventListener("click", () => { S.tickers = []; saveUniverse(); renderUniverse(); });
@@ -213,7 +299,8 @@
     const o = sec("o-body", "4. Run", true);
     const nm = h("label", "f", o.b, "Name this run (optional)"), ni = h("input", "", nm); ni.type = "text"; ni.maxLength = 80; ni.addEventListener("input", () => { S.label = ni.value; });
     const vl = h("label", "f inline", o.b), vc = h("input", "", vl); vc.type = "checkbox"; vl.appendChild(document.createTextNode("Run the look-ahead check (replaces the future with noise; slower)")); vc.addEventListener("change", () => { S.validate = vc.checked; });
-    const foot = h("div", "runbar", p), run = h("button", "btn primary", foot, "Run backtest"); run.id = "run"; run.addEventListener("click", runBacktest);
+    const foot = h("div", "runbar", p), guard = h("p", "guard", foot); guard.id = "guard"; guard.hidden = true; guard.setAttribute("role", "status");
+    const run = h("button", "btn primary", foot, "Run backtest"); run.id = "run"; run.addEventListener("click", runBacktest);
     h("div", "progress", foot).id = "progress";
     h("p", "hint", o.b, "Costs: 10 bps per unit traded, monthly rebalance, signals act the next day. Every idea you try on the same tickers counts as a trial against the deflated Sharpe ratio.");
   }
@@ -222,14 +309,15 @@
   function buildBody() {
     const tickers = S.tickers.filter((x) => x.status !== "bad");
     if (S.tickers.some((x) => x.status === "pending")) throw new Error("Wait for the ticker checks to finish");
-    if (tickers.length < 2) throw new Error("Choose at least two tickers");
+    if (tickers.length < 1) throw new Error("Choose at least one ticker");
+    if (!S.guard.ok) throw new Error(S.guard.message);
     const classes = {}; const isDefault = new Set(S.catalog.default_tickers); for (const x of tickers) if (!isDefault.has(x.t) && x.cls !== "unknown") classes[x.t] = x.cls;
     return { tickers: tickers.map((x) => x.t), classes, start: S.start || null, models: S.models.map((m) => ({ name: m.name, params: m.params })), combination: S.combination,
       allocator: S.allocator || null, allocator_params: S.allocParams, regime: S.regime || null, regime_risk: S.regimeRisk, aum: S.aum ? parseFloat(S.aum) : null,
-      validate: S.validate, refresh: S.refresh, label: S.label || null };
+      validate: S.validate, refresh: S.refresh, label: S.label || null, source: S.source, capital: S.capital ? parseFloat(S.capital) : null };
   }
   function setBusy(busy, message) {
-    S.busy = busy; $("#run").disabled = busy; const p = $("#progress"); p.replaceChildren();
+    S.busy = busy; syncRun(); const p = $("#progress"); p.replaceChildren();
     if (busy) { h("span", "spinner", p); h("span", "", p, message || "Working…").id = "progress-text"; }
     $("#results").classList.toggle("fade", busy && !!S.current);
   }
@@ -244,7 +332,7 @@
         await new Promise((r) => setTimeout(r, 600));
         const v = await api("/api/job/" + job);
         const t = $("#progress-text"); if (t) t.textContent = `${v.message} (${Math.round(v.elapsed)} s)`;
-        if (v.status === "done") { addRun(v.result); break; }
+        if (v.status === "done") { addRun(v.result); if (S.tickers.some((x) => x.later)) recheckTickers(true); break; }
         if (v.status === "error") throw new Error(v.error);
       }
     } catch (e) { showError(e.message); }
@@ -335,35 +423,39 @@
     keepScroll(() => { root.replaceChildren(); buildResult(root, run); }, root);
   }
   function buildResult(root, run) {
-    const r = run.result, w = windowOf(run, S.range), st = statsOf(w.equity), eqw = w.bench.equal_weight ? statsOf(w.bench.equal_weight) : null;
+    const r = run.result, w = windowOf(run, S.range), st = statsOf(w.equity), single = r.universe.tickers.length === 1, refName = single ? "buy and hold" : "equal weight", eqw = w.bench.equal_weight ? statsOf(w.bench.equal_weight) : null;
     const head = h("div", "head", root), left = h("div", "", head);
     h("h1", "", left, r.name);
-    h("p", "sub", left, `${r.universe.tickers.length} tickers · ${r.universe.source} · ${r.metrics.start} to ${r.metrics.end} (${(r.stats.years).toFixed(1)} years) · ran in ${r.seconds} s · run #${run.id}`);
+    h("p", "sub", left, `${r.universe.tickers.length} ticker${single ? "" : "s"} · ${r.universe.source} · ${r.metrics.start} to ${r.metrics.end} (${(r.stats.years).toFixed(1)} years) · ran in ${r.seconds} s · run #${run.id}`);
     const acts = h("div", "row tight", head);
     const ex = h("button", "btn", acts, "Copy spec (YAML)"); ex.addEventListener("click", () => copy(r.yaml, "Spec"));
     const dn = h("button", "btn", acts, "Download spec"); dn.addEventListener("click", () => download(r.name.replace(/[^\w-]+/g, "_") + ".yaml", r.yaml));
     const cmp = h("button", "btn", acts, "Compare runs"); cmp.addEventListener("click", () => showTab("compare"));
     if (r.warning) { const b = h("div", "banner", root); h("strong", "", b, "Heads up."); b.appendChild(document.createTextNode(r.warning)); }
+    const notes = Object.entries(r.universe.data_notes || {});
+    if (notes.length) { const b = h("div", "banner", root); h("strong", "", b, "Data notes."); b.appendChild(document.createTextNode(notes.map(([t, list]) => `${t}: ${list.join(" ")}`).join(" · "))); }
     const nBad = r.flags.filter((f) => f.flag).length;
     const range = h("div", "row", root); h("span", "hint", range, "Chart window");
     const seg = h("div", "seg", range);
     for (const [k, lab] of [["all", "All"], ["10y", "10y"], ["5y", "5y"], ["3y", "3y"], ["1y", "1y"]]) { const b = h("button", "", seg, lab); b.setAttribute("aria-pressed", String(S.range === k)); b.addEventListener("click", () => { S.range = k; renderResult(); }); }
     h("span", "hint", range, S.range === "all" ? "Return, volatility and drawdown tiles follow the window; costs, turnover and the deflated Sharpe are full-sample." : `Window starts ${w.first}. Tables below always show the full backtest.`);
     const k = h("div", "kpis", root), dl = eqw ? st.sharpe - eqw.sharpe : null;
-    tile(k, "Net Sharpe ratio" + (S.range === "all" ? "" : " (window)"), num(st.sharpe), dl === null ? null : { text: `${fmt.signed(dl)} vs equal weight (${num(eqw.sharpe)})`, dir: dl >= 0 ? "up" : "down" }, "hero", "Annualised excess return per unit of volatility, after costs");
-    tile(k, "CAGR", pct(st.cagr), eqw ? { text: `equal weight ${pct(eqw.cagr)}` } : null);
-    tile(k, "Volatility", pct(st.vol), eqw ? { text: `equal weight ${pct(eqw.vol)}` } : null);
-    tile(k, "Max drawdown", pct(st.mdd), eqw ? { text: `equal weight ${pct(eqw.mdd)}` } : null);
+    tile(k, "Net Sharpe ratio" + (S.range === "all" ? "" : " (window)"), num(st.sharpe), dl === null ? null : { text: `${fmt.signed(dl)} vs ${refName} (${num(eqw.sharpe)})`, dir: dl >= 0 ? "up" : "down" }, "hero", "Annualised excess return per unit of volatility, after costs");
+    tile(k, "CAGR", pct(st.cagr), eqw ? { text: `${refName} ${pct(eqw.cagr)}` } : null);
+    tile(k, "Volatility", pct(st.vol), eqw ? { text: `${refName} ${pct(eqw.vol)}` } : null);
+    tile(k, "Max drawdown", pct(st.mdd), eqw ? { text: `${refName} ${pct(eqw.mdd)}` } : null);
     tile(k, "Turnover per year", num(r.metrics.ann_turnover, 1) + "×", { text: `cost drag ${num(r.metrics.ann_cost_bps, 0)} bps/yr` });
     const dsr = r.validation.deflated_sharpe_probability;
     tile(k, "Deflated Sharpe", dsr === null ? "n/a" : num(dsr), { text: `${r.validation.n_trials} trial${r.validation.n_trials === 1 ? "" : "s"}; ≥ 0.95 is the bar`, dir: dsr !== null && dsr >= 0.95 ? "up" : "" }, "", "Probability the Sharpe ratio is above what the best of your tries would show by luck alone");
+    if (r.earnings) earningsTiles(root, r);
     const ch = h("div", "charts", root);
-    const series = [{ name: "Strategy", color: css("--s1"), values: w.equity }];
-    const bn = { equal_weight: ["Equal weight", "--s2"], risk_parity: ["Risk parity", "--s3"] };
-    for (const key in w.bench) series.push({ name: bn[key] ? bn[key][0] : key, color: css(bn[key] ? bn[key][1] : "--s4"), values: w.bench[key] });
-    const growth = chartCard(ch, "Growth of $1", "Net of costs. Benchmarks need five or more assets.", { wide: true,
-      draw: (b) => C.line(b, { dates: w.dates, series, log: S.view.log, yFormat: (v) => "$" + (v >= 10 ? v.toFixed(0) : v.toFixed(2)), tipFormat: (v) => "$" + v.toFixed(2), height: 300, label: "Growth of one dollar" }),
-      table: (b) => { const idx = sampleRows(w.dates, series, 21); simpleTable(b, [{ label: "Date", get: (i) => w.dates[i] }, ...series.map((s) => ({ label: s.name, num: true, get: (i) => (s.values[i] === null ? "" : s.values[i].toFixed(3)) }))], idx); } });
+    const cap = r.capital || 100000, dollars = (arr) => arr.map((v) => (v === null ? null : v * cap));
+    const series = [{ name: "Strategy", color: css("--s1"), values: dollars(w.equity) }];
+    const bn = { equal_weight: [single ? "Buy and hold" : "Equal weight", "--s2"], risk_parity: ["Risk parity", "--s3"] };
+    for (const key in w.bench) series.push({ name: bn[key] ? bn[key][0] : key, color: css(bn[key] ? bn[key][1] : "--s4"), values: dollars(w.bench[key]) });
+    const growth = chartCard(ch, `Account value from ${money(cap)}`, `Net of costs, starting from ${money(cap)} at the start of the chart window. ${single ? "Buy and hold is the benchmark." : "Benchmarks need five or more assets."}`, { wide: true,
+      draw: (b) => C.line(b, { dates: w.dates, series, log: S.view.log, yFormat: axisMoney, tipFormat: (v) => money(v), height: 300, label: "Account value in dollars" }),
+      table: (b) => { const idx = sampleRows(w.dates, series, 21); simpleTable(b, [{ label: "Date", get: (i) => w.dates[i] }, ...series.map((s) => ({ label: s.name, num: true, get: (i) => (s.values[i] === null ? "" : money(s.values[i])) }))], idx); } });
     const lg = h("div", "seg", growth._extra), l1 = h("button", "", lg, "Linear"), l2 = h("button", "", lg, "Log");
     const markLog = () => { l1.setAttribute("aria-pressed", String(!S.view.log)); l2.setAttribute("aria-pressed", String(S.view.log)); };
     markLog();
@@ -395,13 +487,91 @@
       table: (b) => simpleTable(b, [{ label: "Month", get: (c) => `${c.year}-${String(c.month).padStart(2, "0")}` }, { label: "Return", num: true, get: (c) => fmt.spct(c.value) }], w.monthly.slice().reverse()) });
     renderDetails(root, r, nBad);
   }
+  /* ================================================================= earnings and trades */
+  function earningsTiles(root, r) {
+    const e = r.earnings, single = r.universe.tickers.length === 1, ref = e.benchmarks.equal_weight || null, refName = single ? "buy and hold" : "equal weight";
+    h("p", "hint", root, `Earnings on ${money(e.capital)} of starting capital, over the full backtest. The Earnings and Trades tabs below have the detail.`);
+    const k = h("div", "earnrow", root);
+    tile(k, "Net profit", smoney(e.net_profit), { text: `${fmt.spct(e.total_return)} on ${money(e.capital)}` + (ref ? ` · ${refName} ${smoney(ref.pnl)}` : ""), dir: e.net_profit >= 0 ? "up" : "down" }, "", "What the strategy would have earned after trading costs");
+    tile(k, "Ending value", money(e.end_value), { text: `from ${money(e.capital)}` });
+    tile(k, "Average per month", smoney(e.profit_per_month), { text: `${smoney(e.profit_per_year)} a year` });
+    tile(k, "Profitable months", `${e.winning_months} of ${e.months}`, { text: `${pct(e.months ? e.winning_months / e.months : null, 0)} of months made money` });
+    tile(k, "Profit factor", e.profit_factor_monthly === null ? "n/a" : num(e.profit_factor_monthly), { text: e.profit_factor_monthly === null ? "no losing month" : "months won ÷ months lost" }, "", "Total made in winning months divided by total lost in losing months; above 1 means a net gain");
+    tile(k, "Deepest fall from a peak", money(e.drawdown.max_dollars), { text: `${pct(e.drawdown.max_pct)}` + (e.drawdown.longest_calendar_days ? ` · up to ${e.drawdown.longest_calendar_days} days below a peak` : "") });
+  }
+  function kvTable(parent, title, rows) {
+    const box = h("div", "kv", parent); h("h4", "", box, title);
+    simpleTable(box, [{ label: "Measure", get: (x) => x[0] }, { label: "Value", num: true, get: (x) => x[1] }], rows.filter((x) => x[1] !== null && x[1] !== undefined));
+  }
+  function earningsTab(b, r) {
+    const e = r.earnings, single = r.universe.tickers.length === 1, d = e.drawdown, sp = (x) => (x ? `${x.period}: ${smoney(x.pnl)} (${fmt.spct(x.ret)})` : "n/a");
+    if (e.exposure && e.exposure.peak > 1.05) {
+      const n = h("div", "banner", b); h("strong", "", n, "Leverage.");
+      n.appendChild(document.createTextNode(`The strategy held up to ${num(e.exposure.peak, 1)}× your capital (${num(e.exposure.average, 1)}× on average; above 1× on ${pct(e.exposure.share_of_days_above_one, 0)} of days), so gains and losses are scaled the same way. Only trading costs are charged: no borrowing or short-selling fees.`));
+    }
+    h("p", "hint", b, `Dollars on ${money(e.capital)} of starting capital, compounded day by day after trading costs. They show what the historical rules would have earned, not what to expect.`);
+    const grid = h("div", "kvgrid", b);
+    kvTable(grid, "Profit", [["Starting capital", money(e.capital)], ["Ending value", money(e.end_value)], ["Net profit", `${smoney(e.net_profit)} (${fmt.spct(e.total_return)})`],
+      ["Average per year", smoney(e.profit_per_year)], ["Average per month", smoney(e.profit_per_month)], ["Average per trading day", smoney(e.profit_per_day)],
+      ...Object.entries(e.benchmarks).map(([k, v]) => [(k === "equal_weight" ? (single ? "Buy and hold" : "Equal weight") : k.replace(/_/g, " ")) + " would have made", `${smoney(v.pnl)} (${fmt.spct(v.ret)})`])]);
+    kvTable(grid, "Costs and leverage", [["Profit before trading costs", smoney(e.gross_profit)], ["Trading costs paid", money(e.costs_paid)],
+      ["Costs as a share of that profit", e.costs_share_of_gross === null ? null : pct(e.costs_share_of_gross, 0)],
+      ["Average exposure", e.exposure ? num(e.exposure.average, 2) + "× capital" : null], ["Peak exposure", e.exposure ? num(e.exposure.peak, 2) + "× capital" : null]]);
+    kvTable(grid, "Best and worst", [["Best day", sp(e.best_day)], ["Worst day", sp(e.worst_day)], ["Best month", sp(e.best_month)], ["Worst month", sp(e.worst_month)], ["Best year", sp(e.best_year)], ["Worst year", sp(e.worst_year)]]);
+    kvTable(grid, "How often it made money", [["Profitable months", `${e.winning_months} of ${e.months} (${pct(e.months ? e.winning_months / e.months : null, 0)})`],
+      ["Profitable years", `${e.winning_years} of ${e.annual.length}`], ["Winning days", `${e.winning_days} of ${e.winning_days + e.losing_days + e.flat_days}` + (e.flat_days ? ` (${e.flat_days} flat)` : "")],
+      ["Average winning month", smoney(e.average_winning_month)], ["Average losing month", smoney(e.average_losing_month)],
+      ["Profit factor, months", e.profit_factor_monthly === null ? "n/a (no losing month)" : num(e.profit_factor_monthly)], ["Profit factor, days", e.profit_factor_daily === null ? "n/a" : num(e.profit_factor_daily)],
+      ["Longest winning / losing run, months", `${e.longest_winning_streak_months} / ${e.longest_losing_streak_months}`], ["Longest winning / losing run, days", `${e.longest_winning_streak_days} / ${e.longest_losing_streak_days}`]]);
+    kvTable(grid, "Deepest fall from a peak", [["Fall", `${money(d.max_dollars)} (${pct(d.max_pct)})`], ["Peak to trough", d.peak_date ? `${d.peak_date} → ${d.trough_date}` : null],
+      ["Peak regained", d.peak_date ? (d.recovered_on || "not yet") : null], ["Longest time below a peak", `${d.longest_calendar_days} days`]]);
+    h("h4", "subhead", b, "Profit by calendar year");
+    const chartHost = h("div", "", b);
+    C.columns(chartHost, { labels: e.annual.map((a) => a.year), values: e.annual.map((a) => a.pnl), yFormat: axisMoney, tipFormat: smoney, faded: e.annual.map((a) => a.partial), height: 220, name: "Profit",
+      tipLabel: (i) => e.annual[i].year + (e.annual[i].partial ? ` (${e.annual[i].days} trading days)` : ""), label: "Profit by calendar year" });
+    simpleTable(b, [{ label: "Year", get: (a) => a.year + (a.partial ? "*" : "") }, { label: "Start", num: true, get: (a) => money(a.start_value) }, { label: "End", num: true, get: (a) => money(a.end_value) },
+      { label: "Profit", num: true, get: (a) => smoney(a.pnl) }, { label: "Return", num: true, get: (a) => fmt.spct(a.ret) }, { label: "Worst fall", num: true, get: (a) => pct(a.max_drawdown) }], e.annual);
+    h("p", "hint", b, "* part of a year.");
+    h("h4", "subhead", b, "Profit by month");
+    simpleTable(b, [{ label: "Month", get: (m) => `${m.year}-${String(m.month).padStart(2, "0")}` }, { label: "Profit", num: true, get: (m) => smoney(m.pnl) }, { label: "Return", num: true, get: (m) => fmt.spct(m.ret) },
+      { label: "Account value", num: true, get: (m) => money(m.end_value) }], e.monthly.slice().reverse());
+  }
+  function tradesTab(b, r) {
+    const t = r.trades, s = t.stats, tp = (x) => (x ? `${x.ticker} ${x.side}, ${x.entered} → ${x.exited}: ${smoney(x.pnl)}` : null);
+    h("p", "hint", b, "A round trip is one stretch in which a ticker is held on the same side: bought (long) or sold first (short). It opens when the position appears and closes when the position goes to zero or flips. Profit is what the position earned while it was held, before trading costs, in dollars on the account value of each day; the move is the price change between the two dates (reversed for a short). Prices are the adjusted closes the backtest used.");
+    if (!t.total) h("p", "hint", b, "This strategy never opened a position, so there is nothing to list.");
+    const grid = h("div", "kvgrid", b);
+    kvTable(grid, "Round trips", [["Closed", String(s.round_trips)], ["Still open", String(s.open_positions)], ["Winners / losers", `${s.winners} / ${s.losers}`], ["Win rate", s.win_rate === null ? null : pct(s.win_rate, 0)],
+      ["Average winner", smoney(s.average_win)], ["Average loser", smoney(s.average_loss)], ["Payoff ratio (winner ÷ loser)", s.payoff_ratio === null ? null : num(s.payoff_ratio)],
+      ["Profit factor", s.profit_factor === null ? (s.round_trips ? "n/a (no losers)" : null) : num(s.profit_factor)], ["Expected profit per trip", smoney(s.expectancy)], ["Best", tp(s.best)], ["Worst", tp(s.worst)]]);
+    kvTable(grid, "Holding", [["Average days held", s.average_days_held === null ? null : num(s.average_days_held, 0)], ["Longest / shortest", s.longest_days_held === null ? null : `${s.longest_days_held} / ${s.shortest_days_held} days`],
+      ["Days with a position", pct(s.days_in_market, 0)], ["Average exposure", num(s.average_exposure, 2) + "× capital"]]);
+    kvTable(grid, "Buys and sells", [["Changes of position (≥ 0.25% of the account)", String(s.orders)], ["Buys / sells", `${s.buys} / ${s.sells}`],
+      ["Long trips", `${s.long_trips} · ${smoney(s.long_pnl)}`], ["Short trips", `${s.short_trips} · ${smoney(s.short_pnl)}`]]);
+    if (t.round_trips.length) {
+      h("h4", "subhead", b, `Round trips (${t.listed} of ${t.total}: open positions first, then the latest closed)`);
+      simpleTable(b, [{ label: "Ticker", get: (x) => x.ticker }, { label: "Side", get: (x) => x.side }, { label: "Opened", get: (x) => x.entered }, { label: "Closed", get: (x) => (x.open ? "open" : x.exited) },
+        { label: "Days", num: true, get: (x) => x.days }, { label: "Entry price", num: true, get: (x) => (x.entry_price === null ? "" : num(x.entry_price)) }, { label: "Exit price", num: true, get: (x) => (x.exit_price === null ? "" : num(x.exit_price)) },
+        { label: "Move", num: true, get: (x) => (x.move === null ? "" : fmt.spct(x.move)) }, { label: "Profit", num: true, get: (x) => smoney(x.pnl) }], t.round_trips);
+    }
+    if (t.orders.length) {
+      h("h4", "subhead", b, "Latest buys and sells");
+      simpleTable(b, [{ label: "Date", get: (x) => x.date }, { label: "Ticker", get: (x) => x.ticker }, { label: "", get: (x) => x.side }, { label: "Size", num: true, get: (x) => pct(x.size, 1) },
+        { label: "Amount", num: true, get: (x) => money(x.amount) }, { label: "Price", num: true, get: (x) => (x.price === null ? "" : num(x.price)) }], t.orders);
+    }
+  }
   function renderDetails(root, r, nBad) {
     const flags = h("div", "card", root); h("h2", "", flags, "Red flags: fixed rules, each with its threshold"); h("p", "sub", flags, `${nBad} of ${r.flags.length} rules flagged. A flag is a question, not a verdict.`);
     for (const f of r.flags) { const row = h("div", "flag " + (f.flag ? "bad" : "ok"), flags); h("span", "ic", row, f.flag ? "⚑" : "✓"); const d = h("div", "", row); d.appendChild(document.createTextNode(f.rule + " "));
       h("b", "", d, f.flag ? "FLAG" : "ok"); h("small", "", d, `Observed ${f.observed}. ${f.why}`); }
-    const T = r.tables, tabs = [];
+    const T = r.tables, tabs = [], single = r.universe.tickers.length === 1;
     const add = (id, label, draw) => tabs.push({ id, label, draw });
-    const tab = (key, cols) => (b) => simpleTable(b, cols || Object.keys(T[key][0]).map((c, i) => ({ label: c.replace(/_/g, " "), num: typeof T[key][0][c] === "number", get: (x) => cell(x[c]) })), T[key]);
+    const tab = (key, cols) => (b) => {
+      const rows = key === "benchmarks" && single ? T[key].map((x) => Object.assign({}, x, { benchmark: x.benchmark === "equal_weight" ? "buy and hold" : x.benchmark })) : T[key];
+      simpleTable(b, cols || Object.keys(rows[0]).map((c) => ({ label: c.replace(/_/g, " "), num: typeof rows[0][c] === "number", get: (x) => cell(x[c]) })), rows);
+    };
+    if (r.earnings) add("earn", "Earnings", (b) => earningsTab(b, r));
+    if (r.trades) add("trades", "Trades", (b) => tradesTab(b, r));
     if (T.benchmarks) add("bench", "Against benchmarks", tab("benchmarks"));
     if (T.by_sample) add("sample", "By period", tab("by_sample"));
     if (T.by_regime) add("regime", "By regime", tab("by_regime"));
@@ -417,7 +587,7 @@
     if (fq.length) add("fq", "Forecast quality", (b) => simpleTable(b, [{ label: "Measure", get: (x) => x[0].replace("forecast_", "").replace(/_/g, " ") }, { label: "Value", num: true, get: (x) => num(x[1], 4) }], fq));
     if (r.validation.causality) add("caus", "Look-ahead check", (b) => simpleTable(b, [{ label: "Component", get: (x) => x[0] }, { label: "Result", get: (x) => (x[1].ok ? "✓ passes" : "✗ FAILS") }, { label: "Largest change when the future was replaced by noise", num: true, get: (x) => String(x[1].max_abs_difference) }], Object.entries(r.validation.causality)));
     add("spec", "Specification (YAML)", (b) => { const pre = h("pre", "", b); h("code", "", pre, r.yaml); });
-    const card = h("div", "card", root); h("h2", "", card, "Details"); const bar = h("div", "tabsmall", card), body = h("div", "", card);
+    const card = h("div", "card", root); h("h2", "", card, "Details"); const bar = h("div", "tabsmall", card), body = h("div", "tabbody", card);
     const open = (t) => { S.view.detail = t.id; [...bar.children].forEach((c) => c.setAttribute("aria-selected", String(c.dataset.id === t.id))); keepScroll(() => { body.replaceChildren(); t.draw(body); }, body); };
     tabs.forEach((t) => { const b = h("button", "", bar, t.label); b.dataset.id = t.id; b.setAttribute("aria-selected", "false"); b.addEventListener("click", () => open(t)); });
     if (tabs.length) open(tabs.find((t) => t.id === S.view.detail) || tabs[0]);
@@ -432,6 +602,7 @@
     const row = h("div", "starters", c);
     const starters = [["Dual momentum on the 15 ETFs", () => { S.tickers = defaultTickers(); S.models = [{ name: "dual_momentum", params: {} }]; S.allocatorTouched = false; autoAllocator(); }],
       ["12-1 momentum formula on tech stocks", () => { S.tickers = ["AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "TSLA", "AVGO"].map((t) => ({ t, cls: "equity", status: "ok" })); S.start = ""; S.models = [{ name: "expression", params: { expr: "mom(252, 21)" } }]; S.allocatorTouched = false; autoAllocator(); }],
+      ["50/200 moving-average crossover on SPY alone", () => { S.tickers = [{ t: "SPY", cls: S.catalog.default_classes.SPY || "equity", status: "default" }]; S.start = ""; S.models = [{ name: "ma_crossover", params: {} }]; S.allocatorTouched = false; autoAllocator(); }],
       ["Trend filter on stocks, bonds, gold and bitcoin", () => { S.tickers = ["SPY", "TLT", "GLD", "BTC-USD", "VNQ", "DBC"].map((t) => ({ t, cls: t === "BTC-USD" ? "crypto" : S.catalog.default_classes[t] || "unknown", status: S.catalog.default_tickers.includes(t) ? "default" : "ok" })); S.models = [{ name: "expression", params: { expr: "where(close > sma(200), 1, -1)", mode: "time_series" } }]; S.allocatorTouched = false; autoAllocator(); }]];
     for (const [label, apply] of starters) { const b = h("button", "btn", row, label); b.addEventListener("click", () => { apply(); renderUniverse(); renderStrategies(); renderPortfolio(); runBacktest(); }); }
   }
@@ -485,7 +656,7 @@
     chk.addEventListener("click", async () => {
       out.replaceChildren(); h("span", "spinner", out);
       try {
-        const body = { expr: B.expr, mode: B.mode, tickers: S.tickers.filter((x) => x.status !== "bad").map((x) => x.t), start: S.start || null };
+        const body = { expr: B.expr, mode: B.mode, tickers: S.tickers.filter((x) => x.status !== "bad").map((x) => x.t), start: S.start || null, source: S.source };
         const res = await api("/api/formula", body); out.replaceChildren();
         if (!res.ok) { const b = h("div", "banner err", out); h("strong", "", b, "Not valid."); b.appendChild(document.createTextNode(res.error)); return; }
         h("p", "hint", out, `Latest scores on ${res.as_of}; the formula has values for ${(res.coverage * 100).toFixed(0)}% of asset-days from ${res.first}. Top of the list is what the formula would buy first.`);
@@ -626,7 +797,8 @@
     try { S.catalog = await api("/api/catalog"); } catch (e) { $("#results").textContent = "Could not reach the server: " + e.message; return; }
     const savedT = store("tickers"); S.tickers = savedT && savedT.length ? savedT.map((x) => ({ t: x.t, cls: x.cls, status: S.catalog.default_tickers.includes(x.t) ? "default" : "ok" })) : defaultTickers();
     S.models = [{ name: S.catalog.models.some((m) => m.name === "dual_momentum") ? "dual_momentum" : S.catalog.models[0].name, params: {} }];
-    buildPanel(); renderUniverse(); renderStrategies(); renderPortfolio(); renderEmpty(); updateTrials();
+    const savedSource = store("source"); if (savedSource && S.catalog.sources.some((x) => x.name === savedSource)) S.source = savedSource;
+    buildPanel(); renderSource(); renderUniverse(); renderStrategies(); renderPortfolio(); renderEmpty(); updateTrials();
     const t = store("tab"); if (t && TABS.includes(t) && t !== "backtest") showTab(t);
   }
   boot();

@@ -25,6 +25,9 @@ class PCAResidual(ForecastModel):
     def __init__(self, components: int = 3, window: int = 252, zscore_window: int = 21):
         self.components, self.window, self.zscore_window = components, window, zscore_window
 
+    def required_assets(self) -> int:
+        return max(super().required_assets(), int(self.components) + 1)           # something must be left over once the components are removed
+
     def score(self, data):
         return pca_stat_arb_signal(data.returns, self.components, self.window, self.zscore_window).where(data.investable)
 
@@ -60,6 +63,7 @@ class KalmanPairs(ForecastModel):
     """A pair's hedge ratio drifts; filtering it avoids the stale-regression problem of a fixed-window hedge."""
 
     name, family = "kalman_pairs", "stat-arb"
+    min_assets = 2                                              # a pair
 
     def __init__(self, pairs: tuple = DEFAULT_PAIRS, delta: float = 1e-5, obs_var: float = 1e-3, clip: float = 3.0):
         self.pairs, self.delta, self.obs_var, self.clip = tuple(tuple(p) for p in pairs), delta, obs_var, clip
@@ -82,6 +86,7 @@ class CointegrationPairs(ForecastModel):
     """Trade only relationships that currently look stationary; pairs that fail the test are left alone."""
 
     name, family = "cointegration_pairs", "stat-arb"
+    min_assets = 2                                              # a pair
 
     def __init__(self, pairs: tuple = DEFAULT_PAIRS, window: int = 252, refit_every: int = 21, p_value: float = 0.10, z_window: int = 63, clip: float = 3.0):
         self.pairs, self.window, self.refit_every, self.p_value, self.z_window, self.clip = tuple(tuple(p) for p in pairs), window, refit_every, p_value, z_window, clip
@@ -126,6 +131,7 @@ class SparseBasket(ForecastModel):
     """The few other assets that actually explain an ETF define its fair value; the residual from that sparse basket reverts."""
 
     name, family = "sparse_basket", "stat-arb"
+    min_assets = 3                                              # each asset is regressed on a basket of the others
 
     def __init__(self, window: int = 252, refit_every: int = 21, alpha: float = 0.05, z_window: int = 21):
         self.window, self.refit_every, self.alpha, self.z_window = window, refit_every, alpha, z_window

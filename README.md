@@ -200,10 +200,13 @@ the classic model portfolios) plus `min_variance`, `max_diversification` and `sl
 runs all of them once on the 15 ETFs with the deflated Sharpe ratio counting every one as a trial; the honest reading is that few beat
 equal weight and none clears 0.95 (with the same-dates comparison added in Generation 6, only the static 60/40 mix clearly beats it and `dual_momentum` ties).
 
-**Dashboard.** `quant serve` opens a local dashboard ([`docs/dashboard.md`](docs/dashboard.md)): add any Yahoo Finance tickers next to the
-platform's 15 ETFs, pick a strategy (or type a one-line formula, or drop a Python file into `user_strategies/`), and see net growth
-against equal weight and risk parity, drawdowns, rolling Sharpe, annual and monthly returns, exposure, attribution, red flags and a
-deflated Sharpe ratio that counts how many ideas you tried. It also compares runs and renders the guides, including
+**Dashboard.** `quant serve` opens a local dashboard ([`docs/dashboard.md`](docs/dashboard.md)): add tickers from Yahoo Finance or from iTick
+(an API key kept in the environment, never in a file or a page; every call rate-limited) next to the platform's 15 ETFs, pick a strategy (or
+type a one-line formula, or drop a Python file into `user_strategies/`), and see net growth in dollars against equal weight and risk parity,
+drawdowns, rolling Sharpe, annual and monthly returns, exposure, attribution, red flags and a deflated Sharpe ratio that counts how many ideas
+you tried. A strategy that trades each ticker on its own signal runs on a single ticker (one that ranks tickers refuses to, and says why); the
+Earnings tab gives the profit in dollars by year and month, profit factor, best and worst periods and the deepest fall, and the Trades tab lists
+the round trips (long and short, with dates, prices and profit) and the buys and sells. It also compares runs and renders the guides, including
 [how to add a strategy](docs/how_to_add_a_strategy.md). Runs on localhost with a per-launch token; the browser never sends code.
 
 **Integration audit.** A strict feature audit of the Generation 2-4 roadmap ([`docs/feature_audit.md`](docs/feature_audit.md), with a
@@ -316,7 +319,7 @@ docs/            START_HERE, 81 technique guides, glossary, chapter map, strateg
 experiments/     numbered stage scripts + the experiment registry
 reports/         figures, tables, the data-quality report, the research paper,
                  the Generation 2-5 reports, errata/ (before/after record of the drift fix), the dashboard
-tests/           1444 tests
+tests/           1633 tests
 Dockerfile, docker-compose.yml, Makefile, .github/workflows/ci.yml and benchmark.yml, .pre-commit-config.yaml
 ```
 
@@ -335,7 +338,7 @@ python -m experiments.run_all --generation 5  # Generation 5 only (stages 30-40)
 python -m experiments.run_all --from 6 --to 9 # a range of stages
 python -m experiments.run_all --fresh         # clear derived artefacts first
 python -m experiments.stage01_data            # a single stage
-pytest -q                                      # 1444 tests
+pytest -q                                      # 1633 tests
 quant demo; quant dashboard; quant explain risk parity   # the newcomer layer
 quant serve                                    # the interactive dashboard: your tickers, your strategies
 quant new-strategy my_idea                     # a template for your own strategy in user_strategies/

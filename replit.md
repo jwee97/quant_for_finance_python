@@ -37,7 +37,40 @@ python -m pytest tests/test_webapp.py
 ```
 
 The demo and default universe use the imported cached market data. New ticker
-requests use Yahoo Finance and therefore need network access and are subject to
-provider availability/rate limits. Core dashboard use needs no API keys.
+requests use the data source chosen in the dashboard: Yahoo Finance (the default;
+it needs network access and is subject to provider availability/rate limits) or
+iTick (it needs an API key; see below). Core dashboard use needs no API keys.
 Optional Anthropic assistant features need their separate dependency and
 `ANTHROPIC_API_KEY`; they are not configured as part of this setup.
+
+## Using iTick: keeping the API key safe
+
+1. In the Replit workspace open **Tools**, then **Secrets** (under *Setup*), choose
+   **New Secret**, enter the key `ITICK_API_KEY` and your iTick API key as the
+   value, and **Add Secret**. Stop the app and press **Run** again so it starts
+   with the secret. Replit encrypts secrets and passes them to the app as
+   environment variables.
+2. In the dashboard choose **iTick** under *Download other tickers from* and press
+   **Test the iTick connection** (or run `python -m src itick-test` in the Shell): it
+   spends one call and shows whether the key, the host and the daily interval work.
+
+Rules for the key:
+
+- It lives only in Secrets. Never paste it into a chat, an issue, a commit or a
+  file. In particular do not put it in `.replit` (its `[env]` section is committed
+  to the repository), `replit.nix` or `config/*.yaml`.
+- The server reads it from the environment, sends it to iTick in one request
+  header over HTTPS, and never puts it in a page, a response, a log line, an error
+  message or a cache file. The page only learns whether a key exists.
+- Anyone you add to the Repl as a collaborator can see secret values. A Repl that
+  is not published is still reachable by anyone who has its link: they cannot see
+  the key, but they can use the dashboard and so spend your iTick calls. Do not
+  share the link.
+- If a key leaks, create a new one in your iTick account and replace the secret.
+
+The free plan allows 5 calls a minute. The app enforces that for every iTick call
+(a download waits and the progress line says so), remembers recent calls across
+restarts in `data/user/itick_calls.json`, caches downloads for a day and tops them
+up with one call per ticker. See [docs/dashboard.md](docs/dashboard.md) for the
+settings (`ITICK_CALLS_PER_MINUTE`, `ITICK_BASE_URL`, `ITICK_DAILY_KTYPE`, ...) and
+for what is and is not verified about iTick's data.

@@ -127,7 +127,8 @@ def make_handler(app: App, token: str, port_holder: list):
                 if not path.startswith("/api/"):
                     self._json(HTTPStatus.NOT_FOUND, {"error": "not found"})
                 return
-            routes = {"/api/tickers": app.check_tickers, "/api/backtest": app.submit, "/api/formula": app.check_formula}
+            routes = {"/api/tickers": app.check_tickers, "/api/backtest": app.submit, "/api/formula": app.check_formula, "/api/requirements": app.requirements,
+                      "/api/source/test": app.test_source}
             if path in routes:
                 body = self._body()
                 if body is not None:

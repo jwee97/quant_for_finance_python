@@ -78,6 +78,7 @@ class ProtectiveAssetAllocation(_TAA):
     """Breadth of trend across many markets is an early warning of a crash: when most risky assets are falling, step aside into bonds (a canary built from the whole risky set)."""
 
     name = "paa"
+    min_assets = 2                                              # risky assets to rank and a safe one to hide in
 
     def __init__(self, lookback: int = 12, protection: int = 1, top: int = 6, risky: tuple = ("SPY", "QQQ", "IWM", "EFA", "EEM", "VNQ", "GLD", "DBC", "HYG"),
                  safe: tuple = ("IEF", "SHY", "AGG", "TLT")):
@@ -113,6 +114,7 @@ class VigilantAssetAllocation(_TAA):
     """Requiring ALL offensive assets to trend up makes the switch to safety fast, at the cost of being aggressive and concentrated when it is on."""
 
     name = "vaa"
+    min_assets = 2                                              # an offensive and a defensive asset
 
     def __init__(self, offensive: tuple = ("SPY", "EFA", "EEM", "AGG"), defensive: tuple = ("LQD", "IEF", "SHY")):
         self.offensive, self.defensive = tuple(offensive), tuple(defensive)
@@ -138,6 +140,7 @@ class DefensiveAssetAllocation(_TAA):
     """Two 'canary' markets (emerging equities and aggregate bonds) are the first to signal stress; each bad canary moves a share of the portfolio to safety."""
 
     name = "daa"
+    min_assets = 2                                              # an offensive and a defensive asset (the canaries are among them)
 
     def __init__(self, canary: tuple = ("EEM", "AGG"), offensive: tuple = ("SPY", "QQQ", "IWM", "EFA", "EEM", "VNQ", "GLD", "DBC", "HYG"),
                  defensive: tuple = ("IEF", "SHY", "LQD", "TLT"), top: int = 6, breadth: int = 2):
@@ -170,6 +173,7 @@ class AdaptiveAssetAllocation(_TAA):
     """Momentum picks what to own and risk weighting sizes it: strong assets in proportion to how calm they are. Inverse volatility stands in for the original's minimum variance."""
 
     name = "adaptive_asset_allocation"
+    min_assets = 2                                              # it picks the top assets, so it needs something to pick from
 
     def __init__(self, top_k: int = 5, months: int = 6, vol_window: int = 63):
         if top_k < 1 or months < 1 or vol_window < 10:
