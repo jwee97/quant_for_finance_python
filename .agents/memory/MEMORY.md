@@ -1,0 +1,1 @@
+- [GitHub CLI auth in Replit](github-cli-auth.md) — an attached Git provider may not authenticate CLI pushes from the agent shell; verify Git-pane access separately.
