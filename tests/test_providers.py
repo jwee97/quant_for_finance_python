@@ -84,6 +84,16 @@ def test_without_a_key_nothing_is_called_and_every_ticker_gets_the_same_instruct
     assert p.available()[0] is False and p.describe()["configured"] is False and p.preflight("AAPL")
 
 
+def test_the_provider_says_which_setup_is_missing_in_a_word_and_never_the_key(monkeypatch, tmp_path):
+    monkeypatch.delenv("ITICK_API_KEY", raising=False)
+    assert ITickProvider(root=tmp_path).describe()["setup"] == "key"                                              # no key yet
+    assert ITickProvider(key=KEY).describe()["setup"] == "" and ITickProvider(key=KEY).describe()["configured"] is True
+    assert ITickProvider(key=KEY, base_url="http://api.itick.org").describe()["setup"] == "url"                   # a key, but an address that would send it in clear text
+    assert ITickProvider(root=tmp_path, base_url="http://api.itick.org").describe()["setup"] == "url"             # the address is reported first when both are wrong
+    monkeypatch.setenv("ITICK_API_KEY", KEY)
+    assert ITickProvider(root=tmp_path).describe()["setup"] == "" and KEY not in json.dumps(ITickProvider(root=tmp_path).describe())
+
+
 @pytest.mark.parametrize("url", ["http://api.itick.org", "ftp://x.example", "api.itick.org"])
 def test_a_base_url_that_would_send_the_key_in_clear_text_is_refused(url):
     fake = FakeITick()

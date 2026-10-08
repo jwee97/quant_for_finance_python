@@ -378,7 +378,8 @@ class ITickProvider:
 
     def describe(self) -> dict:
         ok, why = self.available()
-        return {"configured": ok, "problem": why, "calls_per_minute": self.limiter.calls, "calls_available_now": self.limiter.remaining(),
+        setup = "url" if self.config_error else ("" if self._key() else "key")                # what is missing: the address is wrong, or there is no key yet
+        return {"configured": ok, "problem": why, "setup": setup, "calls_per_minute": self.limiter.calls, "calls_available_now": self.limiter.remaining(),
                 "host": parse.urlparse(self.base_url).netloc, "symbols": SYMBOL_HELP}
 
     def _clean(self, text: object) -> str:

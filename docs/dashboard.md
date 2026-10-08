@@ -57,6 +57,8 @@ Every distinct idea you test on the same tickers counts as a trial, shown top ri
 
 ### Keeping the iTick key safe
 
+Until a key exists, iTick appears in the menu as *iTick (not set up)* and the page shows a short set-up guide with the steps below, a button that copies the secret name, and a button that reloads the page once you have restarted the app. There is no box to type the key into: it never goes through the page.
+
 The key lives in the environment of the machine that runs the server, and nowhere else:
 
 - **On Replit:** Tools, then **Secrets** (under *Setup*), **New Secret**, key `ITICK_API_KEY`, your key as the value, **Add Secret**; then stop and **Run** again so the app starts with it. Replit stores secrets encrypted and hands them to the app as environment variables; visitors to the Repl's cover page see neither their names nor their values. Anyone you add to the Repl as a collaborator can see the values, so add only people you trust.

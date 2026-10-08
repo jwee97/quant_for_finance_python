@@ -207,6 +207,9 @@ pre code { background: none; padding: 0; }
 .kvgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; margin: 8px 0 12px; align-items: start; }
 .kv h4, h4.subhead { margin: 0 0 4px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
 h4.subhead { margin: 18px 0 6px; }
+.setup { border: 1px solid var(--border); border-left: 3px solid var(--warn); border-radius: 8px; padding: 10px 12px; margin: 8px 0; background: var(--surface); font-size: 12.5px; display: grid; gap: 8px; }
+.setup p { margin: 0; }
+.setup ol.steps { margin: 0; padding-left: 18px; display: grid; gap: 4px; }
 .kv .scroll { max-height: none; }
 .runbar .guard { margin: 0; font-size: 12.5px; color: var(--ink); border-left: 3px solid var(--warn); padding: 6px 10px; background: var(--ghost); border-radius: 4px; }
 .runbar .guard[hidden] { display: none; }

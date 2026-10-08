@@ -356,6 +356,7 @@ def test_the_catalog_lists_the_sources_without_ever_carrying_the_key(itick):
     assert set(sources) == {"yahoo", "itick"} and sources["yahoo"]["available"] and sources["itick"]["available"] and sources["itick"]["calls_per_minute"] == 5
     assert sources["itick"]["calls_available_now"] == 5 and "ITICK_API_KEY" in sources["itick"]["note"]
     assert KEY not in json.dumps(app.catalog()) and fake.calls == []
+    assert sources["itick"]["setup"] == "" and "setup" not in sources["yahoo"]                       # nothing to set up once the key is there; Yahoo never needs it
 
 
 def test_an_unset_key_shows_as_not_available_and_says_how_to_fix_it(tmp_path, monkeypatch):
@@ -365,6 +366,7 @@ def test_an_unset_key_shows_as_not_available_and_says_how_to_fix_it(tmp_path, mo
     app = App(config, builder=builder, root=config.root)
     entry = next(s for s in app.catalog()["sources"] if s["name"] == "itick")
     assert entry["available"] is False and "ITICK_API_KEY" in entry["problem"] and "Secrets" in entry["problem"]
+    assert entry["setup"] == "key"                                                                  # the page shows its set-up guide for exactly this case
     rows = app.check_tickers({"tickers": ["AAA", "NVDA"], "source": "itick"})["tickers"]
     assert rows["AAA"]["ok"] and not rows["NVDA"]["ok"] and "not set up" in rows["NVDA"]["error"]
     with pytest.raises(ApiError, match="iTick is selected but iTick is not set up"):

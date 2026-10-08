@@ -456,6 +456,7 @@ def test_choosing_itick_downloads_when_you_run_waits_for_the_limit_and_never_sho
     assert pg.locator("#u-source-select option").all_inner_texts() == ["Yahoo Finance", "iTick"]
     pg.select_option("#u-source-select", "itick")
     assert "5 calls a minute" in pg.inner_text("#u-source") and "ITICK_API_KEY" in pg.inner_text("#u-source")
+    assert pg.locator("#u-source .setup").count() == 0 and pg.locator("#u-source button:has-text('Test the iTick connection')").count() == 1      # a key exists: no set-up guide, a test button
     pg.click("button:text-is('Clear')")
     pg.fill("input[aria-label='tickers to add']", "NVDA, MSFT")
     pg.click("button:text-is('Add')")
@@ -486,13 +487,41 @@ def page_no_key(browser, live_no_key, monkeypatch):
     pg.close()
 
 
+def test_the_setup_guide_copies_the_secret_name_and_its_reload_button_keeps_iTick_selected(browser, live_no_key, monkeypatch):
+    monkeypatch.delenv("ITICK_API_KEY", raising=False)
+    context = browser.new_context(permissions=["clipboard-read", "clipboard-write"], viewport={"width": 1400, "height": 1000})
+    pg = context.new_page()
+    problems = []
+    pg.on("pageerror", lambda e: problems.append(str(e)))
+    try:
+        pg.goto(live_no_key.url)
+        pg.wait_for_selector(".chip")
+        pg.select_option("#u-source-select", "itick")
+        pg.click("#u-source button:has-text('Copy the secret name')")
+        pg.wait_for_selector(".toast")
+        assert "copied" in pg.inner_text(".toast") and pg.evaluate("navigator.clipboard.readText()") == "ITICK_API_KEY"
+        with pg.expect_navigation():
+            pg.click("#u-source button:has-text('I added it and restarted: reload')")
+        pg.wait_for_selector("#u-source .setup")
+        assert pg.locator("#u-source-select").input_value() == "itick"                                               # the choice survives the reload
+        assert not problems, problems
+    finally:
+        context.close()
+
+
 def test_without_a_key_the_page_says_how_to_set_one_up_and_refuses_the_download(page_no_key, monkeypatch):
     monkeypatch.delenv("ITICK_API_KEY", raising=False)
     pg = page_no_key
     assert pg.locator("#u-source-select option").all_inner_texts() == ["Yahoo Finance", "iTick (not set up)"]
     pg.select_option("#u-source-select", "itick")
     text = pg.inner_text("#u-source")
-    assert "ITICK_API_KEY" in text and "Secrets" in text and "never sent to this page" in text and pg.locator("text=Test the iTick connection").count() == 0
+    assert "ITICK_API_KEY" in text and "Secrets" in text and "never sent to this page" in text
+    assert pg.locator("#u-source button:has-text('Test the iTick connection')").count() == 0                       # the test button waits for a key (the steps may still mention it)
+    steps = pg.locator("#u-source .setup ol.steps li")
+    assert steps.count() == 4 and pg.locator("#u-source .setup code").inner_text() == "ITICK_API_KEY"
+    assert "Stop" in steps.nth(2).inner_text() and "Run" in steps.nth(2).inner_text() and "reload" in steps.nth(2).inner_text()
+    assert pg.locator("#u-source .setup button").all_inner_texts() == ["Copy the secret name", "I added it and restarted: reload"]
+    assert pg.locator("#u-source input").count() == 0 and pg.locator("#u-source textarea").count() == 0       # there is nowhere on the page to type a key
     pg.click("button:text-is('Clear')")
     pg.fill("input[aria-label='tickers to add']", "NVDA")
     pg.click("button:text-is('Add')")
