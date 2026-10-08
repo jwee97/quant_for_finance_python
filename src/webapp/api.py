@@ -49,6 +49,27 @@ DOC_ROOT_FILES = {"dashboard": "dashboard.md", "how_to_add_a_strategy": "how_to_
                   "roadmap_coverage": "roadmap_coverage.md", "platform_integration": "platform_integration.md", "feature_audit": "feature_audit.md"}
 SAFE_SLUG = re.compile(r"^[a-z0-9][a-z0-9_-]{0,80}$")
 
+# What the page needs from this server. 1 was the first catalogue; 2 added data sources (``sources``), the ticker-count check (``/api/requirements``), earnings and trades. The page compares it with
+# its own number and says so when the server behind it is older (the files were updated while the app was running, so it still runs the old code).
+API_VERSION = 2
+CODE_ROOT = Path(__file__).resolve().parents[1]
+
+
+def code_signature(root: Path = CODE_ROOT) -> tuple[int, float]:
+    """``(number of Python files, newest modification time)`` under ``root``. Compared with the value taken when this process started, a difference means the code changed on disk after the
+    app loaded it, so the app is running something older than what the files now say (comparing the files with each other, not with the clock, so a skewed clock cannot fake it)."""
+    count, newest = 0, 0.0
+    for path in Path(root).rglob("*.py"):
+        try:
+            newest = max(newest, path.stat().st_mtime)
+            count += 1
+        except OSError:
+            continue
+    return count, newest
+
+
+LAUNCH_SIGNATURE = code_signature()
+
 
 class ApiError(ValueError):
     """A request the user can fix; the message is shown in the page."""
@@ -121,6 +142,7 @@ class App:
         detectors = [{"name": e.name, "description": e.description} for e in DETECTORS.entries() if e.name != "static"]
         default = self.builder.default_bundle()
         return clean({
+            "api_version": API_VERSION, "restart_needed": code_signature() != LAUNCH_SIGNATURE,
             "models": models, "allocators": allocators, "detectors": detectors, "combinations": [{"name": k, "description": v} for k, v in COMBINATIONS.items()],
             "default_tickers": list(default.assets), "default_classes": dict(default.asset_class), "classes": list(CLASSES), "max_tickers": MAX_TICKERS,
             "sources": [src.status() for src in self.builder.sources.values()], "default_source": "yahoo",

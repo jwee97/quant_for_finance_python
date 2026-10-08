@@ -10,8 +10,18 @@
   async function api(path, body) {
     const res = await fetch(path, { method: body ? "POST" : "GET", headers: Object.assign({ "X-Token": token }, body ? { "Content-Type": "application/json" } : {}), body: body ? JSON.stringify(body) : undefined });
     let data = null; try { data = await res.json(); } catch (e) { data = { error: "the server sent an unreadable response" }; }
-    if (!res.ok) throw new Error(data.error || res.statusText);
+    if (!res.ok) { const error = new Error(data.error || res.statusText); error.status = res.status; throw error; }
     return data;
+  }
+  /* The server API this page was written for (API_VERSION in api.py). A server that reports less is older than the page: the files were updated while the app was running, so it still runs the
+     old code. Say so, instead of drawing half a page. */
+  const PAGE_API = 2;
+  const RESTART = "Stop the app and press Run again (on Replit: the Stop button, then Run), then reload this page. Your saved tickers and runs are kept.";
+  /* A banner above the page for what the person has to act on. One banner per ``id``, so repeating it does not stack. */
+  function notice(id, title, text, serious) {
+    const box = $("#notice"); let el = box.querySelector(`[data-notice="${id}"]`);
+    if (!el) { el = h("div", "banner" + (serious ? " err" : ""), box); el.setAttribute("data-notice", id); }
+    el.replaceChildren(); h("strong", "", el, title); el.appendChild(document.createTextNode(text)); box.hidden = false;
   }
   function store(key, value) { try { if (value === undefined) return JSON.parse(localStorage.getItem("ql." + key)); localStorage.setItem("ql." + key, JSON.stringify(value)); } catch (e) { return null; } }
   function toast(msg) { const t = h("div", "toast", document.body, msg); setTimeout(() => t.remove(), 3500); }
@@ -80,7 +90,7 @@
     if (warned.length) { const p = h("p", "hint", box, "⚠ " + warned.map((x) => `${x.t}: ${x.warn[0]}`).join(" · ")); p.style.color = css("--warn"); p.style.flexBasis = "100%"; }
     const later = S.tickers.filter((x) => x.later);
     if (later.length) {
-      const total = later.reduce((a, x) => a + (x.calls || 0), 0), src = S.catalog.sources.find((x) => x.name === S.source), perMin = src && src.calls_per_minute;
+      const total = later.reduce((a, x) => a + (x.calls || 0), 0), src = sources().find((x) => x.name === S.source), perMin = src && src.calls_per_minute;
       const cost = total ? `: about ${total} call${total === 1 ? "" : "s"}` + (perMin ? `, around ${Math.max(1, Math.ceil(total / perMin))} minute${Math.ceil(total / perMin) > 1 ? "s" : ""} at ${perMin} a minute` : "") + " (once; a later start date means fewer)" : "";
       const p = h("p", "hint", box, "↓ " + later.map((x) => x.t).join(", ") + (later.length === 1 ? " is" : " are") + " downloaded when you run" + cost + "."); p.style.flexBasis = "100%";
     }
@@ -129,12 +139,13 @@
     catch (e) { list.forEach((x) => { if (x.status === "pending") { x.status = "bad"; x.error = "could not check"; } }); toast(e.message); }
     saveUniverse(); renderUniverse();
   }
+  const sources = () => (S.catalog && Array.isArray(S.catalog.sources) ? S.catalog.sources : []);
   function renderSource() {
     const box = $("#u-source"); if (!box) return; box.replaceChildren();
     const lab = h("label", "f", box, "Download other tickers from"), sel = h("select", "", lab); sel.id = "u-source-select";
-    for (const src of S.catalog.sources) { const o = h("option", "", sel, src.label + (src.available ? "" : " (not set up)")); o.value = src.name; if (src.name === S.source) o.selected = true; }
+    for (const src of sources()) { const o = h("option", "", sel, src.label + (src.available ? "" : " (not set up)")); o.value = src.name; if (src.name === S.source) o.selected = true; }
     sel.addEventListener("change", () => { S.source = sel.value; store("source", S.source); renderSource(); recheckTickers(false); });
-    const cur = S.catalog.sources.find((x) => x.name === S.source); if (!cur) return;
+    const cur = sources().find((x) => x.name === S.source); if (!cur) return;
     h("p", "hint", box, cur.note);
     if (!cur.available) {
       const w = h("p", "hint", box, cur.problem + (cur.name === "itick" ? ". The key is read by the server only and is never sent to this page." : "")); w.style.color = css("--warn");
@@ -163,7 +174,7 @@
       try {
         const r = await api("/api/requirements", { models: S.models.map((m) => ({ name: m.name, params: m.params })), allocator: S.allocator || null, allocator_params: S.allocParams, tickers: n });
         if (seq === guardSeq) S.guard = { ok: r.ok, message: r.message || "" };
-      } catch (e) { if (seq === guardSeq) S.guard = { ok: false, message: e.message }; }
+      } catch (e) { if (seq === guardSeq) S.guard = { ok: false, message: e.status === 404 ? "The app running behind this page is older than the page and cannot check the ticker count. " + RESTART : e.message }; }
       syncRun();
     }, 120);
   }
@@ -211,7 +222,7 @@
       if (!info) return;
       h("p", "hint", block, info.description);
       if (info.min_assets > 1) h("p", "hint", block, `Needs at least ${info.min_assets} tickers: it works by comparing them with each other.`);
-      else if (info.book === "sleeves") h("p", "hint", block, "Works on each ticker alone, sized by its own signal and in cash when the signal is off: the Trades tab of the result lists when it bought and sold.");
+      else if (info.book === "sleeves") h("p", "hint", block, "Works on each ticker alone, sized by its own signal: long when the signal is positive, short when it is negative (where the rule shorts) and in cash when there is none. The Trades tab of the result lists when it bought and sold.");
       if (info.rebalance) h("p", "hint", block, "This rule rebalances " + info.rebalance + " unless you change it in the spec.");
       if (info.requires.length) h("p", "hint", block, "Needs macro series: " + info.requires.join(", ") + " (included for the platform ETFs, and attached to any universe).");
       if (info.slow) { const w = h("p", "hint", block, "⏱ Slow: " + info.slow + "."); w.style.color = css("--warn"); }
@@ -793,12 +804,30 @@
     clearTimeout(rz); rz = setTimeout(() => { if (!$("#view-backtest").hidden && S.current && !S.busy) renderResult(); }, 180);
   }).observe($("main"));
 
+  /* The server is older than the page when it reports a lower API version; the first release with data sources did not report one, but it did send ``sources``. */
+  const serverApi = () => S.catalog.api_version || (Array.isArray(S.catalog.sources) ? 2 : 1);
+  function serverTooOld() {
+    $(".layout").hidden = true;
+    notice("old-server", "The app is older than this page. ", "The page was updated, but the app behind it is still running the old code: the files changed while it was running. " + RESTART
+      + ` (The app reports version ${serverApi()}; this page needs ${PAGE_API}.)`, true);
+    const again = h("button", "btn primary", $('#notice [data-notice="old-server"]'), "Reload this page"); again.style.marginLeft = "12px"; again.addEventListener("click", () => location.reload());
+  }
+
   async function boot() {
     try { S.catalog = await api("/api/catalog"); } catch (e) { $("#results").textContent = "Could not reach the server: " + e.message; return; }
-    const savedT = store("tickers"); S.tickers = savedT && savedT.length ? savedT.map((x) => ({ t: x.t, cls: x.cls, status: S.catalog.default_tickers.includes(x.t) ? "default" : "ok" })) : defaultTickers();
+    if (serverApi() < PAGE_API) { serverTooOld(); return; }
+    if (S.catalog.restart_needed) notice("restart", "The app was updated after it started. ", "It may still be running the old code. " + RESTART);
+    const failed = [];
+    const draw = (what, fn) => { try { fn(); } catch (e) { console.error(what, e); failed.push(`${what} (${e.message})`); } };
+    draw("the ticker list", () => {
+      const savedT = store("tickers"); S.tickers = savedT && savedT.length ? savedT.map((x) => ({ t: x.t, cls: x.cls, status: S.catalog.default_tickers.includes(x.t) ? "default" : "ok" })) : defaultTickers();
+    });
     S.models = [{ name: S.catalog.models.some((m) => m.name === "dual_momentum") ? "dual_momentum" : S.catalog.models[0].name, params: {} }];
-    const savedSource = store("source"); if (savedSource && S.catalog.sources.some((x) => x.name === savedSource)) S.source = savedSource;
-    buildPanel(); renderSource(); renderUniverse(); renderStrategies(); renderPortfolio(); renderEmpty(); updateTrials();
+    const savedSource = store("source"); if (savedSource && sources().some((x) => x.name === savedSource)) S.source = savedSource;
+    draw("the setup panel", buildPanel);
+    draw("the data source menu", renderSource); draw("the tickers", renderUniverse); draw("the strategy list", renderStrategies); draw("the portfolio list", renderPortfolio);
+    draw("the results area", renderEmpty); draw("the trial counter", updateTrials);
+    if (failed.length) notice("draw", "Part of the page could not be drawn: ", failed.join("; ") + ". Reload the page; if it happens again, restart the app.", true);
     const t = store("tab"); if (t && TABS.includes(t) && t !== "backtest") showTab(t);
   }
   boot();

@@ -541,6 +541,52 @@ def test_the_test_endpoint_reports_the_connection_without_the_key(itick):
 
 
 # ------------------------------------------------------------------------------------------------------ one ticker, strategies that need more
+def test_the_catalog_states_its_version_and_that_the_code_has_not_changed_since_launch(app):
+    from src.webapp import api
+
+    catalog = app.catalog()
+    assert catalog["api_version"] == api.API_VERSION == 2
+    assert catalog["restart_needed"] is False                       # nothing under src/ was touched while this test process ran
+
+
+def test_the_code_signature_changes_when_a_python_file_is_edited_added_or_removed(tmp_path):
+    import os
+
+    from src.webapp.api import code_signature
+
+    (tmp_path / "pkg").mkdir()
+    (tmp_path / "pkg" / "__pycache__").mkdir()
+    one, two = tmp_path / "one.py", tmp_path / "pkg" / "two.py"
+    one.write_text("x = 1\n"), two.write_text("y = 2\n")
+    (tmp_path / "pkg" / "__pycache__" / "two.cpython-310.pyc").write_bytes(b"compiled")      # not source: ignored
+    (tmp_path / "notes.txt").write_text("not python")
+    for p in (one, two):
+        os.utime(p, (1_700_000_000, 1_700_000_000))
+    before = code_signature(tmp_path)
+    assert before == (2, 1_700_000_000.0)
+    assert code_signature(tmp_path) == before                       # looking changes nothing
+
+    os.utime(two, (1_700_000_500, 1_700_000_500))                   # edited (a git pull replaces the file: newer modification time)
+    edited = code_signature(tmp_path)
+    assert edited == (2, 1_700_000_500.0) and edited != before
+
+    three = tmp_path / "three.py"
+    three.write_text("z = 3\n"), os.utime(three, (1_600_000_000, 1_600_000_000))
+    assert code_signature(tmp_path) == (3, 1_700_000_500.0) != edited       # added with an OLD modification time: the count still gives it away
+    three.unlink()
+    assert code_signature(tmp_path) == edited
+
+
+def test_the_catalog_asks_for_a_restart_when_the_code_changed_after_the_app_started(app, monkeypatch):
+    from src.webapp import api
+
+    count, newest = api.LAUNCH_SIGNATURE
+    monkeypatch.setattr(api, "LAUNCH_SIGNATURE", (count, newest - 60.0))        # as if a file had been replaced since launch
+    assert app.catalog()["restart_needed"] is True
+    monkeypatch.setattr(api, "LAUNCH_SIGNATURE", (count - 1, newest))           # or a file added
+    assert app.catalog()["restart_needed"] is True
+
+
 def test_the_catalog_says_how_many_tickers_each_strategy_needs(app):
     models = {m["name"]: m for m in app.catalog()["models"]}
     assert models["tsmom"]["min_assets"] == 1 and models["ma_crossover"]["min_assets"] == 1 and models["momentum"]["min_assets"] == 2 and models["bab"]["min_assets"] == 4

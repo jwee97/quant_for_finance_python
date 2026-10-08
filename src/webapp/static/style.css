@@ -100,6 +100,8 @@ button.link { background: none; border: 0; padding: 0; color: var(--accent); cur
 .banner { border: 1px solid var(--border); border-left: 3px solid var(--warn); border-radius: 8px; padding: 10px 14px; background: var(--surface); font-size: 13px; }
 .banner.err { border-left-color: var(--crit); }
 .banner strong { margin-right: 6px; }
+.notice { display: grid; gap: 8px; margin-bottom: 16px; }
+.notice[hidden], .layout[hidden] { display: none; }
 .kpis { display: grid; grid-template-columns: minmax(220px, 1.3fr) repeat(auto-fit, minmax(120px, 1fr)); gap: 12px; }
 .tile { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; min-width: 0; }
 .tile .label { color: var(--ink-2); font-size: 12px; }

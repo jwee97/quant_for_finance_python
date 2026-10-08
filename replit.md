@@ -20,6 +20,16 @@ service. Anyone who can open its page can submit backtests and modify the shared
 research session. Do not publish it or expose it to untrusted users without
 adding authentication and resource limits.
 
+## After you pull an update
+
+The app loads its Python code when it starts and keeps running after you pull new
+files, so **press Stop and then Run again after every update** (the page itself is
+read from disk each time, so it can be newer than the app behind it). If you forget,
+the page says so instead of failing: a red banner reading *The app is older than
+this page* means the app must be restarted, and a banner reading *The app was
+updated after it started* means some of its code changed on disk since it started.
+Your saved tickers and runs are kept across restarts.
+
 ## Dependencies and command-line use
 
 Python 3.10 is configured. Project dependencies are declared in

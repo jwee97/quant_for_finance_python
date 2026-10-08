@@ -126,6 +126,89 @@ def test_a_backtest_draws_every_chart_and_the_controls_work(page):
     assert page.inner_text("#trials").startswith("1 trial")
 
 
+# ------------------------------------------------------------------------------------------------- an app that is older than the page
+def _page_with(browser, live, rewrite=None, missing=None):
+    """The dashboard opened with the server's answers changed on the way: ``rewrite(catalog)`` edits the catalogue (to stand in for an app that is older than the page, or one that needs a
+    restart) and ``missing`` is a path the server pretends not to know (HTTP 404, as an older app answers a request it has never heard of)."""
+    pg = browser.new_page(viewport={"width": 1400, "height": 1000})
+    pg.problems = []
+    pg.on("pageerror", lambda e: pg.problems.append(f"pageerror: {e}"))
+    if rewrite:
+        def edit(route):
+            response = route.fetch()
+            data = response.json()
+            rewrite(data)
+            route.fulfill(response=response, json=data)
+
+        pg.route("**/api/catalog", edit)
+    if missing:
+        pg.route(f"**{missing}", lambda route: route.fulfill(status=404, json={"error": "not found"}))
+    pg.goto(live.url)
+    return pg
+
+
+def test_an_app_older_than_the_page_says_so_instead_of_leaving_empty_lists(browser, live):
+    """The case that happened on Replit: the files were updated while the app kept running, so the new page met a catalogue without data sources."""
+    def old(catalog):
+        for key in ("sources", "default_source", "api_version", "restart_needed"):
+            catalog.pop(key, None)
+
+    pg = _page_with(browser, live, rewrite=old)
+    try:
+        pg.wait_for_selector("#notice .banner.err")
+        text = pg.inner_text("#notice")
+        assert "The app is older than this page" in text and "Stop the app and press Run again" in text and "reports version 1" in text
+        assert pg.locator(".layout").is_hidden() and pg.locator("#run").count() == 0
+        assert pg.locator("#notice button:has-text('Reload this page')").count() == 1
+        assert not pg.problems, pg.problems
+    finally:
+        pg.close()
+
+
+def test_the_first_release_with_data_sources_sent_no_version_and_is_still_accepted(browser, live_itick):
+    pg = _page_with(browser, live_itick, rewrite=lambda catalog: catalog.pop("api_version", None))
+    try:
+        pg.wait_for_selector(".chip")
+        assert pg.locator("#notice .banner").count() == 0 and pg.locator("#u-source-select option").count() == 2 and pg.locator("#run").is_enabled()
+        assert not pg.problems, pg.problems
+    finally:
+        pg.close()
+
+
+def test_a_restart_notice_is_shown_when_the_code_changed_after_the_app_started_and_the_page_still_works(browser, live_itick):
+    pg = _page_with(browser, live_itick, rewrite=lambda catalog: catalog.update(restart_needed=True))
+    try:
+        pg.wait_for_selector(".chip")
+        assert "updated after it started" in pg.inner_text("#notice") and pg.locator("#notice .banner.err").count() == 0
+        assert pg.locator("#u-source-select option").count() == 2 and pg.locator("#s-body select").first.locator("option").count() > 10 and pg.locator("#run").is_enabled()
+        assert not pg.problems, pg.problems
+    finally:
+        pg.close()
+
+
+def test_a_part_that_cannot_be_drawn_is_named_and_the_rest_of_the_page_still_works(browser, live):
+    pg = _page_with(browser, live, rewrite=lambda catalog: catalog.update(sources=[None]))         # the data source menu cannot make sense of this
+    try:
+        pg.wait_for_selector("#notice .banner.err")
+        assert "the data source menu" in pg.inner_text("#notice") and "Reload the page" in pg.inner_text("#notice")
+        assert pg.locator("#s-body select").first.locator("option").count() > 10 and pg.locator("#p-body select").count() >= 1 and pg.locator(".chip").count() == 6
+        assert pg.locator("#run").is_enabled()
+        assert not pg.problems, pg.problems
+    finally:
+        pg.close()
+
+
+def test_a_missing_ticker_count_check_is_explained_and_not_reported_as_not_found(browser, live):
+    pg = _page_with(browser, live, missing="/api/requirements")
+    try:
+        pg.wait_for_selector("#guard:not([hidden])")
+        guard = pg.inner_text("#guard")
+        assert "older than the page" in guard and "Stop the app and press Run again" in guard and guard.strip().lower() != "not found"
+        assert pg.locator("#run").is_disabled()
+    finally:
+        pg.close()
+
+
 SETTLE_MS = 800            # longer than the page's 180 ms redraw debounce: a redraw triggered by a click would have happened by then
 
 

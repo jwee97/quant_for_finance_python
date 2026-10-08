@@ -6,6 +6,8 @@ quant serve            # opens http://127.0.0.1:8765 ; --port, --no-browser, --h
 
 Everything runs on your machine. The server listens on localhost only, and every request needs a token that exists only in the page it served.
 
+The server loads its code when it starts. After you update the files (a `git pull`), stop it and start it again: the page is read from disk on every load, so it can be newer than the server behind it. When it is, a banner says so (*The app is older than this page* needs a restart before anything works; *The app was updated after it started* means some of its code changed since it started).
+
 ## Backtest
 
 1. **Tickers.** The platform's 15 ETFs are loaded. Remove any, or add symbols from the **data source** you choose under *Download other tickers from*: Yahoo Finance (`NVDA`, `BTC-USD`, `^GSPC`, `EURUSD=X`) or iTick (see [Data sources](#data-sources-yahoo-finance-or-itick)). Each is checked immediately: days of history and first date, or why it failed. Give new tickers an asset class if you use macro strategies. *Use data from* sets the earliest date. **One ticker is enough** for a strategy that trades each ticker on its own signal (see [One ticker](#one-ticker)).
