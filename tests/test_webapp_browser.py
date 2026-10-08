@@ -99,6 +99,106 @@ def test_a_backtest_draws_every_chart_and_the_controls_work(page):
     assert page.inner_text("#trials").startswith("1 trial")
 
 
+SETTLE_MS = 800            # longer than the page's 180 ms redraw debounce: a redraw triggered by a click would have happened by then
+
+
+def _scroll_card_to_top(page, selector, offset=150):
+    page.evaluate("([sel, off]) => { const r = document.querySelector(sel).getBoundingClientRect(); window.scrollBy(0, r.top - off); }", [selector, offset])
+    page.wait_for_timeout(100)
+
+
+def _scroll_y(page):
+    return page.evaluate("Math.round(window.scrollY)")
+
+
+def _mark_result(page):
+    """Tag a node of the rendered result: if the page redraws the whole result the tag is gone."""
+    page.evaluate("document.querySelector('.kpis').dataset.keep = 'yes'")
+
+
+def _result_untouched(page):
+    return page.evaluate("document.querySelector('.kpis') !== null && document.querySelector('.kpis').dataset.keep === 'yes'")
+
+
+def test_opening_a_table_keeps_the_page_where_it_is_and_does_not_redraw_the_result(page):
+    """Regression: a click that changed the page's height used to make the page rebuild the whole result 180 ms later, which closed the table and sent the reader back to the top."""
+    _run_and_wait(page)
+    _mark_result(page)
+    for title in ("Drawdown from the previous peak", "Monthly returns"):
+        card = page.locator(".chartcard", has=page.locator(f"h3:text-is('{title}')"))
+        card.scroll_into_view_if_needed()
+        page.evaluate("(el) => { const r = el.getBoundingClientRect(); window.scrollBy(0, r.top - 150); }", card.element_handle())
+        page.wait_for_timeout(100)
+        y = _scroll_y(page)
+        assert y > 300, "the card should be well down the page for this test to mean anything"
+        card.locator(".seg button:text-is('Table')").click()
+        page.wait_for_timeout(SETTLE_MS)
+        assert card.locator("table.data").count() == 1 and card.locator("svg.chart").count() == 0, "the table must stay open"
+        assert card.locator(".seg button:text-is('Table')").get_attribute("aria-pressed") == "true"
+        assert _scroll_y(page) == y and _result_untouched(page)
+        card.locator(".seg button:text-is('Chart')").click()
+        page.wait_for_timeout(SETTLE_MS)
+        assert card.locator("svg.chart").count() == 1 and card.locator("table.data").count() == 0
+        assert _scroll_y(page) == y and _result_untouched(page)
+
+
+def test_choosing_another_details_tab_keeps_the_page_where_it_is(page):
+    _run_and_wait(page)
+    _mark_result(page)
+    _scroll_card_to_top(page, ".tabsmall", 100)
+    y = _scroll_y(page)
+    assert y > 1000
+    tabs = page.locator(".tabsmall button")
+    assert tabs.count() >= 4
+    for i in (2, 3, 1, tabs.count() - 1):
+        label = tabs.nth(i).inner_text()
+        tabs.nth(i).click()
+        page.wait_for_timeout(SETTLE_MS)
+        selected = page.evaluate("[...document.querySelectorAll('.tabsmall button')].map((b) => b.getAttribute('aria-selected'))")
+        assert selected == ["true" if j == i else "false" for j in range(len(selected))], (label, selected)
+        assert _scroll_y(page) == y and _result_untouched(page), label
+        assert page.locator(".tabsmall").locator("xpath=..").locator("table.data, pre").count() >= 1
+
+
+def test_a_resize_redraws_the_charts_at_the_new_width_and_keeps_what_the_reader_chose(page):
+    _run_and_wait(page)
+    drawdown = page.locator(".chartcard", has=page.locator("h3:text-is('Drawdown from the previous peak')"))
+    drawdown.locator(".seg button:text-is('Table')").click()
+    page.locator(".chartcard .seg button:text-is('Log')").click()
+    page.locator(".tabsmall button").nth(2).click()
+    _scroll_card_to_top(page, ".tabsmall", 100)
+    y = _scroll_y(page)
+    width_before = page.evaluate("document.querySelector('.chartcard svg.chart').viewBox.baseVal.width")
+    page.set_viewport_size({"width": 1180, "height": 1000})
+    page.wait_for_timeout(SETTLE_MS)
+    width_after = page.evaluate("document.querySelector('.chartcard svg.chart').viewBox.baseVal.width")
+    assert width_after < width_before, "the charts are redrawn to fit the narrower page"
+    assert drawdown.locator("table.data").count() == 1, "the table the reader opened is still open"
+    assert page.locator(".chartcard .seg button:text-is('Log')").get_attribute("aria-pressed") == "true"
+    assert page.locator(".tabsmall button").nth(2).get_attribute("aria-selected") == "true"
+    assert abs(_scroll_y(page) - y) < 120, "the reader stays near where they were"
+    page.click("#theme")                                                            # a theme change redraws too, and keeps the same choices
+    page.wait_for_timeout(SETTLE_MS)
+    assert drawdown.locator("table.data").count() == 1 and page.locator(".tabsmall button").nth(2).get_attribute("aria-selected") == "true"
+    page.click("button:has-text('5y')")                                             # and so does a new chart window
+    page.wait_for_timeout(SETTLE_MS)
+    assert page.locator(".chartcard", has=page.locator("h3:text-is('Drawdown from the previous peak')")).locator("table.data").count() == 1
+
+
+def test_a_new_run_starts_from_the_top_with_the_default_view(page):
+    _run_and_wait(page)
+    page.locator(".chartcard .seg button:text-is('Table')").first.click()
+    page.locator(".tabsmall button").nth(2).click()
+    _scroll_card_to_top(page, ".tabsmall", 100)
+    assert _scroll_y(page) > 1000
+    page.click("#run")
+    page.wait_for_selector("#runcount:text-is('2')", timeout=120_000)
+    page.wait_for_timeout(SETTLE_MS)
+    assert _scroll_y(page) == 0
+    assert page.locator(".chartcard table.data").count() == 0
+    assert page.locator(".tabsmall button").nth(0).get_attribute("aria-selected") == "true"
+
+
 def test_a_formula_is_checked_then_backtested_as_written_and_appears_in_compare(page):
     page.click("#tab-builder")
     page.fill("#builder textarea >> nth=0", "mom(5, 10)")

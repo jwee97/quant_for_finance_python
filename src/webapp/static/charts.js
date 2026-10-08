@@ -47,6 +47,8 @@
     if (out.length < 2) out.push({ t: t0, label: new Date(t0).toISOString().slice(0, 7) });
     return out;
   }
+  /* The drawing width is the host's width. Read it BEFORE the host is emptied: measuring an emptied host forces a layout while the page is shorter, and the browser answers by clamping or
+     re-anchoring the scroll position, so the page would jump every time a chart is redrawn (a Chart/Table or Linear/Log toggle). */
   function width(host) { return Math.max(280, Math.floor(host.getBoundingClientRect().width || 600)); }
   function tooltip(host) {
     let tip = host.querySelector(":scope > .tip");
@@ -67,8 +69,9 @@
 
   /* ---------- line / area over dates ---------- */
   function line(host, o) {
+    const W = width(host);
     host.replaceChildren();
-    const dates = o.dates.map((d) => Date.parse(d)), W = width(host), H = o.height || 280;
+    const dates = o.dates.map((d) => Date.parse(d)), H = o.height || 280;
     const m = { l: 46, r: 14, t: 8, b: 24 }, iw = W - m.l - m.r, ih = H - m.t - m.b;
     if (o.legend !== false && o.series.length > 1) legend(host, o.series);
     const svg = el("svg", { class: "chart", viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": o.label || "line chart" }, host);
@@ -135,8 +138,9 @@
 
   /* ---------- columns by label (annual returns) ---------- */
   function columns(host, o) {
+    const W = width(host);
     host.replaceChildren();
-    const W = width(host), H = o.height || 240, m = { l: 46, r: 10, t: 14, b: 26 }, iw = W - m.l - m.r, ih = H - m.t - m.b;
+    const H = o.height || 240, m = { l: 46, r: 10, t: 14, b: 26 }, iw = W - m.l - m.r, ih = H - m.t - m.b;
     const svg = el("svg", { class: "chart", viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": o.label || "column chart" }, host);
     const vals = o.values.map((v) => (v === null ? 0 : v)), lo = Math.min(0, ...vals), hi = Math.max(0, ...vals), pad = (hi - lo) * 0.1 || 0.1;
     const ticks = niceTicks(lo - (lo < 0 ? pad : 0), hi + pad, 5), min = Math.min(ticks[0], lo), max = Math.max(ticks[ticks.length - 1], hi);
@@ -161,8 +165,9 @@
 
   /* ---------- horizontal bars (weights, contribution, scores) ---------- */
   function hbars(host, o) {
+    const W = width(host);
     host.replaceChildren();
-    const rows = o.rows, W = width(host), rowH = 22, H = rows.length * rowH + 22, m = { l: 74, r: 54, t: 4, b: 18 }, iw = W - m.l - m.r;
+    const rows = o.rows, rowH = 22, H = rows.length * rowH + 22, m = { l: 74, r: 54, t: 4, b: 18 }, iw = W - m.l - m.r;
     const svg = el("svg", { class: "chart", viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": o.label || "bar chart" }, host);
     const vals = rows.map((r) => r.value), lo = Math.min(0, ...vals), hi = Math.max(0, ...vals), ticks = niceTicks(lo, hi, 4);
     const min = Math.min(lo, ticks[0]), max = Math.max(hi, ticks[ticks.length - 1]), X = (v) => m.l + ((v - min) / (max - min || 1)) * iw, tip = tooltip(host);
@@ -184,8 +189,9 @@
 
   /* ---------- month x year heat map (diverging, gray midpoint) ---------- */
   function heatmap(host, o) {
+    const W = width(host);
     host.replaceChildren();
-    const years = [...new Set(o.cells.map((c) => c.year))].sort(), W = width(host), m = { l: 38, r: 8, t: 18, b: 4 };
+    const years = [...new Set(o.cells.map((c) => c.year))].sort(), m = { l: 38, r: 8, t: 18, b: 4 };
     const cw = Math.max(18, Math.min(56, (W - m.l - m.r) / 12)), ch = 20, H = m.t + years.length * ch + m.b, svg = el("svg", { class: "chart", viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": o.label || "heat map" }, host);
     const mx = Math.max(0.02, ...o.cells.map((c) => Math.abs(c.value))) , cap = Math.min(mx, 0.12), pos = css("--pos"), neg = css("--neg"), mid = css("--mid"), tip = tooltip(host);
     const mix = (a, b, t) => { const pa = rgb(a), pb = rgb(b); return `rgb(${pa.map((v, i) => Math.round(v + (pb[i] - v) * t)).join(",")})`; };

@@ -24,7 +24,11 @@
   const S = {
     catalog: null, tickers: [], start: "", models: [], combination: "equal", allocator: "", allocatorTouched: false, allocParams: {}, regime: "", regimeRisk: false,
     aum: "", validate: false, refresh: false, label: "", runs: [], selected: new Set(), current: null, range: "all", busy: false, nextSlot: 0, trials: {},
+    view: freshView(),
   };
+  /* What the user has chosen inside a result: which cards show their table, linear or log growth, which details tab is open. A redraw (new window size, theme change) rebuilds the page
+     from the data, so these choices live here and not in the DOM; a new run starts with a fresh view. */
+  function freshView() { return { modes: {}, log: false, detail: null }; }
 
   /* ================================================================= theme, tabs */
   function setTheme(t) { if (t) document.documentElement.setAttribute("data-theme", t); else document.documentElement.removeAttribute("data-theme"); store("theme", t); redraw(); }
@@ -258,7 +262,7 @@
     S.runs.push(run); S.current = run; S.selected.add(run.id); S.range = "all";
     $("#runcount").textContent = String(S.runs.length);
     S.trials = { n: result.trials_in_universe }; updateTrials();
-    renderResult();
+    renderResult({ fresh: true });
   }
   function updateTrials() { const n = S.trials.n || 0; $("#trials").textContent = n ? `${n} trial${n === 1 ? "" : "s"} on this universe` : "no trials yet"; }
   $("#trials").addEventListener("dblclick", async () => { await api("/api/trials/reset", {}); S.trials = {}; updateTrials(); toast("Trial counter reset"); });
@@ -296,13 +300,23 @@
     h("h3", "", bar, title);
     const body = h("div", "", card);
     if (note) h("p", "note", card, note);
-    const seg = h("div", "seg", bar), a = h("button", "", seg, "Chart"), b = h("button", "", seg, "Table"); a.setAttribute("aria-pressed", "true"); b.setAttribute("aria-pressed", "false");
-    let mode = "chart", extra = h("span", "", bar);
-    const draw = () => { body.replaceChildren(); if (mode === "chart") opts.draw(body); else opts.table(body); };
-    a.addEventListener("click", () => { mode = "chart"; a.setAttribute("aria-pressed", "true"); b.setAttribute("aria-pressed", "false"); draw(); });
-    b.addEventListener("click", () => { mode = "table"; b.setAttribute("aria-pressed", "true"); a.setAttribute("aria-pressed", "false"); draw(); });
-    card._draw = draw; card._extra = extra; card._body = body; draw();
+    const seg = h("div", "seg", bar), a = h("button", "", seg, "Chart"), b = h("button", "", seg, "Table");
+    let mode = S.view.modes[title] === "table" ? "table" : "chart";
+    const extra = h("span", "", bar);
+    const mark = () => { a.setAttribute("aria-pressed", String(mode === "chart")); b.setAttribute("aria-pressed", String(mode === "table")); };
+    const draw = () => { if (mode === "chart") opts.draw(body); else { body.replaceChildren(); opts.table(body); } };       // the chart kit measures its host and then clears it itself
+    const pick = (m) => { mode = m; S.view.modes[title] = m; mark(); keepScroll(draw, body); };
+    a.addEventListener("click", () => pick("chart"));
+    b.addEventListener("click", () => pick("table"));
+    mark(); card._draw = () => keepScroll(draw, body); card._extra = extra; card._body = body; draw();
     return card;
+  }
+  /* Run a redraw of part of the page without letting the page move. Emptying a card and measuring the chart that replaces it (a chart reads its container's width) shrinks the page for a
+     moment, and the browser answers by clamping or re-anchoring the scroll position. Holding the height steady while the new content is built avoids that; the scroll position is also put back. */
+  function keepScroll(fn, host) {
+    const y = window.scrollY, x = window.scrollX, box = host || null, held = box ? box.offsetHeight : 0;
+    if (box) box.style.minHeight = held + "px";
+    try { fn(); } finally { if (box) box.style.minHeight = ""; if (window.scrollY !== y || window.scrollX !== x) window.scrollTo(x, y); }
   }
   function simpleTable(parent, cols, rows) {
     const wrap = h("div", "scroll", parent), t = h("table", "data", wrap), hd = h("tr", "", h("thead", "", t));
@@ -312,9 +326,15 @@
   }
   function sampleRows(dates, cols, every) { const out = []; for (let i = 0; i < dates.length; i += every) out.push(i); if (out[out.length - 1] !== dates.length - 1) out.push(dates.length - 1); return out; }
 
-  function renderResult() {
+  /* Rebuild the whole result from the data. ``fresh`` is a new run (start from the top with the default view); otherwise this is a redraw of what the user was looking at (theme, window
+     width, chart window) and the page must stay where it is, with the same tables and tabs open. */
+  function renderResult(opts) {
     const run = S.current; if (!run) return;
-    const root = $("#results"); root.replaceChildren();
+    const root = $("#results");
+    if (opts && opts.fresh) { S.view = freshView(); root.replaceChildren(); buildResult(root, run); if (!$("#view-backtest").hidden) window.scrollTo(0, 0); return; }
+    keepScroll(() => { root.replaceChildren(); buildResult(root, run); }, root);
+  }
+  function buildResult(root, run) {
     const r = run.result, w = windowOf(run, S.range), st = statsOf(w.equity), eqw = w.bench.equal_weight ? statsOf(w.bench.equal_weight) : null;
     const head = h("div", "head", root), left = h("div", "", head);
     h("h1", "", left, r.name);
@@ -338,16 +358,17 @@
     const dsr = r.validation.deflated_sharpe_probability;
     tile(k, "Deflated Sharpe", dsr === null ? "n/a" : num(dsr), { text: `${r.validation.n_trials} trial${r.validation.n_trials === 1 ? "" : "s"}; ≥ 0.95 is the bar`, dir: dsr !== null && dsr >= 0.95 ? "up" : "" }, "", "Probability the Sharpe ratio is above what the best of your tries would show by luck alone");
     const ch = h("div", "charts", root);
-    let growthLog = false;
     const series = [{ name: "Strategy", color: css("--s1"), values: w.equity }];
     const bn = { equal_weight: ["Equal weight", "--s2"], risk_parity: ["Risk parity", "--s3"] };
     for (const key in w.bench) series.push({ name: bn[key] ? bn[key][0] : key, color: css(bn[key] ? bn[key][1] : "--s4"), values: w.bench[key] });
     const growth = chartCard(ch, "Growth of $1", "Net of costs. Benchmarks need five or more assets.", { wide: true,
-      draw: (b) => C.line(b, { dates: w.dates, series, log: growthLog, yFormat: (v) => "$" + (v >= 10 ? v.toFixed(0) : v.toFixed(2)), tipFormat: (v) => "$" + v.toFixed(2), height: 300, label: "Growth of one dollar" }),
+      draw: (b) => C.line(b, { dates: w.dates, series, log: S.view.log, yFormat: (v) => "$" + (v >= 10 ? v.toFixed(0) : v.toFixed(2)), tipFormat: (v) => "$" + v.toFixed(2), height: 300, label: "Growth of one dollar" }),
       table: (b) => { const idx = sampleRows(w.dates, series, 21); simpleTable(b, [{ label: "Date", get: (i) => w.dates[i] }, ...series.map((s) => ({ label: s.name, num: true, get: (i) => (s.values[i] === null ? "" : s.values[i].toFixed(3)) }))], idx); } });
-    const lg = h("div", "seg", growth._extra), l1 = h("button", "", lg, "Linear"), l2 = h("button", "", lg, "Log"); l1.setAttribute("aria-pressed", "true"); l2.setAttribute("aria-pressed", "false");
-    l1.addEventListener("click", () => { growthLog = false; l1.setAttribute("aria-pressed", "true"); l2.setAttribute("aria-pressed", "false"); growth._draw(); });
-    l2.addEventListener("click", () => { growthLog = true; l2.setAttribute("aria-pressed", "true"); l1.setAttribute("aria-pressed", "false"); growth._draw(); });
+    const lg = h("div", "seg", growth._extra), l1 = h("button", "", lg, "Linear"), l2 = h("button", "", lg, "Log");
+    const markLog = () => { l1.setAttribute("aria-pressed", String(!S.view.log)); l2.setAttribute("aria-pressed", String(S.view.log)); };
+    markLog();
+    l1.addEventListener("click", () => { S.view.log = false; markLog(); growth._draw(); });
+    l2.addEventListener("click", () => { S.view.log = true; markLog(); growth._draw(); });
     chartCard(ch, "Drawdown from the previous peak", "How far below its high the strategy has been.", {
       draw: (b) => C.line(b, { dates: w.dates, series: [{ name: "Strategy", color: css("--s1"), values: w.drawdown }], area: true, areaBase: 0, baseline: 0, ceil: 0, yFormat: (v) => (v * 100).toFixed(0) + "%", tipFormat: (v) => fmt.pct(v), height: 220, label: "Drawdown" }),
       table: (b) => simpleTable(b, [{ label: "Date", get: (i) => w.dates[i] }, { label: "Drawdown", num: true, get: (i) => fmt.pct(w.drawdown[i]) }], sampleRows(w.dates, null, 21)) });
@@ -397,9 +418,9 @@
     if (r.validation.causality) add("caus", "Look-ahead check", (b) => simpleTable(b, [{ label: "Component", get: (x) => x[0] }, { label: "Result", get: (x) => (x[1].ok ? "✓ passes" : "✗ FAILS") }, { label: "Largest change when the future was replaced by noise", num: true, get: (x) => String(x[1].max_abs_difference) }], Object.entries(r.validation.causality)));
     add("spec", "Specification (YAML)", (b) => { const pre = h("pre", "", b); h("code", "", pre, r.yaml); });
     const card = h("div", "card", root); h("h2", "", card, "Details"); const bar = h("div", "tabsmall", card), body = h("div", "", card);
-    const open = (t) => { [...bar.children].forEach((c) => c.setAttribute("aria-selected", String(c.dataset.id === t.id))); body.replaceChildren(); t.draw(body); };
+    const open = (t) => { S.view.detail = t.id; [...bar.children].forEach((c) => c.setAttribute("aria-selected", String(c.dataset.id === t.id))); keepScroll(() => { body.replaceChildren(); t.draw(body); }, body); };
     tabs.forEach((t) => { const b = h("button", "", bar, t.label); b.dataset.id = t.id; b.setAttribute("aria-selected", "false"); b.addEventListener("click", () => open(t)); });
-    if (tabs.length) open(tabs[0]);
+    if (tabs.length) open(tabs.find((t) => t.id === S.view.detail) || tabs[0]);
   }
   function cell(v) { if (v === null || v === undefined) return ""; if (typeof v === "number") return Math.abs(v) >= 1000 ? v.toFixed(0) : Math.abs(v) >= 10 ? v.toFixed(1) : v.toFixed(3); return String(v); }
 
@@ -589,7 +610,17 @@
 
   /* ================================================================= redraw and boot */
   function redraw() { if (!$("#view-backtest").hidden && S.current) renderResult(); if (!$("#view-compare").hidden) renderCompare(); if (!$("#view-builder").hidden) renderBuilder(); }
-  let rz; new ResizeObserver(() => { clearTimeout(rz); rz = setTimeout(() => { if (!$("#view-backtest").hidden && S.current && !S.busy) renderResult(); }, 180); }).observe($("main"));
+  /* Charts are drawn at the pixel width of their container, so they are redrawn when the page gets wider or narrower (a window resize, a phone turned sideways, a scroll bar appearing).
+     A change of HEIGHT is not a reason: it happens every time the user opens a table or a details tab, and redrawing the whole result then undid what they had just chosen and sent the
+     page back to the top. */
+  let rz, lastWidth = null;
+  new ResizeObserver((entries) => {
+    const w = Math.round(entries[entries.length - 1].contentRect.width);
+    if (lastWidth === null) { lastWidth = w; return; }
+    if (Math.abs(w - lastWidth) < 2) return;
+    lastWidth = w;
+    clearTimeout(rz); rz = setTimeout(() => { if (!$("#view-backtest").hidden && S.current && !S.busy) renderResult(); }, 180);
+  }).observe($("main"));
 
   async function boot() {
     try { S.catalog = await api("/api/catalog"); } catch (e) { $("#results").textContent = "Could not reach the server: " + e.message; return; }
