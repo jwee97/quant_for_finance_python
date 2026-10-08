@@ -121,7 +121,7 @@ class ChronosZeroShot(ForecastModel):
             import torch
             from chronos import ChronosBoltPipeline
         except ImportError as error:
-            raise ImportError("the 'chronos' model needs the optional dependency: pip install chronos-forecasting einops") from error
+            raise ImportError("the 'chronos' model needs its optional dependencies: pip install -e '.[chronos]'") from error
         pipeline = ChronosBoltPipeline.from_pretrained(self.model, device_map="cpu", dtype=torch.float32)
 
         def predict(windows):

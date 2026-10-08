@@ -85,6 +85,39 @@ def test_chronos_zero_shot_is_causal_and_forecasts_after_enough_history():
     assert f.dropna(how="all").index[0] >= b.index[315] and np.isfinite(f.stack().dropna()).all() and f.stack().notna().any()
 
 
+def test_chronos_runs_a_forecast_with_a_pretrained_pipeline(monkeypatch, bundle):
+    import sys
+    import types
+    import torch
+
+    calls = {}
+
+    class FakePipeline:
+        def predict_quantiles(self, context, prediction_length, quantile_levels):
+            calls["prediction"] = (tuple(context.shape), prediction_length, quantile_levels)
+            quantiles = torch.ones((len(context), prediction_length, len(quantile_levels)))
+            return quantiles, None
+
+    def from_pretrained(model, **kwargs):
+        calls["load"] = (model, kwargs)
+        return FakePipeline()
+
+    monkeypatch.setitem(
+        sys.modules,
+        "chronos",
+        types.SimpleNamespace(
+            ChronosBoltPipeline=types.SimpleNamespace(from_pretrained=from_pretrained)
+        ),
+    )
+    forecast = MODELS.create("chronos", batch=64).forecast(bundle).mean
+    values = forecast.stack().dropna()
+
+    assert calls["load"][0] == "amazon/chronos-bolt-small"
+    assert calls["load"][1]["device_map"] == "cpu"
+    assert calls["prediction"][1:] == (21, [0.5])
+    assert values.any() and np.isfinite(values).all()
+
+
 @pytest.mark.skipif(importlib.util.find_spec("timesfm") is None or not _cached("google/timesfm-2.5-200m-pytorch"), reason="timesfm or its cached weights are not available")
 def test_timesfm_zero_shot_is_causal_and_forecasts_after_enough_history():
     b = _bundle(700, k=3, planted=False)
@@ -98,7 +131,7 @@ def test_foundation_models_say_what_to_install_when_the_dependency_is_missing(mo
     import sys
     monkeypatch.setitem(sys.modules, "chronos", None)
     monkeypatch.setitem(sys.modules, "timesfm", None)
-    with pytest.raises(ImportError, match="chronos-forecasting"):
+    with pytest.raises(ImportError, match=r"\.\[chronos\]"):
         MODELS.create("chronos").forecast(bundle)
     with pytest.raises(ImportError, match="timesfm"):
         MODELS.create("timesfm").forecast(bundle)

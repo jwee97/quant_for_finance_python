@@ -20,7 +20,8 @@ explorer of every hypothesis the project declared, most of them rejected) and `q
 technique, strategy or experiment, in plain language). Read [`docs/START_HERE.md`](docs/START_HERE.md) for a learning path
 by background, the [technique guides](docs/techniques/index.md) (81 of them, from PCA to diffusion models and from HAC errors to option surfaces), the
 [chapter map](docs/chapter_map.md) from the book to the code, and [what was and was not built](docs/roadmap_coverage.md).
-Adding a strategy is writing one forecast model: [how to](docs/how_to_add_a_strategy.md).
+Adding a strategy is writing one forecast model: [how to](docs/how_to_add_a_strategy.md). Chronos is optional:
+`pip install -e ".[chronos]"`; its pretrained weights download from Hugging Face the first time it runs.
 
 ---
 
