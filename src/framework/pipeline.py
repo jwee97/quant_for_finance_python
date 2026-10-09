@@ -14,6 +14,7 @@ import time
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import yaml
 
@@ -26,6 +27,7 @@ from .allocation import ALLOCATORS, Context
 from .data import MarketBundle
 from .adaptive import RegimeRiskLimits, calibrate_confidence, decay_trust_weights, regime_spread_scale
 from .forecasting import combine_forecasts, ic_trust_weights, regime_trust_weights
+from .ic_combination import optimal_ic_weights, orthogonal_ic_forecast
 from .registry import DETECTORS, MODELS
 from .risk import RegimeRiskPolicy
 from .types import ForecastPanel
@@ -131,6 +133,7 @@ class Pipeline:
         self.spec = spec if isinstance(spec, PipelineSpec) else PipelineSpec.from_dict(spec)
         self.config, self.bundle = config, bundle
         self._decay_table = None
+        self._ic_table = None
         from . import load_library
 
         load_library()                                          # idempotent: the shipped strategies are always available to a Pipeline
@@ -185,6 +188,17 @@ class Pipeline:
                                            int(node.get("min_obs", 252)), int(node.get("holding", 21)))
             self._decay_table = decay
             return combine_forecasts(panels, "given", w), w
+        if rule in ("optimal_ic", "orthogonal_ic"):
+            node = self.spec.combination
+            window, min_obs, shrink = int(node.get("window", 504)), int(node.get("min_obs", 252)), float(node.get("shrink", 0.3))
+            if rule == "optimal_ic":
+                w, expected = optimal_ic_weights(panels, self.bundle.returns, window, min_obs, shrink)
+                share = w.div(w.sum(axis=1).replace(0.0, np.nan), axis=0).fillna(1.0 / w.shape[1])
+                self._ic_table = (share, expected)
+                return combine_forecasts(panels, "given", w), share
+            panel, w, expected = orthogonal_ic_forecast(panels, self.bundle.returns, str(node.get("orthogonalize", "gram_schmidt")), window, min_obs, shrink)
+            self._ic_table = (w, expected)
+            return panel, w
         if rule == "cost_aware":
             standalone = self._standalone(panels, models, {}, engine)
             window, min_hist = int(self.spec.combination.get("window", 504)), int(self.spec.combination.get("min_history", 252))
@@ -291,6 +305,12 @@ class Pipeline:
             out.tables["regime_spread_scale"] = adjustments["regime_spread_scale"].loc[start:].describe().to_frame("regime_spread_scale")
         if getattr(self, "_decay_table", None) is not None:
             out.tables["alpha_decay"] = self._decay_table.groupby("model").agg(ic0_mean=("ic0", "mean"), tau_median=("tau", "median"))
+        if getattr(self, "_ic_table", None) is not None:
+            shares, expected = self._ic_table
+            late = shares.loc[start:]
+            out.tables["ic_combination"] = pd.DataFrame({"mean_weight": late.mean(), "last_weight": late.iloc[-1]})
+            if expected.loc[start:].notna().any():
+                out.metrics["expected_ic_ir"] = float(expected.loc[start:].mean())
         self._attribution_extras(out, models, panels, trust, engine, start)
         if spec.evaluation.get("explain"):
             for model in models:

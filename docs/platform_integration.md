@@ -13,6 +13,7 @@ data bundle (prices, macro levels with release lags, CFTC positioning)
    ├─ forecast: regime_spread     std ← std × κ(regime)            κ from matured standardised errors in that regime
    ├─ forecast: confidence        P(up) recalibrated (Platt / isotonic), matured labels only
    ├─ combination: decay_weighted weights ∝ IC at the holding period implied by each model's fitted alpha decay
+   ├─ combination: optimal_ic / orthogonal_ic weights = Σ⁻¹μ of the models' matured ICs (non-negative; the second after Gram-Schmidt)
    │
    ├─ allocation                  confidence · forecast_stack · regime_switch · static (HRP, risk parity, …)
    │                              dynamic_cov · bayesian · es_policy
@@ -39,6 +40,7 @@ data bundle (prices, macro levels with release lags, CFTC positioning)
 | Regime → backtest report | automatic | `by_regime`, `regime_spread_scale`, `risk_limits` tables |
 | Confidence calibration | `forecast.confidence` | `src/framework/adaptive.py::calibrate_confidence` |
 | Alpha combination (momentum, mean reversion, ML, confidence, decay) | `combination.rule: decay_weighted` | `src/framework/adaptive.py::decay_trust_weights` |
+| Alpha combination by the IC covariance (optimal alpha model, orthogonalised) | `combination.rule: optimal_ic` / `orthogonal_ic` | `src/framework/ic_combination.py`, `src/equity/alpha_model.py` |
 | Impact → costs and net returns | `execution.aum` | `src/backtest/impact.py` through `Pipeline.run` |
 | Impact → strategy comparison | `execution.capacity` / `quant capacity` | `src/framework/analytics.py::capacity_by_aum` |
 | Impact → attribution | `cost_breakdown` table | `src/framework/analytics.py::cost_breakdown` |

@@ -31,6 +31,7 @@ FAMILY_CAVEATS = {
     "volatility": "Uses VIX-type indices as the implied-volatility input; no option-level data.",
     "macro": "Macro series enter with their publication lags; revisions are not modelled.",
     "machine learning": "Walk-forward ridge; the signal-to-noise ratio of monthly returns is very low.",
+    "fundamental": "Reads company statements from a file you supply (data/user/fundamentals.csv); without it the model refuses to run, except the price-only momentum factors. Needs a wide cross-section of stocks, not 15 ETFs, and statements that are point-in-time.",
 }
 
 

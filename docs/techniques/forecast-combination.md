@@ -33,6 +33,8 @@ trust. Adding a strategy means registering a forecast model; it joins the combin
 
 The `decay_weighted` combination rule weights each model by its information coefficient at the holding period implied by an exponential decay fitted to its incremental IC at lags 1 to 20 (matured labels only); the fitted half-lives appear in the tear sheet as "alpha decay". It sits beside `equal`, `confidence`, `precision`, `ic_weighted`, `regime_conditional` and `cost_aware`.
 
+Two rules weigh the models by the covariance of their information coefficients rather than by each one's own: `optimal_ic` uses the weights `Sigma^-1 mu` of the models' matured ICs over a trailing window (non-negative, monthly, shrunk toward the diagonal), which maximise the information ratio of the combination and give a model less when it repeats the others; `orthogonal_ic` makes the models' forecasts orthogonal across stocks first (Gram-Schmidt in the order the models are listed, or symmetric) and returns one combined forecast. See [building an alpha model](alpha-model-construction.md).
+
 ## What we found
 
 The cost-aware trust rule did not beat equal weighting or the Generation 1 momentum book (EXP-066), and in the library combination study confidence weighting was worse than equal weighting.

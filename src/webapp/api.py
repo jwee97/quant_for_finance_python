@@ -36,6 +36,8 @@ COMBINATIONS = {
     "precision": "Weight each model by the inverse of its forecast variance",
     "ic_weighted": "Weight by each model's recent information coefficient (needs more than one model and a long history)",
     "decay_weighted": "Weight by information coefficient at the holding period, using each model's fitted alpha decay",
+    "optimal_ic": "Weight to maximise the information ratio of the combination: the inverse covariance of the models' information coefficients times their means (needs more than one model and a long history)",
+    "orthogonal_ic": "The same after making the models' forecasts independent of each other, each keeping only what the earlier ones did not say (needs more than one model and a long history)",
     "cost_aware": "Weight by each model's trailing net Sharpe ratio",
     "regime_conditional": "Weight by how each model has done in the current regime (needs a regime detector)",
 }

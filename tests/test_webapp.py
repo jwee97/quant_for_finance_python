@@ -700,3 +700,11 @@ def test_a_formula_is_not_checked_against_tickers_a_rate_limited_source_has_yet_
     ok = app.check_formula(body)
     assert ok["ok"] and {r["ticker"] for r in ok["latest"]} == {"NVDA", "MSFT"} and len(fake.calls) == calls
     assert app.check_formula({**body, "tickers": ["AAA", "BBB"]})["ok"]
+
+
+@pytest.mark.parametrize("rule", ["optimal_ic", "orthogonal_ic"])
+def test_the_ic_covariance_combination_rules_run_from_the_dashboard(app, rule):
+    r = _run(app, models=[{"name": "momentum"}, {"name": "mean_reversion"}], combination=rule)
+    assert r["status"] == "done", r
+    assert r["result"]["spec"]["combination"]["rule"] == rule and "ic_combination" in r["result"]["tables"]
+    assert {c["name"] for c in app.catalog()["combinations"]} >= {"optimal_ic", "orthogonal_ic"}
