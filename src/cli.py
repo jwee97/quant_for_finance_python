@@ -15,6 +15,7 @@
     quant tune --model tsmom --space models.0.params.lookback=int:21:504 --trials 24   a hyperparameter search that counts its trials and deflates the winner
     quant benchmark --models tsmom momentum   score time and peak memory of models on the default bundle
     quant registry list                   versioned models: stages, lineage, promotion
+    quant algo list                       the execution algorithms and where each strategy of the taxonomy lives; `quant algo run --algos vwap aim+vwap is:risk_aversion=0.01` compares them on a simulated day
 """
 
 from __future__ import annotations
@@ -278,6 +279,66 @@ def cmd_itick_test(args, config) -> int:
     return 0 if out["ok"] else 1
 
 
+def cmd_algo(args, config) -> int:
+    """Execution algorithms: list them, run an order through the simulator, trace the cost-risk frontier, work a basket, or run a high-frequency simulation."""
+    from .algo import catalog, factory
+
+    if args.action == "list":
+        _print_frame(catalog.table())
+        print("\nalgorithms (quant algo run --algos ...):", ", ".join(sorted(factory.ALL_ALGORITHMS)))
+        print("tactics to wrap them in, as tactic+algorithm:", ", ".join(sorted(factory.TACTICS)), "| styles:", "aggressive, working, passive", "| scenarios: normal, trend_up, trend_down, mean_reverting, crisis")
+        return 0
+    market = dict(side=args.side, shares=args.shares, adv=args.adv, sigma=args.sigma, price=args.price, spread_bps=args.spread_bps, intervals=args.intervals)
+    if args.action == "run":
+        out = factory.run_order(args.algos, style=args.style, scenario=args.scenario, paths=args.paths, seed=args.seed, target_bps=args.target_bps, max_participation=args.max_participation, **market)
+        o = out["order"]
+        print(f"{o['side']} {o['shares']:,.0f} shares (${o['value'] / 1e6:,.1f}M, {100 * o['participation']:.1f}% of a day's volume) | {out['style']['name']} orders | {out['scenario']['name']}: {out['scenario']['description']}")
+        keep = ["algo", "shortfall_bps", "std_bps", "p05_bps", "p95_bps", "spread_bps", "temporary_bps", "permanent_bps", "timing_bps", "participation", "price_improvement"] + (["prob_beat_target"] if args.target_bps is not None else [])
+        _print_frame(pd.DataFrame(out["rows"])[keep].set_index("algo"), "{:.2f}")
+        print("\nshortfall_bps is the cost against the arrival price (lower is better); std_bps its spread across simulated days; the *_bps columns split the average into its parts")
+        if args.schedule:
+            sched = pd.DataFrame(out["schedules"]) * 100.0
+            sched.insert(0, "market volume %", pd.Series(out["volume_profile"]) * 100.0)
+            print("\nshare of the order traded in each interval, %:")
+            _print_frame(sched, "{:.1f}")
+        return 0
+    if args.action == "frontier":
+        out = factory.efficient_frontier(**market)
+        _print_frame(pd.DataFrame(out["frontier"]).set_index("risk_aversion"), "{:.3f}")
+        print(f"\nVWAP: cost {out['vwap']['cost_bps']:.2f} bps, risk {out['vwap']['risk_bps']:.1f} bps | TWAP: cost {out['twap']['cost_bps']:.2f} bps, risk {out['twap']['risk_bps']:.1f} bps")
+        return 0
+    if args.action == "basket":
+        from .algo import basket as bk
+
+        b = bk.random_basket(args.size, seed=args.seed)
+        ra = args.risk_aversion
+        joint, alone = bk.basket_cost_risk(b, bk.basket_schedule(b, ra, exact=True)), bk.basket_cost_risk(b, bk.independent_schedule(b, ra, exact=True))
+        print(f"basket of {b.size} names, ${b.gross / 1e6:,.1f}M gross, net exposure ${b.exposure.sum() / 1e6:,.2f}M, risk aversion {ra:g}")
+        _print_frame(pd.DataFrame({"joint": joint, "stock by stock": alone}).T[["cost_bps", "risk_bps"]].assign(objective=lambda f: f["cost_bps"] + ra * f["risk_bps"] ** 2), "{:.2f}")
+        m = bk.minimum_trading_risk_quantity(b, share=0.5)
+        print(f"\nminimum trading risk quantity at 50%: remaining risk ${m['residual_risk']:,.0f} (proportional execution leaves ${m['naive_risk']:,.0f}; the whole list ${m['original_risk']:,.0f})")
+        t = bk.maximum_trading_opportunity(b, available=b.quantity * (b.side > 0))
+        print(f"maximum trading opportunity with only the buys on offer: {100 * t['share_of_list']:.0f}% of the list's value can go before the remaining list is riskier ({'binding' if t['binding'] else 'not binding'})")
+        pb = bk.program_block(b, block_threshold=args.block_threshold)
+        print(f"program-block: block {pb['block'] or 'none'}, program {len(pb['program'])} names; dark-safe {pb['dark'] or 'none'}")
+        return 0
+    if args.action == "hft":
+        from .algo import blackbox as bb, hft
+
+        if args.sim == "pairs":
+            r = bb.simulate_pair_trading(seed=args.seed)
+            print({k: round(v, 3) if isinstance(v, float) else v for k, v in r.items() if k not in ("daily_bps", "position", "spread")})
+        elif args.sim == "etf":
+            _print_frame(bb.latency_table(seed=args.seed), "{:.2f}")
+        elif args.sim == "rebate":
+            _print_frame(hft.pressure_table(seed=args.seed), "{:.2f}")
+        else:
+            _print_frame(hft.auto_market_making(seed=args.seed), "{:.2f}")
+        print("\nthese are research simulators on stylised markets: they size an edge against costs and delay, they do not show that one exists")
+        return 0
+    return 1
+
+
 def cmd_new_strategy(args, config) -> int:
     from .strategies.user import new_strategy
     try:
@@ -398,6 +459,17 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--seed", type=int, default=0); p.add_argument("--top", type=int, default=8); p.set_defaults(func=cmd_tune)
     p = sub.add_parser("benchmark", help="score time and peak memory of registered models on the default bundle")
     p.add_argument("--models", nargs="*"); p.add_argument("--repeats", type=int, default=1); p.add_argument("--prices"); p.add_argument("--csv"); p.set_defaults(func=cmd_benchmark)
+    p = sub.add_parser("algo", help="execution algorithms: where every strategy of the taxonomy lives, simulated orders (VWAP, TWAP, IS, AIM ...), the cost-risk frontier, baskets and high-frequency simulations")
+    p.add_argument("action", choices=["list", "run", "frontier", "basket", "hft"])
+    p.add_argument("--algos", nargs="*", default=["twap", "vwap", "is"], help="[tactic+]name[:key=value,...], e.g. vwap  pov:rate=0.15  aim+vwap  target_cost+is:risk_aversion=0.003")
+    p.add_argument("--side", choices=["buy", "sell"], default="buy"); p.add_argument("--shares", type=float, default=200_000.0); p.add_argument("--adv", type=float, default=2_000_000.0, help="average daily volume, shares")
+    p.add_argument("--sigma", type=float, default=0.02, help="daily volatility as a fraction"); p.add_argument("--price", type=float, default=50.0); p.add_argument("--spread-bps", type=float, default=4.0)
+    p.add_argument("--intervals", type=int, default=26, help="intervals in the day"); p.add_argument("--max-participation", type=float, default=0.35)
+    p.add_argument("--style", choices=["aggressive", "working", "passive"], default="aggressive"); p.add_argument("--scenario", default="normal", help="normal, trend_up, trend_down, mean_reverting or crisis")
+    p.add_argument("--paths", type=int, default=400); p.add_argument("--seed", type=int, default=0); p.add_argument("--target-bps", type=float, help="report the probability of beating this cost")
+    p.add_argument("--schedule", action="store_true", help="also print the average schedule"); p.add_argument("--size", type=int, default=8, help="names in the demonstration basket")
+    p.add_argument("--risk-aversion", type=float, default=1e-3); p.add_argument("--block-threshold", type=float, default=0.005, help="a name is a block when its trade is at least this share of a day's volume")
+    p.add_argument("--sim", choices=["pairs", "etf", "rebate", "amm"], default="etf", help="which high-frequency simulation (quant algo hft)"); p.set_defaults(func=cmd_algo)
     p = sub.add_parser("registry", help="the model registry: versions, stages, lineage")
     p.add_argument("action", choices=["list", "register-run", "promote", "lineage"]); p.add_argument("--name"); p.add_argument("--version", type=int)
     p.add_argument("--stage", choices=["staging", "production", "archived"]); p.add_argument("--run-id"); p.set_defaults(func=cmd_registry)
