@@ -13,10 +13,11 @@ the answer must not be used.
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass
 
 import numpy as np
-from scipy.linalg import cho_factor, cho_solve, lu_factor, lu_solve
+from scipy.linalg import LinAlgWarning, cho_factor, cho_solve, lu_factor, lu_solve
 
 
 @dataclass
@@ -179,3 +180,119 @@ def _polish(P, q, A, l, u, x, y, zs, delta: float = 1e-7, refine: int = 4):
     if new > old + 1e-9 * (1.0 + abs(old)):
         return None
     return xp
+
+
+# ------------------------------------------------------------------------------------------------------------------ an interior-point method for small, degenerate problems
+def solve_qp_ipm(P, q, A=None, l=None, u=None, lb=None, ub=None, tol: float = 1e-12, max_iter: int = 100, delta: float = 1e-11) -> QPResult:
+    """The same problem as :func:`solve_qp`, solved by a primal-dual interior-point method (Mehrotra's predictor-corrector) with a dense Newton system.
+
+    ADMM is the right tool for hundreds of variables and loose tolerances; it is slow on small problems with many nearly parallel constraints (a cutting-plane method produces exactly those), where it
+    needs thousands of iterations. An interior-point method needs 10 to 30 whatever the degeneracy, and returns the answer to the tolerance asked for without a polishing step. The Newton system has
+    ``n`` rows plus the equality rows, so this is for problems of up to a few hundred variables. ``delta`` regularises the system so dependent equality rows do not make it singular."""
+    P = np.atleast_2d(np.asarray(P, float))
+    q = np.asarray(q, float).ravel()
+    n = len(q)
+    P = 0.5 * (P + P.T)
+    A0, l0, u0 = _stack(A, l, u, lb, ub, n)
+    m0 = A0.shape[0]
+    if m0 and (l0 > u0 + 1e-12).any():
+        return QPResult(np.full(n, np.nan), np.zeros(m0), np.nan, 0, "infeasible bounds", np.inf, np.inf)
+    eq = (np.isfinite(l0) & np.isfinite(u0) & (np.abs(u0 - l0) < 1e-12)) if m0 else np.zeros(0, bool)
+    low = np.isfinite(l0) & ~eq if m0 else np.zeros(0, bool)
+    up = np.isfinite(u0) & ~eq if m0 else np.zeros(0, bool)
+    Ae, be = (A0[eq], l0[eq]) if m0 else (np.zeros((0, n)), np.zeros(0))
+    G = np.vstack([-A0[low], A0[up]]) if m0 else np.zeros((0, n))
+    h = np.concatenate([-l0[low], u0[up]]) if m0 else np.zeros(0)
+    p, m = Ae.shape[0], G.shape[0]
+    # scale: the objective to order one, every constraint row to unit size
+    cs = max(np.abs(P).max() if n else 0.0, np.abs(q).max() if n else 0.0, 1e-12)
+    Ps, qs = P / cs, q / cs
+    ge = 1.0 / np.maximum(np.abs(G).max(axis=1), 1e-12) if m else np.zeros(0)
+    ae = 1.0 / np.maximum(np.abs(Ae).max(axis=1), 1e-12) if p else np.zeros(0)
+    Gs, hs, Aes, bes = G * ge[:, None], h * ge, Ae * ae[:, None], be * ae
+    # starting point: the least-squares solution of the KKT conditions with the slack identity, shifted into the interior (the choice CVXOPT makes)
+    K0 = np.block([[Ps + 1e-8 * np.eye(n), Aes.T, Gs.T], [Aes, -1e-8 * np.eye(p), np.zeros((p, m))], [Gs, np.zeros((m, p)), -np.eye(m)]]) if (p or m) else Ps + 1e-8 * np.eye(n)
+    rhs0 = np.concatenate([-qs, bes, hs])
+    try:
+        sol0 = np.linalg.solve(K0, rhs0)
+    except np.linalg.LinAlgError:
+        sol0 = np.zeros(n + p + m)
+    x, y, z = sol0[:n], sol0[n:n + p], sol0[n + p:]
+    s = hs - Gs @ x if m else np.zeros(0)
+    if m:
+        shift_s = max(0.0, -float(s.min()))
+        s = s + (1.0 + shift_s)
+        z = -(Gs @ x - hs)
+        shift_z = max(0.0, -float(z.min()))
+        z = z + (1.0 + shift_z)
+    status, iteration = "max iterations", 0
+    best = (np.inf, x.copy(), y.copy(), s.copy(), z.copy())                                    # the best iterate so far: near the optimum rounding error can start to undo the progress
+    np_state = np.seterr(all="ignore")                                                      # a singular Newton system gives NaN steps, which end the iteration below
+    for iteration in range(1, max_iter + 1):
+        rd = Ps @ x + qs + (Gs.T @ z if m else 0.0) + (Aes.T @ y if p else 0.0)
+        rp = Aes @ x - bes if p else np.zeros(0)
+        ri = Gs @ x + s - hs if m else np.zeros(0)
+        mu = float(s @ z) / m if m else 0.0
+        scale = 1.0 + np.abs(qs).max()
+        merit = max(np.abs(rd).max(), np.abs(rp).max() if p else 0.0, np.abs(ri).max() if m else 0.0, mu) / scale
+        if merit < best[0]:
+            best = (merit, x.copy(), y.copy(), s.copy(), z.copy())
+        if merit <= tol:
+            status = "solved"
+            break
+        if best[0] <= 1e-6 and merit > 10.0 * best[0]:                                       # diverging after having been nearly there: stop at the best point
+            break
+        H = Ps + (Gs.T * (z / s)) @ Gs if m else Ps.copy()
+        K = np.block([[H + delta * np.eye(n), Aes.T], [Aes, -delta * np.eye(p)]]) if p else H + delta * np.eye(n)
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", LinAlgWarning)                                   # an infeasible problem makes the system singular: that is reported as no solution
+                lu = lu_factor(K, check_finite=False)
+        except (np.linalg.LinAlgError, ValueError):
+            break
+
+        def newton(rc_t):
+            rhs_x = -rd - (Gs.T @ ((z / s) * ri - rc_t / s) if m else 0.0)
+            sol = lu_solve(lu, np.concatenate([rhs_x, -rp]) if p else rhs_x, check_finite=False)
+            dx, dy = sol[:n], sol[n:]
+            ds = -ri - Gs @ dx if m else np.zeros(0)
+            dz = (z / s) * (Gs @ dx + ri) - rc_t / s if m else np.zeros(0)
+            return dx, dy, ds, dz
+
+        def longest(v, dv):
+            neg = dv < 0
+            return min(1.0, float(np.min(-v[neg] / dv[neg]))) if neg.any() else 1.0
+
+        if m:
+            dx_a, dy_a, ds_a, dz_a = newton(s * z)
+            a_aff = min(longest(s, ds_a), longest(z, dz_a))
+            mu_aff = float((s + a_aff * ds_a) @ (z + a_aff * dz_a)) / m
+            sigma = (mu_aff / mu) ** 3 if mu > 0 else 0.0
+            dx, dy, ds, dz = newton(s * z - sigma * mu + ds_a * dz_a)
+            alpha = max(0.995 * min(longest(s, ds), longest(z, dz)), 1e-8)
+            if not (np.isfinite(dx).all() and np.isfinite(ds).all() and np.isfinite(dz).all()):
+                break                                                                          # a singular Newton system: no further progress is possible
+        else:
+            dx, dy, ds, dz = newton(np.zeros(0))
+            alpha = 1.0
+        x, y = x + alpha * dx, y + alpha * dy
+        if m:
+            s, z = s + alpha * ds, z + alpha * dz
+    np.seterr(**np_state)
+    if status != "solved" and best[0] <= 1e-7:
+        status = "solved (reduced accuracy)"
+    if status.startswith("solved"):
+        _, x, y, s, z = best
+    x_out = x
+    y_out = np.zeros(m0)
+    if m0:
+        z_orig = cs * ge * z if m else z                                                    # undo the row and cost scaling: P x + q + A'y = 0 with y positive at an upper bound
+        n_low = int(low.sum())
+        y_out[np.flatnonzero(low)] = -z_orig[:n_low]
+        y_out[np.flatnonzero(up)] += z_orig[n_low:n_low + int(up.sum())]
+        if p:
+            y_out[np.flatnonzero(eq)] = cs * ae * y
+    obj = float(0.5 * x_out @ P @ x_out + q @ x_out)
+    rd_final = np.abs(P @ x_out + q + (A0.T @ y_out if m0 else 0.0)).max() if n else 0.0
+    rp_final = float(max(np.maximum(l0 - A0 @ x_out, 0).max(initial=0.0), np.maximum(A0 @ x_out - u0, 0).max(initial=0.0))) if m0 else 0.0
+    return QPResult(x_out, y_out, obj, iteration, status, rp_final, float(rd_final))

@@ -53,11 +53,11 @@ def test_a_model_that_needs_the_file_refuses_without_it_and_the_price_factors_do
     monkeypatch.setattr(ff, "USER_DATA", tmp_path / "nowhere")
     bundle = world["bundle"]
     for name in ("fundamental_value", "fundamental_quality", "fundamental_alpha"):
-        with pytest.raises(KeyError, match="need the file"):
+        with pytest.raises(KeyError, match="needs the file"):
             MODELS.create(name).score(bundle)
     assert MODELS.create("fundamental_momentum").score(bundle).iloc[-1].notna().sum() > 40                 # the composite of the three price factors needs nothing else
     assert MODELS.create("fundamental_momentum", factor="ret9").score(bundle).iloc[-1].notna().sum() > 40
-    with pytest.raises(KeyError, match="need the file"):
+    with pytest.raises(KeyError, match="needs the file"):
         MODELS.create("fundamental_momentum", factor="earn_rev9").score(bundle)
 
 

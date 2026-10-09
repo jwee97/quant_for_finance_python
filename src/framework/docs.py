@@ -56,6 +56,13 @@ def _book_flag(cls) -> str:
     return "--allocator sleeves " if getattr(cls, "book", None) == "sleeves" else ""
 
 
+def _required_series(cls) -> str:
+    """The macro series a strategy reads, 'none (prices only)' if it reads none; a strategy that runs on any few of them says how many."""
+    series = ", ".join(getattr(cls, "requires", ()) or ())
+    at_least = getattr(cls, "requires_at_least", None)
+    return "none (prices only)" if not series else (f"{series} (any {at_least} of them)" if at_least else series)
+
+
 def strategy_cards(config) -> dict[str, str]:
     from ..framework import MODELS, load_library
 
@@ -74,7 +81,7 @@ def strategy_cards(config) -> dict[str, str]:
         row = lib.loc[entry.name] if entry.name in lib.index else (crypto.loc[entry.name] if entry.name in crypto.index else None)
         doc = inspect.getdoc(cls) or ""
         lines = [f"# {entry.name}", "", f"*Family: {entry.family}*", "", "## What it bets on", "", entry.description, "", doc.split("\n\n")[0] if doc else "", "",
-                 "## Inputs", "", f"- Macro or alternative series required: {', '.join(getattr(cls, 'requires', ()) or ()) or 'none (prices only)'}",
+                 "## Inputs", "", f"- Macro or alternative series required: {_required_series(cls)}",
                  f"- Parameters: {_params(cls)}", "", "## Run it", "", "```bash", f"quant backtest --model {entry.name} {_book_flag(cls)}--tearsheet", "```", ""]
         if getattr(cls, "rebalance", None):
             lines[-1:-1] = [f"This rule declares a {cls.rebalance} rebalance; pass `execution: {{rebalance: monthly}}` in a spec to override it.", ""]

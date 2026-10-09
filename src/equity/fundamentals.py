@@ -75,7 +75,7 @@ class Fundamentals:
         p = Path(path)
         p = p if p.is_absolute() else USER_DATA / p
         if not p.exists():
-            raise KeyError(f"the fundamental factors need the file {p}. Columns: ticker, period_end (and available, the first date the figures were public), then any of: "
+            raise KeyError(f"this fundamental model needs the file {p}. Columns: ticker, period_end (and available, the first date the figures were public), then any of: "
                            f"{', '.join(FIELDS)}. Put it there (data/user/ is not part of the repository) or pass its path.")
         table = pd.read_csv(p, keep_default_na=False, na_values=MISSING)
         return cls.from_table(table, lag_days, expiry)

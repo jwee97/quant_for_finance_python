@@ -22,10 +22,11 @@
     alpha_styles      appraisal-ratio alpha, adaptive autocorrelation, volatility-squeeze breakout, abnormal-volume drift, a walk-forward event study; news sentiment and panel signals read files in data/user/
     rebalance_styles  policy portfolio (calendar and band), the month-end rebalancing flow, flight to quality, market outlook
     economic_outlook  yield-curve quadrants and credit-cycle rotation, with states learned from earlier data only
+    factor_models     statistical APT (PCA residual alpha), macroeconomic factor model, cross-sectional characteristic regression, machine learning on the characteristics (lasso, elastic net, PCR, PLS, CART, forest, network)
     fundamental_factors   value, quality, momentum and estimate-revision factors, discounted cash flow (point and multipath), the optimal alpha model, contextual and nonlinear versions; read data/user/fundamentals.csv
 
 Run ``quant list models`` to see them with their hypotheses.
 """
 
-from . import (alpha_styles, crypto, cross_sectional, deep, econometric, economic_outlook, expression, factors, fixed_income, fundamental_factors, macro, ml, multi_asset, online,  # noqa: F401
-               rebalance_styles, representation, reversion, risk_timing, seasonal, statarb, taa, time_series, trend, volatility)
+from . import (alpha_styles, crypto, cross_sectional, deep, econometric, economic_outlook, expression, factor_models, factors, fixed_income, fundamental_factors, macro, ml, multi_asset,  # noqa: F401
+               online, rebalance_styles, representation, reversion, risk_timing, seasonal, statarb, taa, time_series, trend, volatility)

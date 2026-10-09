@@ -100,7 +100,7 @@ def test_tickers_are_matched_without_regard_to_case_and_unused_columns_are_liste
 
 
 def test_bad_files_are_refused_with_the_reason(tmp_path):
-    with pytest.raises(KeyError, match="need the file"):
+    with pytest.raises(KeyError, match="needs the file"):
         Fundamentals.from_csv(tmp_path / "missing.csv")
     with pytest.raises(FundamentalsError, match="ticker"):
         Fundamentals.from_table(pd.DataFrame({"period_end": ["2020-01-01"], "sales": [1.0]}))

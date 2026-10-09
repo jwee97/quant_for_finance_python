@@ -35,7 +35,7 @@ def test_dynamic_cov_minimum_variance_loads_on_the_calm_asset_and_respects_the_b
     live = w.loc[w.abs().sum(axis=1) > 0]
     assert len(live) > 500
     last = live.iloc[-1]
-    assert last["V0"] == last.max() and last["V5"] == last.min()
+    assert last["V0"] >= last.max() - 1e-9 and last["V5"] <= last.min() + 1e-9              # V0 and V1 can both sit at the cap, and which one is the maximum is a rounding matter
     assert np.isclose(last.sum(), 1.0, atol=1e-6) and (last >= -1e-9).all()
 
 
