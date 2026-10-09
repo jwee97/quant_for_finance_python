@@ -13,6 +13,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from ..data.macro import MacroSeriesSpec
+
 
 @dataclass
 class MarketBundle:
@@ -129,14 +131,24 @@ def load_default_bundle(config, with_macro: bool = True, download: bool = False)
     return bundle_from_market(market, macro)
 
 
+# Series for the factor-timing models. They are declared here and not in config/framework.yaml because that file is part of the pinned identity of the Generation 5 results, and adding data must not rename
+# a result. M1 and GDP are seasonally adjusted and revised after publication, and FRED serves the latest vintage, so the lags put the first look at the data a little after the first publication, which
+# reduces that look-ahead without removing it (GDPC1 is stamped on the first day of its quarter; the first estimate comes about 118 days later and the second about 148).
+TIMING_SERIES = (
+    MacroSeriesSpec(id="M1SL", source="fred", frequency="monthly", release_lag_days=45, feature="M1 money stock, seasonally adjusted (billions of dollars); revised"),
+    MacroSeriesSpec(id="GDPC1", source="fred", frequency="quarterly", release_lag_days=150, feature="real GDP, seasonally adjusted annual rate, stamped on the first day of the quarter; revised"),
+    MacroSeriesSpec(id="PPIACO", source="fred", frequency="monthly", release_lag_days=45, feature="producer price index, all commodities, not seasonally adjusted (1982 = 100)"),
+)
+
+
 def load_macro_levels(config, index: pd.DatetimeIndex, download: bool = False) -> pd.DataFrame:
     """Macro and extra FRED series as published-by-date levels on the trading calendar."""
-    from ..data.macro import MacroDownloader, MacroSeriesSpec, asof_series, ensure_macro_raw, load_macro_raw
+    from ..data.macro import MacroDownloader, asof_series, ensure_macro_raw, load_macro_raw
     from ..features.macro import macro_feature_panel
 
     specs, raw = ensure_macro_raw(config)
     levels = macro_feature_panel(raw, specs, index, config)["levels"]
-    extra = [MacroSeriesSpec.from_config(s) for s in (config.get("framework.extra_series", []) or [])]
+    extra = [MacroSeriesSpec.from_config(s) for s in (config.get("framework.extra_series", []) or [])] + list(TIMING_SERIES)
     if extra:
         raw_dir = config.root / "data" / "raw" / "framework"
         missing = [s for s in extra if not (raw_dir / f"{s.id}.csv").exists()]

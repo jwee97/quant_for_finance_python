@@ -31,6 +31,7 @@ from .payload import clean, result_payload
 from ..equity.factors import names as factor_names
 from ..equity.portfolio import PRESETS as book_presets
 from ..strategies.factor_models import KINDS as learner_kinds
+from ..strategies.factor_timing import CALENDAR_STATES, MACRO_STATES
 from .universe import CLASSES, MAX_TICKERS, TickerStore, UniverseBuilder, UniverseError, itick_source, normalise
 
 COMBINATIONS = {
@@ -45,7 +46,8 @@ COMBINATIONS = {
     "regime_conditional": "Weight by how each model has done in the current regime (needs a regime detector)",
 }
 CHOICES = {"mode": ["cross_sectional", "time_series"], "features": ["price", "price_macro"], "updater": ["ridge", "nlms", "kalman"],
-           ("constrained_long_short", "book"): list(book_presets), ("ml_factor_model", "kind"): list(learner_kinds), ("fundamental_dcf", "factor"): ["dcf_upside", "mdcf_upside", "mdcf_prob"],
+           ("constrained_long_short", "book"): list(book_presets), ("multi_period", "book"): list(book_presets), ("ml_factor_model", "kind"): list(learner_kinds),
+           ("calendar_factor_timing", "state"): list(CALENDAR_STATES), ("macro_factor_timing", "state"): list(MACRO_STATES), ("earnings_season_premium", "source"): ["auto", "file", "volume"], ("fundamental_dcf", "factor"): ["dcf_upside", "mdcf_upside", "mdcf_prob"],
            ("fundamental_value", "factor"): ["composite"] + factor_names("value"), ("fundamental_quality", "factor"): ["composite"] + factor_names("quality"),
            ("fundamental_momentum", "factor"): ["composite"] + factor_names("momentum") + factor_names("estimates"),
            ("fundamental_alpha", "weights"): ["optimal", "equal"], ("fundamental_alpha", "orthogonalize"): ["gram_schmidt", "symmetric", "none"],
@@ -56,7 +58,7 @@ CHOICES = {"mode": ["cross_sectional", "time_series"], "features": ["price", "pr
 ALLOCATOR_TEXT = {"sleeves": "Independent sleeves: every asset is its own small strategy with an equal slice of capital times its signal, cash when flat (needs exactly one strategy; best for pullback, trend-filter and calendar rules)",
                   "score_stack": "Trade the signal as written: rank and scale the raw score, with no calibration against history (needs exactly one strategy; best for your own formulas)",
                   "forecast_stack": "Calibrated forecast: learn from matured history how much a unit of the score has paid, then size positions (a signal that has not paid gets no position)"}
-SLOW = {"constrained_long_short": "solves a quadratic programme every month: about ten seconds on 15 assets, a minute on 60", "mv_cvar": "solves a CVaR-constrained programme every month from 400 scenarios: about a minute",
+SLOW = {"multi_period": "plans the next few months as a quadratic programme every month: several seconds on 15 assets, longer on 60", "constrained_long_short": "solves a quadratic programme every month: about ten seconds on 15 assets, a minute on 60", "mv_cvar": "solves a CVaR-constrained programme every month from 400 scenarios: about a minute",
         "qubo_select": "anneals a QUBO every month from 16 random starts: a minute or two", "ml_factor_model": "refits a learner every month (every third for trees and the network): seconds, longer for forests",
         "fundamental_dcf": "values every company every month, with a Monte Carlo of 400 paths for the multipath version: a few seconds", "fundamental_alpha": "builds the factors and the walk-forward weights: several seconds",
         "tca_mvo": "solves a cost-aware optimisation every month: a few seconds", "deep_window": "trains a neural network every year of history: about 10-20 seconds", "chronos": "downloads and runs a foundation model: about a minute on CPU",

@@ -204,3 +204,80 @@ def simulate_fundamental_world(n_assets: int = 80, n_years: int = 14, seed: int 
     table = pd.concat(rows, ignore_index=True)
     drivers = pd.concat({d: pd.DataFrame(z, index=tickers) for d, z in driver_rows.items()}, names=["date", "ticker"])
     return FundamentalWorld(prices, table, p, drivers, n_days)
+
+
+# ------------------------------------------------------------------------------------------------------------------ worlds for factor timing
+def _month_ends(index: pd.DatetimeIndex) -> np.ndarray:
+    m = pd.Series(index.to_period("M"), index=index)
+    return np.flatnonzero((m != m.shift(-1)).to_numpy())                                            # positions of the last trading day of each month
+
+
+def simulate_timing_world(seed: int = 0, years: int = 16, n: int = 50, premium=None, state_of=None, market_regimes: bool = False, sigma: float = 0.015, start: str = "2004-01-05"):
+    """Daily returns in which momentum is paid a premium that depends on the calendar or on a state: ``premium(month, state)`` a month per cross-sectional standard deviation of the exposure, where
+    ``month`` (1 to 12) is the month the return is earned in and ``state`` is ``state_of(position, returns)`` at the month-end before it (``position`` indexes the trading days; ``returns`` is the array of
+    daily returns simulated so far, which may be inspected up to and including that position). The exposure is the 12-1 month return of the prices as simulated up to that month-end, which is what the
+    price-based factors compute, so a timing model has a premium of known size to find. ``market_regimes`` adds a common component that swings between up and down years.
+
+    Returns the trading dates, the prices (days by assets) and the state at each month-end after the first year."""
+    rng = np.random.default_rng(seed)
+    idx = pd.bdate_range(start, periods=years * 252)
+    ends = _month_ends(idx)
+    ret = rng.normal(0.0002, sigma, (len(idx), n))
+    if market_regimes:
+        regime = 1
+        for k in range(len(ends)):
+            if rng.random() < 0.08:
+                regime = -regime
+            lo = 0 if k == 0 else ends[k - 1] + 1
+            ret[lo:ends[k] + 1] += regime * 0.0012
+    prices = np.zeros_like(ret)
+    prices[:ends[0] + 1] = 100.0 * np.cumprod(1 + ret[:ends[0] + 1], axis=0)
+    states = {}
+    for k, s in enumerate(ends[:-1]):
+        lo, hi = s + 1, ends[k + 1] + 1
+        if s >= 252:
+            mom = prices[s - 21] / prices[s - 252] - 1.0
+            z = (mom - mom.mean()) / mom.std()
+            st = state_of(s, ret) if state_of else 0
+            states[s] = st
+            ret[lo:hi] += (premium(idx[lo].month, st) / (hi - lo)) * z[None, :]
+        prices[lo:hi] = prices[lo - 1] * np.cumprod(1 + ret[lo:hi], axis=0)
+    return idx, prices, states
+
+
+def simulate_earnings_world(seed: int = 0, years: int = 12, n: int = 60, premium: float = 0.02, start: str = "2005-01-03"):
+    """Companies that report every quarter in the same month of the quarter and on the same business day, earning ``premium`` more in the months in which they report, with a spike in trading volume on the
+    day. Returns the prices, the volume and the planted announcement days (each a days by companies table)."""
+    rng = np.random.default_rng(seed)
+    idx = pd.bdate_range(start, periods=years * 252)
+    month = idx.month.to_numpy()
+    bday = idx.to_series().groupby(idx.to_period("M")).cumcount().to_numpy()
+    offset = rng.integers(0, 3, n)                                                                  # which month of the quarter the company reports in
+    day = rng.integers(4, 16, n)
+    reporting_month = ((month[:, None] - 1) % 3) == offset[None, :]
+    events = (reporting_month & (bday[:, None] == day[None, :])).astype(float)
+    ret = rng.normal(0.0003, 0.015, (len(idx), n)) + premium / 21.0 * reporting_month
+    volume = np.exp(rng.normal(0.0, 0.3, (len(idx), n))) * 1e6 * (1 + 4 * events)
+    cols = [f"S{i:02d}" for i in range(n)]
+    return (pd.DataFrame(100 * np.cumprod(1 + ret, axis=0), index=idx, columns=cols), pd.DataFrame(volume, index=idx, columns=cols), pd.DataFrame(events, index=idx, columns=cols))
+
+
+def simulate_nonlinear_world(seed: int = 0, years: int = 16, n: int = 60, effect=None, sigma: float = 0.015, start: str = "2004-01-05"):
+    """Daily returns in which the expected return of next month is a function of two price characteristics: ``effect(z_mom, z_rev)`` (a vector over the assets, in return per month) with ``z_mom`` the
+    standardised 12-1 month return and ``z_rev`` the standardised minus the last month's return, both computed from the prices simulated so far, exactly as the price-based factors compute them. A linear
+    learner can find the part of ``effect`` that is a straight line in them; a square or a product needs a nonlinear one."""
+    rng = np.random.default_rng(seed)
+    idx = pd.bdate_range(start, periods=years * 252)
+    ends = _month_ends(idx)
+    ret = rng.normal(0.0002, sigma, (len(idx), n))
+    prices = np.zeros_like(ret)
+    prices[:ends[0] + 1] = 100.0 * np.cumprod(1 + ret[:ends[0] + 1], axis=0)
+    zs = lambda v: (v - v.mean()) / v.std()
+    for k, s in enumerate(ends[:-1]):
+        lo, hi = s + 1, ends[k + 1] + 1
+        if s >= 252:
+            z_mom = zs(prices[s - 21] / prices[s - 252] - 1.0)
+            z_rev = zs(-(prices[s] / prices[s - 21] - 1.0))
+            ret[lo:hi] += (effect(z_mom, z_rev) / (hi - lo))[None, :]
+        prices[lo:hi] = prices[lo - 1] * np.cumprod(1 + ret[lo:hi], axis=0)
+    return idx, prices

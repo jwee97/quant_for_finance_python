@@ -16,6 +16,7 @@
     quant benchmark --models tsmom momentum   score time and peak memory of models on the default bundle
     quant registry list                   versioned models: stages, lineage, promotion
     quant algo list                       the execution algorithms and where each strategy of the taxonomy lives; `quant algo run --algos vwap aim+vwap is:risk_aversion=0.01` compares them on a simulated day
+    quant algo limit | route              the mix of limit and market orders (dynamic programme) and smart order routing across venues that learns their liquidity from censored fills
     quant cashflow simulate --deposit 1000   what deposits, withdrawals and dividends do to a portfolio under each policy; also `spending`, `redeem` and `ldi`
 """
 
@@ -323,6 +324,39 @@ def cmd_algo(args, config) -> int:
         pb = bk.program_block(b, block_threshold=args.block_threshold)
         print(f"program-block: block {pb['block'] or 'none'}, program {len(pb['program'])} names; dark-safe {pb['dark'] or 'none'}")
         return 0
+    if args.action == "limit":
+        from .algo import limit_orders as lo
+
+        model = lo.LimitOrderModel(shares=args.shares, intervals=args.limit_intervals, half_spread_bps=args.half_spread_bps, impact_bps=args.impact_bps, drift_bps=args.drift_bps,
+                                   adverse_selection_bps=args.adverse_bps, fill_first=args.fill_first, fill_decay=args.fill_decay, risk_bps=args.risk_bps, units=args.units)
+        sol = lo.solve(model)
+        rows = {}
+        for name, policy in (("optimal mix", sol.policy), ("all market now", lo.all_market_policy(model)), ("equal market slices", lo.twap_market_policy(model)), ("limit orders, market at the end", lo.limit_then_market_policy(model))):
+            sim = lo.simulate(model, policy, paths=args.paths, seed=args.seed)
+            rows[name] = {"expected cost (bps)": lo.evaluate(model, policy), "simulated (bps)": sim["cost_bps"], "std (bps)": sim["std_bps"], "share by limit order": sim["limit_share"]}
+        print(f"buy {model.shares:,.0f} shares in {model.intervals} intervals: half-spread {model.half_spread_bps:g} bps, impact {model.impact_bps:g} bps for the whole order, drift {model.drift_bps:g} bps an interval, adverse selection {model.adverse_selection_bps:g} bps, "
+              f"a posted unit fills with probability {model.fill_first:g} and each further unit with {model.fill_decay:g} times that")
+        _print_frame(pd.DataFrame(rows).T, "{:.2f}")
+        print("\nwhat the optimal mix does in the first interval, by how much of the order is still to buy (units of the order):")
+        plan = pd.DataFrame({f"{100 * share:.0f}% left": {"market": int(sol.policy.market[0, int(round(share * model.units))]), "limit": int(sol.policy.limit[0, int(round(share * model.units))])} for share in (1.0, 0.75, 0.5, 0.25)}).T
+        _print_frame(plan, "{:.0f}")
+        print(f"\n({model.units} units = the whole order; the cost includes the drift and risk charge while shares wait. A stylised model: it shows which way each force pushes, not what an order on a real stock will cost)")
+        return 0
+    if args.action == "route":
+        import numpy as np
+
+        from .algo import routing as rt
+
+        venues = rt.example_venues()
+        _print_frame(pd.DataFrame({v.name: {"P(fills anything)": v.first, "decay per lot": v.decay} for v in venues}).T, "{:.4f}")
+        table = {}
+        for policy in rt.POLICIES:
+            runs = [rt.simulate_routing(venues, rounds=args.rounds, shares=args.lots, policy=policy, seed=args.seed + k) for k in range(5)]
+            table[policy] = {"expected fill rate, last third": float(np.mean([r["expected_fill_rate_last_third"] for r in runs])), "realised, all rounds": float(np.mean([r["fill_rate"] for r in runs]))}
+        print(f"\nrouting {args.lots} lots a round for {args.rounds} rounds (5 simulated runs each); the fill rate is the share of the lots sent that were filled")
+        _print_frame(pd.DataFrame(table).T, "{:.3f}")
+        print("\nthe learning router sees only min(sent, hidden liquidity) at each venue; the oracle knows the true distributions; 'best first-unit probability' sends everything to the venue most likely to fill anything")
+        return 0
     if args.action == "hft":
         from .algo import blackbox as bb, hft
 
@@ -531,7 +565,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("benchmark", help="score time and peak memory of registered models on the default bundle")
     p.add_argument("--models", nargs="*"); p.add_argument("--repeats", type=int, default=1); p.add_argument("--prices"); p.add_argument("--csv"); p.set_defaults(func=cmd_benchmark)
     p = sub.add_parser("algo", help="execution algorithms: where every strategy of the taxonomy lives, simulated orders (VWAP, TWAP, IS, AIM ...), the cost-risk frontier, baskets and high-frequency simulations")
-    p.add_argument("action", choices=["list", "run", "frontier", "basket", "hft"])
+    p.add_argument("action", choices=["list", "run", "frontier", "basket", "hft", "limit", "route"])
     p.add_argument("--algos", nargs="*", default=["twap", "vwap", "is"], help="[tactic+]name[:key=value,...], e.g. vwap  pov:rate=0.15  aim+vwap  target_cost+is:risk_aversion=0.003")
     p.add_argument("--side", choices=["buy", "sell"], default="buy"); p.add_argument("--shares", type=float, default=200_000.0); p.add_argument("--adv", type=float, default=2_000_000.0, help="average daily volume, shares")
     p.add_argument("--sigma", type=float, default=0.02, help="daily volatility as a fraction"); p.add_argument("--price", type=float, default=50.0); p.add_argument("--spread-bps", type=float, default=4.0)
@@ -540,7 +574,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--paths", type=int, default=400); p.add_argument("--seed", type=int, default=0); p.add_argument("--target-bps", type=float, help="report the probability of beating this cost")
     p.add_argument("--schedule", action="store_true", help="also print the average schedule"); p.add_argument("--size", type=int, default=8, help="names in the demonstration basket")
     p.add_argument("--risk-aversion", type=float, default=1e-3); p.add_argument("--block-threshold", type=float, default=0.005, help="a name is a block when its trade is at least this share of a day's volume")
-    p.add_argument("--sim", choices=["pairs", "etf", "rebate", "amm"], default="etf", help="which high-frequency simulation (quant algo hft)"); p.set_defaults(func=cmd_algo)
+    p.add_argument("--sim", choices=["pairs", "etf", "rebate", "amm"], default="etf", help="which high-frequency simulation (quant algo hft)")
+    p.add_argument("--limit-intervals", type=int, default=10, help="intervals to work the order in (quant algo limit)"); p.add_argument("--units", type=int, default=50, help="resolution of the order for the dynamic programme (quant algo limit)")
+    p.add_argument("--half-spread-bps", type=float, default=3.0); p.add_argument("--impact-bps", type=float, default=8.0, help="impact of buying the whole order at the market in one interval, bps")
+    p.add_argument("--drift-bps", type=float, default=0.0, help="how far the price is expected to run away each interval, bps (the urgency)"); p.add_argument("--adverse-bps", type=float, default=1.0, help="expected loss per share filled by a limit order, bps")
+    p.add_argument("--fill-first", type=float, default=0.5, help="probability that a posted unit fills in an interval"); p.add_argument("--fill-decay", type=float, default=0.97, help="each further unit fills with this times the probability of the one before")
+    p.add_argument("--risk-bps", type=float, default=0.0, help="risk charge per interval for the whole order outstanding, bps")
+    p.add_argument("--rounds", type=int, default=300, help="rounds of orders to route (quant algo route)"); p.add_argument("--lots", type=int, default=400, help="lots to route per round (quant algo route)"); p.set_defaults(func=cmd_algo)
     p = sub.add_parser("cashflow", help="cash-flow strategies: deposits, withdrawals and dividends under each policy, payments out of a portfolio (spending rules), the cost of a redemption, liability-driven investing")
     p.add_argument("action", choices=["simulate", "spending", "redeem", "ldi"])
     p.add_argument("--prices", help="a CSV of prices (default: the platform's 15 ETFs)"); p.add_argument("--mix", help="the portfolio as ticker=weight,..., e.g. SPY=0.6,IEF=0.4"); p.add_argument("--tickers", nargs="*", help="an equal-weight mix of these")
