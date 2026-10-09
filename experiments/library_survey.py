@@ -5,10 +5,13 @@ history) with the rebalance frequency each rule declares, costs are the platform
 It answers "what does each popular rule do on this universe and sample", and the honest reading of a list this long is that the top of it is partly luck.
 
     python -m experiments.library_survey          # about five minutes on a laptop
+    python -m experiments.library_survey --new    # only the strategies added since the saved survey, counting every strategy as a trial (writes docs/strategy_survey_2.md)
 """
 
 from __future__ import annotations
 
+import argparse
+import re
 import time
 from pathlib import Path
 
@@ -25,13 +28,14 @@ def survey_names() -> list[str]:
     return [e.name for e in MODELS.entries() if e.family not in SKIP_FAMILIES and not e.name.startswith("test_") and getattr(e.factory, "__module__", "").startswith("src.strategies")]
 
 
-def run_survey(config, bundle, names: list[str] | None = None) -> pd.DataFrame:
+def run_survey(config, bundle, names: list[str] | None = None, n_trials: int | None = None) -> pd.DataFrame:
+    """One row per strategy. ``n_trials`` is the number of strategies the deflated Sharpe ratio counts (default: the strategies run now)."""
     names = names or survey_names()
     rows = []
     for name in names:
         entry = next(e for e in MODELS.entries() if e.name == name)
         structured = bool(getattr(entry.factory, "structured", False))
-        spec = {"name": name, "models": [{"name": name}], "evaluation": {"causality": False, "benchmarks": ["equal_weight"], "n_trials": len(names)}}
+        spec = {"name": name, "models": [{"name": name}], "evaluation": {"causality": False, "benchmarks": ["equal_weight"], "n_trials": n_trials or len(names)}}
         if not structured:
             spec["allocation"] = {"allocator": "sleeves" if getattr(entry.factory, "book", None) == "sleeves" else "score_stack"}
         started = time.perf_counter()
@@ -72,15 +76,58 @@ def render(table: pd.DataFrame, first: str, last: str, years: float) -> str:
     return "\n".join(lines)
 
 
-def main() -> int:
+def render_supplement(added: pd.DataFrame, earlier: int, total: int, first: str, last: str, years: float) -> str:
+    """The part of the survey written after the first one: same universe, sample, costs and defaults, with the deflated Sharpe probability counting every strategy (``total``) as a trial."""
+    ok = added[added["error"] == ""].sort_values("net_sharpe", ascending=False)
+    lines = [
+        "# Strategy survey, part two: investment, portfolio and economic-outlook strategies", "",
+        f"{len(added)} strategies added after the first survey ([strategy_survey.md](strategy_survey.md): {earlier} strategies), run the same way: the platform's 15 ETFs, {first} to {last} ({years:.1f} years), net of costs, default parameters,",
+        f"nothing tuned. **The deflated Sharpe probability here counts all {total} strategies as trials** ({earlier} before, {len(added)} now). The first survey's probabilities counted {earlier}, so they are slightly flattering next to these. This is a survey, not a study.", "",
+        "How to read it: several of these rules are made for single stocks, company news or data you supply, and ETFs are not their natural test bed; a negative row on 15 ETFs says the rule does not pay on liquid funds at these costs, not that it fails on the assets it was written for. "
+        "Rules that learn from earlier data (`curve_quadrant`, `credit_cycle_rotation`, `event_study_drift`) start late and stay flat while they have no evidence.", "",
+        "| Strategy | Family | Net Sharpe | Equal weight, same dates | CAGR | Volatility | Max drawdown | Turnover (x/yr) | Deflated Sharpe | First day |", "|---|---|---|---|---|---|---|---|---|---|"]
+    for _, r in ok.iterrows():
+        dsr = "n/a" if pd.isna(r["deflated_sharpe_probability"]) else f"{r['deflated_sharpe_probability']:.2f}"
+        sharpe = "n/a" if pd.isna(r["net_sharpe"]) else f"{r['net_sharpe']:+.2f}"
+        ew = "n/a" if pd.isna(r["equal_weight_sharpe"]) else f"{r['equal_weight_sharpe']:+.2f}"
+        lines.append(f"| [{r['strategy']}](strategies/{r['strategy']}.md) | {r['family']} | {sharpe} | {ew} | {r['cagr']:.1%} | {r['volatility']:.1%} | {r['max_drawdown']:.1%} | {r['turnover']:.1f} | {dsr} | {r['start']} |")
+    failed = added[added["error"] != ""]
+    if len(failed):
+        lines += ["", "Could not run on this bundle:", ""] + [f"- `{r['strategy']}`: {r['error']}" for _, r in failed.iterrows()]
+    lines += ["", "Regenerate with `python -m experiments.library_survey --new`; the next full run (`python -m experiments.library_survey`) folds these rows into the first survey.", ""]
+    return "\n".join(lines)
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    parser.add_argument("--new", action="store_true", help="run only the strategies missing from the saved survey; the deflated Sharpe counts all of them as trials")
+    parser.add_argument("--redo", nargs="*", default=[], help="with --new: also run these again, replacing their rows")
+    args = parser.parse_args(argv)
     config = load_config()
     bundle = load_default_bundle(config)
-    table = run_survey(config, bundle)
     first, last = str(bundle.index[0].date()), str(bundle.index[-1].date())
-    out = Path(config.root) / "docs" / "strategy_survey.md"
-    out.write_text(render(table, first, last, len(bundle.index) / 252.0), encoding="utf-8")
-    (Path(config.root) / "reports" / "tables").mkdir(parents=True, exist_ok=True)
-    table.to_csv(Path(config.root) / "reports" / "tables" / "library_survey.csv", index=False)
+    tables = Path(config.root) / "reports" / "tables"
+    tables.mkdir(parents=True, exist_ok=True)
+    saved = tables / "library_survey.csv"
+    if args.new:
+        lines = saved.read_text(encoding="utf-8").splitlines(keepends=True)                                 # old rows are kept as written, so the file only grows
+        kept_lines = lines[:1] + [row for row in lines[1:] if row.split(",", 1)[0] not in set(args.redo)]
+        kept_names = {row.split(",", 1)[0] for row in kept_lines[1:]}
+        names = [n for n in survey_names() if n not in kept_names]
+        total = len(kept_names) + len(names)
+        added = run_survey(config, bundle, names, n_trials=total) if names else None
+        saved.write_text("".join(kept_lines) + (added.to_csv(index=False, header=False) if added is not None else ""), encoding="utf-8")
+        combined = pd.read_csv(saved).fillna({"error": ""})
+        first_page = (Path(config.root) / "docs" / "strategy_survey.md").read_text(encoding="utf-8")
+        first_survey = set(re.findall(r"\]\(strategies/([a-z0-9_]+)\.md\)", first_page)) | set(re.findall(r"^- `([a-z0-9_]+)`:", first_page, flags=re.M))      # the ones that ran and the ones that could not
+        part_two = combined[~combined["strategy"].isin(first_survey)]                                       # everything run since the first survey, not only this run's rows
+        out = Path(config.root) / "docs" / "strategy_survey_2.md"
+        out.write_text(render_supplement(part_two, len(first_survey), len(first_survey) + len(part_two), first, last, len(bundle.index) / 252.0), encoding="utf-8")
+    else:
+        table = run_survey(config, bundle)
+        out = Path(config.root) / "docs" / "strategy_survey.md"
+        out.write_text(render(table, first, last, len(bundle.index) / 252.0), encoding="utf-8")
+        table.to_csv(saved, index=False)
     print(f"wrote {out}")
     return 0
 

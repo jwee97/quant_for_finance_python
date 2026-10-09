@@ -22,6 +22,14 @@ The loss a liquidity provider suffers when the traders it fills are better infor
 
 See: [market-making-and-order-flow](techniques/market-making-and-order-flow.md)
 
+### AIM and PIM
+
+*Also: aggressive in the money, passive in the money*
+
+Adaptation tactics that change the pace of a running order with the price. Aggressive in the money speeds up when the price has moved in your favour (for markets that overshoot and come back); passive in the money slows down then, and speeds up when the price moves against you (for markets that trend and to limit a loss).
+
+See: [execution-algorithms](techniques/execution-algorithms.md)
+
 ### Allocator
 
 In this repo, a component that turns forecasts and regimes into portfolio weights (static books, forecast stack, confidence, regime switch).
@@ -54,6 +62,12 @@ Drawing random perturbations in plus/minus pairs so their sampling noise cancels
 
 See: [reinforcement-learning](techniques/reinforcement-learning.md)
 
+### Appraisal ratio
+
+Alpha divided by the volatility of the part of the return the market does not explain. It ranks assets by return per unit of idiosyncratic risk, so a lucky streak in a noisy asset ranks below steady alpha.
+
+See: [alpha-generating-styles](techniques/alpha-generating-styles.md)
+
 ### ARIMA
 
 *Also: ARMA*
@@ -61,6 +75,12 @@ See: [reinforcement-learning](techniques/reinforcement-learning.md)
 A time-series model in which the next value depends on past values (autoregressive terms) and past shocks (moving-average terms), after differencing d times to remove a unit root.
 
 See: [time-series-econometrics](techniques/time-series-econometrics.md)
+
+### Arrival price
+
+The market price when an order was received. Implementation shortfall measures the cost of a trade against it.
+
+See: [execution-algorithms](techniques/execution-algorithms.md)
 
 ### Attention
 
@@ -120,11 +140,25 @@ A procedure that controls the expected share of false discoveries among the hypo
 
 See: [multiple-testing](techniques/multiple-testing.md)
 
+### Best execution
+
+Executing an order on the best terms reasonably available. As an algorithm goal it means one of: lowest cost; lowest risk for a cost limit; lowest cost for a risk limit; the best trade-off for a risk aversion; or the best chance of beating a target cost.
+
+See: [execution-algorithms](techniques/execution-algorithms.md)
+
 ### Beta
 
 The sensitivity of an asset's return to a market return: a beta of 0.5 means it tends to move half as much.
 
 See: [attribution](techniques/attribution.md), [cross-sectional-factors](techniques/cross-sectional-factors.md)
+
+### Beta-neutral
+
+*Also: market neutral*
+
+A book whose net exposure to the market is zero, so its profit and loss comes from selection and not from the market's move. It is reached by projecting the market out of the weights or by selling a hedge instrument.
+
+See: [portfolio-overlays-and-liquidation](techniques/portfolio-overlays-and-liquidation.md)
 
 ### Black-Litterman
 
@@ -147,6 +181,14 @@ See: [option-pricing-and-greeks](techniques/option-pricing-and-greeks.md)
 Resampling blocks of consecutive observations rather than single days, so autocorrelation and volatility clustering are preserved.
 
 See: [paired-sharpe-bootstrap](techniques/paired-sharpe-bootstrap.md)
+
+### Block trade and program trade
+
+*Also: basket trade*
+
+A block is a large order in one stock, too big for the lit market in one go; a program (basket) trade is a list of stocks bought and sold together. The risk of the unexecuted part of a list is the reason to schedule it jointly.
+
+See: [basket-and-liquidity-algorithms](techniques/basket-and-liquidity-algorithms.md)
 
 ### BOCPD
 
@@ -384,6 +426,14 @@ A generative model trained to reverse a gradual noising process, so it can turn 
 
 See: [diffusion-scenarios](techniques/diffusion-scenarios.md)
 
+### Dollar-cost averaging
+
+*Also: DCA*
+
+Investing a sum in equal parts over several dates instead of at once. It wins in a falling market and loses to investing at once in a rising one; it reduces regret, not expected cost.
+
+See: [cash-flow-strategies](techniques/cash-flow-strategies.md)
+
 ### Double machine learning
 
 *Also: DML*
@@ -506,6 +556,14 @@ Run one cross-sectional regression of returns on characteristics per date, then 
 
 See: [regression-and-panel-statistics](techniques/regression-and-panel-statistics.md)
 
+### Flight to quality
+
+*Also: flight to safety*
+
+The move of money from risky to safe assets in a panic, seen as bonds rising while stocks fall and volatility jumping.
+
+See: [portfolio-rebalancing-styles](techniques/portfolio-rebalancing-styles.md)
+
 ### Forecast
 
 In this repo, an object with a mean, a standard deviation and a confidence, rather than a single number.
@@ -535,6 +593,12 @@ See: [information-coefficient](techniques/information-coefficient.md)
 The periodic payment between longs and shorts of a perpetual future that keeps its price near the spot price. When the rate is positive longs pay shorts. It is the main carrying cost or income of a crypto perpetual position.
 
 See: [contract-lifecycle](techniques/contract-lifecycle.md), [crypto-carry](techniques/crypto-carry.md)
+
+### Funding ratio
+
+A plan's assets divided by the present value of its liabilities. Below one the plan cannot meet its promises from what it holds.
+
+See: [cash-flow-strategies](techniques/cash-flow-strategies.md)
 
 ### GARCH
 
@@ -567,6 +631,14 @@ See: [graph-neural-networks](techniques/graph-neural-networks.md)
 Sensitivities of an option's value: delta to the underlying, gamma to delta, vega to volatility, theta to time and rho to interest rates.
 
 See: [option-pricing-and-greeks](techniques/option-pricing-and-greeks.md)
+
+### Guardrails (spending)
+
+*Also: Guyton-Klinger*
+
+A spending rule that raises or cuts withdrawals by a fixed step when the withdrawal rate moves outside a band around its starting level.
+
+See: [cash-flow-strategies](techniques/cash-flow-strategies.md)
 
 ### HAC standard errors
 
@@ -604,6 +676,14 @@ Hierarchical risk parity: allocates by recursively splitting a correlation-based
 
 See: [hierarchical-risk-parity](techniques/hierarchical-risk-parity.md)
 
+### I-Star
+
+*Also: Kissell*
+
+Kissell's pre-trade cost model: market impact in basis points from the size of the order against volume and the stock's volatility, for a trade done at once and for one done at a participation rate.
+
+See: [execution-algorithms](techniques/execution-algorithms.md)
+
 ### Impact
 
 *Also: market impact*
@@ -611,6 +691,14 @@ See: [hierarchical-risk-parity](techniques/hierarchical-risk-parity.md)
 The price movement caused by your own trading, approximated here as proportional to volatility times the square root of size over volume.
 
 See: [execution-and-impact](techniques/execution-and-impact.md)
+
+### Implementation shortfall
+
+*Also: IS*
+
+The difference between the value of a trade at the arrival price and what it actually cost to execute: spread, market impact and the price drift while waiting. The Almgren-Chriss optimum minimises its expected value plus a penalty on its variance.
+
+See: [execution-algorithms](techniques/execution-algorithms.md)
 
 ### Implied volatility
 
@@ -698,11 +786,25 @@ A formula that blends the sample covariance matrix with a structured target to r
 
 See: [mean-variance-and-shrinkage](techniques/mean-variance-and-shrinkage.md)
 
+### Liability-driven investing
+
+*Also: LDI*
+
+Holding assets that move with the present value of liabilities, usually long bonds matched in duration, so that interest rates move both sides together and the funding ratio is stable.
+
+See: [cash-flow-strategies](techniques/cash-flow-strategies.md)
+
 ### Limit order book
 
 The list of resting buy and sell orders at each price. Its depth and the arrival of market orders determine spread and price impact.
 
 See: [market-making-and-order-flow](techniques/market-making-and-order-flow.md)
+
+### Liquidity seeking
+
+An execution algorithm that scales its pace with the quality of liquidity it sees (volume, spread, depth): more when the market is deep, less when it is thin. What it holds back is traded later.
+
+See: [basket-and-liquidity-algorithms](techniques/basket-and-liquidity-algorithms.md)
 
 ### Local volatility
 
@@ -784,6 +886,14 @@ The tendency of recent winners to keep winning over the following weeks to month
 
 See: [momentum](techniques/momentum.md)
 
+### Money-weighted return
+
+*Also: internal rate of return, IRR*
+
+The rate that makes the investor's dated cash flows into and out of a portfolio worth zero. It depends on when money was added or taken out, unlike the time-weighted return.
+
+See: [cash-flow-strategies](techniques/cash-flow-strategies.md)
+
 ### N-BEATS
 
 *Also: N-HiTS*
@@ -850,6 +960,14 @@ Running a strategy against live or streamed data with simulated fills and no rea
 
 See: [paper-trading-and-replay](techniques/paper-trading-and-replay.md)
 
+### Participation rate
+
+*Also: POV, percent of volume*
+
+The share of the market's volume that an order makes up. A POV algorithm trades a fixed participation rate, so it speeds up when the market does.
+
+See: [execution-algorithms](techniques/execution-algorithms.md)
+
 ### Payoff ratio
 
 The average winning trade divided by the size of the average losing trade. With the win rate it sets the expectancy: winning 30% of the time needs a payoff of about 2.3 to break even.
@@ -901,6 +1019,22 @@ See: [calibration](techniques/calibration.md)
 Data arranged so that on each date only what was known then is visible, including publication lags and not revisions.
 
 See: [macro-and-alternative-data](techniques/macro-and-alternative-data.md)
+
+### Policy portfolio
+
+*Also: strategic asset allocation*
+
+The long-run target allocation an investor sets and returns to, rebalancing on a calendar, when weights drift beyond a band, or both.
+
+See: [portfolio-rebalancing-styles](techniques/portfolio-rebalancing-styles.md)
+
+### Post-event drift
+
+*Also: post-earnings-announcement drift*
+
+The tendency of prices to keep moving in the direction of news for days or weeks, because information is absorbed gradually.
+
+See: [alpha-generating-styles](techniques/alpha-generating-styles.md), [event-studies](techniques/event-studies.md)
 
 ### Posterior predictive
 
@@ -969,6 +1103,14 @@ See: [time-series-econometrics](techniques/time-series-econometrics.md)
 White's bootstrap test of whether the best of many strategies beats a benchmark after accounting for the search.
 
 See: [reality-check-spa-pbo](techniques/reality-check-spa-pbo.md)
+
+### Rebate
+
+*Also: maker rebate*
+
+A payment an exchange makes to the side that adds liquidity (a resting order that is filled). A strategy that lives on rebates and spread pays for it in adverse selection.
+
+See: [black-box-and-high-frequency-strategies](techniques/black-box-and-high-frequency-strategies.md)
 
 ### Reconciliation
 
@@ -1044,6 +1186,18 @@ One stretch in which an asset is held on the same side: it opens when the positi
 
 See: [backtest-engine-and-costs](techniques/backtest-engine-and-costs.md)
 
+### Safe withdrawal rate
+
+The highest starting spending rate a portfolio can sustain over a horizon with a chance of running out below a chosen limit. It depends on the asset mix, the horizon, the spending rule and the returns assumed.
+
+See: [cash-flow-strategies](techniques/cash-flow-strategies.md)
+
+### Sequence-of-returns risk
+
+The danger that poor returns arrive early in the life of a portfolio that is being drawn down, which a later recovery cannot repair because the money is already gone.
+
+See: [cash-flow-strategies](techniques/cash-flow-strategies.md)
+
 ### Shapley value
 
 *Also: SHAP*
@@ -1081,6 +1235,14 @@ See: [performance-metrics](techniques/performance-metrics.md)
 The gap between the best price to buy and the best price to sell.
 
 See: [execution-and-impact](techniques/execution-and-impact.md)
+
+### Squeeze (Bollinger)
+
+*Also: volatility squeeze*
+
+A spell when Bollinger bandwidth is at the low end of its recent range. Volatility clusters, so a squeeze tends to be followed by a larger move, and the direction of the first close outside the band is the best guess of its direction.
+
+See: [alpha-generating-styles](techniques/alpha-generating-styles.md)
 
 ### Stationary
 
@@ -1122,6 +1284,14 @@ A forecasting network that combines variable selection, gated residual blocks, a
 
 See: [deep-time-series-models](techniques/deep-time-series-models.md)
 
+### Time-weighted return
+
+*Also: TWR*
+
+The return of a portfolio with the effect of cash flows removed, by chaining the returns of the periods between them. It is what a backtest reports.
+
+See: [cash-flow-strategies](techniques/cash-flow-strategies.md)
+
 ### Tracking error
 
 The volatility of the difference between a strategy's return and its benchmark's.
@@ -1149,6 +1319,14 @@ See: [research-operations](techniques/research-operations.md)
 The amount traded per year as a multiple of the portfolio; it drives trading cost.
 
 See: [backtest-engine-and-costs](techniques/backtest-engine-and-costs.md)
+
+### TWAP and VWAP
+
+*Also: time-weighted average price, volume-weighted average price*
+
+Execution algorithms that slice an order equally over time (TWAP) or in proportion to the day's expected volume (VWAP). VWAP is the cheapest schedule when impact is linear and price risk is ignored.
+
+See: [execution-algorithms](techniques/execution-algorithms.md)
 
 ### Unit root
 

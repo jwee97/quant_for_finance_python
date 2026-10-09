@@ -10,15 +10,20 @@ from src.algo import catalog
 from src.algo.factory import ALL_ALGORITHMS, TACTICS, build_algo, efficient_frontier, run_order
 from src.algo.tactics import AIM, TargetCost
 
-# The items of the taxonomy sections 2-8 as the request listed them: each must be in the catalogue.
+# The items of the taxonomy as the request listed them: each must be in the catalogue.
 TAXONOMY = {
+    "1a. Investment: alpha generating": ["Long-term", "Short-term", "Company outlook", "Company news", "Corporate action", "Mispricing"],
+    "1b. Investment: portfolio rebalance": ["Asset allocation", "Index reconstitution", "Market outlook", "Market neutral", "Flight to quality", "Model driven"],
+    "1c. Investment: risk management": ["Risk reduction", "Hedging", "Liquidation costs"],
+    "1d. Investment: cash flow": ["Cash deposit", "Redemption", "Cash dividend", "Liabilities", "Payments"],
+    "1e. Investment: economic outlook": ["Yield curve strategy", "Credit strategy"],
     "2. Trading algorithm styles": ["Aggressive", "Working order", "Passive"],
     "3. Specific algorithm types": ["VWAP", "TWAP", "POV / Volume", "Arrival price", "Implementation shortfall", "Basket / portfolio algorithms", "Black-box: pair trading",
                                     "Black-box: auto market making", "Black-box: statistical arbitrage", "Liquidity seeking"],
     "4. High-frequency trading": ["Auto market making (AMM)", "Quantitative trading / statistical arbitrage", "Rebate / liquidity trading"],
     "5. Best execution goals": ["Minimise cost", "Minimise cost with a risk constraint", "Minimise risk with a cost constraint", "Balance cost and risk", "Price improvement"],
     "6. Adaptation tactics": ["Target cost", "Aggressive in the money (AIM)", "Passive in the money (PIM)"],
-    "7. Schedule and portfolio optimisation": ["Quadratic programming", "Trade schedule exponential", "Residual schedule exponential", "Trade rate parameter"],
+    "7. Schedule and portfolio optimisation": ["Quadratic programming", "Trade schedule exponential", "Residual schedule exponential", "Trade rate parameter", "Portfolio optimisation with TCA (third wave)"],
     "8. Advanced execution and risk tactics": ["Minimum trading risk quantity", "Maximum trading opportunity", "Program-block decomposition"],
 }
 
@@ -29,7 +34,7 @@ def test_every_item_of_the_taxonomy_is_in_the_catalogue_with_an_honest_status():
         for item in items:
             assert (section, item) in have, (section, item)
     assert len(have) == len(catalog.ITEMS)                                                                       # no item twice
-    assert {i.status for i in catalog.ITEMS} <= {"built", "existing", "proxy", "simulator"}
+    assert {i.status for i in catalog.ITEMS} <= {"built", "existing", "proxy", "data", "simulator"}
     assert all(i.where and i.note for i in catalog.ITEMS)
 
 
@@ -43,6 +48,32 @@ def test_every_location_the_catalogue_names_really_exists():
         catalog.resolve("model:no_such_model")
     with pytest.raises(AttributeError):
         catalog.resolve("py:src.algo.algos.NoSuchAlgorithm")
+
+
+def test_the_coverage_page_is_the_catalogue_written_out_and_the_data_items_really_need_data():
+    from pathlib import Path
+
+    page = (Path(__file__).resolve().parents[1] / "docs" / "algorithmic_trading.md").read_text(encoding="utf-8")
+    assert page == catalog.markdown(), "docs/algorithmic_trading.md is stale: run `python -m src.algo.catalog`"
+    for item in catalog.ITEMS:
+        assert f"| {item.item} |" in page
+    # an item marked as needing data names a model that refuses to run without its file
+    import pandas as pd
+
+    from src.framework import MODELS, bundle_from_prices
+    from src.strategies import alpha_styles
+
+    prices = pd.DataFrame(100.0 + pd.Series(range(300), dtype=float).to_numpy()[:, None] * [0.01, 0.02], index=pd.bdate_range("2015-01-05", periods=300), columns=["A", "B"])
+    bundle = bundle_from_prices(prices, name="x")
+    saved = alpha_styles.USER_DATA
+    alpha_styles.USER_DATA = Path("/nonexistent/for/this/test")
+    try:
+        for name in ("news_sentiment", "panel_signal"):
+            with pytest.raises(KeyError, match="needs the file"):
+                MODELS.create(name).score(bundle)
+    finally:
+        alpha_styles.USER_DATA = saved
+    assert {i.status for i in catalog.ITEMS if i.item in ("Company news", "Company outlook")} == {"data"}
 
 
 def test_the_catalogue_table_has_a_row_per_item_and_shows_where_to_look():
