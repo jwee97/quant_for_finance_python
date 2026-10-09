@@ -161,7 +161,7 @@ def _basket_form(b: Basket, risk_aversion: float):
 
 def basket_schedule(b: Basket, risk_aversion: float = 1e-3, exact: bool = False) -> np.ndarray:
     """The joint schedule: shares to trade in each interval for each stock, as a ``size x n`` array of non-negative numbers (the side is the list's). It solves the quadratic model exactly; ``exact=True``
-    then polishes it with each market's own power-law impact (slower: a few seconds for a few dozen stocks)."""
+    then polishes it with each market's own power-law impact (slower, and the cost grows quickly with the size: about 2 seconds for 16 stocks, 13 for 20 and 40 for 30, on one thread)."""
     H, g, A, X, H_risk, c = _basket_form(b, risk_aversion)
     q = solve_qp_eq(H, g, A, X)
     if exact and abs(b.beta - 1.0) > 1e-9:

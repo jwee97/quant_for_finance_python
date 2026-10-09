@@ -35,6 +35,11 @@
     for (let v = start; v <= hi + step * 1e-9; v += step) out.push(+v.toFixed(10));
     return out;
   }
+  function wholeTicks(lo, hi, n) {                                                   // ticks on whole numbers (slices of a day, years)
+    const step = [1, 2, 5, 10, 20, 25, 50, 100, 200, 500, 1000].find((v) => (hi - lo) / v <= n) || 1000, out = [];
+    for (let v = Math.ceil(lo / step) * step; v <= hi + 1e-9; v += step) out.push(v);
+    return out;
+  }
   function logTicks(lo, hi) {
     const base = [1, 1.5, 2, 3, 4, 5, 7.5], out = [];
     for (let e = Math.floor(Math.log10(lo)) - 1; e <= Math.ceil(Math.log10(hi)); e++) for (const b of base) { const v = b * Math.pow(10, e); if (v >= lo * 0.999 && v <= hi * 1.001) out.push(v); }
@@ -63,22 +68,27 @@
   }
   function legend(host, items, boxes) {
     const lg = html("div", "legend" + (boxes ? " boxes" : ""), host);
-    for (const s of items) { const span = html("span", "", lg); const i = html("i", "", span); i.style.setProperty("--c", s.color); span.appendChild(document.createTextNode(s.name)); }
+    for (const s of items) { const span = html("span", "", lg); const i = html("i", s.box ? "box" : "", span); i.style.setProperty("--c", s.color); if (s.box) i.style.opacity = String(Math.min(1, (s.opacity || 0.14) * 2.5)); span.appendChild(document.createTextNode(s.name)); }
     return lg;
   }
 
-  /* ---------- line / area over dates ---------- */
+  /* ---------- line / area over dates, or over numbers ----------
+     Dates by default (o.dates). With o.xs (numbers, ascending) the horizontal axis is numeric: o.xFormat writes a tick or a hover title, o.xLabel names the axis, o.xWhole puts the ticks on whole numbers. A series may be drawn dashed
+     (dash), with a dot at every point (dots, dotSize; a series of one point shows as a dot, and pointLabel names it) and may skip over missing values instead of breaking (connect). o.bands shades the space between two
+     arrays ({ lo, hi, color, name }), which is how a range of outcomes (a fan of wealth paths) is drawn behind its median. o.tipExtra(i) adds [label, text] rows to the hover. */
   function line(host, o) {
     const W = width(host);
     host.replaceChildren();
-    const dates = o.dates.map((d) => Date.parse(d)), H = o.height || 280;
-    const m = { l: 46, r: 14, t: 8, b: 24 }, iw = W - m.l - m.r, ih = H - m.t - m.b;
-    if (o.legend !== false && o.series.length > 1) legend(host, o.series);
+    const numeric = Array.isArray(o.xs), dates = numeric ? o.xs.slice() : o.dates.map((d) => Date.parse(d)), H = o.height || 280;
+    const bands = o.bands || [], m = { l: 46, r: 14, t: 8, b: o.xLabel ? 40 : 24 }, iw = W - m.l - m.r, ih = H - m.t - m.b;
+    const legendItems = o.series.concat(bands.filter((b) => b.name).map((b) => ({ name: b.name, color: b.color, box: true, opacity: b.opacity })));
+    if (o.legend !== false && legendItems.length > 1) legend(host, legendItems);
     const svg = el("svg", { class: "chart", viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": o.label || "line chart" }, host);
     const log = !!o.log;
     const f = (v) => (log ? Math.log(v) : v);
     let lo = Infinity, hi = -Infinity;
     for (const s of o.series) for (const v of s.values) if (v !== null && isFinite(v) && (!log || v > 0)) { lo = Math.min(lo, v); hi = Math.max(hi, v); }
+    for (const b of bands) for (const arr of [b.lo, b.hi]) for (const v of arr) if (v !== null && isFinite(v) && (!log || v > 0)) { lo = Math.min(lo, v); hi = Math.max(hi, v); }
     if (o.include !== undefined) { lo = Math.min(lo, o.include); hi = Math.max(hi, o.include); }
     if (!isFinite(lo)) { el("text", { x: W / 2, y: H / 2, "text-anchor": "middle" }, svg, "No data"); return; }
     const pad = (hi - lo) * 0.05 || 0.5;
@@ -88,19 +98,37 @@
     const t0 = dates[0], t1 = dates[dates.length - 1];
     const X = (t) => m.l + ((t - t0) / (t1 - t0 || 1)) * iw, Y = (v) => m.t + ih - ((f(v) - flo) / (fhi - flo || 1)) * ih;
     for (const v of ticks) { const y = Y(v); if (y < m.t - 1 || y > m.t + ih + 1) continue; el("line", { x1: m.l, x2: W - m.r, y1: y, y2: y, class: "grid" }, svg); el("text", { x: m.l - 6, y: y + 4, "text-anchor": "end" }, svg, (o.yFormat || fmt.num)(v)); }
-    for (const t of yearTicks(t0, t1, Math.floor(iw / 70))) el("text", { x: X(t.t), y: H - 6, "text-anchor": "middle" }, svg, t.label);
+    const tickY = o.xLabel ? H - 22 : H - 6;
+    if (numeric) for (const v of (o.xWhole ? wholeTicks : niceTicks)(t0, t1, Math.max(2, Math.floor(iw / 80)))) el("text", { x: X(v), y: tickY, "text-anchor": "middle" }, svg, (o.xFormat || fmt.num)(v));
+    else for (const t of yearTicks(t0, t1, Math.floor(iw / 70))) el("text", { x: X(t.t), y: tickY, "text-anchor": "middle" }, svg, t.label);
+    if (o.xLabel) el("text", { x: m.l + iw / 2, y: H - 4, "text-anchor": "middle", class: "ink" }, svg, o.xLabel);
     if (o.baseline !== undefined) el("line", { x1: m.l, x2: W - m.r, y1: Y(o.baseline), y2: Y(o.baseline), class: "axis" }, svg);
     el("line", { x1: m.l, x2: W - m.r, y1: m.t + ih, y2: m.t + ih, class: "axis" }, svg);
+    for (const b of bands) {
+      const keep = []; b.hi.forEach((v, i) => { const l = b.lo[i]; if (v !== null && l !== null && isFinite(v) && isFinite(l) && (!log || (v > 0 && l > 0))) keep.push(i); });
+      if (keep.length < 2) continue;
+      const top = keep.map((i, k) => (k ? "L" : "M") + X(dates[i]).toFixed(1) + " " + Y(b.hi[i]).toFixed(1)).join(""), bottom = keep.slice().reverse().map((i) => "L" + X(dates[i]).toFixed(1) + " " + Y(b.lo[i]).toFixed(1)).join("");
+      el("path", { d: top + bottom + "Z", fill: b.color, "fill-opacity": b.opacity || 0.14, stroke: "none" }, svg);
+    }
     const paths = [];
     o.series.forEach((s, k) => {
       let d = "", pen = false, lastY = null, lastX = null, first = null;
+      const marks = [];
       s.values.forEach((v, i) => {
-        if (v === null || !isFinite(v) || (log && v <= 0)) { pen = false; return; }
+        if (v === null || !isFinite(v) || (log && v <= 0)) { if (!s.connect) pen = false; return; }
         const x = X(dates[i]), y = Y(v);
         d += (pen ? "L" : "M") + x.toFixed(1) + " " + y.toFixed(1); pen = true; lastX = x; lastY = y; if (first === null) first = [x, y];
+        if (s.dots) marks.push([x, y]);
       });
       if (o.area && k === 0 && first) el("path", { d: d + `L${lastX.toFixed(1)} ${(o.areaBase !== undefined ? Y(o.areaBase) : m.t + ih).toFixed(1)}L${first[0].toFixed(1)} ${(o.areaBase !== undefined ? Y(o.areaBase) : m.t + ih).toFixed(1)}Z`, fill: s.color, "fill-opacity": 0.1, stroke: "none" }, svg);
-      el("path", { d, fill: "none", stroke: s.color, "stroke-width": s.width || 2, "stroke-linejoin": "round", "stroke-linecap": "round" }, svg);
+      const stroke = { d, fill: "none", stroke: s.color, "stroke-width": s.width || 2, "stroke-linejoin": "round", "stroke-linecap": "round" };
+      if (s.dash) stroke["stroke-dasharray"] = s.dash;
+      if (d) el("path", stroke, svg);
+      for (const [x, y] of marks) el("circle", { cx: x, cy: y, r: s.dotSize || 3.5, fill: s.color, stroke: css("--surface"), "stroke-width": 1.5 }, svg);
+      if (s.pointLabel && marks.length) {
+        const [x, y] = marks[marks.length - 1], flip = x > W - m.r - 120;
+        el("text", { x: flip ? x - 9 : x + 9, y: y + 4, "text-anchor": flip ? "end" : "start", class: "ink" }, svg, s.pointLabel);
+      }
       paths.push({ lastX, lastY });
     });
     // direct end labels only when they do not collide; the legend carries identity otherwise
@@ -119,7 +147,7 @@
       while (hi2 - lo2 > 1) { const mid = (lo2 + hi2) >> 1; if (dates[mid] < t) lo2 = mid; else hi2 = mid; }
       const i = Math.abs(dates[lo2] - t) < Math.abs(dates[hi2] - t) ? lo2 : hi2, x = X(dates[i]);
       cross.setAttribute("x1", x); cross.setAttribute("x2", x); cross.setAttribute("visibility", "visible");
-      tip.replaceChildren(); html("div", "t", tip, o.dates[i]);
+      tip.replaceChildren(); html("div", "t", tip, numeric ? (o.tipTitle ? o.tipTitle(i) : (o.xFormat || fmt.num)(dates[i])) : o.dates[i]);
       o.series.forEach((s, k) => {
         const v = s.values[i], g = dots[k];
         if (v === null || !isFinite(v)) { g.setAttribute("visibility", "hidden"); return; }
@@ -127,6 +155,12 @@
         const r = html("div", "r", tip), kk = html("span", "k", r), sw = html("i", "", kk); sw.style.setProperty("--c", s.color); kk.appendChild(document.createTextNode(s.name));
         html("b", "", r, (o.tipFormat || o.yFormat || fmt.num)(v));
       });
+      for (const b of bands) {
+        if (!b.name || b.lo[i] === null || b.hi[i] === null || !isFinite(b.lo[i]) || !isFinite(b.hi[i])) continue;
+        const r = html("div", "r", tip), kk = html("span", "k", r), sw = html("i", "", kk); sw.style.setProperty("--c", b.color); kk.appendChild(document.createTextNode(b.name));
+        html("b", "", r, `${(o.tipFormat || o.yFormat || fmt.num)(b.lo[i])} to ${(o.tipFormat || o.yFormat || fmt.num)(b.hi[i])}`);
+      }
+      if (o.tipExtra) for (const [label, text] of o.tipExtra(i)) { const r = html("div", "r", tip); html("span", "k", r, label); html("b", "", r, text); }
       place(tip, host, (x / W) * rect.width, m.t + 20);
     };
     const hide = () => { cross.setAttribute("visibility", "hidden"); dots.forEach((g) => g.setAttribute("visibility", "hidden")); tip.hidden = true; };
@@ -167,7 +201,7 @@
   function hbars(host, o) {
     const W = width(host);
     host.replaceChildren();
-    const rows = o.rows, rowH = 22, H = rows.length * rowH + 22, m = { l: 74, r: 54, t: 4, b: 18 }, iw = W - m.l - m.r;
+    const rows = o.rows, rowH = 22, H = rows.length * rowH + 22, m = { l: o.labelWidth || 74, r: o.valueWidth || 54, t: 4, b: 18 }, iw = W - m.l - m.r;
     const svg = el("svg", { class: "chart", viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": o.label || "bar chart" }, host);
     const vals = rows.map((r) => r.value), lo = Math.min(0, ...vals), hi = Math.max(0, ...vals), ticks = niceTicks(lo, hi, 4);
     const min = Math.min(lo, ticks[0]), max = Math.max(hi, ticks[ticks.length - 1]), X = (v) => m.l + ((v - min) / (max - min || 1)) * iw, tip = tooltip(host);

@@ -1,4 +1,4 @@
-# Capability matrix: the platform after Generation 7
+# Capability matrix: the platform after Generation 8
 
 An audit against the target of an *institutional multi-asset quantitative research platform*. Companion to [the Generation 2-4 audit](feature_audit.md); see the [research survey](research_survey.md) for why each capability matters and [the architecture](architecture.md) for how it fits together.
 
@@ -26,7 +26,7 @@ The state of the repository when this generation started (commit `0b67953`: 15 E
 | Microstructure | square-root impact in the daily engine | order-flow estimators, a limit-order-book simulator, Avellaneda-Stoikov market making, Almgren-Chriss execution |
 | Machine learning | ridge, online ridge, deep window (PatchTST, TSMixer, N-BEATS, N-HiTS, TimeMixer), Chronos, TimesFM | + gradient-boosting and forest learners (`ml_trees`), TFT, autoencoder and contrastive representation learning (`deep_representation`) |
 | Platform | experiment manager, SQLite research DB, distributed sweep, dashboard | + content-addressed artifact store, model registry, hyperparameter optimiser with selection-bias report, purged/CPCV cross-validation, profiling, `quant tune/benchmark/registry`, CI matrix and weekly benchmark |
-| Strategies | 80 registered models | 90 (+ 4 econometric, 4 multi-asset carry/value, 2 ML) and 2 new allocators (`kelly`, `black_litterman`) |
+| Strategies | 80 registered models, 12 allocators | 103 models (+ 4 econometric, 4 multi-asset carry/value, 2 ML in Generation 6; + 13 alpha, rebalancing and economic-outlook styles in Generation 8) and 17 allocators (`kelly`, `black_litterman`; `beta_neutral`, `liquidity_cap`, `tca_mvo`) |
 
 ## The matrix
 
@@ -161,6 +161,24 @@ The contract-level engine: one engine, one ledger, one strategy interface for FX
 | Depth-aware fills (walking displayed book levels) | COMPLETE | `execution._walk_book`, `events_from_depth`, tests in `tests/test_engine.py` (VWAP, partial fills, FOK, limit and IOC, selling) | none for snapshots | n/a |
 | Tick data replay with queue position and latency in the engine | NOT IMPLEMENTED | `src/microstructure` has a standalone book simulator; depth snapshots can be replayed | no queue-position model, no message-level book reconstruction; needs tick data to be meaningful | Medium (data) |
 | Dashboard support for futures, derivatives and swaps | NOT IMPLEMENTED | the result's tables (`pnl_matrix`, `cost_summary`, `last_risk`) are the inputs | the dashboard still shows the ETF pipeline only | Low |
+
+### Strategy styles, execution algorithms and cash flows (Generation 8)
+
+The item-by-item map to the taxonomy this section answers is [algorithmic trading and investment strategies](algorithmic_trading.md), generated from the code. Execution and high-frequency capabilities are **simulators on a stylised market**: their tests check them against closed forms and known truths (the Almgren-Chriss solution, the risk of the unexecuted list, an edge that falls as the delay of the order grows), and a result says what a setting does to a cost, not what your trades would cost.
+
+| Capability | Status | Evidence | Missing | Priority |
+|---|---|---|---|---|
+| Alpha-generating styles: long-term and short-term price rules, a walk-forward event study | COMPLETE | `src/strategies/alpha_styles.py`, `tests/test_alpha_styles.py`, [guide](techniques/alpha-generating-styles.md), [survey part two](strategy_survey_2.md) | none; on 15 ETFs none earned a net Sharpe above equal weight | n/a |
+| Company outlook, company news and corporate-action strategies | PARTIAL | `news_sentiment`, `panel_signal` and `event_study_drift` read headlines, scores and events from `data/user/`; tested on planted data with lags and expiry | no free source of headlines, analyst revisions, corporate actions or index changes, so they were not run on real data | High (data) |
+| Portfolio rebalancing styles: strategic weights with a calendar and a band, month-end flows, flight to quality, market outlook, market neutral | COMPLETE | `src/strategies/rebalance_styles.py`, `src/framework/allocators_overlay.py`, `tests/test_rebalance_styles.py`, `tests/test_allocators_overlay.py`, [guide](techniques/portfolio-rebalancing-styles.md) | index reconstitution needs an index-changes file | Low (data) |
+| Risk reduction, hedging and liquidation costs | COMPLETE | `beta_neutral`, `liquidity_cap`, `tca_mvo`, `src/algo/liquidation.py`, [guide](techniques/portfolio-overlays-and-liquidation.md) | `tca_mvo` drops holdings in assets that become non-investable without charging for the sale | Low |
+| Cash-flow strategies: deposits, redemptions, dividends, liabilities (LDI), payments | COMPLETE | `src/cashflow`, `tests/test_cashflow.py` (accounting, policy properties, closed forms), [guide](techniques/cash-flow-strategies.md), `quant cashflow`, the dashboard's Cash flows tab | liabilities use one flat discount yield and equal-weight buckets, not key-rate durations; spending is bootstrapped from the portfolio's own history | Low |
+| Economic outlook: yield-curve and credit strategies | COMPLETE | `src/strategies/economic_outlook.py`, `tests/test_economic_outlook.py`, [guide](techniques/economic-outlook-strategies.md) | states are learned from about twenty years of history; the credit rule falls back to a credit-against-rates proxy when the spread series is missing | Low |
+| Execution styles (aggressive, working order, passive) and single-stock algorithms (VWAP, TWAP, POV, arrival price, implementation shortfall) | COMPLETE | `src/algo/simulate.py`, `src/algo/algos.py`, `tests/test_algo.py`, [guide](techniques/execution-algorithms.md), `quant algo run`, the dashboard's Execution tab | impact parameters are illustrative values from the literature; the passive and dark fill rates are round numbers; calibrating to your own fills needs execution data | Medium (data) |
+| Best-execution goals, adaptation tactics (target cost, aggressive and passive in the money), schedule optimisation (QP, exponential trade, exponential residual, trade rate) | COMPLETE | `src/algo/optimize.py`, `src/algo/tactics.py`, `tests/test_algo.py`, `tests/test_algo_catalog.py` | the tactics follow documented interpretations of one-line definitions | Low |
+| Basket algorithms, minimum trading risk quantity, maximum trading opportunity, program-block decomposition, liquidity seeking | COMPLETE | `src/algo/basket.py`, `src/algo/liquidity.py`, `tests/test_basket.py`, [guide](techniques/basket-and-liquidity-algorithms.md) | the four tactics follow documented interpretations of one-line definitions; correlations in the demonstration basket come from one factor | Low |
+| Black-box and high-frequency strategies: pair trading, ETF arbitrage, rebate and liquidity trading, auto market making | PARTIAL | `src/algo/blackbox.py`, `src/algo/hft.py`, `tests/test_blackbox_hft.py`, [guide](techniques/black-box-and-high-frequency-strategies.md) | stylised Ornstein-Uhlenbeck and Poisson markets: no order book, queue position, latency model or real tick data | Medium (data) |
+| Dashboard tabs for execution and cash flows | COMPLETE | `src/webapp` (`/api/exec`, `/api/cash`), `tests/test_webapp_labs.py`, `tests/test_webapp_browser.py` | none | n/a |
 
 ## What cannot be completed in this environment
 

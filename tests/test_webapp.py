@@ -547,7 +547,7 @@ def test_the_catalog_states_its_version_and_that_the_code_has_not_changed_since_
     from src.webapp import api
 
     catalog = app.catalog()
-    assert catalog["api_version"] == api.API_VERSION == 2
+    assert catalog["api_version"] == api.API_VERSION == 3
     assert catalog["restart_needed"] is False                       # nothing under src/ was touched while this test process ran
 
 

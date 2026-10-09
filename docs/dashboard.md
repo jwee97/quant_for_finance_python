@@ -6,7 +6,7 @@ quant serve            # opens http://127.0.0.1:8765 ; --port, --no-browser, --h
 
 Everything runs on your machine. The server listens on localhost only, and every request needs a token that exists only in the page it served.
 
-The server loads its code when it starts. After you update the files (a `git pull`), stop it and start it again: the page is read from disk on every load, so it can be newer than the server behind it. When it is, a banner says so (*The app is older than this page* needs a restart before anything works; *The app was updated after it started* means some of its code changed since it started).
+The server loads its code when it starts. After you update the files (a `git pull`), stop it and start it again: the page is read from disk on every load, so it can be newer than the server behind it. When it is, a banner says so (*The app is older than this page* needs a restart before anything works; *The app was updated after it started* means some of its code changed since it started). The Execution and Cash flows tabs need a newer app than the Backtest tab does: with an older one the Backtest keeps working and those two tabs say they need a restart.
 
 ## Backtest
 
@@ -112,9 +112,35 @@ A strategy needs only as many tickers as its idea needs:
 
 Every run of the session, with up to six overlaid, rebased to 100 at the latest common start. A run keeps its colour whatever you tick.
 
-## Strategy builder and guides
+## Strategy builder
 
-The builder has the formula editor (check against your tickers, function reference, examples) and the Python template; see [How to add a strategy](how_to_add_a_strategy.md). The Guides tab reads the technique guides, glossary and strategy cards.
+The builder has the formula editor (check against your tickers, function reference, examples) and the Python template; see [How to add a strategy](how_to_add_a_strategy.md).
+
+## Execution
+
+The Execution tab runs the simulators behind the [execution algorithms](techniques/execution-algorithms.md) from a form, with no code. Nothing is downloaded and nothing is sent to a broker: the market is made from the numbers you type (shares, average daily volume, price, daily volatility, spread, slices in the day). Each mode keeps its form and its last result while you use other tabs, and each result has a *Read the guide* button.
+
+- **Compare algorithms.** Tick up to eight of TWAP, VWAP, POV, arrival price, implementation shortfall, AIM or PIM on VWAP, target cost and liquidity seeking, or type others by name (`pov:rate=0.15`, `exp_trade:kappa=3`; a tactic goes first: `aim+vwap`). Choose the trading style (aggressive, working order or passive), the market (normal, trending, mean-reverting or a crisis) and how many days to simulate. Every algorithm trades the same simulated days. The result is a table of the **shortfall** (the cost of the whole order against the arrival price in basis points of its value: positive is a cost, negative a gain) with its standard error, its variation between days and its 5th and 95th percentiles; a split of the cost into spread, temporary and permanent impact, timing and fees; bars of the average cost and of the variation by algorithm; how each one spreads the order through the day against the market's own volume (per slice or cumulative); and a plot of cost against variation, where a point that is higher and further right than another is beaten by it.
+- **Cost-risk frontier.** For every price of risk, the cheapest schedule for the order: the curve between paying market impact by trading fast and carrying price risk by trading slowly, with VWAP and TWAP marked. Hover for the risk aversion and how much of the order the schedule trades in its first slice.
+- **Basket.** A demonstration list of 2 to 16 buys and sells (random sizes, volumes and volatilities, one common factor; the command line goes up to 30, which takes about 40 seconds) traded together: the joint schedule against stock by stock (the objective is cost plus risk aversion times risk squared; lower is better), the risk of the unexecuted list through the day, the **minimum trading risk quantity** (which share of each order to execute when only part of the list's value can go, so that what is left is as hedged as possible), the **maximum trading opportunity** (how much can go if only the buys are on offer before the rest is riskier than the original list) and the **program-block** split with the names that can be entered in dark pools without raising risk.
+- **High-frequency.** Pair trading on a mean-reverting spread, an ETF against its basket by the delay of the order, rebate and liquidity trading with and without a view of the order flow, and an inventory-shaded market maker against symmetric quotes. They size how much edge a given delay, cost or half-life leaves; they do not show that such an edge exists.
+
+These are research simulators on a stylised market: the impact parameters are illustrative values from the equity literature, there is no order book or queue, and the passive and dark fill rates are round numbers. Use them to compare methods and see which way a setting pushes, not to quote a cost. [Algorithmic trading coverage](algorithmic_trading.md) lists every item of the execution taxonomy and where it lives.
+
+## Cash flows
+
+The Cash flows tab follows a portfolio of real tickers through money coming in and going out, from the data source and start date you chose on the Backtest tab (tickers are downloaded as for a backtest, within the iTick limit if you use it). The *Holdings and weights* field takes `SPY=60, IEF=40` (any scale, `AAA=60%` also works, no weights means equal weight; it starts as `SPY=60, IEF=40` when both are in your list, else the first three tickers of the list). It is the portfolio's mix for every mode but the last, where you name the bond funds to hedge with and the funds that seek return.
+
+- **Deposits and withdrawals.** A starting value, a monthly deposit or withdrawal (optionally growing every year), a scheduled rebalance, a dividend yield and what to do with dividends, a trading cost, and the number of months to spread the starting value and each deposit over (dollar-cost averaging). Tick up to five **policies** for how each flow is traded: pro rata, fix drift (buy what is below target, sell what is above), a full rebalance with every flow, hold cash until the next rebalance, or most liquid first. You get the money each policy ends with, the **money-weighted** return (what the investor earned given when the money arrived) next to the **time-weighted** return (what the portfolio did), turnover, costs and the distance from the target mix, and weekly charts of the account value and of the drift.
+- **Spending rules.** A starting portfolio, a first-year spending rate and inflation, and the rules to compare: a fixed real amount (the 4% rule), a share of the current value, the endowment rule and guardrails. Thousands of futures are made by resampling the portfolio's own daily history in blocks, and you get the chance of running out, the chance that spending had to be cut, the spending and the wealth left, the highest starting rate whose chance of ruin stays under your limit, and a **fan chart** of the middle half and the central nine in ten of futures for any rule, for the wealth left and for the spending paid.
+- **Redemption.** A fund of a given size, the share redeemed, a cash buffer and a limit on the share of each asset's daily dollar volume. Selling in proportion, selling the most liquid asset first and using the cash buffer are priced with the execution cost model: cost as a share of the fund (the measure that compares policies selling different amounts) and of what was sold, days to finish, and the distance from the mix afterwards.
+- **Liabilities (LDI).** A plan that owes 100 a year for some years, discounted at the 10-year Treasury yield, with a starting funding ratio: no hedge, a glide path that hedges more as the plan gets funded, and a full hedge, held in the bond funds you name against the funds you name for return. The funding ratio and the hedge share are drawn weekly.
+
+A bootstrap of the past cannot produce a future worse than the history it samples, the liability model uses one flat yield, and every result is one path of history: read the tables and charts as a way to see what a policy does, not as a forecast. The [cash-flow strategies guide](techniques/cash-flow-strategies.md) explains the arithmetic.
+
+## Guides
+
+The Guides tab reads the technique guides, the glossary, the strategy cards and the [algorithmic trading coverage](algorithmic_trading.md) page.
 
 ## What it will not do
 
@@ -123,4 +149,5 @@ The builder has the formula editor (check against your tickers, function referen
 - Weekend and holiday gaps: for mixed universes it keeps weekdays on which at least 60% of the tickers traded.
 - Yahoo Finance data are free and unaudited: corporate actions and delistings are not curated. iTick's adjustments are undocumented (see above). The platform's 15 ETFs are the versioned, cleaned dataset.
 - There are no stop-loss, take-profit or trailing-stop exits and no borrowing or short-selling fees: positions follow the signal and the rebalance schedule, and only trading costs are charged.
+- The Execution tab is a simulator: it places no orders and measures nothing about your own executions, and its costs come from illustrative impact parameters. The Cash flows tab follows historical prices, so it shows what a policy would have done, not what it will.
 - Costs are the platform defaults (10 bps per unit traded, monthly rebalance); change them in `config/backtest.yaml` or the spec.

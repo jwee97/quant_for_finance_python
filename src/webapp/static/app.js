@@ -15,7 +15,7 @@
   }
   /* The server API this page was written for (API_VERSION in api.py). A server that reports less is older than the page: the files were updated while the app was running, so it still runs the
      old code. Say so, instead of drawing half a page. */
-  const PAGE_API = 2;
+  const PAGE_API = 2;                                                                       // what the whole page needs; the Execution and Cash flows tabs ask for more (LAB_API below) and say so on their own
   const RESTART = "Stop the app and press Run again (on Replit: the Stop button, then Run), then reload this page. Your saved tickers and runs are kept.";
   /* A banner above the page for what the person has to act on. One banner per ``id``, so repeating it does not stack. */
   function notice(id, title, text, serious) {
@@ -27,8 +27,9 @@
   function toast(msg) { const t = h("div", "toast", document.body, msg); setTimeout(() => t.remove(), 3500); }
   function copy(text, what) { (navigator.clipboard ? navigator.clipboard.writeText(text) : Promise.reject()).then(() => toast(`${what} copied`), () => toast("Copy is blocked in this browser: select the text and copy it by hand")); }
   function download(name, text) { const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([text], { type: "text/plain" })); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000); }
-  const num = (v, d = 2) => (v === null || v === undefined || !isFinite(v) ? "n/a" : v.toFixed(d));
-  const pct = (v, d = 1) => (v === null || v === undefined || !isFinite(v) ? "n/a" : (v * 100).toFixed(d) + "%");
+  const unsign = (s) => (/^-0(\.0+)?$/.test(s) ? s.slice(1) : s);                                   // a value that rounds to zero is not "-0.0"
+  const num = (v, d = 2) => (v === null || v === undefined || !isFinite(v) ? "n/a" : unsign(v.toFixed(d)));
+  const pct = (v, d = 1) => (v === null || v === undefined || !isFinite(v) ? "n/a" : unsign((v * 100).toFixed(d)) + "%");
   const bad = (v) => v === null || v === undefined || !isFinite(v);
   /* "\u2060" (word joiner) keeps the minus sign on the same line as the amount. */
   const money = (v, d = 0) => (bad(v) ? "n/a" : (v < 0 ? "−\u2060$" : "$") + Math.abs(v).toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d }));
@@ -51,11 +52,13 @@
   const saved = store("theme"); if (saved) document.documentElement.setAttribute("data-theme", saved);
   matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => redraw());
 
-  const TABS = ["backtest", "compare", "builder", "guides"];
+  const TABS = ["backtest", "compare", "builder", "exec", "cash", "guides"];
   function showTab(name) {
     for (const t of TABS) { $("#tab-" + t).setAttribute("aria-selected", String(t === name)); $("#view-" + t).hidden = t !== name; }
     if (name === "compare") renderCompare();
     if (name === "builder") renderBuilder();
+    if (name === "exec") renderLab(X);
+    if (name === "cash") renderLab(K);
     if (name === "guides") renderGuides();
     if (name === "backtest") redraw();
     store("tab", name);
@@ -435,7 +438,7 @@
   }
   function simpleTable(parent, cols, rows) {
     const wrap = h("div", "scroll", parent), t = h("table", "data", wrap), hd = h("tr", "", h("thead", "", t));
-    for (const c of cols) h("th", c.num ? "num" : "", hd, c.label);
+    for (const c of cols) { const th = h("th", c.num ? "num" : "", hd, c.label); if (c.title) th.title = c.title; }
     const tb = h("tbody", "", t);
     for (const r of rows) { const tr = h("tr", "", tb); for (const c of cols) h("td", c.num ? "num" : "", tr, c.get ? c.get(r) : String(r[c.key])); }
   }
@@ -718,9 +721,489 @@
     h("p", "hint", py, "Files in user_strategies/ run as ordinary Python on this computer, so only put code there that you wrote or trust. The browser never sends code to the server.");
   }
 
+  /* ================================================================= execution and cash-flow labs */
+  /* Two tabs that run the research simulators behind /api/exec and /api/cash. The Execution tab works on a stylised market made from the numbers in its form (nothing is downloaded); the Cash
+     flows tab follows a portfolio of real tickers from the data source. Each tab keeps its form while another tab is open, and a result is redrawn from the data it came from. */
+  const LAB_API = 3;
+  const colorOf = (i) => css(SLOTS[i % SLOTS.length]);
+  const labelPx = (labels) => Math.min(260, Math.max(74, Math.round(Math.max(0, ...labels.map((x) => String(x).length)) * 6.4) + 14));
+  const running = (a) => { let total = 0; return a.map((v) => (total += v)); };
+  const bps = (v, d = 1) => (bad(v) ? "n/a" : num(v, d) + " bps");
+  const grouped = (v) => (bad(v) ? "n/a" : Math.round(v).toLocaleString("en-US"));
+  const plain = (v) => String(+v.toFixed(2));                                                // an axis tick without trailing zeros: 12.5, 15, 17.5
+  const openGuide = (slug) => { G.slug = slug; showTab("guides"); };
+
+  /* One form field, a number, a choice, a line of text or a tick box, bound to ``state[spec.key]``. Numbers are kept as typed, so a half-written value is not lost when the tab is redrawn. */
+  function labField(parent, spec, state, after) {
+    const wrap = h("label", "f" + (spec.kind === "bool" ? " inline" : ""), parent);
+    let input;
+    if (spec.kind === "bool") { input = h("input", "", wrap); input.type = "checkbox"; input.checked = !!state[spec.key]; wrap.appendChild(document.createTextNode(spec.label)); }
+    else {
+      wrap.appendChild(document.createTextNode(spec.label));
+      if (spec.kind === "choice") { input = h("select", "", wrap); for (const [value, text] of spec.options) { const o = h("option", "", input, text); o.value = value; if (value === state[spec.key]) o.selected = true; } }
+      else {
+        input = h("input", "", wrap); input.type = spec.kind === "number" ? "number" : "text"; input.value = state[spec.key]; if (spec.placeholder) input.placeholder = spec.placeholder;
+        if (spec.kind === "number") { input.step = spec.step || "any"; if (spec.min !== undefined) input.min = spec.min; if (spec.max !== undefined) input.max = spec.max; }
+        else input.spellcheck = false;
+      }
+    }
+    if (spec.help) wrap.title = spec.help;
+    input.setAttribute("data-key", spec.key);
+    input.addEventListener("input", () => { state[spec.key] = spec.kind === "bool" ? input.checked : input.value; if (after) after(); });
+    input.addEventListener("change", () => input.dispatchEvent(new Event("input")));
+    return wrap;
+  }
+  function checkList(parent, title, items, chosen, after) {
+    const box = h("div", "checks", parent); h("span", "hint", box, title);
+    for (const [value, text, help] of items) {
+      const label = h("label", "f inline", box), c = h("input", "", label); c.type = "checkbox"; c.checked = chosen.has(value); c.setAttribute("data-value", value); label.appendChild(document.createTextNode(text)); if (help) label.title = help;
+      c.addEventListener("change", () => { if (c.checked) chosen.add(value); else chosen.delete(value); after(); });
+    }
+  }
+  /* The numbers of a form as a request: blank fields are left out (the server has a default for each), ``scale`` turns a percentage into a fraction. */
+  function numbers(state, keys, scale) {
+    const out = {};
+    for (const key of keys) {
+      const raw = String(state[key] === undefined ? "" : state[key]).trim(); if (raw === "") continue;
+      const v = Number(raw); if (!isFinite(v)) throw new Error(`${key.replace(/_/g, " ")} must be a number`);
+      out[key] = v * ((scale && scale[key]) || 1);
+    }
+    return out;
+  }
+  function labOld(root) {
+    const c = h("div", "card empty", root); c.style.gridColumn = "1 / -1"; h("h2", "", c, "This tab needs a newer app");
+    h("p", "", c, "The page was updated, but the app behind it is still running the old code. " + RESTART + ` (The app reports version ${serverApi()}; this tab needs ${LAB_API}.)`);
+    const again = h("button", "btn primary", c, "Reload this page"); again.addEventListener("click", () => location.reload());
+  }
+  function labHead(root, title, sub, guide) {
+    const head = h("div", "head", root), left = h("div", "", head); h("h1", "", left, title); if (sub) h("p", "sub", left, sub);
+    if (guide) { const acts = h("div", "row tight", head), b = h("button", "btn", acts, "Read the guide"); b.addEventListener("click", () => openGuide(guide)); }
+  }
+  function labBanner(root, title, text, serious) { const b = h("div", "banner" + (serious ? " err" : ""), root); h("strong", "", b, title); b.appendChild(document.createTextNode(text)); return b; }
+  function labEmpty(root, lab, title, text, button) {
+    const c = h("div", "card empty", root); h("h2", "", c, title); for (const t of [].concat(text)) h("p", "", c, t);
+    const b = h("button", "btn primary", c, button || "Run it with these settings"); b.addEventListener("click", () => lab.run());
+  }
+  function syncLab(lab) {
+    if (!lab.go || !lab.go.isConnected) return;
+    const message = lab.check ? lab.check() : "";
+    lab.go.disabled = !!lab.busy || !!message; lab.guard.textContent = message; lab.guard.hidden = !message;
+    lab.progress.replaceChildren(); if (lab.busy) { h("span", "spinner", lab.progress); h("span", "", lab.progress, lab.busy); }
+  }
+  async function labRun(lab, path, bodyFor, message) {
+    if (lab.busy) return;
+    let body; try { body = bodyFor(); } catch (e) { toast(e.message); return; }
+    const mode = lab.mode; lab.busy = message; syncLab(lab);
+    try { lab.results[mode] = { data: await api(path, body), body }; lab.errors[mode] = null; }
+    catch (e) { lab.results[mode] = null; lab.errors[mode] = e.status === 404 ? "The app behind this page does not know this request: it is older than the page. " + RESTART : e.message; }
+    lab.busy = ""; syncLab(lab);
+    if (lab.mode === mode && !$(lab.view).hidden) lab.draw();
+  }
+  function renderLab(lab) {
+    const root = $(lab.root); root.replaceChildren();
+    if (serverApi() < LAB_API) { labOld(root); return; }
+    const panel = h("aside", "card panel", root); panel.setAttribute("aria-label", lab.title + " setup");
+    const top = h("div", "labtop", panel); h("h2", "", top, lab.title); h("p", "hint", top, lab.about);
+    const pills = h("div", "tabsmall", top);
+    for (const [key, text] of lab.modes) { const b = h("button", "", pills, text); b.dataset.mode = key; b.setAttribute("aria-selected", String(key === lab.mode)); b.addEventListener("click", () => { lab.mode = key; renderLab(lab); }); }
+    h("p", "hint", top, lab.blurb[lab.mode]);
+    lab.sections(panel);
+    const foot = h("div", "runbar", panel); lab.guard = h("p", "guard", foot); lab.guard.setAttribute("role", "status"); lab.guard.hidden = true;
+    lab.go = h("button", "btn primary", foot, lab.runLabel[lab.mode]); lab.go.addEventListener("click", () => lab.run()); lab.progress = h("div", "progress", foot);
+    const results = h("div", "stack", root); results.id = lab.id + "-results"; results.setAttribute("aria-live", "polite");
+    syncLab(lab); lab.draw();
+  }
+  /* Rebuild the results from the data they came from. The page must stay where it is, so this is the same redraw the Backtest tab uses for a theme or width change. */
+  function drawLab(lab) {
+    const root = $("#" + lab.id + "-results"); if (!root || serverApi() < LAB_API) return;
+    keepScroll(() => {
+      root.replaceChildren();
+      const error = lab.errors[lab.mode], got = lab.results[lab.mode];
+      if (error) labBanner(root, "That did not run. ", error, true);
+      if (got) lab.build(root, got.data, got.body); else if (!error) lab.empty(root);
+    }, root);
+  }
+
+  /* ---------- the Execution tab ---------- */
+  const ALGO_PRESETS = [["twap", "TWAP: equal slices"], ["vwap", "VWAP: follow the day's volume"], ["pov", "POV: take a fixed share of the volume"], ["arrival_price", "Arrival price: trade early"],
+    ["is:risk_aversion=0.003", "Implementation shortfall (risk aversion 0.003)"], ["aim+vwap", "VWAP, aggressive in the money (AIM)"], ["pim+vwap", "VWAP, passive in the money (PIM)"],
+    ["target_cost+is:risk_aversion=0.003", "Target cost, on implementation shortfall"], ["liquidity_seeking", "Liquidity seeking: slow down when the market is thin"]];
+  const HFT_TEXT = { pairs: "Pair trading: a z-score rule on the spread of two prices, orders arriving after a delay, a cost on both legs.", etf: "ETF against its basket: how the profit of trading the premium falls with the delay of the order.",
+    rebate: "Rebate and liquidity trading: a maker living on rebates and spread, with and without a view of the order flow that is about to hit its quotes.", amm: "Auto market making: quotes shaded by inventory (Avellaneda-Stoikov) against symmetric quotes." };
+  const HFT_COLUMNS = { days: "Days", mean_daily_bps: "Profit per day (bps)", std_daily_bps: "Std dev per day (bps)", sharpe: "Sharpe", round_trips: "Round trips", win_rate: "Win rate", average_hold_bars: "Hold (bars)",
+    average_trip_bps: "Per trip (bps)", gross_bps: "Gross (bps)", cost_bps_total: "Costs (bps)", mean_wealth: "Mean profit", se_wealth: "Std error", rebate: "Rebates", spread: "Spread earned", price_pnl: "Price moves",
+    adverse_selection: "Adverse selection", inventory_pnl: "Inventory", fills: "Fills", mean_abs_inventory: "Mean |inventory|", std_wealth: "Std dev of profit", mean_trades: "Trades", std_inventory: "Std dev of inventory",
+    mean_squared_inventory: "Mean squared inventory" };
+  const X = {
+    id: "exec", root: "#exec", view: "#view-exec", title: "Execution lab", mode: "run", busy: "", results: {}, errors: {}, cumulative: false, guard: null, go: null, progress: null,
+    about: "Trade an order through a simulated day and compare algorithms. Nothing is downloaded: the market is made from the numbers below.",
+    modes: [["run", "Compare algorithms"], ["frontier", "Cost-risk frontier"], ["basket", "Basket"], ["hft", "High-frequency"]],
+    runLabel: { run: "Run the algorithms", frontier: "Trace the frontier", basket: "Work the basket", hft: "Run the simulation" },
+    blurb: { run: "Run several algorithms on the same simulated days and see what they cost, and how much that cost varies.",
+      frontier: "For every price of risk, the cheapest way to trade the order: the curve between paying market impact and carrying price risk.",
+      basket: "Trade a list of stocks together: keep the unexecuted list as hedged as possible, see what can go to dark pools and what a partial execution should be.",
+      hft: "Research simulators of strategies that live on spreads, rebates and short-lived mispricings, to size how much edge a delay or a cost leaves." },
+    form: { side: "buy", shares: "200000", adv: "2000000", price: "50", sigma: "2", spread_bps: "4", intervals: "26", style: "aggressive", scenario: "normal", max_participation: "35", target_bps: "", paths: "300", seed: "0",
+      algos: new Set(["twap", "vwap", "pov", "is:risk_aversion=0.003", "arrival_price"]), custom: "", size: "8", risk_aversion: "0.001", block_threshold: "0.5", share: "50", sim: "etf" },
+  };
+  const EXEC_ORDER = [{ key: "side", label: "Side", kind: "choice", options: [["buy", "Buy"], ["sell", "Sell"]] }, { key: "shares", label: "Shares to trade", kind: "number", min: 1 }];
+  const EXEC_MARKET = [{ key: "adv", label: "Average daily volume (shares)", kind: "number", min: 1000 }, { key: "price", label: "Price per share ($)", kind: "number", min: 0.01 },
+    { key: "sigma", label: "Daily volatility (%)", kind: "number", min: 0.1, max: 20 }, { key: "spread_bps", label: "Bid-ask spread (bps)", kind: "number", min: 0, max: 200 },
+    { key: "intervals", label: "Slices in the day", kind: "number", step: 1, min: 4, max: 100 }];
+  const EXEC_WORK = [
+    { key: "style", label: "Trading style", kind: "choice", options: [["aggressive", "Aggressive: take liquidity"], ["working", "Working order: a mix"], ["passive", "Passive: limit and dark orders"]] },
+    { key: "scenario", label: "Market scenario", kind: "choice", options: [["normal", "Normal"], ["trend_up", "Trending up"], ["trend_down", "Trending down"], ["mean_reverting", "Mean-reverting"], ["crisis", "Crisis"]] },
+    { key: "max_participation", label: "Most of the volume to take (%)", kind: "number", min: 1, max: 100 },
+    { key: "target_bps", label: "Target cost in bps (blank = none)", kind: "number", help: "The budget the target-cost tactic tries to keep; the other algorithms ignore it." },
+    { key: "paths", label: "Simulated days per algorithm", kind: "number", step: 1, min: 20, max: 2000 }, { key: "seed", label: "Random seed", kind: "number", step: 1, min: 0 }];
+  const EXEC_BASKET = [{ key: "size", label: "Names in the list (2 to 16)", kind: "number", step: 1, min: 2, max: 16 }, { key: "seed", label: "Random seed", kind: "number", step: 1, min: 0 },
+    { key: "risk_aversion", label: "Risk aversion", kind: "number", min: 0.000001, help: "Zero would trade every name on its own volume; higher hedges first." },
+    { key: "block_threshold", label: "A block is at least this share of a day's volume (%)", kind: "number", min: 0.01, max: 100 }, { key: "share", label: "Share of the list's value to execute (%)", kind: "number", min: 0, max: 100 }];
+  const EXEC_HFT = [{ key: "sim", label: "Simulation", kind: "choice", options: [["etf", "ETF against its basket"], ["pairs", "Pair trading"], ["rebate", "Rebate and liquidity trading"], ["amm", "Auto market making"]] },
+    { key: "seed", label: "Random seed", kind: "number", step: 1, min: 0 }];
+  const PERCENT = { sigma: 0.01, max_participation: 0.01, share: 0.01, block_threshold: 0.01 };
+  const execAlgos = () => [...ALGO_PRESETS.map((a) => a[0]).filter((a) => X.form.algos.has(a)), ...X.form.custom.split(/\s+/).filter(Boolean)];
+  X.check = () => (X.mode === "run" && (execAlgos().length < 1 || execAlgos().length > 8) ? "Choose between one and eight algorithms." : "");
+  X.sections = (panel) => {
+    const f = X.form, after = () => syncLab(X), sec = (title) => { const d = h("details", "", panel); d.open = true; h("summary", "", d, title); return h("div", "body", d); };
+    const fields = (box, specs, then) => { for (const s of specs) labField(box, s, f, then || after); };
+    if (X.mode === "run" || X.mode === "frontier") { fields(sec("1. The order"), EXEC_ORDER); fields(sec("2. The market"), EXEC_MARKET); }
+    if (X.mode === "run") {
+      fields(sec("3. How it is worked"), EXEC_WORK);
+      const a = sec("4. Algorithms"); checkList(a, "Tick up to eight:", ALGO_PRESETS, f.algos, after);
+      labField(a, { key: "custom", label: "Others, separated by spaces", kind: "text", placeholder: "pov:rate=0.15 exp_trade:kappa=3", help: "name:key=value,key=value, with an optional tactic first: aim, pim or target_cost, then +" }, f, after);
+      h("p", "hint", a, "Any name from the guide works: twap, vwap, pov, arrival_price, is, min_cost, min_cost_risk, min_risk_cost, balanced, price_improvement, exp_trade, exp_residual, trade_rate, liquidity_seeking.");
+    }
+    if (X.mode === "basket") fields(sec("The basket"), EXEC_BASKET);
+    if (X.mode === "hft") { const b = sec("The simulation"), note = h("p", "hint", b, ""); fields(b, EXEC_HFT, () => { note.textContent = HFT_TEXT[f.sim]; after(); }); note.textContent = HFT_TEXT[f.sim]; }
+  };
+  X.run = () => {
+    const f = X.form, m = X.mode, market = ["shares", "adv", "price", "sigma", "spread_bps", "intervals"];
+    if (m === "run") return labRun(X, "/api/exec", () => ({ action: "run", side: f.side, style: f.style, scenario: f.scenario, algos: execAlgos(), ...numbers(f, [...market, "max_participation", "target_bps", "paths", "seed"], PERCENT) }), "Simulating…");
+    if (m === "frontier") return labRun(X, "/api/exec", () => ({ action: "frontier", side: f.side, ...numbers(f, market, PERCENT) }), "Tracing the frontier…");
+    if (m === "basket") return labRun(X, "/api/exec", () => ({ action: "basket", ...numbers(f, ["size", "seed", "risk_aversion", "block_threshold", "share"], PERCENT) }), "Working the basket…");
+    return labRun(X, "/api/exec", () => ({ action: "hft", sim: f.sim, ...numbers(f, ["seed"]) }), "Simulating (the rebate simulation takes a few seconds)…");
+  };
+  X.empty = (root) => {
+    const text = { run: ["Compare execution algorithms on a simulated day", "Each algorithm trades the same order on the same random days. You see the average cost against the arrival price, how much it varies from day to day, and how each one spreads the order through the day."],
+      frontier: ["Trace the cost-risk frontier", "Trading faster costs market impact and trading slower leaves the order exposed to the price. The frontier is the best trade-off for every price of risk."],
+      basket: ["Work a basket of stocks", "A demonstration list of buys and sells traded together: the joint schedule against stock by stock, the minimum-risk partial execution, what can go dark, and block against program names."],
+      hft: ["Run a high-frequency research simulation", "Pair trading, ETF arbitrage, rebate trading and market making on stylised markets, to see how a delay or a cost eats an edge."] }[X.mode];
+    labEmpty(root, X, text[0], [text[1], "The defaults run in a second or two."], "Run it with the defaults");
+  };
+  X.draw = () => drawLab(X);
+  X.build = (root, r, body) => ({ run: execCompare, frontier: execFrontier, basket: execBasket, hft: execHft })[X.mode](root, r, body);
+  const sideWord = (side) => (side === "buy" ? "Buying" : "Selling");
+
+  function execCompare(root, r) {
+    const rows = r.rows, o = r.order, paths = rows.length ? rows[0].paths : 0, colors = rows.map((_, i) => colorOf(i));
+    labHead(root, `${sideWord(o.side)} ${grouped(o.shares)} shares`, `${money(o.value)} · ${pct(o.participation, 1)} of a day's volume · ${r.scenario.name.replace(/_/g, " ")} market · ${r.style.name} · ${grouped(paths)} simulated days per algorithm · ${r.intervals} slices`, "technique-execution-algorithms");
+    h("p", "hint", root, `Market: ${r.scenario.description}. Style: ${r.style.description}.`);
+    const cheapest = rows.reduce((a, b) => (b.shortfall_bps < a.shortfall_bps ? b : a)), calmest = rows.reduce((a, b) => (b.std_bps < a.std_bps ? b : a));
+    const k = h("div", "earnrow", root);
+    tile(k, "Lowest average shortfall", bps(cheapest.shortfall_bps), { text: `${cheapest.algo} · varies by ${bps(cheapest.std_bps, 0)} between days` }, "", "Average cost of the whole order against the price when it arrived; positive is a cost");
+    tile(k, "Least variation between days", bps(calmest.std_bps, 1), { text: `${calmest.algo} · average shortfall ${bps(calmest.shortfall_bps)}` }, "", "Standard deviation of the shortfall across the simulated days");
+    tile(k, "Order size", pct(o.participation, 1) + " of a day", { text: `${grouped(o.shares)} shares, ${money(o.value)}` });
+    const card = h("div", "card", root); h("h3", "", card, "Results"); h("p", "note", card, "Shortfall is the cost of the whole order against the price when it arrived, in basis points of its value: positive is a cost, negative a gain. The variation between days is its standard deviation across the simulated days; the ± is the standard error of the average.");
+    simpleTable(card, [{ label: "Algorithm", get: (x) => x.algo }, { label: "Shortfall (bps)", num: true, get: (x) => `${num(x.shortfall_bps, 1)} ± ${num(x.se_bps, 1)}` }, { label: "Std dev (bps)", title: "Standard deviation of the shortfall across the simulated days", num: true, get: (x) => num(x.std_bps, 1) },
+      { label: "5th to 95th pct (bps)", title: "The 5th and 95th percentiles of the shortfall across the simulated days", num: true, get: (x) => `${num(x.p05_bps, 0)} to ${num(x.p95_bps, 0)}` },
+      { label: "Against VWAP (bps)", title: "How much worse than the market's volume-weighted average price over the order's window", num: true, get: (x) => num(x.vwap_slippage_bps, 1) },
+      { label: "Share of volume", title: "Average share of the market's volume that the algorithm took", num: true, get: (x) => pct(x.participation, 1) }], rows);
+    const ch = h("div", "charts", root), width = labelPx(rows.map((x) => x.algo));
+    const bars = (key) => rows.map((x, i) => ({ label: x.algo, value: x[key], color: colors[i] }));
+    chartCard(ch, "Average shortfall by algorithm", "Basis points of the order's value; lower is cheaper. The Table view splits it into spread, impact and timing.", {
+      draw: (b) => C.hbars(b, { rows: bars("shortfall_bps"), format: (v) => num(v, 1), tipFormat: (v) => bps(v), name: "Average shortfall", label: "Average shortfall by algorithm", labelWidth: width, color: (v, row) => row.color }),
+      table: (b) => simpleTable(b, [{ label: "Algorithm", get: (x) => x.algo }, { label: "Shortfall", num: true, get: (x) => num(x.shortfall_bps, 1) }, { label: "Spread", num: true, get: (x) => num(x.spread_bps, 1) },
+        { label: "Temporary impact", num: true, get: (x) => num(x.temporary_bps, 1) }, { label: "Permanent impact", num: true, get: (x) => num(x.permanent_bps, 1) },
+        { label: "Timing (price moves while it works)", num: true, get: (x) => num(x.timing_bps, 1) }, { label: "Fees", num: true, get: (x) => num(x.fees_bps, 1) }], rows) });
+    chartCard(ch, "Variation between days by algorithm", "Standard deviation of the shortfall across the simulated days, in basis points. A lower average cost with more variation is not better; say which you want.", {
+      draw: (b) => C.hbars(b, { rows: bars("std_bps"), format: (v) => num(v, 0), tipFormat: (v) => bps(v), name: "Variation between days", label: "Variation between days by algorithm", labelWidth: width, color: (v, row) => row.color }),
+      table: (b) => simpleTable(b, [{ label: "Algorithm", get: (x) => x.algo }, { label: "Std dev", num: true, get: (x) => num(x.std_bps, 1) }, { label: "5th percentile", num: true, get: (x) => num(x.p05_bps, 1) },
+        { label: "Median", num: true, get: (x) => num(x.median_bps, 1) }, { label: "95th percentile", num: true, get: (x) => num(x.p95_bps, 1) }], rows) });
+    const slices = Array.from({ length: r.intervals }, (_, i) => i + 1), volume = r.volume_profile;
+    const lines = () => {
+      const scaled = (a) => (X.cumulative ? running(a) : a).map((v) => v * 100);
+      return [...rows.map((x, i) => ({ name: x.algo, color: colors[i], values: scaled(r.schedules[x.algo]) })), { name: "Market volume", color: css("--muted"), values: scaled(volume), dash: "5 4", width: 1.5 }];
+    };
+    const sched = chartCard(ch, "How each algorithm spreads the order through the day", "Share of the order traded in each slice (dashed: the market's own volume, as a share of the day). VWAP follows the dashed line; front-loaded algorithms start above it.", { wide: true,
+      draw: (b) => C.line(b, { xs: slices, xWhole: true, xLabel: "Slice of the day (1 is the open)", series: lines(), yFormat: (v) => v.toFixed(0) + "%", tipFormat: (v) => v.toFixed(1) + "%", xFormat: (v) => String(Math.round(v)), tipTitle: (i) => `Slice ${slices[i]}`, height: 300, label: "Share of the order by slice", endLabels: false, include: 0 }),
+      table: (b) => { const L = lines(); simpleTable(b, [{ label: "Slice", num: true, get: (i) => slices[i] }, ...L.map((s) => ({ label: s.name, num: true, get: (i) => num(s.values[i], 2) + "%" }))], slices.map((_, i) => i)); } });
+    const seg = h("div", "seg", sched._extra), once = h("button", "", seg, "Per slice"), total = h("button", "", seg, "Cumulative");
+    const mark = () => { once.setAttribute("aria-pressed", String(!X.cumulative)); total.setAttribute("aria-pressed", String(X.cumulative)); };
+    mark(); once.addEventListener("click", () => { X.cumulative = false; mark(); sched._draw(); }); total.addEventListener("click", () => { X.cumulative = true; mark(); sched._draw(); });
+    const sd = rows.map((x) => x.std_bps), xs = [...new Set(sd)].sort((a, b) => a - b);
+    chartCard(ch, "Cost against risk", "Each point is one algorithm: average shortfall (up) against the variation between days (right). Lower and further left is better; a point that is higher and further right than another is beaten by it.", { wide: true,
+      draw: (b) => C.line(b, { xs, xLabel: "Variation between days (standard deviation of the shortfall, bps)", series: rows.map((x, i) => ({ name: x.algo, color: colors[i], dots: true, dotSize: 5, pointLabel: x.algo, values: xs.map((v) => (v === x.std_bps ? x.shortfall_bps : null)) })),
+        yFormat: plain, tipFormat: (v) => bps(v), xFormat: (v) => v.toFixed(0), tipTitle: (i) => `Varies by ${bps(xs[i])}`, height: 280, label: "Cost against risk", endLabels: false }),
+      table: (b) => simpleTable(b, [{ label: "Algorithm", get: (x) => x.algo }, { label: "Shortfall (bps)", num: true, get: (x) => num(x.shortfall_bps, 1) }, { label: "Std dev (bps)", num: true, get: (x) => num(x.std_bps, 1) }], rows) });
+    h("p", "hint", root, "A stylised market: impact follows an Almgren-Chriss model with illustrative parameters, there is no order book or queue, and the passive and dark fill rates are round numbers. Use it to compare methods and see which way a setting pushes, not to quote a cost.");
+  }
+
+  function execFrontier(root, r) {
+    const f = r.frontier.slice().sort((a, b) => a.risk_bps - b.risk_bps), inp = r.inputs, first = r.frontier[0], last = r.frontier[r.frontier.length - 1];
+    labHead(root, "The cost-risk frontier", `${sideWord(inp.side)} ${grouped(inp.shares)} shares · ${pct(inp.shares / inp.adv, 1)} of a day's volume · ${(inp.sigma * 100).toFixed(1)}% daily volatility · ${inp.spread_bps} bps spread · ${inp.intervals} slices`, "technique-execution-algorithms");
+    const k = h("div", "earnrow", root);
+    tile(k, "VWAP", bps(r.vwap.cost_bps), { text: `risk ${bps(r.vwap.risk_bps, 0)}` }, "", "Follow the day's volume: cheapest, and it carries the most price risk");
+    tile(k, "TWAP", bps(r.twap.cost_bps), { text: `risk ${bps(r.twap.risk_bps, 0)}` });
+    tile(k, "Most urgent schedule", bps(last.cost_bps), { text: `risk ${bps(last.risk_bps, 0)} · ${pct(last.first_slice, 0)} in the first slice` }, "", "The highest risk aversion on the curve");
+    tile(k, "Least urgent schedule", bps(first.cost_bps), { text: `risk ${bps(first.risk_bps, 0)} · ${pct(first.first_slice, 0)} in the first slice` });
+    const others = [["VWAP", r.vwap, "--s2"], ["TWAP", r.twap, "--s3"]], xs = [...new Set([...f.map((p) => p.risk_bps), ...others.map(([, v]) => v.risk_bps)])].sort((a, b) => a - b);
+    const curve = xs.map(() => null); f.forEach((p) => { curve[xs.indexOf(p.risk_bps)] = p.cost_bps; });
+    const series = [{ name: "Best schedule for each risk aversion", color: css("--s1"), values: curve, connect: true, dots: true },
+      ...others.map(([name, v, c]) => { const values = xs.map(() => null); values[xs.indexOf(v.risk_bps)] = v.cost_bps; return { name, color: css(c), values, dots: true }; })];
+    const ch = h("div", "charts", root);
+    chartCard(ch, "Expected cost against risk", "Each point on the curve is the cheapest schedule for one price of risk (risk aversion). Trading faster costs more impact and leaves less exposure to the price; VWAP and TWAP are shown for reference.", { wide: true,
+      draw: (b) => C.line(b, { xs, xLabel: "Risk (standard deviation of the shortfall, bps)", series, yFormat: plain, tipFormat: (v) => bps(v), xFormat: (v) => v.toFixed(0), tipTitle: (i) => `Risk ${bps(xs[i])}`, height: 320, label: "Expected cost against risk", endLabels: false,
+        tipExtra: (i) => { const p = f.find((q) => q.risk_bps === xs[i]); return p ? [["Risk aversion", p.risk_aversion.toExponential(1)], ["First slice", pct(p.first_slice, 1) + " of the order"]] : []; } }),
+      table: (b) => simpleTable(b, [{ label: "Risk aversion", num: true, get: (p) => p.risk_aversion.toExponential(1) }, { label: "Expected cost (bps)", num: true, get: (p) => num(p.cost_bps, 1) }, { label: "Risk (bps)", num: true, get: (p) => num(p.risk_bps, 1) },
+        { label: "First slice (share of the order)", num: true, get: (p) => pct(p.first_slice, 1) }], r.frontier) });
+    h("p", "hint", root, "The curve is the optimiser's answer for each risk aversion on a stylised market with illustrative impact parameters. Its shape (how much risk a few basis points buy) is the lesson; the levels are not a quote.");
+  }
+
+  function execBasket(root, r) {
+    const j = r.joint, s = r.independent, m = r.mtrq, t = r.mto, p = r.program_block, share = r.inputs.share, n = r.intervals, slices = Array.from({ length: n }, (_, i) => i + 1);
+    labHead(root, `A basket of ${r.size} names`, `${money(r.gross)} gross · ${money(r.net_exposure)} net · ${n} slices · risk aversion ${r.risk_aversion}`, "technique-basket-and-liquidity-algorithms");
+    const k = h("div", "earnrow", root);
+    tile(k, "Joint schedule", num(j.objective, 2), { text: `cost ${bps(j.cost_bps)}, risk ${bps(j.risk_bps)}`, dir: j.objective <= s.objective ? "up" : "" }, "", "Cost plus risk aversion times risk squared; lower is better");
+    tile(k, "Stock by stock", num(s.objective, 2), { text: `cost ${bps(s.cost_bps)}, risk ${bps(s.risk_bps)}` }, "", "Each name scheduled alone at the same price of risk");
+    tile(k, `Risk left after executing ${pct(share, 0)}`, money(m.residual_risk), { text: `${money(m.naive_risk)} in proportion, ${money(m.original_risk)} untouched`, dir: m.residual_risk <= m.naive_risk ? "up" : "" }, "", "Standard deviation of the remaining list's value change, executing the best names first");
+    tile(k, "If only the buys are on offer", pct(t.share_of_list, 0), { text: t.feasible ? (t.binding ? "of the list's value can go before the rest is riskier" : "of the list's value: all that is on offer can go") : "cannot be done without raising risk" }, "", "Most value that can be executed without the remaining list being riskier than the original");
+    tile(k, "Dark-safe names", `${p.dark.length} of ${p.block.length}`, { text: p.block.length ? (p.dark.length ? p.dark.join(", ") : "none can go dark safely") : "no block names" }, "", "Block names that may be entered in dark pools without raising risk, whatever fills");
+    const ch = h("div", "charts", root), C1 = css("--s1"), C2 = css("--s2");
+    chartCard(ch, "Risk of the unexecuted list through the day", "Standard deviation of the remaining list's value, in basis points of the list's gross value, after each slice. The joint schedule minimises cost plus a price on this risk for the whole list, so it may carry more or less of it than trading each name alone, wherever that saves cost.", {
+      draw: (b) => C.line(b, { xs: slices, xWhole: true, xLabel: "Slice of the day", series: [{ name: "Joint schedule", color: C1, values: r.risk_left_bps.joint }, { name: "Stock by stock", color: C2, values: r.risk_left_bps.independent }], yFormat: (v) => v.toFixed(0), tipFormat: (v) => bps(v), xFormat: (v) => String(Math.round(v)), tipTitle: (i) => `After slice ${slices[i]}`, height: 260, label: "Risk of the unexecuted list", endLabels: false, include: 0 }),
+      table: (b) => simpleTable(b, [{ label: "After slice", num: true, get: (i) => slices[i] }, { label: "Joint (bps)", num: true, get: (i) => num(r.risk_left_bps.joint[i], 1) }, { label: "Stock by stock (bps)", num: true, get: (i) => num(r.risk_left_bps.independent[i], 1) }], slices.map((_, i) => i)) });
+    chartCard(ch, "Value traded in each slice", "Share of the list's gross value traded in each slice.", {
+      draw: (b) => C.line(b, { xs: slices, xWhole: true, xLabel: "Slice of the day", series: [{ name: "Joint schedule", color: C1, values: r.executed.joint.map((v) => v * 100) }, { name: "Stock by stock", color: C2, values: r.executed.independent.map((v) => v * 100) }], yFormat: (v) => v.toFixed(0) + "%", tipFormat: (v) => v.toFixed(1) + "%", xFormat: (v) => String(Math.round(v)), tipTitle: (i) => `Slice ${slices[i]}`, height: 260, label: "Value traded by slice", endLabels: false, include: 0 }),
+      table: (b) => simpleTable(b, [{ label: "Slice", num: true, get: (i) => slices[i] }, { label: "Joint", num: true, get: (i) => num(r.executed.joint[i] * 100, 2) + "%" }, { label: "Stock by stock", num: true, get: (i) => num(r.executed.independent[i] * 100, 2) + "%" }], slices.map((_, i) => i)) });
+    const names = r.names.map((nm, i) => ({ name: nm, side: r.side[i] > 0 ? "buy" : "sell", value: r.value[i], mtrq: m.executed_fraction[i], mto: t.executed_fraction[i], block: p.block.includes(nm), dark: p.dark.includes(nm) }));
+    chartCard(ch, `Share of each order to execute when ${pct(share, 0)} of the list's value can go`, "The fractions that leave the remaining list least risky (the minimum trading risk quantity). Hedged legs are executed together; a name at 0% is left for later.", { wide: true,
+      draw: (b) => C.hbars(b, { rows: names.map((x) => ({ label: `${x.name} (${x.side})`, value: x.mtrq * 100, color: x.side === "buy" ? css("--s1") : css("--s2") })), format: (v) => v.toFixed(0) + "%", tipFormat: (v) => v.toFixed(0) + "% of the order", name: "Executed", label: "Share of each order to execute", labelWidth: 96, color: (v, row) => row.color }),
+      table: (b) => simpleTable(b, [{ label: "Name", get: (x) => x.name }, { label: "Side", get: (x) => x.side }, { label: "Value", num: true, get: (x) => money(x.value) }, { label: "Class", get: (x) => (x.block ? "block" : "program") },
+        { label: `Minimum-risk execution of ${pct(share, 0)}`, num: true, get: (x) => pct(x.mtrq, 0) }, { label: "If only the buys are on offer", num: true, get: (x) => pct(x.mto, 0) }, { label: "May go dark", get: (x) => (x.dark ? "yes" : "no") }], names) });
+    h("p", "hint", root, p.exact ? "The dark-safe set is checked against every subset of its names that might fill." : "The dark-safe set is checked on a sample of the subsets that might fill, not all of them.");
+    h("p", "hint", root, "A random demonstration list on a stylised market: the correlations come from one common factor and the impact parameters are illustrative. A list that is more hedged than a random one gains more from trading jointly.");
+  }
+
+  function execHft(root, r) {
+    labHead(root, r.title, r.note, "technique-black-box-and-high-frequency-strategies");
+    const fmtFor = (c) => (v) => (c === "win_rate" ? pct(v, 0) : ["days", "round_trips", "fills"].includes(c) ? grouped(v) : cell(v));
+    const cols = [{ label: "", get: (x) => x.label }, ...r.columns.map((c) => ({ label: HFT_COLUMNS[c] || c.replace(/_/g, " "), num: true, get: (x) => fmtFor(c)(x[c]) }))];
+    const card = h("div", "card", root); h("h3", "", card, "Results"); simpleTable(card, cols, r.rows);
+    const ch = h("div", "charts", root), name = HFT_COLUMNS[r.chart] || r.chart.replace(/_/g, " ");
+    if (r.rows.length > 1) chartCard(ch, name, "The figure the simulation is built to move. Blue is a gain and red a loss.", { wide: true,
+      draw: (b) => C.hbars(b, { rows: r.rows.map((x) => ({ label: x.label, value: x[r.chart] })), format: (v) => cell(v), tipFormat: (v) => cell(v), name, label: name, labelWidth: labelPx(r.rows.map((x) => x.label)) }),
+      table: (b) => simpleTable(b, [{ label: "", get: (x) => x.label }, { label: name, num: true, get: (x) => cell(x[r.chart]) }], r.rows) });
+    if (r.series) chartCard(ch, r.series.name, "Running total of the simulated days.", { wide: true,
+      draw: (b) => C.line(b, { xs: r.series.x, xWhole: true, xLabel: r.series.x_label.charAt(0).toUpperCase() + r.series.x_label.slice(1), series: [{ name: r.series.name, color: css("--s1"), values: r.series.y }], yFormat: (v) => v.toFixed(0), tipFormat: (v) => bps(v), xFormat: (v) => String(Math.round(v)), tipTitle: (i) => `${r.series.x_label} ${r.series.x[i]}`, height: 260, label: r.series.name, baseline: 0, include: 0 }),
+      table: (b) => simpleTable(b, [{ label: r.series.x_label, num: true, get: (i) => r.series.x[i] }, { label: r.series.name, num: true, get: (i) => num(r.series.y[i], 1) }], r.series.x.map((_, i) => i)) });
+  }
+
+  /* ---------- the Cash flows tab ---------- */
+  const POLICY_NAMES = { pro_rata: "Pro rata", correct_drift: "Fix drift", rebalance: "Full rebalance", cash: "Hold cash", liquid: "Most liquid first" };
+  const POLICY_ITEMS = [["pro_rata", "Pro rata: in proportion to the target"], ["correct_drift", "Fix drift: buy what is below target, sell what is above"], ["rebalance", "Full rebalance with every flow"], ["cash", "Hold in cash until the next rebalance"], ["liquid", "Most liquid first"]];
+  const RULE_NAMES = { fixed_real: "Fixed real amount", percent_of_nav: "Percent of value", endowment: "Endowment (smoothed)", guardrails: "Guardrails" };
+  const RULE_ITEMS = [["fixed_real", "Fixed real amount: the 4% rule"], ["percent_of_nav", "A share of the current value"], ["endowment", "Endowment: smoothed between the two"], ["guardrails", "Guardrails: cut or raise by 10% at the limits"]];
+  const K = {
+    id: "cash", root: "#cash", view: "#view-cash", title: "Cash flows", mode: "simulate", busy: "", results: {}, errors: {}, rule: null, guard: null, go: null, progress: null,
+    about: "Follow a portfolio of real tickers through money coming in and going out. Tickers come from the Backtest tab's data source and start date.",
+    modes: [["simulate", "Deposits and withdrawals"], ["spending", "Spending rules"], ["redeem", "Redemption"], ["ldi", "Liabilities (LDI)"]],
+    runLabel: { simulate: "Follow the portfolio", spending: "Simulate spending", redeem: "Price the redemption", ldi: "Run the plan" },
+    blurb: { simulate: "Add money, take money out and receive dividends under each policy, and see what each policy does to the money you end with, the drift from your target and the cost.",
+      spending: "Spend from a portfolio each year under different rules over many futures made by resampling its own history: the chance of running out, and what spending looks like.",
+      redeem: "Raise cash for a redemption from a fund: what selling pro rata, most liquid first, or from a cash buffer costs, and how long it takes.",
+      ldi: "A plan that owes dated payments: how the funding ratio moves with interest rates if the plan holds long bonds against its liabilities, and a glide path that hedges more as it gets funded." },
+    form: { holdings: "", initial: "100000", deposit: "1000", withdraw: "0", growth: "0", rebalance: "none", dividend_yield: "0", dividend_policy: "flow", cost_bps: "5", dca_months: "1", policies: new Set(["pro_rata", "correct_drift", "rebalance", "cash"]),
+      spend_initial: "1000000", rate: "4", years: "30", inflation: "2", paths: "1000", target_ruin: "5", rules: new Set(["fixed_real", "percent_of_nav", "endowment", "guardrails"]),
+      aum: "1000000000", redemption: "10", cash: "5", participation: "10", hedge: "", seeking: "", funding_ratio: "0.85", liability_years: "25" },
+  };
+  const CASH_HOLDINGS = { key: "holdings", label: "Holdings and weights", kind: "text", placeholder: "SPY=60, IEF=40", help: "Tickers with weights (any scale; they are normalised). Leave the weights out for equal weight." };
+  const CASH_SIMULATE = [{ key: "initial", label: "Starting value ($)", kind: "number", min: 1000 }, { key: "deposit", label: "Deposit each month ($)", kind: "number", min: 0 }, { key: "withdraw", label: "Withdraw each month ($)", kind: "number", min: 0 },
+    { key: "growth", label: "Yearly growth of the flows (%)", kind: "number", min: -50, max: 100, help: "A contribution that rises with pay, or a withdrawal that keeps up with inflation." },
+    { key: "rebalance", label: "Scheduled rebalance", kind: "choice", options: [["none", "None"], ["monthly", "Monthly"], ["quarterly", "Quarterly"], ["annual", "Annual"], ["weekly", "Weekly"], ["daily", "Daily"]] },
+    { key: "dividend_yield", label: "Dividend yield (%)", kind: "number", min: 0, max: 20 },
+    { key: "dividend_policy", label: "Dividends are", kind: "choice", options: [["flow", "Handled like a deposit (by the policy)"], ["reinvest", "Reinvested in the asset that paid them"], ["cash", "Held as cash"]] },
+    { key: "cost_bps", label: "Trading cost (bps)", kind: "number", min: 0, max: 200 }, { key: "dca_months", label: "Spread the starting value and each deposit over this many months", kind: "number", step: 1, min: 1, max: 36, help: "Dollar-cost averaging: invest in equal parts at the start of each month; the part not yet invested waits in cash." }];
+  const CASH_SPENDING = [{ key: "spend_initial", label: "Starting portfolio ($)", kind: "number", min: 1000 }, { key: "rate", label: "First-year spending (% of the starting value)", kind: "number", min: 0.1, max: 50 },
+    { key: "years", label: "Years", kind: "number", step: 1, min: 1, max: 50 }, { key: "inflation", label: "Inflation (% a year)", kind: "number", min: -5, max: 20 }, { key: "paths", label: "Simulated futures", kind: "number", step: 1, min: 100, max: 2000 },
+    { key: "target_ruin", label: "Acceptable chance of running out (%)", kind: "number", min: 0.1, max: 50 }];
+  const CASH_REDEEM = [{ key: "aum", label: "Fund size ($)", kind: "number", min: 100000 }, { key: "redemption", label: "Redemption (% of the fund)", kind: "number", min: 0.1, max: 90 }, { key: "cash", label: "Cash buffer (% of the fund)", kind: "number", min: 0, max: 90 },
+    { key: "participation", label: "Most of the daily volume to take (%)", kind: "number", min: 1, max: 100 }];
+  const CASH_LDI = [{ key: "hedge", label: "Bond funds to hedge with", kind: "text", placeholder: "TLT" }, { key: "seeking", label: "Return-seeking funds", kind: "text", placeholder: "SPY, EFA" },
+    { key: "funding_ratio", label: "Funding ratio at the start (assets ÷ liabilities)", kind: "number", min: 0.3, max: 3 }, { key: "liability_years", label: "Years of payments owed (100 a year)", kind: "number", step: 1, min: 5, max: 60 }];
+  const CASH_SCALE = { growth: 0.01, dividend_yield: 0.01, rate: 0.01, inflation: 0.01, target_ruin: 0.01, redemption: 0.01, cash: 0.01, participation: 0.01 };
+  /* A ticker, which may end in =X or =F (Yahoo's currency pairs and futures), so a weight can only follow an = when it is a number: "SPY=60" is a weight, "SPY=abc" is a mistake. */
+  const HOLDING_TICKER = /^[A-Za-z0-9^][A-Za-z0-9.^-]{0,11}(?:=[XxFf])?$/;
+  function parseHoldings(text) {
+    const weights = {}, order = [];
+    for (const part of text.split(/[,;\n]+/).map((x) => x.trim()).filter(Boolean)) {
+      const m = /^(.+?)\s*[=:]\s*(\d*\.?\d+)\s*%?$/.exec(part), weighted = m && HOLDING_TICKER.test(m[1]), ticker = weighted ? m[1] : HOLDING_TICKER.test(part) ? part : null;
+      if (!ticker) throw new Error(`Cannot read "${part}": write holdings like SPY=60, IEF=40`);
+      const t = ticker.toUpperCase(); if (t in weights) throw new Error(`${t} is listed twice`);
+      weights[t] = weighted ? parseFloat(m[2]) : null; order.push(t);
+    }
+    if (!order.length) throw new Error("Name at least one holding");
+    const given = order.filter((t) => weights[t] !== null).length;
+    if (given && given < order.length) throw new Error("Give a weight to every holding, or to none");
+    if (!given) for (const t of order) weights[t] = 1;
+    if (order.every((t) => weights[t] === 0)) throw new Error("The weights add up to zero");
+    return { tickers: order, weights };
+  }
+  const tickerList = (text) => text.split(/[\s,;]+/).map((x) => x.trim().toUpperCase()).filter(Boolean);
+  const usable = () => S.tickers.filter((x) => x.status !== "bad");
+  const classOf = (t) => ((usable().find((x) => x.t === t) || {}).cls) || (S.catalog.default_classes || {})[t] || "unknown";
+  function seedCash() {
+    const f = K.form, have = usable().map((x) => x.t);
+    if (!f.holdings) f.holdings = have.includes("SPY") && have.includes("IEF") ? "SPY=60, IEF=40" : have.slice(0, 3).join(", ");
+    if (!f.hedge) f.hedge = have.find((t) => ["rates", "fixed_income"].includes(classOf(t))) || "";
+    if (!f.seeking) f.seeking = have.filter((t) => classOf(t) === "equity").slice(0, 2).join(", ");
+  }
+  function cashCommon() {
+    const classes = {}, isDefault = new Set(S.catalog.default_tickers); for (const x of usable()) if (!isDefault.has(x.t) && x.cls !== "unknown") classes[x.t] = x.cls;
+    return { classes, start: S.start || null, source: S.source };
+  }
+  K.check = () => {
+    try { if (K.mode === "ldi") { if (!tickerList(K.form.hedge).length || !tickerList(K.form.seeking).length) return "Name a bond fund to hedge with and a return-seeking fund."; } else parseHoldings(K.form.holdings); }
+    catch (e) { return e.message; }
+    if (K.mode === "simulate" && !K.form.policies.size) return "Choose at least one policy.";
+    if (K.mode === "spending" && !K.form.rules.size) return "Choose at least one spending rule.";
+    return "";
+  };
+  K.sections = (panel) => {
+    seedCash();
+    const f = K.form, after = () => syncLab(K), sec = (title) => { const d = h("details", "", panel); d.open = true; h("summary", "", d, title); return h("div", "body", d); };
+    const fields = (box, specs) => { for (const s of specs) labField(box, s, f, after); };
+    if (K.mode === "ldi") fields(sec("The plan"), CASH_LDI);
+    else { const p = sec("The portfolio"); labField(p, CASH_HOLDINGS, f, after); h("p", "hint", p, "Daily prices from the data source chosen in the Backtest tab, from its start date to the end of the shared history. Tickers that are not downloaded yet are fetched, within that source's rate limit."); }
+    if (K.mode === "simulate") { fields(sec("The flows"), CASH_SIMULATE); checkList(sec("Policies to compare"), "How each flow is traded (up to five):", POLICY_ITEMS, f.policies, after); }
+    if (K.mode === "spending") { fields(sec("The spending"), CASH_SPENDING); checkList(sec("Rules to compare"), "How the amount is set each year:", RULE_ITEMS, f.rules, after); }
+    if (K.mode === "redeem") fields(sec("The redemption"), CASH_REDEEM);
+  };
+  K.run = () => {
+    const f = K.form, m = K.mode, base = () => cashCommon();
+    const held = () => { const p = parseHoldings(f.holdings); return { tickers: p.tickers, weights: p.weights }; };
+    if (m === "simulate") return labRun(K, "/api/cash", () => ({ action: "simulate", ...base(), ...held(), policies: POLICY_ITEMS.map((p) => p[0]).filter((p) => f.policies.has(p)), ...numbers(f, ["initial", "deposit", "withdraw", "growth", "dividend_yield", "cost_bps", "dca_months"], CASH_SCALE), rebalance: f.rebalance, dividend_policy: f.dividend_policy }), "Following the portfolio day by day…");
+    if (m === "spending") return labRun(K, "/api/cash", () => ({ action: "spending", ...base(), ...held(), rules: RULE_ITEMS.map((r) => r[0]).filter((r) => f.rules.has(r)), ...numbers({ ...f, initial: f.spend_initial }, ["initial", "rate", "years", "inflation", "paths", "target_ruin"], CASH_SCALE) }), "Simulating futures…");
+    if (m === "redeem") return labRun(K, "/api/cash", () => ({ action: "redeem", ...base(), ...held(), ...numbers(f, ["aum", "redemption", "cash", "participation"], CASH_SCALE) }), "Pricing the sales…");
+    return labRun(K, "/api/cash", () => { const hedge = tickerList(f.hedge), seeking = tickerList(f.seeking); return { action: "ldi", ...base(), tickers: [...new Set([...hedge, ...seeking])], hedge, seeking, ...numbers(f, ["funding_ratio", "liability_years"]) }; }, "Running the plan…");
+  };
+  K.empty = (root) => {
+    const text = { simulate: ["Follow a portfolio through deposits and withdrawals", "Each policy decides which assets to buy with a deposit and sell for a withdrawal. You see the money you end with (what you earned, with the timing of the flows) beside the drift from your target mix and the cost of keeping it."],
+      spending: ["See whether a spending rule lasts", "Resample the portfolio's own history into thousands of futures and spend from each under the rules you choose: how often the money runs out, how much spending has to be cut, and the highest safe starting rate."],
+      redeem: ["Price a redemption", "Selling in proportion keeps the mix, selling the most liquid assets first is cheapest and leaves the book less liquid, and a cash buffer avoids selling at all. See what each costs and how long it takes."],
+      ldi: ["Fund a plan that owes payments", "A plan owes 100 a year for a number of years. Holding long bonds against that liability keeps its funding ratio steady when interest rates move; compare no hedge, a glide path and a full hedge."] }[K.mode];
+    labEmpty(root, K, text[0], [text[1], "Uses the tickers in the field on the left. The defaults need SPY and IEF (the platform's 15 ETFs include both)."], "Run it with these settings");
+  };
+  K.draw = () => drawLab(K);
+  K.build = (root, r, body) => ({ simulate: cashSimulate, spending: cashSpending, redeem: cashRedeem, ldi: cashLdi })[K.mode](root, r, body);
+  const holdingsText = (mix) => Object.entries(mix).map(([t, w]) => `${t} ${(w * 100).toFixed(0)}%`).join(" · ");
+  function cashHead(root, r, title, guide, withMix) {
+    labHead(root, title, [withMix === false ? null : holdingsText(r.mix), `${r.period[0]} to ${r.period[1]}`, r.universe && r.universe.source ? r.universe.source : null].filter(Boolean).join(" · "), guide);
+  }
+
+  function cashSimulate(root, r) {
+    const rows = r.rows, i = r.inputs, names = rows.map((x) => POLICY_NAMES[x.policy] || x.policy), most = rows.reduce((a, b) => (b.final_value > a.final_value ? b : a)), closest = rows.reduce((a, b) => (b.mean_deviation < a.mean_deviation ? b : a));
+    cashHead(root, r, "Money in and money out", "technique-cash-flow-strategies");
+    h("p", "hint", root, `Starting with ${money(i.initial)}` + (i.deposit ? `, ${money(i.deposit)} added each month` : "") + (i.withdraw ? `, ${money(i.withdraw)} taken out each month` : "") + (i.growth ? `, the flows growing ${pct(i.growth, 1)} a year` : "") + `. Scheduled rebalance: ${i.rebalance}.` + (i.dividend_yield ? ` Dividend yield ${pct(i.dividend_yield, 1)}.` : "") + ` Trading cost ${i.cost_bps} bps.`);
+    const k = h("div", "earnrow", root);
+    tile(k, "Ended with the most", money(most.final_value), { text: `${POLICY_NAMES[most.policy] || most.policy} · money-weighted return ${pct(most.irr, 1)} a year` }, "", "Final value of the account");
+    tile(k, "Stayed closest to the target", pct(closest.mean_deviation, 1), { text: `${POLICY_NAMES[closest.policy] || closest.policy} · average distance from the target weights` }, "", "Half the sum of the absolute differences between the weights and the target, averaged over the days");
+    tile(k, "Put in and taken out", money(rows[0].deposits), { text: rows[0].withdrawals ? `taken out ${money(Math.abs(rows[0].withdrawals))}` : "nothing taken out" });
+    const card = h("div", "card", root); h("h3", "", card, "By policy"); h("p", "note", card, "The money-weighted return is what the investor earned given when the money arrived; the time-weighted return is what the portfolio did, whatever the flows. They differ by the timing of the flows.");
+    simpleTable(card, [{ label: "Policy", get: (x) => POLICY_NAMES[x.policy] || x.policy }, { label: "Ends with", num: true, get: (x) => money(x.final_value) }, { label: "Profit", num: true, get: (x) => smoney(x.profit) },
+      { label: "Money-weighted", title: "Yearly return of the investor, given when the money arrived (the internal rate of return)", num: true, get: (x) => pct(x.irr, 1) },
+      { label: "Time-weighted", title: "Yearly return of the portfolio, whatever the flows", num: true, get: (x) => pct(x.twr_annual, 1) }, { label: "Traded a year", title: "Dollars traded a year as a share of the average account value", num: true, get: (x) => pct(x.turnover, 1) },
+      { label: "Costs", num: true, get: (x) => money(x.costs) }, { label: "Drift, average", title: "Average distance from the target weights (half the sum of the absolute differences)", num: true, get: (x) => pct(x.mean_deviation, 1) },
+      { label: "Drift, largest", title: "Largest distance from the target weights", num: true, get: (x) => pct(x.max_deviation, 1) }, { label: "Cash, average", title: "Average share of the account held as cash", num: true, get: (x) => pct(x.mean_cash, 1) }], rows);
+    const ch = h("div", "charts", root), series = (key, scale) => rows.map((x, n) => ({ name: names[n], color: colorOf(n), values: r[key][x.policy].map((v) => (v === null ? null : v * (scale || 1))) }));
+    chartCard(ch, "Account value", "Weekly. Net of trading costs.", { wide: true,
+      draw: (b) => C.line(b, { dates: r.dates, series: series("nav"), yFormat: axisMoney, tipFormat: (v) => money(v), height: 300, label: "Account value by policy", endLabels: false }),
+      table: (b) => simpleTable(b, [{ label: "Week", get: (n) => r.dates[n] }, ...names.map((nm, n) => ({ label: nm, num: true, get: (j) => money(r.nav[rows[n].policy][j]) }))], sampleRows(r.dates, null, 13)) });
+    chartCard(ch, "Distance from the target weights", "Half the sum of the absolute differences between the weights held and the target, weekly. Zero is exactly on target.", { wide: true,
+      draw: (b) => C.line(b, { dates: r.dates, series: series("deviation"), baseline: 0, include: 0, yFormat: (v) => (v * 100).toFixed(0) + "%", tipFormat: (v) => pct(v, 1), height: 240, label: "Distance from the target weights", endLabels: false }),
+      table: (b) => simpleTable(b, [{ label: "Week", get: (n) => r.dates[n] }, ...names.map((nm, n) => ({ label: nm, num: true, get: (j) => pct(r.deviation[rows[n].policy][j], 1) }))], sampleRows(r.dates, null, 13)) });
+    h("p", "hint", root, "One historical path. The policy that ended highest did so partly because drift toward the asset that did well was rewarded in this sample; drift is a risk as often as a reward. The policies buy control of the mix, not return.");
+  }
+
+  function cashSpending(root, r) {
+    const rows = r.rows, rules = rows.map((x) => x.rule); if (!rules.includes(K.rule)) K.rule = rules[0];
+    cashHead(root, r, `Spending ${pct(r.rate, 1)} of ${money(r.initial)} a year for ${r.years} years`, "technique-cash-flow-strategies");
+    h("p", "hint", root, `${grouped(r.paths)} futures made by resampling ${grouped(r.days)} days of this portfolio's own history in blocks of about a month (so calm and stormy spells stay together). Inflation ${pct(r.inflation, 1)}; all amounts are in today's dollars.`);
+    const k = h("div", "earnrow", root);
+    tile(k, "Highest safe starting rate", pct(r.sustainable_rate, 1), { text: `fixed real withdrawals, at most ${pct(r.target_ruin, 1)} chance of running out` }, "", "Found by bisection over the same futures");
+    const first = rows[0]; tile(k, "Chance of running out", pct(first.ruin_probability, 1), { text: `${RULE_NAMES[first.rule] || first.rule} at ${pct(r.rate, 1)}` });
+    tile(k, "Typical outcome", money(first.median_final_real_wealth), { text: `median wealth left after ${r.years} years (${RULE_NAMES[first.rule] || first.rule})` });
+    const card = h("div", "card", root); h("h3", "", card, "By spending rule");
+    simpleTable(card, [{ label: "Rule", get: (x) => RULE_NAMES[x.rule] || x.rule }, { label: "Runs out", title: "Share of futures in which the portfolio could not pay a year's spending in full", num: true, get: (x) => pct(x.ruin_probability, 1) },
+      { label: "Spending cut", title: "Share of futures in which spending fell below 80% of the first year's at some point", num: true, get: (x) => pct(x.spending_cut_probability, 1) },
+      { label: "Spent a year", title: "Average spending a year, in today's dollars", num: true, get: (x) => money(x.mean_real_spending) }, { label: "Years paid", title: "Average number of years paid in full", num: true, get: (x) => num(x.years_funded, 1) },
+      { label: "Median left", title: "Median wealth at the end, in today's dollars", num: true, get: (x) => money(x.median_final_real_wealth) },
+      { label: "5th pct left", title: "5th percentile of wealth at the end, in today's dollars: one future in twenty ends with less", num: true, get: (x) => money(x.p05_final_real_wealth) }], rows);
+    const pick = h("div", "row", root); h("span", "hint", pick, "Show the range of outcomes for"); const seg = h("div", "seg", pick), buttons = [];
+    const ch = h("div", "charts", root);
+    const fan = (a, offset) => {
+      const q = r.bands[K.rule][a], years = r.bands[K.rule].years, xs = offset ? years.slice(1) : years;
+      return { xs, q };
+    };
+    const fanChart = (title, note, key, label) => chartCard(ch, title, note, { wide: true,
+      draw: (b) => { const { xs, q } = fan(key, key === "spending"); C.line(b, { xs, xWhole: true, xLabel: "Year", series: [{ name: "Median", color: css("--s1"), values: q[2], width: 2.5 }],
+        bands: [{ lo: q[0], hi: q[4], color: css("--s1"), name: "5th to 95th percentile", opacity: 0.12 }, { lo: q[1], hi: q[3], color: css("--s1"), name: "25th to 75th percentile", opacity: 0.22 }],
+        yFormat: axisMoney, tipFormat: (v) => money(v), xFormat: (v) => String(Math.round(v)), tipTitle: (i) => `Year ${xs[i]}`, height: 300, label, include: 0, endLabels: false }); },
+      table: (b) => { const { xs, q } = fan(key, key === "spending"); simpleTable(b, [{ label: "Year", num: true, get: (i) => xs[i] }, ...["5th", "25th", "Median", "75th", "95th"].map((nm, n) => ({ label: nm, num: true, get: (i) => money(q[n][i]) }))], xs.map((_, i) => i)); } });
+    const wealth = fanChart(`Portfolio value left, in today's dollars`, `The middle half of futures lie in the darker band and nine in ten in the lighter one.`, "wealth", "Portfolio value by year");
+    const spent = fanChart("Spending each year, in today's dollars", "What was actually paid: it falls below the plan when the money runs short.", "spending", "Spending by year");
+    for (const rule of rules) { const b = h("button", "", seg, RULE_NAMES[rule] || rule); b.dataset.rule = rule; buttons.push(b); b.addEventListener("click", () => { K.rule = rule; mark(); wealth._draw(); spent._draw(); }); }
+    const mark = () => buttons.forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.rule === K.rule))); mark();
+    h("p", "hint", root, "A bootstrap of the past cannot produce a future worse than the history it samples. Twenty years of a 60/40 contains one financial crisis and one inflation shock; widen the sample or the stress before reading a small chance as a promise.");
+  }
+
+  function cashRedeem(root, r) {
+    const i = r.inputs, rows = r.rows, cheapest = rows.reduce((a, b) => (b.cost_bps_of_fund < a.cost_bps_of_fund ? b : a));
+    cashHead(root, r, `Redeeming ${pct(i.redemption, 1)} of a ${money(i.aum)} fund`, "technique-cash-flow-strategies");
+    h("p", "hint", root, `${pct(1 - r.cash, 0)} of the fund is invested in the mix above` + (r.cash ? ` and ${pct(r.cash, 0)} is held as cash` : "") + `. Sales take at most ${pct(i.participation, 0)} of each asset's daily dollar volume. ${r.note}`);
+    const k = h("div", "earnrow", root);
+    tile(k, "Cheapest overall", bps(cheapest.cost_bps_of_fund, 2), { text: `of the fund · ${POLICY_NAMES[cheapest.policy] || cheapest.policy} (${bps(cheapest.cost_bps)} of what it sold)` }, "", "Spread, temporary and permanent impact of the sales, as a share of the whole fund so that policies that sell different amounts can be compared");
+    const slow = rows.reduce((a, b) => (b.days > a.days ? b : a)); tile(k, "Slowest to finish", num(slow.days, 1) + " days", { text: POLICY_NAMES[slow.policy] || slow.policy });
+    const drift = rows.reduce((a, b) => (b.drift_after > a.drift_after ? b : a)); tile(k, "Furthest from the mix afterwards", pct(drift.drift_after, 1), { text: POLICY_NAMES[drift.policy] || drift.policy });
+    const card = h("div", "card", root); h("h3", "", card, "By policy");
+    simpleTable(card, [{ label: "Policy", get: (x) => POLICY_NAMES[x.policy] || x.policy }, { label: "Cost, bps of the fund", title: "Cost of the sales as a share of the whole fund: the measure that compares policies selling different amounts", num: true, get: (x) => num(x.cost_bps_of_fund, 2) },
+      { label: "Cost, bps of sales", title: "Cost of the sales as a share of the amount sold", num: true, get: (x) => num(x.cost_bps, 1) }, { label: "Days", title: "Days until the last sale is done, at the daily volume limit", num: true, get: (x) => num(x.days, 1) },
+      { label: "Assets sold", num: true, get: (x) => String(Math.round(x.assets_sold)) }, { label: "Raised by selling", title: "Cash raised from the holdings; the rest of the redemption came from the cash buffer", num: true, get: (x) => money(x.raised) },
+      { label: "Drift left", title: "Distance from the target mix after the sales (half the sum of the absolute differences)", num: true, get: (x) => pct(x.drift_after, 1) },
+      { label: "Timing risk", title: "Average price risk of the sales while they are worked, in basis points", num: true, get: (x) => bps(x.risk_bps) }], rows);
+    const ch = h("div", "charts", root), labels = rows.map((x) => POLICY_NAMES[x.policy] || x.policy), width = labelPx(labels);
+    chartCard(ch, "Cost of the sales", "Basis points of the whole fund, which compares policies that sell different amounts; lower is cheaper. The table also has basis points of the amount sold.", {
+      draw: (b) => C.hbars(b, { rows: rows.map((x, n) => ({ label: labels[n], value: x.cost_bps_of_fund, color: colorOf(n) })), format: (v) => num(v, 2), tipFormat: (v) => bps(v, 2) + " of the fund", name: "Cost", label: "Cost of the sales", labelWidth: width, color: (v, row) => row.color }),
+      table: (b) => simpleTable(b, [{ label: "Policy", get: (x) => POLICY_NAMES[x.policy] || x.policy }, { label: "bps of the fund", num: true, get: (x) => num(x.cost_bps_of_fund, 3) }, { label: "bps of the amount sold", num: true, get: (x) => num(x.cost_bps, 2) }], rows) });
+    chartCard(ch, "Days to finish", "At the daily volume limit above.", {
+      draw: (b) => C.hbars(b, { rows: rows.map((x, n) => ({ label: labels[n], value: x.days, color: colorOf(n) })), format: (v) => num(v, 1), tipFormat: (v) => num(v, 2) + " days", name: "Days", label: "Days to finish", labelWidth: width, color: (v, row) => row.color }),
+      table: (b) => simpleTable(b, [{ label: "Policy", get: (x) => POLICY_NAMES[x.policy] || x.policy }, { label: "Days", num: true, get: (x) => num(x.days, 2) }], rows) });
+    h("p", "hint", root, "The fund holds exactly its target mix here, so 'sell what has drifted' would be the same as selling pro rata and is not listed. The cost uses the same impact model as the execution algorithms with illustrative parameters.");
+  }
+
+  function cashLdi(root, r) {
+    const i = r.inputs, rows = r.rows;
+    cashHead(root, r, "A plan that owes payments", "technique-cash-flow-strategies", false);
+    h("p", "hint", root, `Owes 100 a year for ${i.liability_years} years, discounted at the 10-year Treasury yield; starts ${pct(i.funding_ratio, 0)} funded. Hedge with ${r.hedge.join(", ")}; seek return with ${r.seeking.join(", ")}.`);
+    const k = h("div", "earnrow", root);
+    for (const x of rows) tile(k, x.plan.charAt(0).toUpperCase() + x.plan.slice(1), pct(x.funding_ratio_vol, 1), { text: `volatility of the funding ratio · worst fall ${pct(x.max_funding_drawdown, 0)}` }, "", "Annualised volatility of the funding ratio");
+    const card = h("div", "card", root); h("h3", "", card, "By plan");
+    simpleTable(card, [{ label: "Plan", get: (x) => x.plan }, { label: "Funding ratio at the start", num: true, get: (x) => pct(x.funding_ratio_start, 0) }, { label: "At the end", num: true, get: (x) => pct(x.funding_ratio_end, 0) }, { label: "Lowest", num: true, get: (x) => pct(x.funding_ratio_min, 0) },
+      { label: "Volatility", num: true, get: (x) => pct(x.funding_ratio_vol, 1) }, { label: "Worst fall", num: true, get: (x) => pct(x.max_funding_drawdown, 0) }, { label: "Share of the time below 100%", num: true, get: (x) => pct(x.share_below_one, 0) }], rows);
+    const ch = h("div", "charts", root), plans = rows.map((x) => x.plan);
+    const series = (key, scale) => plans.map((p, n) => ({ name: p, color: colorOf(n), values: r[key][p].map((v) => (v === null ? null : v * (scale || 1))) }));
+    chartCard(ch, "Funding ratio", "Assets divided by the present value of the payments owed, weekly. Above 100% the plan can meet its promises.", { wide: true,
+      draw: (b) => C.line(b, { dates: r.dates, series: series("funding_ratio", 100), baseline: 100, yFormat: (v) => v.toFixed(0) + "%", tipFormat: (v) => v.toFixed(0) + "%", height: 300, label: "Funding ratio by plan", endLabels: false }),
+      table: (b) => simpleTable(b, [{ label: "Week", get: (n) => r.dates[n] }, ...plans.map((p) => ({ label: p, num: true, get: (n) => pct(r.funding_ratio[p][n], 0) }))], sampleRows(r.dates, null, 13)) });
+    chartCard(ch, "Share of the assets in the hedge", "How much of the plan is held in the bond funds. The glide path raises it as the plan gets better funded.", { wide: true,
+      draw: (b) => C.line(b, { dates: r.dates, series: series("hedge_weight", 100), include: 0, yFormat: (v) => v.toFixed(0) + "%", tipFormat: (v) => v.toFixed(0) + "%", height: 220, label: "Share of assets in the hedge", endLabels: false }),
+      table: (b) => simpleTable(b, [{ label: "Week", get: (n) => r.dates[n] }, ...plans.map((p) => ({ label: p, num: true, get: (n) => pct(r.hedge_weight[p][n], 0) }))], sampleRows(r.dates, null, 13)) });
+    h("p", "hint", root, "A flat discount yield and equal-weight buckets: a real plan discounts every payment on its own curve and hedges key-rate durations, not one number. The plan is open: no payments are made out of the assets in this view, so the funding ratio shows the hedge and not the cash drain.");
+  }
+
   /* ================================================================= guides + markdown */
   const G = { index: null, slug: null, filter: "" };
-  const FILE_SLUGS = { "dashboard.md": "dashboard", "how_to_add_a_strategy.md": "how_to_add_a_strategy", "START_HERE.md": "start_here", "glossary.md": "glossary", "tour_of_a_backtest_day.md": "tour_of_a_backtest_day", "roadmap_coverage.md": "roadmap_coverage", "platform_integration.md": "platform_integration", "feature_audit.md": "feature_audit" };
+  const FILE_SLUGS = { "dashboard.md": "dashboard", "how_to_add_a_strategy.md": "how_to_add_a_strategy", "START_HERE.md": "start_here", "glossary.md": "glossary", "tour_of_a_backtest_day.md": "tour_of_a_backtest_day", "roadmap_coverage.md": "roadmap_coverage", "algorithmic_trading.md": "algorithmic_trading", "platform_integration.md": "platform_integration", "feature_audit.md": "feature_audit" };
   function slugFromHref(href) {
     const clean = href.split("#")[0], base = clean.split("/").pop();
     if (/techniques\//.test(clean) || (/^[a-z0-9-]+\.md$/.test(clean) && G.index && G.index.some((d) => d.slug === "technique-" + base.replace(".md", "")))) return "technique-" + base.replace(".md", "");
@@ -807,7 +1290,10 @@
   }
 
   /* ================================================================= redraw and boot */
-  function redraw() { if (!$("#view-backtest").hidden && S.current) renderResult(); if (!$("#view-compare").hidden) renderCompare(); if (!$("#view-builder").hidden) renderBuilder(); }
+  function redraw() {
+    if (!$("#view-backtest").hidden && S.current) renderResult(); if (!$("#view-compare").hidden) renderCompare(); if (!$("#view-builder").hidden) renderBuilder();
+    if (!$("#view-exec").hidden) drawLab(X); if (!$("#view-cash").hidden) drawLab(K);
+  }
   /* Charts are drawn at the pixel width of their container, so they are redrawn when the page gets wider or narrower (a window resize, a phone turned sideways, a scroll bar appearing).
      A change of HEIGHT is not a reason: it happens every time the user opens a table or a details tab, and redrawing the whole result then undid what they had just chosen and sent the
      page back to the top. */
@@ -817,7 +1303,10 @@
     if (lastWidth === null) { lastWidth = w; return; }
     if (Math.abs(w - lastWidth) < 2) return;
     lastWidth = w;
-    clearTimeout(rz); rz = setTimeout(() => { if (!$("#view-backtest").hidden && S.current && !S.busy) renderResult(); }, 180);
+    clearTimeout(rz); rz = setTimeout(() => {
+      if (!$("#view-backtest").hidden && S.current && !S.busy) renderResult();
+      if (!$("#view-exec").hidden) drawLab(X); if (!$("#view-cash").hidden) drawLab(K);
+    }, 180);
   }).observe($("main"));
 
   /* The server is older than the page when it reports a lower API version; the first release with data sources did not report one, but it did send ``sources``. */

@@ -18,7 +18,7 @@ result.
 **New here?** `pip install -e .`, then `quant demo` (thirteen seconds on the cached data), `quant dashboard` (an offline
 explorer of every hypothesis the project declared, most of them rejected) and `quant explain deflated sharpe` (any term,
 technique, strategy or experiment, in plain language). Read [`docs/START_HERE.md`](docs/START_HERE.md) for a learning path
-by background, the [technique guides](docs/techniques/index.md) (81 of them, from PCA to diffusion models and from HAC errors to option surfaces), the
+by background, the [technique guides](docs/techniques/index.md) (89 of them, from PCA to diffusion models, from HAC errors to option surfaces and from VWAP to liability-driven investing), the
 [chapter map](docs/chapter_map.md) from the book to the code, and [what was and was not built](docs/roadmap_coverage.md).
 Adding a strategy is writing one forecast model: [how to](docs/how_to_add_a_strategy.md). Chronos is optional:
 `pip install -e ".[chronos]"`; its pretrained weights download from Hugging Face the first time it runs.
@@ -207,7 +207,10 @@ drawdowns, rolling Sharpe, annual and monthly returns, exposure, attribution, re
 you tried. A strategy that trades each ticker on its own signal runs on a single ticker (one that ranks tickers refuses to, and says why); the
 Earnings tab gives the profit in dollars by year and month, profit factor, best and worst periods and the deepest fall, and the Trades tab lists
 the round trips (long and short, with dates, prices and profit) and the buys and sells. It also compares runs and renders the guides, including
-[how to add a strategy](docs/how_to_add_a_strategy.md). Runs on localhost with a per-launch token; the browser never sends code.
+[how to add a strategy](docs/how_to_add_a_strategy.md). The **Execution** tab runs the execution algorithms (VWAP, TWAP, POV, arrival price, implementation
+shortfall, adaptation tactics, baskets, liquidity seeking and high-frequency simulators) on a stylised market from a form, and the **Cash flows** tab follows a
+portfolio of your tickers through deposits, withdrawals, dividends, spending rules, redemptions and liabilities. Runs on localhost with a per-launch token;
+the browser never sends code.
 
 **Integration audit.** A strict feature audit of the Generation 2-4 roadmap ([`docs/feature_audit.md`](docs/feature_audit.md), with a
 before/after status for every feature) found that most of it lived only in stage scripts. The pieces are now reachable from one
@@ -274,6 +277,18 @@ print(demo.result.digest)       # the same inputs always give the same digest
 
 **What the evidence says, honestly.** All of this is exercised on a **synthetic market with a known generating process**: the tests prove that the machinery recovers what was built in (independent P&L recomputation through futures rolls, cash and position conservation, exercise and assignment against analytic P&L, swap identities, no dependence on the future, deterministic replay, a paper session that reproduces a backtest), and the demo's numbers say nothing about real markets. Real option, futures, FX-forward, swap-curve and tick data are not available here; the loaders and schemas exist. Broker adapters need credentials and are not built (the interface, a paper broker and a position reconciliation are). Constraints are applied per strategy, the isolated-margin liquidation check runs at the daily snapshot, partial option exercise is not supported, and resting orders have no queue-position model (market orders do walk displayed book depth when the data carry it).
 
+## Generation 8: strategy styles, execution algorithms and cash flows
+
+The strategy catalogue was widened to the taxonomy a portfolio manager and a trading desk work from: investment and portfolio strategies (alpha, rebalancing, risk, cash flow, economic outlook), the styles and types of trading algorithm, high-frequency strategies, best-execution goals, adaptation tactics and the portfolio-optimisation techniques behind them. [`docs/algorithmic_trading.md`](docs/algorithmic_trading.md) is the coverage page: every item of the taxonomy with where it lives and whether it is built, already existed, or reads a file you supply. It is generated from the code, and a test keeps it in step. Start with the guides on [alpha styles](docs/techniques/alpha-generating-styles.md), [rebalancing styles](docs/techniques/portfolio-rebalancing-styles.md), [economic outlook](docs/techniques/economic-outlook-strategies.md), [overlays and liquidation](docs/techniques/portfolio-overlays-and-liquidation.md), [cash flows](docs/techniques/cash-flow-strategies.md), [execution algorithms](docs/techniques/execution-algorithms.md), [baskets and liquidity seeking](docs/techniques/basket-and-liquidity-algorithms.md) and [black-box and high-frequency strategies](docs/techniques/black-box-and-high-frequency-strategies.md).
+
+- **`src/strategies`** (13 new models, 103 in all): `jensen_alpha`, `adaptive_autocorrelation`, `squeeze_breakout`, `abnormal_volume_drift` and `event_study_drift` (alpha); `news_sentiment` and `panel_signal` (company news, outlooks and corporate actions from a file you supply in `data/user/`); `policy_portfolio` (strategic weights with a calendar and a band), `rebalancing_flow` (the month-end flows of funds that target a mix), `flight_to_quality` and `market_outlook`; `curve_quadrant` and `credit_cycle_rotation` (economic outlook, with states learned from earlier data only). [Strategy survey, part two](docs/strategy_survey_2.md) runs them on the 15 ETFs.
+- **`src/framework/allocators_overlay.py`** (17 allocators in all): `beta_neutral` (market neutral by projection or with one hedge instrument), `liquidity_cap`, and `tca_mvo` (mean-variance with the trading-cost model inside the optimiser: portfolio optimisation with transaction-cost analysis).
+- **`src/algo`**: a market and impact model (Almgren-Chriss: power-law temporary impact, linear permanent impact, spread), an intraday simulator with aggressive, working-order and passive styles and five market scenarios, VWAP, TWAP, POV, arrival price and implementation shortfall, the five best-execution goals, exponential-trade, exponential-residual and trade-rate schedule families, a quadratic-programming schedule optimiser, the adaptation tactics (target cost, aggressive and passive in the money), basket algorithms with the minimum trading risk quantity, maximum trading opportunity and program-block decomposition, liquidity seeking, and research simulators of pair trading, ETF arbitrage, rebate trading and market making; `quant algo list|run|frontier|basket|hft`.
+- **`src/cashflow`**: deposits, withdrawals, cash dividends and dollar-cost averaging under five flow policies (money-weighted against time-weighted return), the cost of meeting a redemption, liability-driven investing with a glide path, and spending rules (fixed real, share of value, endowment, guardrails) over bootstrapped futures with the highest safe spending rate; `quant cashflow simulate|spending|redeem|ldi`.
+- **The dashboard** has an Execution tab and a Cash flows tab for all of it.
+
+**What the evidence says, honestly.** On the 15 ETFs the style strategies mostly do not pay. Of the 11 that ran, `policy_portfolio` (60/40, restored quarterly with a 5% band) earned a net Sharpe of +0.83 against +0.65 for equal weight over the same dates, the same as the static 60/40 it is built on; `curve_quadrant` (+0.70) and `flight_to_quality` (+0.60) protect rather than earn, and both trail equal weight over their own dates; the short-term rules lose after 10 bps of cost: `rebalancing_flow` earned +0.31 gross and +0.02 net at 7.7x turnover, and `adaptive_autocorrelation` +0.09 gross and -0.84 net at 116x. With 92 strategies counted as trials none clears a deflated Sharpe of 0.95. The execution and high-frequency code is a set of **stylised simulators** with illustrative impact parameters: they reproduce their own closed forms (the tests check that) and show which way a setting pushes a cost, and they say nothing about a real order book, queue position or the cost of your own trades. The company-news, outlook, corporate-action and index-reconstitution strategies need files you supply (`news_sentiment` and `panel_signal` could not be run here), the adaptation tactics, minimum-risk, maximum-opportunity and program-block rules follow documented interpretations of one-line definitions, and the liability model uses one flat discount yield.
+
 ## Repository layout
 
 ```
@@ -299,7 +314,7 @@ src/
                  diffusion, evolution-strategies policy, explanation methods
   framework/     Generation 5 plugin pipeline: types, registries, data bundle, regimes, calibration and combination, allocators,
                  regime risk, validation, experiment manager, tear sheet, dashboard, demo, generated docs
-  strategies/    the 90 registered forecast models (time-series, cross-sectional, stat-arb, volatility, fixed income, macro, ML, crypto, econometric, multi-asset carry)
+  strategies/    the 103 registered forecast models (time-series, cross-sectional, stat-arb, volatility, fixed income, macro, ML, crypto, econometric, multi-asset carry, alpha, rebalancing and economic-outlook styles)
   stats/         Generation 6: regression and HAC, panels, unit roots, cointegration, event studies, multiple testing, Sharpe inference
   probability/   Generation 6: resampling, Monte Carlo, EVT, copulas, drawdown and Kelly, Bayesian inference, Markov models
   econometrics/  Generation 6: ARIMA, VAR/VECM, GARCH family, state space, dynamic factors
@@ -313,13 +328,15 @@ src/
   engine/        Generation 7: event-driven engine, lifecycle, strategy API, strategies, costs, constraints, risk, optimisation, paper trading, demo
   swaps/         Generation 7: swap schedules, curves, cashflows, pricing, risk and strategies
   causal/        double machine learning, R-learner, 2SLS, difference in differences, simulated worlds
+  algo/          Generation 8: execution algorithms, impact and schedule optimisation, baskets, liquidity seeking, high-frequency simulators, the taxonomy catalogue
+  cashflow/      Generation 8: flow policies, redemptions, dividends, liabilities (LDI) and spending rules
   cli.py         the `quant` command
   utils/         config, logging, dates, plotting, experiment registry
-docs/            START_HERE, 81 technique guides, glossary, chapter map, strategy cards, capability matrix, research survey, architecture, notebooks, roadmap coverage (mkdocs.yml)
+docs/            START_HERE, 89 technique guides, glossary, chapter map, strategy cards, capability matrix, research survey, architecture, notebooks, roadmap coverage (mkdocs.yml)
 experiments/     numbered stage scripts + the experiment registry
 reports/         figures, tables, the data-quality report, the research paper,
                  the Generation 2-5 reports, errata/ (before/after record of the drift fix), the dashboard
-tests/           1643 tests
+tests/           2022 tests
 Dockerfile, docker-compose.yml, Makefile, .github/workflows/ci.yml and benchmark.yml, .pre-commit-config.yaml
 ```
 
@@ -338,7 +355,7 @@ python -m experiments.run_all --generation 5  # Generation 5 only (stages 30-40)
 python -m experiments.run_all --from 6 --to 9 # a range of stages
 python -m experiments.run_all --fresh         # clear derived artefacts first
 python -m experiments.stage01_data            # a single stage
-pytest -q                                      # 1643 tests
+pytest -q                                      # 2022 tests
 quant demo; quant dashboard; quant explain risk parity   # the newcomer layer
 quant serve                                    # the interactive dashboard: your tickers, your strategies
 quant new-strategy my_idea                     # a template for your own strategy in user_strategies/

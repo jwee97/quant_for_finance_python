@@ -14,6 +14,7 @@ from src.webapp.providers import ITickProvider, RateLimiter
 from src.webapp.universe import TickerStore, UniverseBuilder, itick_source
 from tests.fake_itick import KEY, FakeClock, FakeITick
 from tests.test_webapp import _default, _fetch
+from tests.test_webapp_labs import _rich
 
 sync_api = pytest.importorskip("playwright.sync_api")
 
@@ -529,3 +530,216 @@ def test_without_a_key_the_page_says_how_to_set_one_up_and_refuses_the_download(
     assert pg.locator(".chip.bad").count() == 1 and "not set up" in pg.inner_text("#u-chips")
     pg.select_option("#u-source-select", "yahoo")                                  # Yahoo does not need it: the same ticker is checked again against the other source
     pg.wait_for_selector(".chip.pending", state="detached", timeout=30_000)
+
+
+# ------------------------------------------------------------------------------------------------------ the Execution and Cash flows tabs
+@pytest.fixture(scope="module")
+def live_labs(tmp_path_factory):
+    """A server whose platform data also has dollar volume and the ten-year yield (the redemption and liability tools need them)."""
+    config = load_config()
+    store = TickerStore(tmp_path_factory.mktemp("lab_prices"), fetch=_fetch)
+    running = server.start(App(config, builder=UniverseBuilder(config, store, default_loader=_rich), root=config.root), "127.0.0.1", 0)
+    yield running
+    running.stop()
+
+
+@pytest.fixture()
+def labs(browser, live_labs):
+    pg = browser.new_page(viewport={"width": 1400, "height": 1000})
+    pg.problems = []
+    pg.on("pageerror", lambda e: pg.problems.append(f"pageerror: {e}"))
+    pg.on("console", lambda m: pg.problems.append(f"console {m.type}: {m.text}") if m.type == "error" else None)
+    pg.goto(live_labs.url)
+    pg.wait_for_selector(".chip")
+    yield pg
+    assert not pg.problems, pg.problems
+    pg.close()
+
+
+def _card(page, scope, title):
+    return page.locator(f"{scope} .chartcard", has=page.locator(f"h3:text-is({title!r})"))
+
+
+def _refused(page):
+    """The browser logs a refused request (HTTP 400) as a console error; the test asked for the refusal, so it is not a problem with the page."""
+    page.problems[:] = [p for p in page.problems if "status of 400" not in p]
+
+
+def _lab_run(page, tab, wait_for, timeout=90_000):
+    page.click(f"#tab-{tab}")
+    page.wait_for_selector(f"#{tab} .panel")
+    page.click(f"#{tab} .runbar button")
+    page.wait_for_selector(wait_for, timeout=timeout)
+
+
+def test_the_execution_tab_compares_algorithms_and_draws_every_chart(labs):
+    labs.click("#tab-exec")
+    labs.wait_for_selector("#exec .panel")
+    assert "Compare execution algorithms" in labs.inner_text("#exec-results") and labs.locator("#exec-results svg.chart").count() == 0      # an invitation, not an empty page
+    labs.click("#exec .runbar button")
+    labs.wait_for_selector("#exec-results .earnrow", timeout=60_000)
+    assert labs.locator("#exec-results .earnrow .tile").count() == 3 and labs.locator("#exec-results svg.chart").count() == 4
+    rows = labs.locator("#exec-results table.data").first.locator("tbody tr")
+    assert [rows.nth(i).locator("td").first.inner_text() for i in range(rows.count())] == ["twap", "vwap", "pov", "arrival_price", "is:risk_aversion=0.003"]
+    assert "Read the guide" in labs.inner_text("#exec-results") and "stylised market" in labs.inner_text("#exec-results")
+    schedule = _card(labs, "#exec-results", "How each algorithm spreads the order through the day")
+    schedule.scroll_into_view_if_needed()
+    box = schedule.locator("svg.chart").bounding_box()                                                # the card is below the fold at first: measure it where it is now
+    labs.mouse.move(box["x"] + box["width"] * 0.3, box["y"] + 120)
+    labs.wait_for_selector(".tip:not([hidden])")
+    assert "Slice" in labs.inner_text(".tip:not([hidden])") and "Market volume" in labs.inner_text(".tip:not([hidden])")
+    before = schedule.locator("svg.chart").inner_html()
+    schedule.locator(".seg button:text-is('Cumulative')").click()
+    assert schedule.locator("svg.chart").inner_html() != before and schedule.locator(".seg button:text-is('Cumulative')").get_attribute("aria-pressed") == "true"
+    scatter = _card(labs, "#exec-results", "Cost against risk")
+    assert scatter.locator("svg.chart text:text-is('arrival_price')").count() == 1                      # each point is named beside the point
+    cost = _card(labs, "#exec-results", "Average shortfall by algorithm")
+    cost.locator(".seg button:text-is('Table')").click()
+    assert "Temporary impact" in cost.inner_text() and cost.locator("svg.chart").count() == 0
+
+
+def test_the_form_and_the_result_stay_when_another_tab_is_opened_and_each_mode_runs(labs):
+    labs.click("#tab-exec")
+    labs.fill("#exec input[data-key=shares]", "123456")
+    labs.click("#exec .runbar button")
+    labs.wait_for_selector("#exec-results .earnrow", timeout=60_000)
+    assert "123,456 shares" in labs.inner_text("#exec-results")
+    labs.click("#tab-backtest")
+    labs.click("#tab-exec")
+    assert labs.input_value("#exec input[data-key=shares]") == "123456" and "123,456 shares" in labs.inner_text("#exec-results")
+    for mode, heading in (("frontier", "The cost-risk frontier"), ("basket", "A basket of 8 names"), ("hft", "ETF against its basket")):
+        labs.click(f"#exec .labtop button[data-mode={mode}]")
+        labs.click("#exec .runbar button")
+        labs.wait_for_selector(f"#exec-results h1:has-text('{heading}')", timeout=60_000)
+        assert labs.locator("#exec-results svg.chart").count() >= 1 and labs.locator("#exec-results .banner.err").count() == 0, mode
+    labs.click("#exec .labtop button[data-mode=run]")
+    assert "123,456 shares" in labs.inner_text("#exec-results"), "going back to a mode shows the result it had"
+    labs.click("#exec .labtop button[data-mode=hft]")
+    labs.select_option("#exec select[data-key=sim]", "pairs")
+    labs.click("#exec .runbar button")
+    labs.wait_for_selector("#exec-results h1:has-text('Pair trading')", timeout=60_000)
+    assert labs.locator("#exec-results svg.chart").count() == 1 and "Cumulative profit" in labs.inner_text("#exec-results")
+    labs.click("#exec-results button:text-is('Read the guide')")
+    labs.wait_for_selector("article.md h1:has-text('Black-box and high-frequency')")
+
+
+def test_a_request_the_server_refuses_is_explained_and_a_form_that_cannot_run_is_not_sent(labs):
+    labs.click("#tab-exec")
+    labs.fill("#exec input[data-key=custom]", "bogus")
+    labs.click("#exec .runbar button")
+    labs.wait_for_selector("#exec-results .banner.err")
+    assert "unknown algorithm 'bogus'" in labs.inner_text("#exec-results") and labs.locator("#exec-results .earnrow").count() == 0
+    _refused(labs)
+    labs.fill("#exec input[data-key=custom]", "")
+    for box in labs.locator("#exec input[data-value]").all():
+        box.uncheck()
+    assert labs.locator("#exec .runbar button.primary").is_disabled() and "between one and eight" in labs.inner_text("#exec .runbar .guard")
+    labs.fill("#exec input[data-key=custom]", "vwap")
+    assert labs.locator("#exec .runbar button.primary").is_enabled() and not labs.locator("#exec .runbar .guard").is_visible()
+
+
+def test_the_cash_flows_tab_runs_each_question_on_the_tickers_in_the_list(labs):
+    labs.click("#tab-cash")
+    labs.wait_for_selector("#cash .panel")
+    assert labs.input_value("#cash input[data-key=holdings]") == "AAA, BBB, CCC" and "Follow a portfolio through deposits" in labs.inner_text("#cash-results")
+    for mode, heading, charts in (("simulate", "Money in and money out", 2), ("spending", "Spending 4.0% of $1,000,000 a year for 30 years", 2), ("redeem", "Redeeming 10.0% of a $1,000,000,000 fund", 2), ("ldi", "A plan that owes payments", 2)):
+        labs.click(f"#cash .labtop button[data-mode={mode}]")
+        labs.click("#cash .runbar button")
+        labs.wait_for_selector(f"#cash-results h1:has-text({heading!r})", timeout=90_000)
+        assert labs.locator("#cash-results svg.chart").count() == charts and labs.locator("#cash-results .banner.err").count() == 0, mode
+        assert labs.locator("#cash-results table.data").count() >= 1 and "Read the guide" in labs.inner_text("#cash-results")
+    assert "Hedge with CCC; seek return with AAA, BBB" in labs.inner_text("#cash-results")                 # the liability mode picked a bond fund and two equity funds from the list
+    labs.click("#cash .labtop button[data-mode=spending]")                                             # the result of a mode is kept while the other modes are used
+    assert "Spending 4.0%" in labs.inner_text("#cash-results")
+    fan = _card(labs, "#cash-results", "Portfolio value left, in today's dollars")
+    assert fan.locator("svg.chart path[fill-opacity]").count() == 2 and "5th to 95th percentile" in fan.inner_text()
+    before = fan.locator("svg.chart").inner_html()
+    labs.click("#cash-results .seg button:text-is('Percent of value')")
+    assert fan.locator("svg.chart").inner_html() != before and labs.locator("#cash-results .seg button:text-is('Percent of value')").get_attribute("aria-pressed") == "true"
+
+
+def test_a_holding_that_cannot_be_read_is_explained_before_anything_is_sent(labs):
+    labs.click("#tab-cash")
+    labs.wait_for_selector("#cash .panel")
+    for text, message in (("AAA=abc", "Cannot read"), ("AAA=1, BBB", "Give a weight to every holding, or to none"), ("AAA, AAA", "listed twice"), ("", "Name at least one holding"), ("AAA=0, BBB=0", "add up to zero")):
+        labs.fill("#cash input[data-key=holdings]", text)
+        assert labs.locator("#cash .runbar button.primary").is_disabled() and message in labs.inner_text("#cash .runbar .guard"), text
+    labs.fill("#cash input[data-key=holdings]", "AAA=60%, CCC=40%")
+    assert labs.locator("#cash .runbar button.primary").is_enabled() and not labs.locator("#cash .runbar .guard").is_visible()
+    labs.click("#cash .labtop button[data-mode=ldi]")
+    labs.fill("#cash input[data-key=hedge]", "")
+    assert labs.locator("#cash .runbar button.primary").is_disabled() and "bond fund" in labs.inner_text("#cash .runbar .guard")
+
+
+def test_a_ticker_the_data_does_not_have_is_reported_on_the_cash_tab(labs):
+    labs.click("#tab-cash")
+    labs.fill("#cash input[data-key=holdings]", "AAA=1, BADX=1")
+    labs.click("#cash .runbar button")
+    labs.wait_for_selector("#cash-results .banner.err", timeout=30_000)
+    assert "BADX" in labs.inner_text("#cash-results")
+    _refused(labs)
+
+
+def test_opening_a_table_in_a_lab_keeps_the_page_where_it_is_and_does_not_redraw(labs):
+    _lab_run(labs, "exec", "#exec-results .earnrow", 60_000)
+    labs.evaluate("document.querySelector('#exec-results .earnrow').dataset.keep = 'yes'")
+    for title in ("Variation between days by algorithm", "How each algorithm spreads the order through the day"):
+        card = _card(labs, "#exec-results", title)
+        card.evaluate("(el) => { const r = el.getBoundingClientRect(); window.scrollBy(0, r.top - 150); }")
+        labs.wait_for_timeout(100)
+        y = _scroll_y(labs)
+        assert y > 300, "the card should be well down the page for this test to mean anything"
+        card.locator(".seg button:text-is('Table')").click()
+        labs.wait_for_timeout(SETTLE_MS)
+        assert card.locator("table.data").count() == 1 and card.locator("svg.chart").count() == 0 and _scroll_y(labs) == y
+        assert labs.evaluate("document.querySelector('#exec-results .earnrow').dataset.keep") == "yes"
+        card.locator(".seg button:text-is('Chart')").click()
+        labs.wait_for_timeout(SETTLE_MS)
+        assert card.locator("svg.chart").count() == 1 and _scroll_y(labs) == y
+
+
+def test_a_resize_and_a_theme_change_redraw_a_lab_and_keep_what_the_reader_opened(labs):
+    _lab_run(labs, "cash", "#cash-results h1", 90_000)
+    card = _card(labs, "#cash-results", "Distance from the target weights")
+    card.locator(".seg button:text-is('Table')").click()
+    width_before = labs.evaluate("document.querySelector('#cash-results svg.chart').viewBox.baseVal.width")
+    labs.set_viewport_size({"width": 1180, "height": 1000})
+    labs.wait_for_timeout(SETTLE_MS)
+    assert labs.evaluate("document.querySelector('#cash-results svg.chart').viewBox.baseVal.width") < width_before
+    assert card.locator("table.data").count() == 1, "the table the reader opened is still open"
+    labs.click("#theme")
+    labs.wait_for_timeout(SETTLE_MS)
+    assert card.locator("table.data").count() == 1 and labs.locator("#cash-results .earnrow .tile").count() == 3
+    labs.click("#theme")
+
+
+def test_the_new_tabs_fit_a_phone(browser, live_labs):
+    pg = browser.new_page(viewport={"width": 390, "height": 800})
+    pg.problems = []
+    pg.on("pageerror", lambda e: pg.problems.append(f"pageerror: {e}"))
+    try:
+        pg.goto(live_labs.url)
+        pg.wait_for_selector(".chip")
+        assert pg.evaluate("document.documentElement.scrollWidth") <= 392, "six tabs go on two rows instead of widening the page"
+        for tab, wait_for in (("exec", "#exec-results .earnrow"), ("cash", "#cash-results h1")):
+            _lab_run(pg, tab, wait_for, 90_000)
+            assert pg.evaluate("document.documentElement.scrollWidth") <= 392, tab
+        assert not pg.problems, pg.problems
+    finally:
+        pg.close()
+
+
+def test_an_app_older_than_the_new_tabs_still_runs_the_backtest_and_says_so_on_the_tabs_it_cannot_serve(browser, live_labs):
+    pg = _page_with(browser, live_labs, rewrite=lambda catalog: catalog.update(api_version=2))
+    try:
+        pg.wait_for_selector(".chip")
+        assert pg.locator("#notice .banner").count() == 0 and pg.locator("#run").is_enabled(), "the Backtest tab does not need the newer app"
+        for tab in ("exec", "cash"):
+            pg.click(f"#tab-{tab}")
+            pg.wait_for_selector(f"#{tab} .card.empty")
+            text = pg.inner_text(f"#{tab}")
+            assert "This tab needs a newer app" in text and "Stop the app and press Run again" in text and "reports version 2; this tab needs 3" in text, tab
+            assert pg.locator(f"#{tab} button:has-text('Reload this page')").count() == 1 and pg.locator(f"#{tab} .panel").count() == 0
+        assert not pg.problems, pg.problems
+    finally:
+        pg.close()

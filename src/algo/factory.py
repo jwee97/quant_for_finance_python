@@ -101,3 +101,72 @@ def efficient_frontier(side: str = "buy", shares: float = 200_000.0, adv: float 
     twap = opt.cost_and_risk(np.full(intervals, shares / intervals), order, market)
     return {"frontier": [{"risk_aversion": r["risk_aversion"], "cost_bps": r["cost_bps"], "risk_bps": r["risk_bps"], "first_slice": float(r["schedule"][0] / shares)} for r in rows],
             "vwap": {"cost_bps": vwap["cost_bps"], "risk_bps": vwap["risk_bps"]}, "twap": {"cost_bps": twap["cost_bps"], "risk_bps": twap["risk_bps"]}}
+
+
+# ---------------------------------------------------------------------------------------------------------------------------------- reports for the command line and the dashboard
+def _listed(a) -> list:
+    return np.asarray(a, float).tolist()
+
+
+def basket_report(size: int = 8, seed: int = 0, risk_aversion: float = 1e-3, block_threshold: float = 0.005, share: float = 0.5) -> dict:
+    """A demonstration basket (random sizes, volumes and volatilities, a one-factor correlation, about half sells) worked three ways: the joint schedule against stock by stock, the minimum trading
+    risk quantity for ``share`` of its value, the maximum trading opportunity when only the buys are on offer, and the program-block split. All numbers are JSON-friendly."""
+    from . import basket as bk
+
+    if not 2 <= size <= 30 or risk_aversion <= 0 or not 0 <= share <= 1 or block_threshold <= 0:
+        raise ValueError("2 <= size <= 30, risk_aversion > 0, 0 <= share <= 1, block_threshold > 0")
+    b = bk.random_basket(size, seed=seed)
+    Q = {"joint": bk.basket_schedule(b, risk_aversion, exact=True), "independent": bk.independent_schedule(b, risk_aversion, exact=True)}
+    result = {k: bk.basket_cost_risk(b, q) for k, q in Q.items()}
+    for r in result.values():
+        r["objective"] = r["cost_bps"] + risk_aversion * r["risk_bps"] ** 2
+    cov = b.covariance()
+
+    def risk_left(q):
+        left = (b.side * b.prices)[:, None] * (b.quantity[:, None] - np.cumsum(q, axis=1))
+        return [1e4 * float(np.sqrt(max(left[:, i] @ cov @ left[:, i], 0.0))) / b.gross for i in range(b.n)]
+
+    m = bk.minimum_trading_risk_quantity(b, share=share)
+    t = bk.maximum_trading_opportunity(b, available=b.quantity * (b.side > 0))
+    pb = bk.program_block(b, block_threshold=block_threshold)
+    return {"size": b.size, "seed": seed, "risk_aversion": risk_aversion, "gross": b.gross, "net_exposure": float(b.exposure.sum()), "names": list(b.names), "value": _listed(b.value), "side": _listed(b.side),
+            "joint": result["joint"], "independent": result["independent"], "intervals": b.n,
+            "executed": {k: _listed((b.prices[:, None] * q).sum(axis=0) / b.gross) for k, q in Q.items()}, "risk_left_bps": {k: risk_left(q) for k, q in Q.items()},
+            "mtrq": {"share": m["share"], "executed_fraction": _listed(m["executed_fraction"]), "residual_risk": m["residual_risk"], "naive_risk": m["naive_risk"], "original_risk": m["original_risk"]},
+            "mto": {"share_of_list": t["share_of_list"], "executed_fraction": _listed(t["executed_fraction"]), "available_value": t["available_value"], "residual_risk": t["residual_risk"],
+                    "original_risk": t["original_risk"], "binding": t["binding"], "feasible": t["feasible"]},
+            "program_block": {k: pb[k] for k in ("block", "program", "dark", "lit", "dark_share", "original_risk", "worst_case_risk", "exact")}}
+
+
+HFT_SIMS = ("pairs", "etf", "rebate", "amm")
+HFT_CAVEAT = " A research simulator on a stylised market: it sizes an edge against costs and delay, it does not show that one exists."
+
+
+def hft_report(sim: str = "etf", seed: int = 0) -> dict:
+    """One of the high-frequency research simulations as a table: ``rows`` (a label and the figures), the name of the figure to chart, and a plain statement of what it shows."""
+    from . import blackbox as bb, hft
+
+    if sim not in HFT_SIMS:
+        raise ValueError(f"sim must be one of {HFT_SIMS}")
+    if sim == "pairs":
+        r = bb.simulate_pair_trading(seed=seed)
+        keep = ("days", "mean_daily_bps", "std_daily_bps", "sharpe", "round_trips", "win_rate", "average_hold_bars", "average_trip_bps", "gross_bps", "cost_bps_total")
+        cumulative = np.cumsum(np.asarray(r["daily_bps"], float))
+        return {"sim": sim, "title": "Pair trading on a mean-reverting spread", "columns": list(keep), "rows": [{"label": "pair trading", **{k: float(r[k]) for k in keep}}], "chart": "mean_daily_bps",
+                "series": {"name": "Cumulative profit, bps", "x": list(range(1, len(cumulative) + 1)), "y": cumulative.tolist(), "x_label": "day"},
+                "note": "A z-score rule on the spread of two prices, with the spread an Ornstein-Uhlenbeck process, orders arriving after a delay and a cost on both legs. The gap between gross and cost is the edge." + HFT_CAVEAT}
+    if sim == "etf":
+        table, title = bb.latency_table(seed=seed), "ETF against its basket, by the delay of the order"
+        note = "An ETF whose premium to its net asset value decays with a half-life of a few bars: profit per day by how late the order lands (bars of delay)."
+    elif sim == "rebate":
+        table, title = hft.pressure_table(seed=seed), "Rebate and liquidity trading from order-flow pressure"
+        note = "A maker living on rebates and spread. The naive one quotes both sides always and pays adverse selection; the aware one withdraws the side about to be hit, and its edge fades as its view of the flow gets older."
+    else:
+        table, title = hft.auto_market_making(seed=seed), "Auto market making: inventory-shaded quotes against symmetric quotes"
+        note = "The Avellaneda-Stoikov market maker (quotes shaded by inventory) against symmetric quotes with the same average spread: the mean is similar, the risk is not."
+    chart = {"etf": "mean_daily_bps", "rebate": "mean_wealth", "amm": "sharpe"}[sim]
+    names = {"as": "inventory-shaded (Avellaneda-Stoikov)", "symmetric": "symmetric quotes"}
+    rows = [{"label": names.get(str(i), str(i)), **{c: float(v) for c, v in row.items()}} for i, row in table.iterrows()]
+    if sim == "etf":
+        rows = [{"label": f"{int(r['label'])} bar{'s' if int(r['label']) != 1 else ''} late", **{k: v for k, v in r.items() if k != "label"}} for r in rows]
+    return {"sim": sim, "title": title, "columns": [str(c) for c in table.columns], "rows": rows, "chart": chart, "series": None, "note": note + HFT_CAVEAT}

@@ -97,6 +97,27 @@ The request: unify instruments, market data, engine, ledger, strategies, risk an
 | Dashboard support for futures, derivatives and swaps | Not built | result tables are available; the dashboard shows the ETF pipeline only |
 | Mixed-asset example with a modern strategy | Built | `src/engine/demo.py` (`run_mixed_asset_demo`) |
 
+## Generation 8: strategy styles, execution algorithms and cash flows
+
+The taxonomy of investment and portfolio strategies, trading-algorithm styles and types, high-frequency strategies, best-execution goals, adaptation tactics and portfolio-optimisation techniques. [Algorithmic trading and investment strategies](algorithmic_trading.md) maps every item to its code; this table is the summary. The execution and high-frequency items are research simulators on a stylised market with illustrative parameters.
+
+| Item | Status | Where |
+|---|---|---|
+| Investment: alpha generating (long-term, short-term, mispricing) | Built | [alpha-generating-styles](techniques/alpha-generating-styles.md), `src/strategies/alpha_styles.py`, [survey part two](strategy_survey_2.md) |
+| Investment: alpha generating from company outlook, company news and corporate actions | Partly | `news_sentiment`, `panel_signal` and `event_study_drift` read files you supply in `data/user/`; there is no free source of headlines, revisions or corporate actions, so they have not been run on real data |
+| Investment: portfolio rebalance (asset allocation, market outlook, market neutral, flight to quality, model driven) | Built | [portfolio-rebalancing-styles](techniques/portfolio-rebalancing-styles.md), `policy_portfolio`, `market_outlook`, `flight_to_quality`, the `beta_neutral` allocator |
+| Investment: index reconstitution | Partly | index additions and deletions are events for `event_study_drift`; there is no index-membership feed, so it needs a file you supply |
+| Investment: risk management (risk reduction, hedging, liquidation costs) | Built | [portfolio-overlays-and-liquidation](techniques/portfolio-overlays-and-liquidation.md), `beta_neutral`, `liquidity_cap`, `src/algo/liquidation.py` |
+| Investment: cash flow (deposit, redemption, cash dividend, liabilities, payments) | Built | [cash-flow-strategies](techniques/cash-flow-strategies.md), `src/cashflow`, `quant cashflow` |
+| Investment: economic outlook (yield curve, credit) | Built | [economic-outlook-strategies](techniques/economic-outlook-strategies.md), `curve_quadrant`, `credit_cycle_rotation` |
+| Trading algorithm styles: aggressive, working order, passive | Built (simulated) | [execution-algorithms](techniques/execution-algorithms.md), `src/algo/simulate.py` |
+| Single-stock algorithms: VWAP, TWAP, POV, arrival price, implementation shortfall; basket and portfolio algorithms; liquidity seeking | Built (simulated) | [execution-algorithms](techniques/execution-algorithms.md), [basket-and-liquidity-algorithms](techniques/basket-and-liquidity-algorithms.md), `src/algo` |
+| Black-box and high-frequency: pair trading, auto market making, statistical arbitrage, rebate and liquidity trading | Partly | [black-box-and-high-frequency-strategies](techniques/black-box-and-high-frequency-strategies.md); stylised simulators only, with no order book, queue position or latency model |
+| Best-execution goals; adaptation tactics (target cost, aggressive and passive in the money) | Built (simulated) | [execution-algorithms](techniques/execution-algorithms.md); the tactics follow documented interpretations of one-line definitions |
+| Portfolio optimisation techniques: quadratic programming, trade-schedule and residual-schedule exponentials, trade rate, optimisation with transaction-cost analysis | Built | `src/algo/optimize.py`, the `tca_mvo` allocator |
+| Minimum trading risk quantity, maximum trading opportunity, program-block decomposition | Built (simulated) | [basket-and-liquidity-algorithms](techniques/basket-and-liquidity-algorithms.md), `src/algo/basket.py`; documented interpretations of one-line definitions |
+| Dashboard support for the above | Built | the Execution and Cash flows tabs ([dashboard](dashboard.md)) |
+
 ## Run but not demonstrated
 
 Docker and the continuous-integration workflow exist as files; no Docker daemon was available to build the image, and the workflow has not run on a hosted runner.

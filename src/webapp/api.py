@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import inspect
 import json
+import math
 import re
 import threading
 import time
@@ -18,6 +19,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 import yaml
 
 from ..framework import ALLOCATORS, DETECTORS, MODELS, Pipeline, PipelineSpec, load_library
@@ -39,19 +41,21 @@ COMBINATIONS = {
 }
 CHOICES = {"mode": ["cross_sectional", "time_series"], "features": ["price", "price_macro"], "updater": ["ridge", "nlms", "kalman"],
            ("deep_window", "kind"): ["nbeats", "nhits", "patchtst", "tsmixer", "timemixer"], ("bayesian", "kind"): ["mvo_sample", "bayes_stein", "bayes_predictive"],
-           ("dynamic_cov", "model"): ["dcc", "ogarch", "static"], ("static", "book"): ["equal_weight", "inverse_vol", "risk_parity", "mean_cvar", "hrp", "herc", "mvo"]}
+           ("dynamic_cov", "model"): ["dcc", "ogarch", "static"], ("static", "book"): ["equal_weight", "inverse_vol", "risk_parity", "mean_cvar", "hrp", "herc", "mvo"],
+           ("policy_portfolio", "preset"): ["60_40", "permanent", "all_weather", "bogleheads"], ("policy_portfolio", "calendar"): ["monthly", "quarterly", "semiannual", "annual", "never"]}
 ALLOCATOR_TEXT = {"sleeves": "Independent sleeves: every asset is its own small strategy with an equal slice of capital times its signal, cash when flat (needs exactly one strategy; best for pullback, trend-filter and calendar rules)",
                   "score_stack": "Trade the signal as written: rank and scale the raw score, with no calibration against history (needs exactly one strategy; best for your own formulas)",
                   "forecast_stack": "Calibrated forecast: learn from matured history how much a unit of the score has paid, then size positions (a signal that has not paid gets no position)"}
-SLOW = {"deep_window": "trains a neural network every year of history: about 10-20 seconds", "chronos": "downloads and runs a foundation model: about a minute on CPU",
+SLOW = {"tca_mvo": "solves a cost-aware optimisation every month: a few seconds", "deep_window": "trains a neural network every year of history: about 10-20 seconds", "chronos": "downloads and runs a foundation model: about a minute on CPU",
         "timesfm": "runs a 200M-parameter model on CPU: many minutes on a long history", "es_policy": "trains a policy: about 10 seconds"}
 DOC_ROOT_FILES = {"dashboard": "dashboard.md", "how_to_add_a_strategy": "how_to_add_a_strategy.md", "start_here": "START_HERE.md", "glossary": "glossary.md", "tour_of_a_backtest_day": "tour_of_a_backtest_day.md",
-                  "roadmap_coverage": "roadmap_coverage.md", "platform_integration": "platform_integration.md", "feature_audit": "feature_audit.md"}
+                  "roadmap_coverage": "roadmap_coverage.md", "algorithmic_trading": "algorithmic_trading.md", "platform_integration": "platform_integration.md", "feature_audit": "feature_audit.md"}
 SAFE_SLUG = re.compile(r"^[a-z0-9][a-z0-9_-]{0,80}$")
 
-# What the page needs from this server. 1 was the first catalogue; 2 added data sources (``sources``), the ticker-count check (``/api/requirements``), earnings and trades. The page compares it with
-# its own number and says so when the server behind it is older (the files were updated while the app was running, so it still runs the old code).
-API_VERSION = 2
+# What the page needs from this server. 1 was the first catalogue; 2 added data sources (``sources``), the ticker-count check (``/api/requirements``), earnings and trades; 3 added the Execution and
+# Cash flows tabs (``/api/exec``, ``/api/cash``). The page compares it with its own number and says so when the server behind it is older (the files were updated while the app was running, so it
+# still runs the old code): the whole page needs 2, and the two new tabs ask for 3 on their own, so an older app still runs the Backtest tab.
+API_VERSION = 3
 CODE_ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -123,6 +127,7 @@ class App:
         self.trials: dict[str, set] = {}
         self._pool = ThreadPoolExecutor(max_workers=1)             # one at a time: the models set process-wide torch flags and share the data caches
         self._lock = threading.Lock()
+        self._lab_lock = threading.Lock()                          # the Execution and Cash flows tabs: numpy work of a few seconds, one request at a time so a click storm cannot use every core
 
     # ------------------------------------------------------------------------------------------------------ catalogue
     def catalog(self) -> dict:
@@ -344,6 +349,172 @@ class App:
             self.trials.clear()
         return {"ok": True}
 
+
+    # ------------------------------------------------------------------------------------------------------ the execution lab
+    EXEC_ACTIONS = ("run", "frontier", "basket", "hft")
+
+    def exec_lab(self, body: dict) -> dict:
+        """The Execution tab: run algorithms on a simulated day (``run``), trace the cost-risk frontier (``frontier``), work a demonstration basket (``basket``) or run a high-frequency simulation
+        (``hft``). Everything is computed on a stylised market from the numbers in the request; no prices are downloaded."""
+        from ..algo import factory
+
+        action = str(body.get("action") or "run")
+        if action not in self.EXEC_ACTIONS:
+            raise ApiError(f"action must be one of {list(self.EXEC_ACTIONS)}")
+        seed = _number(body, "seed", 0, 0, 1_000_000, integer=True)
+        market = dict(side=_choice(body, "side", "buy", ("buy", "sell")), shares=_number(body, "shares", 200_000, 1, 1e9), adv=_number(body, "adv", 2_000_000, 1e3, 1e10),
+                      sigma=_number(body, "sigma", 0.02, 0.001, 0.2), price=_number(body, "price", 50.0, 0.01, 1e5), spread_bps=_number(body, "spread_bps", 4.0, 0, 200),
+                      intervals=_number(body, "intervals", 26, 4, 100, integer=True))
+        with self._lab_lock:
+            try:
+                if action == "run":
+                    algos = body.get("algos") or ["twap", "vwap"]
+                    if not isinstance(algos, (str, list, tuple)):
+                        raise ApiError("algos must be a list of algorithm names")
+                    algos = algos.replace(",", " ").split() if isinstance(algos, str) else [str(a) for a in algos]
+                    if not 1 <= len(algos) <= 8 or any(len(a) > 80 for a in algos):
+                        raise ApiError("choose between one and eight algorithms")
+                    target = body.get("target_bps")
+                    out = factory.run_order(algos, style=_choice(body, "style", "aggressive", ("aggressive", "working", "passive")), paths=_number(body, "paths", 300, 20, 2000, integer=True), seed=seed,
+                                            scenario=_choice(body, "scenario", "normal", ("normal", "trend_up", "trend_down", "mean_reverting", "crisis")),
+                                            max_participation=_number(body, "max_participation", 0.35, 0.01, 1.0), target_bps=None if target in (None, "") else _number(body, "target_bps", 0, -1000, 1000), **market)
+                    out["inputs"] = {**market, "seed": seed}
+                elif action == "frontier":
+                    out = factory.efficient_frontier(**market)
+                    out["inputs"] = dict(market)
+                elif action == "basket":
+                    inputs = dict(size=_number(body, "size", 8, 2, 16, integer=True), seed=seed, risk_aversion=_number(body, "risk_aversion", 1e-3, 1e-6, 10.0),
+                                  block_threshold=_number(body, "block_threshold", 0.005, 1e-4, 1.0), share=_number(body, "share", 0.5, 0.0, 1.0))
+                    out = factory.basket_report(**inputs)
+                    out["inputs"] = inputs
+                else:
+                    out = factory.hft_report(_choice(body, "sim", "etf", factory.HFT_SIMS), seed)
+                    out["inputs"] = {"sim": out["sim"], "seed": seed}
+            except (ValueError, KeyError) as error:
+                raise ApiError(str(error.args[0] if isinstance(error, KeyError) and error.args else error)) from None
+        return clean(out)
+
+    # ------------------------------------------------------------------------------------------------------ the cash-flow lab
+    CASH_ACTIONS = ("simulate", "spending", "redeem", "ldi")
+
+    def _mix(self, body: dict, bundle) -> pd.Series:
+        """The portfolio the cash-flow tools work on: the weights in the request, else an equal weight of the tickers."""
+        tickers = [t for t in normalise(body.get("tickers") or self.builder.default_tickers()) if t in bundle.prices.columns]
+        given = body.get("weights") or {}
+        if not isinstance(given, dict):
+            raise ApiError("weights must be a mapping from ticker to weight")
+        if given:
+            try:
+                w = pd.Series({str(k).upper(): float(v) for k, v in given.items() if str(k).upper() in tickers})
+            except (TypeError, ValueError):
+                raise ApiError("weights must be numbers") from None
+            if w.empty or (w < 0).any() or w.sum() <= 0:
+                raise ApiError("weights must be non-negative, add up to more than zero, and name tickers that are in the list")
+        else:
+            w = pd.Series(1.0, index=tickers)
+        return w / w.sum()
+
+    def cash_lab(self, body: dict) -> dict:
+        """The Cash flows tab: a portfolio followed through deposits, withdrawals and dividends under each policy (``simulate``), payments out of it under spending rules (``spending``), the cost of a
+        redemption (``redeem``) and liability-driven investing (``ldi``). The portfolio is made of the tickers already downloaded for the Backtest tab."""
+        from ..cashflow import flows, liabilities, redemption, simulate, spending
+        from ..cashflow.policies import POLICIES
+
+        action = str(body.get("action") or "simulate")
+        if action not in self.CASH_ACTIONS:
+            raise ApiError(f"action must be one of {list(self.CASH_ACTIONS)}")
+        source = body.get("source")
+        try:
+            tickers = normalise(body.get("tickers") or self.builder.default_tickers())
+            waiting = self.builder.waiting(tickers, body.get("start"), source)
+            if waiting:
+                label = self.builder.source(source).label
+                raise ApiError(f"{', '.join(waiting)} {'has' if len(waiting) == 1 else 'have'} not been downloaded from {label} yet. Run a backtest once (it downloads them, within the rate limit), then use this tab.")
+            bundle, info = self.builder.resolve(tickers, body.get("classes"), body.get("start"), False, source)
+        except UniverseError as error:
+            raise ApiError(str(error)) from None
+        mix = self._mix(body, bundle)
+        prices = bundle.prices[list(mix.index)].dropna()
+        if len(prices) < 260:
+            raise ApiError("the chosen tickers share less than a year of prices")
+        week = lambda s: [None if not math.isfinite(v) else round(float(v), 4) for v in s.iloc[::5].to_numpy(dtype=float)]            # noqa: E731  (weekly points keep the page light)
+        head = {"mix": {k: float(v) for k, v in mix.items()}, "period": [str(prices.index[0].date()), str(prices.index[-1].date())], "action": action}
+        with self._lab_lock:
+            try:
+                if action == "simulate":
+                    chosen = body.get("policies") or ["pro_rata", "correct_drift", "rebalance", "cash"]
+                    if not isinstance(chosen, list) or not 1 <= len(chosen) <= 5 or any(p not in POLICIES for p in chosen):
+                        raise ApiError(f"policies must be 1 to 5 of {list(POLICIES)}")
+                    deposit, withdraw, growth = _number(body, "deposit", 0, 0, 1e9), _number(body, "withdraw", 0, 0, 1e9), _number(body, "growth", 0.0, -0.5, 1.0)
+                    initial, rebalance = _number(body, "initial", 100_000, 1e3, 1e12), _choice(body, "rebalance", "none", simulate.REBALANCE)
+                    dividend_yield, dividend_policy = _number(body, "dividend_yield", 0.0, 0.0, 0.2), _choice(body, "dividend_policy", "flow", simulate.DIVIDEND_POLICIES)
+                    cost_bps, dca_months = _number(body, "cost_bps", 5.0, 0.0, 200.0), _number(body, "dca_months", 1, 1, 36, integer=True)
+                    schedule = flows.flow_schedule(prices.index, deposit=deposit, withdraw=withdraw, growth=growth)
+                    rows, nav, dev = [], {}, {}
+                    for policy in chosen:
+                        r = simulate.simulate_cashflows(prices, mix, schedule, initial=initial, inflow_policy=policy, outflow_policy=policy, rebalance=rebalance, dividend_yield=dividend_yield or None,
+                                                        dividend_policy=dividend_policy, cost_bps=cost_bps, dca_months=dca_months)
+                        keep = ("final_value", "profit", "irr", "twr_annual", "turnover", "costs", "dividends", "mean_deviation", "max_deviation", "mean_cash", "deposits", "withdrawals")
+                        rows.append({"policy": policy, **{k: r.summary[k] for k in keep}})
+                        nav[policy], dev[policy] = week(r.nav), week(r.deviation)
+                    out = {**head, "rows": rows, "dates": [str(d.date()) for d in prices.index[::5]], "nav": nav, "deviation": dev,
+                           "inputs": {"initial": initial, "deposit": deposit, "withdraw": withdraw, "growth": growth, "rebalance": rebalance, "dividend_yield": dividend_yield, "dividend_policy": dividend_policy,
+                                      "cost_bps": cost_bps, "dca_months": dca_months}}
+                elif action == "spending":
+                    rules = body.get("rules") or list(spending.RULES)
+                    if not isinstance(rules, list) or not 1 <= len(rules) <= 4 or any(x not in spending.RULES for x in rules):
+                        raise ApiError(f"rules must be 1 to 4 of {list(spending.RULES)}")
+                    daily = (prices.pct_change().dropna() @ mix).to_numpy()
+                    # The futures are drawn once and every rule faces the same ones (the draw is the slow part: paths x years x 252 numbers, so the limits keep a request to a few seconds and about a gigabyte).
+                    args = dict(initial=_number(body, "initial", 1_000_000, 1e3, 1e12), years=_number(body, "years", 30, 1, 50, integer=True), paths=_number(body, "paths", 1000, 100, 2000, integer=True),
+                                inflation=_number(body, "inflation", 0.02, -0.05, 0.2), seed=_number(body, "seed", 0, 0, 1_000_000, integer=True))
+                    rate, target_ruin = _number(body, "rate", 0.04, 0.001, 0.5), _number(body, "target_ruin", 0.05, 0.001, 0.5)
+                    annual = spending.bootstrap_annual_returns(daily, args["years"], args["paths"], seed=args["seed"])
+                    shared = dict(annual_returns=annual, initial=args["initial"], years=args["years"], inflation=args["inflation"])
+                    results = {rule: spending.simulate_spending(rule=rule, rate=rate, **shared) for rule in rules}
+                    safe = spending.sustainable_rate(target_ruin=target_ruin, rule="fixed_real", **shared)
+                    out = {**head, "rate": rate, "years": args["years"], "inflation": args["inflation"], "initial": args["initial"], "paths": args["paths"], "days": int(len(daily)), "sustainable_rate": safe,
+                           "target_ruin": target_ruin,
+                           "rows": [{"rule": k, **{m: v[m] for m in ("ruin_probability", "spending_cut_probability", "mean_real_spending", "years_funded")},
+                                     "median_final_real_wealth": v["final_real_wealth"][0.5], "p05_final_real_wealth": v["final_real_wealth"][0.05]} for k, v in results.items()],
+                           "bands": {k: v["bands"] for k, v in results.items()}}
+                elif action == "redeem":
+                    cash = _number(body, "cash", 0.05, 0.0, 0.9)
+                    weights = mix * (1.0 - cash)
+                    if bundle.volume is not None:
+                        dollars = (bundle.prices[list(mix.index)] * bundle.volume[list(mix.index)]).tail(60).median()
+                        note = "Dollar volume is the median of the last 60 days in the data."
+                    else:
+                        dollars, note = pd.Series(1e8, index=mix.index), "The data has no volume; every asset is assumed to trade $100 million a day."
+                    sigma = bundle.returns[list(mix.index)].tail(252).std()
+                    aum, share, participation = _number(body, "aum", 1e9, 1e5, 1e13), _number(body, "redemption", 0.1, 0.001, 0.9), _number(body, "participation", 0.1, 0.01, 1.0)
+                    table = redemption.compare_redemption_policies(weights, aum, share, dollars, sigma, policies=("pro_rata", "liquid", "cash"), cash=cash, participation=participation)
+                    out = {**head, "cash": cash, "note": note, "rows": [{"policy": str(i), **{c: float(v) for c, v in row.items()}} for i, row in table.iterrows()],
+                           "inputs": {"aum": aum, "redemption": share, "cash": cash, "participation": participation}}
+                else:
+                    if "DGS10" not in bundle.macro.columns or bundle.macro["DGS10"].dropna().empty:
+                        raise ApiError("liability-driven investing needs the 10-year Treasury yield (DGS10), which this data does not have")
+                    if not all(isinstance(body.get(k) or [], (list, tuple)) for k in ("hedge", "seeking")):
+                        raise ApiError("hedge and seeking are lists of tickers")
+                    hedge, seeking = [str(t).upper() for t in body.get("hedge") or []], [str(t).upper() for t in body.get("seeking") or []]
+                    if not hedge or not seeking or any(t not in bundle.prices.columns for t in hedge + seeking):
+                        raise ApiError("name at least one bond fund to hedge with and one return-seeking fund, from the tickers in the list")
+                    years = _number(body, "liability_years", 25, 5, 60, integer=True)
+                    liab = liabilities.Liability.level(100.0, years)
+                    fr0 = _number(body, "funding_ratio", 0.85, 0.3, 3.0)
+                    frames, rows = {}, []
+                    for label, ratio in (("unhedged", 0.0), ("glide path", "glide"), ("fully hedged", 1.0)):
+                        o = liabilities.simulate_ldi(bundle.prices, bundle.macro["DGS10"], liab, hedge, seeking, initial_funding_ratio=fr0, hedge_ratio=ratio, pay=False)
+                        frames[label] = o["frame"]
+                        rows.append({"plan": label, **o["summary"]})
+                    first = next(iter(frames.values()))
+                    out = {**head, "hedge": hedge, "seeking": seeking, "rows": rows, "dates": [str(d.date()) for d in first.index[::5]], "funding_ratio": {k: week(v["funding_ratio"]) for k, v in frames.items()},
+                           "hedge_weight": {k: week(v["w_hedge"]) for k, v in frames.items()}, "inputs": {"funding_ratio": fr0, "liability_years": years, "payment": 100.0}}
+            except (ValueError, KeyError) as error:
+                raise ApiError(str(error.args[0] if isinstance(error, KeyError) and error.args else error)) from None
+        out["universe"] = {"tickers": info["tickers"], "source": info.get("source")} if isinstance(info, dict) else None
+        return clean(out)
+
     # ------------------------------------------------------------------------------------------------------ guides
     def docs_index(self) -> dict:
         docs = self.root / "docs"
@@ -376,6 +547,27 @@ class App:
         if text.startswith("---\n"):
             text = text.split("\n---\n", 1)[1] if "\n---\n" in text else text
         return {"slug": slug, "title": _title(path), "markdown": text}
+
+
+def _number(body: dict, key: str, default, lo: float, hi: float, integer: bool = False) -> float:
+    """A number from a request, with its default and its range; the message says which field is wrong."""
+    raw = body.get(key, default)
+    raw = default if raw is None or raw == "" else raw
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        raise ApiError(f"{key.replace('_', ' ')} must be a number") from None
+    if not math.isfinite(value) or not lo <= value <= hi:
+        raise ApiError(f"{key.replace('_', ' ')} must be between {lo:g} and {hi:g}")
+    return int(round(value)) if integer else value
+
+
+def _choice(body: dict, key: str, default: str, allowed) -> str:
+    value = body.get(key)
+    value = default if value in (None, "") else str(value)
+    if value not in allowed:
+        raise ApiError(f"{key.replace('_', ' ')} must be one of {sorted(allowed)}")
+    return value
 
 
 def _front(path: Path) -> dict:

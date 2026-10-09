@@ -15,6 +15,8 @@
     <button role="tab" id="tab-backtest" aria-selected="true" aria-controls="view-backtest">Backtest</button>
     <button role="tab" id="tab-compare" aria-selected="false" aria-controls="view-compare">Compare <span class="pill" id="runcount">0</span></button>
     <button role="tab" id="tab-builder" aria-selected="false" aria-controls="view-builder">Strategy builder</button>
+    <button role="tab" id="tab-exec" aria-selected="false" aria-controls="view-exec">Execution</button>
+    <button role="tab" id="tab-cash" aria-selected="false" aria-controls="view-cash">Cash flows</button>
     <button role="tab" id="tab-guides" aria-selected="false" aria-controls="view-guides">Guides</button>
   </nav>
   <div class="grow"></div>
@@ -31,6 +33,8 @@
   </section>
   <section role="tabpanel" id="view-compare" aria-labelledby="tab-compare" hidden><div class="stack" id="compare"></div></section>
   <section role="tabpanel" id="view-builder" aria-labelledby="tab-builder" hidden><div class="stack" id="builder"></div></section>
+  <section role="tabpanel" id="view-exec" aria-labelledby="tab-exec" hidden><div class="lab" id="exec"></div></section>
+  <section role="tabpanel" id="view-cash" aria-labelledby="tab-cash" hidden><div class="lab" id="cash"></div></section>
   <section role="tabpanel" id="view-guides" aria-labelledby="tab-guides" hidden><div class="guides" id="guides"></div></section>
 </main>
 <script src="/static/charts.js"></script>
