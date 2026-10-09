@@ -16,6 +16,7 @@
     quant benchmark --models tsmom momentum   score time and peak memory of models on the default bundle
     quant registry list                   versioned models: stages, lineage, promotion
     quant algo list                       the execution algorithms and where each strategy of the taxonomy lives; `quant algo run --algos vwap aim+vwap is:risk_aversion=0.01` compares them on a simulated day
+    quant cashflow simulate --deposit 1000   what deposits, withdrawals and dividends do to a portfolio under each policy; also `spending`, `redeem` and `ldi`
 """
 
 from __future__ import annotations
@@ -339,6 +340,76 @@ def cmd_algo(args, config) -> int:
     return 1
 
 
+def _mix(args, bundle) -> pd.Series:
+    """The portfolio the cash-flow commands work on: ``--mix SPY=0.6,IEF=0.4`` or an equal weight of ``--tickers`` (default: the first few assets of the bundle)."""
+    if args.mix:
+        pairs = [item.split("=") for item in args.mix.split(",")]
+        w = pd.Series({k.strip(): float(v) for k, v in pairs})
+    else:
+        names = args.tickers or list(bundle.assets)[:6]
+        w = pd.Series(1.0 / len(names), index=names)
+    missing = [t for t in w.index if t not in bundle.assets]
+    if missing:
+        raise SystemExit(f"not in the data: {missing}; available: {list(bundle.assets)}")
+    return w / w.sum()
+
+
+def cmd_cashflow(args, config) -> int:
+    """Cash-flow strategies: deposits, withdrawals and dividends handled under each policy, payments out of a portfolio, the cost of a redemption, and liability-driven investing."""
+    from .cashflow import flows as cf, liabilities, redemption, simulate, spending
+
+    bundle = _bundle(config, args.prices)
+    w = _mix(args, bundle)
+    prices = bundle.prices[list(w.index)].dropna()
+    if args.action == "simulate":
+        flows = cf.flow_schedule(prices.index, deposit=args.deposit, withdraw=args.withdraw, growth=args.growth)
+        rows = {}
+        for policy in args.policies or ['pro_rata', 'correct_drift', 'rebalance', 'cash']:
+            kind = "inflow_policy" if args.deposit >= args.withdraw else "outflow_policy"
+            r = simulate.simulate_cashflows(prices, w, flows, initial=args.initial, rebalance=args.rebalance, dividend_yield=args.dividend_yield or None, dividend_policy=args.dividend_policy,
+                                            cost_bps=args.cost_bps, dca_months=args.dca_months, **{kind: policy})
+            s = r.summary
+            rows[policy] = {"final_value": s["final_value"], "profit": s["profit"], "irr": s["irr"], "twr_annual": s["twr_annual"], "turnover": s["turnover"], "costs": s["costs"], "mean_deviation": s["mean_deviation"]}
+        print(f"mix { {k: round(float(v), 3) for k, v in w.items()} } | {prices.index[0].date()} to {prices.index[-1].date()} | start ${args.initial:,.0f}, deposit ${args.deposit:,.0f} and withdraw ${args.withdraw:,.0f} a month, rebalance {args.rebalance}")
+        _print_frame(pd.DataFrame(rows).T, "{:,.4f}")
+        print("\nirr is the money-weighted return (what the investor earned on their dollars), twr_annual the time-weighted one (what the portfolio earned); mean_deviation is the average distance from the target mix")
+        return 0
+    if args.action == "spending":
+        r = (prices.pct_change().dropna() @ w).to_numpy()
+        rows = {}
+        for rule in args.rules:
+            o = spending.simulate_spending(r, rule=rule, initial=args.initial, rate=args.rate, years=args.years, paths=args.paths, inflation=args.inflation, seed=args.seed)
+            rows[rule] = {"ruin_probability": o["ruin_probability"], "spending_cut_probability": o["spending_cut_probability"], "mean_real_spending": o["mean_real_spending"],
+                          "median_final_real_wealth": o["final_real_wealth"][0.5], "p05_final_real_wealth": o["final_real_wealth"][0.05]}
+        print(f"{args.years} years of spending {100 * args.rate:.1f}% of ${args.initial:,.0f} (inflation {100 * args.inflation:.1f}%), {args.paths} paths resampled from {len(r)} days of the mix")
+        _print_frame(pd.DataFrame(rows).T, "{:,.3f}")
+        safe = spending.sustainable_rate(r, target_ruin=args.target_ruin, rule="fixed_real", initial=args.initial, years=args.years, paths=args.paths, inflation=args.inflation, seed=args.seed)
+        print(f"\nthe highest starting rate of a fixed real withdrawal whose chance of running out stays under {100 * args.target_ruin:.0f}%: {100 * safe:.2f}%")
+        return 0
+    if args.action == "redeem":
+        dollars = (bundle.prices[list(w.index)] * bundle.volume[list(w.index)]).tail(60).median() if bundle.volume is not None else pd.Series(1e8, index=w.index)
+        sigma = bundle.returns[list(w.index)].tail(252).std()
+        table = redemption.compare_redemption_policies(w, args.aum, args.redemption, dollars, sigma, policies=args.policies or ('pro_rata', 'liquid'))
+        print(f"a redemption of {100 * args.redemption:.1f}% of ${args.aum / 1e6:,.0f}M, sold at {100 * 0.1:.0f}% of each asset's dollar volume")
+        _print_frame(table, "{:,.2f}")
+        return 0
+    if args.action == "ldi":
+        if "DGS10" not in bundle.macro.columns:
+            raise SystemExit("the ldi action needs the 10-year yield (DGS10) in the data's macro frame")
+        hedge, seeking = args.hedge or [a for a in ("TLT", "IEF") if a in bundle.assets][:1], args.seeking or [a for a in ("SPY", "EFA") if a in bundle.assets][:2]
+        if not hedge or not seeking:
+            raise SystemExit("name the bond ETF(s) to hedge with (--hedge) and the return-seeking ones (--seeking)")
+        liab = liabilities.Liability.level(100.0, args.liability_years)
+        rows = {}
+        for label, ratio in (("unhedged", 0.0), ("glide path", "glide"), ("fully hedged", 1.0)):
+            o = liabilities.simulate_ldi(bundle.prices, bundle.macro["DGS10"], liab, hedge, seeking, initial_funding_ratio=args.funding_ratio, hedge_ratio=ratio, pay=False)
+            rows[label] = o["summary"]
+        print(f"a plan owing 100 a year for {args.liability_years} years, funded at {100 * args.funding_ratio:.0f}%; hedge with {hedge}, seek with {seeking}")
+        _print_frame(pd.DataFrame(rows).T, "{:.3f}")
+        return 0
+    return 1
+
+
 def cmd_new_strategy(args, config) -> int:
     from .strategies.user import new_strategy
     try:
@@ -470,6 +541,18 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--schedule", action="store_true", help="also print the average schedule"); p.add_argument("--size", type=int, default=8, help="names in the demonstration basket")
     p.add_argument("--risk-aversion", type=float, default=1e-3); p.add_argument("--block-threshold", type=float, default=0.005, help="a name is a block when its trade is at least this share of a day's volume")
     p.add_argument("--sim", choices=["pairs", "etf", "rebate", "amm"], default="etf", help="which high-frequency simulation (quant algo hft)"); p.set_defaults(func=cmd_algo)
+    p = sub.add_parser("cashflow", help="cash-flow strategies: deposits, withdrawals and dividends under each policy, payments out of a portfolio (spending rules), the cost of a redemption, liability-driven investing")
+    p.add_argument("action", choices=["simulate", "spending", "redeem", "ldi"])
+    p.add_argument("--prices", help="a CSV of prices (default: the platform's 15 ETFs)"); p.add_argument("--mix", help="the portfolio as ticker=weight,..., e.g. SPY=0.6,IEF=0.4"); p.add_argument("--tickers", nargs="*", help="an equal-weight mix of these")
+    p.add_argument("--initial", type=float, default=100_000.0); p.add_argument("--deposit", type=float, default=0.0, help="dollars added each month"); p.add_argument("--withdraw", type=float, default=0.0, help="dollars taken each month")
+    p.add_argument("--growth", type=float, default=0.0, help="yearly growth of the monthly amounts"); p.add_argument("--policies", nargs="*", help="flow policies to compare (simulate: pro_rata correct_drift rebalance cash; redeem: pro_rata liquid)")
+    p.add_argument("--rebalance", default="none", help="none, monthly, quarterly or annual"); p.add_argument("--dividend-yield", type=float, default=0.0); p.add_argument("--dividend-policy", choices=["reinvest", "flow", "cash"], default="flow")
+    p.add_argument("--cost-bps", type=float, default=5.0); p.add_argument("--dca-months", type=int, default=1, help="invest each deposit over this many months")
+    p.add_argument("--rules", nargs="*", default=["fixed_real", "percent_of_nav", "endowment", "guardrails"]); p.add_argument("--rate", type=float, default=0.04, help="starting spending rate"); p.add_argument("--years", type=int, default=30)
+    p.add_argument("--paths", type=int, default=2000); p.add_argument("--inflation", type=float, default=0.02); p.add_argument("--target-ruin", type=float, default=0.05); p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--aum", type=float, default=1e9); p.add_argument("--redemption", type=float, default=0.10, help="fraction of the fund redeemed")
+    p.add_argument("--hedge", nargs="*", help="bond ETFs that hedge the liability (ldi)"); p.add_argument("--seeking", nargs="*", help="return-seeking ETFs (ldi)")
+    p.add_argument("--funding-ratio", type=float, default=0.85); p.add_argument("--liability-years", type=int, default=25); p.set_defaults(func=cmd_cashflow)
     p = sub.add_parser("registry", help="the model registry: versions, stages, lineage")
     p.add_argument("action", choices=["list", "register-run", "promote", "lineage"]); p.add_argument("--name"); p.add_argument("--version", type=int)
     p.add_argument("--stage", choices=["staging", "production", "archived"]); p.add_argument("--run-id"); p.set_defaults(func=cmd_registry)

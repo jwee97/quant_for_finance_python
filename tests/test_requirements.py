@@ -136,7 +136,7 @@ def test_strategies_that_declare_one_ticker_take_positions_on_one_ticker_and_the
             try:
                 held = _held_days(entry.name, bundle)
             except KeyError as error:
-                if "macro series" in str(error) or "needs one of" in str(error) or "volume" in str(error) or "asset of class" in str(error):
+                if "macro series" in str(error) or "needs one of" in str(error) or "volume" in str(error) or "asset of class" in str(error) or "needs the file" in str(error):
                     continue
                 raise
             except ValueError:

@@ -19,9 +19,12 @@
     multi_asset       cross-asset carry (cross-sectional and time-series), basis momentum, long-term reversal (need CARRY_<asset> signals: src.assets.bundles)
     econometric       Kalman trend, GARCH- and EVT-managed exposure, shrunk-VAR lead-lag
     crypto            funding carry, basis reversion, stablecoin flow (optional branch; needs the crypto bundle)
+    alpha_styles      appraisal-ratio alpha, adaptive autocorrelation, volatility-squeeze breakout, abnormal-volume drift, a walk-forward event study; news sentiment and panel signals read files in data/user/
+    rebalance_styles  policy portfolio (calendar and band), the month-end rebalancing flow, flight to quality, market outlook
+    economic_outlook  yield-curve quadrants and credit-cycle rotation, with states learned from earlier data only
 
 Run ``quant list models`` to see them with their hypotheses.
 """
 
-from . import (crypto, cross_sectional, deep, econometric, expression, factors, fixed_income, macro, ml, multi_asset, online, representation, reversion, risk_timing,  # noqa: F401
-               seasonal, statarb, taa, time_series, trend, volatility)
+from . import (alpha_styles, crypto, cross_sectional, deep, econometric, economic_outlook, expression, factors, fixed_income, macro, ml, multi_asset, online, rebalance_styles,  # noqa: F401
+               representation, reversion, risk_timing, seasonal, statarb, taa, time_series, trend, volatility)
