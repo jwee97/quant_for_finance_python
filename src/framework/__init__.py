@@ -4,7 +4,7 @@ Importing the package registers the built-in detectors and allocators; ``src.str
 (imported lazily by ``load_library``) and anything you register yourself is found the same way.
 """
 
-from . import allocation, allocators_bayes, allocators_book, allocators_overlay, allocators_portfolio, allocators_theory, allocators_trading, forecasting, regimes, risk  # noqa: F401  (importing registers the built-ins)
+from . import allocation, allocators_bayes, allocators_book, allocators_overlay, allocators_portfolio, allocators_rl, allocators_theory, allocators_trading, forecasting, regimes, risk  # noqa: F401  (importing registers the built-ins)
 from .data import MarketBundle, bundle_from_market, bundle_from_prices, load_default_bundle, load_prices_csv  # noqa: F401
 from .forecasting import ForecastModel, combine_forecasts, score_to_forecast  # noqa: F401
 from .pipeline import Pipeline, PipelineResult, PipelineSpec  # noqa: F401
