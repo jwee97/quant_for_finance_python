@@ -21,6 +21,10 @@ gets a slope near zero and so little weight. The same machinery the fundamental 
 quant backtest --model characteristic_regression --tearsheet
 ```
 
+## In the strategy survey
+
+Default parameters on the 15 ETFs, net of costs, traded as written: net Sharpe -0.32, CAGR -2.3%, volatility 6.7%, max drawdown -37.9%, turnover 15.3 times a year, deflated Sharpe probability 0.00 counting every strategy in the survey as a trial. One run, not a test: see [the survey](../strategy_survey_3.md) for how to read it.
+
 ## Caveats
 
 Ranks 15 ETFs across asset classes, so the ranking is partly a ranking of asset classes.

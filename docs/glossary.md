@@ -132,6 +132,12 @@ Pulling noisy estimated mean returns toward a common value, with a weight that d
 
 See: [bayesian-portfolio-construction](techniques/bayesian-portfolio-construction.md)
 
+### Bellman equation
+
+The condition that makes dynamic programming work: the value of being in a state is the best action's reward plus the discounted expected value of the state it leads to. Value iteration applies the right side repeatedly until it stops changing; backward induction applies it once per period from the end.
+
+See: [dynamic-programming-and-optimal-control](techniques/dynamic-programming-and-optimal-control.md)
+
 ### Benjamini-Hochberg
 
 *Also: BH, false discovery rate, FDR*
@@ -280,6 +286,12 @@ A test of whether a larger forecasting model improves on a smaller model nested 
 
 See: [macro-and-alternative-data](techniques/macro-and-alternative-data.md)
 
+### Clique centrality
+
+How embedded an asset is in a filtered correlation graph: the total correlation over the four-cliques it belongs to. High means a hub that moves with many others, low a peripheral diversifier.
+
+See: [graph-portfolios-and-hierarchical-sensitivity-parity](techniques/graph-portfolios-and-hierarchical-sensitivity-parity.md)
+
 ### Cointegration
 
 A long-run relationship between non-stationary prices such that some combination of them is stationary and tends to revert.
@@ -350,6 +362,14 @@ The no-arbitrage relation that the forward exchange rate equals spot adjusted by
 
 See: [fx-carry-and-momentum](techniques/fx-carry-and-momentum.md)
 
+### CPCV
+
+*Also: combinatorial purged cross-validation*
+
+Cross-validation that cuts the history into groups, tests every combination of a few of them, purges training observations whose labels overlap the test groups and embargoes the days after, and assembles the out-of-sample predictions into many complete paths. The spread over the paths shows how much a result depends on the order of events.
+
+See: [scenario-generation-and-backtesting](techniques/scenario-generation-and-backtesting.md)
+
 ### CRPS
 
 Continuous ranked probability score: a proper scoring rule for a whole forecast distribution that generalises absolute error; lower is better.
@@ -390,11 +410,23 @@ The probability that a strategy's Sharpe exceeds what the best of N random trial
 
 See: [multiple-testing](techniques/multiple-testing.md)
 
+### Degeneracy ordering
+
+An ordering of a graph's vertices from repeated removal of one of smallest degree. The largest degree met is the graph's degeneracy (3 for a TMFG), and each vertex's running maximum is its core number.
+
+See: [graph-portfolios-and-hierarchical-sensitivity-parity](techniques/graph-portfolios-and-hierarchical-sensitivity-parity.md)
+
 ### Delta hedging
 
 Trading the underlying so that the option position's delta is close to zero; the remaining profit comes from gamma and the difference between realised and implied volatility.
 
 See: [option-strategies-and-vol-premium](techniques/option-strategies-and-vol-premium.md)
+
+### Desirability
+
+In linearly solvable control, exp(-v) where v is the cost to go. The Bellman equation is linear in it, and the optimal controlled dynamics are the passive dynamics reweighted by it.
+
+See: [dynamic-programming-and-optimal-control](techniques/dynamic-programming-and-optimal-control.md)
 
 ### Deterministic replay
 
@@ -600,6 +632,12 @@ A plan's assets divided by the present value of its liabilities. Below one the p
 
 See: [cash-flow-strategies](techniques/cash-flow-strategies.md)
 
+### G-learning
+
+Reinforcement learning with a penalty, in units of 1/beta, on the relative entropy of the policy from a prior policy. The optimal policy is the prior times exp(beta times the action value), so a large beta gives Q-learning's greedy policy and a small one gives back the prior.
+
+See: [reinforcement-learning-from-tables-to-networks](techniques/reinforcement-learning-from-tables-to-networks.md)
+
 ### GARCH
 
 A volatility model in which today's variance depends on yesterday's squared return and yesterday's variance, with reversion to a long-run level.
@@ -611,6 +649,14 @@ See: [volatility-forecasting](techniques/volatility-forecasting.md)
 A distribution made of several weighted normal distributions; used to combine forecasts while keeping their disagreement.
 
 See: [forecast-combination](techniques/forecast-combination.md)
+
+### GIRL
+
+*Also: G-learning inverse reinforcement learning*
+
+Finding the reward weights that make observed behaviour most likely if the agent followed the soft-optimal policy of G-learning. The reward is identified only up to what leaves the policy unchanged.
+
+See: [reinforcement-learning-from-tables-to-networks](techniques/reinforcement-learning-from-tables-to-networks.md)
 
 ### Gradient boosting
 
@@ -654,6 +700,14 @@ The age at which an observation's weight in an exponential average has fallen to
 
 See: [volatility-forecasting](techniques/volatility-forecasting.md)
 
+### Hamilton-Jacobi-Bellman equation
+
+*Also: HJB*
+
+The continuous-time Bellman equation: a partial differential equation for the value function, with a maximisation over the control inside. Often the value function is not smooth, and the viscosity solution is the one a monotone numerical scheme converges to.
+
+See: [dynamic-programming-and-optimal-control](techniques/dynamic-programming-and-optimal-control.md)
+
 ### Hedge (algorithm)
 
 An online expert-aggregation rule that multiplicatively down-weights experts with recent losses.
@@ -667,6 +721,14 @@ See: [online-learning](techniques/online-learning.md)
 A model where an unobserved state follows a Markov chain and each state generates returns from its own distribution.
 
 See: [regime-detection](techniques/regime-detection.md)
+
+### Hierarchical sensitivity parity
+
+*Also: HSP*
+
+A generalisation of hierarchical risk parity: at each split of a dendrogram the two branches are weighted so their sensitivity (risk contribution, or exposure to factor shocks) is equal. The definition used here is the author's reading of the name.
+
+See: [graph-portfolios-and-hierarchical-sensitivity-parity](techniques/graph-portfolios-and-hierarchical-sensitivity-parity.md)
 
 ### HRP
 
@@ -838,6 +900,14 @@ A model in which the next state depends only on the current one. Transition prob
 
 See: [bayesian-inference-and-markov-models](techniques/bayesian-inference-and-markov-models.md)
 
+### Markov decision process
+
+*Also: MDP, POMDP*
+
+A model of sequential decisions: states, actions, transition probabilities, rewards and a discount. In a partially observed MDP the state is hidden and the agent holds a belief about it, updated by Bayes' rule.
+
+See: [dynamic-programming-and-optimal-control](techniques/dynamic-programming-and-optimal-control.md)
+
 ### MCMC
 
 *Also: Markov chain Monte Carlo*
@@ -867,6 +937,14 @@ See: [multi-asset-strategy-api](techniques/multi-asset-strategy-api.md)
 The smallest true effect a test detects with a chosen probability (usually 80%) at a chosen significance level.
 
 See: [power-analysis](techniques/power-analysis.md)
+
+### Minimum spanning tree
+
+*Also: MST*
+
+The cheapest set of N-1 links connecting N assets when the distance is sqrt(2(1-correlation)): the skeleton of the correlation matrix.
+
+See: [graph-portfolios-and-hierarchical-sensitivity-parity](techniques/graph-portfolios-and-hierarchical-sensitivity-parity.md)
 
 ### Minnesota prior
 
@@ -927,6 +1005,14 @@ See: [attribution](techniques/attribution.md)
 A rule not to trade unless a position is further than a set distance from its target, saving costs at the price of tracking error.
 
 See: [execution-and-impact](techniques/execution-and-impact.md)
+
+### No-trade region
+
+*Also: no-trade band*
+
+The range around the ideal holding inside which a trader with trading costs does nothing, trading to its edge only when the holding drifts out. It widens with the cost, roughly as its cube root.
+
+See: [dynamic-programming-and-optimal-control](techniques/dynamic-programming-and-optimal-control.md)
 
 ### Online learning
 
@@ -1002,6 +1088,14 @@ A futures contract without expiry that stays near spot through funding payments.
 
 See: [crypto-carry](techniques/crypto-carry.md)
 
+### Physics-informed neural network
+
+*Also: PINN*
+
+A network trained to make a differential equation's residual small at random points, plus its boundary conditions, instead of fitting data. Used here to price options without a grid.
+
+See: [deep-learning-generative-scenarios-and-pinns](techniques/deep-learning-generative-scenarios-and-pinns.md)
+
 ### PIT
 
 Probability integral transform: the forecast's cumulative distribution evaluated at the outcome; uniform if the forecast is calibrated.
@@ -1020,6 +1114,12 @@ Data arranged so that on each date only what was known then is visible, includin
 
 See: [macro-and-alternative-data](techniques/macro-and-alternative-data.md)
 
+### Policy gradient
+
+A family of reinforcement learning methods that adjust a policy's parameters in the direction that raises expected return, using the likelihood ratio (REINFORCE, actor-critic) or the slope of a critic in the action (deterministic policy gradient).
+
+See: [reinforcement-learning-from-tables-to-networks](techniques/reinforcement-learning-from-tables-to-networks.md)
+
 ### Policy portfolio
 
 *Also: strategic asset allocation*
@@ -1027,6 +1127,14 @@ See: [macro-and-alternative-data](techniques/macro-and-alternative-data.md)
 The long-run target allocation an investor sets and returns to, rebalancing on a calendar, when weights drift beyond a band, or both.
 
 See: [portfolio-rebalancing-styles](techniques/portfolio-rebalancing-styles.md)
+
+### Pontryagin's principle
+
+*Also: maximum principle*
+
+A necessary condition for optimal control along one path: the control minimises the Hamiltonian at every instant and the costate follows an equation driven by the Hamiltonian's slope in the state, giving a boundary value problem.
+
+See: [dynamic-programming-and-optimal-control](techniques/dynamic-programming-and-optimal-control.md)
 
 ### Post-event drift
 
@@ -1089,6 +1197,14 @@ See: [research-operations](techniques/research-operations.md)
 The change in a position's present value for a one basis point rise in rates. Swap trades are sized in PV01 so that the risk, not the notional, is the budget.
 
 See: [interest-rate-swaps](techniques/interest-rate-swaps.md)
+
+### Q-learning
+
+*Also: SARSA, DQN*
+
+Learning the value of each action in each state by moving it toward the reward plus the discounted best next value. SARSA uses the action actually taken next instead, so it learns the value of the policy it follows; DQN uses a neural network.
+
+See: [reinforcement-learning-from-tables-to-networks](techniques/reinforcement-learning-from-tables-to-networks.md)
 
 ### QLIKE
 
@@ -1192,6 +1308,18 @@ The highest starting spending rate a portfolio can sustain over a horizon with a
 
 See: [cash-flow-strategies](techniques/cash-flow-strategies.md)
 
+### Scenario generator
+
+A method that produces many plausible paths of returns for a set of assets: replayed history, bootstrap, copula, factor model, GARCH, or a trained network. Each preserves some features of the data and loses others.
+
+See: [scenario-generation-and-backtesting](techniques/scenario-generation-and-backtesting.md)
+
+### Schroedinger bridge
+
+The process closest in relative entropy to a reference process that starts at one distribution and ends at another. Found by alternately rescaling to match each end (Sinkhorn's iteration).
+
+See: [dynamic-programming-and-optimal-control](techniques/dynamic-programming-and-optimal-control.md)
+
 ### Sequence-of-returns risk
 
 The danger that poor returns arrive early in the life of a portfolio that is being drawn down, which a later recovery cannot repair because the money is already gone.
@@ -1217,6 +1345,12 @@ See: [performance-metrics](techniques/performance-metrics.md)
 Pulling an estimate toward a simpler target to reduce its variance at the price of some bias.
 
 See: [mean-variance-and-shrinkage](techniques/mean-variance-and-shrinkage.md)
+
+### Sinkhorn iteration
+
+Alternately rescaling the rows and columns of a positive matrix until its sums match given targets. It solves the static Schroedinger problem and entropy-regularised optimal transport.
+
+See: [dynamic-programming-and-optimal-control](techniques/dynamic-programming-and-optimal-control.md)
 
 ### Slippage
 
@@ -1291,6 +1425,14 @@ See: [deep-time-series-models](techniques/deep-time-series-models.md)
 The return of a portfolio with the effect of cash flows removed, by chaining the returns of the periods between them. It is what a backtest reports.
 
 See: [cash-flow-strategies](techniques/cash-flow-strategies.md)
+
+### TMFG
+
+*Also: triangulated maximally filtered graph*
+
+A planar graph with 3(N-2) links built from the four most correlated assets by repeatedly inserting the remaining asset into the triangle where its total correlation is largest. It keeps the loops a spanning tree drops.
+
+See: [graph-portfolios-and-hierarchical-sensitivity-parity](techniques/graph-portfolios-and-hierarchical-sensitivity-parity.md)
 
 ### Tracking error
 
@@ -1370,6 +1512,12 @@ A model in which every series in a vector depends on the lags of all of them. It
 
 See: [time-series-econometrics](techniques/time-series-econometrics.md)
 
+### Viscosity solution
+
+The generalised solution of a Hamilton-Jacobi-Bellman equation that exists even where the value function has kinks, such as at an option's exercise boundary. Monotone, stable and consistent schemes converge to it.
+
+See: [dynamic-programming-and-optimal-control](techniques/dynamic-programming-and-optimal-control.md)
+
 ### Volatility surface
 
 Implied volatility as a function of strike and expiry. It must satisfy no-arbitrage conditions; SVI and SSVI are parametric forms that can.
@@ -1395,6 +1543,14 @@ See: [walk-forward-and-leakage](techniques/walk-forward-and-leakage.md)
 Refitting a model on a rolling window of data known at the time, using only labels whose horizon has already elapsed, and predicting the next period. It is the only honest way to evaluate a learner on time series.
 
 See: [multi-asset-strategy-api](techniques/multi-asset-strategy-api.md)
+
+### Wasserstein GAN
+
+*Also: WGAN, WGAN-GP*
+
+A generative adversarial network whose critic estimates the Wasserstein distance between real and generated data, with a penalty on its gradient (GP) to keep it well behaved. Steadier to train than the original GAN.
+
+See: [deep-learning-generative-scenarios-and-pinns](techniques/deep-learning-generative-scenarios-and-pinns.md)
 
 ### Win rate
 

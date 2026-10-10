@@ -6,6 +6,7 @@ It answers "what does each popular rule do on this universe and sample", and the
 
     python -m experiments.library_survey          # about five minutes on a laptop
     python -m experiments.library_survey --new    # only the strategies added since the saved survey, counting every strategy as a trial (writes docs/strategy_survey_2.md)
+    python -m experiments.library_survey --part3  # only the strategies added since parts one and two (writes docs/strategy_survey_3.md)
 """
 
 from __future__ import annotations
@@ -76,15 +77,22 @@ def render(table: pd.DataFrame, first: str, last: str, years: float) -> str:
     return "\n".join(lines)
 
 
-def render_supplement(added: pd.DataFrame, earlier: int, total: int, first: str, last: str, years: float) -> str:
+PART_THREE_NOTE = ("How to read it: these are the factor-timing, characteristic-regression, APT, macro-factor and equity-factor rules of the two books. Rules that read a file the repository does not have "
+                   "(`fundamental_*`, `earnings_season_premium`) are listed under *could not run*, not scored. Rules that learn from earlier data start late and stay flat while they have no evidence. "
+                   "A negative or flat row on 15 ETFs says the rule does not pay on liquid funds at these costs, not that it fails on the single stocks it was written for.")
+
+
+def render_supplement(added: pd.DataFrame, earlier: int, total: int, first: str, last: str, years: float, part: int = 2) -> str:
     """The part of the survey written after the first one: same universe, sample, costs and defaults, with the deflated Sharpe probability counting every strategy (``total``) as a trial."""
     ok = added[added["error"] == ""].sort_values("net_sharpe", ascending=False)
+    title = "# Strategy survey, part two: investment, portfolio and economic-outlook strategies" if part == 2 else "# Strategy survey, part three: factor timing, factor models and equity factors"
+    before = "the first survey ([strategy_survey.md](strategy_survey.md)" if part == 2 else "parts one and two ([strategy_survey.md](strategy_survey.md), [strategy_survey_2.md](strategy_survey_2.md)"
     lines = [
-        "# Strategy survey, part two: investment, portfolio and economic-outlook strategies", "",
-        f"{len(added)} strategies added after the first survey ([strategy_survey.md](strategy_survey.md): {earlier} strategies), run the same way: the platform's 15 ETFs, {first} to {last} ({years:.1f} years), net of costs, default parameters,",
+        title, "",
+        f"{len(added)} strategies added after {before}: {earlier} strategies), run the same way: the platform's 15 ETFs, {first} to {last} ({years:.1f} years), net of costs, default parameters,",
         f"nothing tuned. **The deflated Sharpe probability here counts all {total} strategies as trials** ({earlier} before, {len(added)} now). The first survey's probabilities counted {earlier}, so they are slightly flattering next to these. This is a survey, not a study.", "",
-        "How to read it: several of these rules are made for single stocks, company news or data you supply, and ETFs are not their natural test bed; a negative row on 15 ETFs says the rule does not pay on liquid funds at these costs, not that it fails on the assets it was written for. "
-        "Rules that learn from earlier data (`curve_quadrant`, `credit_cycle_rotation`, `event_study_drift`) start late and stay flat while they have no evidence.", "",
+        ("How to read it: several of these rules are made for single stocks, company news or data you supply, and ETFs are not their natural test bed; a negative row on 15 ETFs says the rule does not pay on liquid funds at these costs, not that it fails on the assets it was written for. "
+         "Rules that learn from earlier data (`curve_quadrant`, `credit_cycle_rotation`, `event_study_drift`) start late and stay flat while they have no evidence.") if part == 2 else PART_THREE_NOTE, "",
         "| Strategy | Family | Net Sharpe | Equal weight, same dates | CAGR | Volatility | Max drawdown | Turnover (x/yr) | Deflated Sharpe | First day |", "|---|---|---|---|---|---|---|---|---|---|"]
     for _, r in ok.iterrows():
         dsr = "n/a" if pd.isna(r["deflated_sharpe_probability"]) else f"{r['deflated_sharpe_probability']:.2f}"
@@ -94,13 +102,15 @@ def render_supplement(added: pd.DataFrame, earlier: int, total: int, first: str,
     failed = added[added["error"] != ""]
     if len(failed):
         lines += ["", "Could not run on this bundle:", ""] + [f"- `{r['strategy']}`: {r['error']}" for _, r in failed.iterrows()]
-    lines += ["", "Regenerate with `python -m experiments.library_survey --new`; the next full run (`python -m experiments.library_survey`) folds these rows into the first survey.", ""]
+    flag = "--new" if part == 2 else "--part3"
+    lines += ["", f"Regenerate with `python -m experiments.library_survey {flag}`; the next full run (`python -m experiments.library_survey`) folds these rows into the first survey.", ""]
     return "\n".join(lines)
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--new", action="store_true", help="run only the strategies missing from the saved survey; the deflated Sharpe counts all of them as trials")
+    parser.add_argument("--part3", action="store_true", help="run only the strategies missing from the saved survey and from parts one and two, and write docs/strategy_survey_3.md")
     parser.add_argument("--redo", nargs="*", default=[], help="with --new: also run these again, replacing their rows")
     args = parser.parse_args(argv)
     config = load_config()
@@ -109,7 +119,7 @@ def main(argv: list[str] | None = None) -> int:
     tables = Path(config.root) / "reports" / "tables"
     tables.mkdir(parents=True, exist_ok=True)
     saved = tables / "library_survey.csv"
-    if args.new:
+    if args.new or args.part3:
         lines = saved.read_text(encoding="utf-8").splitlines(keepends=True)                                 # old rows are kept as written, so the file only grows
         kept_lines = lines[:1] + [row for row in lines[1:] if row.split(",", 1)[0] not in set(args.redo)]
         kept_names = {row.split(",", 1)[0] for row in kept_lines[1:]}
@@ -120,9 +130,17 @@ def main(argv: list[str] | None = None) -> int:
         combined = pd.read_csv(saved).fillna({"error": ""})
         first_page = (Path(config.root) / "docs" / "strategy_survey.md").read_text(encoding="utf-8")
         first_survey = set(re.findall(r"\]\(strategies/([a-z0-9_]+)\.md\)", first_page)) | set(re.findall(r"^- `([a-z0-9_]+)`:", first_page, flags=re.M))      # the ones that ran and the ones that could not
-        part_two = combined[~combined["strategy"].isin(first_survey)]                                       # everything run since the first survey, not only this run's rows
-        out = Path(config.root) / "docs" / "strategy_survey_2.md"
-        out.write_text(render_supplement(part_two, len(first_survey), len(first_survey) + len(part_two), first, last, len(bundle.index) / 252.0), encoding="utf-8")
+        second_page = (Path(config.root) / "docs" / "strategy_survey_2.md").read_text(encoding="utf-8")
+        second_survey = set(re.findall(r"\]\(strategies/([a-z0-9_]+)\.md\)", second_page)) | set(re.findall(r"^- `([a-z0-9_]+)`:", second_page, flags=re.M))
+        if args.part3:                                                                                      # part two stays as written; everything newer is part three
+            earlier = first_survey | second_survey
+            part_three = combined[~combined["strategy"].isin(earlier)]
+            out = Path(config.root) / "docs" / "strategy_survey_3.md"
+            out.write_text(render_supplement(part_three, len(earlier), len(earlier) + len(part_three), first, last, len(bundle.index) / 252.0, part=3), encoding="utf-8")
+        else:
+            part_two = combined[~combined["strategy"].isin(first_survey)]                                   # everything run since the first survey, not only this run's rows
+            out = Path(config.root) / "docs" / "strategy_survey_2.md"
+            out.write_text(render_supplement(part_two, len(first_survey), len(first_survey) + len(part_two), first, last, len(bundle.index) / 252.0), encoding="utf-8")
     else:
         table = run_survey(config, bundle)
         out = Path(config.root) / "docs" / "strategy_survey.md"

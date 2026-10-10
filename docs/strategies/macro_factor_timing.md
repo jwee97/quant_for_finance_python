@@ -22,6 +22,10 @@ months, shrunk toward its overall mean; states are classified from data availabl
 quant backtest --model macro_factor_timing --tearsheet
 ```
 
+## In the strategy survey
+
+Default parameters on the 15 ETFs, net of costs, traded as written: net Sharpe +0.26, CAGR 1.5%, volatility 6.5%, max drawdown -18.9%, turnover 8.2 times a year, deflated Sharpe probability 0.06 counting every strategy in the survey as a trial. One run, not a test: see [the survey](../strategy_survey_3.md) for how to read it.
+
 ## Caveats
 
 Macro series enter with their publication lags; revisions are not modelled.

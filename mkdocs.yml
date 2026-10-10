@@ -27,5 +27,9 @@ nav:
   - Institutional findings: institutional_findings.md
   - Strategy cards: strategies/index.md
   - Strategy survey: strategy_survey.md
+  - Strategy survey, part two: strategy_survey_2.md
+  - Strategy survey, part three: strategy_survey_3.md
+  - Algorithmic trading coverage: algorithmic_trading.md
+  - The two books, coverage: quant_books_coverage.md
   - What was built: roadmap_coverage.md
   - Findings digest: generated/findings.md

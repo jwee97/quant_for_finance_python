@@ -20,7 +20,7 @@ from ..framework.types import ForecastPanel
 from ..models.deep_forecast import TrainSettings, daily_sigma, normalised_windows, train_and_predict
 from ..models.probabilistic import ewma_sigma
 
-KINDS = ("patchtst", "tsmixer", "nbeats", "nhits", "timemixer", "tft")
+KINDS = ("patchtst", "tsmixer", "nbeats", "nhits", "timemixer", "tft", "fnn", "cnn", "lstm", "gru", "transformer")
 WINDOW = 252
 
 
@@ -49,7 +49,7 @@ def _panel(model, data, origins, mean: np.ndarray, halflife: float) -> ForecastP
     return ForecastPanel.from_mean_std(out, std.where(out.notna()), model.horizon, model.name)
 
 
-@register_model("deep_window", "machine learning", "A small neural network (patch transformer, MLP-mixer, N-BEATS, N-HiTS, TimeMixer-style or Temporal Fusion Transformer) on the volatility-normalised 252-day return window, refit yearly")
+@register_model("deep_window", "machine learning", "A small neural network (patch transformer, MLP-mixer, N-BEATS, N-HiTS, TimeMixer-style, Temporal Fusion Transformer, or a plain feed-forward, convolutional, LSTM, GRU or Transformer network) on the volatility-normalised 252-day return window, refit yearly")
 class DeepWindow(ForecastModel):
     """If a flexible sequence model finds structure in the last year of returns that a ridge on twelve features cannot, it should beat the ridge out of sample.
     Stage 27 and 33 found it did not; the plug-in makes that test repeatable on any bundle."""

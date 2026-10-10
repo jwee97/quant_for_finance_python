@@ -22,6 +22,10 @@ which is why the premium in each state is learned from earlier years only and sh
 quant backtest --model calendar_factor_timing --tearsheet
 ```
 
+## In the strategy survey
+
+Default parameters on the 15 ETFs, net of costs, traded as written: net Sharpe +0.21, CAGR 1.2%, volatility 6.5%, max drawdown -22.0%, turnover 11.0 times a year, deflated Sharpe probability 0.05 counting every strategy in the survey as a trial. One run, not a test: see [the survey](../strategy_survey_3.md) for how to read it.
+
 ## Learn more
 
 [Factor timing: the calendar, the macroeconomy, the market's state and the earnings season](../techniques/factor-timing.md)

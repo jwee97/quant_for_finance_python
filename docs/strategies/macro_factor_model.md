@@ -23,6 +23,10 @@ premia. Needs the macro series in the bundle; uses what is there, and at least t
 quant backtest --model macro_factor_model --tearsheet
 ```
 
+## In the strategy survey
+
+Default parameters on the 15 ETFs, net of costs, traded as written: net Sharpe -0.06, CAGR -0.6%, volatility 6.0%, max drawdown -28.5%, turnover 4.8 times a year, deflated Sharpe probability 0.00 counting every strategy in the survey as a trial. One run, not a test: see [the survey](../strategy_survey_3.md) for how to read it.
+
 ## Caveats
 
 Macro series enter with their publication lags; revisions are not modelled.

@@ -289,6 +289,18 @@ The strategy catalogue was widened to the taxonomy a portfolio manager and a tra
 
 **What the evidence says, honestly.** On the 15 ETFs the style strategies mostly do not pay. Of the 11 that ran, `policy_portfolio` (60/40, restored quarterly with a 5% band) earned a net Sharpe of +0.83 against +0.65 for equal weight over the same dates, the same as the static 60/40 it is built on; `curve_quadrant` (+0.70) and `flight_to_quality` (+0.60) protect rather than earn, and both trail equal weight over their own dates; the short-term rules lose after 10 bps of cost: `rebalancing_flow` earned +0.31 gross and +0.02 net at 7.7x turnover, and `adaptive_autocorrelation` +0.09 gross and -0.84 net at 116x. With 92 strategies counted as trials none clears a deflated Sharpe of 0.95. The execution and high-frequency code is a set of **stylised simulators** with illustrative impact parameters: they reproduce their own closed forms (the tests check that) and show which way a setting pushes a cost, and they say nothing about a real order book, queue position or the cost of your own trades. The company-news, outlook, corporate-action and index-reconstitution strategies need files you supply (`news_sentiment` and `panel_signal` could not be run here), the adaptation tactics, minimum-risk, maximum-opportunity and program-block rules follow documented interpretations of one-line definitions, and the liability model uses one flat discount yield.
 
+## Generation 9: the two quant-portfolio books
+
+Two books' worth of topics were added, item by item: *Quantitative Equity Portfolio Management* (alpha generation, alpha-model construction, portfolio construction, trading and implementation, factor timing) and *Quantitative Portfolio Optimization* (portfolio theory, Bayesian methods, factor investing and machine learning, dynamic programming and reinforcement learning, deep learning, graph-based portfolios, backtesting and scenario generation). [`docs/quant_books_coverage.md`](docs/quant_books_coverage.md) maps every topic to the code that implements it, says whether it is built, already existed, needs a file you supply, runs by a stand-in method, or is the author's reading of a method whose definition was not available; it is generated from `src/books/catalog.py` and a test imports every location it names.
+
+- **`src/equity`**: a point-in-time fundamentals table and 24 value, quality, momentum and revision factors, fading-growth and multipath DCF, the optimal IC-based alpha model with z-scores, Gram-Schmidt and symmetric orthogonalisation and Fama-MacBeth marginal contributions, contextual and nonlinear models; the efficient frontier, tangency portfolio, CML, CAPM (standard and zero-beta), APT; 130/30, market-, dollar-, sector- and beta-neutral books with turnover limits as one quadratic programme; mean-variance under a CVaR limit; QUBO portfolios by simulated annealing (no quantum hardware); the multi-period (Mei et al.) and constrained (Skaf and Boyd) trading problems.
+- **`src/algo`, `src/strategies`, `src/portfolio`, `src/models`**: the limit/market order mix and smart order routing from censored fills; calendar, macro and earnings-season factor timing; hierarchical Bayes, Bayesian decision theory, an exact Gaussian process; regularised and tree learners on characteristics; the feed-forward, convolutional, LSTM, GRU and Transformer window networks, a WGAN-GP and a factor VAE, physics-informed networks for Black-Scholes-Merton, Vasicek, Heston and Bates; the minimum spanning tree, TMFG, centrality portfolios and hierarchical sensitivity parity.
+- **`src/control`**: Markov decision processes (value and policy iteration, backward induction, entropic risk, POMDPs with belief updates and point-based value iteration), Merton's problem with and without trading costs, monotone HJB schemes (Merton, the American put as an obstacle problem), Pontryagin's principle as a boundary value problem (LQR, Almgren-Chriss, Ramsey), Schroedinger bridges and linearly solvable control.
+- **`src/rl`**: SARSA, expected SARSA, Q-learning and double Q-learning; REINFORCE, actor-critic and the deterministic policy gradient; G-learning and its inverse; DQN and double DQN, DDPG, TD3, SAC and PPO in torch; and the `q_learning_exposure` allocator.
+- **`src/scenarios` and `src/validation/cpcv.py`**: eight scenario generators (historical, bootstrap, copula, risk factor, ARIMA-GARCH, WGAN-GP, factor VAE, diffusion), a quality yardstick, scenario backtests and combinatorial purged cross-validation.
+
+**What the evidence says, honestly.** Every method was first checked against a world with a known answer (an MDP solved exactly, Merton's fraction, a closed-form Black-Scholes price, a planted factor effect, a planted reward), and those checks pass. On real data the picture is plain: on the 15 ETFs, factor timing, the Gaussian-process forecaster, the multi-period allocator, the graph portfolios, hierarchical sensitivity parity, the reinforcement-learning exposure allocator and the new window networks did **not** beat their simple baselines on a risk-adjusted basis (the guides give the numbers; the one apparent exception, a Transformer with t = 3.4, is one of several architectures tried on a small sample). Learned scenario generators did no better than a bootstrap on any measure, and every generator under-predicted the tail risk of a later, wilder period. Fundamentals-based models need `data/user/fundamentals.csv` and were validated on simulated statements, not on companies. Read the new code as correct, tested machinery and a catalogue of what did not pay on this universe, not as a source of edge. Guides: [dynamic programming and optimal control](docs/techniques/dynamic-programming-and-optimal-control.md), [reinforcement learning](docs/techniques/reinforcement-learning-from-tables-to-networks.md), [deep networks, generative models and PINNs](docs/techniques/deep-learning-generative-scenarios-and-pinns.md), [graph portfolios](docs/techniques/graph-portfolios-and-hierarchical-sensitivity-parity.md), [scenario generation and backtesting](docs/techniques/scenario-generation-and-backtesting.md), [trading with costs](docs/techniques/multi-period-trading-and-order-routing.md), [factor timing](docs/techniques/factor-timing.md), [portfolio theory](docs/techniques/portfolio-theory-and-constrained-books.md), [factor models and machine learning](docs/techniques/factor-models-and-machine-learning.md), [hierarchical Bayes and Gaussian processes](docs/techniques/hierarchical-bayes-decisions-and-gaussian-processes.md).
+
 ## Repository layout
 
 ```
@@ -330,13 +342,18 @@ src/
   causal/        double machine learning, R-learner, 2SLS, difference in differences, simulated worlds
   algo/          Generation 8: execution algorithms, impact and schedule optimisation, baskets, liquidity seeking, high-frequency simulators, the taxonomy catalogue
   cashflow/      Generation 8: flow policies, redemptions, dividends, liabilities (LDI) and spending rules
+  equity/        Generation 9: fundamentals, factors, DCF, alpha model, portfolio theory, constrained books, CVaR and QUBO portfolios, multi-period trading
+  control/       Generation 9: MDPs and POMDPs, Merton, HJB schemes, Pontryagin, Schroedinger bridges
+  rl/            Generation 9: tabular, policy-gradient, G-learning and deep reinforcement learning, exposure by Q-learning
+  scenarios/     Generation 9: scenario generators, their quality yardstick, scenario backtests
+  books/         Generation 9: the coverage catalogue of the two books
   cli.py         the `quant` command
   utils/         config, logging, dates, plotting, experiment registry
-docs/            START_HERE, 89 technique guides, glossary, chapter map, strategy cards, capability matrix, research survey, architecture, notebooks, roadmap coverage (mkdocs.yml)
+docs/            START_HERE, 101 technique guides, glossary, chapter map, strategy cards, capability matrix, research survey, architecture, notebooks, roadmap coverage (mkdocs.yml)
 experiments/     numbered stage scripts + the experiment registry
 reports/         figures, tables, the data-quality report, the research paper,
                  the Generation 2-5 reports, errata/ (before/after record of the drift fix), the dashboard
-tests/           2022 tests
+tests/           2501 tests
 Dockerfile, docker-compose.yml, Makefile, .github/workflows/ci.yml and benchmark.yml, .pre-commit-config.yaml
 ```
 
@@ -355,7 +372,7 @@ python -m experiments.run_all --generation 5  # Generation 5 only (stages 30-40)
 python -m experiments.run_all --from 6 --to 9 # a range of stages
 python -m experiments.run_all --fresh         # clear derived artefacts first
 python -m experiments.stage01_data            # a single stage
-pytest -q                                      # 2022 tests
+pytest -q                                      # 2501 tests
 quant demo; quant dashboard; quant explain risk parity   # the newcomer layer
 quant serve                                    # the interactive dashboard: your tickers, your strategies
 quant new-strategy my_idea                     # a template for your own strategy in user_strategies/

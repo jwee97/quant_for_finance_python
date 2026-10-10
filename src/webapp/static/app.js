@@ -1203,7 +1203,7 @@
 
   /* ================================================================= guides + markdown */
   const G = { index: null, slug: null, filter: "" };
-  const FILE_SLUGS = { "dashboard.md": "dashboard", "how_to_add_a_strategy.md": "how_to_add_a_strategy", "START_HERE.md": "start_here", "glossary.md": "glossary", "tour_of_a_backtest_day.md": "tour_of_a_backtest_day", "roadmap_coverage.md": "roadmap_coverage", "algorithmic_trading.md": "algorithmic_trading", "platform_integration.md": "platform_integration", "feature_audit.md": "feature_audit" };
+  const FILE_SLUGS = { "dashboard.md": "dashboard", "how_to_add_a_strategy.md": "how_to_add_a_strategy", "START_HERE.md": "start_here", "glossary.md": "glossary", "tour_of_a_backtest_day.md": "tour_of_a_backtest_day", "roadmap_coverage.md": "roadmap_coverage", "algorithmic_trading.md": "algorithmic_trading", "quant_books_coverage.md": "quant_books_coverage", "platform_integration.md": "platform_integration", "feature_audit.md": "feature_audit" };
   function slugFromHref(href) {
     const clean = href.split("#")[0], base = clean.split("/").pop();
     if (/techniques\//.test(clean) || (/^[a-z0-9-]+\.md$/.test(clean) && G.index && G.index.some((d) => d.slug === "technique-" + base.replace(".md", "")))) return "technique-" + base.replace(".md", "");

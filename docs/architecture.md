@@ -56,6 +56,11 @@ The research pipeline above works on return series. The second half of the platf
 | `src/ledger` | multi-currency positions and cash, a journal with a per-entry identity, margin, reconciliation | cash conservation, equity = start + P&L + transfers, independent position book, no held expired contract |
 | `src/engine` | the event loop, orders and execution, cost models, lifecycle handlers, the strategy API, constraints, portfolio risk, analysis, paper trading | same inputs, same SHA-256 digest; a decision sees only data available at its time |
 | `src/swaps` | schedules, curves, cashflows, pricing, PV01, carry and roll-down, swap strategies | par swap has zero value; carry plus roll-down equals the total; every coupon is a journal entry |
+| `src/equity` | fundamentals and factors, DCF, the alpha model, portfolio theory, constrained long-short books, CVaR and QUBO portfolios, multi-period trading | every optimiser is checked against a closed form or a brute-force search; models read statements from their filing date |
+| `src/control` | MDPs and POMDPs, Merton, HJB schemes, Pontryagin, Schroedinger bridges | each solver is checked against an exact solution (Bellman fixed point, Merton's fraction, Riccati, the sinh schedule, the binomial price) |
+| `src/rl` | tabular, policy-gradient, G-learning and deep reinforcement learning, the exposure allocator | learners are checked against the exact dynamic programme of the same environment |
+| `src/scenarios` | scenario generators, quality yardstick, scenario backtests | generators use only the history they are handed |
+| `src/books` | the coverage catalogue of the two books | every location it names imports |
 
 The two halves are connected by design, not by code: the research pipeline answers "is there a signal?" on total-return indices with a daily engine, and the contract engine answers "what would holding this book of FX, futures, perpetuals, options and swaps have done, to the cent, with funding, margin, rolls and expiries?". A research finding becomes a `Strategy` on the common API; the same class runs in a backtest, in a paper-trading session and (given a real broker adapter, which needs credentials) against a venue.
 

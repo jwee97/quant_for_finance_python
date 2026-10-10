@@ -19,10 +19,14 @@ Every network takes ``(x, asset)`` with ``x`` of shape (batch, window) and retur
 
 from __future__ import annotations
 
-FAMILY = ("nbeats", "nhits", "timemixer", "tft")
+FAMILY = ("nbeats", "nhits", "timemixer", "tft", "fnn", "cnn", "lstm", "gru", "transformer")
 
 
 def build_family_network(kind: str, n_assets: int, window: int = 252, **cfg):
+    from .deep_sequence import SEQUENCE, build_sequence_network
+
+    if kind in SEQUENCE:                                                                              # Generation 6: the classical families
+        return build_sequence_network(kind, n_assets, window, **cfg)
     import torch
     from torch import nn
 

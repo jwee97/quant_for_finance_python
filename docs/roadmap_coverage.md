@@ -118,6 +118,24 @@ The taxonomy of investment and portfolio strategies, trading-algorithm styles an
 | Minimum trading risk quantity, maximum trading opportunity, program-block decomposition | Built (simulated) | [basket-and-liquidity-algorithms](techniques/basket-and-liquidity-algorithms.md), `src/algo/basket.py`; documented interpretations of one-line definitions |
 | Dashboard support for the above | Built | the Execution and Cash flows tabs ([dashboard](dashboard.md)) |
 
+## Generation 9: the two quant-portfolio books
+
+The topics of two books, *Quantitative Equity Portfolio Management* and *Quantitative Portfolio Optimization*. [The two books: where everything is](quant_books_coverage.md) maps each topic to its code and status; this table is the summary. Statuses are for the code. None of it claims an edge: on the 15 ETFs most of the new methods did not beat simple baselines, and the guides say so.
+
+| Item | Status | Where |
+|---|---|---|
+| Value, quality, momentum and revision factors; DCF and multipath DCF; contextual and nonlinear models; the optimal IC-based alpha model | Built (needs a fundamentals file) | [fundamental-factors](techniques/fundamental-factors.md), [alpha-model-construction](techniques/alpha-model-construction.md); validated on simulated statements, not on companies |
+| 130/30, market-, dollar-, sector- and beta-neutral books; turnover limits; MPT, CML, tangency, CAPM, APT; mean-variance with CVaR; QUBO portfolios | Built | [portfolio-theory-and-constrained-books](techniques/portfolio-theory-and-constrained-books.md); QUBO is solved by simulated annealing, not quantum hardware |
+| Multi-period trading (Mei et al., Skaf and Boyd), the limit/market order mix, smart order routing | Built (simulated) | [multi-period-trading-and-order-routing](techniques/multi-period-trading-and-order-routing.md) |
+| Factor timing: calendar, macro, up and down markets, earnings season | Built | [factor-timing](techniques/factor-timing.md); the earnings model needs a dates file or infers announcements from volume |
+| Hierarchical Bayes, Bayesian decision theory, Gaussian process regression | Built | [hierarchical-bayes-decisions-and-gaussian-processes](techniques/hierarchical-bayes-decisions-and-gaussian-processes.md) |
+| Statistical, macro and cross-sectional factor models; LASSO, ridge, elastic net, PCR, PLS, trees, forests, networks | Built | [factor-models-and-machine-learning](techniques/factor-models-and-machine-learning.md) |
+| MDPs, POMDPs, risk-sensitive control, Bellman, HJB and viscosity solutions, Pontryagin, Merton, Schroedinger control | Built | [dynamic-programming-and-optimal-control](techniques/dynamic-programming-and-optimal-control.md) |
+| SARSA, Q-learning, double Q, REINFORCE, A2C, DPG, DQN, DDPG, TD3, SAC, PPO, G-learning, GIRL | Built (small research implementations) | [reinforcement-learning-from-tables-to-networks](techniques/reinforcement-learning-from-tables-to-networks.md) |
+| FNN, CNN, LSTM, Transformer; WGAN-GP; VAE and NeuralFactors; PINNs for BSM, Vasicek, Heston and Bates | Built (the VAE is in the spirit of NeuralFactors, not the paper's model) | [deep-learning-generative-scenarios-and-pinns](techniques/deep-learning-generative-scenarios-and-pinns.md) |
+| MST, TMFG, degeneracy ordering, clique centrality; hierarchical sensitivity parity | Built (HSP is the author's reading: the published definition was not available) | [graph-portfolios-and-hierarchical-sensitivity-parity](techniques/graph-portfolios-and-hierarchical-sensitivity-parity.md) |
+| Walk-forward, purged and combinatorial purged cross-validation, bootstrap and Monte Carlo; historical, bootstrap, copula, risk-factor, ARIMA-GARCH, GAN and VAE scenarios | Built | [scenario-generation-and-backtesting](techniques/scenario-generation-and-backtesting.md) |
+
 ## Run but not demonstrated
 
 Docker and the continuous-integration workflow exist as files; no Docker daemon was available to build the image, and the workflow has not run on a hosted runner.

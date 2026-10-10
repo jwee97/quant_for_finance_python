@@ -52,7 +52,7 @@ def test_the_same_seed_gives_the_same_forecast(bundle):
     assert np.allclose(a.fillna(0.0), b.fillna(0.0))
 
 
-@pytest.mark.parametrize("kwargs", [{"kind": "lstm"}, {"min_train": 300}, {"refit_every": 5}, {"embargo": -1}, {"max_epochs": 0}, {"patience": 0}, {"seeds": ()}, {"d_model": 2}])
+@pytest.mark.parametrize("kwargs", [{"kind": "mamba"}, {"min_train": 300}, {"refit_every": 5}, {"embargo": -1}, {"max_epochs": 0}, {"patience": 0}, {"seeds": ()}, {"d_model": 2}])
 def test_deep_window_rejects_invalid_parameters(kwargs):
     with pytest.raises(ValueError):
         MODELS.create("deep_window", **kwargs)

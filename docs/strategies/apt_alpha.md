@@ -22,6 +22,10 @@ its residual volatility (an appraisal ratio), skipping the last ``skip`` days so
 quant backtest --model apt_alpha --tearsheet
 ```
 
+## In the strategy survey
+
+Default parameters on the 15 ETFs, net of costs, traded as written: net Sharpe +0.44, CAGR 1.8%, volatility 4.2%, max drawdown -18.9%, turnover 4.4 times a year, deflated Sharpe probability 0.22 counting every strategy in the survey as a trial. One run, not a test: see [the survey](../strategy_survey_3.md) for how to read it.
+
 ## Caveats
 
 Ranks 15 ETFs across asset classes, so the ranking is partly a ranking of asset classes.

@@ -42,7 +42,7 @@ def test_networks_have_the_declared_shape_and_a_modest_size(kind):
     assert out.shape == (4,)
     assert parameter_count(kind, 3) < 40_000
     with pytest.raises(ValueError):
-        build_network("lstm", 3)
+        build_network("mamba", 3)
 
 
 def _planted(n=4000, seed=1):

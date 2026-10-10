@@ -180,6 +180,20 @@ The item-by-item map to the taxonomy this section answers is [algorithmic tradin
 | Black-box and high-frequency strategies: pair trading, ETF arbitrage, rebate and liquidity trading, auto market making | PARTIAL | `src/algo/blackbox.py`, `src/algo/hft.py`, `tests/test_blackbox_hft.py`, [guide](techniques/black-box-and-high-frequency-strategies.md) | stylised Ornstein-Uhlenbeck and Poisson markets: no order book, queue position, latency model or real tick data | Medium (data) |
 | Dashboard tabs for execution and cash flows | COMPLETE | `src/webapp` (`/api/exec`, `/api/cash`), `tests/test_webapp_labs.py`, `tests/test_webapp_browser.py` | none | n/a |
 
+## The two quant-portfolio books (Generation 9)
+
+| Capability | Status | Evidence | Missing | Priority |
+|---|---|---|---|---|
+| Equity factors, DCF, alpha-model construction | PARTIAL | `src/equity`, `tests/test_equity_*.py`, [guides](techniques/fundamental-factors.md) | a fundamentals feed (the models read `data/user/fundamentals.csv`); results are on simulated statements | High for use on companies |
+| Portfolio theory, constrained long-short books, CVaR and QUBO portfolios | COMPLETE | `src/equity/theory.py`, `portfolio.py`, `cvar_portfolio.py`, `qubo.py`, [guide](techniques/portfolio-theory-and-constrained-books.md) | quantum hardware (QUBO by simulated annealing) | Low |
+| Multi-period trading, limit-order mix, smart order routing | COMPLETE (simulated) | `src/equity/multiperiod.py`, `src/algo/limit_orders.py`, `routing.py`, [guide](techniques/multi-period-trading-and-order-routing.md) | real order books | n/a |
+| Factor timing, hierarchical Bayes, Gaussian processes, learners | COMPLETE | `src/strategies/factor_timing.py`, `src/portfolio/hierarchical_bayes.py`, `src/models/gaussian_process.py`, [guides](techniques/factor-timing.md) | an earnings-dates feed | Low |
+| Dynamic programming, optimal control, Schroedinger bridges | COMPLETE | `src/control`, `tests/test_control_*.py`, [guide](techniques/dynamic-programming-and-optimal-control.md) | higher-dimensional HJB | Low |
+| Reinforcement learning, G-learning and GIRL | COMPLETE (small implementations) | `src/rl`, `tests/test_rl_*.py`, [guide](techniques/reinforcement-learning-from-tables-to-networks.md) | environments from real execution or portfolio data | Medium |
+| Deep window networks, WGAN-GP, factor VAE, PINNs | PARTIAL | `src/models/deep_sequence.py`, `generative.py`, `pinn.py`, [guide](techniques/deep-learning-generative-scenarios-and-pinns.md) | the paper-faithful NeuralFactors model; PINN accuracy is about 0.5% of the strike | Low |
+| Graph portfolios, hierarchical sensitivity parity | PARTIAL | `src/portfolio/graph_portfolio.py`, [guide](techniques/graph-portfolios-and-hierarchical-sensitivity-parity.md) | the published definition of HSP | Low |
+| Scenario generators, scenario backtests, CPCV | COMPLETE | `src/scenarios`, `src/validation/cpcv.py`, [guide](techniques/scenario-generation-and-backtesting.md) | none | n/a |
+
 ## What cannot be completed in this environment
 
 | Item | Why | What exists instead |

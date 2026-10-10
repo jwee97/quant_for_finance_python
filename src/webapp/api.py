@@ -52,7 +52,9 @@ CHOICES = {"mode": ["cross_sectional", "time_series"], "features": ["price", "pr
            ("fundamental_momentum", "factor"): ["composite"] + factor_names("momentum") + factor_names("estimates"),
            ("fundamental_alpha", "weights"): ["optimal", "equal"], ("fundamental_alpha", "orthogonalize"): ["gram_schmidt", "symmetric", "none"],
            ("fundamental_alpha", "context"): ["", "value", "growth", "earnings_variability", "size"],
-           ("deep_window", "kind"): ["nbeats", "nhits", "patchtst", "tsmixer", "timemixer"], ("bayesian", "kind"): ["mvo_sample", "bayes_stein", "bayes_predictive"],
+           ("deep_window", "kind"): ["nbeats", "nhits", "patchtst", "tsmixer", "timemixer", "fnn", "cnn", "lstm", "gru", "transformer"],
+           ("graph_centrality", "graph"): ["tmfg", "mst"], ("graph_centrality", "centrality"): ["clique", "eigenvector", "strength", "degree"], ("graph_centrality", "tilt"): ["peripheral", "central"],
+           ("hierarchical_sensitivity_parity", "sensitivity"): ["risk", "factor"], ("bayesian", "kind"): ["mvo_sample", "bayes_stein", "bayes_predictive"],
            ("dynamic_cov", "model"): ["dcc", "ogarch", "static"], ("static", "book"): ["equal_weight", "inverse_vol", "risk_parity", "mean_cvar", "hrp", "herc", "mvo"],
            ("policy_portfolio", "preset"): ["60_40", "permanent", "all_weather", "bogleheads"], ("policy_portfolio", "calendar"): ["monthly", "quarterly", "semiannual", "annual", "never"]}
 ALLOCATOR_TEXT = {"sleeves": "Independent sleeves: every asset is its own small strategy with an equal slice of capital times its signal, cash when flat (needs exactly one strategy; best for pullback, trend-filter and calendar rules)",
@@ -62,9 +64,9 @@ SLOW = {"multi_period": "plans the next few months as a quadratic programme ever
         "qubo_select": "anneals a QUBO every month from 16 random starts: a minute or two", "ml_factor_model": "refits a learner every month (every third for trees and the network): seconds, longer for forests",
         "fundamental_dcf": "values every company every month, with a Monte Carlo of 400 paths for the multipath version: a few seconds", "fundamental_alpha": "builds the factors and the walk-forward weights: several seconds",
         "tca_mvo": "solves a cost-aware optimisation every month: a few seconds", "deep_window": "trains a neural network every year of history: about 10-20 seconds", "chronos": "downloads and runs a foundation model: about a minute on CPU",
-        "timesfm": "runs a 200M-parameter model on CPU: many minutes on a long history", "es_policy": "trains a policy: about 10 seconds"}
+        "timesfm": "runs a 200M-parameter model on CPU: many minutes on a long history", "es_policy": "trains a policy: about 10 seconds", "q_learning_exposure": "refits a small Q-function every month: several seconds"}
 DOC_ROOT_FILES = {"dashboard": "dashboard.md", "how_to_add_a_strategy": "how_to_add_a_strategy.md", "start_here": "START_HERE.md", "glossary": "glossary.md", "tour_of_a_backtest_day": "tour_of_a_backtest_day.md",
-                  "roadmap_coverage": "roadmap_coverage.md", "algorithmic_trading": "algorithmic_trading.md", "platform_integration": "platform_integration.md", "feature_audit": "feature_audit.md"}
+                  "roadmap_coverage": "roadmap_coverage.md", "algorithmic_trading": "algorithmic_trading.md", "quant_books_coverage": "quant_books_coverage.md", "platform_integration": "platform_integration.md", "feature_audit": "feature_audit.md"}
 SAFE_SLUG = re.compile(r"^[a-z0-9][a-z0-9_-]{0,80}$")
 
 # What the page needs from this server. 1 was the first catalogue; 2 added data sources (``sources``), the ticker-count check (``/api/requirements``), earnings and trades; 3 added the Execution and

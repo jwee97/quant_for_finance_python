@@ -22,6 +22,10 @@ which needs a bundle with volume and works only for companies, not funds.
 quant backtest --model earnings_season_premium --tearsheet
 ```
 
+## In the strategy survey
+
+Default parameters on the 15 ETFs, net of costs, traded as written: net Sharpe +0.55, CAGR 2.9%, volatility 5.5%, max drawdown -17.3%, turnover 13.9 times a year, deflated Sharpe probability 0.35 counting every strategy in the survey as a trial. One run, not a test: see [the survey](../strategy_survey_3.md) for how to read it.
+
 ## Learn more
 
 [Factor timing: the calendar, the macroeconomy, the market's state and the earnings season](../techniques/factor-timing.md)

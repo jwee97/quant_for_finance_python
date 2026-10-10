@@ -21,6 +21,10 @@ uses the price factors, plus the estimate factors when the file has their column
 quant backtest --model fundamental_momentum --tearsheet
 ```
 
+## In the strategy survey
+
+Default parameters on the 15 ETFs, net of costs, traded as written: net Sharpe +0.08, CAGR 0.3%, volatility 7.3%, max drawdown -26.1%, turnover 13.2 times a year, deflated Sharpe probability 0.01 counting every strategy in the survey as a trial. One run, not a test: see [the survey](../strategy_survey_3.md) for how to read it.
+
 ## Caveats
 
 Reads company statements from a file you supply (data/user/fundamentals.csv); without it the model refuses to run, except the price-only momentum factors. Needs a wide cross-section of stocks, not 15 ETFs, and statements that are point-in-time.

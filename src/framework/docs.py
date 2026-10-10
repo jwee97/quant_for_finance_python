@@ -74,6 +74,8 @@ def strategy_cards(config) -> dict[str, str]:
     survey = pd.read_csv(tables / "library_survey.csv", index_col=0) if (tables / "library_survey.csv").exists() else pd.DataFrame()
     second = config.root / "docs" / "strategy_survey_2.md"
     second_survey = second.read_text(encoding="utf-8") if second.exists() else ""                      # strategies added after the first survey are listed in the second
+    third = config.root / "docs" / "strategy_survey_3.md"
+    third_survey = third.read_text(encoding="utf-8") if third.exists() else ""                         # and those added after that in the third
     cards = {}
     for entry in sorted(library_models(MODELS), key=lambda e: e.name):
         cls = entry.factory
@@ -87,7 +89,8 @@ def strategy_cards(config) -> dict[str, str]:
             lines[-1:-1] = [f"This rule declares a {cls.rebalance} rebalance; pass `execution: {{rebalance: monthly}}` in a spec to override it.", ""]
         if entry.name in survey.index and survey.loc[entry.name, "error"] != survey.loc[entry.name, "error"]:
             r = survey.loc[entry.name]
-            survey_page = "../strategy_survey_2.md" if f"strategies/{entry.name}.md" in second_survey else "../strategy_survey.md"
+            survey_page = ("../strategy_survey_3.md" if f"strategies/{entry.name}.md" in third_survey else "../strategy_survey_2.md" if f"strategies/{entry.name}.md" in second_survey
+                           else "../strategy_survey.md")
             lines += ["## In the strategy survey", "",
                       f"Default parameters on the 15 ETFs, net of costs, traded as written: net Sharpe {float(r['net_sharpe']):+.2f}, CAGR {float(r['cagr']):.1%}, volatility {float(r['volatility']):.1%}, "
                       f"max drawdown {float(r['max_drawdown']):.1%}, turnover {float(r['turnover']):.1f} times a year, deflated Sharpe probability {float(r['deflated_sharpe_probability']):.2f} "
