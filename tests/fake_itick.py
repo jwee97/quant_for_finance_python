@@ -31,11 +31,16 @@ class FakeClock:
         self.t += seconds
 
 
+def new_york_today() -> pd.Timestamp:
+    """The date in New York, which is what the provider calls today for US stocks (the local clock's date differs for several hours a day)."""
+    return pd.Timestamp.now(tz="America/New_York").normalize().tz_localize(None)
+
+
 class FakeITick:
     def __init__(self, bars: int = 2600, last: str | None = None, key: str = KEY, cap: int | None = None, stamp: str = "midnight_utc", split: tuple | None = None,
                  include_today: bool = False, daily: bool = True):
         self.n, self.key, self.cap, self.stamp, self.split, self.include_today, self.daily = bars, key, cap, stamp, split, include_today, daily
-        self.last = pd.Timestamp(last) if last else pd.Timestamp.now().normalize() - pd.Timedelta(days=1)
+        self.last = pd.Timestamp(last) if last else new_york_today() - pd.Timedelta(days=1)
         self.calls: list[dict] = []                     # the query parameters of every call
         self.tokens: list[str | None] = []              # the token header of every call
         self.urls: list[str] = []
@@ -48,7 +53,7 @@ class FakeITick:
     def series(self, code: str) -> pd.DataFrame:
         days = pd.bdate_range(end=self.last, periods=self.n)
         if self.include_today:
-            days = days.append(pd.DatetimeIndex([pd.Timestamp.now().normalize()]))
+            days = days.append(pd.DatetimeIndex([new_york_today()]))
         if code in self.history_start:
             days = days[days >= self.history_start[code]]
         rng = np.random.default_rng(zlib.crc32(code.encode()))
