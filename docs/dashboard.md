@@ -6,7 +6,7 @@ quant serve            # opens http://127.0.0.1:8765 ; --port, --no-browser, --h
 
 Everything runs on your machine. The server listens on localhost only, and every request needs a token that exists only in the page it served.
 
-The server loads its code when it starts. After you update the files (a `git pull`), stop it and start it again: the page is read from disk on every load, so it can be newer than the server behind it. When it is, a banner says so (*The app is older than this page* needs a restart before anything works; *The app was updated after it started* means some of its code changed since it started). The Execution and Cash flows tabs need a newer app than the Backtest tab does: with an older one the Backtest keeps working and those two tabs say they need a restart.
+The server loads its code when it starts. After you update the files (a `git pull`), stop it and start it again: the page is read from disk on every load, so it can be newer than the server behind it. When it is, a banner says so (*The app is older than this page* needs a restart before anything works; *The app was updated after it started* means some of its code changed since it started). The Execution and Cash flows tabs need a newer app than the Backtest tab does, and the Options, Futures, Crypto and Machine learning tabs need a newer one still: with an older app the Backtest keeps working and those tabs say they need a restart.
 
 ## Backtest
 
@@ -138,6 +138,42 @@ The Cash flows tab follows a portfolio of real tickers through money coming in a
 
 A bootstrap of the past cannot produce a future worse than the history it samples, the liability model uses one flat yield, and every result is one path of history: read the tables and charts as a way to see what a policy does, not as a forecast. The [cash-flow strategies guide](techniques/cash-flow-strategies.md) explains the arithmetic.
 
+## Options, Futures and Crypto
+
+Three workspaces, one per asset class, with the same shape: a read-only analytics view first, then a backtest that goes through the platform's own engine, so costs, the one-day signal lag, volatility targeting and validation are the same as anywhere else. Nothing here sends an order.
+
+**Every page says where its numbers come from.** A badge above each table reads *Platform data* (real data held in this repository), *Your file* (a CSV you placed under `data/user/`), *Simulated: a model*, or *Mixed sources* (the parts are listed beside it). The repository holds no option quotes, no futures contract prices and no multi-exchange crypto quotes, so by default those are simulated: use them to learn the page and to check the analytics, never to look for an edge. Deribit's BTC and ETH perpetual and funding history, the stablecoin supply and the ETF prices are real.
+
+### Options
+
+Pick an underlying (an ETF of the platform, or `file:<NAME>` for a chain you saved as `data/user/options/<NAME>.csv`). *Overview* gives at-the-money implied volatility, its rank and percentile against the underlying's own history, the put/call ratio and the state of the term structure and skew. *Chain* shows calls and puts side by side with the at-the-money row marked, filters by expiry and moneyness, volume, open interest, the bid-ask spread and a warning for stale quotes. *Smile and skew* and *Surface and term* draw implied volatility by strike, by expiry and by both, with the skew and the static-arbitrage checks. *Greeks and risk* takes a list of positions and reports their Greeks in dollars and a stress table of price and volatility shocks. *Strategy builder* builds a trade (long call, covered call, vertical spreads, straddle, strangle, butterfly, condor, calendar, ratio spread and more): the payoff at expiry and today, maximum profit and loss, break-evens, Greeks, an illustrative margin estimate, the probability of profit and the expected value under a lognormal view you can change. *Backtest* runs volatility strategies through the options engine on a simulated market. [Guide](techniques/option-chains-and-greeks.md).
+
+### Futures
+
+Pick a root. *Curve* is price by contract month, how the curve moved, the roll yield of each contract and the contract specification. *Roll* names the contract held and the next, the calendar and open-interest roll dates, what the roll costs and the rolls of the past. *Carry and basis* follows both against their history. *Margin* takes a book (an example loads with one click) and reports notional, initial and maintenance margin, leverage and the distance to a margin call, with warnings above 70% margin use, for concentration in one root and for contracts close to expiry. *Backtest* trades carry, trend, breakout or momentum across the roots through the pipeline. Curves are a Schwartz-Smith model unless `data/user/futures/<ROOT>.csv` (`date, contract, expiry, price`, optionally `open_interest`, `volume`, `spot`) replaces one; contract specifications and margins are illustrative. [Guide](techniques/futures-curves-carry-and-rolls.md).
+
+### Crypto
+
+Pick a coin (BTC and ETH are Deribit data; SOL, BNB and XRP are simulated from BTC; `data/user/crypto/<SYMBOL>.csv` with `time, spot` and optionally `perp`, `funding_daily` or `funding_8h` replaces any of them). *Overview* shows six cards (trend, funding, momentum, volatility, liquidity, on-chain) and spot against the perpetual. *Funding* is annualised funding by coin and venue with z-scores and percentiles. *Basis and carry* measures the basis and the cash-and-carry trade with its break-even in days. *Across exchanges* lists every venue pair's gross gap, fees, slippage and net result. *Liquidity* gives spread, depth and price impact for $100 thousand, $1 million and $10 million from a parametric book. *Backtest* runs spot momentum, funding carry, the basis trade, volatility breakout, stablecoin flow and regime-filtered trend on Deribit BTC and ETH. [Guide](techniques/crypto-funding-basis-and-venues.md).
+
+The same data is available as JSON: `GET /api/options/chain?underlying=&expiry=`, `/api/options/surface?underlying=`, `POST /api/options/portfolio-risk`, `/api/options/strategy/payoff`, `/api/options/strategy/backtest`, `GET /api/futures/curve?root=CL`, `/api/futures/roll?root=CL`, `/api/futures/margin`, `GET /api/crypto/funding?symbols=BTC,ETH,SOL`, `/api/crypto/overview`, `/api/crypto/cross-exchange`, and `/api/assets/catalog` for what each form offers. Every payload carries `source`, `sources`, `warnings`, `notes` and `as_of`.
+
+## Machine learning
+
+The Machine learning tab trains models **only inside the whole research pipeline**: features built without look-ahead, walk-forward fits whose training rows are purged around every test day, a backtest with costs, and a result cut into train (in-sample), validation (where settings are chosen), test and forward segments, with every look at the same data counted. The ETF and crypto universes are platform data; the futures universe is simulated. There are nine views; they share one form and one idea of the current experiment, and anything slow runs as a job with progress.
+
+- **Dataset.** Choose a universe, groups of features, a target and its horizon, how features are scaled, the window and the segments. The result lists every feature with its coverage and its rank IC with the target **on the warm-up segment only** (judging features on later days would leak them), the features that could not be built and why, the split of the days and the purge.
+- **Train.** Pick a model (linear, ridge, lasso, elastic net, logistic, random forest, gradient boosting, XGBoost and LightGBM if installed, autoregression, Kalman, online ridge and logistic, regime ridge), its settings, a position rule, costs and a volatility target. The result shows Sharpe by segment (the train bar is grey: it is not evidence), the equity curve with its four sections shaded, drawdown, the rank IC through time and by horizon, the return by score bucket, what the model leans on and what breaks when a feature is shuffled, the distribution of its predictions by segment, and a form to re-backtest the same predictions under other rules.
+- **Experiments.** A leaderboard of everything saved, with the number of looks at the data when each ran, a plot of validation against test Sharpe, the model registry with stages, and open, delete, compare and combine.
+- **Compare.** Two to eight experiments: settings and Sharpe by segment side by side, equity curves over the days they share, the correlation matrix and a map of how alike they are.
+- **Explain.** Why the saved model scored an asset as it did on a date: a Shapley waterfall that sums exactly to the score, the day's scores for every asset, and the global importances.
+- **Overfitting.** The generalisation score, the deflated Sharpe ratio, the probability that the true Sharpe is positive on test and forward, the Sharpe through the validation blocks, the rank IC by refit, ten stress tests with a random-signal control, and meta-labelling.
+- **Search.** Random, then Bayesian, then genetic search over model kind, settings, horizon, position rule and rebalancing on validation only, with the deflated Sharpe, the probability of backtest overfitting and the Romano-Wolf p-value of the winner; or tune the settings of one model.
+- **Combine.** Ten ways to weight several strategies, each estimated from the past only, with the similarity map of the strategies.
+- **Forward test.** Record the saved model's signal for the newest date as paper orders, settle the signals whose window has ended and watch the live rank IC and the drift of every feature against the backtest.
+
+Experiments, datasets and models are saved under `artifacts/ml/` (SQLite for the records). The same pipeline is on the command line (`python -m src.cli ml-build-dataset | ml-train | ml-backtest | ml-report`) and the settings are in `config/ml_research.yaml`. [Guide](techniques/machine-learning-research-pipeline.md).
+
 ## Guides
 
 The Guides tab reads the technique guides, the glossary, the strategy cards and the [algorithmic trading coverage](algorithmic_trading.md) page.
@@ -149,5 +185,6 @@ The Guides tab reads the technique guides, the glossary, the strategy cards and 
 - Weekend and holiday gaps: for mixed universes it keeps weekdays on which at least 60% of the tickers traded.
 - Yahoo Finance data are free and unaudited: corporate actions and delistings are not curated. iTick's adjustments are undocumented (see above). The platform's 15 ETFs are the versioned, cleaned dataset.
 - There are no stop-loss, take-profit or trailing-stop exits and no borrowing or short-selling fees: positions follow the signal and the rebalance schedule, and only trading costs are charged.
+- The Options, Futures and Crypto tabs are read-only analytics on simulated data unless you bring a file; the simulated chains, curves, venues and order books are labelled as such and are not quotes. The Machine learning tab finds no edge in data that has none, and a good validation result after a search is partly selection: judge it by test, forward and the trial count.
 - The Execution tab is a simulator: it places no orders and measures nothing about your own executions, and its costs come from illustrative impact parameters. The Cash flows tab follows historical prices, so it shows what a policy would have done, not what it will.
 - Costs are the platform defaults (10 bps per unit traded, monthly rebalance); change them in `config/backtest.yaml` or the spec.

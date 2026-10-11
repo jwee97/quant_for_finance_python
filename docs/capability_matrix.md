@@ -194,6 +194,24 @@ The item-by-item map to the taxonomy this section answers is [algorithmic tradin
 | Graph portfolios, hierarchical sensitivity parity | PARTIAL | `src/portfolio/graph_portfolio.py`, [guide](techniques/graph-portfolios-and-hierarchical-sensitivity-parity.md) | the published definition of HSP | Low |
 | Scenario generators, scenario backtests, CPCV | COMPLETE | `src/scenarios`, `src/validation/cpcv.py`, [guide](techniques/scenario-generation-and-backtesting.md) | none | n/a |
 
+## Multi-asset workspaces and the machine-learning platform (Generation 10)
+
+The Options, Futures and Crypto tabs analyse simulated chains, curves, venues and order books unless a file of yours replaces them, and say so on every table. The machine-learning platform's tests check the machinery (causality, purging, trial counting, the reserved segments), not an edge.
+
+| Capability | Status | Evidence | Missing | Priority |
+|---|---|---|---|---|
+| Options workspace: chain, smile, skew, term structure, surface, Greeks and stress, strategy payoffs with margin, probability of profit and expected value, volatility-strategy backtest | PARTIAL | `src/assets/options_analytics.py`, `src/webapp/asset_api.py`, `src/webapp/static/options.js`, `tests/test_assets_workspaces.py`, [guide](techniques/option-chains-and-greeks.md) | no historical or live option quotes in the repository: the default chain is an arbitrage-free SSVI surface on a real spot and volatility, labelled simulated; a vendor CSV is analysed as it is | Medium |
+| Futures workspace: curve, carry and basis, roll analysis, margin dashboard, carry and trend backtests | PARTIAL | `src/assets/futures_analytics.py`, `src/webapp/static/futures.js`, `tests/test_assets_workspaces.py`, [guide](techniques/futures-curves-carry-and-rolls.md) | no futures contract prices: Schwartz-Smith curves with illustrative margins, labelled simulated; a curve file replaces them | Medium |
+| Crypto workspace: overview, funding by venue, basis and carry, cross-exchange spreads net of fees, liquidity, strategy backtests | PARTIAL | `src/assets/crypto_analytics.py`, `src/webapp/static/crypto.js`, `tests/test_assets_workspaces.py`, `tests/test_crypto.py`, [guide](techniques/crypto-funding-basis-and-venues.md) | Deribit BTC and ETH and the stablecoin supply are data; other venues, other coins and the order book are simulated and labelled; no exchange net flows | Medium |
+| Leak-free datasets: causal features in ten groups, forward-looking targets, purge and embargo, segments (train, validation, test, forward) | COMPLETE | `src/ml/datasets.py`, `src/ml/features.py`, `src/ml/targets.py`, `src/ml/splitters.py`, `tests/test_ml_data.py` | the futures, options and crypto feature groups need data the platform only simulates | Low |
+| Walk-forward training of 15 model kinds, eight position rules, the platform's backtest engine with costs | COMPLETE | `src/ml/training.py`, `src/ml/models.py`, `src/ml/signals.py`, `src/ml/backtest.py`, `tests/test_ml_pipeline.py` | CatBoost is optional and absent here; XGBoost and LightGBM are used when installed | Low |
+| Evaluation and overfitting report: rank IC and decay, Sharpe by segment, generalisation score, probabilistic and deflated Sharpe, stress tests and a random-signal control | COMPLETE | `src/ml/evaluation.py`, `src/ml/robustness.py`, `tests/test_ml_pipeline.py` | the stress-test verdicts are crude stated rules | Low |
+| Explainability: permutation importance, model importance across refits, Shapley values for one prediction | COMPLETE | `src/ml/explainability.py`, `tests/test_ml_pipeline.py` | describes the model, not the market | Low |
+| Experiment registry (SQLite) counting every look at the same sample, model stages, `ml-*` commands | COMPLETE | `src/ml/registry.py`, `src/ml/experiments.py`, `src/ml/cli.py`, `tests/test_ml_cli.py`, [platform notes](ml_platform.md) | none | n/a |
+| Strategy search (random, Bayesian, genetic) on validation only, tuning, combination engine, meta-labelling | COMPLETE | `src/ml/strategy_search.py`, `src/ml/optimization.py`, `src/ml/ensembles.py`, `tests/test_ml_search.py` | combining strategies ignores the cost of changing weights between them (stated) | Low |
+| Forward testing and drift monitoring: paper signals, settlement, live rank IC, population stability index | PARTIAL | `src/ml/monitoring.py`, `tests/test_ml_search.py`, `tests/test_webapp_assets_ml.py` | signals are paper orders and are recorded when the step is run: nothing schedules the daily run | Medium |
+| Dashboard: Options, Futures, Crypto and Machine learning tabs | COMPLETE | `src/webapp/static/{options,futures,crypto,ml,workspace}.js`, `tests/test_webapp_assets_ml.py`, `tests/test_webapp_workspaces_browser.py`, [dashboard guide](dashboard.md) | none | n/a |
+
 ## What cannot be completed in this environment
 
 | Item | Why | What exists instead |

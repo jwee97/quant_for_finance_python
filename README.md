@@ -18,7 +18,7 @@ result.
 **New here?** `pip install -e .`, then `quant demo` (thirteen seconds on the cached data), `quant dashboard` (an offline
 explorer of every hypothesis the project declared, most of them rejected) and `quant explain deflated sharpe` (any term,
 technique, strategy or experiment, in plain language). Read [`docs/START_HERE.md`](docs/START_HERE.md) for a learning path
-by background, the [technique guides](docs/techniques/index.md) (89 of them, from PCA to diffusion models, from HAC errors to option surfaces and from VWAP to liability-driven investing), the
+by background, the [technique guides](docs/techniques/index.md) (105 of them, from PCA to diffusion models, from HAC errors to option surfaces and from VWAP to liability-driven investing), the
 [chapter map](docs/chapter_map.md) from the book to the code, and [what was and was not built](docs/roadmap_coverage.md).
 Adding a strategy is writing one forecast model: [how to](docs/how_to_add_a_strategy.md). Chronos is optional:
 `pip install -e ".[chronos]"`; its pretrained weights download from Hugging Face the first time it runs.
@@ -301,6 +301,17 @@ Two books' worth of topics were added, item by item: *Quantitative Equity Portfo
 
 **What the evidence says, honestly.** Every method was first checked against a world with a known answer (an MDP solved exactly, Merton's fraction, a closed-form Black-Scholes price, a planted factor effect, a planted reward), and those checks pass. On real data the picture is plain: on the 15 ETFs, factor timing, the Gaussian-process forecaster, the multi-period allocator, the graph portfolios, hierarchical sensitivity parity, the reinforcement-learning exposure allocator and the new window networks did **not** beat their simple baselines on a risk-adjusted basis (the guides give the numbers; the one apparent exception, a Transformer with t = 3.4, is one of several architectures tried on a small sample). Learned scenario generators did no better than a bootstrap on any measure, and every generator under-predicted the tail risk of a later, wilder period. Fundamentals-based models need `data/user/fundamentals.csv` and were validated on simulated statements, not on companies. Read the new code as correct, tested machinery and a catalogue of what did not pay on this universe, not as a source of edge. Guides: [dynamic programming and optimal control](docs/techniques/dynamic-programming-and-optimal-control.md), [reinforcement learning](docs/techniques/reinforcement-learning-from-tables-to-networks.md), [deep networks, generative models and PINNs](docs/techniques/deep-learning-generative-scenarios-and-pinns.md), [graph portfolios](docs/techniques/graph-portfolios-and-hierarchical-sensitivity-parity.md), [scenario generation and backtesting](docs/techniques/scenario-generation-and-backtesting.md), [trading with costs](docs/techniques/multi-period-trading-and-order-routing.md), [factor timing](docs/techniques/factor-timing.md), [portfolio theory](docs/techniques/portfolio-theory-and-constrained-books.md), [factor models and machine learning](docs/techniques/factor-models-and-machine-learning.md), [hierarchical Bayes and Gaussian processes](docs/techniques/hierarchical-bayes-decisions-and-gaussian-processes.md).
 
+## Generation 10: multi-asset workspaces and a machine-learning research platform
+
+The dashboard grew from a backtest and strategy interface into a research terminal with a workspace for each asset class, all feeding the same backtest, risk and portfolio engine, plus a machine-learning platform that trains a model only inside a full research-validation-backtest-forward-test pipeline ([`docs/dashboard.md`](docs/dashboard.md), [`docs/ml_platform.md`](docs/ml_platform.md)).
+
+- **`src/assets`** (`common`, `options_analytics`, `futures_analytics`, `crypto_analytics`, `strategy_runs`) and **`src/webapp/asset_api.py`**: pure functions behind the **Options**, **Futures** and **Crypto** tabs. Options: the chain (calls and puts side by side, spread, open interest, stale-quote warnings), smile, skew, term structure and surface with static-arbitrage checks, position Greeks and stress tables, a strategy builder (payoff, break-evens, margin estimate, probability of profit, expected value) and a volatility-strategy backtest. Futures: the curve, carry and basis, a roll analyzer (calendar against open-interest roll dates, roll cost), a margin dashboard with warnings for heavy use, concentration and contracts near expiry, and carry, trend and breakout backtests through the pipeline. Crypto: six overview cards, spot against the perpetual, funding by venue and coin with z-scores, the cash-and-carry break-even, venue spreads net of fees and slippage, order-book depth and impact, and strategy backtests on Deribit BTC and ETH.
+- **Provenance is part of the data.** No free source of option chains, futures contract prices or multi-exchange crypto quotes exists here, so those are simulated (an arbitrage-free SSVI surface on a real spot, Schwartz-Smith curves, Deribit-derived venues and a parametric order book) and **every payload and every table says so** (`Platform data`, `Your file`, `Simulated: a model`, `Mixed sources`). A CSV under `data/user/{options,futures,crypto}/` replaces the simulation and is labelled as yours.
+- **`src/ml`**: ten groups of causal features (85 of them, each tested by replacing the future with noise), eight kinds of forward-looking target, 15 model kinds behind one interface, walk-forward training with purge and embargo, eight position rules, the platform's own backtest engine, rank IC and its decay, Sharpe by train, validation, test and forward segment, the generalisation score and the deflated Sharpe ratio, permutation importance and Shapley values, ten stress tests and a random-signal control, a SQLite registry that counts every look at the same sample, a staged random, Bayesian and genetic strategy search that never predicts the reserved segments, ten ways to combine strategies, meta-labelling, and forward testing with drift monitoring. `python -m src.cli ml-build-dataset | ml-train | ml-backtest | ml-report`, settings in `config/ml_research.yaml`, results under `artifacts/ml/`.
+- **The Machine learning tab** has nine views (Dataset, Train, Experiments, Compare, Explain, Overfitting, Search, Combine, Forward test) over the same code.
+
+**What the evidence says, honestly.** The tests prove the machinery, not an edge: every feature is causal, the purge removes exactly the overlapping labels, a model finds a planted signal and does not find one in noise, the trial counter rises with every look, a search never touches the reserved segments before its finalists, and forward signals recorded after their date are marked as replays. The option chains, futures curves, other venues and order books are models, so nothing computed on them says anything about a market; the pages exist to read a chain, a curve or a funding table correctly and to check that the analytics behave.
+
 ## Repository layout
 
 ```
@@ -331,7 +342,8 @@ src/
   probability/   Generation 6: resampling, Monte Carlo, EVT, copulas, drawdown and Kelly, Bayesian inference, Markov models
   econometrics/  Generation 6: ARIMA, VAR/VECM, GARCH family, state space, dynamic factors
   derivatives/   Generation 6: pricing, Greeks, implied vol, SVI/SSVI, synthetic option market, options backtester, volatility strategies
-  assets/        Generation 6: futures, commodity curves, FX, rates and bonds, market bundles
+  assets/        Generation 6: futures, commodity curves, FX, rates and bonds, market bundles; Generation 10: the options, futures and crypto analytics behind the dashboard workspaces
+  ml/            Generation 10: the machine-learning research platform (datasets, walk-forward training, experiments, registry, search, combination, forward testing)
   microstructure/ Generation 6: order flow, limit-order-book simulator, market making, optimal execution
   ops/           Generation 6: artifact store, model registry, hyperparameter optimisation, purged/CPCV cross-validation, profiling
   instruments/   Generation 7: the unified instrument model (FX, futures, crypto, options, swaps), calendars, registry
@@ -349,11 +361,11 @@ src/
   books/         Generation 9: the coverage catalogue of the two books
   cli.py         the `quant` command
   utils/         config, logging, dates, plotting, experiment registry
-docs/            START_HERE, 101 technique guides, glossary, chapter map, strategy cards, capability matrix, research survey, architecture, notebooks, roadmap coverage (mkdocs.yml)
+docs/            START_HERE, 105 technique guides, glossary, chapter map, strategy cards, capability matrix, research survey, architecture, notebooks, roadmap coverage (mkdocs.yml)
 experiments/     numbered stage scripts + the experiment registry
 reports/         figures, tables, the data-quality report, the research paper,
                  the Generation 2-5 reports, errata/ (before/after record of the drift fix), the dashboard
-tests/           2501 tests
+tests/           2632 tests
 Dockerfile, docker-compose.yml, Makefile, .github/workflows/ci.yml and benchmark.yml, .pre-commit-config.yaml
 ```
 

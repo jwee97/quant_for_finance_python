@@ -22,6 +22,7 @@ nav:
       - Chapter map: chapter_map.md
   - Technique guides: techniques/index.md
   - Architecture: architecture.md
+  - The machine-learning platform: ml_platform.md
   - Research survey: research_survey.md
   - Capability matrix: capability_matrix.md
   - Institutional findings: institutional_findings.md

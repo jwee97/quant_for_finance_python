@@ -114,6 +114,12 @@ A simulation of how a strategy would have performed on past data, under stated r
 
 See: [backtest-engine-and-costs](techniques/backtest-engine-and-costs.md)
 
+### Backwardation
+
+A futures curve that slopes down: later contracts are cheaper than the front one. A long position earns the roll yield as its contract rolls up the curve.
+
+See: [futures-curves-carry-and-rolls](techniques/futures-curves-carry-and-rolls.md), [futures-and-commodity-curves](techniques/futures-and-commodity-curves.md)
+
 ### Base rate
 
 How often an event happens regardless of any signal, for example equities rise in about 60% of months; a forecast must beat it to have skill.
@@ -124,7 +130,7 @@ See: [probabilistic-forecasting](techniques/probabilistic-forecasting.md)
 
 The difference between a futures or perpetual price and the spot price.
 
-See: [crypto-carry](techniques/crypto-carry.md)
+See: [crypto-carry](techniques/crypto-carry.md), [crypto-funding-basis-and-venues](techniques/crypto-funding-basis-and-venues.md)
 
 ### Bayes-Stein shrinkage
 
@@ -258,7 +264,7 @@ See: [unified-instrument-model](techniques/unified-instrument-model.md), [event-
 
 Buying an asset and selling its future or perpetual in the same notional to earn the basis (and, for a perpetual, the funding the short receives) until the prices converge. The reverse trade sells the asset and buys the derivative when the derivative is cheap.
 
-See: [multi-asset-strategy-api](techniques/multi-asset-strategy-api.md)
+See: [multi-asset-strategy-api](techniques/multi-asset-strategy-api.md), [crypto-funding-basis-and-venues](techniques/crypto-funding-basis-and-venues.md)
 
 ### Causality test
 
@@ -322,6 +328,12 @@ When a model's training data includes the period or series you test it on, so a 
 
 See: [foundation-models](techniques/foundation-models.md)
 
+### Contango
+
+A futures curve that slopes up: later contracts are dearer than the front one. A long position pays the roll yield as its contract rolls down the curve.
+
+See: [futures-curves-carry-and-rolls](techniques/futures-curves-carry-and-rolls.md), [futures-and-commodity-curves](techniques/futures-and-commodity-curves.md)
+
 ### Content-addressed store
 
 *Also: artifact store*
@@ -370,6 +382,12 @@ Cross-validation that cuts the history into groups, tests every combination of a
 
 See: [scenario-generation-and-backtesting](techniques/scenario-generation-and-backtesting.md)
 
+### Cross-exchange spread
+
+The difference between the price at which a coin can be bought on one exchange and sold on another. It is an opportunity only if it exceeds both taker fees and the slippage of crossing each book.
+
+See: [crypto-funding-basis-and-venues](techniques/crypto-funding-basis-and-venues.md)
+
 ### CRPS
 
 Continuous ranked probability score: a proper scoring rule for a whole forecast distribution that generalises absolute error; lower is better.
@@ -408,7 +426,7 @@ See: [dynamic-covariance](techniques/dynamic-covariance.md)
 
 The probability that a strategy's Sharpe exceeds what the best of N random trials would show, given sample length, skew and kurtosis.
 
-See: [multiple-testing](techniques/multiple-testing.md)
+See: [multiple-testing](techniques/multiple-testing.md), [machine-learning-research-pipeline](techniques/machine-learning-research-pipeline.md)
 
 ### Degeneracy ordering
 
@@ -608,6 +626,14 @@ The empirical finding that high-interest currencies do not depreciate by the int
 
 See: [fx-carry-and-momentum](techniques/fx-carry-and-momentum.md)
 
+### Forward test
+
+*Also: forward testing*
+
+Recording a model's signals as paper orders as the days arrive, settling them when their window ends and comparing the live rank IC with the backtest's. It is the only evidence that cannot be re-tuned after the fact.
+
+See: [machine-learning-research-pipeline](techniques/machine-learning-research-pipeline.md), [paper-trading-and-replay](techniques/paper-trading-and-replay.md)
+
 ### Foundation model
 
 A large model pre-trained on a vast range of data that can be applied to new tasks with little or no further training.
@@ -624,7 +650,7 @@ See: [information-coefficient](techniques/information-coefficient.md)
 
 The periodic payment between longs and shorts of a perpetual future that keeps its price near the spot price. When the rate is positive longs pay shorts. It is the main carrying cost or income of a crypto perpetual position.
 
-See: [contract-lifecycle](techniques/contract-lifecycle.md), [crypto-carry](techniques/crypto-carry.md)
+See: [contract-lifecycle](techniques/contract-lifecycle.md), [crypto-carry](techniques/crypto-carry.md), [crypto-funding-basis-and-venues](techniques/crypto-funding-basis-and-venues.md)
 
 ### Funding ratio
 
@@ -649,6 +675,12 @@ See: [volatility-forecasting](techniques/volatility-forecasting.md)
 A distribution made of several weighted normal distributions; used to combine forecasts while keeping their disagreement.
 
 See: [forecast-combination](techniques/forecast-combination.md)
+
+### Generalization score
+
+How much of a model's best Sharpe ratio survives where it was not fitted: the worst out-of-sample Sharpe divided by the larger of the train and validation Sharpe, clipped to 0 to 1, and 0 if any out-of-sample Sharpe is not positive.
+
+See: [machine-learning-research-pipeline](techniques/machine-learning-research-pipeline.md)
 
 ### GIRL
 
@@ -676,7 +708,7 @@ See: [graph-neural-networks](techniques/graph-neural-networks.md)
 
 Sensitivities of an option's value: delta to the underlying, gamma to delta, vega to volatility, theta to time and rho to interest rates.
 
-See: [option-pricing-and-greeks](techniques/option-pricing-and-greeks.md)
+See: [option-pricing-and-greeks](techniques/option-pricing-and-greeks.md), [option-chains-and-greeks](techniques/option-chains-and-greeks.md)
 
 ### Guardrails (spending)
 
@@ -766,7 +798,7 @@ See: [execution-algorithms](techniques/execution-algorithms.md)
 
 The volatility that makes an option model match the market price of the option. The implied volatilities of all strikes and expiries form the volatility surface.
 
-See: [option-pricing-and-greeks](techniques/option-pricing-and-greeks.md), [volatility-surfaces](techniques/volatility-surfaces.md)
+See: [option-pricing-and-greeks](techniques/option-pricing-and-greeks.md), [volatility-surfaces](techniques/volatility-surfaces.md), [option-chains-and-greeks](techniques/option-chains-and-greeks.md)
 
 ### Importance sampling
 
@@ -780,7 +812,7 @@ See: [resampling-and-monte-carlo](techniques/resampling-and-monte-carlo.md)
 
 The rank correlation between a signal and subsequent returns.
 
-See: [information-coefficient](techniques/information-coefficient.md)
+See: [information-coefficient](techniques/information-coefficient.md), [machine-learning-research-pipeline](techniques/machine-learning-research-pipeline.md)
 
 ### Information ratio
 
@@ -789,6 +821,12 @@ See: [information-coefficient](techniques/information-coefficient.md)
 Excess return over a benchmark divided by the volatility of that excess (tracking error).
 
 See: [information-coefficient](techniques/information-coefficient.md)
+
+### Initial margin
+
+The collateral a broker or exchange requires to open a futures position, a fraction of its notional value. Margin use is the initial margin of the book divided by equity.
+
+See: [futures-curves-carry-and-rolls](techniques/futures-curves-carry-and-rolls.md)
 
 ### Instrumental variable
 
@@ -880,6 +918,12 @@ The negative average log probability assigned to what actually happened; a prope
 
 See: [calibration](techniques/calibration.md)
 
+### Maintenance margin
+
+The equity a futures position must keep after it is opened. Below it the broker issues a margin call and may close the position.
+
+See: [futures-curves-carry-and-rolls](techniques/futures-curves-carry-and-rolls.md)
+
 ### Marchenko-Pastur
 
 The distribution of eigenvalues of a random covariance matrix; its upper edge separates signal from noise eigenvalues.
@@ -928,7 +972,7 @@ See: [mean-variance-and-shrinkage](techniques/mean-variance-and-shrinkage.md)
 
 A second model that decides whether to act on a primary model's signal, trained on whether the primary's past calls were profitable. The bet size follows the estimated probability of being right.
 
-See: [multi-asset-strategy-api](techniques/multi-asset-strategy-api.md)
+See: [multi-asset-strategy-api](techniques/multi-asset-strategy-api.md), [machine-learning-research-pipeline](techniques/machine-learning-research-pipeline.md)
 
 ### Minimum detectable effect
 
@@ -1020,6 +1064,12 @@ Updating a model after each new observation instead of training once.
 
 See: [online-learning](techniques/online-learning.md)
 
+### Open interest
+
+The number of contracts outstanding. In futures it moves from the expiring contract to the next one before expiry, which is a better roll signal than the calendar alone; in options a strike with no open interest is hard to trade.
+
+See: [futures-curves-carry-and-rolls](techniques/futures-curves-carry-and-rolls.md), [option-chains-and-greeks](techniques/option-chains-and-greeks.md)
+
 ### Order-flow imbalance
 
 *Also: OFI*
@@ -1032,7 +1082,7 @@ See: [market-making-and-order-flow](techniques/market-making-and-order-flow.md)
 
 Fitting noise in the sample so well that performance on new data is much worse.
 
-See: [multiple-testing](techniques/multiple-testing.md), [walk-forward-and-leakage](techniques/walk-forward-and-leakage.md)
+See: [multiple-testing](techniques/multiple-testing.md), [walk-forward-and-leakage](techniques/walk-forward-and-leakage.md), [machine-learning-research-pipeline](techniques/machine-learning-research-pipeline.md)
 
 ### Pairs trading
 
@@ -1053,6 +1103,12 @@ See: [paper-trading-and-replay](techniques/paper-trading-and-replay.md)
 The share of the market's volume that an order makes up. A POV algorithm trades a fixed participation rate, so it speeds up when the market does.
 
 See: [execution-algorithms](techniques/execution-algorithms.md)
+
+### Payoff diagram
+
+A position's profit or loss at one date as a function of the underlying's price. Where it crosses zero are the break-evens; its extremes are the maximum profit and loss.
+
+See: [option-chains-and-greeks](techniques/option-chains-and-greeks.md)
 
 ### Payoff ratio
 
@@ -1078,7 +1134,7 @@ See: [pca-effective-rank](techniques/pca-effective-rank.md)
 
 How much error rises when one input is shuffled; a model-agnostic measure of use.
 
-See: [explainability](techniques/explainability.md)
+See: [explainability](techniques/explainability.md), [machine-learning-research-pipeline](techniques/machine-learning-research-pipeline.md)
 
 ### Perpetual future
 
@@ -1086,7 +1142,7 @@ See: [explainability](techniques/explainability.md)
 
 A futures contract without expiry that stays near spot through funding payments.
 
-See: [crypto-carry](techniques/crypto-carry.md)
+See: [crypto-carry](techniques/crypto-carry.md), [crypto-funding-basis-and-venues](techniques/crypto-funding-basis-and-venues.md)
 
 ### Physics-informed neural network
 
@@ -1135,6 +1191,14 @@ See: [portfolio-rebalancing-styles](techniques/portfolio-rebalancing-styles.md)
 A necessary condition for optimal control along one path: the control minimises the Hamiltonian at every instant and the costate follows an equation driven by the Hamiltonian's slope in the state, giving a boundary value problem.
 
 See: [dynamic-programming-and-optimal-control](techniques/dynamic-programming-and-optimal-control.md)
+
+### Population stability index
+
+*Also: PSI*
+
+A measure of how far a feature's (or a score's) distribution today has moved from the one the model was trained on. Below 0.1 is steady, 0.1 to 0.25 is worth watching and above 0.25 is a shift.
+
+See: [machine-learning-research-pipeline](techniques/machine-learning-research-pipeline.md)
 
 ### Post-event drift
 
@@ -1282,13 +1346,13 @@ See: [online-learning](techniques/online-learning.md)
 
 Replacing an expiring futures contract with the next one. The roll is a trade (with costs), not a return; a continuous series must be adjusted so the gap between the two contracts does not appear as profit.
 
-See: [contract-lifecycle](techniques/contract-lifecycle.md), [futures-and-commodity-curves](techniques/futures-and-commodity-curves.md)
+See: [contract-lifecycle](techniques/contract-lifecycle.md), [futures-and-commodity-curves](techniques/futures-and-commodity-curves.md), [futures-curves-carry-and-rolls](techniques/futures-curves-carry-and-rolls.md)
 
 ### Roll yield
 
 The return from rolling a futures position when the curve is not flat: positive in backwardation (the next contract is cheaper) and negative in contango.
 
-See: [futures-and-commodity-curves](techniques/futures-and-commodity-curves.md)
+See: [futures-and-commodity-curves](techniques/futures-and-commodity-curves.md), [futures-curves-carry-and-rolls](techniques/futures-curves-carry-and-rolls.md)
 
 ### Roll-down
 
@@ -1332,7 +1396,7 @@ See: [cash-flow-strategies](techniques/cash-flow-strategies.md)
 
 A fair division of a prediction among inputs, averaging each input's marginal contribution over all orders.
 
-See: [explainability](techniques/explainability.md)
+See: [explainability](techniques/explainability.md), [machine-learning-research-pipeline](techniques/machine-learning-research-pipeline.md)
 
 ### Sharpe ratio
 
@@ -1518,6 +1582,18 @@ The generalised solution of a Hamilton-Jacobi-Bellman equation that exists even 
 
 See: [dynamic-programming-and-optimal-control](techniques/dynamic-programming-and-optimal-control.md)
 
+### Volatility skew
+
+The difference between the implied volatility of low-strike puts and high-strike calls (for example 25-delta put minus 25-delta call). It is the market's price of crash insurance.
+
+See: [option-chains-and-greeks](techniques/option-chains-and-greeks.md), [volatility-surfaces](techniques/volatility-surfaces.md)
+
+### Volatility smile
+
+Implied volatility plotted against strike for one expiry. It is rarely flat: it curves up at both ends, and for equity indices it slopes down with strike (the skew).
+
+See: [option-chains-and-greeks](techniques/option-chains-and-greeks.md), [volatility-surfaces](techniques/volatility-surfaces.md)
+
 ### Volatility surface
 
 Implied volatility as a function of strike and expiry. It must satisfy no-arbitrage conditions; SVI and SSVI are parametric forms that can.
@@ -1532,11 +1608,17 @@ Scaling positions so the portfolio runs at a chosen level of volatility.
 
 See: [risk-parity](techniques/risk-parity.md), [regime-adaptive-allocation](techniques/regime-adaptive-allocation.md)
 
+### Volatility term structure
+
+At-the-money implied volatility plotted against expiry. Upward sloping is the usual calm state; inverted (short expiries above long ones) is a sign of stress.
+
+See: [option-chains-and-greeks](techniques/option-chains-and-greeks.md), [volatility-surfaces](techniques/volatility-surfaces.md)
+
 ### Walk-forward
 
 Testing by repeatedly fitting on the past and predicting the next block of the future.
 
-See: [walk-forward-and-leakage](techniques/walk-forward-and-leakage.md)
+See: [walk-forward-and-leakage](techniques/walk-forward-and-leakage.md), [machine-learning-research-pipeline](techniques/machine-learning-research-pipeline.md)
 
 ### Walk-forward learning
 
