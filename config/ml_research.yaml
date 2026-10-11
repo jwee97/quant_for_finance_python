@@ -1,0 +1,84 @@
+# ---------------------------------------------------------------------------
+# Machine-learning research platform (src/ml).
+#
+# Read by src/ml/config.py and merged over the defaults written there; a missing key falls back to the
+# default. It is deliberately NOT one of the pinned configuration namespaces of the research pipeline
+# (the Generation 1-5 results are fingerprinted from those): changing a number here changes ML
+# experiments only. Every experiment writes the merged configuration it ran with next to its results.
+#
+# The rule behind every setting: a model is never judged on its own. It is trained walk-forward, its
+# predictions become positions, the positions go through the platform's backtest engine with costs, and
+# the result is split into train / validation / test / forward segments, of which the last two are only
+# looked at once.
+# ---------------------------------------------------------------------------
+registry:
+  root: artifacts/ml                  # experiments/, models/, features/, predictions/, reports/ and registry.sqlite live here
+
+dataset:
+  universe: etf                       # etf (the platform's 15 ETFs) | crypto (Deribit BTC/ETH and carry indices) | futures (simulated roots) | a list of tickers
+  feature_groups: [price, momentum, mean_reversion, volatility, volume, relative, macro]
+  target: fwd_ret_5                   # the column the model is trained on; see src/ml/targets.py for the list
+  horizon: 5                          # days the target looks ahead (the 5 in fwd_ret_5)
+  lag: 1                              # days between the decision (close of t) and the start of the target; the backtest engine's signal lag
+  min_history: 252                    # an asset enters the sample after this many observations
+  winsor: 0.01                        # cross-sectional winsorisation of features at each date (each tail)
+  normalize: cross_sectional_z        # none | cross_sectional_z | rank, applied per date (it can only use that date's cross-section)
+  benchmark: equal_weight             # for excess-return targets: equal_weight or a ticker in the universe
+  start: null
+  end: null
+  regime_detector: null               # null | vol_state | hmm | gmm: adds a regime_state feature (the regime_ridge model needs it)
+
+split:
+  scheme: walk_forward                # walk_forward | expanding | rolling
+  window: expanding                   # expanding | rolling (rolling uses `rolling_days`)
+  rolling_days: 1260
+  min_train_days: 756
+  refit_every: 21                     # trading days between refits
+  embargo: 0                          # extra days kept out of training on top of the label overlap (lag + horizon)
+  validation_fraction: 0.20           # of the dates after the first training window: used for model selection
+  test_fraction: 0.15                 # looked at once, after selection
+  forward_fraction: 0.15              # the final hold-out; reported once and never used to choose anything
+
+model:
+  kind: ridge
+  params: {}
+
+signal:
+  method: top_n_long_short            # top_n_long_short | long_only_top_quantile | proportional | vol_scaled | rank_normalised | threshold | regime_filtered | confidence_weighted
+  n: 3
+  quantile: 0.3
+  threshold: 0.0
+  gross: 1.0
+  net: 0.0                            # 0 = dollar neutral long/short; 1 = long only is set by the method
+  max_weight: 0.35
+  sector_cap: null                    # e.g. 0.5: at most this much gross per group of the universe
+  holding_period: 5                   # 1 | 5 | 20 days: the book is the average of the last `holding_period` daily target books (staggered tranches)
+
+backtest:
+  rebalance: weekly                   # daily | weekly | monthly
+  cost_bps: 5.0                       # one-way commission/fee on traded notional
+  slippage_bps: 2.0                   # one-way slippage on traded notional
+  target_vol: 0.10                    # annual volatility target; null for none
+  max_leverage: 1.5
+  extra_lag: 0                        # extra days of delay on top of the engine's own signal lag
+
+robustness:
+  enabled: false                      # the ten stress tests; they re-run backtests and are slow-ish, so off by default
+  n_draws: 20
+  cost_multiples: [1, 2, 3, 5]
+  delays: [0, 1, 2, 5]
+  noise_levels: [0.0, 0.25, 0.5, 1.0]
+  seed: 0
+
+search:
+  n_random: 12
+  n_bayes: 12
+  generations: 3
+  population: 8
+  objective_weights: {turnover: 0.5, max_drawdown: 0.3, instability: 0.2, train_validation_gap: 0.5}
+  top_k: 3                            # strategies re-evaluated on the test and forward segments, once, at the end
+
+forward:
+  horizon_days: 5
+  track_window: 63
+  psi_alert: 0.25                     # population stability index above this flags drift

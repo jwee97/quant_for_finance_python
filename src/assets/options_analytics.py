@@ -34,7 +34,7 @@ DEFAULT_RATE = 0.04
 # Trailing dividend yields of the platform's ETFs, rounded and ASSUMED (they only move forward prices and put-call parity by a few points of a percent).
 DIVIDEND_YIELDS = {"SPY": 0.013, "QQQ": 0.006, "IWM": 0.012, "EFA": 0.030, "EEM": 0.025, "VNQ": 0.040, "AGG": 0.035, "TLT": 0.038, "IEF": 0.035, "SHY": 0.040, "LQD": 0.040, "HYG": 0.060}
 # A real implied-volatility index for some underlyings (series in the platform's macro panel) and the tenor of the index in days.
-REFERENCE_INDEX = {"SPY": ("VIX3M", 93), "QQQ": ("VXN", 30), "GLD": ("GVZ", 30)}
+REFERENCE_INDEX = {"SPY": ("VIX", 30), "QQQ": ("VXN", 30), "GLD": ("GVZ", 30), "DBC": ("OVX", 30)}
 MULTIPLIER = 100.0
 STALE_AFTER_MIN = 15.0
 KAPPA_Q = 2.2                                           # speed at which the model's implied variance reverts to its long-run level (the generator's ``kappa_q``)
