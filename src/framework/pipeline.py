@@ -18,6 +18,7 @@ import numpy as np
 import pandas as pd
 import yaml
 
+from ..backtest.costs import LinearCostModel
 from ..backtest.engine import BacktestEngine
 from ..backtest.impact import market_state
 from ..signals.alpha_engine import trailing_sharpe, trust_weights
@@ -107,6 +108,8 @@ def _engine(config, spec: PipelineSpec, models=()) -> BacktestEngine:
         overrides["signal_lag"] = int(spec.execution["signal_lag"])
     if spec.execution.get("min_assets") is not None:                       # the platform default of 5 zeroes a book of fewer than five assets
         overrides["min_assets"] = int(spec.execution["min_assets"])
+    if spec.execution.get("cost_bps") is not None:                         # one-way cost (fees plus slippage) of trading the whole book, in place of the platform's per-asset costs
+        overrides["cost_model"] = LinearCostModel(cost_bps=float(spec.execution["cost_bps"]))
     return replace(engine, **overrides) if overrides else engine
 
 
