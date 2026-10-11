@@ -218,7 +218,7 @@ class AssetApi:
         except ValueError:
             skew = {}
         data = {"underlying": underlying, "overview": ov, "chain": view, "smile": oa.smile(chain, view["expiry"]), "skew": skew, "term": oa.term_structure(chain), "term_metrics": oa.term_metrics(oa.term_structure(chain)),
-                "settings": {"rate": float(chain["rate"].iloc[0]), "dividend": float(chain["dividend"].iloc[0]), "premium": premium, "window": window}}
+                "settings": {"rate": float(chain["rate"].median()), "dividend": float(chain["dividend"].median()), "premium": premium, "window": window}}       # a real chain has a yield per expiry: the middle one
         warnings = [f"{view['stale_quotes']} of {view['quotes']} quotes in this expiry are stale (older than {oa.STALE_AFTER_MIN:.0f} minutes)."] if view["stale_quotes"] else []
         warnings += [f"{view['wide_quotes']} quotes have a spread wider than 10% of the mid."] if view["wide_quotes"] else []
         parts = {"underlying_price": "platform" if simulated else source, "chain": source, "activity": source}

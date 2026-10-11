@@ -133,7 +133,9 @@ def _chain_notes(df: pd.DataFrame, counts: dict, rate: float, american: bool, de
     notes = [f"{delay}. {len(df):,} contracts on {df['expiry'].nunique()} expiries were kept of {counts['raw']:,} received; contracts with no offer, a crossed market or an expiry out of range were dropped."]
     if carry["estimated"]:
         notes.append(f"The risk-free rate is an assumption ({rate:.2%}). Each expiry's dividend yield is the one implied by put-call parity at the money: median {carry['median']:.2%} "
-                     f"(from {carry['low']:.2%} to {carry['high']:.2%}) over {carry['estimated']} of {carry['expiries']} expiries; the others take their nearest neighbour's.")
+                     f"(from {carry['low']:.2%} to {carry['high']:.2%}) over {carry['estimated']} of {carry['expiries']} expiries; the others take their nearest neighbour's. It absorbs everything that "
+                     "separates the market's forward from the price grown at the assumed rate (the true rate, borrowing costs, the value of early exercise, quote noise), so for an expiry of a few days "
+                     "it can be large or negative: it keeps that expiry's volatilities consistent with its own forward and is not a forecast of dividends.")
     else:
         notes.append(f"The risk-free rate ({rate:.2%}) and a zero dividend yield are assumptions: too few strikes had a live bid on both the call and the put to read a forward from parity.")
     if american:
