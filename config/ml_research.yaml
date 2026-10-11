@@ -53,6 +53,7 @@ signal:
   max_weight: 0.35
   sector_cap: null                    # e.g. 0.5: at most this much gross per group of the universe
   holding_period: 5                   # 1 | 5 | 20 days: the book is the average of the last `holding_period` daily target books (staggered tranches)
+  regime_on_states: [0]               # for regime_filtered: the dataset's regime_state values in which the signal is traded (0 = the first state of the detector, the calm one)
 
 backtest:
   rebalance: weekly                   # daily | weekly | monthly
