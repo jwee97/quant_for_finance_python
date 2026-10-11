@@ -48,9 +48,10 @@ def _json_safe(value):
 
 # ------------------------------------------------------------------------------------------------------ the page and its guides
 def test_the_version_the_new_tabs_need_is_announced_and_the_coverage_guide_is_listed(lab):
-    assert lab.catalog()["api_version"] == api.API_VERSION == 4
+    assert lab.catalog()["api_version"] == api.API_VERSION == 5
     slugs = [d["slug"] for d in lab.docs_index()["docs"]]
     assert "algorithmic_trading" in slugs and "quant_books_coverage" in slugs
+    assert "free_data" in slugs and lab.doc("free_data")["markdown"].lstrip().startswith("# Free data"), "the page on the free downloads is one of the pinned guides"
     assert lab.doc("algorithmic_trading")["markdown"].lstrip().startswith("#") and lab.doc("quant_books_coverage")["markdown"].lstrip().startswith("#")
     assert {"technique-dynamic-programming-and-optimal-control", "technique-reinforcement-learning-from-tables-to-networks", "technique-scenario-generation-and-backtesting"} <= set(slugs)
     assert {"technique-execution-algorithms", "technique-basket-and-liquidity-algorithms", "technique-black-box-and-high-frequency-strategies", "technique-cash-flow-strategies"} <= set(slugs)

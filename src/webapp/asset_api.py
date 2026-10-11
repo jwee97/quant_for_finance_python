@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import re
 import threading
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -24,6 +25,8 @@ from ..assets import common
 from ..assets import crypto_analytics as ca
 from ..assets import futures_analytics as fa
 from ..assets import options_analytics as oa
+from ..assets.free_data.store import SAFE_NAME as DOWNLOAD_NAME
+from ..assets.free_data.store import DownloadStore
 from .api import ApiError, _choice, _number
 from .payload import clean
 
@@ -74,6 +77,7 @@ class AssetApi:
         self.root = Path(app.root)
         self._lock = threading.Lock()
         self._frames: dict | None = None
+        self.downloads = DownloadStore(self.root)
 
     # ------------------------------------------------------------------------------------------------------------ routes
     def get_routes(self) -> dict:
@@ -89,6 +93,10 @@ class AssetApi:
         d = self.root / "data" / "user" / folder
         return {p.stem: p for p in sorted(d.glob("*.csv")) if SAFE_NAME.match(p.stem)} if d.is_dir() else {}
 
+    def _downloaded(self, kind: str, item: str | None = None) -> dict[str, dict]:
+        """``{name: record}`` of the free data downloaded for a kind (see ``assets.free_data``), newest first; ``item`` keeps one sort of file (``chain``, ``curve``, ``history``)."""
+        return {r["name"]: r for r in self.downloads.list(kind) if item is None or r.get("item") == item}
+
     def _bundle(self):
         return self.app.builder.default_bundle()
 
@@ -97,13 +105,19 @@ class AssetApi:
         """What the three workspaces can show: option underlyings (the platform's ETFs and your chain files), futures roots, crypto symbols and venues, and the strategies each workspace can run."""
         b = self._bundle()
         opt_files, fut_files, cry_files = self._user_files("options"), self._user_files("futures"), self._user_files("crypto")
+        dl_chains, dl_curves, dl_coins = self._downloaded("options", "chain"), self._downloaded("futures", "curve"), self._downloaded("crypto", "history")
         underlyings = [{"id": a, "label": a, "source": "simulated chain on real prices", "has_index": a in oa.REFERENCE_INDEX} for a in b.assets if a in b.prices.columns]
+        underlyings += [{"id": f"dl:{n}", "label": f"{n} (real chain, {r.get('source', 'downloaded')}, {r.get('as_of', '?')})", "source": "downloaded", "has_index": str(r.get("underlying", "")).upper() in oa.REFERENCE_INDEX,
+                         "as_of": r.get("as_of"), "fetched_at": r.get("fetched_at")} for n, r in dl_chains.items()]
         underlyings += [{"id": f"file:{n}", "label": f"{n} (your file)", "source": "user_file", "has_index": False} for n in opt_files]
-        roots = [{"id": r, "name": s.name, "asset_class": s.asset_class, "exchange": s.exchange, "multiplier": s.multiplier, "tick_size": s.tick_size, "source": "user_file" if r in fut_files else "simulated"}
-                 for r, s in fa.ROOTS.items()]
-        roots += [{"id": r, "name": r, "asset_class": "unknown", "exchange": "?", "multiplier": 1.0, "tick_size": 0.01, "source": "user_file"} for r in fut_files if r not in fa.ROOTS]
-        symbols = [{"id": s, "source": "user_file" if s in cry_files else "platform"} for s in ca.REAL_SYMBOLS] + [{"id": s, "source": "user_file" if s in cry_files else "simulated"} for s in ca.SIMULATED_ALTS]
-        symbols += [{"id": s, "source": "user_file"} for s in cry_files if s not in ca.REAL_SYMBOLS and s not in ca.SIMULATED_ALTS]
+        roots = [{"id": r, "name": s.name, "asset_class": s.asset_class, "exchange": s.exchange, "multiplier": s.multiplier, "tick_size": s.tick_size,
+                  "source": "user_file" if r in fut_files else "downloaded" if r in dl_curves else "simulated"} for r, s in fa.ROOTS.items()]
+        roots += [{"id": r, "name": rec.get("root_name", r), "asset_class": rec.get("asset_class", "unknown"), "exchange": rec.get("exchange", "?"), "multiplier": float(rec.get("multiplier", 1.0)),
+                   "tick_size": float(rec.get("tick_size", 0.01)), "source": "user_file" if r in fut_files else "downloaded"} for r, rec in dl_curves.items() if r not in fa.ROOTS]
+        roots += [{"id": r, "name": r, "asset_class": "unknown", "exchange": "?", "multiplier": 1.0, "tick_size": 0.01, "source": "user_file"} for r in fut_files if r not in fa.ROOTS and r not in dl_curves]
+        symbols = [{"id": s, "source": "user_file" if s in cry_files else "platform"} for s in ca.REAL_SYMBOLS] + [{"id": s, "source": "user_file" if s in cry_files else "downloaded" if s in dl_coins else "simulated"} for s in ca.SIMULATED_ALTS]
+        symbols += [{"id": s, "source": "user_file" if s in cry_files else "downloaded"} for s in dl_coins if s not in ca.REAL_SYMBOLS and s not in ca.SIMULATED_ALTS]
+        symbols += [{"id": s, "source": "user_file"} for s in cry_files if s not in ca.REAL_SYMBOLS and s not in ca.SIMULATED_ALTS and s not in dl_coins]
         return clean({"underlyings": underlyings, "option_strategies": [{"id": k, "text": v} for k, v in oa.STRATEGY_INFO.items()], "option_backtests": [{"id": k, "text": oa.BACKTEST_TEXT[k], "params": oa.backtest_params(k)} for k in oa.BACKTEST_STRATEGIES],
                       "defaults": {"rate": oa.DEFAULT_RATE, "premium": 0.15, "dividend_yields": oa.DIVIDEND_YIELDS}, "futures_roots": roots,
                       "futures_strategies": [{"id": k, "label": v["label"], "text": v["text"]} for k, v in fa.FUTURES_STRATEGIES.items()],
@@ -111,8 +125,43 @@ class AssetApi:
                       "venues": list(ca.VENUE_ORDER), "data_dir": "data/user/", "as_of": str(b.index[-1].date())})
 
     # ------------------------------------------------------------------------------------------------------------ options
+    def _downloaded_chain(self, name: str, rate: float | None, dividend: float | None):
+        """A real chain fetched from a free source (``assets.free_data``). Its rate and dividend yield are columns of the file (the dividend of each expiry is implied by the market's own forward), so a rate or
+        dividend typed in the form does not apply to it. The realised-volatility context comes from the platform's prices when it has the underlying."""
+        if not DOWNLOAD_NAME.match(name):
+            raise ApiError("a downloaded chain is named like SPY or BTC-Deribit")
+        known = self._downloaded("options", "chain")
+        if name not in known:
+            raise ApiError(f"no downloaded chain '{name}'; use the Free data card on this tab to download it (downloaded so far: {sorted(known) or 'none'})")
+        rec = known[name]
+        from ..derivatives.synthetic import load_option_csv
+
+        symbol = str(rec.get("underlying") or name)
+        try:
+            chain = oa.prepare_chain(load_option_csv(self.downloads.folder("options") / rec["file"], underlying=symbol))
+        except (ValueError, OSError) as exc:
+            raise ApiError(f"{name}: {exc}") from None
+        spot, quote_date = float(chain["underlying"].iloc[0]), pd.Timestamp(chain["date"].iloc[0])
+        b, ctx = self._bundle(), None
+        if symbol in b.prices.columns:
+            try:
+                ctx = replace(oa.underlying_context(symbol, b.prices[symbol], b.volume[symbol] if b.volume is not None and symbol in b.volume.columns else None), spot=spot, as_of=quote_date)
+            except ValueError:
+                ctx = None
+        if ctx is None:
+            ctx = oa.UnderlyingContext(symbol, spot, quote_date, float("nan"), float("nan"), float("nan"), pd.Series(dtype=float), float("nan"))
+        notes = [f"Downloaded {str(rec.get('fetched_at', '?')).replace('T', ' ').rstrip('Z')} UTC from {rec.get('source', 'a free source')}; the quotes are for {rec.get('as_of')}."] + [str(n) for n in rec.get("notes", [])]
+        if ctx.rv_21 == ctx.rv_21:
+            notes.append(f"Realised volatility is from the platform's prices of {symbol} through {b.index[-1].date()}.")
+        if rate is not None or dividend is not None:
+            notes.append("The rate and dividend yield of a downloaded chain come with it and are not editable here.")
+        return chain, ctx, "downloaded", notes
+
     def _option_chain(self, underlying: str, rate: float | None, dividend: float | None, premium: float):
-        """``(chain, context, simulated, notes)`` for an underlying: a model chain on an ETF's real last close and realised volatility, or the newest date of your chain file."""
+        """``(chain, context, source, notes)`` for an underlying. ``source`` is ``downloaded`` (a real chain from a free source, ``dl:NAME``), ``user_file`` (your chain file, ``file:NAME``) or ``simulated`` (a
+        model chain on an ETF's real last close and realised volatility)."""
+        if underlying.startswith("dl:"):
+            return self._downloaded_chain(underlying[3:], rate, dividend)
         if underlying.startswith("file:"):
             name = underlying[5:]
             files = self._user_files("options")
@@ -128,7 +177,7 @@ class AssetApi:
             spot = float(chain["underlying"].iloc[0])
             ctx = oa.UnderlyingContext(name, spot, pd.Timestamp(chain["date"].iloc[0]), float("nan"), float("nan"), float("nan"), pd.Series(dtype=float), float("nan"))
             notes = [f"Quotes are from your file {name}.csv (newest quote date {ctx.as_of.date()}); volatilities not in the file are inverted from the mid prices."]
-            return chain, ctx, False, notes
+            return chain, ctx, "user_file", notes
         if not SYMBOL.match(underlying) or underlying not in self._bundle().prices.columns:
             raise ApiError(f"unknown underlying '{underlying}'; the platform's ETFs are {list(self._bundle().prices.columns)}")
         b = self._bundle()
@@ -143,7 +192,7 @@ class AssetApi:
         chain = oa.prepare_chain(oa.build_model_chain(ctx.spot, ctx.as_of, ctx.rv_21, ctx.long_run_vol, r, div, premium, underlying, scale))
         notes = [f"The chain is a MODEL (an arbitrage-free SSVI surface) quoted at {underlying}'s real last close of {ctx.spot:,.2f} on {ctx.as_of.date()} and its real 21-day realised volatility {ctx.rv_21:.1%}.",
                  f"Rate {r:.2%} and dividend yield {div:.2%} are assumptions; the implied-over-realised variance premium is {premium:.0%}. Volume, open interest and quote ages are simulated."]
-        return chain, ctx, True, notes
+        return chain, ctx, "simulated", notes
 
     def _option_params(self, q: dict) -> tuple[str, float | None, float | None, float]:
         underlying = str(q.get("underlying") or "SPY")
@@ -156,13 +205,14 @@ class AssetApi:
         """``GET /api/options/chain?underlying=SPY&expiry=2026-10-23``: the overview cards, the chain for one expiry (calls and puts side by side), its smile and skew metrics, and the term structure."""
         underlying, rate, dividend, premium = self._option_params(q)
         window = _number(q, "window", 0.15, 0.02, 0.6)
-        chain, ctx, simulated, notes = self._option_chain(underlying, rate, dividend, premium)
+        chain, ctx, source, notes = self._option_chain(underlying, rate, dividend, premium)
+        simulated = source == "simulated"
         try:
             view = oa.chain_view(chain, q.get("expiry") or None, window)
         except ValueError as exc:
             raise ApiError(str(exc)) from None
-        macro = self._bundle().macro if simulated else None
-        ov = oa.overview(chain, ctx, premium, macro, simulated)
+        macro = self._bundle().macro if source != "user_file" else None
+        ov = oa.overview(chain, ctx, premium, macro, simulated, source)
         try:
             skew = oa.skew_metrics(chain, view["expiry"])
         except ValueError:
@@ -171,15 +221,16 @@ class AssetApi:
                 "settings": {"rate": float(chain["rate"].iloc[0]), "dividend": float(chain["dividend"].iloc[0]), "premium": premium, "window": window}}
         warnings = [f"{view['stale_quotes']} of {view['quotes']} quotes in this expiry are stale (older than {oa.STALE_AFTER_MIN:.0f} minutes)."] if view["stale_quotes"] else []
         warnings += [f"{view['wide_quotes']} quotes have a spread wider than 10% of the mid."] if view["wide_quotes"] else []
-        parts = {"underlying_price": "platform" if simulated else "user_file", "chain": "simulated" if simulated else "user_file", "activity": "simulated" if simulated else "user_file"}
-        if simulated:
+        parts = {"underlying_price": "platform" if simulated else source, "chain": source, "activity": source}
+        if simulated or (source == "downloaded" and ov.get("reference_index")):
             parts["reference_index"] = "platform"
         return _wrap("options_chain", data, parts, warnings + ov["risk_flags"], ctx.as_of, notes)
 
     def options_surface(self, q: dict) -> dict:
         """``GET /api/options/surface?underlying=SPY``: the implied-volatility surface (strike by expiry), the term structure, the skew metrics of every expiry and the static no-arbitrage checks."""
         underlying, rate, dividend, premium = self._option_params(q)
-        chain, ctx, simulated, notes = self._option_chain(underlying, rate, dividend, premium)
+        chain, ctx, source, notes = self._option_chain(underlying, rate, dividend, premium)
+        simulated = source == "simulated"
         skews = []
         for e in oa.expiry_list(chain):
             if e["dte"] < 4:
@@ -190,13 +241,20 @@ class AssetApi:
                 continue
             if np.isfinite(sk.get("atm_iv", np.nan)):
                 skews.append(sk)
+        downloaded = source == "downloaded"
+        american = bool(self._downloaded("options", "chain").get(underlying[3:], {}).get("american_style", True)) if downloaded else True
+        band = 0.05 if american else 0.15
         try:
-            arb = oa.arbitrage_view(chain)
+            arb = oa.arbitrage_view(chain, liquid_only=downloaded, band=band)                  # a downloaded chain is real quotes, delayed: only the live ones near the forward say anything
         except Exception:                                                                      # a diagnostic must not take the page down
             arb = {"rows": [], "tick": None, "tolerance": None}
+        if downloaded:
+            notes = notes + [f"The no-arbitrage checks cover real quotes that have a live bid and lie within {band:.0%} of the forward"
+                             + (" (stock and ETF options can be exercised early, so in-the-money puts are worth more than put-call parity says: farther out the checks would flag the right of early exercise, not an arbitrage)." if american else ".")
+                             + " A few violations are normal in a real market (stale or wide quotes); a large share would mean the data, or the rate and dividend assumptions, are wrong."]
         data = {"underlying": underlying, "surface": oa.surface_grid(chain), "term": oa.term_structure(chain), "term_metrics": oa.term_metrics(oa.term_structure(chain)), "skews": skews, "arbitrage": arb["rows"],
                 "arbitrage_tick": arb["tick"], "arbitrage_tolerance": arb["tolerance"]}
-        parts = {"chain": "simulated" if simulated else "user_file"}
+        parts = {"chain": source}
         return _wrap("options_surface", data, parts, [], ctx.as_of, notes)
 
     def _positions(self, body: dict, chain: pd.DataFrame, as_of: pd.Timestamp) -> list[dict]:
@@ -233,7 +291,8 @@ class AssetApi:
     def options_portfolio_risk(self, body: dict) -> dict:
         """``POST /api/options/portfolio-risk``: Greeks, by-expiry exposure and a stress table (spot and implied-volatility shocks) for a book of option and share positions."""
         underlying, rate, dividend, premium = self._option_params(body)
-        chain, ctx, simulated, notes = self._option_chain(underlying, rate, dividend, premium)
+        chain, ctx, source, notes = self._option_chain(underlying, rate, dividend, premium)
+        simulated = source == "simulated"
         positions = self._positions(body, chain, ctx.as_of)
         spot_shocks = _floats(body, "spot_shocks", [-0.05, -0.02, 0.0, 0.02, 0.05], -0.9, 2.0)
         vol_shocks = _floats(body, "vol_shocks", [-0.05, 0.0, 0.05], -0.5, 1.0)
@@ -242,13 +301,14 @@ class AssetApi:
             risk = oa.portfolio_risk(positions, ctx.spot, float(chain["rate"].iloc[0]), float(chain["dividend"].iloc[0]), ctx.as_of, spot_shocks, vol_shocks, days)
         except ValueError as exc:
             raise ApiError(str(exc)) from None
-        return _wrap("options_portfolio_risk", {"underlying": underlying, **risk}, {"prices": "platform" if simulated else "user_file", "volatilities": "simulated" if simulated else "user_file"},
+        return _wrap("options_portfolio_risk", {"underlying": underlying, **risk}, {"prices": "platform" if simulated else source, "volatilities": source},
                                      risk["risk_flags"], ctx.as_of, notes + ["Stress P&L revalues every option with Black-Scholes at the shocked spot and volatility; time passes only if you set days."])
 
     def options_strategy_payoff(self, body: dict) -> dict:
         """``POST /api/options/strategy/payoff``: the legs of a named structure (or your own), their payoff at the horizon, today and half way, maximum profit and loss, break-evens, Greeks, an indicative margin, the probability of profit and expected value."""
         underlying, rate, dividend, premium = self._option_params(body)
-        chain, ctx, simulated, notes = self._option_chain(underlying, rate, dividend, premium)
+        chain, ctx, source, notes = self._option_chain(underlying, rate, dividend, premium)
+        simulated = source == "simulated"
         name = str(body.get("strategy") or "long_straddle")
         dte = _number(body, "dte", 30, 1, 700, integer=True)
         far = _number(body, "far_dte", max(dte * 2, dte + 14), dte + 1, 800, integer=True)
@@ -277,7 +337,7 @@ class AssetApi:
             raise ApiError(str(exc)) from None
         data = {"underlying": underlying, "strategy": name, "text": oa.STRATEGY_INFO.get(name, "Your own legs"), "expiry": str(pd.Timestamp(e1).date()), "far_expiry": str(pd.Timestamp(e2).date()), "atm_iv": atm,
                 "analysis": result}
-        return _wrap("options_strategy", data, {"prices": "platform" if simulated else "user_file", "premiums": "simulated" if simulated else "user_file"}, result["risk_flags"], ctx.as_of,
+        return _wrap("options_strategy", data, {"prices": "platform" if simulated else source, "premiums": source}, result["risk_flags"], ctx.as_of,
                                      notes + ["Entry prices are the model's mids (or worse, if you chose to cross the spread). Margin is indicative. Probability of profit and expected value assume a lognormal spot with one volatility."])
 
     def _custom_legs(self, raw, chain: pd.DataFrame, as_of: pd.Timestamp) -> list[dict]:
@@ -316,6 +376,18 @@ class AssetApi:
         return self.app.submit_task(f"options: {name}", work)
 
     # ------------------------------------------------------------------------------------------------------------ futures
+    def _downloaded_curve(self, root: str, rec: dict) -> fa.CurveData:
+        """A curve fetched from a free source. A root the platform simulates keeps its specification; any other takes the terms the download recorded (margins unknown)."""
+        spec = fa.ROOTS.get(root)
+        if spec is None:
+            spec = fa.RootSpec(root, str(rec.get("root_name", root)), str(rec.get("exchange", "?")), str(rec.get("asset_class", "unknown")), float(rec.get("multiplier", 1.0)), float(rec.get("tick_size", 0.01)),
+                               tuple(range(1, 13)), "last_business_day", fa.SchwartzSmithParams(), 0.0, 0.0)
+        notes = [f"Downloaded {str(rec.get('fetched_at', '?')).replace('T', ' ').rstrip('Z')} UTC from {rec.get('source', 'a free source')}; the newest prices are for {rec.get('as_of')}."] + [str(n) for n in rec.get("notes", [])]
+        try:
+            return fa.load_curve_file(self.downloads.folder("futures") / rec["file"], root, spec=spec, source="downloaded", extra_notes=notes)
+        except (ValueError, OSError) as exc:
+            raise ApiError(f"{root}: {exc}") from None
+
     def _curve(self, root: str) -> fa.CurveData:
         root = root.upper()
         if not SYMBOL.match(root):
@@ -326,9 +398,22 @@ class AssetApi:
                 return fa.load_curve_file(files[root], root)
             except ValueError as exc:
                 raise ApiError(f"{root}.csv: {exc}") from None
+        downloaded = self._downloaded("futures", "curve")
+        if root in downloaded:
+            return self._downloaded_curve(root, downloaded[root])
         if root not in fa.ROOTS:
-            raise ApiError(f"unknown root '{root}'; the simulated roots are {sorted(fa.ROOTS)} (put {root}.csv in data/user/futures/ to use your own)")
+            raise ApiError(f"unknown root '{root}'; the simulated roots are {sorted(fa.ROOTS)} (download it with the Free data card, or put {root}.csv in data/user/futures/ to use your own)")
         return fa.simulated_curve(root, self._bundle().index[-1])
+
+    @staticmethod
+    def _curve_parts(data: fa.CurveData, margins: bool = False) -> dict:
+        """Where a curve's numbers came from, part by part. Open interest is a part only when the table has it (a free Yahoo download does not); margins are always the platform's illustrative figures."""
+        parts = {"curve": data.source}
+        if data.long["open_interest"].notna().any():
+            parts["open_interest"] = data.source
+        if margins:
+            parts["margins"] = "simulated"
+        return parts
 
     def futures_curve(self, q: dict) -> dict:
         """``GET /api/futures/curve?root=CL``: the curve, how it moved, carry, basis and the one-line snapshot."""
@@ -341,8 +426,7 @@ class AssetApi:
         except ValueError as exc:
             raise ApiError(str(exc)) from None
         flags = list(out["snapshot"]["risk_flags"])
-        return _wrap("futures_curve", out, {"curve": data.source, "open_interest": data.source if data.long["open_interest"].notna().any() else "simulated", "margins": "simulated"}, flags,
-                                     data.as_of, data.notes)
+        return _wrap("futures_curve", out, self._curve_parts(data, margins=True), flags, data.as_of, data.notes)
 
     def futures_roll(self, q: dict) -> dict:
         """``GET /api/futures/roll?root=CL&roll_days=5``: the contract held and the next, the suggested roll date, the open-interest crossover, the cost of the roll and its histories."""
@@ -351,7 +435,7 @@ class AssetApi:
             roll = fa.roll_analysis(data, _number(q, "roll_days", 5, 0, 60, integer=True))
         except ValueError as exc:
             raise ApiError(str(exc)) from None
-        return _wrap("futures_roll", {"root": data.root, "roll": roll, "spec": {"multiplier": data.spec.multiplier, "tick_value": data.spec.tick_value}}, {"curve": data.source, "open_interest": data.source},
+        return _wrap("futures_roll", {"root": data.root, "roll": roll, "spec": {"multiplier": data.spec.multiplier, "tick_value": data.spec.tick_value}}, self._curve_parts(data),
                                      roll["risk_flags"], data.as_of, data.notes + ["Roll cost is for a LONG position (negative: rolling earns the backwardation); a short position's is the opposite."])
 
     def futures_margin(self, body: dict) -> dict:
@@ -366,7 +450,7 @@ class AssetApi:
             out = fa.margin_dashboard(positions, curves, _number(body, "equity", 100_000, 1e3, 1e10), _number(body, "margin_scale", 1.0, 0.1, 10.0), _number(body, "near_expiry_days", 7, 0, 60, integer=True))
         except ValueError as exc:
             raise ApiError(str(exc)) from None
-        return _wrap("futures_margin", out, {"prices": "simulated" if any(c.source == "simulated" for c in curves.values()) else "user_file", "margins": "simulated"}, out["risk_flags"],
+        return _wrap("futures_margin", out, {"prices": common.overall_source({r: c.source for r, c in curves.items()}), "margins": "simulated"}, out["risk_flags"],
                                      self._bundle().index[-1])
 
     def futures_strategy_backtest(self, body: dict) -> dict:
@@ -400,6 +484,27 @@ class AssetApi:
                 self._frames = build_crypto_frames(d)
             return self._frames
 
+    def _downloaded_series(self, symbol: str, rec: dict) -> ca.CryptoSeries:
+        """A coin's history fetched from free sources. Its funding belongs to the venue the download says (OKX for a coin with an OKX perpetual)."""
+        sources = rec.get("sources") or {}
+        notes = [f"Downloaded {str(rec.get('fetched_at', '?')).replace('T', ' ').rstrip('Z')} UTC from {rec.get('source', 'a free source')}; the newest day is {rec.get('as_of')}."] + [str(n) for n in rec.get("notes", [])]
+        try:
+            return ca.user_series(self.downloads.folder("crypto") / rec["file"], symbol, source="downloaded", notes=notes, funding_venue="OKX" if sources.get("funding") == "OKX" else "DERIBIT")
+        except (ValueError, OSError) as exc:
+            raise ApiError(f"{symbol}: {exc}") from None
+
+    def _attach_venue_funding(self, s: ca.CryptoSeries) -> ca.CryptoSeries:
+        """Add the real funding series downloaded for other venues (``funding_<COIN>_<VENUE>``) to a coin's series."""
+        for name, rec in self._downloaded("crypto", "funding").items():
+            if rec.get("coin") != s.symbol or not rec.get("venue") or str(rec["venue"]).upper() == s.funding_venue:
+                continue
+            try:
+                raw = pd.read_csv(self.downloads.folder("crypto") / rec["file"], parse_dates=["time"]).dropna().drop_duplicates("time").set_index("time").sort_index()["funding_daily"].astype(float)
+            except (ValueError, OSError, KeyError):
+                continue
+            s.venue_funding[str(rec["venue"]).upper()] = raw
+        return s
+
     def _series(self, symbol: str) -> ca.CryptoSeries:
         symbol = symbol.upper()
         if not SYMBOL.match(symbol):
@@ -410,11 +515,20 @@ class AssetApi:
                 return ca.user_series(files[symbol], symbol)
             except ValueError as exc:
                 raise ApiError(f"{symbol}.csv: {exc}") from None
-        if symbol in ca.REAL_SYMBOLS:
-            return ca.platform_series(self._crypto_frames(), symbol)
+        downloaded = self._downloaded("crypto", "history")
+        if symbol in ca.REAL_SYMBOLS:                                                       # the platform's Deribit history is longer than any download; the downloads add venues and funding to it
+            return self._attach_venue_funding(ca.platform_series(self._crypto_frames(), symbol))
+        if symbol in downloaded:
+            return self._attach_venue_funding(self._downloaded_series(symbol, downloaded[symbol]))
         if symbol in ca.SIMULATED_ALTS:
-            return ca.simulated_series(symbol, ca.platform_series(self._crypto_frames(), "BTC"))
-        raise ApiError(f"unknown symbol '{symbol}'; the platform has {list(ca.REAL_SYMBOLS)}, can simulate {sorted(ca.SIMULATED_ALTS)}, or put {symbol}.csv in data/user/crypto/")
+            return self._attach_venue_funding(ca.simulated_series(symbol, ca.platform_series(self._crypto_frames(), "BTC")))
+        raise ApiError(f"unknown symbol '{symbol}'; the platform has {list(ca.REAL_SYMBOLS)}, can simulate {sorted(ca.SIMULATED_ALTS)}, and downloads others with the Free data card "
+                       f"(or put {symbol}.csv in data/user/crypto/)")
+
+    def _snapshot(self, symbol: str) -> dict | None:
+        """The downloaded snapshot of a coin's quotes and order books on several venues, if there is one."""
+        snap = self.downloads.read_json("crypto", f"venues_{symbol.upper()}")
+        return snap if isinstance(snap, dict) and snap.get("venues") else None
 
     def _stable(self) -> pd.Series | None:
         try:
@@ -425,18 +539,29 @@ class AssetApi:
         return s
 
     def crypto_overview(self, q: dict) -> dict:
-        """``GET /api/crypto/overview?symbol=BTC``: the cards (trend, funding, momentum, volatility, liquidity, on-chain), the spot/perpetual view, the basis dashboard and the order-book summary."""
+        """``GET /api/crypto/overview?symbol=BTC``: the cards (trend, funding, momentum, volatility, liquidity, on-chain), the spot/perpetual view, the basis dashboard and the order-book summary (the real books
+        of a downloaded snapshot when there is one, else a parametric model)."""
         s = self._series(str(q.get("symbol") or "BTC"))
-        book = ca.order_book_summary(s.symbol, "BINANCE", float(s.spot.iloc[-1]), seed=int(s.as_of.toordinal()))
+        snap = self._snapshot(s.symbol)
         try:
+            if snap is not None:
+                books = ca.snapshot_books(snap, s.symbol)
+                spot_books = [b for b, v in zip(books.values(), snap["venues"]) if v["kind"] == "spot"] or list(books.values())
+                book = max(spot_books, key=lambda b: b["depth"]["25bp"]["bid"] + b["depth"]["25bp"]["ask"])
+            else:
+                book = ca.order_book_summary(s.symbol, "BINANCE", float(s.spot.iloc[-1]), seed=int(s.as_of.toordinal()))
+                books = {v: ca.order_book_summary(s.symbol, v, float(s.spot.iloc[-1]), seed=int(s.as_of.toordinal())) for v in ca.VENUE_ORDER}
             ov = ca.overview(s, self._stable(), book)
             data = {"symbol": s.symbol, "overview": ov, "spot_perp": ca.spot_perp_view(s, _number(q, "days", 365, 60, 2000, integer=True)) if s.perp is not None else None,
-                    "basis": ca.basis_dashboard(s, _number(q, "fee_bps", 5.0, 0.0, 100.0)) if s.perp is not None and s.funding is not None else None,
-                    "books": {v: ca.order_book_summary(s.symbol, v, float(s.spot.iloc[-1]), seed=int(s.as_of.toordinal())) for v in ca.VENUE_ORDER}}
+                    "basis": ca.basis_dashboard(s, _number(q, "fee_bps", 5.0, 0.0, 100.0)) if s.perp is not None and s.funding is not None else None, "books": books,
+                    "snapshot": None if snap is None else {"fetched_at": snap.get("fetched_at"), "venues": [v["venue"] for v in snap["venues"]], "failed": snap.get("failed", {})}}
         except ValueError as exc:
             raise ApiError(str(exc)) from None
-        parts = {"prices": s.source, "funding": s.source, "stablecoin_supply": "platform", "order_book": "simulated"}
-        return _wrap("crypto_overview", data, parts, ov["risk_flags"], s.as_of)
+        parts = {"prices": s.source, "funding": s.source, "stablecoin_supply": "platform", "order_book": "downloaded" if snap is not None else "simulated"}
+        notes = list(s.notes)
+        if snap is not None:
+            notes.append(f"The order books are the real ones of {snap.get('fetched_at', 'the download')}; the liquidity card uses the deepest spot venue ({book['venue']}).")
+        return _wrap("crypto_overview", data, parts, ov["risk_flags"], s.as_of, notes)
 
     def crypto_funding(self, q: dict) -> dict:
         """``GET /api/crypto/funding?symbols=BTC,ETH,SOL``: funding by coin and venue with z-scores and charts (Deribit's BTC and ETH are data; every other venue and coin is simulated)."""
@@ -446,18 +571,21 @@ class AssetApi:
             out = ca.funding_dashboard(series, days=_number(q, "days", 120, 30, 720, integer=True))
         except ValueError as exc:
             raise ApiError(str(exc)) from None
-        parts = {f"{k}@DERIBIT": s.source for k, s in series.items()}
-        parts["other_venues"] = "simulated"
+        parts = {f"{r['symbol']}@{r['venue']}": r["source"] for r in out["rows"]}
         return _wrap("crypto_funding", out, parts, out["risk_flags"], max(s.as_of for s in series.values()))
 
     def crypto_cross_exchange(self, q: dict) -> dict:
-        """``GET /api/crypto/cross-exchange?symbol=BTC``: every venue pair's spread net of fees and slippage, with the warnings."""
+        """``GET /api/crypto/cross-exchange?symbol=BTC``: every pair of venues of one kind, buy at one's ask and sell at the other's bid, net of fees and slippage, with the warnings. Real quotes when a venue
+        snapshot has been downloaded, else modelled ones."""
         s = self._series(str(q.get("symbol") or "BTC"))
+        snap = self._snapshot(s.symbol)
         try:
-            out = ca.cross_exchange(s, _number(q, "slippage_bps", 1.0, 0.0, 50.0), _number(q, "notional", 1e6, 1e3, 1e9))
+            out = ca.cross_exchange(s, _number(q, "slippage_bps", 1.0, 0.0, 50.0), _number(q, "notional", 1e6, 1e3, 1e9), snapshot=snap)
         except ValueError as exc:
             raise ApiError(str(exc)) from None
-        return _wrap("crypto_cross_exchange", out, {"deribit": s.source, "other_venues": "simulated"}, out["risk_flags"], s.as_of, ["Deribit's price is a daily mark, so the spreads below are indicative, not executable."])
+        if snap is not None:
+            return _wrap("crypto_cross_exchange", out, {"quotes": "downloaded"}, out.pop("risk_flags"), (snap.get("fetched_at") or "")[:10] or s.as_of, out.pop("notes"))
+        return _wrap("crypto_cross_exchange", out, {"deribit": s.source, "other_venues": "simulated"}, out.pop("risk_flags"), s.as_of, out.pop("notes") + ["Deribit's price is a daily mark, so the spreads below are indicative, not executable."])
 
     def crypto_strategy_backtest(self, body: dict) -> dict:
         """``POST /api/crypto/strategy/backtest``: a crypto strategy on the Deribit data through the platform pipeline, as a job."""

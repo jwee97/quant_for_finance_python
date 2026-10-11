@@ -66,14 +66,16 @@ SLOW = {"multi_period": "plans the next few months as a quadratic programme ever
         "tca_mvo": "solves a cost-aware optimisation every month: a few seconds", "deep_window": "trains a neural network every year of history: about 10-20 seconds", "chronos": "downloads and runs a foundation model: about a minute on CPU",
         "timesfm": "runs a 200M-parameter model on CPU: many minutes on a long history", "es_policy": "trains a policy: about 10 seconds", "q_learning_exposure": "refits a small Q-function every month: several seconds"}
 DOC_ROOT_FILES = {"dashboard": "dashboard.md", "how_to_add_a_strategy": "how_to_add_a_strategy.md", "start_here": "START_HERE.md", "glossary": "glossary.md", "tour_of_a_backtest_day": "tour_of_a_backtest_day.md",
-                  "roadmap_coverage": "roadmap_coverage.md", "algorithmic_trading": "algorithmic_trading.md", "quant_books_coverage": "quant_books_coverage.md", "platform_integration": "platform_integration.md", "feature_audit": "feature_audit.md"}
+                  "roadmap_coverage": "roadmap_coverage.md", "algorithmic_trading": "algorithmic_trading.md", "quant_books_coverage": "quant_books_coverage.md", "platform_integration": "platform_integration.md", "feature_audit": "feature_audit.md",
+                  "free_data": "free_data.md"}
 SAFE_SLUG = re.compile(r"^[a-z0-9][a-z0-9_-]{0,80}$")
 
 # What the page needs from this server. 1 was the first catalogue; 2 added data sources (``sources``), the ticker-count check (``/api/requirements``), earnings and trades; 3 added the Execution and
-# Cash flows tabs (``/api/exec``, ``/api/cash``); 4 added the Options, Futures, Crypto and Machine learning workspaces (``asset_api``, ``ml_api``). The page compares it with its own number and says so
+# Cash flows tabs (``/api/exec``, ``/api/cash``); 4 added the Options, Futures, Crypto and Machine learning workspaces (``asset_api``, ``ml_api``); 5 added the Free data downloads of the Options, Futures and
+# Crypto tabs (``data_api``) and the ``downloaded`` source kind those tabs now read. The page compares it with its own number and says so
 # when the server behind it is older (the files were updated while the app was running, so it still runs the old code): the whole page needs 2, and the newer tabs ask for 3 or 4 on their own, so an
 # older app still runs the Backtest tab.
-API_VERSION = 4
+API_VERSION = 5
 CODE_ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -148,11 +150,13 @@ class App:
         self._lab_lock = threading.Lock()                          # the Execution and Cash flows tabs: numpy work of a few seconds, one request at a time so a click storm cannot use every core
         # The Options, Futures, Crypto and Machine learning workspaces keep their endpoints in their own modules; the server asks these tables, so ``server.py`` does not change per workspace.
         from .asset_api import AssetApi
+        from .data_api import DataApi
         from .ml_api import MlApi
 
         self.extra_get: dict = {}                                  # path -> fn(query: dict) for GET /api/...?a=1&b=2
         self.extra_post: dict = {}                                 # path -> fn(body: dict) for POST /api/...
-        for part in (AssetApi(self), MlApi(self)):
+        self.data = DataApi(self)                                  # the free-data downloads of the three asset tabs (their own worker, apart from the backtests)
+        for part in (AssetApi(self), MlApi(self), self.data):
             self.extra_get.update(part.get_routes())
             self.extra_post.update(part.post_routes())
 

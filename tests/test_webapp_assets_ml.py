@@ -73,7 +73,7 @@ def test_a_task_runs_on_the_worker_and_reports_its_result_or_its_message(assets)
 
 
 def test_the_version_announces_the_new_workspaces_and_the_routes_are_registered(assets):
-    assert assets.catalog()["api_version"] == api.API_VERSION == 4
+    assert assets.catalog()["api_version"] == api.API_VERSION == 5
     for path in ("/api/options/chain", "/api/options/surface", "/api/futures/curve", "/api/futures/roll", "/api/crypto/funding", "/api/ml/catalog", "/api/ml/experiments"):
         assert path in assets.extra_get, path
     for path in ("/api/options/portfolio-risk", "/api/options/strategy/payoff", "/api/options/strategy/backtest", "/api/ml/train", "/api/ml/search", "/api/ml/combine"):
@@ -207,7 +207,8 @@ def test_crypto_overview_funding_and_cross_exchange_say_which_numbers_are_data(a
     ov = _safe(assets.extra_get["/api/crypto/overview"]({"symbol": "BTC"}))
     assert ov["sources"]["prices"] == "platform" and ov["sources"]["order_book"] == "simulated" and len(ov["overview"]["cards"]) >= 5 and ov["spot_perp"] and set(ov["books"]) == {"DERIBIT", "BINANCE", "BYBIT", "OKX"}
     fund = _safe(assets.extra_get["/api/crypto/funding"]({"symbols": "BTC,ETH,SOL"}))
-    assert fund["sources"]["BTC@DERIBIT"] == "platform" and fund["sources"]["SOL@DERIBIT"] == "simulated" and fund["sources"]["other_venues"] == "simulated"
+    assert fund["sources"]["BTC@DERIBIT"] == "platform" and fund["sources"]["SOL@DERIBIT"] == "simulated" and fund["sources"]["BTC@BINANCE"] == "simulated" and fund["sources"]["ETH@OKX"] == "simulated"
+    assert any("Funding that is data: BTC on DERIBIT, ETH on DERIBIT" in n for n in fund["notes"]), "the page is told which rows are data and which are not, by name"
     cross = _safe(assets.extra_get["/api/crypto/cross-exchange"]({"symbol": "ETH", "slippage_bps": "2"}))
     assert cross["pairs"] and len(cross["quotes"]) == 4 and any("indicative" in n for n in cross["notes"]) and all("net_bps" in r for r in cross["pairs"])
     for fn, arg, text in ((assets.extra_get["/api/crypto/overview"], {"symbol": "DOGE!"}, "letters and digits"), (assets.extra_get["/api/crypto/funding"], {"symbols": ",".join("ABCDEFG")}, "at most"),
