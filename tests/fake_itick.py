@@ -57,9 +57,13 @@ class FakeITick:
         if code in self.history_start:
             days = days[days >= self.history_start[code]]
         rng = np.random.default_rng(zlib.crc32(code.encode()))
-        close = 50.0 * np.cumprod(1.0 + rng.normal(0.0004, 0.012, len(days)))
+        returns = rng.normal(0.0004, 0.012, len(days))
         if self.split is not None:                       # a ``(date, ratio)`` split that is NOT adjusted for: the close falls by ``ratio`` from that date on
             when, ratio = pd.Timestamp(self.split[0]), float(self.split[1])
+            returns[days == when] = 0.0                  # the day's own move is nil, so the drop is exactly the ratio whatever the window: the window slides with today's date, and a random draw of
+            #                                              2.5 standard deviations on that day made the split "not almost exactly a common ratio" and the test fail on some days of the year
+        close = 50.0 * np.cumprod(1.0 + returns)
+        if self.split is not None:
             close = np.where(days >= when, close / ratio, close)
         if self.restate is not None:
             close = close * self.restate
