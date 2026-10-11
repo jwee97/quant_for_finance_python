@@ -30,10 +30,11 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
 from ..ops.hpo import Categorical, Float, Int, LogFloat
+from ..utils.optional import OptionalPackageError, import_optional, unavailable_reason
 
 
 class ModelUnavailable(RuntimeError):
-    """The model needs a package that is not installed."""
+    """The model needs a package that is not installed, or one that is installed but cannot load (a missing system library such as libgomp.so.1)."""
 
 
 AR_FEATURES = ("ret_1", "ret_lag_2", "ret_lag_3", "ret_lag_4", "ret_lag_5")
@@ -174,9 +175,9 @@ class SklearnModel(Model):
 
 def _import(name: str):
     try:
-        return __import__(name)
-    except ImportError as exc:
-        raise ModelUnavailable(f"the '{name}' package is not installed (pip install {name}); choose another model") from exc
+        return import_optional(name)
+    except OptionalPackageError as exc:
+        raise ModelUnavailable(f"{exc}; choose another model") from exc
 
 
 def _build_sklearn(kind: str, task: str, p: dict, seed: int) -> SklearnModel:
@@ -464,20 +465,12 @@ MODEL_INFO = [
 _INFO = {m.kind: m for m in MODEL_INFO}
 
 
-def _package_available(name: str | None) -> bool:
-    if name is None:
-        return True
-    try:
-        __import__(name)
-        return True
-    except ImportError:
-        return False
-
-
 def model_catalog() -> list[dict]:
-    """Every model kind with its tasks, defaults and whether its package is installed."""
+    """Every model kind with its tasks, defaults and whether it can be used here. A model whose package is missing, or installed but unable to load (no libgomp.so.1 for LightGBM and XGBoost), is
+    listed as unavailable with the reason; it never takes the catalogue down."""
+    reasons = {pkg: unavailable_reason(pkg) for pkg in sorted({m.optional_package for m in MODEL_INFO if m.optional_package})}
     return [{"kind": m.kind, "label": m.label, "family": m.family, "tasks": list(m.tasks), "description": m.description, "params": dict(m.params), "refit_every": m.refit_every,
-             "available": _package_available(m.optional_package), "reason": None if _package_available(m.optional_package) else f"install the {m.optional_package} package"} for m in MODEL_INFO]
+             "available": reasons.get(m.optional_package) is None, "reason": reasons.get(m.optional_package)} for m in MODEL_INFO]
 
 
 def default_refit(kind: str) -> int:

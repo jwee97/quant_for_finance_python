@@ -249,6 +249,20 @@ def test_the_ml_catalog_lists_models_features_targets_rules_and_the_timing_conve
     assert (mlapp.root / "artifacts").exists() is False, "reading the catalogue must not create the registry"
 
 
+def test_a_booster_that_cannot_load_is_listed_as_unavailable_and_refused_with_its_reason(mlapp, boosters_without_openmp):
+    """The tab used to fail to open with ``OSError: libgomp.so.1: cannot open shared object file`` on a machine without the OpenMP runtime, because the catalogue imported LightGBM to see whether it was there."""
+    cat = _safe(mlapp.extra_get["/api/ml/catalog"]({}))
+    kinds = {m["kind"]: m for m in cat["models"]}
+    assert kinds["lightgbm"]["available"] is False and "libgomp.so.1" in kinds["lightgbm"]["reason"] and kinds["xgboost"]["available"] is False
+    assert all(kinds[k]["available"] for k in ("ridge", "random_forest", "hist_gb")) and cat["defaults"]["model"]["kind"] == "ridge"
+    queued = len(mlapp.jobs)
+    for path, body, text in (("/api/ml/train", {"model": {"kind": "lightgbm"}}, r"LightGBM model cannot be used here: .*libgomp"), ("/api/ml/search", {"kinds": ["ridge", "xgboost"]}, "kinds must be"),
+                             ("/api/ml/tune", {"model": {"kind": "xgboost"}}, r"XGBoost model cannot be used here")):
+        with pytest.raises(ApiError, match=text):
+            mlapp.extra_post[path](body)
+    assert len(mlapp.jobs) == queued, "nothing refused may have been queued"
+
+
 def test_a_training_request_is_whitelisted_ranged_and_validated_before_it_is_queued(mlapp):
     train = mlapp.extra_post["/api/ml/train"]
     for body, text in (({"signal": {"bogus": 1}}, "no setting"), ({"backtest": {"cost_bps": -1}}, "between 0 and 250"), ({"dataset": {"universe": "mars"}}, "universe must be one of"),

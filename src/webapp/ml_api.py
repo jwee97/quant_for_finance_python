@@ -28,7 +28,7 @@ from ..ml.config import build_key, experiment_config, load_ml_config
 from ..ml.datasets import UNIVERSES, build_dataset, feature_catalog, resolve_bundle
 from ..ml.experiments import load_run, rebacktest, run_experiment
 from ..ml.features import GROUPS
-from ..ml.models import Model, default_refit, model_catalog
+from ..ml.models import Model, ModelUnavailable, default_refit, model_catalog
 from ..ml.registry import STAGES, Registry
 from ..ml.signals import METHODS as SIGNAL_METHODS
 from ..ml.targets import CLASSIFICATION
@@ -127,6 +127,8 @@ def _user_errors():
         raise
     except FileNotFoundError as exc:
         raise ApiError(f"a saved file is missing ({Path(str(exc.filename or exc)).name}); the experiment may have been moved or partly deleted") from None
+    except ModelUnavailable as exc:
+        raise ApiError(str(exc)) from None
     except (ValueError, KeyError) as exc:
         raise ApiError(str(exc.args[0] if isinstance(exc, KeyError) and exc.args else exc)) from None
 
@@ -246,7 +248,10 @@ class MlApi:
                 if not PARAM.match(str(k)) or not (v is None or isinstance(v, (bool, int, float, str))):
                     raise ApiError(f"model.params.{k} must be a number, text, true/false or null")
             over["model"] = {"kind": kind, "params": dict(params)}
-            if kind in {m["kind"] for m in model_catalog()} and "refit_every" not in over.get("split", {}):
+            known = {m["kind"]: m for m in model_catalog()}
+            if kind in known and not known[kind]["available"]:
+                raise ApiError(f"the {known[kind]['label']} model cannot be used here: {known[kind]['reason']}")      # refused before a job is queued, with the reason
+            if kind in known and "refit_every" not in over.get("split", {}):
                 over.setdefault("split", {})["refit_every"] = default_refit(kind)           # trees refit every quarter, linear models every month: the platform's own default per kind
         elif need_model:
             over["model"] = {"kind": "ridge", "params": {}}

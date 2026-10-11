@@ -16,6 +16,7 @@ from ..framework.forecasting import ForecastModel
 from ..framework.registry import register_model
 from ..framework.types import ForecastPanel
 from ..models.probabilistic import ewma_sigma, price_features
+from ..utils.optional import OptionalPackageError, import_optional
 
 
 @register_model("ml_ridge", "machine learning", "Walk-forward ridge regression of the next 21-day return on price features, optionally plus macro features")
@@ -128,21 +129,22 @@ def make_tree_learner(learner: str, n_estimators: int, max_depth: int, learning_
         return ExtraTreesRegressor(n_estimators=n_estimators, max_depth=max_depth, min_samples_leaf=min_samples_leaf, max_features=0.5, random_state=seed, n_jobs=1)
     try:
         if learner == "lightgbm":
-            import lightgbm as lgb
+            lgb = import_optional("lightgbm")
 
             return lgb.LGBMRegressor(n_estimators=n_estimators, max_depth=max_depth, learning_rate=learning_rate, min_child_samples=min_samples_leaf, reg_lambda=10.0, subsample=0.8, subsample_freq=1,
                                      colsample_bytree=0.8, random_state=seed, n_jobs=1, verbose=-1)
         if learner == "xgboost":
-            import xgboost as xgb
+            xgb = import_optional("xgboost")
 
             return xgb.XGBRegressor(n_estimators=n_estimators, max_depth=max_depth, learning_rate=learning_rate, min_child_weight=min_samples_leaf, reg_lambda=10.0, subsample=0.8, colsample_bytree=0.8,
                                     random_state=seed, n_jobs=1, tree_method="hist")
         if learner == "catboost":
-            import catboost as cb
+            cb = import_optional("catboost")
 
             return cb.CatBoostRegressor(iterations=n_estimators, depth=max_depth, learning_rate=learning_rate, l2_leaf_reg=10.0, random_seed=seed, verbose=False, thread_count=1)
-    except ImportError as exc:
-        raise ImportError(f"learner '{learner}' needs the optional package: pip install \"systematic-multi-asset-research[boosting]\" ({exc})") from exc
+    except OptionalPackageError as exc:
+        raise ImportError(f"learner '{learner}' cannot be used here: {exc}. The optional boosting packages are installed with pip install \"systematic-multi-asset-research[boosting]\"; "
+                          "hgb, random_forest and extra_trees need nothing extra") from exc
     raise ValueError(f"learner must be one of {LEARNERS}")
 
 

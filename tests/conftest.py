@@ -7,6 +7,7 @@ need the real data skip cleanly when it is absent.
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -83,3 +84,16 @@ def real_market():
         pytest.skip("processed data not built; run `python -m experiments.stage01_data`")
     return MarketData.from_processed(config.path("processed"), config.path("metadata"),
                                      config.asset_class_map, config.group_map)
+
+
+@pytest.fixture
+def boosters_without_openmp(tmp_path, monkeypatch):
+    """LightGBM and XGBoost as they behave on a machine without the OpenMP runtime: importing either raises (``OSError: libgomp.so.1: cannot open shared object file`` from LightGBM, XGBoost's own
+    error type from XGBoost). The fakes sit first on the import path for the length of the test, in front of the real packages if those are installed."""
+    (tmp_path / "lightgbm.py").write_text("raise OSError('libgomp.so.1: cannot open shared object file: No such file or directory')\n")
+    (tmp_path / "xgboost.py").write_text(
+        "class XGBoostError(ValueError):\n    pass\n\n\n"
+        "raise XGBoostError('XGBoost Library (libxgboost.so) could not be loaded.\\nLikely causes:\\n  * OpenMP runtime is not installed\\n  (libgomp.so for Linux and other UNIX-like OSes)')\n")
+    for name in ("lightgbm", "xgboost"):
+        monkeypatch.delitem(sys.modules, name, raising=False)
+    monkeypatch.syspath_prepend(str(tmp_path))
