@@ -1,7 +1,7 @@
 """The feature library: named, documented, causal feature functions in ten groups.
 
 Every feature is a function of the bundle's data up to and including the date it is stamped with, so a feature row can be computed at the close of ``t`` and used to decide a trade at ``t``. That is not a
-promise made in a docstring: ``tests/test_ml_features.py`` replaces every price, volume and macro value after a cutoff with noise and requires every feature up to the cutoff to be unchanged
+promise made in a docstring: ``tests/test_ml_data.py`` replaces every price, volume and macro value after a cutoff with noise and requires every feature up to the cutoff to be unchanged
 (``MarketBundle.perturbed_after``, the same test the platform applies to its strategies).
 
 A feature function takes ``Inputs`` and returns a wide frame (date x asset). ``broadcast`` features describe the market, not the asset (the same value for every asset on a date): they are not normalised

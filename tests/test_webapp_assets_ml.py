@@ -117,6 +117,7 @@ def test_the_surface_endpoint_returns_a_grid_a_term_structure_and_the_no_arbitra
     s = out["surface"]
     assert len(s["iv"]) == len(s["expiries"]) and len(s["iv"][0]) == len(s["moneyness"]) and out["source"] == "simulated"
     assert len(out["term"]) >= 5 and out["term_metrics"] and out["skews"] and isinstance(out["arbitrage"], list)
+    assert out["arbitrage"] and all(r["violations"] == 0 for r in out["arbitrage"]) and out["arbitrage_tick"] >= 0.01 and out["arbitrage_tolerance"] > 0, "the model chain is quoted without noise, so every static check is clean up to the rounding of a price to a tick"
 
 
 def test_a_long_straddle_costs_its_premium_has_two_breakevens_and_no_upper_bound(assets):
@@ -372,6 +373,9 @@ def test_a_saved_run_can_be_rebacktested_and_meta_labelled_without_refitting(mla
         mlapp.extra_post["/api/ml/meta-label"]({"id": parent, "kind": "kalman"})
     kids = mlapp.extra_get["/api/ml/experiment"]({"id": parent})["children"]
     assert {re["id"], meta["id"]} <= {k["id"] for k in kids}
+    board = {r["id"]: r for r in mlapp.extra_get["/api/ml/experiments"]({})["rows"]}
+    assert board[parent]["has_model"] is True and board[parent]["parent"] is None
+    assert board[re["id"]]["has_model"] is False and board[re["id"]]["parent"] == parent, "a child re-uses its parent's predictions and has no model of its own: the page must not offer it for a forward test"
 
 
 def test_a_search_counts_every_trial_and_finalises_only_its_best(mlapp):

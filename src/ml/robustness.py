@@ -129,15 +129,18 @@ def delayed_execution(ctx: Context) -> dict:
 
 def noisy_features(ctx: Context) -> dict:
     ds, tr = ctx.dataset, ctx.train
+    usable = [(model, idx) for model, idx in zip(tr.models, tr.fold_rows) if model is not None and len(idx)]
+    description = "Gaussian noise (as a multiple of each feature's standard deviation) added to the features when the fitted models predict."
+    if not usable:                                                                          # a re-backtest re-uses saved predictions: the models of each refit are not kept with an experiment
+        return {"name": "noisy_features", "title": "Noisy features", "description": description, "rows": [], "verdict": "na",
+                "detail": "Not run: the models of each refit are not kept with a saved experiment, so a re-backtest cannot re-predict. Train with the stress tests switched on to include it."}
     levels = [float(x) for x in ctx.cfg["robustness"]["noise_levels"]]
     rng = np.random.default_rng(int(ctx.cfg["robustness"]["seed"]) + 2)
     sd = ds.X.std(ddof=0).replace(0.0, 1.0).to_numpy(dtype=float)
     rows = []
     for lvl in levels:
         pieces = []
-        for model, idx in zip(tr.models, tr.fold_rows):
-            if model is None or not len(idx):
-                continue
+        for model, idx in usable:
             X = ds.X.iloc[idx]
             Xn = X + lvl * sd * rng.standard_normal(X.shape) if lvl > 0 else X
             pieces.append(pd.Series(model.predict(Xn), index=X.index))
@@ -148,7 +151,7 @@ def noisy_features(ctx: Context) -> dict:
     by = {r["level"]: r["sharpe"] for r in rows}
     base, half = by.get(0.0, rows[0]["sharpe"]), by.get(0.5, np.nan)
     ok = np.isfinite(half) and half > 0 and half >= 0.5 * base
-    return {"name": "noisy_features", "title": "Noisy features", "description": "Gaussian noise (as a multiple of each feature's standard deviation) added to the features when the fitted models predict.",
+    return {"name": "noisy_features", "title": "Noisy features", "description": description,
             "rows": rows, "verdict": _verdict(ok, np.isfinite(half) and half > 0), "detail": f"Sharpe {base:.2f} clean and {half:.2f} with noise half the size of the features."}
 
 

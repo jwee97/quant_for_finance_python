@@ -191,12 +191,11 @@ class AssetApi:
             if np.isfinite(sk.get("atm_iv", np.nan)):
                 skews.append(sk)
         try:
-            from ..derivatives.schema import arbitrage_report
-
-            arb = arbitrage_report(chain).to_dict(orient="records")
+            arb = oa.arbitrage_view(chain)
         except Exception:                                                                      # a diagnostic must not take the page down
-            arb = []
-        data = {"underlying": underlying, "surface": oa.surface_grid(chain), "term": oa.term_structure(chain), "term_metrics": oa.term_metrics(oa.term_structure(chain)), "skews": skews, "arbitrage": arb}
+            arb = {"rows": [], "tick": None, "tolerance": None}
+        data = {"underlying": underlying, "surface": oa.surface_grid(chain), "term": oa.term_structure(chain), "term_metrics": oa.term_metrics(oa.term_structure(chain)), "skews": skews, "arbitrage": arb["rows"],
+                "arbitrage_tick": arb["tick"], "arbitrage_tolerance": arb["tolerance"]}
         parts = {"chain": "simulated" if simulated else "user_file"}
         return _wrap("options_surface", data, parts, [], ctx.as_of, notes)
 

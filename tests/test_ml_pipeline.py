@@ -376,6 +376,10 @@ def test_saved_predictions_can_be_rebacktested_without_refitting(signal_bundle, 
     assert train.predictions.equals(base.train.predictions) and len(train.insample) == len(base.train.insample) and train.models == [] and d.features == base.dataset.features
     same = xe.rebacktest(reg, base.id, {}, save=False)
     assert same.report["segments"]["stats"]["test"]["sharpe"] == pytest.approx(base.report["segments"]["stats"]["test"]["sharpe"], rel=1e-6)
+    stressed = xe.rebacktest(reg, base.id, {"robustness": {"enabled": True, "n_draws": 4}}, save=False)
+    tests = {t["name"]: t for t in stressed.report["robustness"]["tests"]}
+    assert tests["noisy_features"]["verdict"] == "na" and "not kept" in tests["noisy_features"]["detail"], "the refit models are not saved, so this test says it could not run instead of failing"
+    assert tests["higher_costs"]["rows"] and tests["higher_costs"]["verdict"] in ("pass", "warn", "fail") and "ValueError" not in " ".join(t["detail"] for t in tests.values())
     dearer = xe.rebacktest(reg, base.id, {"backtest": {"cost_bps": 40.0}, "signal": {"n": 2}})
     assert dearer.report["metrics"]["oos"]["sharpe"] < base.report["metrics"]["oos"]["sharpe"] and dearer.report["trials"]["dataset_trials"] == 2
     rec = reg.get_experiment(dearer.id)

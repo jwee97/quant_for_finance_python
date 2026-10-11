@@ -465,7 +465,11 @@ class MlApi:
         trials = {}
         for r in rows:
             trials[r["dataset_key"]] = self.registry.trial_count(r["dataset_key"])
-        data = {"rows": leaderboard_payload(rows[:limit]), "sort": sort, "n": len(rows), "dataset_trials": trials,
+        payload, parents = leaderboard_payload(rows[:limit]), {r["id"]: r.get("parent_id") for r in rows}
+        for row in payload:                                                                     # a re-backtest or a meta-labelled run has no model of its own: forward tests and explanations need the parent's
+            row["has_model"] = (self.registry.root / "experiments" / row["id"] / "model.pkl").exists()
+            row["parent"] = parents.get(row["id"])
+        data = {"rows": payload, "sort": sort, "n": len(rows), "dataset_trials": trials,
                 "note": "Sharpe ratios are net of costs. 'trials' is how many looks at the same sample (experiments and search trials) had been recorded when the run was made; the deflated Sharpe probability in each report corrects for it."}
         return clean(common.envelope("ml_experiments", data, {"experiments": "platform"}, [], None, []))
 

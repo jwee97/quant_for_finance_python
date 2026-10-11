@@ -114,12 +114,21 @@ def _fold_ics(train: TrainResult, ic: pd.Series, ds: Dataset) -> list[float]:
     return out
 
 
+def _latest_positions(weights: pd.DataFrame) -> dict:
+    """The book on the last day that held anything: the final days of a dataset have no scores (their targets are not known yet), so the very last row of weights is empty."""
+    held = weights.index[(weights.abs() > 1e-6).any(axis=1)] if len(weights) else weights.index
+    if not len(held):
+        return {"date": str(weights.index[-1].date()) if len(weights) else None, "weights": {}}
+    day = held[-1]
+    return {"date": str(day.date()), "weights": {a: float(w) for a, w in weights.loc[day].items() if abs(w) > 1e-6}}
+
+
 def run_experiment(overrides: dict | None = None, bundle=None, config=None, builder=None, registry: Registry | None = None, progress=None, save: bool = True, dataset: Dataset | None = None,
                    info: dict | None = None, parent_id: str | None = None, explain: bool = True, final_model: bool = True, robustness: bool | None = None, trials_extra: int = 0,
                    experiment_id: str | None = None, stop_after: str | None = None) -> Experiment:
     """Run one experiment. ``overrides`` is merged over the platform configuration (``ml.config.experiment_config``). With a ``registry`` and ``save`` the artifacts are written and the run recorded.
 
-    ``explain`` computes permutation importance; ``final_model`` fits the model a live prediction would use; ``robustness`` overrides the configuration's switch for the ten stress tests;
+    ``explain`` computes permutation importance; ``final_model`` fits the model a live prediction would use; ``robustness`` overrides the configuration's switch for the stress tests;
     ``trials_extra`` adds to the recorded trial count (a search that ran many variants passes how many). ``stop_after="validation"`` is the search mode: the test and forward segments are not
     predicted at all, so nothing a search does can depend on them."""
     t0 = time.perf_counter()
@@ -230,7 +239,7 @@ def evaluate_run(cfg: dict, ds: Dataset, train: TrainResult, info: dict, registr
         "importance": {"table": imp_table.head(40).reset_index().rename(columns={"index": "feature"}) if not imp_table.empty else pd.DataFrame(), "bars": importance_bars(imp_table, 20), "rank_stability": xp.rank_stability(train.importance),
                        "permutation": perm.head(20).reset_index().rename(columns={"index": "feature"}) if not perm.empty else pd.DataFrame()},
         "distribution": prediction_distribution(train.predictions, train.plan.labels()), "equity": eq,
-        "positions": {"date": str(weights.index[-1].date()), "weights": {a: float(w) for a, w in weights.iloc[-1].items() if abs(w) > 1e-6}},
+        "positions": _latest_positions(weights),
         "folds": {"n": len(train.folds), "n_skipped": len(train.skipped), "first": train.folds[0] if train.folds else None, "last": train.folds[-1] if train.folds else None, "refit_every": cfg["split"]["refit_every"],
                   "list": [{k: f.get(k) for k in ("fold", "test_start", "test_end", "n_train", "n_test", "skipped", "seconds")} for f in train.folds]},
         "features": {"n": len(ds.features), "skipped": ds.meta.get("skipped", {}), "names": ds.features}, "robustness": rob,

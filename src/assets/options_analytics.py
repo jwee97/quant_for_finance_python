@@ -42,12 +42,14 @@ KAPPA_Q = 2.2                                           # speed at which the mod
 
 # ------------------------------------------------------------------------------------------------------------------ the model chain
 def model_spec(spot: float, vol: float, long_run_vol: float, rate: float = DEFAULT_RATE, dividend: float = 0.0, premium: float = 0.15) -> SyntheticMarketSpec:
-    """The generator's settings for an underlying: strikes every 0.25% of the spot (rounded), listed out to three standard deviations of each expiry, long-run implied variance at ``long_run_vol`` squared, and ``premium`` as the implied-over-realised variance gap."""
+    """The generator's settings for an underlying: strikes every 0.25% of the spot (rounded), listed out to three standard deviations of each expiry, long-run implied variance at ``long_run_vol`` squared, and ``premium`` as the implied-over-realised variance gap. No noise is added to the quotes (the generator's default adds some, which is
+    realistic for a backtest but would make a displayed smile jagged and its static checks fail): what is left is the surface and the rounding of bids and asks to a cent."""
     if spot <= 0 or vol <= 0 or long_run_vol <= 0:
         raise ValueError("spot and volatilities must be positive")
     if not -0.5 <= premium <= 2.0:
         raise ValueError("variance premium must be between -0.5 and 2.0")
-    return SyntheticMarketSpec(s0=spot, rate=rate, dividend=dividend, theta_q=long_run_vol ** 2, variance_premium=premium, strike_step=nice_step(spot * 0.0025), near_width=3.0, max_dte=400, weekly_dte=35)
+    return SyntheticMarketSpec(s0=spot, rate=rate, dividend=dividend, theta_q=long_run_vol ** 2, variance_premium=premium, strike_step=nice_step(spot * 0.0025), near_width=3.0, max_dte=400, weekly_dte=35,
+                               quote_noise=0.0)
 
 
 def _seed(*parts) -> int:
@@ -282,6 +284,24 @@ def strike_step(chain: pd.DataFrame, expiry) -> float:
     near = strikes[np.argsort(np.abs(strikes - float(g["F"].iloc[0])))[:15]]
     gaps = np.diff(np.sort(near))
     return float(np.median(gaps[gaps > 0])) if (gaps > 0).any() else 1.0
+
+
+def price_tick(chain: pd.DataFrame) -> float:
+    """The smallest price increment the quotes use (a cent for a model chain; vendors often use five cents): the smallest positive gap between the distinct bids and asks, between one cent and a quarter."""
+    levels = np.unique(np.round(np.r_[chain["bid"].to_numpy(), chain["ask"].to_numpy()], 4))
+    gaps = np.diff(levels)
+    return float(np.clip(gaps[gaps > 1e-4].min(), 0.01, 0.25)) if (gaps > 1e-4).any() else 0.01
+
+
+def arbitrage_view(chain: pd.DataFrame) -> dict:
+    """The static no-arbitrage checks of ``derivatives.schema.arbitrage_report``, with the tolerance a quote's rounding needs. Prices are rounded to a tick, so a slope between two strikes ``gap`` apart is wrong
+    by up to ``tick / gap`` at each end, and a butterfly (a difference of two slopes) by twice that: a "violation" smaller than that is the rounding, not the market. ``tolerance`` is returned with the rows."""
+    from ..derivatives.schema import arbitrage_report
+
+    tick = price_tick(chain)
+    gaps = [float(np.diff(np.sort(g["strike"].unique())).min()) for _, g in chain.groupby("expiry") if g["strike"].nunique() > 1]
+    tol = 2.0 * tick / max(min(gaps), 1e-6) if gaps else 1e-8
+    return {"rows": arbitrage_report(chain, tol=tol).to_dict(orient="records"), "tick": tick, "tolerance": tol}
 
 
 # ------------------------------------------------------------------------------------------------------------------ the chain table

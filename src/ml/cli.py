@@ -253,7 +253,7 @@ def register(sub) -> None:
     p.add_argument("--config", help="a YAML file of overrides (sections dataset, split, model, signal, backtest)"); p.add_argument("--model", help="ridge, lasso, elasticnet, random_forest, hist_gb, xgboost, lightgbm, kalman, ...")
     p.add_argument("--param", action="append", help="model parameter, e.g. --param alpha=10"); p.add_argument("--refit-every", dest="refit_every", type=int); p.add_argument("--min-train-days", dest="min_train_days", type=int)
     p.add_argument("--window", choices=["expanding", "rolling"]); p.add_argument("--embargo", type=int); p.add_argument("--name"); p.add_argument("--seed", type=int)
-    p.add_argument("--robustness", action="store_true", help="also run the ten stress tests"); p.add_argument("--no-explain", action="store_true", help="skip permutation importance"); p.add_argument("--no-save", action="store_true")
+    p.add_argument("--robustness", action="store_true", help="also run the stress tests"); p.add_argument("--no-explain", action="store_true", help="skip permutation importance"); p.add_argument("--no-save", action="store_true")
     p.add_argument("--verbose", action="store_true"); p.set_defaults(func=cmd_train)
     p = sub.add_parser("ml-backtest", help="re-run a saved experiment's predictions under different position rules, rebalancing or costs (no refit)")
     p.add_argument("experiment"); common(p, data=False); signal_options(p); p.add_argument("--no-save", action="store_true"); p.set_defaults(func=cmd_backtest)

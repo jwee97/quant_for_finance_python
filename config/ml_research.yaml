@@ -64,7 +64,7 @@ backtest:
   extra_lag: 0                        # extra days of delay on top of the engine's own signal lag
 
 robustness:
-  enabled: false                      # the ten stress tests; they re-run backtests and are slow-ish, so off by default
+  enabled: false                      # the stress tests; they re-run backtests and are slow-ish, so off by default
   n_draws: 20
   cost_multiples: [1, 2, 3, 5]
   delays: [0, 1, 2, 5]
