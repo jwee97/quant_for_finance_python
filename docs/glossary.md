@@ -48,6 +48,12 @@ The part of a return that is not explained by exposure to known risks or factors
 
 See: [attribution](techniques/attribution.md)
 
+### American option
+
+An option that can be exercised at any time up to its expiry, as stock and ETF options can; a European option only at expiry, as index options and Bitcoin options can. The right to exercise early has a value, so Black-Scholes, which prices a European option, understates an American one a little (mostly deep-in-the-money puts), and put-call parity holds for it only as an inequality.
+
+See: [option-chains-and-greeks](techniques/option-chains-and-greeks.md)
+
 ### Annualised volatility
 
 *Also: ann vol*
@@ -434,6 +440,12 @@ An ordering of a graph's vertices from repeated removal of one of smallest degre
 
 See: [graph-portfolios-and-hierarchical-sensitivity-parity](techniques/graph-portfolios-and-hierarchical-sensitivity-parity.md)
 
+### Delayed quote
+
+A price published some time after it was struck, usually 15 minutes for the free options data of an exchange. Fine for research and for reading the shape of a chain; not a price to trade on, and a quote that has not changed for longer than that is stale.
+
+See: [option-chains-and-greeks](techniques/option-chains-and-greeks.md)
+
 ### Delta hedging
 
 Trading the underlying so that the option position's delta is close to zero; the remaining profit comes from gamma and the difference between realised and implied volatility.
@@ -491,6 +503,12 @@ See: [cash-flow-strategies](techniques/cash-flow-strategies.md)
 A causal estimator that removes the effect of controls from treatment and outcome using flexible models, cross-fitted, then regresses the residuals.
 
 See: [causal-inference](techniques/causal-inference.md)
+
+### Downloaded data
+
+Real data the dashboard fetched for you from a free public source (Cboe, Yahoo Finance, Deribit, OKX, Coinbase, Kraken, Bitstamp) with the Free data card of the Options, Futures or Crypto tab, saved under `data/user/downloads/` with a record of its source, its time and its limits. It is badged "Downloaded: free data": real, but delayed or unaudited and somebody else's service.
+
+See: [option-chains-and-greeks](techniques/option-chains-and-greeks.md), [futures-curves-carry-and-rolls](techniques/futures-curves-carry-and-rolls.md), [crypto-funding-basis-and-venues](techniques/crypto-funding-basis-and-venues.md)
 
 ### Drawdown
 
@@ -1253,6 +1271,12 @@ See: [performance-metrics](techniques/performance-metrics.md), [multiple-testing
 Cross-validation for overlapping labels: training rows whose labels overlap the test period are removed, with an embargo after it. The combinatorial version builds many out-of-sample paths.
 
 See: [research-operations](techniques/research-operations.md)
+
+### Put-call parity
+
+The relation between the prices of a call and a put with the same strike and expiry: call minus put equals the discounted forward price minus the strike. It holds exactly for European options without arbitrage, so a chain's quotes near the money reveal the forward the market uses, and with it the dividend yield (or, for Bitcoin, the basis) that goes with an assumed interest rate.
+
+See: [option-chains-and-greeks](techniques/option-chains-and-greeks.md)
 
 ### PV01
 

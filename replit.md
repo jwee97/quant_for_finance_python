@@ -29,8 +29,33 @@ the page says so instead of failing: a red banner reading *The app is older than
 this page* means the app must be restarted, and a banner reading *The app was
 updated after it started* means some of its code changed on disk since it started.
 The Execution and Cash flows tabs need a newer app than the Backtest tab does, so with an
-older one the Backtest keeps working and those two tabs say that they need a restart.
+older one the Backtest keeps working and those two tabs say that they need a restart; the
+Options, Futures, Crypto and Machine learning tabs, and the Free data cards on the first
+three, need newer ones still, and say so in the same way.
 Your saved tickers and runs are kept across restarts.
+
+## Free data for the Options, Futures and Crypto tabs
+
+Each of those three tabs has a **Real data (free)** card in its left panel: tick tickers,
+futures roots or coins and press **Download real data**. The app fetches real option
+chains (Cboe, Deribit), futures curves (Yahoo Finance, Deribit) and crypto prices, order
+books and funding (OKX, Coinbase, Kraken, Bitstamp, Deribit), saves them under
+`data/user/downloads/` and the tab switches to them, badged *Downloaded: free data*. No
+account, no key and no Secret are needed, and nothing has to be sourced by hand.
+
+These are public feeds that rate-limit shared cloud addresses, and a Repl's address is
+shared. If a provider answers *HTTP 403* or *HTTP 429* the card says which one and the app
+waits before asking that host again: try again in a few minutes, download fewer items at a
+time (Yahoo is the strictest), or run the dashboard on your own computer. What is
+downloaded, how it is read and what it is not (delayed, unaudited, no open interest from
+Yahoo): [docs/free_data.md](docs/free_data.md).
+
+## If the Machine learning tab says LightGBM or XGBoost is not available
+
+Both are optional and need the operating system's OpenMP runtime (`libgomp.so.1`), which a
+Repl may not provide. The tab lists them as not available, with the reason, and every other
+model works; scikit-learn's histogram gradient boosting is the same kind of model and needs
+nothing extra. See [docs/ml_platform.md](docs/ml_platform.md) for how to switch them on.
 
 ## Dependencies and command-line use
 
