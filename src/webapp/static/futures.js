@@ -11,8 +11,8 @@
     mixed: "The curve is neither clearly rising nor clearly falling over its front contracts." };
 
   const F = {
-    id: "futures", root: "#futures", view: "#view-futures", title: "Futures", api: 4, mode: "curve", busy: "", results: {}, errors: {}, cache: new Map(), guard: null, go: null, progress: null,
-    about: "Read a futures curve, decide when to roll, see carry and basis, check the margin of a book and test a strategy on several roots. The prices are a model unless you bring a file.",
+    id: "futures", root: "#futures", view: "#view-futures", title: "Futures", api: 5, mode: "curve", busy: "", results: {}, errors: {}, cache: new Map(), guard: null, go: null, progress: null,
+    about: "Read a futures curve, decide when to roll, see carry and basis, check the margin of a book and test a strategy on several roots. The prices are a model unless you download real curves (free, below) or bring a file.",
     modes: [["curve", "Curve"], ["roll", "Roll"], ["carry", "Carry and basis"], ["margin", "Margin"], ["backtest", "Backtest"]],
     runLabel: { curve: "Refresh", roll: "Refresh", carry: "Refresh", margin: "Check the margin", backtest: "Run the backtest" },
     blurb: { curve: "Price by contract month, how the curve has moved over the last two months, the roll yield of each contract and the contract specification.",
@@ -24,6 +24,26 @@
     catalog: null,
   };
   const contractColor = W.palette();
+  const setCatalog = (c) => { F.catalog = c; if (!c.futures_roots.some((r) => r.id === F.form.root)) F.form.root = (c.futures_roots[0] || {}).id || "CL"; };
+  const CONTRACTS = [["4", "4 contracts"], ["6", "6 contracts"], ["8", "8 contracts"], ["10", "10 contracts"], ["12", "12 contracts"], ["16", "16 contracts"]];
+  const HISTORY = { "6mo": "6 months", "1y": "1 year", "2y": "2 years", "5y": "5 years" };
+  /* The Free data card: each contract's daily prices from Yahoo Finance, stacked into a curve, and Bitcoin and Ether futures from Deribit. */
+  const FREE = {
+    kind: "futures", title: "Real futures curves (free)",
+    intro: "Download the real forward curve of a root: the delayed daily price of each contract month from Yahoo Finance (no account, no key), or Bitcoin and Ether futures from Deribit. Expiry dates are computed from each exchange's rule, Yahoo has no open interest, and a later download is merged with the earlier one, so the history of contracts that have expired is kept.",
+    defaults: () => ({ chosen: new Set(["CL", "ES", "GC"]), contracts: "10", history: "1y" }),
+    controls: (box, f, ks, changed) => {
+      h("span", "hint", box, "Pick roots:");
+      W.picks(box, [...ks.roots.map((r) => [r.id, r.id, `${r.name} · ${r.exchange}`]), ...ks.crypto.map((c) => [c.id, c.id + " · Deribit", `${c.name} futures from Deribit, live`])], f.chosen, changed);
+      Q.labField(box, { key: "contracts", label: "Contracts per root", kind: "choice", options: CONTRACTS, help: "How many of the next delivery months to ask Yahoo for" }, f, changed);
+      Q.labField(box, { key: "history", label: "History to download", kind: "choice", options: ks.history.map((x) => [x, HISTORY[x] || x]), help: "Not used for the Deribit futures, which are a snapshot of today" }, f, changed);
+    },
+    request: (f) => { if (!f.chosen.size) throw new Error("Pick at least one root"); return { kind: "futures", items: [...f.chosen], contracts: Number(f.contracts), history: f.history }; },
+    estimate: (b) => b.items.length * (4 + b.contracts * 0.5),
+    describe: (rec) => [`${rec.name} · ${rec.root_name || ""}`.replace(/ · $/, ""), `${rec.source} · ${rec.contracts} contracts · ${rec.first_date && rec.first_date !== rec.as_of ? rec.first_date + " to " : ""}${rec.as_of}`],
+    setCatalog,
+    pick: (res) => { const first = res.results.find((r) => r.ok); if (first) F.form.root = first.name; },
+  };
   W.catalog().then((c) => { F.catalog = c; if (!Q.$(F.view).hidden) Q.renderLab(F); }, () => {});
   const rootsList = () => (F.catalog ? F.catalog.futures_roots : []);
   const rootInfo = (id) => rootsList().find((r) => r.id === id) || {};
@@ -41,11 +61,12 @@
     if (!cat) { h("p", "hint", sec("1. Root"), "Loading the list of roots…"); return; }
     if (CURVE_MODES.has(m)) {
       const b = sec("1. Root");
-      Q.labField(b, { key: "root", label: "Futures root", kind: "choice", options: cat.futures_roots.map((r) => [r.id, `${r.id}: ${r.name}${r.source === "user_file" ? " (your file)" : ""}`]) }, f, () => F.run(true));
+      Q.labField(b, { key: "root", label: "Futures root", kind: "choice", options: cat.futures_roots.map((r) => [r.id, `${r.id}: ${r.name}${r.source === "user_file" ? " (your file)" : r.source === "downloaded" ? " (downloaded)" : ""}`]) }, f, () => F.run(true));
       const info = rootInfo(f.root);
-      h("p", "hint", b, info.source === "user_file" ? "Prices are read from your file in data/user/futures/." : "No futures prices are held here: this curve is a model (Schwartz-Smith: a short-term factor that decays and a long-term level), with simulated open interest. Put " + f.root + ".csv in data/user/futures/ to use your own.");
+      h("p", "hint", b, info.source === "user_file" ? "Prices are read from your file in data/user/futures/." : info.source === "downloaded" ? "Real prices, downloaded from a free source and delayed: see the notes under the badge for what they are and are not." : "This curve is a model (Schwartz-Smith: a short-term factor that decays and a long-term level), with simulated open interest. Download the real curve below, or put " + f.root + ".csv in data/user/futures/ to use your own.");
       if (m === "roll") Q.labField(b, { key: "rollDays", label: "Leave the contract this many days before expiry", kind: "number", step: 1, min: 0, max: 60 }, f, () => F.run(true));
     }
+    if (m !== "backtest") W.dataCard(panel, F, FREE);
     if (m === "margin") {
       const b = sec("1. The book");
       h("p", "hint", b, "Quantities: positive long, negative short. Leave the contract blank to use the front one. Margins are illustrative figures per contract, not your broker's.");
@@ -65,7 +86,7 @@
         const label = h("label", "f inline", box), c = h("input", "", label); c.type = "checkbox"; c.checked = f.roots.has(r.id); label.appendChild(document.createTextNode(`${r.id}: ${r.name} (${r.asset_class})`));
         c.addEventListener("change", () => { if (c.checked) f.roots.add(r.id); else f.roots.delete(r.id); after(); });
       }
-      h("p", "hint", roots, "Only the simulated roots can be backtested: they share one calendar and one model.");
+      h("p", "hint", roots, "Only the simulated roots can be backtested: they share one calendar and one model. Downloaded curves are used by the other views, not here.");
       const c = sec("3. Trading");
       Q.labField(c, { key: "frequency", label: "Rebalance", kind: "choice", options: [["daily", "Daily"], ["weekly", "Weekly"], ["monthly", "Monthly"]] }, f, after);
       for (const s of [{ key: "lookback", label: "Lookback in days (blank = the strategy's own)", kind: "number", step: 1, min: 5, max: 756 }, { key: "targetVol", label: "Volatility target (% a year, blank = the platform's)", kind: "number", step: 1, min: 1, max: 100 },
@@ -146,9 +167,10 @@
       draw: (b) => C.columns(b, { labels: ry.map((r) => r.contract), values: ry.map((r) => r.roll_yield), yFormat: (v) => (v * 100).toFixed(0) + "%", tipFormat: (v) => pct(v, 1), height: 230, name: "Roll yield", label: "Roll yield by contract", tipLabel: (i) => `${ry[i].contract} against the next (${ry[i].dte} days)` }),
       table: (b) => table(b, [{ label: "Contract", get: (r) => r.contract }, { label: "Roll yield (a year)", num: true, get: (r) => pct(r.roll_yield, 2) }], ry) });
     const oi = rows.filter((r) => r.open_interest !== null);
-    chartCard(ch, "Open interest by contract", `Contracts outstanding. The front month is where most positions sit until the roll${d.sources.open_interest === "simulated" ? " (simulated here)" : ""}.`, {
+    if (oi.length) chartCard(ch, "Open interest by contract", `Contracts outstanding. The front month is where most positions sit until the roll${d.sources.open_interest === "simulated" ? " (simulated here)" : ""}.`, {
       draw: (b) => C.columns(b, { labels: oi.map((r) => r.contract), values: oi.map((r) => r.open_interest), yFormat: (v) => (v >= 1000 ? (v / 1000).toFixed(0) + "k" : String(v)), tipFormat: (v) => Math.round(v).toLocaleString("en-US"), height: 230, name: "Open interest", label: "Open interest" }),
       table: (b) => table(b, [{ label: "Contract", get: (r) => r.contract }, { label: "Open interest", num: true, get: (r) => Math.round(r.open_interest).toLocaleString("en-US") }, { label: "Volume", num: true, get: (r) => (r.volume === null ? "" : Math.round(r.volume).toLocaleString("en-US")) }], oi) });
+    else W.hint(root, "This curve has no open interest, so there is no chart of it: the feed it came from does not carry it.");
   }
 
   /* ---------- roll ---------- */
@@ -159,23 +181,25 @@
     const k = h("div", "earnrow", root);
     tile(k, "Suggested roll date", W.dayMonth(r.suggested_roll_date), { text: `${r.suggested_roll_date.slice(0, 4)} · in ${r.days_to_roll} day${r.days_to_roll === 1 ? "" : "s"}` }, "", "The earlier of the calendar date and the open-interest crossover");
     tile(k, "Calendar roll", W.dayMonth(r.calendar_roll_date), { text: `${r.calendar_roll_date.slice(0, 4)} · ${r.roll_days} days before expiry` });
-    tile(k, "Open-interest crossover", r.oi_crossover ? W.dayMonth(r.oi_crossover) : "not yet", { text: r.oi_crossover ? `${r.oi_crossover.slice(0, 4)} · the next contract holds more` : `${r.next_contract} is still the smaller one` }, "", "The date from which the next contract's open interest stays above the front's");
+    const hs = r.history, hasOi = [...hs.oi_front, ...hs.oi_next].some((v) => v !== null && v !== undefined);              // a downloaded curve may come from a feed without open interest
+    tile(k, "Open-interest crossover", !hasOi ? "No data" : r.oi_crossover ? W.dayMonth(r.oi_crossover) : "not yet", { text: !hasOi ? "this curve has no open interest" : r.oi_crossover ? `${r.oi_crossover.slice(0, 4)} · the next contract holds more` : `${r.next_contract} is still the smaller one` }, "", "The date from which the next contract's open interest stays above the front's");
     tile(k, "Cost of the roll", smoney(-r.roll_cost_dollars), { text: `${pct(r.roll_cost_pct, 2)} of the position's value` }, "", "For a LONG position: the calendar spread you pay when selling the old contract and buying the next, plus a tick of execution cost. Negative means you pay; a short position earns it.");
     tile(k, "Calendar spread", num(r.calendar_spread_points, 3), { text: `${money(r.calendar_spread_dollars)} per contract` }, "", "Next contract's price less the front's");
     tile(k, "Annualised roll", pct(r.annualised_roll, 1), { text: r.annualised_roll >= 0 ? "a long earns" : "a long pays" });
-    const hs = r.history, ch = h("div", "charts", root);
+    const ch = h("div", "charts", root);
     chartCard(ch, "Front and next contract", "The two contracts' prices over the last 120 days; the gap is the calendar spread you cross when you roll.", {
       draw: (b) => C.line(b, { dates: hs.dates, series: [{ name: r.current_contract, color: css("--s1"), values: hs.front }, { name: r.next_contract, color: css("--s2"), values: hs.next }], yFormat: (v) => num(v, 1), tipFormat: (v) => num(v, 3), height: 250, label: "Front and next contract" }),
       table: (b) => table(b, [{ label: "Date", get: (n) => hs.dates[n] }, { label: r.current_contract, num: true, get: (n) => num(hs.front[n], 3) }, { label: r.next_contract, num: true, get: (n) => num(hs.next[n], 3) }, { label: "Spread", num: true, get: (n) => num(hs.spread[n], 3) }], hs.dates.map((_, n) => n).filter((n) => n % 5 === 0)) });
     chartCard(ch, "Calendar spread", "Next contract less the front: above zero is contango, below zero backwardation.", {
       draw: (b) => C.line(b, { dates: hs.dates, series: [{ name: "Spread", color: css("--s1"), values: hs.spread }], area: true, areaBase: 0, baseline: 0, include: 0, yFormat: (v) => num(v, 2), tipFormat: (v) => num(v, 3), height: 250, label: "Calendar spread" }),
       table: (b) => table(b, [{ label: "Date", get: (n) => hs.dates[n] }, { label: "Spread", num: true, get: (n) => num(hs.spread[n], 3) }], hs.dates.map((_, n) => n).filter((n) => n % 5 === 0)) });
-    chartCard(ch, "Open interest: where the positions are", "Positions outstanding in the two contracts you roll between, over the last 120 days. A contract's open interest builds as it nears the front; the crossover date is when the next contract has become the liquid one.", { wide: true,
+    if (hasOi) chartCard(ch, "Open interest: where the positions are", "Positions outstanding in the two contracts you roll between, over the last 120 days. A contract's open interest builds as it nears the front; the crossover date is when the next contract has become the liquid one.", { wide: true,
       draw: (b) => C.line(b, { dates: hs.dates, series: [{ name: r.current_contract, color: css("--s1"), values: hs.oi_front }, { name: r.next_contract, color: css("--s2"), values: hs.oi_next }], include: 0, yFormat: (v) => (v >= 1000 ? (v / 1000).toFixed(0) + "k" : String(Math.round(v))), tipFormat: (v) => Math.round(v).toLocaleString("en-US"), height: 250, label: "Open interest" }),
       table: (b) => table(b, [{ label: "Date", get: (n) => hs.dates[n] }, { label: r.current_contract, num: true, get: (n) => Math.round(hs.oi_front[n]).toLocaleString("en-US") }, { label: r.next_contract, num: true, get: (n) => Math.round(hs.oi_next[n]).toLocaleString("en-US") }], hs.dates.map((_, n) => n).filter((n) => n % 5 === 0)) });
     const past = h("div", "card", root); h("h3", "", past, "The rolls of the past year");
-    table(past, [{ label: "Contract", get: (x) => x.contract }, { label: "Rolled into", get: (x) => x.next }, { label: "Expiry", get: (x) => x.expiry }, { label: "Calendar roll", get: (x) => x.roll_date }, { label: "Spread at the roll", num: true, get: (x) => num(x.spread, 3) }, { label: "Open-interest crossover", get: (x) => x.oi_crossover || "never" }], r.past_rolls);
-    W.hint(root, "The cost shown is for a long position; a short position's is the opposite. Execution cost is one tick per leg. Prices and open interest are simulated unless your file has them.");
+    if (r.past_rolls.length) table(past, [{ label: "Contract", get: (x) => x.contract }, { label: "Rolled into", get: (x) => x.next }, { label: "Expiry", get: (x) => x.expiry }, { label: "Calendar roll", get: (x) => x.roll_date }, { label: "Spread at the roll", num: true, get: (x) => num(x.spread, 3) }, { label: "Open-interest crossover", get: (x) => x.oi_crossover || (hasOi ? "never" : "no data") }], r.past_rolls);
+    else h("p", "hint", past, "No contract in this file has expired yet, so there is no past roll to show. A downloaded curve gains them as later downloads are merged into it.");
+    W.hint(root, "The cost shown is for a long position; a short position's is the opposite. Execution cost is one tick per leg. Prices and open interest are simulated unless your file or a download has them.");
   }
 
   /* ---------- carry and basis ---------- */
@@ -193,7 +217,8 @@
       tile(k, "Basis, annualised", pct(b.basis_annualised, 1), { text: `z-score ${num(b.basis_zscore, 1)}` });
     }
     tile(k, "Calendar basis", pct(b.calendar_basis_annualised, 1), { text: "front against next, annualised" });
-    tile(k, "Basis momentum", num(b.basis_momentum * 100, 2) + "%", { text: `percentile ${pct(b.basis_momentum_percentile, 0)}` }, "", "Front-contract return over the last year less the second contract's: commodities whose front has beaten the second tend to keep doing so (Boons and Prado)");
+    const hasMomentum = b.basis_momentum !== null && b.basis_momentum !== undefined && b.basis_momentum_series.dates.length > 0;
+    tile(k, "Basis momentum", hasMomentum ? num(b.basis_momentum * 100, 2) + "%" : "n/a", { text: hasMomentum ? `percentile ${pct(b.basis_momentum_percentile, 0)}` : "needs about a year of prices" }, "", "Front-contract return over the last year less the second contract's: commodities whose front has beaten the second tend to keep doing so (Boons and Prado)");
     const ch = h("div", "charts", root), s = cy.series;
     chartCard(ch, "Carry through time", "Annualised roll yield and its 21-day average. Above zero a long position earns carry.", {
       draw: (c) => C.line(c, { dates: s.dates, series: [{ name: "Carry", color: css("--s1"), values: s.carry, width: 1.5 }, { name: "21-day average", color: css("--s2"), values: s.carry_ma }], baseline: 0, include: 0, yFormat: (v) => (v * 100).toFixed(0) + "%", tipFormat: (v) => pct(v, 1), height: 260, label: "Carry through time", endLabels: false }),
@@ -204,7 +229,7 @@
     chartCard(ch, "Calendar basis", "Next contract against the front, as a share of the front: the term structure's own signal.", {
       draw: (c) => C.line(c, { dates: b.calendar_series.dates, series: [{ name: "Calendar basis", color: css("--s1"), values: b.calendar_series.values }], baseline: 0, include: 0, yFormat: (v) => (v * 100).toFixed(1) + "%", tipFormat: (v) => pct(v, 2), height: 240, label: "Calendar basis" }),
       table: (c) => table(c, [{ label: "Date", get: (n) => b.calendar_series.dates[n] }, { label: "Calendar basis", num: true, get: (n) => pct(b.calendar_series.values[n], 3) }], b.calendar_series.dates.map((_, n) => n).filter((n) => n % 10 === 0)) });
-    chartCard(ch, "Basis momentum", "The front contract's trailing return less the second's. Positive means the front has been stronger: the shape of the curve has been tightening.", {
+    if (hasMomentum) chartCard(ch, "Basis momentum", "The front contract's trailing return less the second's. Positive means the front has been stronger: the shape of the curve has been tightening.", {
       draw: (c) => C.line(c, { dates: b.basis_momentum_series.dates, series: [{ name: "Basis momentum", color: css("--s1"), values: b.basis_momentum_series.values }], baseline: 0, include: 0, yFormat: (v) => (v * 100).toFixed(0) + "%", tipFormat: (v) => pct(v, 1), height: 240, label: "Basis momentum" }),
       table: (c) => table(c, [{ label: "Date", get: (n) => b.basis_momentum_series.dates[n] }, { label: "Basis momentum", num: true, get: (n) => pct(b.basis_momentum_series.values[n], 2) }], b.basis_momentum_series.dates.map((_, n) => n).filter((n) => n % 10 === 0)) });
   }

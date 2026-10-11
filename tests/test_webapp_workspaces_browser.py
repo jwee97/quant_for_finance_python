@@ -7,17 +7,20 @@ import time
 
 import pytest
 
+from src.assets.free_data.http import Http
 from src.utils.config import load_config
 from src.webapp import server
 from src.webapp.api import App
 from src.webapp.universe import TickerStore, UniverseBuilder
+from tests.free_data_helpers import FakeFeeds, cboe_payload
 from tests.ml_helpers import make_bundle
 from tests.test_webapp import _fetch
 from tests.test_webapp_browser import _page_with, browser  # noqa: F401  (``browser`` is the module's Chromium fixture)
+from tests.test_webapp_data import CBOE, YAHOO, _crypto_routes, yahoo_route
 
 sync_api = pytest.importorskip("playwright.sync_api")
 
-SOURCES = {"Platform data", "Your file", "Simulated: a model", "Mixed sources"}
+SOURCES = {"Platform data", "Your file", "Downloaded: free data", "Simulated: a model", "Mixed sources"}
 
 
 @pytest.fixture(scope="module")
@@ -125,6 +128,173 @@ def test_each_new_tab_opens_its_own_guide(ws, tab, ready, title):
     ws.click(f"#{tab}-results button:text-is('Read the guide')")
     ws.wait_for_selector("article.md h1", timeout=30_000)
     assert title in ws.inner_text("article.md h1")
+
+
+# ------------------------------------------------------------------------------------------------------ free data
+@pytest.fixture(scope="module")
+def live_free(tmp_path_factory):
+    """An app whose downloads go to a temporary folder and whose network is a table of answers in the shape of the live feeds, so that no test reaches the internet. The repository's prices and Deribit
+    data are linked in, read only."""
+    config = load_config()
+    root = tmp_path_factory.mktemp("free_root")
+    (root / "data").mkdir()
+    (root / "data" / "raw").symlink_to(config.root / "data" / "raw", target_is_directory=True)
+    (root / "docs").symlink_to(config.root / "docs", target_is_directory=True)
+    bundle = make_bundle(n_assets=8, n=1300, seed=3, alpha=1.0)
+    store = TickerStore(tmp_path_factory.mktemp("free_prices"), fetch=_fetch)
+    app = App(config, builder=UniverseBuilder(config, store, default_loader=lambda c: bundle), root=root)
+    feeds = FakeFeeds({CBOE + "SPY.json": cboe_payload("SPY", spot=500.0, vol=0.2), YAHOO + "CL": yahoo_route(90.0, days=120), **_crypto_routes("SOL")})
+    app.data.http = Http(feeds, sleep=lambda s: None, pause=0.0, retries=0)
+    app.data.yfinance = type("OfflineYahoo", (), {"Ticker": staticmethod(lambda symbol: (_ for _ in ()).throw(RuntimeError("offline")))})
+    running = server.start(app, "127.0.0.1", 0)
+    running.app, running.feeds = app, feeds
+    yield running
+    running.stop()
+
+
+@pytest.fixture()
+def free(browser, live_free):  # noqa: F811
+    pg = browser.new_page(viewport={"width": 1400, "height": 1000})
+    pg.problems = []
+    pg.on("pageerror", lambda e: pg.problems.append(f"pageerror: {e}"))
+    pg.on("console", lambda m: pg.problems.append(f"console {m.type}: {m.text}") if m.type == "error" else None)
+    pg.goto(live_free.url)
+    pg.wait_for_selector(".chip")
+    pg.live = live_free
+    yield pg
+    assert not pg.problems, pg.problems
+    pg.close()
+
+
+def _badge(page, tab):
+    page.wait_for_selector(f"#{tab}-results .prov .src.downloaded, #{tab}-results .prov .src.mixed, #{tab}-results .prov .src.simulated", timeout=90_000)
+    return page.locator(f"#{tab}-results .prov .src").first.inner_text()
+
+
+def _download(page, tab):
+    """Press the card's button and wait until the progress line is gone and the result is shown."""
+    page.click(f"#{tab} details.freedata button[data-action=download]")
+    page.wait_for_selector(f"#{tab} details.freedata .fdres", timeout=90_000)
+    _wait_until(page, f"!document.querySelector('#{tab} details.freedata .fdlive .progress')")
+
+
+def test_the_options_tab_downloads_a_real_chain_analyses_it_as_downloaded_data_and_forgets_it_when_asked(free):
+    page = free
+    page.click("#tab-options")
+    page.wait_for_selector("#options-results .tile", timeout=90_000)
+    card = page.locator("#options details.freedata")
+    page.wait_for_selector("#options details.freedata button[data-action=download]")
+    assert card.count() == 1 and card.evaluate("d => d.open"), "with nothing downloaded the card is open: the way to real data is the first thing seen"
+    assert "No account and no key" in card.inner_text() and "Nothing is downloaded yet" in card.inner_text()
+    assert page.locator("#options select[data-key=underlying] option[value^='dl:']").count() == 0
+    assert _badge(page, "options") in {"Simulated: a model", "Mixed sources"}
+    card.locator("input[data-key=extra]").fill("zzzz")                                          # a ticker without listed options, to see a failure explained
+    _download(page, "options")
+    ok, bad = page.locator("#options .fdres li:not(.fail)"), page.locator("#options .fdres li.fail")
+    assert ok.count() == 1 and "SPY" in ok.first.inner_text() and bad.count() == 1 and "ZZZZ" in bad.first.inner_text() and "no option chain" in bad.first.inner_text()
+    page.wait_for_selector("#options .fdlist li[data-name=SPY]")
+    assert "Cboe delayed quotes" in page.inner_text("#options .fdlist li[data-name=SPY]") and "downloaded just now" in page.inner_text("#options .fdlist li[data-name=SPY]")
+    select = page.locator("#options select[data-key=underlying]")
+    assert select.input_value() == "dl:SPY" and "real chain" in select.locator("option:checked").inner_text(), "the downloaded chain is chosen for you, and the menu says it is real"
+    assert _badge(page, "options") in {"Downloaded: free data", "Mixed sources"}
+    assert "Cboe delayed quotes" in page.locator("#options-results").text_content() and page.locator("#options-results .banner.err").count() == 0
+    saved = page.live.app.data.store.path("options", "SPY")
+    assert saved.is_file() and "downloads" in saved.parts and not (page.live.app.root / "data" / "user" / "options").exists(), "the file is saved where the page says, not in the folder for your own files"
+    # update asks the feed again; delete asks twice and takes the chain out of the menu
+    before = len(page.live.feeds.calls)
+    page.click("#options .fdlist li[data-name=SPY] button[data-action=update]")
+    _wait_until(page, "!!document.querySelector('#options details.freedata .fdres')")
+    _wait_until(page, "!document.querySelector('#options details.freedata .fdlive .progress')")
+    assert len(page.live.feeds.calls) > before
+    item = page.locator("#options .fdlist li[data-name=SPY]")
+    item.locator("button[data-action=delete]").click()
+    assert "Really delete?" in item.inner_text()
+    item.locator("button[data-action=delete]").click()
+    page.wait_for_selector("#options .fdlist li[data-name=SPY]", state="detached", timeout=30_000)
+    assert page.locator("#options select[data-key=underlying] option[value^='dl:']").count() == 0 and "Nothing is downloaded yet" in page.inner_text("#options details.freedata")
+    assert _badge(page, "options") in {"Simulated: a model", "Mixed sources"} and page.locator("#options .fdres").count() == 0
+
+
+def test_the_futures_tab_downloads_a_curve_chooses_it_and_says_what_the_feed_lacks(free):
+    page = free
+    page.click("#tab-futures")
+    page.wait_for_selector("#futures-results .tile", timeout=90_000)
+    card = page.locator("#futures details.freedata")
+    page.wait_for_selector("#futures details.freedata button[data-action=download]")
+    assert card.evaluate("d => d.open") and card.locator(".picks button[aria-pressed=true]").count() == 3, "three roots are ticked to begin with"
+    for root in ("ES", "GC"):                                                                   # the table of answers has Yahoo's crude oil only
+        card.locator(f".picks button[data-value={root}]").click()
+        assert card.locator(f".picks button[data-value={root}]").get_attribute("aria-pressed") == "false"
+    card.locator("select[data-key=contracts]").select_option("4")
+    assert "takes about" in card.locator("[data-role=estimate]").inner_text()
+    _download(page, "futures")
+    assert page.locator("#futures .fdres li:not(.fail)").count() == 1 and page.locator("#futures .fdres li.fail").count() == 0
+    page.wait_for_selector("#futures .fdlist li[data-name=CL]")
+    select = page.locator("#futures select[data-key=root]")
+    assert select.input_value() == "CL" and "(downloaded)" in select.locator("option:checked").inner_text()
+    assert _badge(page, "futures") in {"Downloaded: free data", "Mixed sources"}
+    text = page.locator("#futures-results").text_content()
+    assert "Yahoo Finance" in text and "computed from the exchange" in text and page.locator("#futures-results .banner.err").count() == 0
+    assert page.locator("#futures-results svg.chart").count() >= 1
+
+
+def test_the_crypto_tab_downloads_a_coin_and_reads_its_real_books_and_funding(free):
+    page = free
+    page.click("#tab-crypto")
+    page.wait_for_selector("#crypto-results .tile", timeout=90_000)
+    card = page.locator("#crypto details.freedata")
+    page.wait_for_selector("#crypto details.freedata button[data-action=download]")
+    assert card.evaluate("d => d.open") and card.locator("input[data-value]").count() == 3 and card.locator("input[data-value]:checked").count() == 3
+    card.locator("select[data-key=days]").select_option("260")
+    _download(page, "crypto")
+    assert page.locator("#crypto .fdres li:not(.fail)").count() == 3 and page.locator("#crypto .fdres li.fail").count() == 0
+    assert [t.strip() for t in page.locator("#crypto .fdres li b").all_inner_texts()] == ["✓ SOL · daily history", "✓ SOL · order books", "✓ SOL · OKX funding"]
+    page.wait_for_selector("#crypto .fdlist li", timeout=30_000)
+    assert page.locator("#crypto .fdlist ul.dl li").count() == 3
+    select = page.locator("#crypto select[data-key=symbol]")
+    assert select.input_value() == "SOL" and "downloaded" in select.locator("option:checked").inner_text()
+    assert _badge(page, "crypto") in {"Downloaded: free data", "Mixed sources"}
+    assert "downloaded" in page.locator("#crypto-results .earnrow").first.inner_text().lower() or page.locator("#crypto-results .earnrow .tile").count() >= 5
+    _mode(page, "crypto", "cross")
+    page.wait_for_selector("#crypto-results table.data", timeout=60_000)
+    assert "Real quotes at one moment" in page.inner_text("#crypto-results") and "spot with spot" in page.inner_text("#crypto-results")
+    _mode(page, "crypto", "liquidity")
+    page.wait_for_selector("#crypto-results svg.chart", timeout=60_000)
+    text = page.inner_text("#crypto-results")
+    assert "Real order books taken" in text and "OKX is quoted in USDT" in text and "n/a" in text, "books too thin for $1 million say n/a instead of a made-up cost"
+    _mode(page, "crypto", "funding")
+    page.wait_for_selector("#crypto-results table.data", timeout=60_000)
+    assert "downloaded" in page.locator("#crypto-results").text_content().lower()
+
+
+def test_an_app_without_the_data_routes_explains_the_card_instead_of_leaving_it_empty(browser, live_ws):  # noqa: F811
+    pg = _page_with(browser, live_ws, missing="/api/data/status")
+    try:
+        pg.wait_for_selector(".chip")
+        pg.click("#tab-options")
+        pg.wait_for_selector("#options details.freedata", timeout=90_000)
+        pg.wait_for_selector("#options details.freedata :text('does not offer free data downloads')", timeout=30_000)
+        assert "Stop the app and press Run again" in pg.inner_text("#options details.freedata")
+        pg.click("#tab-backtest")
+        assert pg.locator(".chip").count() >= 1
+    finally:
+        pg.close()
+
+
+def test_an_app_one_version_behind_keeps_the_machine_learning_tab_and_asks_the_asset_tabs_for_a_restart(browser, live_ws):  # noqa: F811
+    """The Free data cards arrived with API version 5: an app at 4 still serves the Machine learning tab, but the three asset tabs need the newer one."""
+    pg = _page_with(browser, live_ws, rewrite=lambda catalog: catalog.update(api_version=4))
+    try:
+        pg.wait_for_selector(".chip")
+        for tab in ("options", "futures", "crypto"):
+            pg.click(f"#tab-{tab}")
+            pg.wait_for_selector(f"#{tab} .card.empty")
+            assert "needs a newer app" in pg.inner_text(f"#{tab}") and "this tab needs 5" in pg.inner_text(f"#{tab}")
+        pg.click("#tab-ml")
+        pg.wait_for_selector("#ml .panel")
+        assert "needs a newer app" not in pg.inner_text("#ml") and not pg.problems, pg.problems
+    finally:
+        pg.close()
 
 
 # ------------------------------------------------------------------------------------------------------ machine learning

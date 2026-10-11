@@ -239,6 +239,7 @@ h4.subhead { margin: 18px 0 6px; }
 .src.simulated::before { background: var(--warn); }
 .src.platform::before { background: var(--s1); }
 .src.user_file::before { background: var(--s3); }
+.src.downloaded::before { background: var(--s7); }
 .src.mixed::before { background: var(--s4); }
 .srcs { display: flex; flex-wrap: wrap; gap: 2px 14px; }
 .srcs b { font-weight: 600; color: var(--ink); }
@@ -288,6 +289,31 @@ button.btn.small { padding: 2px 8px; font-size: 12px; margin-right: 4px; }
 .verdict.fail { color: var(--crit); }
 .tile.muted .value { color: var(--muted); }
 ul.plain { margin: 0 0 6px; padding-left: 20px; display: grid; gap: 2px; font-size: 12.5px; color: var(--ink-2); }
+/* free data: the card on the options, futures and crypto tabs that downloads real data, the chips that choose what, and the list of what is on disk */
+.panel details.freedata { border-left: 3px solid var(--s7); padding-left: 13px; }
+.panel details.freedata details.how { padding: 0; border-bottom: 0; }
+.fdcontrols { display: grid; gap: 10px; }
+.picks { display: flex; flex-wrap: wrap; gap: 4px; }
+.picks button { background: none; border: 1px solid var(--border); padding: 4px 10px; border-radius: 999px; cursor: pointer; font-size: 12px; color: var(--ink-2); }
+.picks button:hover { background: var(--ghost); }
+.picks button[aria-pressed="true"] { background: var(--ghost); color: var(--ink); border-color: var(--axis); font-weight: 600; }
+.picks button[aria-pressed="true"]::before { content: "✓ "; }
+.freedata button.link { justify-self: start; font-size: 12.5px; }
+.fdgo { justify-content: space-between; }
+.fdgo .hint { flex: 1 1 110px; }
+.fdlive { display: grid; gap: 8px; }
+.fdlive:empty { display: none; }
+.fdres ul, .fdlist ul.dl { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 4px; font-size: 12.5px; color: var(--ink-2); }
+.fdres li b { color: var(--good-text); }
+.fdres li.fail b { color: var(--crit); }
+.fdlist h4.subhead { margin: 4px 0 6px; }
+.fdlist ul.dl { margin: 0; gap: 6px; }
+.fdlist ul.dl li { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+.fdlist .main { flex: 1 1 150px; min-width: 0; display: grid; }
+.fdlist .main b { color: var(--ink); overflow-wrap: anywhere; }
+.fdlist .main .meta { color: var(--muted); font-size: 11.5px; }
+.fdlist .acts { display: flex; gap: 4px; }
+.fdlist .acts button.btn.small { margin-right: 0; }
 @media (max-width: 700px) {
   header.top { padding: 8px 12px; }
   nav.tabs { flex-wrap: nowrap; overflow-x: auto; max-width: 100%; order: 3; flex-basis: 100%; scrollbar-width: thin; }

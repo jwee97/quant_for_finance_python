@@ -9,8 +9,8 @@
   const WINDOWS = [["5", "±5%"], ["10", "±10%"], ["15", "±15%"], ["25", "±25%"], ["40", "±40%"]];
 
   const O = {
-    id: "options", root: "#options", view: "#view-options", title: "Options", api: 4, mode: "overview", busy: "", results: {}, errors: {}, cache: new Map(), guard: null, go: null, progress: null,
-    about: "Read an option chain, see what a book of options is exposed to, draw what a structure pays and test a rolling strategy. The chain is a model quoted at the underlying's real price unless you bring your own file.",
+    id: "options", root: "#options", view: "#view-options", title: "Options", api: 5, mode: "overview", busy: "", results: {}, errors: {}, cache: new Map(), guard: null, go: null, progress: null,
+    about: "Read an option chain, see what a book of options is exposed to, draw what a structure pays and test a rolling strategy. The chain is a model quoted at the underlying's real price unless you download a real one (free, below) or bring your own file.",
     modes: [["overview", "Overview"], ["chain", "Chain"], ["smile", "Smile and skew"], ["surface", "Surface and term"], ["risk", "Greeks and risk"], ["strategy", "Strategy builder"], ["backtest", "Backtest"]],
     runLabel: { overview: "Refresh", chain: "Refresh", smile: "Refresh", surface: "Refresh", risk: "Revalue the book", strategy: "Draw the payoff", backtest: "Run the backtest" },
     blurb: { overview: "Implied against realised volatility, where it ranks, the put-call balance, the term structure and the skew: the page to open first.",
@@ -27,6 +27,33 @@
     catalog: null, spot: null, expiries: [], used: null,
   };
   const expiryColor = W.palette();
+  const setCatalog = (c) => {                                                               // a download changed what exists: the menu follows, and a chain that was deleted is not left selected
+    O.catalog = c;
+    if (!c.underlyings.some((u) => u.id === O.form.underlying)) { O.form.underlying = (c.underlyings.find((u) => u.id === "SPY") || c.underlyings[0] || {}).id || ""; O.form.expiry = ""; O.spot = null; }
+  };
+  /* The Free data card: real chains from Cboe (and Yahoo when Cboe cannot be reached), and Bitcoin and Ether from Deribit. */
+  const FREE = {
+    kind: "options", title: "Real option chains (free)",
+    intro: "Download real option quotes, about 15 minutes late, for US-listed tickers from Cboe, or Bitcoin and Ether options from Deribit. No account and no key. A downloaded chain appears in the Underlying menu as “real chain” and is analysed exactly like a model chain.",
+    defaults: () => ({ chosen: new Set(["SPY"]), extra: "", maxDte: "365" }),
+    controls: (box, f, ks, changed) => {
+      h("span", "hint", box, "Pick tickers:");
+      W.picks(box, [...ks.symbols.map((s) => [s, s]), ...ks.crypto.map((c) => ["deribit:" + c, c + " · Deribit", "Bitcoin and Ether options from Deribit, live"])], f.chosen, changed);
+      Q.labField(box, { key: "extra", label: "Other tickers (separated by spaces)", kind: "text", placeholder: "NVDA AMD", help: "Any ticker that has listed options in the US" }, f, changed);
+      Q.labField(box, { key: "maxDte", label: "Expiries up to", kind: "choice", options: ks.max_dte.map((d) => [String(d), d < 365 ? d + " days" : d === 365 ? "1 year" : d / 365 + " years"]), help: "Longer chains are bigger files and slower pages" }, f, changed);
+    },
+    request: (f) => {
+      const items = [...f.chosen, ...String(f.extra).split(/[\s,;]+/).filter(Boolean)];
+      if (!items.length) throw new Error("Pick a ticker, or type one");
+      return { kind: "options", items, max_dte: Number(f.maxDte) };
+    },
+    estimate: (b) => b.items.length * 4,
+    describe: (rec) => [rec.name, `${rec.source} · quotes of ${rec.as_of} · ${Number(rec.contracts || rec.rows).toLocaleString("en-US")} contracts`],
+    setCatalog,
+    pick: (res) => { const first = res.results.find((r) => r.ok && r.what === "chain"); if (first) { O.form.underlying = "dl:" + first.name; O.form.expiry = ""; O.spot = null; } },
+  };
+  const nameOf = (d) => (String(d.underlying).startsWith("dl:") ? d.underlying.slice(3) + " (real chain)" : d.underlying);          // "dl:SPY" is an id, not a name
+  const fileName = (d) => String(d.underlying).replace(/[^A-Za-z0-9_.-]/g, "_");
   const volFormat = (values) => {                                                           // whole points unless the volatilities are so close that ticks would repeat
     const v = values.filter((x) => x !== null && isFinite(x)), spread = v.length ? Math.max(...v) - Math.min(...v) : 1, d = spread < 0.03 ? 2 : spread < 0.12 ? 1 : 0;
     return (x) => (x * 100).toFixed(d) + "%";
@@ -98,10 +125,11 @@
   const underlyingField = (box, after) => {
     const f = O.form, cat = O.catalog;
     if (!cat) { h("p", "hint", box, "Loading the list of underlyings…"); return; }
-    Q.labField(box, { key: "underlying", label: "Underlying", kind: "choice", options: cat.underlyings.map((u) => [u.id, u.label]), help: "The platform's ETFs, quoted from a model at their real last close, and any chain file you put in data/user/options/" }, f,
+    Q.labField(box, { key: "underlying", label: "Underlying", kind: "choice", options: cat.underlyings.map((u) => [u.id, u.label]), help: "The platform's ETFs, quoted from a model at their real last close, real chains you have downloaded, and any chain file you put in data/user/options/" }, f,
       () => { f.expiry = ""; O.spot = null; after(); });
     const u = cat.underlyings.find((x) => x.id === f.underlying);
-    if (u) h("p", "hint", box, u.source === "user_file" ? "Quotes are read from your file." : "No option quotes are held for this ETF: the chain is a model (an arbitrage-free surface) anchored to its real price and realised volatility.");
+    if (u) h("p", "hint", box, u.source === "user_file" ? "Quotes are read from your file." : u.source === "downloaded" ? `Real quotes, delayed: downloaded ${W.ago(u.fetched_at)} for the session of ${u.as_of}. Download again below for fresher ones.`
+      : "No option quotes are held for this ETF: the chain is a model (an arbitrage-free surface) anchored to its real price and realised volatility. Download a real chain below to replace it.");
   };
   O.check = () => {
     if (!O.catalog) return "Loading the list of underlyings…";
@@ -113,6 +141,7 @@
     const sec = (title, open = true) => { const d = h("details", "", panel); d.open = open; h("summary", "", d, title); return h("div", "body", d); };
     const m = O.mode;
     underlyingField(sec("1. Underlying"), ANALYTIC.has(m) ? rerun : () => { context(); after(); });
+    if (m !== "backtest") W.dataCard(panel, O, FREE);
     if (m === "chain" || m === "smile") {
       const b = sec("2. Expiry and strikes");
       Q.labField(b, { key: "expiry", label: "Expiry", kind: "choice", options: [["", "Nearest"], ...O.expiries.map((e) => [e.expiry, `${e.expiry} · ${e.dte} days`])] }, f, rerun);
@@ -123,7 +152,7 @@
       const b = sec("Assumptions", false);
       for (const s of [{ key: "rate", label: "Interest rate (% a year, blank = 4)", kind: "number", step: 0.25 }, { key: "dividend", label: "Dividend yield (% a year, blank = the ETF's)", kind: "number", step: 0.1, min: 0 },
         { key: "premium", label: "Implied over realised variance (%)", kind: "number", step: 1, help: "How much richer the model's implied volatility is than the recent realised volatility. The simulated chain only." }]) Q.labField(b, s, f, after);
-      h("p", "hint", b, "Used to build and price the simulated chain. They change the numbers, so they are part of what you are looking at; a chain from your own file ignores them except for the rate and dividend it lacks.");
+      h("p", "hint", b, "Used to build and price the simulated chain. They change the numbers, so they are part of what you are looking at; a chain from your own file ignores them except for the rate and dividend it lacks, and a downloaded chain brings its own (the dividend of each expiry is read from the market's forward).");
     }
     if (m === "risk") {
       const b = sec("2. The book");
@@ -229,7 +258,7 @@
   function buildOverview(root, d) {
     const ov = d.overview, ref = ov.reference_index, sk = ov.skew || {};
     remember(d);
-    header(root, `${d.underlying} options`, `${money(ov.spot, 2)} · nearest expiry ${ov.nearest_expiry} (${ov.nearest_dte} days) · ${d.chain.quotes} quotes in that expiry`);
+    header(root, `${nameOf(d)} options`, `${money(ov.spot, 2)} · nearest expiry ${ov.nearest_expiry} (${ov.nearest_dte} days) · ${d.chain.quotes} quotes in that expiry`);
     W.provenance(root, { ...d, warnings: ov.risk_flags });
     const k = h("div", "earnrow", root);
     tile(k, "Implied volatility, 30 days", pct(ov.atm_iv_30d), { text: `${W.points(ov.iv_premium)} against realised` }, "", "At-the-money implied volatility interpolated to 30 days");
@@ -262,7 +291,7 @@
   function buildChain(root, d) {
     const ch = d.chain, f = O.form;
     remember(d);
-    header(root, `${d.underlying} chain: ${ch.expiry}`, `${ch.dte} days · forward ${num(ch.forward, 2)} · at-the-money volatility ${pct(ch.atm_iv, 1)} · ${ch.quotes} quotes`);
+    header(root, `${nameOf(d)} chain: ${ch.expiry}`, `${ch.dte} days · forward ${num(ch.forward, 2)} · at-the-money volatility ${pct(ch.atm_iv, 1)} · ${ch.quotes} quotes`);
     W.provenance(root, { ...d, warnings: d.warnings.filter((w) => !d.overview.risk_flags.includes(w)) });
     const row = h("div", "filters", root);
     W.pills(row, ch.expiries.slice(0, 20).map((e) => [e.expiry, `${e.expiry.slice(5)} · ${e.dte}d`, `${e.expiry}: ${e.dte} days, ${e.strikes} strikes`]), ch.expiry, (v) => { f.expiry = v; O.run(true); });
@@ -277,7 +306,7 @@
     chainTable(scroll, rows);
     W.hint(card, `${rows.length} of ${ch.rows.length} strikes shown, within ${Math.round(Number(f.window))}% of the price. The at-the-money row is outlined; shaded cells are in the money; ⚠ marks a quote older than 15 minutes and orange spreads are wider than 10% of the mid. Volume, open interest and quote ages are simulated unless the chain is your file.`);
     const dl = h("button", "btn", card, "Download this expiry (CSV)");
-    dl.addEventListener("click", () => W.csvDownload(`${d.underlying}_${ch.expiry}_chain.csv`, [["strike", "call_bid", "call_ask", "call_iv", "call_delta", "call_volume", "call_oi", "put_bid", "put_ask", "put_iv", "put_delta", "put_volume", "put_oi"],
+    dl.addEventListener("click", () => W.csvDownload(`${fileName(d)}_${ch.expiry}_chain.csv`, [["strike", "call_bid", "call_ask", "call_iv", "call_delta", "call_volume", "call_oi", "put_bid", "put_ask", "put_iv", "put_delta", "put_volume", "put_oi"],
       ...ch.rows.map((r) => [r.strike, r.call.bid, r.call.ask, r.call.iv, r.call.delta, r.call.volume, r.call.oi, r.put.bid, r.put.ask, r.put.iv, r.put.delta, r.put.volume, r.put.oi])]));
   }
   const grouped = (v) => (Q.bad(v) ? "n/a" : Math.round(v).toLocaleString("en-US"));
@@ -303,7 +332,7 @@
   function buildSmile(root, d, body) {
     const ch = d.chain, sk = d.skew || {}, surf = O.cache.get(key("surface", settings()));
     remember(d);
-    header(root, `${d.underlying} smile and skew`, `${ch.expiry} · ${ch.dte} days · at-the-money volatility ${pct(ch.atm_iv, 1)}`);
+    header(root, `${nameOf(d)} smile and skew`, `${ch.expiry} · ${ch.dte} days · at-the-money volatility ${pct(ch.atm_iv, 1)}`);
     W.provenance(root, { ...d, warnings: [] });
     const row = h("div", "filters", root);
     W.pills(row, ch.expiries.slice(0, 20).map((e) => [e.expiry, `${e.expiry.slice(5)} · ${e.dte}d`, `${e.expiry}: ${e.dte} days`]), ch.expiry, (v) => { O.form.expiry = v; O.run(true); });
@@ -334,7 +363,7 @@
   /* ---------- surface and term structure ---------- */
   function buildSurface(root, d) {
     const s = d.surface, tm = d.term_metrics;
-    header(root, `${d.underlying} implied-volatility surface`, `${s.expiries.length} expiries · strikes from ${num(s.moneyness[0], 2)} to ${num(s.moneyness[s.moneyness.length - 1], 2)} times the price`);
+    header(root, `${nameOf(d)} implied-volatility surface`, `${s.expiries.length} expiries · strikes from ${num(s.moneyness[0], 2)} to ${num(s.moneyness[s.moneyness.length - 1], 2)} times the price`);
     W.provenance(root, d);
     const k = h("div", "earnrow", root);
     tile(k, "30-day volatility", pct(tm.iv_30d, 1)); tile(k, "90-day volatility", pct(tm.iv_90d, 1));
@@ -357,7 +386,7 @@
   /* ---------- greeks and risk ---------- */
   function buildRisk(root, d) {
     const t = d.totals;
-    header(root, `Book on ${d.underlying}`, `${d.positions.length} position${d.positions.length === 1 ? "" : "s"} · price ${money(d.spot, 2)} · valued today`);
+    header(root, `Book on ${nameOf(d)}`, `${d.positions.length} position${d.positions.length === 1 ? "" : "s"} · price ${money(d.spot, 2)} · valued today`);
     W.provenance(root, d);
     const k = h("div", "earnrow", root);
     tile(k, "Value", smoney(t.value), { text: "at the model's mids" });
@@ -389,7 +418,7 @@
   const ROLLING = { covered_call: ["covered_call"], iron_condor: ["iron_condor"], short_strangle: ["short_strangle"], short_straddle: ["delta_hedged_straddle", { side: -1 }], long_straddle: ["delta_hedged_straddle", { side: 1 }], calendar_spread: ["calendar_spread"] };
   function buildStrategy(root, d) {
     const a = d.analysis, c = a.curve, f = O.form, name = d.strategy ? d.strategy.replace(/_/g, " ") : "your own legs";
-    header(root, `${name[0].toUpperCase()}${name.slice(1)} on ${d.underlying}`, `${d.text} · expiry ${d.expiry} · horizon ${a.horizon_days} days`);
+    header(root, `${name[0].toUpperCase()}${name.slice(1)} on ${nameOf(d)}`, `${d.text} · expiry ${d.expiry} · horizon ${a.horizon_days} days`);
     W.provenance(root, d);
     const k = h("div", "earnrow", root), cash = a.net_debit > 0 ? `pay ${money(a.net_debit)}` : `receive ${money(a.net_credit)}`;
     tile(k, "Most it can make", a.unlimited_profit ? "Unlimited" : smoney(a.max_profit), { text: a.reward_risk === null ? cash : `reward to risk ${num(a.reward_risk, 2)} · ${cash}` });

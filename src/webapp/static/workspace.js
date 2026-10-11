@@ -5,10 +5,11 @@
   "use strict";
   const Q = window.QL, h = Q.h, api = Q.api;
 
-  const SOURCE_TEXT = { platform: "Platform data", user_file: "Your file", simulated: "Simulated: a model", mixed: "Mixed sources" };
+  const SOURCE_TEXT = { platform: "Platform data", user_file: "Your file", downloaded: "Downloaded: free data", simulated: "Simulated: a model", mixed: "Mixed sources" };
   const SOURCE_HELP = {
     platform: "Real data held in this repository (prices, funding, interest rates).",
     user_file: "Read from a file you put in data/user/.",
+    downloaded: "Real data this app downloaded for you from a free public source (named in the notes), saved under data/user/downloads/. It is delayed or unaudited: good for research, not a feed to trade on.",
     simulated: "Made by a model on this computer. It is not a market: use it to check that the analytics and the machinery behave, not to look for an edge.",
     mixed: "Some parts are real data and some are simulated or yours; the parts are listed beside this badge." };
   const sourceText = (s) => SOURCE_TEXT[s] || String(s).replace(/_/g, " ");
@@ -159,5 +160,126 @@
       ["Volatility target", spec.risk ? (spec.risk.mode === "regime" ? "by regime (" + ((spec.regime || {}).detector || "") + ")" : pct(spec.risk.target_vol, 0)) : "the platform's default"], ["Evaluated days", String(d.n_days)]]);
   }
 
-  window.WS = { pipelineResult, request, catalog, provenance, flags, seg, pills, meter, palette, kv, sub, hint, card, signed, points, shortDate, dayMonth, percentList, csvDownload, qs, sourceText };
+
+  /* ---------- free data: real data downloaded from free public sources ---------- */
+  const WHAT_LABEL = { history: "daily history", venues: "order books", funding: "OKX funding" };           // the parts of a coin's download
+  let statusPromise = null, statusCache = null;
+  const dataStatus = (fresh) => {                                                           // what is downloaded and what can be asked for (GET /api/data/status)
+    if (fresh) statusPromise = null;
+    if (!statusPromise) statusPromise = api("/api/data/status").then((s) => (statusCache = s), (e) => { statusPromise = null; throw e; });
+    return statusPromise;
+  };
+  const refreshCatalog = () => { catalogPromise = null; return catalog(); };
+  const ago = (iso) => {
+    const t = Date.parse(iso); if (!isFinite(t)) return "";
+    const s = Math.max(0, (Date.now() - t) / 1000);
+    return s < 90 ? "just now" : s < 5400 ? Math.round(s / 60) + " min ago" : s < 129600 ? Math.round(s / 3600) + " h ago" : Math.round(s / 86400) + " days ago";
+  };
+  function picks(parent, items, chosen, after) {                                            // chips that switch on and off, for choosing several things
+    const box = h("div", "picks", parent);
+    for (const [value, text, title] of items) {
+      const b = h("button", "", box, text); b.type = "button"; b.dataset.value = value; b.setAttribute("aria-pressed", String(chosen.has(value))); if (title) b.title = title;
+      b.addEventListener("click", () => { if (chosen.has(value)) chosen.delete(value); else chosen.add(value); b.setAttribute("aria-pressed", String(chosen.has(value))); if (after) after(); });
+    }
+    return box;
+  }
+  /* The "Real data (free)" section of an asset tab. ``spec``: kind (options | futures | crypto), title, intro, defaults() (the form's initial state), controls(box, form, kindStatus, changed) (the inputs, filled
+     from the server's presets; call ``changed`` when one is edited), request(form) (the body for /api/data/fetch; throws a message), estimate(body) (seconds, for the hint beside the button), describe(record) ([headline, detail]), setCatalog(catalog), pick(result) (select what
+     was downloaded). The card keeps its state in ``lab.free``, so it survives a redraw of the form while a download runs. */
+  function dataCard(panel, lab, spec) {
+    const st = lab.free = lab.free || { form: spec.defaults(), busy: "", error: "", last: null, open: null, armed: "" };
+    const d = h("details", "freedata", panel); d.dataset.free = spec.kind; h("summary", "", d, spec.title);
+    const body = h("div", "body", d); st.el = { details: d, body, live: null, list: null };
+    d.addEventListener("toggle", () => { st.open = d.open; });
+    const build = (status) => {
+      if (!body.isConnected) return;
+      const ks = status.kinds[spec.kind]; body.replaceChildren();
+      if (st.open === null) st.open = ks.downloads.length === 0;
+      d.open = st.open;
+      h("p", "hint", body, spec.intro);
+      const estimate = () => {                                                                // how long what is ticked will take, in words
+        if (!st.el.estimate) return;
+        let text = ""; try { const s = spec.estimate(spec.request(st.form)); text = s ? "takes about " + (s < 90 ? Math.round(s) + " seconds" : Math.round(s / 60) + " minutes") : ""; } catch (e) { /* not a valid request yet */ }
+        st.el.estimate.textContent = text;
+      };
+      const box = h("div", "fdcontrols", body); spec.controls(box, st.form, ks, estimate);
+      const row = h("div", "row tight fdgo", body), go = h("button", "btn primary", row, "Download real data"); go.type = "button"; go.dataset.action = "download";
+      go.addEventListener("click", () => { let req; try { req = spec.request(st.form); } catch (e) { Q.toast(e.message); return; } submit(lab, spec, req); });
+      const est = h("span", "hint", row, ""); est.dataset.role = "estimate"; st.el.estimate = est; st.el.go = go; estimate();
+      st.el.live = h("div", "fdlive", body); st.el.live.setAttribute("aria-live", "polite"); st.el.list = h("div", "fdlist", body);
+      const how = h("details", "how", body); h("summary", "", how, "Where this comes from"); const ul = h("ul", "", how);
+      for (const s of ks.sources) { const li = h("li", "", ul); h("b", "", li, s.label); li.appendChild(document.createTextNode(`: ${s.provides}; ${s.delay}. `)); }
+      h("li", "", ul, status.note);
+      const more = h("button", "link", body, "Read more about the free data"); more.type = "button"; more.addEventListener("click", () => Q.openGuide("free_data"));
+      paintLive(lab); paintList(lab, spec, status);
+    };
+    if (statusCache) build(statusCache);
+    else {
+      h("p", "hint", body, "Loading…");
+      dataStatus().then(build, (e) => {
+        if (!body.isConnected) return;
+        body.replaceChildren(); d.open = true;                                                // the reason is shown, not left inside a closed card
+        h("p", "hint", body, e.status === 404 ? "The app behind this page does not offer free data downloads: it is older than the page. " + Q.RESTART : e.message);
+      });
+    }
+    st.spec = spec;
+  }
+  function paintLive(lab) {                                                                  // progress, error and the result of the last download
+    const st = lab.free, el = st && st.el && st.el.live; if (!el || !el.isConnected) return;
+    el.replaceChildren();
+    if (st.el.go) st.el.go.disabled = !!st.busy;
+    if (st.busy) { const p = h("div", "progress", el); h("span", "spinner", p); h("span", "", p, st.busy); }
+    if (st.error) { const b = h("div", "banner err", el); h("strong", "", b, "Not downloaded. "); b.appendChild(document.createTextNode(st.error)); }
+    if (st.last && !st.busy) {
+      const ok = st.last.results.filter((r) => r.ok), bad = st.last.results.filter((r) => !r.ok), box = h("div", "fdres", el);
+      h("p", "hint", box, `${ok.length} downloaded${bad.length ? `, ${bad.length} could not be` : ""}.`);
+      const ul = h("ul", "", box);
+      for (const r of st.last.results) { const li = h("li", r.ok ? "" : "fail", ul); h("b", "", li, (r.ok ? "✓ " : "✗ ") + r.item + (r.what && r.what !== "chain" && r.what !== "curve" ? " · " + (WHAT_LABEL[r.what] || r.what) : "")); li.appendChild(document.createTextNode(" " + r.message)); }
+    }
+  }
+  function paintList(lab, spec, status) {                                                    // the downloads, newest first, each with its source, its date and what to do with it
+    const st = lab.free, el = st.el && st.el.list; if (!el || !el.isConnected) return;
+    const items = status.kinds[spec.kind].downloads; el.replaceChildren();
+    if (!items.length) { h("p", "hint", el, "Nothing is downloaded yet: until it is, this tab shows a model."); return; }
+    h("h4", "subhead", el, "Downloaded");
+    const ul = h("ul", "dl", el);
+    for (const rec of items) {
+      const li = h("li", "", ul); li.dataset.name = rec.name; const [headline, detail] = spec.describe(rec);
+      const main = h("div", "main", li); h("b", "", main, headline); h("span", "meta", main, `${detail} · downloaded ${ago(rec.fetched_at)}`);
+      const acts = h("div", "acts", li), up = h("button", "btn small", acts, "Update"), del = h("button", "btn small", acts, "Delete"); up.type = del.type = "button";
+      up.disabled = !rec.refresh; up.title = "Download it again"; up.dataset.action = "update"; del.dataset.action = "delete";
+      up.addEventListener("click", () => submit(lab, spec, { kind: spec.kind, ...rec.refresh }));
+      del.addEventListener("click", async () => {
+        if (st.armed !== rec.name) { st.armed = rec.name; del.textContent = "Really delete?"; setTimeout(() => { if (st.armed === rec.name) { st.armed = ""; del.textContent = "Delete"; } }, 4000); return; }
+        st.armed = ""; del.disabled = true;
+        try { await api("/api/data/delete", { kind: spec.kind, name: rec.name, confirm: true }); st.last = null; st.error = ""; await changed(lab, spec); } catch (e) { st.error = e.message; paintLive(lab); }
+      });
+    }
+  }
+  async function changed(lab, spec) {                                                        // the downloads changed: ask again what exists, so the menus and the views follow
+    const st = lab.free; await dataStatus(true);
+    spec.setCatalog(await refreshCatalog());
+    lab.cache.clear(); lab.results = {}; lab.errors = {};
+    if (!Q.$(lab.view).hidden) Q.renderLab(lab); else if (st.el) paintList(lab, spec, statusCache);
+  }
+  async function submit(lab, spec, body) {
+    const st = lab.free; if (st.busy) return;
+    st.busy = "Starting…"; st.error = ""; st.last = null; paintLive(lab);
+    try {
+      const { job } = await api("/api/data/fetch", body);
+      for (;;) {
+        await new Promise((r) => setTimeout(r, 600));
+        const v = await api("/api/job/" + job);
+        st.busy = `${v.message} (${Math.round(v.elapsed)} s)`; paintLive(lab);
+        if (v.status === "done") { st.last = v.result; break; }
+        if (v.status === "error") throw new Error(v.error);
+      }
+      st.busy = "";
+      if (spec.pick) spec.pick(st.last);
+      await changed(lab, spec);
+    } catch (e) { st.error = e.status === 404 ? "The app behind this page does not know this request: it is older than the page. " + Q.RESTART : e.message; }
+    st.busy = ""; paintLive(lab);
+  }
+
+  window.WS = { pipelineResult, request, catalog, refreshCatalog, dataCard, picks, ago, provenance, flags, seg, pills, meter, palette, kv, sub, hint, card, signed, points, shortDate, dayMonth, percentList, csvDownload, qs, sourceText };
 })();
