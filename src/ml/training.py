@@ -66,8 +66,10 @@ def _fit(kind: str, params: dict, task: str, seed: int, X: pd.DataFrame, y: pd.S
     return make_model(kind, params, task, seed).fit(X, y, dates)
 
 
-def walk_forward_train(ds: Dataset, model_cfg: dict, split_cfg: dict, seed: int = 0, target: str | None = None, progress=None) -> TrainResult:
-    """Fit ``model_cfg`` (``kind`` and ``params``) walk-forward on ``ds`` according to ``split_cfg`` and return the out-of-sample predictions with everything needed to audit them."""
+def walk_forward_train(ds: Dataset, model_cfg: dict, split_cfg: dict, seed: int = 0, target: str | None = None, progress=None, stop_after: str | None = None) -> TrainResult:
+    """Fit ``model_cfg`` (``kind`` and ``params``) walk-forward on ``ds`` according to ``split_cfg`` and return the out-of-sample predictions with everything needed to audit them.
+
+    ``stop_after="validation"`` ends the run at the end of the validation segment: the test and forward segments are never predicted, which is how a search keeps them out of its reach."""
     t0 = time.perf_counter()
     tgt = target or ds.target
     task = task_for(is_classification(tgt))
@@ -75,7 +77,9 @@ def walk_forward_train(ds: Dataset, model_cfg: dict, split_cfg: dict, seed: int 
     plan, upos = plan_for(ds, split_cfg, tgt)                                    # plan positions index the labelled dates; upos maps them to the full axis
     purge = ds.lag + ds.horizon
     refit = int(split_cfg.get("refit_every") or default_refit(kind))
-    splits = walk_forward_splits(len(upos), plan.first_prediction(), refit, purge, int(split_cfg.get("embargo", 0)), str(split_cfg.get("window", "expanding")), int(split_cfg.get("rolling_days", 1260)))
+    last_test = plan.bounds[stop_after][1] if stop_after else None
+    splits = walk_forward_splits(len(upos), plan.first_prediction(), refit, purge, int(split_cfg.get("embargo", 0)), str(split_cfg.get("window", "expanding")), int(split_cfg.get("rolling_days", 1260)),
+                                 last_test)
     pos_all = ds.positions()
     # row -> position in the labelled-date axis (-1 where the date has no label at all)
     inv = np.full(len(ds.dates), -1)

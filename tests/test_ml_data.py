@@ -21,7 +21,9 @@ def test_configuration_merges_validates_and_fingerprints():
     assert cfg["name"] == "lasso_fwd_ret_5_etf" and mc.config_hash(cfg) == mc.config_hash(mc.experiment_config({"model": {"kind": "lasso", "params": {"alpha": 0.1}}, "signal": {"n": 2}, "name": "x"}, defaults=mc.DEFAULTS))
     other = mc.experiment_config({"model": {"kind": "lasso", "params": {"alpha": 0.2}}, "signal": {"n": 2}}, defaults=mc.DEFAULTS)
     assert mc.config_hash(other) != mc.config_hash(cfg) and mc.dataset_key(other) == mc.dataset_key(cfg)             # a different model on the same data
-    assert mc.dataset_key(mc.experiment_config({"dataset": {"horizon": 20, "target": "fwd_ret_20"}}, defaults=mc.DEFAULTS)) != mc.dataset_key(cfg)
+    longer = mc.experiment_config({"dataset": {"horizon": 20, "target": "fwd_ret_20"}}, defaults=mc.DEFAULTS)
+    assert mc.dataset_key(longer) == mc.dataset_key(cfg) and mc.build_key(longer) != mc.build_key(cfg)             # same sample, a different panel built from it
+    assert mc.dataset_key(mc.experiment_config({"dataset": {"universe": "crypto"}}, defaults=mc.DEFAULTS)) != mc.dataset_key(cfg)
     for bad, text in [({"dataset": {"horizon": 0}}, "horizon"), ({"dataset": {"normalize": "zscore"}}, "normalize"), ({"split": {"forward_fraction": 0.5, "test_fraction": 0.3}}, "fractions"),
                       ({"backtest": {"rebalance": "hourly"}}, "rebalance"), ({"backtest": {"cost_bps": 400, "slippage_bps": 400}}, "costs"), ({"signal": {"holding_period": 0}}, "holding_period"),
                       ({"nonsense": 1}, "unknown configuration sections"), ({"model": {"kind": "regime_ridge"}}, "regime_detector")]:

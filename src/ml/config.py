@@ -2,7 +2,7 @@
 
 An experiment is described by one nested dictionary with the sections ``dataset``, ``split``, ``model``, ``signal``, ``backtest`` and (optionally) ``robustness``. ``experiment_config`` merges what you give
 over the platform defaults, validates it and returns a plain dictionary; ``config_hash`` is a short fingerprint of the merged configuration, so two runs with the same hash are the same experiment, and
-``dataset_key`` fingerprints only the part that decides the data (used to count how many models have been tried on the same data).
+``dataset_key`` fingerprints the sample (universe and dates; used to count how many models have been tried on the same data) and ``build_key`` the whole dataset section (used to reuse a built panel).
 """
 
 from __future__ import annotations
@@ -123,5 +123,12 @@ def config_hash(cfg: dict) -> str:
 
 
 def dataset_key(cfg: dict) -> str:
-    """A fingerprint of the data a model sees (the dataset section only): experiments sharing it are looks at the same data, which is what the trial count of a deflated Sharpe ratio counts."""
+    """A fingerprint of the SAMPLE a configuration looks at: the universe and the date range, not which features or target it builds from it. Experiments sharing it are looks at the same data, which is what
+    the trial count of a deflated Sharpe ratio counts: trying five horizons and three feature sets on the same ETFs is eight looks, not eight different datasets."""
+    d = cfg["dataset"]
+    return hashlib.sha256(_canon({"universe": d["universe"], "start": d.get("start"), "end": d.get("end")}).encode()).hexdigest()[:12]
+
+
+def build_key(cfg: dict) -> str:
+    """A fingerprint of the whole ``dataset`` section: two configurations with the same build key build the same panel from the same data, so one can reuse the other's."""
     return hashlib.sha256(_canon(cfg["dataset"]).encode()).hexdigest()[:12]

@@ -19,7 +19,7 @@ from . import evaluation as ev
 from . import explainability as xp
 from . import robustness as rb
 from .backtest import equal_weight_benchmark, label_days, run_backtest, trim_to_signal
-from .config import config_hash, dataset_key, experiment_config
+from .config import build_key, config_hash, dataset_key, experiment_config
 from .datasets import Dataset, build_dataset, resolve_bundle
 from .models import Model
 from .registry import Registry
@@ -116,11 +116,12 @@ def _fold_ics(train: TrainResult, ic: pd.Series, ds: Dataset) -> list[float]:
 
 def run_experiment(overrides: dict | None = None, bundle=None, config=None, builder=None, registry: Registry | None = None, progress=None, save: bool = True, dataset: Dataset | None = None,
                    info: dict | None = None, parent_id: str | None = None, explain: bool = True, final_model: bool = True, robustness: bool | None = None, trials_extra: int = 0,
-                   experiment_id: str | None = None) -> Experiment:
+                   experiment_id: str | None = None, stop_after: str | None = None) -> Experiment:
     """Run one experiment. ``overrides`` is merged over the platform configuration (``ml.config.experiment_config``). With a ``registry`` and ``save`` the artifacts are written and the run recorded.
 
     ``explain`` computes permutation importance; ``final_model`` fits the model a live prediction would use; ``robustness`` overrides the configuration's switch for the ten stress tests;
-    ``trials_extra`` adds to the recorded trial count (a search that ran many variants passes how many)."""
+    ``trials_extra`` adds to the recorded trial count (a search that ran many variants passes how many). ``stop_after="validation"`` is the search mode: the test and forward segments are not
+    predicted at all, so nothing a search does can depend on them."""
     t0 = time.perf_counter()
     cfg = experiment_config(overrides)
     dkey, chash = dataset_key(cfg), config_hash(cfg)
@@ -128,7 +129,7 @@ def run_experiment(overrides: dict | None = None, bundle=None, config=None, buil
     ds, info = prepare(cfg, bundle, config, builder, dataset, info, progress)
     progress("training walk-forward")
     try:
-        train = walk_forward_train(ds, cfg["model"], cfg["split"], cfg["seed"], progress=progress)
+        train = walk_forward_train(ds, cfg["model"], cfg["split"], cfg["seed"], progress=progress, stop_after=stop_after)
     except ValueError as exc:
         raise ExperimentError(str(exc)) from None
     lag, horizon = ds.lag, ds.horizon
@@ -147,6 +148,9 @@ def run_experiment(overrides: dict | None = None, bundle=None, config=None, buil
     first_signal = scores.dropna(how="all").index[0]
     parts = trim_to_signal(result, first_signal, lag)
     net, gross, costs, turnover = parts["net"], parts["gross"], parts["costs"], parts["turnover"]
+    if stop_after:                                                             # the positions of the last day still earn for `lag` more days; nothing later belongs to the run
+        cut = net.index.searchsorted(train.plan.dates[train.plan.bounds[stop_after][1] - 1]) + lag + 1
+        net, gross, costs, turnover = net.iloc[:cut], gross.iloc[:cut], costs.iloc[:cut], turnover.iloc[:cut]
     labels = label_days(net.index, train.plan.labels())
     bench = equal_weight_benchmark(ds.returns, ds.investable).reindex(net.index)
     # the train segment: the first model's in-sample positions, run through the same engine
@@ -182,6 +186,9 @@ def run_experiment(overrides: dict | None = None, bundle=None, config=None, buil
     n_trials = (registry.trial_count(dkey) if registry is not None else 0) + 1 + int(trials_extra)
     tf_net = net[labels.isin(["test", "forward"])]
     over = ev.overfit_report(seg_stats, n_trials, fold_ics, oos_summary.get("gross_sharpe"), oos_summary.get("sharpe"), len(ds.features), len(ds.X), test_forward_returns=tf_net)
+    blocks = [ev.sharpe_of(pd.Series(b)) for b in np.array_split(net[labels == "validation"].to_numpy(), 4) if len(b) >= 20]
+    over["validation_blocks"] = blocks
+    over["instability"] = float(np.nanstd(blocks, ddof=1)) if len(blocks) >= 2 else float("nan")
     imp_table = xp.importance_table(train.importance)
     perm = pd.DataFrame()
     if explain:
@@ -206,7 +213,7 @@ def run_experiment(overrides: dict | None = None, bundle=None, config=None, buil
     if info.get("source") == "simulated":
         notes.append("The data is simulated: this checks the machinery, not the market.")
     report = jsonable({
-        "id": exp_id, "name": cfg["name"], "config": cfg, "config_hash": chash, "dataset_key": dkey, "dataset": ds.summary(), "provenance": {"source": info.get("source", "platform"), "label": info.get("label", ""), "notes": notes},
+        "id": exp_id, "name": cfg["name"], "config": cfg, "config_hash": chash, "dataset_key": dkey, "build_key": build_key(cfg), "dataset": ds.summary(), "provenance": {"source": info.get("source", "platform"), "label": info.get("label", ""), "notes": notes},
         "segments": {"plan": train.plan.to_dict(), "stats": seg_stats},
         "metrics": {"oos": oos_summary, "benchmark": ev.strategy_summary(bench)},
         "ic": {"all": ic_all, "by_segment": ic_seg, "decay": decay, "series": ic_series_payload(ic), "by_fold": fold_ics, "quantiles": quant},
@@ -270,7 +277,7 @@ def save_experiment(registry: Registry, exp: Experiment, info: dict, parent_id: 
             registry.log_prediction_summary(exp_id, seg_name, int(sel.sum()), d / "predictions.parquet", exp.report["ic"]["by_segment"].get(seg_name, {}).get("mean"))
     if exp.final_model is not None:
         registry.register_model(exp_id, exp.final_model.to_bytes(), cfg["model"]["kind"], ds.features, "candidate", cfg["name"])
-    registry.register_feature_set(ds, exp.report["dataset_key"])
+    registry.register_feature_set(ds, exp.report["build_key"])
 
 
 def load_report(registry: Registry, exp_id: str) -> dict:
