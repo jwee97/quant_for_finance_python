@@ -281,6 +281,10 @@ def test_the_page_carries_the_token_and_security_headers(live):
     status, body, headers = _http(live, "/", token=False)
     assert status == 200 and live.token.encode() in body and "frame-ancestors 'none'" in headers["Content-Security-Policy"]
     assert _http(live, "/static/app.js", token=False)[0] == 200
+    for name in ("charts.js", "workspace.js", "options.js", "futures.js", "crypto.js", "ml.js", "style.css"):         # the workspaces' scripts are served like the page's own
+        status, body, head = _http(live, f"/static/{name}", token=False)
+        assert status == 200 and body and head["Content-Type"].startswith(("text/javascript", "application/javascript", "text/css")), name
+    assert b"/static/ml.js" in _http(live, "/", token=False)[1] and b"/static/workspace.js" in _http(live, "/", token=False)[1]
     for path in ["/static/../../README.md", "/static/index.html", "/static/%2e%2e/api.py", "/nothing"]:
         assert _http(live, path, token=False)[0] == 404
 

@@ -15,6 +15,10 @@
     <button role="tab" id="tab-backtest" aria-selected="true" aria-controls="view-backtest">Backtest</button>
     <button role="tab" id="tab-compare" aria-selected="false" aria-controls="view-compare">Compare <span class="pill" id="runcount">0</span></button>
     <button role="tab" id="tab-builder" aria-selected="false" aria-controls="view-builder">Strategy builder</button>
+    <button role="tab" id="tab-options" aria-selected="false" aria-controls="view-options">Options</button>
+    <button role="tab" id="tab-futures" aria-selected="false" aria-controls="view-futures">Futures</button>
+    <button role="tab" id="tab-crypto" aria-selected="false" aria-controls="view-crypto">Crypto</button>
+    <button role="tab" id="tab-ml" aria-selected="false" aria-controls="view-ml">Machine learning</button>
     <button role="tab" id="tab-exec" aria-selected="false" aria-controls="view-exec">Execution</button>
     <button role="tab" id="tab-cash" aria-selected="false" aria-controls="view-cash">Cash flows</button>
     <button role="tab" id="tab-guides" aria-selected="false" aria-controls="view-guides">Guides</button>
@@ -33,11 +37,20 @@
   </section>
   <section role="tabpanel" id="view-compare" aria-labelledby="tab-compare" hidden><div class="stack" id="compare"></div></section>
   <section role="tabpanel" id="view-builder" aria-labelledby="tab-builder" hidden><div class="stack" id="builder"></div></section>
+  <section role="tabpanel" id="view-options" aria-labelledby="tab-options" hidden><div class="lab" id="options"></div></section>
+  <section role="tabpanel" id="view-futures" aria-labelledby="tab-futures" hidden><div class="lab" id="futures"></div></section>
+  <section role="tabpanel" id="view-crypto" aria-labelledby="tab-crypto" hidden><div class="lab" id="crypto"></div></section>
+  <section role="tabpanel" id="view-ml" aria-labelledby="tab-ml" hidden><div class="lab" id="ml"></div></section>
   <section role="tabpanel" id="view-exec" aria-labelledby="tab-exec" hidden><div class="lab" id="exec"></div></section>
   <section role="tabpanel" id="view-cash" aria-labelledby="tab-cash" hidden><div class="lab" id="cash"></div></section>
   <section role="tabpanel" id="view-guides" aria-labelledby="tab-guides" hidden><div class="guides" id="guides"></div></section>
 </main>
 <script src="/static/charts.js"></script>
 <script src="/static/app.js"></script>
+<script src="/static/workspace.js"></script>
+<script src="/static/options.js"></script>
+<script src="/static/futures.js"></script>
+<script src="/static/crypto.js"></script>
+<script src="/static/ml.js"></script>
 </body>
 </html>

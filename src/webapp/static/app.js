@@ -53,12 +53,15 @@
   matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => redraw());
 
   const TABS = ["backtest", "compare", "builder", "exec", "cash", "guides"];
+  const WORKSPACES = {};                                                                  // tab name -> lab, for the tabs that live in their own files (options.js, futures.js, crypto.js, ml.js)
+  let booted = false;
   function showTab(name) {
     for (const t of TABS) { $("#tab-" + t).setAttribute("aria-selected", String(t === name)); $("#view-" + t).hidden = t !== name; }
     if (name === "compare") renderCompare();
     if (name === "builder") renderBuilder();
     if (name === "exec") renderLab(X);
     if (name === "cash") renderLab(K);
+    if (WORKSPACES[name]) renderLab(WORKSPACES[name]);
     if (name === "guides") renderGuides();
     if (name === "backtest") redraw();
     store("tab", name);
@@ -770,9 +773,9 @@
     }
     return out;
   }
-  function labOld(root) {
+  function labOld(root, need) {
     const c = h("div", "card empty", root); c.style.gridColumn = "1 / -1"; h("h2", "", c, "This tab needs a newer app");
-    h("p", "", c, "The page was updated, but the app behind it is still running the old code. " + RESTART + ` (The app reports version ${serverApi()}; this tab needs ${LAB_API}.)`);
+    h("p", "", c, "The page was updated, but the app behind it is still running the old code. " + RESTART + ` (The app reports version ${serverApi()}; this tab needs ${need || LAB_API}.)`);
     const again = h("button", "btn primary", c, "Reload this page"); again.addEventListener("click", () => location.reload());
   }
   function labHead(root, title, sub, guide) {
@@ -801,7 +804,7 @@
   }
   function renderLab(lab) {
     const root = $(lab.root); root.replaceChildren();
-    if (serverApi() < LAB_API) { labOld(root); return; }
+    if (serverApi() < (lab.api || LAB_API)) { labOld(root, lab.api || LAB_API); return; }
     const panel = h("aside", "card panel", root); panel.setAttribute("aria-label", lab.title + " setup");
     const top = h("div", "labtop", panel); h("h2", "", top, lab.title); h("p", "hint", top, lab.about);
     const pills = h("div", "tabsmall", top);
@@ -812,10 +815,11 @@
     lab.go = h("button", "btn primary", foot, lab.runLabel[lab.mode]); lab.go.addEventListener("click", () => lab.run()); lab.progress = h("div", "progress", foot);
     const results = h("div", "stack", root); results.id = lab.id + "-results"; results.setAttribute("aria-live", "polite");
     syncLab(lab); lab.draw();
+    if (lab.auto && !lab.busy && !lab.results[lab.mode] && !lab.errors[lab.mode]) lab.auto();                // a read-only view (a chain, a curve) loads when its tab opens
   }
   /* Rebuild the results from the data they came from. The page must stay where it is, so this is the same redraw the Backtest tab uses for a theme or width change. */
   function drawLab(lab) {
-    const root = $("#" + lab.id + "-results"); if (!root || serverApi() < LAB_API) return;
+    const root = $("#" + lab.id + "-results"); if (!root || serverApi() < (lab.api || LAB_API)) return;
     keepScroll(() => {
       root.replaceChildren();
       const error = lab.errors[lab.mode], got = lab.results[lab.mode];
@@ -1293,6 +1297,7 @@
   function redraw() {
     if (!$("#view-backtest").hidden && S.current) renderResult(); if (!$("#view-compare").hidden) renderCompare(); if (!$("#view-builder").hidden) renderBuilder();
     if (!$("#view-exec").hidden) drawLab(X); if (!$("#view-cash").hidden) drawLab(K);
+    for (const lab of Object.values(WORKSPACES)) if (!$(lab.view).hidden) drawLab(lab);
   }
   /* Charts are drawn at the pixel width of their container, so they are redrawn when the page gets wider or narrower (a window resize, a phone turned sideways, a scroll bar appearing).
      A change of HEIGHT is not a reason: it happens every time the user opens a table or a details tab, and redrawing the whole result then undid what they had just chosen and sent the
@@ -1306,6 +1311,7 @@
     clearTimeout(rz); rz = setTimeout(() => {
       if (!$("#view-backtest").hidden && S.current && !S.busy) renderResult();
       if (!$("#view-exec").hidden) drawLab(X); if (!$("#view-cash").hidden) drawLab(K);
+      for (const lab of Object.values(WORKSPACES)) if (!$(lab.view).hidden) drawLab(lab);
     }, 180);
   }).observe($("main"));
 
@@ -1333,7 +1339,19 @@
     draw("the data source menu", renderSource); draw("the tickers", renderUniverse); draw("the strategy list", renderStrategies); draw("the portfolio list", renderPortfolio);
     draw("the results area", renderEmpty); draw("the trial counter", updateTrials);
     if (failed.length) notice("draw", "Part of the page could not be drawn: ", failed.join("; ") + ". Reload the page; if it happens again, restart the app.", true);
+    booted = true;
     const t = store("tab"); if (t && TABS.includes(t) && t !== "backtest") showTab(t);
   }
+
+  /* ================================================================= workspaces in their own files
+     options.js, futures.js, crypto.js and ml.js use this page's helpers through window.QL and register a lab (the same object the Execution and Cash flows tabs are: a form on the left, results on the right).
+     They are loaded after this file, so a tab saved from the last visit is opened here once its script has registered, whichever finishes first. */
+  function registerWorkspace(name, lab) {
+    WORKSPACES[name] = lab; TABS.push(name);
+    $("#tab-" + name).addEventListener("click", () => { if (S.catalog) showTab(name); });
+    if (booted && store("tab") === name) showTab(name);
+  }
+  window.QL = { C, h, fmt, $, api, css, store, toast, copy, download, num, pct, money, smoney, axisMoney, bad, bps, grouped, plain, unsign, colorOf, SLOTS, tile, chartCard, simpleTable, sampleRows, keepScroll, labField, checkList, numbers,
+    labHead, labBanner, labEmpty, labOld, syncLab, renderLab, drawLab, openGuide, serverApi, RESTART, notice, registerWorkspace, labelPx, running, S };
   boot();
 })();
