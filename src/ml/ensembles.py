@@ -23,7 +23,7 @@ Methods (``combine``):
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import numpy as np
 import pandas as pd
@@ -199,8 +199,17 @@ def combine(R: pd.DataFrame, method: str, lookback: int = 252, rebalance: int = 
     return Combination(method, W.dropna(how="all"), ret, {"lookback": lookback, "rebalance": rebalance, "risk_aversion": risk_aversion, "eta": eta}, summary, turnover)
 
 
-def compare_methods(R: pd.DataFrame, methods: tuple = METHODS, regimes: pd.Series | None = None, **kw) -> dict:
-    """Every method on the same strategies and the same evaluation window (the latest start among them), with the strategies themselves for reference. A method that cannot run is listed with the reason."""
+def _segment_sharpes(r: pd.Series, labels: pd.Series | None) -> dict:
+    """The Sharpe ratio of a return stream on each segment of ``labels`` (``train``, ``validation``, ``test``, ``forward``) it has at least 40 days in."""
+    if labels is None:
+        return {}
+    lab = labels.reindex(r.index)
+    return {seg: sharpe_of(r[lab == seg]) for seg in ("validation", "test", "forward") if int((lab == seg).sum()) >= 40}
+
+
+def compare_methods(R: pd.DataFrame, methods: tuple = METHODS, regimes: pd.Series | None = None, labels: pd.Series | None = None, **kw) -> dict:
+    """Every method on the same strategies and the same evaluation window (the latest start among them), with the strategies themselves for reference. A method that cannot run is listed with the reason.
+    With ``labels`` (the segment of each date) every row also carries the method's Sharpe ratio on the validation, test and forward segments."""
     rows, curves, errors = [], {}, {}
     results = {}
     for m in methods:
@@ -215,10 +224,11 @@ def compare_methods(R: pd.DataFrame, methods: tuple = METHODS, regimes: pd.Serie
         r = c.returns.loc[start:]
         eq = (1.0 + r).cumprod()
         rows.append({"method": m, "sharpe": sharpe_of(r), "ann_return": float(r.mean() * ANN), "ann_vol": float(r.std(ddof=1) * math.sqrt(ANN)), "max_drawdown": float((eq / eq.cummax() - 1.0).min()),
-                     "turnover": c.turnover, "final_weights": {k: float(v) for k, v in c.weights.iloc[-1].items()}})
+                     "turnover": c.turnover, "final_weights": {k: float(v) for k, v in c.weights.iloc[-1].items()}, "segments": _segment_sharpes(r, labels)})
         curves[m] = eq
     singles = {col: sharpe_of(R[col].loc[start:]) for col in R.columns}
-    return {"start": str(start.date()), "rows": sorted(rows, key=lambda r: -(r["sharpe"] if np.isfinite(r["sharpe"]) else -9)), "strategy_sharpes": singles, "errors": errors,
+    return {"start": str(start.date()), "rows": sorted(rows, key=lambda r: -(r["sharpe"] if np.isfinite(r["sharpe"]) else -9)), "strategy_sharpes": singles,
+            "strategy_segments": {col: _segment_sharpes(R[col].loc[start:], labels) for col in R.columns}, "errors": errors,
             "curves": {"dates": [str(d.date()) for d in next(iter(curves.values())).index[::5]], **{m: [round(float(v), 5) for v in eq.iloc[::5]] for m, eq in curves.items()}},
             "similarity": similarity_map(R.loc[start:])}
 
@@ -269,3 +279,94 @@ def meta_label_scores(ds, train, model_kind: str = "logistic", params: dict | No
     auc = float(roc_auc_score(right[ok], prob[ok])) if ok.sum() > 50 and right[ok].nunique() == 2 else float("nan")
     return {"scores": out.unstack("asset").reindex(index=ds.dates, columns=ds.assets), "probability": prob, "auc": auc, "n_models": n_models, "coverage": float(prob.notna().mean()),
             "primary_hit_rate": float(right[right.notna()].mean()), "meta_hit_rate": float(right[ok & (prob > 0.5)].mean()) if (ok & (prob > 0.5)).any() else float("nan")}
+
+
+# ------------------------------------------------------------------------------------------------------------------ on saved experiments
+def load_streams(registry, ids: list[str]) -> tuple[pd.DataFrame, dict[str, pd.Series], dict[str, str]]:
+    """The daily net returns of saved experiments (one column per experiment id), each one's segment label by date, and the experiments' names."""
+    cols, labels, names = {}, {}, {}
+    for i in ids:
+        rec = registry.get_experiment(i)
+        path = registry.root / "experiments" / i / "returns.parquet"
+        if not path.exists():
+            raise ValueError(f"experiment '{i}' has no saved returns")
+        r = pd.read_parquet(path)
+        cols[i], labels[i], names[i] = r["net"], r["segment"], rec["name"]
+    return pd.DataFrame(cols), labels, names
+
+
+def combine_experiments(registry, ids: list[str], methods: tuple = METHODS, lookback: int = 252, rebalance: int = 21, min_history: int = 126, risk_aversion: float = 5.0, eta: float = 5.0, seed: int = 0) -> dict:
+    """The strategy combination engine on saved experiments: every method in ``methods`` allocates across their out-of-sample net returns. Segment Sharpe ratios use the first experiment's segments.
+    The regime-based methods use the volatility regime of the first experiment's universe (they are listed under ``errors`` when its saved panel is unavailable)."""
+    if len(ids) < 2:
+        raise ValueError("choose at least two experiments to combine")
+    R, labels, names = load_streams(registry, ids)
+    regimes = None
+    try:
+        from .datasets import Dataset
+
+        report = registry.report(ids[0])
+        fsets = [f for f in registry.list_feature_sets() if f["id"].startswith(report["build_key"])]
+        if fsets:
+            d = Dataset.load(fsets[0]["path"])
+            regimes = strategy_regimes(d.returns, d.investable).reindex(R.index).ffill()
+    except Exception:                                                                       # the regime methods then report that they have no regimes; the others do not need them
+        regimes = None
+    out = compare_methods(R, tuple(methods), regimes, labels[ids[0]], lookback=lookback, rebalance=rebalance, min_history=min_history, risk_aversion=risk_aversion, eta=eta, seed=seed)
+    out["names"] = names
+    out["experiments"] = list(ids)
+    out["note"] = ("Each method re-estimates its weights every {r} days from the returns up to that day and applies them afterwards. The strategies' returns include the days they were selected on "
+                   "(validation); read the test and forward columns for evidence.").format(r=rebalance)
+    return out
+
+
+def meta_label_experiment(registry, exp_id: str, model_kind: str = "logistic", params: dict | None = None, signal: dict | None = None, progress=None, save: bool = True, min_rows: int = 400, seed: int = 0):
+    """Meta-label a saved experiment: fit the secondary model on its out-of-sample bets, size the book with it (proportional to the meta score by default: the primary's side, no bet where the secondary
+    doubts it) and run the result through the same backtest, segments and diagnostics. Returns ``(experiment, meta summary)``; the new run is a child of the original and counts as another look."""
+    from .config import experiment_config, merge
+    from .experiments import ExperimentError, evaluate_run, load_run
+
+    cfg0, ds, train, info = load_run(registry, exp_id)
+    if progress:
+        progress("fitting the secondary model on the primary's past bets")
+    try:
+        meta = meta_label_scores(ds, train, model_kind, params, min_rows, seed)
+    except ValueError as exc:
+        raise ExperimentError(str(exc)) from None
+    flat = pd.Series(meta["scores"].to_numpy().reshape(-1), index=pd.MultiIndex.from_product([ds.dates, ds.assets], names=["date", "asset"])).dropna()
+    if flat.empty:
+        raise ExperimentError(f"the secondary model never had {min_rows} past bets to learn from: the primary's out-of-sample run is too short for meta-labelling")
+    cfg = experiment_config(merge(cfg0, {"signal": {"method": "proportional", **(signal or {})}, "notes": f"meta-labelled version of {exp_id} ({model_kind} secondary model)"}), name=f"{cfg0['name']}-meta")
+    sized = replace(train, predictions=flat, insample=pd.Series(dtype=float), probabilities=None, models=[], fold_rows=[], importance=pd.DataFrame(), task="regression", kind=f"meta({train.kind})")
+    exp = evaluate_run(cfg, ds, sized, info, registry, progress, save, exp_id, explain=False, final_model=False, robustness=False)
+    return exp, {k: meta[k] for k in ("auc", "n_models", "coverage", "primary_hit_rate", "meta_hit_rate")}
+
+
+def compare_experiments(registry, ids: list[str], max_points: int = 700) -> dict:
+    """Side by side: each saved experiment's settings and headline numbers by segment, their equity curves over the days they share (each starting at 1), the correlation of their daily returns and a
+    two-dimensional map of how alike they are."""
+    if not 2 <= len(ids) <= 8:
+        raise ValueError("choose between two and eight experiments")
+    R, labels, names = load_streams(registry, ids)
+    rows = []
+    for i in ids:
+        rep = registry.report(i)
+        cfg, st = rep["config"], rep["segments"]["stats"]
+        rows.append({"id": i, "name": names[i], "model": cfg["model"]["kind"], "target": cfg["dataset"]["target"], "universe": cfg["dataset"]["universe"] if isinstance(cfg["dataset"]["universe"], str) else "tickers",
+                     "signal": cfg["signal"]["method"], "rebalance": cfg["backtest"]["rebalance"], "ic": rep["ic"]["all"].get("mean"), "ic_ir": rep["ic"]["all"].get("ir"),
+                     "generalization": rep["overfit"].get("generalization_score"), "trials": rep["trials"]["dataset_trials"], "turnover": rep["metrics"]["oos"].get("ann_turnover"),
+                     "segments": {seg: {k: v.get(k) for k in ("sharpe", "ann_return", "ann_vol", "max_drawdown", "n_days")} for seg, v in st.items()}, "warnings": list(rep.get("warnings", []))[:3]})
+    common = R.dropna()
+    note = None
+    if len(common) < 60:
+        common = R.fillna(0.0).loc[R.apply(lambda c: c.first_valid_index()).max():]
+        note = "The experiments share fewer than 60 days of returns; the curves start at the latest start among them and count missing days as flat."
+    if len(common) < 20:
+        raise ValueError("the experiments share too few days to compare")
+    curves = (1.0 + common).cumprod()
+    keep = np.unique(np.append(np.linspace(0, len(curves) - 1, min(len(curves), max_points)).round().astype(int), len(curves) - 1))
+    lab = labels[ids[0]].reindex(curves.index).ffill()
+    corr = common.corr().fillna(0.0)
+    return {"rows": rows, "dates": [str(d.date()) for d in curves.index[keep]], "curves": {i: [round(float(v), 5) for v in curves[i].to_numpy()[keep]] for i in ids},
+            "segment": [str(x) for x in lab.to_numpy()[keep]], "correlation": {"ids": list(ids), "matrix": [[round(float(v), 3) for v in row] for row in corr.to_numpy()]},
+            "similarity": similarity_map(common, min_overlap=20), "common_days": int(len(common)), "start": str(common.index[0].date()), "end": str(common.index[-1].date()), "note": note}

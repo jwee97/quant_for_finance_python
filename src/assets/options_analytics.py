@@ -260,6 +260,30 @@ def surface_grid(chain: pd.DataFrame, moneyness: tuple[float, float] = (0.8, 1.2
     return {"moneyness": [round(float(x), 4) for x in grid], "expiries": labels, "iv": rows}
 
 
+def nearest_expiry_to(chain: pd.DataFrame, dte: float) -> pd.Timestamp:
+    """The listed expiry whose days to expiry are closest to ``dte``."""
+    days = {e: float(g["T"].iloc[0]) * 365.0 for e, g in chain.groupby("expiry")}
+    return min(days, key=lambda e: abs(days[e] - dte))
+
+
+def iv_lookup(chain: pd.DataFrame, expiry, strike: float) -> float:
+    """The implied volatility at ``strike`` on ``expiry`` read off the OTM smile by linear interpolation in strike (flat beyond the quoted strikes); the ATM volatility if the slice has too few quotes."""
+    g = _expiry_slice(chain, expiry)
+    s = otm_smile(g)
+    if len(s) < 3:
+        return atm_iv(g)
+    return float(np.interp(float(strike), s["strike"].to_numpy(), s["iv"].to_numpy()))
+
+
+def strike_step(chain: pd.DataFrame, expiry) -> float:
+    """The strike spacing near the money on one expiry (the median gap between the 15 strikes nearest the forward)."""
+    g = _expiry_slice(chain, expiry)
+    strikes = np.sort(g["strike"].unique())
+    near = strikes[np.argsort(np.abs(strikes - float(g["F"].iloc[0])))[:15]]
+    gaps = np.diff(np.sort(near))
+    return float(np.median(gaps[gaps > 0])) if (gaps > 0).any() else 1.0
+
+
 # ------------------------------------------------------------------------------------------------------------------ the chain table
 def _side(g: pd.DataFrame, spot: float, stale_after_min: float) -> dict[float, dict]:
     """Per-strike quote, implied volatility, delta, gamma, volume, open interest, spread and staleness of ONE right at ONE expiry."""
@@ -597,7 +621,7 @@ def strategy_analysis(legs: list[dict], spot: float, forward: float, atm_vol: fl
                       points: int = 241) -> dict:
     """Everything the strategy builder shows for a set of legs.
 
-    Each option leg is priced with the ATM volatility plus the skew slope times its log-strike (``skew_slope`` in volatility per unit of ln K / F, negative for equities). The P&L at the horizon (default the
+    Each option leg is priced with its own ``iv`` if it has one (the dashboard takes it from the chain), else with the ATM volatility plus the skew slope times its log-strike (``skew_slope`` in volatility per unit of ln K / F, negative for equities). The P&L at the horizon (default the
     earliest expiry) is drawn at expiry and, for the curved lines, now ("T+0") and half way. Maximum profit and loss come from the expiry curve and the slope beyond the last strike (unlimited if it is not
     flat), break-evens by interpolation, the Greeks are the position's today, ``prob_profit`` and ``expected_value`` integrate the lognormal distribution of the spot at the horizon with volatility
     ``view_vol`` (default the ATM volatility, i.e. the market's own view) and drift ``view_drift`` (default the risk-neutral ``r - q``): at the market's own view the expected value is the costs, and a view
@@ -610,7 +634,7 @@ def strategy_analysis(legs: list[dict], spot: float, forward: float, atm_vol: fl
     opts = [l for l in legs if l["type"] == "option"]
     if not opts:
         raise ValueError("a strategy needs at least one option leg")
-    sigma_of = lambda leg: float(max(atm_vol + skew_slope * math.log(leg["strike"] / forward), 0.05))                    # noqa: E731
+    sigma_of = lambda leg: float(leg["iv"]) if leg.get("iv") else float(max(atm_vol + skew_slope * math.log(leg["strike"] / forward), 0.05))        # noqa: E731
     horizon_d = int(horizon_days if horizon_days is not None else min(l["dte"] for l in opts))
     if horizon_d < 1 or horizon_d > max(l["dte"] for l in opts):
         raise ValueError("the horizon must be between one day and the last expiry")
@@ -671,6 +695,82 @@ def strategy_analysis(legs: list[dict], spot: float, forward: float, atm_vol: fl
 
 # ------------------------------------------------------------------------------------------------------------------ strategy backtests
 BACKTEST_STRATEGIES = ("short_put", "covered_call", "short_strangle", "iron_condor", "delta_hedged_straddle", "risk_reversal", "calendar_spread")
+
+
+BACKTEST_TEXT = {
+    "short_put": "Sell a cash-secured put of about 25 delta, hold it to a week before expiry and roll (the premium-selling idea behind the Cboe PUT index).",
+    "covered_call": "Own the underlying and sell a call of about 30 delta each month (Cboe BXM-style).",
+    "short_strangle": "Sell a put and a call of about 16 delta each; optionally delta-hedge daily so that only volatility is traded.",
+    "iron_condor": "The short strangle with bought wings at 5 delta: the same premium sale with a defined worst case.",
+    "delta_hedged_straddle": "Sell (or buy) the at-the-money straddle and hedge the delta daily: a pure bet on realised against implied volatility.",
+    "risk_reversal": "Buy a 25-delta call and sell a 25-delta put, delta-hedged: the skew premium.",
+    "calendar_spread": "Sell the front-month at-the-money option and buy the back month: long the term structure.",
+}
+
+
+def _param(default, lo=None, hi=None, kind: str = "float", choices=None, text: str = "") -> dict:
+    return {"default": default, "lo": lo, "hi": hi, "kind": kind, "choices": choices, "text": text}
+
+
+_ROLL = {"dte": _param(45, 7, 400, "int", text="days to expiry when the package is opened"), "close_dte": _param(7, 0, 60, "int", text="close this many days before expiry and roll"),
+         "size": _param(1.0, 0.1, 100.0, text="contracts per leg"), "min_open_dte": _param(20, 1, 200, "int", text="do not open a package with fewer days than this")}
+# What each rolling option strategy accepts (the page builds its form from this, the API refuses anything else, and ``derivatives.strategies`` receives the validated values).
+BACKTEST_PARAMS: dict[str, dict[str, dict]] = {
+    "short_put": {"delta": _param(0.25, 0.02, 0.6, text="absolute delta of the put sold"), **_ROLL},
+    "covered_call": {"delta": _param(0.30, 0.02, 0.6, text="delta of the call sold against the shares"), **_ROLL},
+    "short_strangle": {"delta": _param(0.16, 0.02, 0.6, text="delta of the put and the call sold"), "hedge": _param(False, kind="bool", text="delta-hedge the position daily"), **_ROLL},
+    "iron_condor": {"short_delta": _param(0.16, 0.02, 0.6, text="delta of the short put and call"), "wing_delta": _param(0.05, 0.01, 0.4, text="delta of the protective wings"), **_ROLL},
+    "delta_hedged_straddle": {"side": _param(-1, kind="choice", choices=[-1, 1], text="-1 sells the straddle (short volatility), +1 buys it"), "hedge_threshold": _param(0.0, 0.0, 1000.0, text="hedge when the net delta exceeds this"), **_ROLL},
+    "risk_reversal": {"delta": _param(0.25, 0.02, 0.6, text="delta of the call and the put"), "side": _param(1, kind="choice", choices=[-1, 1], text="+1 is long the call and short the put"), **_ROLL},
+    "calendar_spread": {"front_dte": _param(30, 7, 200, "int", text="days to expiry of the option sold"), "back_dte": _param(90, 21, 400, "int", text="days to expiry of the option bought"),
+                        **{k: v for k, v in _ROLL.items() if k != "dte"}},
+}
+
+
+def backtest_params(name: str) -> list[dict]:
+    """The settings of a rolling option strategy as form fields: ``name, default, lo, hi, kind, choices, text``."""
+    if name not in BACKTEST_PARAMS:
+        raise ValueError(f"unknown strategy '{name}'; choose from {list(BACKTEST_PARAMS)}")
+    return [{"name": k, **v} for k, v in BACKTEST_PARAMS[name].items()]
+
+
+def parse_backtest_params(name: str, given: dict | None) -> dict:
+    """The settings in ``given`` checked against ``BACKTEST_PARAMS`` and cast to the right types; a name the strategy does not take, or a value out of range, raises ``ValueError``."""
+    if name not in BACKTEST_PARAMS:
+        raise ValueError(f"unknown strategy '{name}'; choose from {list(BACKTEST_PARAMS)}")
+    if given is not None and not isinstance(given, dict):
+        raise ValueError("params must be an object")
+    spec, out = BACKTEST_PARAMS[name], {}
+    for key, raw in (given or {}).items():
+        if key not in spec:
+            raise ValueError(f"{name} has no setting '{key}'; it takes {list(spec)}")
+        p = spec[key]
+        if raw is None or raw == "":
+            continue
+        if p["kind"] == "bool":
+            if isinstance(raw, str):
+                raw = raw.strip().lower() in ("1", "true", "yes", "on")
+            out[key] = bool(raw)
+            continue
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            raise ValueError(f"{key} must be a number") from None
+        if p["kind"] == "choice":
+            if value not in p["choices"]:
+                raise ValueError(f"{key} must be one of {p['choices']}")
+            out[key] = type(p["default"])(value)
+        else:
+            if not math.isfinite(value) or not p["lo"] <= value <= p["hi"]:
+                raise ValueError(f"{key} must be between {p['lo']:g} and {p['hi']:g}")
+            out[key] = int(round(value)) if p["kind"] == "int" else value
+    if name == "calendar_spread" and out.get("back_dte", spec["back_dte"]["default"]) <= out.get("front_dte", spec["front_dte"]["default"]) + 7:
+        raise ValueError("back_dte must be at least a week longer than front_dte")
+    if name == "iron_condor" and out.get("wing_delta", spec["wing_delta"]["default"]) >= out.get("short_delta", spec["short_delta"]["default"]):
+        raise ValueError("wing_delta must be smaller than short_delta (the wings are further out of the money)")
+    return out
+
+
 _MARKETS: "OrderedDict[tuple, object]" = OrderedDict()
 _MARKET_LOCK = threading.Lock()
 

@@ -36,6 +36,9 @@ site/
 # Tickers downloaded by the dashboard (cached for a day) and nothing else under data/user
 data/user/
 
+# Machine-learning experiments, saved models and datasets written by the dashboard and the ml-* commands
+artifacts/ml/
+
 # Coverage data
 .coverage
 coverage.xml

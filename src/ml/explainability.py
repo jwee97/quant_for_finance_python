@@ -38,8 +38,10 @@ def rank_stability(imp: pd.DataFrame) -> float:
     if len(imp) < 3:
         return float("nan")
     ranks = imp.abs().rank(axis=1)
-    corrs = [ranks.iloc[i].corr(ranks.iloc[i + 1]) for i in range(len(ranks) - 1)]
-    return float(np.nanmean(corrs))
+    with np.errstate(invalid="ignore", divide="ignore"):                         # a refit whose importances are all equal has no rank correlation
+        corrs = [ranks.iloc[i].corr(ranks.iloc[i + 1]) for i in range(len(ranks) - 1)]
+    finite = [c for c in corrs if np.isfinite(c)]
+    return float(np.mean(finite)) if finite else float("nan")
 
 
 def _fast_ic(pred: np.ndarray, y: np.ndarray, codes: np.ndarray) -> float:
@@ -86,12 +88,15 @@ def permutation_importance(train: TrainResult, ds: Dataset, max_folds: int = 8, 
     return out.sort_values("mean_drop", ascending=False)
 
 
-def feature_ic(ds: Dataset, target: str | None = None, features: list[str] | None = None) -> pd.DataFrame:
-    """Each feature's mean cross-sectional rank IC with the target over all labelled dates, its IC information ratio and the share of positive dates."""
+def feature_ic(ds: Dataset, target: str | None = None, features: list[str] | None = None, until=None) -> pd.DataFrame:
+    """Each feature's mean cross-sectional rank IC with the target over the labelled dates (up to ``until`` if given), its IC information ratio and the share of positive dates. A look at the
+    features is a look at the data: restrict it to the warm-up segment (``until``) when the result will guide which features to keep."""
     from .evaluation import ic_summary, rank_ic_wide
 
     t = target or ds.target
     wide_y = ds.Y[t].unstack("asset").reindex(columns=ds.assets)
+    if until is not None:
+        wide_y = wide_y.loc[: pd.Timestamp(until)]
     rows = {}
     for f in features or ds.features:
         wide_x = ds.X[f].unstack("asset").reindex(index=wide_y.index, columns=ds.assets)

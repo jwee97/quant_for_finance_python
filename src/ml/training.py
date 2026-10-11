@@ -45,6 +45,8 @@ class TrainResult:
     def scores_wide(self, dataset: Dataset, which: str = "predictions") -> pd.DataFrame:
         """The predictions as a wide frame (date x asset) on the dataset's date axis."""
         s = self.predictions if which == "predictions" else self.insample
+        if s.empty:                                                                        # e.g. no in-sample scores for a reloaded or meta-labelled run
+            return pd.DataFrame(np.nan, index=dataset.dates, columns=dataset.assets)
         return s.unstack("asset").reindex(index=dataset.dates, columns=dataset.assets)
 
 
@@ -74,6 +76,7 @@ def walk_forward_train(ds: Dataset, model_cfg: dict, split_cfg: dict, seed: int 
     tgt = target or ds.target
     task = task_for(is_classification(tgt))
     kind, params = model_cfg["kind"], dict(model_cfg.get("params") or {})
+    make_model(kind, params, task, seed)                                         # an unknown model, setting or task is refused here, with its own message, not hidden as a fold that failed to fit
     plan, upos = plan_for(ds, split_cfg, tgt)                                    # plan positions index the labelled dates; upos maps them to the full axis
     purge = ds.lag + ds.horizon
     refit = int(split_cfg.get("refit_every") or default_refit(kind))

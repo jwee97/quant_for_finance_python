@@ -14,13 +14,15 @@ import webbrowser
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 from .api import ApiError, App
 
 STATIC = Path(__file__).parent / "static"
-FILES = {"app.js": "text/javascript; charset=utf-8", "style.css": "text/css; charset=utf-8", "charts.js": "text/javascript; charset=utf-8"}
+JS = "text/javascript; charset=utf-8"
+FILES = {"app.js": JS, "style.css": "text/css; charset=utf-8", "charts.js": JS, "options.js": JS, "futures.js": JS, "crypto.js": JS, "ml.js": JS}
 MAX_BODY = 200_000
+MAX_QUERY_FIELDS = 40
 LOOPBACK = {"127.0.0.1", "localhost", "::1", "[::1]"}
 
 
@@ -96,6 +98,14 @@ def make_handler(app: App, token: str, port_holder: list):
                 self._json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": f"{type(error).__name__}: {error}"})
 
         # ------------------------------------------------------------------------------------------ routes
+        def _query(self) -> dict:
+            """The query string as ``{name: last value}`` (at most ``MAX_QUERY_FIELDS`` fields, so a crafted URL cannot make the parser do unbounded work)."""
+            try:
+                fields = parse_qs(urlparse(self.path).query, keep_blank_values=True, max_num_fields=MAX_QUERY_FIELDS)
+            except ValueError:
+                raise ApiError("too many query fields") from None
+            return {k: v[-1] for k, v in fields.items()}
+
         def do_GET(self):
             path = urlparse(self.path).path
             if path in ("/", "/index.html"):
@@ -116,6 +126,8 @@ def make_handler(app: App, token: str, port_holder: list):
                     self._call(app.doc, path[len("/api/docs/"):])
                 elif path.startswith("/api/job/"):
                     self._call(app.job, path[len("/api/job/"):])
+                elif path in app.extra_get:
+                    self._call(lambda: app.extra_get[path](self._query()))
                 else:
                     self._json(HTTPStatus.NOT_FOUND, {"error": "not found"})
             else:
@@ -128,7 +140,7 @@ def make_handler(app: App, token: str, port_holder: list):
                     self._json(HTTPStatus.NOT_FOUND, {"error": "not found"})
                 return
             routes = {"/api/tickers": app.check_tickers, "/api/backtest": app.submit, "/api/formula": app.check_formula, "/api/requirements": app.requirements,
-                      "/api/source/test": app.test_source, "/api/exec": app.exec_lab, "/api/cash": app.cash_lab}
+                      "/api/source/test": app.test_source, "/api/exec": app.exec_lab, "/api/cash": app.cash_lab, **app.extra_post}
             if path in routes:
                 body = self._body()
                 if body is not None:

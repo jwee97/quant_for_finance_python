@@ -70,9 +70,10 @@ DOC_ROOT_FILES = {"dashboard": "dashboard.md", "how_to_add_a_strategy": "how_to_
 SAFE_SLUG = re.compile(r"^[a-z0-9][a-z0-9_-]{0,80}$")
 
 # What the page needs from this server. 1 was the first catalogue; 2 added data sources (``sources``), the ticker-count check (``/api/requirements``), earnings and trades; 3 added the Execution and
-# Cash flows tabs (``/api/exec``, ``/api/cash``). The page compares it with its own number and says so when the server behind it is older (the files were updated while the app was running, so it
-# still runs the old code): the whole page needs 2, and the two new tabs ask for 3 on their own, so an older app still runs the Backtest tab.
-API_VERSION = 3
+# Cash flows tabs (``/api/exec``, ``/api/cash``); 4 added the Options, Futures, Crypto and Machine learning workspaces (``asset_api``, ``ml_api``). The page compares it with its own number and says so
+# when the server behind it is older (the files were updated while the app was running, so it still runs the old code): the whole page needs 2, and the newer tabs ask for 3 or 4 on their own, so an
+# older app still runs the Backtest tab.
+API_VERSION = 4
 CODE_ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -145,6 +146,15 @@ class App:
         self._pool = ThreadPoolExecutor(max_workers=1)             # one at a time: the models set process-wide torch flags and share the data caches
         self._lock = threading.Lock()
         self._lab_lock = threading.Lock()                          # the Execution and Cash flows tabs: numpy work of a few seconds, one request at a time so a click storm cannot use every core
+        # The Options, Futures, Crypto and Machine learning workspaces keep their endpoints in their own modules; the server asks these tables, so ``server.py`` does not change per workspace.
+        from .asset_api import AssetApi
+        from .ml_api import MlApi
+
+        self.extra_get: dict = {}                                  # path -> fn(query: dict) for GET /api/...?a=1&b=2
+        self.extra_post: dict = {}                                 # path -> fn(body: dict) for POST /api/...
+        for part in (AssetApi(self), MlApi(self)):
+            self.extra_get.update(part.get_routes())
+            self.extra_post.update(part.post_routes())
 
     # ------------------------------------------------------------------------------------------------------ catalogue
     def catalog(self) -> dict:
@@ -314,13 +324,38 @@ class App:
             raise ApiError(str(error)) from None
         spec = self.build_spec(body, n_tickers=len(tickers))
         capital = self._capital(body)
-        job = Job(spec["name"])
+        job = self._register(Job(spec["name"]))
+        self._pool.submit(self._run, job, spec, tickers, body, capital)
+        return {"job": job.id}
+
+    def _register(self, job: Job) -> Job:
         with self._lock:
             self.jobs[job.id] = job
             for old in list(self.jobs)[:-60]:
                 self.jobs.pop(old, None)
-        self._pool.submit(self._run, job, spec, tickers, body, capital)
+        return job
+
+    def submit_task(self, label: str, work) -> dict:
+        """Run ``work(progress)`` on the single worker and return ``{"job": id}``; the page polls ``/api/job/<id>`` like it does for a backtest. ``work`` returns a JSON-able result and calls
+        ``progress(text)`` to say what it is doing; whatever it raises that the user can fix (``ApiError``, ``ValueError``, ``KeyError``) reaches the page as the job's message."""
+        job = self._register(Job(label))
+        self._pool.submit(self._run_task, job, work)
         return {"job": job.id}
+
+    @staticmethod
+    def _run_task(job: Job, work) -> None:
+        def progress(text: str) -> None:
+            job.message = str(text)
+
+        try:
+            job.status, job.message = "running", "starting"
+            job.result = clean(work(progress))
+            job.status, job.message = "done", "finished"
+        except (ApiError, ValueError, KeyError) as error:
+            job.status, job.error = "error", str(error.args[0] if isinstance(error, KeyError) and error.args else error)
+        except Exception as error:                                   # a bug must reach the user as a message, not a hung page
+            traceback.print_exc()
+            job.status, job.error = "error", f"{type(error).__name__}: {error}"
 
     def _run(self, job: Job, spec: dict, tickers: list[str], body: dict, capital: float = 100_000.0) -> None:
         def progress(text: str) -> None:

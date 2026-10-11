@@ -75,6 +75,23 @@ def is_rebalance_day(date: pd.Timestamp, frequency: str) -> bool:
     return (date + pd.offsets.BDay(1)).month != date.month
 
 
+def forward_record(signals: list[dict], name: str, experiment_id: str, horizon: int) -> dict:
+    """What the recorded forward signals say, from the registry's rows alone (no data is read): how many, how many have settled, and the realised track record of those that have. A signal is
+    ``backfilled`` when it was recorded more than a day after its date (replayed history, not a live forecast)."""
+    done = [s for s in signals if s["realised"] is not None]
+    out = {"experiment_id": experiment_id, "name": name, "n_signals": len(signals), "n_settled": len(done), "first_signal": signals[0]["signal_date"] if signals else None,
+           "last_signal": signals[-1]["signal_date"] if signals else None, "horizon": horizon, "alerts": [],
+           "n_backfilled": sum((pd.Timestamp(s["created"]).normalize() - pd.Timestamp(s["signal_date"])).days > 1 for s in signals)}
+    if done:
+        r = pd.Series([s["realised"] for s in done], index=pd.to_datetime([s["signal_date"] for s in done]))
+        per_day = r / max(horizon, 1)
+        out.update({"mean_realised": float(r.mean()), "hit_rate": float((r > 0).mean()), "cumulative": float((1.0 + per_day).prod() - 1.0), "sharpe": sharpe_of(per_day),
+                    "series": {"dates": [str(d.date()) for d in r.index], "realised": [float(v) for v in r], "cumulative": [float(v) for v in (1.0 + per_day).cumprod() - 1.0]}})
+    if out["n_backfilled"]:
+        out["alerts"].append(f"{out['n_backfilled']} of {len(signals)} signals were recorded after their date (replayed history, not live forecasts).")
+    return out
+
+
 class ForwardTracker:
     """Follow one saved experiment forward in time."""
 
@@ -161,14 +178,7 @@ class ForwardTracker:
         """The forward track record, the live IC against the backtest's, and drift."""
         sigs = self.registry.forward_signals(self.id)
         report = self.registry.report(self.id)
-        done = [s for s in sigs if s["realised"] is not None]
-        out = {"experiment_id": self.id, "name": self.cfg["name"], "n_signals": len(sigs), "n_settled": len(done), "first_signal": sigs[0]["signal_date"] if sigs else None, "last_signal": sigs[-1]["signal_date"] if sigs else None,
-               "horizon": self.cfg["dataset"]["horizon"], "alerts": []}
-        if done:
-            r = pd.Series([s["realised"] for s in done], index=pd.to_datetime([s["signal_date"] for s in done]))
-            per_day = r / max(int(self.cfg["dataset"]["horizon"]), 1)
-            out.update({"mean_realised": float(r.mean()), "hit_rate": float((r > 0).mean()), "cumulative": float((1.0 + per_day).prod() - 1.0), "sharpe": sharpe_of(per_day),
-                        "series": {"dates": [str(d.date()) for d in r.index], "realised": [float(v) for v in r], "cumulative": [float(v) for v in (1.0 + per_day).cumprod() - 1.0]}})
+        out = forward_record(sigs, self.cfg["name"], self.id, int(self.cfg["dataset"]["horizon"]))
         backtest_ic = report["ic"]["all"].get("mean")
         ds, _ = self._dataset(bundle, as_of)
         fwd = forward_return(ds.prices, ds.horizon, ds.lag).reindex(index=ds.dates, columns=ds.assets)
