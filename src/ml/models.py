@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import io
 import math
+import warnings
 from dataclasses import dataclass, field
 
 import joblib
@@ -23,7 +24,7 @@ import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 from sklearn.ensemble import HistGradientBoostingClassifier, HistGradientBoostingRegressor
-from sklearn.impute import SimpleImputer
+from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.linear_model import ElasticNet, Lasso, LinearRegression, LogisticRegression, Ridge
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
@@ -36,6 +37,21 @@ class ModelUnavailable(RuntimeError):
 
 
 AR_FEATURES = ("ret_1", "ret_lag_2", "ret_lag_3", "ret_lag_4", "ret_lag_5")
+
+
+class MedianImputer(BaseEstimator, TransformerMixin):
+    """Replace missing values by the training median of their column (zero for a column that is entirely missing). scikit-learn's imputer computes the median through masked arrays, about ten times slower
+    on a panel of this size, and a walk-forward run fits a hundred models."""
+
+    def fit(self, X, y=None):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            self.fill_ = np.nan_to_num(np.nanmedian(np.asarray(X, dtype=float), axis=0), nan=0.0)
+        return self
+
+    def transform(self, X):
+        X = np.asarray(X, dtype=float)
+        return np.where(np.isnan(X), self.fill_, X) if np.isnan(X).any() else X
 
 
 # ------------------------------------------------------------------------------------------------------------------ the interface
@@ -110,7 +126,7 @@ class SklearnModel(Model):
     def _pipeline(self) -> Pipeline:
         steps = []
         if not self.native_nan:
-            steps.append(("impute", SimpleImputer(strategy="median", keep_empty_features=True)))
+            steps.append(("impute", MedianImputer()))
         if self.needs_scaling:
             steps.append(("scale", StandardScaler()))
         steps.append(("model", self.estimator))

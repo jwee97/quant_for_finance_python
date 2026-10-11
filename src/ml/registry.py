@@ -132,6 +132,7 @@ class Registry:
 
     def report(self, exp_id: str) -> dict:
         """The saved ``report.json`` of an experiment."""
+        self.get_experiment(exp_id)                                         # an unknown id is reported as unknown, not as a missing file
         p = self.root / "experiments" / exp_id / "report.json"
         if not p.exists():
             raise RegistryError(f"experiment '{exp_id}' has no report")

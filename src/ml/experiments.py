@@ -19,7 +19,7 @@ from . import evaluation as ev
 from . import explainability as xp
 from . import robustness as rb
 from .backtest import equal_weight_benchmark, label_days, run_backtest, trim_to_signal
-from .config import build_key, config_hash, dataset_key, experiment_config
+from .config import DEFAULTS, build_key, config_hash, dataset_key, experiment_config, merge
 from .datasets import Dataset, build_dataset, resolve_bundle
 from .models import Model
 from .registry import Registry
@@ -124,7 +124,6 @@ def run_experiment(overrides: dict | None = None, bundle=None, config=None, buil
     predicted at all, so nothing a search does can depend on them."""
     t0 = time.perf_counter()
     cfg = experiment_config(overrides)
-    dkey, chash = dataset_key(cfg), config_hash(cfg)
     progress = progress or (lambda msg: None)
     ds, info = prepare(cfg, bundle, config, builder, dataset, info, progress)
     progress("training walk-forward")
@@ -132,6 +131,16 @@ def run_experiment(overrides: dict | None = None, bundle=None, config=None, buil
         train = walk_forward_train(ds, cfg["model"], cfg["split"], cfg["seed"], progress=progress, stop_after=stop_after)
     except ValueError as exc:
         raise ExperimentError(str(exc)) from None
+    return evaluate_run(cfg, ds, train, info, registry, progress, save, parent_id, explain, final_model, robustness, trials_extra, experiment_id, stop_after, t0)
+
+
+def evaluate_run(cfg: dict, ds: Dataset, train: TrainResult, info: dict, registry: Registry | None = None, progress=None, save: bool = True, parent_id: str | None = None, explain: bool = True,
+                 final_model: bool = True, robustness: bool | None = None, trials_extra: int = 0, experiment_id: str | None = None, stop_after: str | None = None, t0: float | None = None) -> Experiment:
+    """Everything after the fitting: positions, backtest, segments, information coefficient, overfitting diagnostics, explanation, robustness, the report and (if a registry is given) the record. Separate
+    from ``run_experiment`` so that the same predictions can be re-run under different signal and cost settings without refitting (``rebacktest``)."""
+    t0 = time.perf_counter() if t0 is None else t0
+    progress = progress or (lambda msg: None)
+    dkey, chash = dataset_key(cfg), config_hash(cfg)
     lag, horizon = ds.lag, ds.horizon
     scores = train.scores_wide(ds)
     prob_wide = train.probabilities.unstack("asset").reindex(index=ds.dates, columns=ds.assets) if train.probabilities is not None else None
@@ -222,7 +231,8 @@ def run_experiment(overrides: dict | None = None, bundle=None, config=None, buil
                        "permutation": perm.head(20).reset_index().rename(columns={"index": "feature"}) if not perm.empty else pd.DataFrame()},
         "distribution": prediction_distribution(train.predictions, train.plan.labels()), "equity": eq,
         "positions": {"date": str(weights.index[-1].date()), "weights": {a: float(w) for a, w in weights.iloc[-1].items() if abs(w) > 1e-6}},
-        "folds": {"n": len(train.folds), "n_skipped": len(train.skipped), "first": train.folds[0] if train.folds else None, "last": train.folds[-1] if train.folds else None, "refit_every": cfg["split"]["refit_every"]},
+        "folds": {"n": len(train.folds), "n_skipped": len(train.skipped), "first": train.folds[0] if train.folds else None, "last": train.folds[-1] if train.folds else None, "refit_every": cfg["split"]["refit_every"],
+                  "list": [{k: f.get(k) for k in ("fold", "test_start", "test_end", "n_train", "n_test", "skipped", "seconds")} for f in train.folds]},
         "features": {"n": len(ds.features), "skipped": ds.meta.get("skipped", {}), "names": ds.features}, "robustness": rob,
         "trials": {"dataset_trials": n_trials, "note": "Every experiment and search trial on this dataset is counted; the deflated Sharpe probability deflates the validation Sharpe by this number."},
         "warnings": list(over["warnings"]), "seconds": round(time.perf_counter() - t0, 2), "created": time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -258,6 +268,8 @@ def save_experiment(registry: Registry, exp: Experiment, info: dict, parent_id: 
     ret.to_parquet(d / "returns.parquet")
     if exp.insample_net is not None:
         exp.insample_net.rename("net").to_frame().to_parquet(d / "returns_insample.parquet")
+    if len(tr.insample):
+        tr.insample.rename("score").to_frame().to_parquet(d / "predictions_insample.parquet")
     files = {"predictions": d / "predictions.parquet", "positions": d / "positions.parquet", "returns": d / "returns.parquet", "config": d / "config.yaml"}
     if exp.final_model is not None:
         (d / "model.pkl").write_bytes(exp.final_model.to_bytes())
@@ -286,3 +298,39 @@ def load_report(registry: Registry, exp_id: str) -> dict:
 
 def is_classification_target(target: str) -> bool:
     return is_classification(target)
+
+
+def load_run(registry: Registry, exp_id: str) -> tuple[dict, Dataset, TrainResult, dict]:
+    """Rebuild what ``evaluate_run`` needs from a saved experiment: its configuration, the saved panel, and a ``TrainResult`` made of the saved predictions (the fitted models are not kept, so anything that
+    needs them, such as permutation importance and the noisy-feature test, is unavailable for a reloaded run)."""
+    import yaml
+
+    from .training import plan_for
+
+    rec = registry.get_experiment(exp_id)
+    report = registry.report(exp_id)
+    d = registry.root / "experiments" / exp_id
+    saved = yaml.safe_load((d / "config.yaml").read_text())
+    cfg = experiment_config(merge(DEFAULTS, saved), name=saved.get("name"))
+    fsets = [f for f in registry.list_feature_sets() if f["id"].startswith(report["build_key"])]
+    if not fsets:
+        raise ExperimentError(f"the saved panel of experiment {exp_id} is not in the registry; re-run the experiment")
+    ds = Dataset.load(fsets[0]["path"])
+    preds = pd.read_parquet(d / "predictions.parquet")
+    plan, _ = plan_for(ds, cfg["split"], cfg["dataset"]["target"])
+    insample = pd.read_parquet(d / "predictions_insample.parquet")["score"] if (d / "predictions_insample.parquet").exists() else pd.Series(dtype=float)
+    folds = [dict(f, skipped=bool(f.get("skipped"))) for f in report["folds"].get("list", [])]
+    train = TrainResult(preds["score"], insample, folds, [], [], pd.DataFrame(), plan, cfg["dataset"]["target"], "classification" if "prob" in preds.columns else "regression", cfg["model"]["kind"],
+                        list(ds.features), preds["prob"] if "prob" in preds.columns else None, 0.0, [])
+    return cfg, ds, train, {"source": rec.get("source") or "platform", "label": report["provenance"].get("label", "")}
+
+
+def rebacktest(registry: Registry, exp_id: str, overrides: dict | None = None, progress=None, save: bool = True) -> Experiment:
+    """Run a saved experiment's predictions through different positions rules, rebalancing or costs, with no refitting. ``overrides`` may change the ``signal`` and ``backtest`` sections only (anything
+    else would change the predictions). The new run is recorded as a child of the original and counts as another look at the data."""
+    bad = set(overrides or {}) - {"signal", "backtest", "name", "notes", "robustness"}
+    if bad:
+        raise ExperimentError(f"a re-backtest can change only the signal, backtest and robustness settings, not {sorted(bad)}: they would change the predictions")
+    cfg0, ds, train, info = load_run(registry, exp_id)
+    cfg = experiment_config(merge(cfg0, overrides or {}), name=(overrides or {}).get("name") or f"{cfg0['name']}-rebacktest")
+    return evaluate_run(cfg, ds, train, info, registry, progress, save, exp_id, explain=False, final_model=False, robustness=None)

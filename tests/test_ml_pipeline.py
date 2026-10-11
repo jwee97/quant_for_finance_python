@@ -366,3 +366,19 @@ def test_experiment_errors_are_messages_not_crashes(signal_bundle):
         xe.run_experiment({**over, "dataset": {"universe": "mars"}})
     with pytest.raises(mc.MLConfigError):
         xe.run_experiment({"dataset": {"horizon": 0}}, bundle=signal_bundle)
+
+
+def test_saved_predictions_can_be_rebacktested_without_refitting(signal_bundle, tmp_path):
+    reg = rg.Registry(tmp_path / "ml")
+    over = {"dataset": {"feature_groups": FEATURES}, "split": {"min_train_days": 500, "refit_every": 63}, "model": {"kind": "ridge", "params": {"alpha": 10.0}}}
+    base = xe.run_experiment(over, bundle=signal_bundle, registry=reg, explain=False)
+    cfg, d, train, info = xe.load_run(reg, base.id)
+    assert train.predictions.equals(base.train.predictions) and len(train.insample) == len(base.train.insample) and train.models == [] and d.features == base.dataset.features
+    same = xe.rebacktest(reg, base.id, {}, save=False)
+    assert same.report["segments"]["stats"]["test"]["sharpe"] == pytest.approx(base.report["segments"]["stats"]["test"]["sharpe"], rel=1e-6)
+    dearer = xe.rebacktest(reg, base.id, {"backtest": {"cost_bps": 40.0}, "signal": {"n": 2}})
+    assert dearer.report["metrics"]["oos"]["sharpe"] < base.report["metrics"]["oos"]["sharpe"] and dearer.report["trials"]["dataset_trials"] == 2
+    rec = reg.get_experiment(dearer.id)
+    assert rec["parent_id"] == base.id and rec["name"].endswith("-rebacktest") and (tmp_path / "ml" / "experiments" / dearer.id / "report.html").exists()
+    with pytest.raises(xe.ExperimentError, match="not \\['model'\\]"):
+        xe.rebacktest(reg, base.id, {"model": {"kind": "lasso"}})
