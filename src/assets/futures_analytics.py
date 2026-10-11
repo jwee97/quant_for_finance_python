@@ -72,7 +72,7 @@ class CurveData:
     spec: RootSpec
     long: pd.DataFrame                    # date, contract, expiry, price, ttm, open_interest, volume
     spot: pd.Series | None                # the model's spot (simulated curves) or a spot column from a file; None if unknown
-    source: str                           # "simulated" | "user_file"
+    source: str                           # "simulated" | "user_file" | "downloaded"
     notes: list[str] = field(default_factory=list)
 
     @property
@@ -128,9 +128,10 @@ def simulated_curve(root: str, as_of=None, n_days: int = HISTORY_DAYS) -> CurveD
     return data
 
 
-def load_curve_file(path, root: str) -> CurveData:
-    """A contract table from a CSV with columns ``date, contract, expiry, price`` and optionally ``open_interest``, ``volume`` and ``spot``. Contract terms come from ``ROOTS`` when the root is known; otherwise
-    a generic specification (multiplier 1, no margin) is used and margin figures are not meaningful."""
+def load_curve_file(path, root: str, spec: RootSpec | None = None, source: str = "user_file", extra_notes=()) -> CurveData:
+    """A contract table from a CSV with columns ``date, contract, expiry, price`` and optionally ``open_interest``, ``volume`` and ``spot``. Contract terms come from ``spec`` when given (a downloaded root's
+    terms), else from ``ROOTS`` when the root is known; otherwise a generic specification (multiplier 1, no margin) is used and margin figures are not meaningful. ``source`` is ``user_file`` for your file
+    and ``downloaded`` for a free-data download, whose own notes arrive as ``extra_notes``."""
     raw = pd.read_csv(path)
     missing = [c for c in ("date", "contract", "expiry", "price") if c not in raw.columns]
     if missing:
@@ -141,16 +142,20 @@ def load_curve_file(path, root: str) -> CurveData:
         raise ValueError("duplicate (date, contract) rows in the futures file")
     raw = raw[raw["expiry"] >= raw["date"]].copy()
     raw["ttm"] = (raw["expiry"] - raw["date"]).dt.days / 365.0
-    notes = ["Prices are from your file."]
+    notes = ["Prices are from your file."] if source == "user_file" else ["Prices are free data downloaded for you (see the notes that follow for where from and what they are not)."]
+    notes += [str(n) for n in extra_notes]
     for col in ("open_interest", "volume"):
         if col not in raw.columns:
             raw[col] = np.nan
             notes.append(f"The file has no {col.replace('_', ' ')}; anything that needs it is unavailable.")
-    spec = ROOTS.get(root.upper()) or RootSpec(root.upper(), root.upper(), "?", "unknown", 1.0, 0.01, tuple(range(1, 13)), "last_business_day", SchwartzSmithParams(), 0.0, 0.0)
-    if root.upper() not in ROOTS:
-        notes.append("The contract terms of this root are unknown (multiplier 1, no margin): dollar figures are in price units.")
+    if spec is None:
+        spec = ROOTS.get(root.upper()) or RootSpec(root.upper(), root.upper(), "?", "unknown", 1.0, 0.01, tuple(range(1, 13)), "last_business_day", SchwartzSmithParams(), 0.0, 0.0)
+        if root.upper() not in ROOTS:
+            notes.append("The contract terms of this root are unknown (multiplier 1, no margin): dollar figures are in price units.")
+    elif spec.initial_margin == 0.0:
+        notes.append("Margins for this root are not known to the platform (shown as zero); the contract multiplier and tick are the exchange's.")
     spot = raw.drop_duplicates("date").set_index("date")["spot"] if "spot" in raw.columns and raw["spot"].notna().any() else None
-    return CurveData(root.upper(), spec, raw[["date", "contract", "expiry", "price", "ttm", "open_interest", "volume"]].reset_index(drop=True), spot, "user_file", notes)
+    return CurveData(root.upper(), spec, raw[["date", "contract", "expiry", "price", "ttm", "open_interest", "volume"]].reset_index(drop=True), spot, source, notes)
 
 
 # ------------------------------------------------------------------------------------------------------------------ the curve

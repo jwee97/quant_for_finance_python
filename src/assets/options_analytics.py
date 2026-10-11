@@ -293,11 +293,18 @@ def price_tick(chain: pd.DataFrame) -> float:
     return float(np.clip(gaps[gaps > 1e-4].min(), 0.01, 0.25)) if (gaps > 1e-4).any() else 0.01
 
 
-def arbitrage_view(chain: pd.DataFrame) -> dict:
+def arbitrage_view(chain: pd.DataFrame, liquid_only: bool = False, band: float = 0.10) -> dict:
     """The static no-arbitrage checks of ``derivatives.schema.arbitrage_report``, with the tolerance a quote's rounding needs. Prices are rounded to a tick, so a slope between two strikes ``gap`` apart is wrong
-    by up to ``tick / gap`` at each end, and a butterfly (a difference of two slopes) by twice that: a "violation" smaller than that is the rounding, not the market. ``tolerance`` is returned with the rows."""
+    by up to ``tick / gap`` at each end, and a butterfly (a difference of two slopes) by twice that: a "violation" smaller than that is the rounding, not the market. ``tolerance`` is returned with the rows.
+
+    ``liquid_only`` is for a chain of real quotes: a contract with no bid has a "mid" of half its offer, which is no price, and an in-the-money American option is worth more than parity says, so only
+    contracts with a live bid within ``band`` of the forward (in log-moneyness) are checked. A model chain is checked whole."""
     from ..derivatives.schema import arbitrage_report
 
+    if liquid_only:
+        chain = chain[(chain["bid"] > 0) & (chain["k"].abs() <= band)]
+        if chain.empty:
+            return {"rows": [], "tick": None, "tolerance": None}
     tick = price_tick(chain)
     gaps = [float(np.diff(np.sort(g["strike"].unique())).min()) for _, g in chain.groupby("expiry") if g["strike"].nunique() > 1]
     tol = 2.0 * tick / max(min(gaps), 1e-6) if gaps else 1e-8
@@ -389,10 +396,11 @@ def reference_index_view(symbol: str, macro: pd.DataFrame | None, atm_at_tenor: 
             "chain_atm_iv": atm_at_tenor}
 
 
-def overview(chain: pd.DataFrame, ctx: UnderlyingContext, premium: float = 0.15, macro: pd.DataFrame | None = None, simulated: bool = True) -> dict:
+def overview(chain: pd.DataFrame, ctx: UnderlyingContext, premium: float = 0.15, macro: pd.DataFrame | None = None, simulated: bool = True, source: str = "user_file") -> dict:
     """The cards above the chain: spot, realised volatility, ATM implied volatility (30-day, constant maturity), IV rank and percentile over one year, put/call ratios, the nearest expiry, the term slope, and
     the risk flags worth reading. For a simulated chain the IV history is the model applied to the realised-volatility history, so the rank is the rank of realised volatility in a new coat and is labelled
-    as such; the real index (when the platform has one) is shown beside it."""
+    as such; the real index (when the platform has one) is shown beside it. ``source`` labels a real chain (``user_file`` or ``downloaded``); a real chain is one snapshot, so it has no
+    implied-volatility history and no rank."""
     term = term_structure(chain)
     tm = term_metrics(term)
     near = nearest_expiry(chain)
@@ -402,7 +410,7 @@ def overview(chain: pd.DataFrame, ctx: UnderlyingContext, premium: float = 0.15,
         hist = model_atm_iv(ctx.rv_history, ctx.long_run_vol, 30.0, premium).tail(252)
         basis = "model: the surface applied to the trailing realised-volatility history (not an observed implied-volatility history)"
     else:
-        hist, basis = pd.Series(dtype=float), "history of ATM implied volatility is not in the file; rank unavailable"
+        hist, basis = pd.Series(dtype=float), "a real chain is one day's snapshot: it has no history of implied volatility, so the one-year rank is unavailable"
     rank, pct = (range_rank(hist, iv30), percentile_rank(hist, iv30)) if len(hist) else (float("nan"), float("nan"))
     call_v, put_v = float(chain.loc[chain["right"] == "C", "volume"].sum()), float(chain.loc[chain["right"] == "P", "volume"].sum())
     call_o, put_o = float(chain.loc[chain["right"] == "C", "open_interest"].sum()), float(chain.loc[chain["right"] == "P", "open_interest"].sum())
@@ -422,7 +430,7 @@ def overview(chain: pd.DataFrame, ctx: UnderlyingContext, premium: float = 0.15,
     add_flag(flags, np.isfinite(skew.get("rr_25d", float("nan"))) and skew.get("rr_25d", 0.0) < -0.06, "steep put skew: the market pays a lot for downside protection")
     add_flag(flags, np.isfinite(iv30) and iv30 < ctx.rv_21 * 0.9, "implied volatility is below recent realised volatility: options are cheap against what the stock has done")
     liquid = liquidity_score(atm_spread_pct * 1e4 if np.isfinite(atm_spread_pct) else float("inf"), ctx.dollar_volume)
-    snap = AssetSnapshot(ctx.symbol, "option", ctx.spot, float(iv30) if np.isfinite(iv30) else ctx.rv_21, liquid, flags, str(ctx.as_of.date()), "simulated" if simulated else "user_file")
+    snap = AssetSnapshot(ctx.symbol, "option", ctx.spot, float(iv30) if np.isfinite(iv30) else ctx.rv_21, liquid, flags, str(ctx.as_of.date()), "simulated" if simulated else source)
     ref = reference_index_view(ctx.symbol, macro, interpolate_iv(term, REFERENCE_INDEX.get(ctx.symbol.upper(), ("", 30))[1]), ctx.as_of)
     return {"symbol": ctx.symbol, "spot": ctx.spot, "as_of": str(ctx.as_of.date()), "realized_vol_21d": ctx.rv_21, "realized_vol_63d": ctx.rv_63, "long_run_vol": ctx.long_run_vol,
             "atm_iv_30d": iv30, "atm_iv_90d": tm["iv_90d"], "iv_premium": iv30 - ctx.rv_21 if np.isfinite(iv30) else None, "iv_rank": rank, "iv_percentile": pct, "iv_rank_basis": basis,

@@ -6,6 +6,10 @@ SIMULATES them and says so (``source: simulated``): other venues' funding and qu
 the order book is a parametric depth profile. A simulated number is a way to exercise the page and the code, never a quote. A file in ``data/user/crypto/<SYMBOL>.csv`` (``time, spot`` and optionally ``perp``,
 ``funding_daily`` or ``funding_8h``) replaces the simulation for that symbol (``source: user_file``).
 
+Free data fetched for you (``assets.free_data.crypto``, ``source: downloaded``) replaces the simulation the same way: a coin's history (spot, perpetual and funding from OKX), OKX's funding beside Deribit's
+(``CryptoSeries.venue_funding``) and a snapshot of the real quotes and order books of the coin on up to six venues (``snapshot``), from which the spreads, depth and the cost of size are measured on the real
+books and the cross-venue view compares real prices.
+
 Conventions. Crypto trades every day, so annualisation here is by 365 (the strategy backtests use weekday marks and 252, like the rest of the platform). ``funding`` is the daily funding rate EARNED BY A SHORT
 perpetual position (positive when longs pay shorts, the usual state); annualised funding is that times 365. ``basis`` is ``perp / spot - 1``.
 """
@@ -21,6 +25,7 @@ import pandas as pd
 
 from ..instruments.crypto import VENUES
 from .common import AssetSnapshot, add_flag, last_zscore, liquidity_score, percentile_rank, realized_vol
+from .free_data.crypto import book_summary
 
 ANN = 365.0
 VENUE_ORDER = ("DERIBIT", "BINANCE", "BYBIT", "OKX")
@@ -45,8 +50,10 @@ class CryptoSeries:
     spot: pd.Series                       # index price at the daily 08:00 UTC mark
     perp: pd.Series | None                # perpetual close, same marks
     funding: pd.Series | None             # daily funding rate earned by a short
-    source: str                           # platform | simulated | user_file
+    source: str                           # platform | simulated | user_file | downloaded
     notes: list[str] = field(default_factory=list)
+    funding_venue: str = "DERIBIT"        # the venue ``funding`` belongs to (OKX for a downloaded coin)
+    venue_funding: dict = field(default_factory=dict)      # other venues' REAL funding series, by venue (downloaded)
 
     @property
     def as_of(self) -> pd.Timestamp:
@@ -91,16 +98,17 @@ def simulated_series(symbol: str, btc: CryptoSeries) -> CryptoSeries:
                         [f"{symbol} is SIMULATED from BTC (beta {p['beta']}); the platform has no {symbol} data."])
 
 
-def user_series(path, symbol: str) -> CryptoSeries:
-    """A coin from ``data/user/crypto/<SYMBOL>.csv``: columns ``time, spot`` and optionally ``perp``, ``funding_daily`` (decimal per day) or ``funding_8h`` (decimal per 8 hours)."""
+def user_series(path, symbol: str, source: str = "user_file", notes: list[str] | None = None, funding_venue: str = "DERIBIT") -> CryptoSeries:
+    """A coin from ``data/user/crypto/<SYMBOL>.csv`` (or a free-data download of the same layout, ``source="downloaded"``): columns ``time, spot`` and optionally ``perp``, ``funding_daily`` (decimal per day)
+    or ``funding_8h`` (decimal per 8 hours). ``funding_venue`` names the venue the funding is from."""
     raw = pd.read_csv(path, parse_dates=["time"])
     if "spot" not in raw.columns:
         raise ValueError("the crypto file needs the columns time and spot")
     raw = raw.dropna(subset=["spot"]).drop_duplicates("time").set_index("time").sort_index()
     raw.index = pd.DatetimeIndex(raw.index).tz_localize(None) if pd.DatetimeIndex(raw.index).tz is not None else pd.DatetimeIndex(raw.index)
     funding = raw["funding_daily"] if "funding_daily" in raw.columns else (raw["funding_8h"] * 3.0 if "funding_8h" in raw.columns else None)
-    return CryptoSeries(symbol, raw["spot"].astype(float), raw["perp"].astype(float) if "perp" in raw.columns else None, None if funding is None else funding.astype(float), "user_file",
-                        ["Prices are from your file."])
+    return CryptoSeries(symbol, raw["spot"].astype(float), raw["perp"].astype(float) if "perp" in raw.columns else None, None if funding is None else funding.astype(float), source,
+                        notes if notes is not None else ["Prices are from your file."], funding_venue.upper())
 
 
 # ------------------------------------------------------------------------------------------------------------------ the order book (simulated)
@@ -156,7 +164,9 @@ def overview(s: CryptoSeries, stable: pd.Series | None = None, book: dict | None
         cards.insert(1, _card("funding", "Funding", "unavailable", None, "no funding history for this coin", s.source))
     liq = liquidity_score(book["spread_bps"], book["depth"]["10bp"]["bid"] * 40.0) if book else 0.0          # dollar volume taken as 40 times the depth within 10 bps (a convention for the score)
     if book:
-        cards.append(_card("liquidity", "Liquidity", "deep" if liq > 70 else "thin" if liq < 40 else "moderate", liq, f"spread {book['spread_bps']:.1f} bps, ${book['depth']['25bp']['ask'] / 1e6:.1f}M within 25 bps (simulated book)", "simulated"))
+        real = book.get("source") == "downloaded"
+        cards.append(_card("liquidity", "Liquidity", "deep" if liq > 70 else "thin" if liq < 40 else "moderate", liq,
+                           f"spread {book['spread_bps']:.2f} bps, ${book['depth']['25bp']['ask'] / 1e6:.1f}M within 25 bps ({'real book on ' + str(book['venue']).title() if real else 'simulated book'})", "downloaded" if real else "simulated"))
     else:
         cards.append(_card("liquidity", "Liquidity", "unavailable", None, "no order book in the data", "simulated"))
     if stable is not None and len(stable.dropna()) > 60:
@@ -201,15 +211,18 @@ def spot_perp_view(s: CryptoSeries, days: int = 365) -> dict:
 
 # ------------------------------------------------------------------------------------------------------------------ funding by venue
 def venue_funding(s: CryptoSeries, venue: str) -> tuple[pd.Series, str]:
-    """The funding series on a venue and its source. Deribit's is the platform's real series for BTC and ETH; every other venue is SIMULATED as Deribit's rate times a venue factor plus an offset and a persistent
-    shock (the platforms' funding rates are strongly but not perfectly correlated), because the platform holds one venue's history."""
+    """The funding series on a venue and its source. The series of the coin itself belongs to ``s.funding_venue`` (Deribit's, the platform's real series, for BTC and ETH; OKX's for a downloaded coin); a venue
+    whose real series was downloaded (``s.venue_funding``) returns it; every other venue is SIMULATED as the coin's rate times a venue factor plus an offset and a persistent shock (the platforms' funding
+    rates are strongly but not perfectly correlated), because the platform holds one venue's history."""
     venue = venue.upper()
     if venue not in VENUES:
         raise ValueError(f"unknown venue '{venue}'; choose from {sorted(VENUES)}")
     if s.funding is None:
         raise ValueError(f"{s.symbol} has no funding history")
-    if venue == "DERIBIT":
-        return s.funding, ("platform" if s.source == "platform" else s.source)
+    if venue == s.funding_venue:
+        return s.funding, s.source
+    if venue in s.venue_funding:
+        return s.venue_funding[venue], "downloaded"
     rng = np.random.default_rng(_seed("funding", s.symbol, venue))
     idx = s.funding.index
     factor = {"BINANCE": 1.00, "BYBIT": 1.04, "OKX": 0.97}.get(venue, 1.0)
@@ -240,11 +253,14 @@ def funding_dashboard(series: dict[str, CryptoSeries], venues: tuple = VENUE_ORD
             charts.setdefault(sym, {})[v] = {"source": src, "dates": [str(d.date()) for d in f.index[-days:]], "annualised": [round(float(x), 5) for x in (f.tail(days).rolling(3, min_periods=1).mean() * ANN)]}
         latest = {v: float(f.tail(7).mean() * ANN) for v, (f, _) in by_venue.items()}
         gap = max(latest.values()) - min(latest.values())
-        add_flag(flags, gap > 0.05, f"{sym}: funding differs by {gap:.1%} a year between venues (some of the venues are simulated)")
+        add_flag(flags, gap > 0.05, f"{sym}: funding differs by {gap:.1%} a year between venues" + (" (some of the venues are simulated)" if any(src == "simulated" for _, src in by_venue.values()) else ""))
         z = [r["zscore_90d"] for r in rows if r["symbol"] == sym and np.isfinite(r["zscore_90d"])]
         add_flag(flags, bool(z) and max(abs(x) for x in z) > 2.0, f"{sym}: funding is more than two standard deviations from its 90-day mean")
-    return {"rows": rows, "series": charts, "risk_flags": flags, "venues": list(venues),
-            "notes": ["Only Deribit's funding is data (BTC and ETH). The other venues' funding is simulated from it with offsets and noise; coins other than BTC and ETH are simulated entirely."]}
+    real = sorted({f"{r['symbol']} on {r['venue']}" for r in rows if r["source"] != "simulated"})
+    fake = sorted({f"{r['symbol']} on {r['venue']}" for r in rows if r["source"] == "simulated"})
+    notes = ["Funding that is data: " + (", ".join(real) if real else "none") + ". Funding that is simulated: " + (", ".join(fake) if fake else "none")
+             + ". A simulated venue is the coin's own series with offsets and noise; download the coin from the Free data card to replace it with real history."]
+    return {"rows": rows, "series": charts, "risk_flags": flags, "venues": list(venues), "notes": notes}
 
 
 # ------------------------------------------------------------------------------------------------------------------ basis
@@ -272,9 +288,28 @@ def basis_dashboard(s: CryptoSeries, fee_bps: float = 5.0, days: int = 365) -> d
 
 
 # ------------------------------------------------------------------------------------------------------------------ cross-exchange
-def venue_quotes(s: CryptoSeries, venues: tuple = VENUE_ORDER) -> list[dict]:
+def snapshot_quotes(snapshot: dict) -> list[dict]:
+    """The REAL quotes of a venue snapshot (``assets.free_data.crypto.fetch_venues``): each venue's best bid and ask when the snapshot was taken, its spread, the assumed taker fee, and whether it is a spot or a
+    perpetual market (only markets of one kind are compared with each other: a perpetual trades at a basis to spot)."""
+    out = []
+    for v in snapshot["venues"]:
+        bid, ask = float(v["bid"]), float(v["ask"])
+        mid = (bid + ask) / 2.0
+        out.append({"venue": v["venue"], "label": v.get("label", v["venue"]), "kind": v["kind"], "pair": v["pair"], "quote_asset": v["quote_asset"], "bid": bid, "ask": ask, "mid": mid,
+                    "spread_bps": (ask - bid) / mid * 1e4, "taker_bps": float(v["taker_bps"]), "source": "downloaded"})
+    return out
+
+
+def snapshot_books(snapshot: dict, symbol: str) -> dict[str, dict]:
+    """The order-book summary of every venue in a snapshot, measured on the real levels (same shape as ``order_book_summary``)."""
+    return {v["venue"]: book_summary(v, symbol) for v in snapshot["venues"]}
+
+
+def venue_quotes(s: CryptoSeries, venues: tuple = VENUE_ORDER, snapshot: dict | None = None) -> list[dict]:
     """The perpetual's bid and ask on each venue at the latest mark. Deribit's mid is the platform's last perpetual close (real, but a daily mark, not a live quote); every other venue's mid is that price times
-    a SIMULATED venue offset, and every spread is the venue's simulated book spread."""
+    a SIMULATED venue offset, and every spread is the venue's simulated book spread. With a downloaded ``snapshot`` the quotes are the real ones of that moment instead."""
+    if snapshot is not None:
+        return snapshot_quotes(snapshot)
     if s.perp is None:
         raise ValueError(f"{s.symbol} has no perpetual price")
     base = float(s.perp.dropna().iloc[-1])
@@ -285,31 +320,39 @@ def venue_quotes(s: CryptoSeries, venues: tuple = VENUE_ORDER) -> list[dict]:
         offset = 0.0 if v == "DERIBIT" else float(np.clip(1.5e-4 * rng.standard_normal(), -4e-4, 4e-4))
         mid = base * (1.0 + offset)
         half = mid * book["spread_bps"] / 2e4
-        out.append({"venue": v, "bid": mid - half, "ask": mid + half, "mid": mid, "spread_bps": book["spread_bps"], "taker_bps": float(VENUES[v]["taker_bps"]),
+        out.append({"venue": v, "label": v, "kind": "perp", "bid": mid - half, "ask": mid + half, "mid": mid, "spread_bps": book["spread_bps"], "taker_bps": float(VENUES[v]["taker_bps"]),
                     "source": "platform (daily mark)" if (v == "DERIBIT" and s.source == "platform") else "simulated"})
     return out
 
 
-def cross_exchange(s: CryptoSeries, slippage_bps: float = 1.0, notional: float = 1e6, venues: tuple = VENUE_ORDER) -> dict:
-    """Every ordered pair of venues: buy at the first venue's ask, sell at the second's bid. Gross spread in basis points, less both taker fees and ``slippage_bps`` of slippage per side, is the net edge; the
-    dollar edge is that on ``notional``. Warnings say when an edge does not cover its costs and what the number does not include (transfers, funding, margin, latency)."""
-    quotes = venue_quotes(s, venues)
+def cross_exchange(s: CryptoSeries, slippage_bps: float = 1.0, notional: float = 1e6, venues: tuple = VENUE_ORDER, snapshot: dict | None = None) -> dict:
+    """Every ordered pair of venues of the same kind: buy at the first venue's ask, sell at the second's bid. Gross spread in basis points, less both taker fees and ``slippage_bps`` of slippage per side, is the
+    net edge; the dollar edge is that on ``notional``. Warnings say when an edge does not cover its costs and what the number does not include (transfers, funding, margin, latency). A downloaded
+    ``snapshot`` supplies real quotes; without one the quotes are modelled."""
+    quotes = venue_quotes(s, venues, snapshot)
     rows = []
     for a in quotes:
         for b in quotes:
-            if a["venue"] == b["venue"]:
+            if a["venue"] == b["venue"] or a["kind"] != b["kind"]:
                 continue
             gross = (b["bid"] / a["ask"] - 1.0) * 1e4
             fees = a["taker_bps"] + b["taker_bps"]
             net = gross - fees - 2.0 * slippage_bps
-            rows.append({"buy": a["venue"], "sell": b["venue"], "gross_bps": float(gross), "fees_bps": float(fees), "slippage_bps": float(2.0 * slippage_bps), "net_bps": float(net), "net_dollars": float(net / 1e4 * notional),
-                         "profitable": bool(net > 0)})
+            rows.append({"buy": a["venue"], "sell": b["venue"], "kind": a["kind"], "gross_bps": float(gross), "fees_bps": float(fees), "slippage_bps": float(2.0 * slippage_bps), "net_bps": float(net),
+                         "net_dollars": float(net / 1e4 * notional), "profitable": bool(net > 0)})
     rows.sort(key=lambda r: r["net_bps"], reverse=True)
     flags = []
     add_flag(flags, not any(r["profitable"] for r in rows), "no pair covers its fees: the spreads here are smaller than the cost of crossing them")
-    add_flag(flags, any(q["source"] == "simulated" for q in quotes), "all venues except Deribit are simulated, and Deribit's price is a daily mark, so these spreads are illustrative")
-    return {"symbol": s.symbol, "quotes": quotes, "pairs": rows, "notional": float(notional), "risk_flags": flags,
-            "notes": ["Net edge excludes transfer time and fees between venues, funding paid while the legs are open, margin, borrowing and latency."]}
+    if snapshot is None:
+        add_flag(flags, any(q["source"] == "simulated" for q in quotes), "all venues except Deribit are simulated, and Deribit's price is a daily mark, so these spreads are illustrative")
+    else:
+        add_flag(flags, any(q["quote_asset"] == "USDT" for q in quotes) and any(q["quote_asset"] == "USD" for q in quotes),
+                 "OKX quotes in USDT, not dollars: part of its gap to the dollar venues is the USDT/USD rate, not an opportunity")
+    notes = ["Net edge excludes transfer time and fees between venues, funding paid while the legs are open, margin, borrowing and latency."]
+    if snapshot is not None:
+        notes.append(f"Real quotes of {snapshot.get('fetched_at', 'one moment')}, taken from each venue's public order book; a quote is gone in seconds. Taker fees are entry-level assumptions, not your tier. "
+                     "Spot venues are compared with spot venues and perpetuals with perpetuals.")
+    return {"symbol": s.symbol, "quotes": quotes, "pairs": rows, "notional": float(notional), "risk_flags": flags, "notes": notes}
 
 
 # ------------------------------------------------------------------------------------------------------------------ strategies
