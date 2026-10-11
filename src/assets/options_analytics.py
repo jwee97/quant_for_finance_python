@@ -350,7 +350,7 @@ def chain_view(chain: pd.DataFrame, expiry=None, window: float = 0.15, stale_aft
     return {"expiry": str(expiry.date()), "dte": int(round(T * 365)), "spot": spot, "forward": forward, "atm_strike": atm_strike, "atm_iv": atm_iv(g), "rows": rows,
             "totals": {"call_volume": cv, "put_volume": pv, "call_oi": co, "put_oi": po, "put_call_volume": pv / cv if cv > 0 else None, "put_call_oi": po / co if co > 0 else None},
             "stale_quotes": int(sum(x["stale"] for x in both)), "wide_quotes": int(sum(1 for x in both if x["spread_pct"] is not None and x["spread_pct"] > 0.10)), "quotes": len(both),
-            "expiries": expiry_list(chain)}
+            "quote_ages": "quote_age_min" in chain.columns, "expiries": expiry_list(chain)}
 
 
 # ------------------------------------------------------------------------------------------------------------------ overview
@@ -436,7 +436,7 @@ def overview(chain: pd.DataFrame, ctx: UnderlyingContext, premium: float = 0.15,
             "atm_iv_30d": iv30, "atm_iv_90d": tm["iv_90d"], "iv_premium": iv30 - ctx.rv_21 if np.isfinite(iv30) else None, "iv_rank": rank, "iv_percentile": pct, "iv_rank_basis": basis,
             "put_call_volume": put_v / call_v if call_v > 0 else None, "put_call_oi": put_o / call_o if call_o > 0 else None, "nearest_expiry": str(pd.Timestamp(near).date()),
             "nearest_dte": int(round(float(g_near["T"].iloc[0]) * 365)), "term_slope": tm["term_slope"], "term_inverted": tm["inverted"], "skew": skew, "reference_index": ref,
-            "atm_spread_pct": atm_spread_pct, "stale_share": stale_share, "snapshot": snap.to_dict(), "risk_flags": flags}
+            "atm_spread_pct": atm_spread_pct, "stale_share": stale_share, "quote_ages": "quote_age_min" in chain.columns, "snapshot": snap.to_dict(), "risk_flags": flags}
 
 
 # ------------------------------------------------------------------------------------------------------------------ positions and portfolio risk

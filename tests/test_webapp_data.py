@@ -101,6 +101,8 @@ def test_option_chains_download_as_a_job_and_the_options_tab_reads_them_as_downl
     assert any("Cboe delayed quotes" in n for n in chain["notes"]) and any("put-call parity" in n for n in chain["notes"])
     assert 0.17 < chain["overview"]["atm_iv_30d"] < 0.23, "the volatility that priced the payload comes back out of the file"
     assert chain["overview"]["snapshot"]["source"] == "downloaded" and "no history of implied volatility" in chain["overview"]["iv_rank_basis"]
+    assert chain["overview"]["quote_ages"] is False and chain["chain"]["quote_ages"] is False, "a download has no quote times: the page must not claim that none is stale"
+    assert app.extra_get["/api/options/chain"]({"underlying": "AAA"})["chain"]["quote_ages"] is True, "the modelled chain has quote ages"
     assert chain["settings"]["rate"] == 0.04 and 0.0 < chain["settings"]["dividend"] < 0.03
     with_rate = _safe(app.extra_get["/api/options/chain"]({"underlying": "dl:SPY", "rate": "0.02", "dividend": "0.05"}))
     assert with_rate["settings"]["rate"] == 0.04 and any("not editable here" in n for n in with_rate["notes"]), "the rate comes with the download"

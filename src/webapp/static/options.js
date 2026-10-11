@@ -268,7 +268,7 @@
     tile(k, "Term structure", W.points(ov.term_slope), { text: `${ov.term_inverted ? "inverted: the front is dearer" : "normal"} · 90 days ${pct(ov.atm_iv_90d)}` }, "", "Implied volatility at 90 days less at 30 days, in volatility points");
     tile(k, "25Δ risk reversal", sk.rr_25d === undefined ? "n/a" : W.points(sk.rr_25d), { text: sk.bf_25d === undefined ? "" : `butterfly ${W.points(sk.bf_25d)}` }, "", "Call volatility less put volatility at 25 delta: negative when puts are dearer (crash protection costs more)");
     tile(k, "At-the-money spread", pct(ov.atm_spread_pct, 1), { text: `liquidity score ${num(ov.snapshot.liquidity_score, 0)} of 100` }, "", "Bid-ask spread of the at-the-money options as a share of their mid");
-    tile(k, "Stale quotes", pct(ov.stale_share, 0), { text: "older than 15 minutes" }, "", "Share of the chain's quotes older than 15 minutes");
+    tile(k, "Stale quotes", ov.quote_ages === false ? "n/a" : pct(ov.stale_share, 0), { text: ov.quote_ages === false ? "the data has no quote times" : "older than 15 minutes" }, "", "Share of the chain's quotes older than 15 minutes");
     if (ref) tile(k, `${ref.name} (real index)`, num(ref.level * 100, 1), { text: `rank ${pct(ref.rank_1y, 0)} · chain ${pct(ref.chain_atm_iv, 1)}` }, "", `The published ${ref.tenor_days}-day implied-volatility index for this underlying, as of ${ref.as_of}, against the chain's own at-the-money volatility`);
     const ch = h("div", "charts", root), term = d.term;
     chartCard(ch, "Term structure of at-the-money volatility", "Implied volatility of the at-the-money option by days to expiry. Upward is the normal shape; downward means the market expects trouble soon.", {
@@ -299,12 +299,14 @@
     tile(k, "Call volume", grouped(t.call_volume), { text: `open interest ${grouped(t.call_oi)}` });
     tile(k, "Put volume", grouped(t.put_volume), { text: `open interest ${grouped(t.put_oi)}` });
     tile(k, "Put-call ratio", num(t.put_call_volume, 2), { text: `open interest ${num(t.put_call_oi, 2)}` }, "", "Put volume over call volume in this expiry");
-    tile(k, "Stale quotes", `${ch.stale_quotes} of ${ch.quotes}`, { text: `${ch.wide_quotes} with a spread over 10%` }, "", "A quote older than 15 minutes, or a spread wider than a tenth of the mid, is not a price you can trade at");
+    tile(k, "Stale quotes", ch.quote_ages === false ? "n/a" : `${ch.stale_quotes} of ${ch.quotes}`, { text: `${ch.wide_quotes} with a spread over 10%` }, "", "A quote older than 15 minutes, or a spread wider than a tenth of the mid, is not a price you can trade at");
     const card = h("div", "card", root), scroll = h("div", "scroll", card); scroll.style.maxHeight = "560px";
     const minOi = Number(f.minOi) || 0;
     const rows = ch.rows.filter((r) => !(f.hideStale && r.call.stale && r.put.stale) && r.call.oi + r.put.oi >= minOi);
     chainTable(scroll, rows);
-    W.hint(card, `${rows.length} of ${ch.rows.length} strikes shown, within ${Math.round(Number(f.window))}% of the price. The at-the-money row is outlined; shaded cells are in the money; ⚠ marks a quote older than 15 minutes and orange spreads are wider than 10% of the mid. Volume, open interest and quote ages are simulated unless the chain is your file.`);
+    const chainSource = (d.sources || {}).chain, ages = ch.quote_ages !== false;
+    const provenance = chainSource === "simulated" ? "Volume, open interest and quote ages are simulated." : `Volume and open interest are ${chainSource === "downloaded" ? "the provider's, as downloaded" : "from your file"}${ages ? "" : "; there are no quote times, so a stale quote is not flagged"}.`;
+    W.hint(card, `${rows.length} of ${ch.rows.length} strikes shown, within ${Math.round(Number(f.window))}% of the price. The at-the-money row is outlined; shaded cells are in the money; ${ages ? "⚠ marks a quote older than 15 minutes and " : ""}orange spreads are wider than 10% of the mid. ${provenance}`);
     const dl = h("button", "btn", card, "Download this expiry (CSV)");
     dl.addEventListener("click", () => W.csvDownload(`${fileName(d)}_${ch.expiry}_chain.csv`, [["strike", "call_bid", "call_ask", "call_iv", "call_delta", "call_volume", "call_oi", "put_bid", "put_ask", "put_iv", "put_delta", "put_volume", "put_oi"],
       ...ch.rows.map((r) => [r.strike, r.call.bid, r.call.ask, r.call.iv, r.call.delta, r.call.volume, r.call.oi, r.put.bid, r.put.ask, r.put.iv, r.put.delta, r.put.volume, r.put.oi])]));

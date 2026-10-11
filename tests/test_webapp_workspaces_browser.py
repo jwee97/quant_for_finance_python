@@ -198,6 +198,7 @@ def test_the_options_tab_downloads_a_real_chain_analyses_it_as_downloaded_data_a
     assert select.input_value() == "dl:SPY" and "real chain" in select.locator("option:checked").inner_text(), "the downloaded chain is chosen for you, and the menu says it is real"
     assert _badge(page, "options") in {"Downloaded: free data", "Mixed sources"}
     assert "Cboe delayed quotes" in page.locator("#options-results").text_content() and page.locator("#options-results .banner.err").count() == 0
+    assert "n/a" in page.locator("#options-results .tile", has_text="Stale quotes").inner_text(), "the chain has no quote times, so it does not say that none is stale"
     saved = page.live.app.data.store.path("options", "SPY")
     assert saved.is_file() and "downloads" in saved.parts and not (page.live.app.root / "data" / "user" / "options").exists(), "the file is saved where the page says, not in the folder for your own files"
     # update asks the feed again; delete asks twice and takes the chain out of the menu

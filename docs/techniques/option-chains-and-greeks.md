@@ -55,7 +55,7 @@ A butterfly with a negative price, or total variance that falls as expiry grows,
 - Black-Scholes Greeks assume one volatility per option, so a stress that moves the spot without moving the smile understates what a real surface does.
 - The margin estimate is an illustrative rule of thumb, not an exchange or broker requirement.
 - Probability of profit is a statement about a distribution you chose, not about the market.
-- A downloaded chain is one delayed snapshot, not a history: the volatility rank, which needs a year of implied volatility, reads "n/a" for it. Its quotes can be stale (the page counts them), and the bid and ask of a far out-of-the-money option are often a few cents wide whatever the option is worth.
+- A downloaded chain is one delayed snapshot, not a history: the volatility rank, which needs a year of implied volatility, reads "n/a" for it. The feed carries no quote times, so the page cannot flag a stale quote (the stale-quote tiles read "n/a"): a wide spread is the warning you have, and the bid and ask of a far out-of-the-money option are often a few cents wide whatever the option is worth.
 - Stock and ETF options can be exercised early and are priced as European, so deep in-the-money puts look slightly cheap against parity and the arbitrage view checks only live quotes within 5% of the forward. An implied dividend that moves a lot from one expiry to the next is a sign of thin quotes, not of a dividend policy.
 
 ## Try it

@@ -413,7 +413,7 @@
   /* ================================================================= results */
   function tile(parent, label, value, delta, cls, title) {
     const t = h("div", "tile" + (cls ? " " + cls : ""), parent); if (title) t.title = title;
-    h("div", "label", t, label); h("div", "value", t, value); if (delta) { const d = h("div", "delta " + (delta.dir || ""), t, delta.text); }
+    h("div", "label", t, label); h("div", "value" + (/\S{12,}/.test(String(value)) ? " long" : ""), t, value); if (delta) { const d = h("div", "delta " + (delta.dir || ""), t, delta.text); }
     return t;
   }
   function chartCard(parent, title, note, opts) {
