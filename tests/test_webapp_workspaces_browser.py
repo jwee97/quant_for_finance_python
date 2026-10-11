@@ -22,10 +22,11 @@ SOURCES = {"Platform data", "Your file", "Simulated: a model", "Mixed sources"}
 
 @pytest.fixture(scope="module")
 def live_ws(tmp_path_factory):
-    """An app on synthetic prices with a planted signal. Its registry lives in a temporary directory; the repository's data (Deribit, your files) is reached through a link, read only."""
+    """An app on synthetic prices with a planted signal. Its registry lives in a temporary directory; the repository's data (Deribit, your files) and guides are reached through links, read only."""
     config = load_config()
     root = tmp_path_factory.mktemp("ws_root")
-    (root / "data").symlink_to(config.root / "data", target_is_directory=True)
+    for folder in ("data", "docs"):
+        (root / folder).symlink_to(config.root / folder, target_is_directory=True)
     bundle = make_bundle(n_assets=8, n=1300, seed=3, alpha=1.0)
     store = TickerStore(tmp_path_factory.mktemp("ws_prices"), fetch=_fetch)
     running = server.start(App(config, builder=UniverseBuilder(config, store, default_loader=lambda c: bundle), root=root), "127.0.0.1", 0)
@@ -114,6 +115,16 @@ def test_the_crypto_views_keep_real_and_simulated_apart_and_count_what_survives_
     _mode(ws, "crypto", "cross")
     ws.wait_for_selector("#crypto-results .earnrow", timeout=60_000)
     assert "Pairs that pay" in ws.inner_text("#crypto-results") and "illustrative" in ws.inner_text("#crypto-results")
+
+
+@pytest.mark.parametrize("tab, ready, title", [("options", "#options-results .tile", "Reading an option chain"), ("futures", "#futures-results .tile", "Reading a futures curve"), ("crypto", "#crypto-results .tile", "Crypto funding, basis"),
+                                               ("ml", "#ml-results .card", "The machine-learning research pipeline")])
+def test_each_new_tab_opens_its_own_guide(ws, tab, ready, title):
+    ws.click(f"#tab-{tab}")
+    ws.wait_for_selector(ready, timeout=90_000)
+    ws.click(f"#{tab}-results button:text-is('Read the guide')")
+    ws.wait_for_selector("article.md h1", timeout=30_000)
+    assert title in ws.inner_text("article.md h1")
 
 
 # ------------------------------------------------------------------------------------------------------ machine learning
