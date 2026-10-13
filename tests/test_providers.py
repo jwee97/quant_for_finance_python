@@ -681,3 +681,59 @@ def test_the_repository_keeps_secrets_out_of_git():
         if path.exists():
             text = path.read_text(encoding="utf-8")
             assert "ITICK_API_KEY=" not in text.replace("ITICK_API_KEY=...", "")      # no assignment of a real value in a committed file
+
+
+# ------------------------------------------------------------------------------------------------------------------------------ futures and coins
+def test_a_futures_product_and_a_coin_map_to_their_itick_instruments():
+    ny = providers.Instrument("future", "US", "NQ", "America/New_York")
+    assert providers.future_instrument("us", " nq ") == ny and map_symbol("ES=F") == providers.Instrument("future", "US", "ES", "America/New_York"), "Yahoo's front-month ticker is the US product"
+    assert providers.future_instrument("HK", "HSI").tz == "Asia/Hong_Kong" and providers.future_instrument("CN", "IF").tz == "Asia/Shanghai" and ny.label == "US:NQ"
+    for region, code in (("EU", "NQ"), ("US", ""), ("US", "N Q"), ("US", "N" * 13), ("", "NQ")):
+        with pytest.raises(ITickError):
+            providers.future_instrument(region, code)
+    assert providers.crypto_instrument("sol") == providers.Instrument("crypto", "BA", "SOLUSDT", "UTC")
+    with pytest.raises(ITickError):
+        providers.crypto_instrument("so l")
+    with pytest.raises(ITickError, match="cannot place"):
+        map_symbol("=F")
+
+
+def test_a_futures_trading_day_that_opens_the_evening_before_is_dated_by_the_day_it_belongs_to():
+    days = pd.bdate_range("2026-03-02", periods=12)                                                      # a Monday on
+    evening = np.array([int((d - pd.Timedelta(days=1) + pd.Timedelta(hours=23)).value // 10**6) for d in days])           # 23:00 UTC the day before: Sunday evening for Monday
+    assert list(session_dates(evening, "America/New_York", True, trade_day=True)) == list(days)
+    midnight_utc = np.array([int(d.value // 10**6) for d in days])
+    assert list(session_dates(midnight_utc, "America/New_York", True, trade_day=True)) == list(days), "bars stamped at midnight UTC need no shift"
+    open_local = np.array([int((d + pd.Timedelta(hours=14, minutes=30)).value // 10**6) for d in days])
+    assert list(session_dates(open_local, "America/New_York", True, trade_day=True)) == list(days), "nor do bars stamped in the session"
+    assert session_dates(evening, "America/New_York", False).dayofweek.max() == 6, "without the trading-day rule a Monday bar stamped on Sunday evening stays on Sunday (calendar markets)"
+
+
+@pytest.mark.parametrize("stamp", ["midnight_utc", "evening_prior", "open_local"])
+def test_futures_bars_become_one_row_per_weekday_whichever_way_the_bar_is_stamped(stamp):
+    p, fake, _ = make(FakeITick(stamp=stamp))
+    frame = p.series(providers.future_instrument("US", "ES"), "2024-01-01")
+    truth = pd.bdate_range(end=fake.last, periods=fake.n)
+    assert frame.index.is_unique and set(frame.index) <= set(truth) and (frame.index.dayofweek < 5).all() and frame.index[0] <= pd.Timestamp("2024-01-31")
+    assert fake.urls[0].startswith("https://api-free.itick.org/future/kline?") and fake.calls[0]["region"] == "US" and fake.calls[0]["code"] == "ES" and fake.calls[0]["kType"] == "8"
+
+
+def test_series_goes_through_the_shared_limiter_leaves_out_todays_bar_and_hides_the_key():
+    p, fake, clock = make(FakeITick(stamp="evening_prior", include_today=True), calls=2)
+    inst = providers.future_instrument("US", "CL")
+    for _ in range(3):
+        frame = p.series(inst, "2025-06-01")
+    assert frame.index[-1] < providers.pd.Timestamp.now(tz="America/New_York").normalize().tz_localize(None), "today's bar is still being drawn"
+    assert len(fake.calls) == 3 and sum(clock.slept) >= 55, "two calls a minute: the third waits for the first to age out"
+    said = []
+    p.series(inst, "2025-06-01", progress=said.append)
+    assert any(text.startswith("iTick US:CL: ") for text in said)
+    fake.script.append((401, {}, json.dumps({"message": f"Invalid API key {KEY}"}).encode()))
+    with pytest.raises(ITickError, match="rejected the API key") as caught:
+        p.series(inst, "2025-06-01")
+    assert caught.value.fatal and KEY not in str(caught.value)
+    unset = ITickProvider(key="", base_url="https://api-free.itick.org", transport=fake)
+    with pytest.raises(ITickError, match="ITICK_API_KEY") as caught:
+        unset.series(inst, "2025-06-01")
+    assert caught.value.fatal
+    assert p.local_today("America/New_York") == pd.Timestamp.now(tz="America/New_York").normalize().tz_localize(None)

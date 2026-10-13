@@ -1,0 +1,1617 @@
+region,code,name,exchange,group
+US,ES,E-mini S&P 500 Futures,CME,Indexes
+US,NQ,E-mini Nasdaq-100 Futures,CME,Indexes
+US,MNQ,Micro E-mini Nasdaq-100 Index Futures,CME,Indexes
+US,MES,Micro E-mini S&P 500 Index Futures,CME,Indexes
+US,YM,E-mini Dow Jones Industrial Average Index Futures,CBOT,Indexes
+US,M2K,Micro E-mini Russell 2000 Index Futures,CME,Indexes
+US,RTY,E-mini Russell 2000 Index Futures,CME,Indexes
+US,MYM,Micro E-mini Dow Jones Industrial Average Index Futures,CBOT,Indexes
+US,NIY,Nikkei (JPY) Futures,CME,Indexes
+US,NKD,Nikkei (USD) Futures,CME,Indexes
+US,XAU,E-mini Utilities Select Sector Futures,CME,Indexes
+US,AW,Bloomberg Commodity Index Futures,CBOT,Indexes
+US,ES1,Nearby BTIC+ Futures on E-mini S&P 500 Stock Price Index Futures,CME,Indexes
+US,SOX,E-mini PHLX Semiconductor Sector Futures,CME,Indexes
+US,MME,MSCI Emerging Markets Index Futures,ICEUS,Indexes
+US,EMD,E-mini S&P MidCap 400 Futures,CME,Indexes
+US,FNG,MICRO NYSE FANG+™ Index Futures,ICEUS,Indexes
+US,MNK,Micro Nikkei (USD) Futures,CME,Indexes
+US,QCN,E-mini Nasdaq Composite Futures,CME,Indexes
+US,ADR,Adjusted Interest Rate Dow Jones Industrial Average Total Return (EFFR) Futures,CBOT,Indexes
+US,NDA,Nasdaq-100 Annual Dividend Index Futures,CME,Indexes
+US,TPY,TOPIX (JPY) Futures,CME,Indexes
+US,XAP,E-mini Consumer Staples Select Sector Futures,CME,Indexes
+US,CAD,MSCI Canada GTR Index Futures,ICEUS,Indexes
+US,ENY,E-mini Nikkei 225 (JPY) Futures,CME,Indexes
+US,ESG,E-mini S&P 500 ESG Index Futures,CME,Indexes
+US,FT1,E-mini FTSE 100 Index (GBP) Futures,CME,Indexes
+US,GD,S&P-GSCI Commodity Index Futures,CME,Indexes
+US,IPO,E-mini IPOX 100 U.S. Index Futures,CME,Indexes
+US,MCE,MSCI Europe Index Futures,ICEUS,Indexes
+US,MMC,Micro E-mini S&P MidCap 400 Futures,CME,Indexes
+US,MNI,Micro Nikkei (JPY) Futures,CME,Indexes
+US,MSC,Micro E-mini S&P SmallCap 600 Futures,CME,Indexes
+US,MTP,MSCI Emerging Markets ex China ex Taiwan Price Index Futures,ICEUS,Indexes
+US,MUV,MSCI USA Minimum Volatility GTR Index Futures,ICEUS,Indexes
+US,MVA,MSCI USA Total Return Index Futures,ICEUS,Indexes
+US,MWA,MSCI World Total Return Index Futures,ICEUS,Indexes
+US,NQQ,TACO on E-mini Nasdaq-100 Futures,CME,Indexes
+US,RX,Dow Jones Real Estate Futures,CBOT,Indexes
+US,SME,S&P 500 Month-End Futures,CME,Indexes
+US,TRB,BTIC on S&P 500 Total Return Index Futures,CME,Indexes
+US,VA,S&P 500 Variance Futures,CBOE,Indexes
+US,VXM,Mini Cboe Volatility Index (VXM) Futures,CBOE,Indexes
+US,VX,Cboe Volatility Index (VIX) Futures,CBOE,Indexes
+US,IBIG,Cboe iBoxx iShares Investment Grade Corporate Bond Index Futures,CBOE,Indexes
+US,IBHY,Cboe iBoxx iShares High Yield Corporate Bond Index Futures,CBOE,Indexes
+US,XAF,E-mini Financial Select Sector Futures,CME,Indexes
+US,XAV,E-mini Health Care Select Sector Futures,CME,Indexes
+US,YMX,TMAC on E-mini Dow Jones Industrial Average Futures,CBOT,Indexes
+US,AFR,Adjusted Interest Rate FTSE-100 Total Return Declared Dividend (SONIA) Futures,CME,Indexes
+US,AS7,MSCI Australia NTR Index Futures,ICEUS,Indexes
+US,ASI,MSCI AC Asia ex Japan NTR Index Futures,ICEUS,Indexes
+US,ASN,MSCI Emerging Markets Asia (NTR) Index Futures,ICEUS,Indexes
+US,ASPR,Adjusted Interest Rate S&P 500 Total Return (SOFR) Futures,CME,Indexes
+US,ASPT,BTIC on Adjusted Interest Rate S&P 500 Total Return (SOFR) Futures,CME,Indexes
+US,AST,BTIC on Adjusted Interest Rate S&P 500 Total Return (EFFR) Futures,CME,Indexes
+US,AWN,MSCI All Country World Ex-US Net Total Return (NTR) Index Futures,ICEUS,Indexes
+US,BIO,E-mini Nasdaq-100 Biotechnology Index Futures,CME,Indexes
+US,DRS,Bloomberg Roll Select Commodity Index Futures,CBOT,Indexes
+US,DVE,E-mini FTSE Developed Europe Index Futures,CME,Indexes
+US,E3G,E-mini S&P Europe 350 ESG Index Futures,CME,Indexes
+US,EHY,MSCI MarketAxess EUR HY Tradable Corporate Bond Index Futures,ICEUS,Indexes
+US,EI,E-mini FTSE Emerging Index Futures,CME,Indexes
+US,EIG,MSCI MarketAxess EUR IG Tradable Corporate Bond Index Futures,ICEUS,Indexes
+US,EQ1,TACO+ Futures on E-mini S&P 500 Stock Price Index Futures,CME,Indexes
+US,ES2,Deferred BTIC+ Futures on E-mini S&P 500 Stock Price Index Futures,CME,Indexes
+US,ESQ,TACO on E-mini S&P 500 Futures,CME,Indexes
+US,EST,BTIC E-mini S&P 500 Futures,CME,Indexes
+US,ESX,TMAC on E-mini S&P 500 Futures,CME,Indexes
+US,EU1,MSCI Europe Climate Change NTR Index Futures,ICEUS,Indexes
+US,EU9,MSCI Europe NTR Index Futures,ICEUS,Indexes
+US,EWF,E-mini S&P 500 Equal Weight Futures,CME,Indexes
+US,FNG.Z,MICRO NYSE FANG+™ Index Futures (TAS),ICEUS,Indexes
+US,FT5,E-mini FTSE China 50 Index Futures,CME,Indexes
+US,FTU,E-mini FTSE 100 (USD) Futures,CME,Indexes
+US,GIE,S&P-GSCI ER Index Futures,CME,Indexes
+US,H2O,Nasdaq Veles California Water Index Futures,CME,Indexes
+US,IBV,Ibovespa (USD) Futures,CME,Indexes
+US,IUS,ICE Semiconductor GTR Index Futures,ICEUS,Indexes
+US,IUT,ICE Biotechnology GTR Index Futures,ICEUS,Indexes
+US,JPP,MSCI Japan NTR Index Futures,ICEUS,Indexes
+US,KKS,MSCI KOKUSAI GTR NTR Index Futures,ICEUS,Indexes
+US,LFA,MSCI USA ESG Leaders GTR Index Futures,ICEUS,Indexes
+US,LFG,MSCI EAFE ESG Leaders NTR Index Futures,ICEUS,Indexes
+US,LFM,MSCI Emerging Markets ESG Leaders NTR Index Futures,ICEUS,Indexes
+US,LFU,MSCI Europe ESG Leaders NTR Index Futures,ICEUS,Indexes
+US,LFW,MSCI World ESG Leaders NTR Index Futures,ICEUS,Indexes
+US,MCL,MSCI Canada Index Futures,ICEUS,Indexes
+US,MCU,MSCI USA Value Index Futures,ICEUS,Indexes
+US,MEU,MSCI Euro Index Futures,ICEUS,Indexes
+US,MFS,MSCI EAFE Index Futures,ICEUS,Indexes
+US,MFU,MSCI EAFE Net Total Return (NTR) Index Futures,ICEUS,Indexes
+US,MHY,MSCI MarketAxess USD HY Tradable Corporate Bond Index Futures,ICEUS,Indexes
+US,MIH,MSCI MarketAxess USD IG Tradable Corporate Bond Index Futures,ICEUS,Indexes
+US,MIN,MSCI India NTR Index Futures,ICEUS,Indexes
+US,MLE,MSCI Emerging Markets Latin America Index Futures,ICEUS,Indexes
+US,MML,MSCI Emerging Markets LatAm NTR Index Futures,ICEUS,Indexes
+US,MMM,MSCI Emerging Markets EMEA NTR Index Futures,ICEUS,Indexes
+US,MMN,MSCI Emerging Markets Net Total Return (NTR) Index Futures,ICEUS,Indexes
+US,MMR,MSCI Emerging Markets NTR (EUR) Index Futures,ICEUS,Indexes
+US,MMW,MSCI ACWI NTR Index Futures,ICEUS,Indexes
+US,MPA,MSCI Pacific NTR Index Futures,ICEUS,Indexes
+US,MPP,MSCI Pan-Euro Index Futures,ICEUS,Indexes
+US,MPU,MSCI Europe Value Index Futures,ICEUS,Indexes
+US,MRG,MSCI USA Growth Index Futures,ICEUS,Indexes
+US,MTJ,MSCI ACWI NTR Index Futures (EUR),ICEUS,Indexes
+US,MTK,MSCI USA Low Carbon Target Core GTR Index Futures,ICEUS,Indexes
+US,MTL,MSCI Emerging Markets Low Carbon Target Core GTR Index Futures,ICEUS,Indexes
+US,MTM,MSCI World ex USA Low Carbon Target Core GTR Index Futures,ICEUS,Indexes
+US,MTO,MSCI ACWI Low Carbon Target Core NTR Index Futures,ICEUS,Indexes
+US,MTQ,MSCI Emerging Markets ex China ex Taiwan Price Index Futures,ICEUS,Indexes
+US,MUC,MSCI USA Climate Change Index Futures,ICEUS,Indexes
+US,MUN,MSCI USA Index Futures,ICEUS,Indexes
+US,MUS,MSCI USA Small Cap Index Futures,ICEUS,Indexes
+US,MVA.Y,MSCI USA Total Return Index Futures,ICEUS,Indexes
+US,MVE,MSCI Emerging Markets Total Return Index Futures,ICEUS,Indexes
+US,MVE.Y,MSCI Emerging Markets Total Return Index Futures,ICEUS,Indexes
+US,MVH,MSCI EAFE Total Return Index Futures,ICEUS,Indexes
+US,MVH.Y,MSCI EAFE Total Return Index Futures,ICEUS,Indexes
+US,MVR,MSCI World Climate Paris Aligned NTR Index Futures,ICEUS,Indexes
+US,MVS,MSCI USA Climate Paris Aligned GTR Index Futures,ICEUS,Indexes
+US,MVT,MSCI Europe Climate Paris Aligned NTR Index Futures,ICEUS,Indexes
+US,MVU,MSCI EM Climate Paris Aligned NTR Index Futures,ICEUS,Indexes
+US,MVV,MSCI Europe NTR Index Future (EUR),ICEUS,Indexes
+US,MWA.Y,MSCI World Total Return Index Futures,ICEUS,Indexes
+US,MWL,MSCI World Index Futures,ICEUS,Indexes
+US,MWS,MSCI World NTR Index Futures,ICEUS,Indexes
+US,MYY,MSCI Malaysia NTR Index Futures,ICEUS,Indexes
+US,NAA,MSCI North America NTR Index Futures,ICEUS,Indexes
+US,NQT,BTIC E-mini Nasdaq-100 Futures,CME,Indexes
+US,NQX,TMAC on E-mini Nasdaq-100 Index Futures,CME,Indexes
+US,QDF,Spot-Quoted Dow Cleared Futures (OI View),CBOT,Indexes
+US,QDOW,Spot-Quoted Dow Futures,CBOT,Indexes
+US,QNDX,Spot-Quoted Nasdaq-100 Futures,CME,Indexes
+US,QNF,Spot-Quoted Nasdaq-100 Cleared Futures (OI View),CME,Indexes
+US,QRF,Spot-Quoted Russell 2000 Cleared Futures (OI View),CME,Indexes
+US,QRTY,Spot-Quoted Russell 2000 Futures,CME,Indexes
+US,QSF,Spot-Quoted S&P 500 Cleared Futures (OI View),CME,Indexes
+US,QSPX,Spot-Quoted S&P 500 Futures,CME,Indexes
+US,R2G,E-mini Russell 2000 Growth Index Futures,CME,Indexes
+US,R2V,E-mini Russell 2000 Value Index Futures,CME,Indexes
+US,RDA,Russell 2000 Annual Dividend Index Futures,CME,Indexes
+US,RS1,E-mini Russell 1000 Index Futures,CME,Indexes
+US,RSG,E-mini Russell 1000 Growth Index Futures,CME,Indexes
+US,RSV,E-mini Russell 1000 Value Index Futures,CME,Indexes
+US,RTQ,TACO on E-mini Russel 2000 Futures,CME,Indexes
+US,RTX,TMAC on E-mini Russell 2000 Futures,CME,Indexes
+US,SDA,S&P 500 Annual Dividend Index Futures,CME,Indexes
+US,SDI,S&P 500 Quarterly Dividend Index Futures,CME,Indexes
+US,SG,S&P 500 Growth Futures,CME,Indexes
+US,SMC,E-mini S&P SmallCap 600 Futures,CME,Indexes
+US,SMET,BTIC on S&P 500 Month-End Futures,CME,Indexes
+US,SU,S&P 500 Value Futures,CME,Indexes
+US,SXB,E-mini S&P Regional Banks Select Industry Futures,CME,Indexes
+US,SXI,E-mini S&P Insurance Select Industry Futures,CME,Indexes
+US,SXO,E-mini S&P Oil & Gas Exploration & Production Select Industry Futures,CME,Indexes
+US,SXR,E-mini S&P Retail Select Industry Futures,CME,Indexes
+US,SXT,E-mini S&P Biotechnology Select Industry Futures,CME,Indexes
+US,THG,MSCI Thailand NTR Index Futures,ICEUS,Indexes
+US,TPD,TOPIX (USD) Futures,CME,Indexes
+US,TRI,S&P 500 Total Return Index Futures,CME,Indexes
+US,USS,MSCI USA GTR Index Futures,ICEUS,Indexes
+US,WOW,MSCI USA Climate Change NTR Index Futures,ICEUS,Indexes
+US,XAB,E-mini Materials Select Sector Futures,CME,Indexes
+US,XAE,E-mini Energy Select Sector Futures,CME,Indexes
+US,XAI,E-mini Industrial Select Sector Futures,CME,Indexes
+US,XAK,E-mini Technology Select Sector Futures,CME,Indexes
+US,XAR,E-mini Real Estate Select Sector Futures,CME,Indexes
+US,XAY,E-mini Consumer Discretionary Select Sector Futures,CME,Indexes
+US,XAZ,E-mini Communication Services Select Sector Futures,CME,Indexes
+US,XBT,BTIC on E-mini Material Select Sector Futures,CME,Indexes
+US,XYT,BTIC on E-mini Consumer Discretionary Select Sector Futures,CME,Indexes
+US,IPC,E-mini S&P/BMV IPC Futures,CME,Stocks
+US,CUS,CME Metro Area Housing Index Futures,CME,Stocks
+US,BOS,Boston Real Estate Futures,CME,Stocks
+US,CHI,Chicago Real Estate Futures,CME,Stocks
+US,DEN,Denver Real Estate Futures,CME,Stocks
+US,EMV,MSCI Europe Minimum Volatility NTR EUR Index Futures,ICEUS,Stocks
+US,EWE,MSCI Europe Equal Weighted NTR EUR Index Futures,ICEUS,Stocks
+US,EWM,MSCI Emerging Markets Equal Weighted NTR USD Index Futures,ICEUS,Stocks
+US,EWW,MSCI World Equal Weighted NTR USD Index Futures,ICEUS,Stocks
+US,FBT,"Financially Settled Bitcoin FBT Futures,Oct-2025,ETH",CBOE,Stocks
+US,FET,"Financially Settled Ether FET Futures,Oct-2025,ETH",CBOE,Stocks
+US,IPCT,BTIC on E-mini S&P/BMV IPC Futures,CME,Stocks
+US,LAV,Las Vegas Real Estate Futures,CME,Stocks
+US,LAX,Los Angeles Real Estate Futures,CME,Stocks
+US,MAC,MSCI All Country World Total Return Future (GTR),ICEUS,Stocks
+US,MIA,Miami Real Estate Futures,CME,Stocks
+US,MIE,MSCI EAFE Climate Change NTR Index Futures,ICEUS,Stocks
+US,MIU,MSCI USA Equal Weighted NTR Index Futures,ICEUS,Stocks
+US,MMA,MSCI All Country World Total Return (TRF) Futures,ICEUS,Stocks
+US,MMA.Y,MSCI All Country World Total Return (TRF) Futures,ICEUS,Stocks
+US,MVM,MSCI Emerging Markets Minimum Volatility NTR USD Index Futures,ICEUS,Stocks
+US,MVW,MSCI World Minimum Volatility NTR USD Index Futures,ICEUS,Stocks
+US,MXC,MSCI ACWI ex China ex HK NTR Index Future,ICEUS,Stocks
+US,MXK,MSCI EAFE ex HK NTR Future,ICEUS,Stocks
+US,NYM,New York Real Estate Futures,CME,Stocks
+US,SDG,San Diego Real Estate Futures,CME,Stocks
+US,SFR,San Francisco Real Estate Futures,CME,Stocks
+US,VX44,Cboe Volatility Index (VIX) Futures,CBOE,Stocks
+US,VX45,Cboe Volatility Index (VIX) Futures,CBOE,Stocks
+US,VX47,Cboe Volatility Index (VIX) Futures,CBOE,Stocks
+US,VX48,Cboe Volatility Index (VIX) Futures,CBOE,Stocks
+US,VX49,Cboe Volatility Index (VIX) Futures,CBOE,Stocks
+US,WDC,Washington DC Real Estate Futures,CME,Stocks
+US,XBTF,Cboe FTSE Bitcoin Index Futures,CBOE,Stocks
+US,BTC,Bitcoin Futures,CME,Currencies
+US,ETH,Ether Futures,CME,Currencies
+US,MBT,Micro Bitcoin Futures,CME,Currencies
+US,6E,Euro FX Futures,CME,Currencies
+US,DX,US Dollar Index® Futures,ICEUS,Currencies
+US,6J,Japanese Yen Futures,CME,Currencies
+US,M6E,Micro EUR/USD Futures,CME,Currencies
+US,6B,British Pound Futures,CME,Currencies
+US,SOL,SOL Futures,CME,Currencies
+US,MET,Micro Ether Futures,CME,Currencies
+US,6A,Australian Dollar Futures,CME,Currencies
+US,M6B,Micro GBP/USD Futures,CME,Currencies
+US,6N,New Zealand Dollar Futures,CME,Currencies
+US,MJY,Micro JPY/USD Futures,CME,Currencies
+US,6C,Canadian Dollar Futures,CME,Currencies
+US,6S,Swiss Franc Futures,CME,Currencies
+US,CNH,Offshore Chinese Renminbi (CNH) Futures,CME,Currencies
+US,MSL,Micro SOL Futures,CME,Currencies
+US,MCD,Micro CAD/USD Futures,CME,Currencies
+US,E7,E-mini Euro FX Futures,CME,Currencies
+US,M6A,Micro AUD/USD Futures,CME,Currencies
+US,XRP,XRP Futures,CME,Currencies
+US,6M,Mexican Peso Futures,CME,Currencies
+US,QBTC,Spot-Quoted Bitcoin Futures,CME,Currencies
+US,6EP,Nearby BTIC+ on EUR/USD Futures,CME,Currencies
+US,J7,E-mini Japanese Yen Futures,CME,Currencies
+US,MSF,Micro CHF/USD Futures,CME,Currencies
+US,6L,Brazilian Real Futures,CME,Currencies
+US,DX.Z,US Dollar Index® Futures (TAS),ICEUS,Currencies
+US,ETE,Ether Euro Futures,CME,Currencies
+US,KEO,Dollar Based Currency Pairs Euro/US Dollar,ICEUS,Currencies
+US,KRW,Korean Won Futures,CME,Currencies
+US,MIR,Micro INR/USD Futures,CME,Currencies
+US,MNH,Micro USD/CNH Futures,CME,Currencies
+US,MP,Dollar Based Currency Pairs British Pound/US Dollar Futures,ICEUS,Currencies
+US,NOK,Norwegian Krone Futures,CME,Currencies
+US,PC,Cross Currency Pairs British Pound Sterling/Canadian Dollar Futures,ICEUS,Currencies
+US,RMB,Onshore Chinese Renminbi (CNY) Futures,CME,Currencies
+US,SIR,Indian Rupee/USD Futures,CME,Currencies
+US,SLB,BTIC on SOL Futures against CME CF Solana-Dollar Reference Rate,CME,Currencies
+US,TMS,TAS on Micro SOL Futures,CME,Currencies
+US,TSL,TAS on SOL Futures,CME,Currencies
+US,XLB,BTIC on XRP Futures against CME CF XRP-Dollar Reference Rate,CME,Currencies
+US,6Z,South African Rand Futures,CME,Currencies
+US,ABB,BTIC on Bitcoin futures against APAC Close (Bitcoin Reference Rate APAC - BRRAP),CME,Currencies
+US,ACD,Australian Dollar/Canadian Dollar Futures,CME,Currencies
+US,AHB,BTIC on Micro Ether futures against APAC Close (Ether-Dollar Reference Rate APAC - ETHUSD_AP),CME,Currencies
+US,AJY,Australian Dollar/Japanese Yen Futures,CME,Currencies
+US,AMB,BTIC on Micro Bitcoin futures against APAC Close (Bitcoin Reference Rate APAC - BRRAP),CME,Currencies
+US,ANE,Australian Dollar/New Zealand Dollar Futures,CME,Currencies
+US,AR,Cross Currency Pairs Australian Dollar/New Zealand Dollar Futures,ICEUS,Currencies
+US,AS,Cross Currency Pairs Australian Dollar/Canadian Dollar Futures,ICEUS,Currencies
+US,ATB,BTIC on Ether futures against APAC Close (Ether-Dollar Reference Rate APAC - ETHUSD_AP),CME,Currencies
+US,BAB,BTIC on Bitcoin Friday Futures against APAC Close,CME,Currencies
+US,BFB,BTIC on Bitcoin Friday Futures,CME,Currencies
+US,BFF,Bitcoin Friday Futures,CME,Currencies
+US,BLB,BTIC on Bitcoin Friday Futures against London Close,CME,Currencies
+US,BTE,Bitcoin Euro Futures,CME,Currencies
+US,CHP,Chilean Peso/US Dollar (CLP/USD) Futures,CME,Currencies
+US,CJY,Canadian Dollar/Japanese Yen Futures,CME,Currencies
+US,CZK,Czech Koruna Futures,CME,Currencies
+US,EAD,Euro/Australian Dollar Futures,CME,Currencies
+US,EBM,Micro Bitcoin Euro Futures,CME,Currencies
+US,EBR,Ether/Bitcoin Ratio Futures,CME,Currencies
+US,ECD,Euro/Canadian Dollar Futures,CME,Currencies
+US,ECK,Czech Koruna/Euro (CZK/EUR) Cross Rate Futures,CME,Currencies
+US,EEM,Micro Ether Euro Futures,CME,Currencies
+US,EHF,Hungarian Forint/Euro (HUF/EUR) Cross Rate Futures,CME,Currencies
+US,ENK,Euro/Norwegian Krone Futures,CME,Currencies
+US,ENZ,EUR/NZD Futures,CME,Currencies
+US,EPZ,Polish Zloty/Euro (PLN/EUR) Cross Rate Futures,CME,Currencies
+US,ESK,Euro/Swedish Krona Futures,CME,Currencies
+US,ETR,Cross Currency Pairs Turkish Lira/Euro,ICEUS,Currencies
+US,EZ,Euro Currency Pairs Euro/Czech Koruna Futures,ICEUS,Currencies
+US,GN,Cross Currency Pairs British Pound Sterling/New Zealand Dollar Futures,ICEUS,Currencies
+US,HR,Euro Currency Pairs Euro/Hungarian Forint Futures,ICEUS,Currencies
+US,HUF,Hungarian Forint Futures,CME,Currencies
+US,HY,Cross Currency Pairs Canadian Dollar/Japanese Yen Futures,ICEUS,Currencies
+US,IDR,IDR/USD Futures,CME,Currencies
+US,ILS,Israeli Shekel Futures,CME,Currencies
+US,KAU,Dollar Based Currency Pairs Aus. Dollar/US Dollar,ICEUS,Currencies
+US,KEJ,Euro Currency Pairs Euro/Japanese Yen Futures,ICEUS,Currencies
+US,KEP,Euro Currency Pairs Euro/Canadian Dollar Futures,ICEUS,Currencies
+US,KGB,Euro Currency Pairs Euro/British Pound Futures,ICEUS,Currencies
+US,KJ,Cross Currency Pairs Swedish Krona/Japanese Yen Futures,ICEUS,Currencies
+US,KMF,Dollar Based Currency Pairs Swiss Franc/US Dollar,ICEUS,Currencies
+US,KMP,Dollar Based Currency Pairs Mexican peso/US dollar,ICEUS,Currencies
+US,KOL,Euro Currency Pairs Euro/Norwegian Krone Futures,ICEUS,Currencies
+US,KRA,Euro Currency Pairs Euro/Australian Dollar Futures (125),ICEUS,Currencies
+US,KRK,Euro Currency Pairs Euro/Swedish Krona Futures,ICEUS,Currencies
+US,KRZ,Euro Currency Pairs Euro/Swiss Franc Futures,ICEUS,Currencies
+US,KSN,Dollar Based Currency Pairs Japanese Yen/US Dollar,ICEUS,Currencies
+US,KSV,Dollar Based Currency pairs Canadian Dollar/US Dollar,ICEUS,Currencies
+US,KX,Dollar Based Currency Pairs US Dollar/Swedish Krona,ICEUS,Currencies
+US,KY,Cross Currency Pairs Norwegian Krone/Japanese Yen Futures,ICEUS,Currencies
+US,KZX,Dollar Based Currency Pairs New Zealand Dollar/US Dollar Futures,ICEUS,Currencies
+US,KZY,Cross Currency Pairs Swiss Franc/Japanese Yen Futures,ICEUS,Currencies
+US,MXP,Micro XRP Futures,CME,Currencies
+US,NJ,Cross Currency Pairs Norwegian Krone/Swedish Krona Futures,ICEUS,Currencies
+US,NJY,NZD/JPY Futures,CME,Currencies
+US,NSK,NOK/SEK Futures,CME,Currencies
+US,NT,Dollar Based Currency Pairs US Dollar/Norw. Krone,ICEUS,Currencies
+US,NZC,NZD/CAD Futures,CME,Currencies
+US,OLB,BTIC on Micro SOL Futures against CME CF Solana-Dollar Reference Rate,CME,Currencies
+US,ONB,BTIC on Micro SOL Futures against CME CF Solana-Dollar Reference Rate New York Variant,CME,Currencies
+US,PAD,GBP/AUD Futures,CME,Currencies
+US,PCD,GBP/CAD Futures,CME,Currencies
+US,PJY,British Pound/Japanese Yen Futures,CME,Currencies
+US,PK,Cross Currency Pairs British Pound Sterling/Norwegian Krone Futures,ICEUS,Currencies
+US,PLE,Cross Currency Pairs Polish Zloty/Euro,ICEUS,Currencies
+US,PLN,Polish Zloty Futures,CME,Currencies
+US,PNK,GBP/NOK Futures,CME,Currencies
+US,PS,Cross Currency Pairs British Pound Sterling/Swedish Krona Futures,ICEUS,Currencies
+US,PSF,British Pound/Swiss Franc Futures,CME,Currencies
+US,PSK,GBP/SEK Futures,CME,Currencies
+US,PZ,Cross Currency Pairs British Pound Sterling/South African Rand Futures,ICEUS,Currencies
+US,QA,Cross Currency Pairs British Pound Sterling/Australian Dollar Futures,ICEUS,Currencies
+US,QEF,Spot-Quoted Ether Cleared Futures (OI View),CME,Currencies
+US,QETH,Spot-Quoted Ether Futures,CME,Currencies
+US,QTF,Spot-Quoted Bitcoin Futures (OI View),CME,Currencies
+US,RF,Euro/Swiss Franc Futures,CME,Currencies
+US,RLB,BTIC on Micro XRP Futures against CME CF XRP-Dollar Reference Rate,CME,Currencies
+US,RME,Chinese Renminbi/Euro Futures,CME,Currencies
+US,RNB,BTIC on Micro XRP Futures against CME CF XRP-Dollar Reference Rate New York Variant,CME,Currencies
+US,RP,Euro/British Pound Futures,CME,Currencies
+US,RY,Euro/Japanese Yen Futures,CME,Currencies
+US,SEK,Swedish Krona Futures,CME,Currencies
+US,SGD,SGD/USD Futures,CME,Currencies
+US,SJY,Swiss Franc/Japanese Yen Futures,CME,Currencies
+US,SNB,BTIC on SOL Futures against CME CF Solana-Dollar Reference Rate New York Variant,CME,Currencies
+US,SS,Cross Currency Pairs British Pound Sterling/Swiss Franc Futures,ICEUS,Currencies
+US,SY,Cross Currency Pairs British Pound Sterling/Japanese Yen Futures,ICEUS,Currencies
+US,TBM,TAS on Micro Bitcoin Futures,CME,Currencies
+US,TBT,TAS on Bitcoin Futures,CME,Currencies
+US,TEM,TAS on Micro Ether Futures,CME,Currencies
+US,TET,TAS on Ether Futures,CME,Currencies
+US,THAI,THB/USD Futures,CME,Currencies
+US,TRL,Turkish Lira/US Dollar (TRY/USD) Future,CME,Currencies
+US,TRM,Dollar Based Currency Pairs Turkish Lira/Us Dollar,ICEUS,Currencies
+US,VC,Dollar Based Currency Pairs US Dollar/Czech Koruna,ICEUS,Currencies
+US,VU,Dollar Based Currency Pairs US Dollar/Hungarian Forint,ICEUS,Currencies
+US,XNB,BTIC on XRP Futures against CME CF XRP-Dollar Reference Rate New York Variant,CME,Currencies
+US,YA,Cross Currency Pairs Australian Dollar/Japanese Yen Futures,ICEUS,Currencies
+US,YZ,Euro Currency Pairs Euro/South African Rand Futures,ICEUS,Currencies
+US,ZJ,Cross Currency Pairs New Zealand Dollar/Japanese Yen Futures,ICEUS,Currencies
+US,ZN,10-Year T-Note Futures,CBOT,Rates
+US,ZB,U.S. Treasury Bond Futures,CBOT,Rates
+US,10Y,10-Year Yield Futures,CBOT,Rates
+US,ZQ,30 Day Federal Funds Futures,CBOT,Rates
+US,UB,Ultra U.S. Treasury Bond Futures,CBOT,Rates
+US,ZF,5-Year T-Note Futures,CBOT,Rates
+US,ZT,2-Year T-Note Futures,CBOT,Rates
+US,TN,Ultra 10-Year U.S. Treasury Note Futures,CBOT,Rates
+US,20U,30-Year UMBS TBA Futures - 2.0% Coupon,CBOT,Rates
+US,MTN,Micro Ultra 10-Year U.S. Treasury Note Futures,CBOT,Rates
+US,SR3,Three-Month SOFR Futures,CME,Rates
+US,2YY,2-Year Yield Futures,CBOT,Rates
+US,30Y,30-Year Yield Futures,CBOT,Rates
+US,5YY,5-Year Yield Futures,CBOT,Rates
+US,MWN,Micro Ultra U.S. Treasury Bond Futures,CBOT,Rates
+US,TBF3,U.S. T-Bill Futures,CME,Rates
+US,YIT,2-Year Eris SOFR Swap Futures,CBOT,Rates
+US,YIY,10-Year Eris SOFR Swap Futures,CBOT,Rates
+US,25U,30-Year UMBS TBA Futures - 2.5% Coupon,CBOT,Rates
+US,30C,ICE U.S. Conforming 30-year Fixed Mortgage Rate Lock Weighted APR Index Futures,ICEUS,Rates
+US,30J,ICE U.S. Jumbo 30-year Fixed Mortgage Rate Lock Weighted APR Index Futures,ICEUS,Rates
+US,30U,30-Year UMBS TBA Futures - 3.0% Coupon,CBOT,Rates
+US,35U,30-Year UMBS TBA Futures - 3.5% Coupon,CBOT,Rates
+US,40U,30-Year UMBS TBA Futures - 4.0% Coupon,CBOT,Rates
+US,45U,30-Year UMBS TBA Futures - 4.5% Coupon,CBOT,Rates
+US,50U,30-Year UMBS TBA Futures - 5.0% Coupon,CBOT,Rates
+US,55U,30-Year UMBS TBA Futures - 5.5% Coupon,CBOT,Rates
+US,60U,30-Year UMBS TBA Futures - 6.0% Coupon,CBOT,Rates
+US,70U,30-Year UMBS TBA Futures - 7.0% Coupon,CBOT,Rates
+US,A2R,Adjusted Interest Rate Russell 2000 Total Return (EFFR) Futures,CME,Rates
+US,AQR,Adjusted Interest Rate Nasdaq-100 Total Return (EFFR) Futures,CME,Rates
+US,ARR,Adjusted Interest Rate Russell 1000 Total Return (EFFR) Futures,CME,Rates
+US,ASR,Adjusted Interest Rate S&P 500 Total Return (EFFR) Futures,CME,Rates
+US,B1S,30-Year MAC SOFR Swap Futures,CBOT,Rates
+US,DHB,Bloomberg IG Duration-Hedged Credit Futures,CBOT,Rates
+US,DHY,Bloomberg HY Duration-Hedged Credit Futures,CBOT,Rates
+US,E1S,20-Year MAC SOFR Swap Futures,CBOT,Rates
+US,ESR,ESTR Futures,CME,Rates
+US,EUS,Euro Short-Term Rate (€STR) - Three-Month Single Contract Basis Spread Futures,CME,Rates
+US,F1S,5-Year MAC SOFR Swap Futures,CBOT,Rates
+US,FFV,Fed Funds Variation Futures,CME,Rates
+US,HYB,Bloomberg HY Credit Futures,CBOT,Rates
+US,HYBT,BTIC on Bloomberg HY Credit Futures,CBOT,Rates
+US,IQB,Bloomberg IG Credit Futures,CBOT,Rates
+US,IQBT,BTIC on Bloomberg IG Credit Futures,CBOT,Rates
+US,MGE,Mortgage Rate (OB30C) Futures,CBOT,Rates
+US,N1S,10-Year MAC SOFR Swap Futures,CBOT,Rates
+US,S1S,7-Year MAC SOFR Swap Futures,CBOT,Rates
+US,SON,Quarterly IMM SONIA Futures,CME,Rates
+US,SR1,One-Month SOFR Futures,CME,Rates
+US,T1S,2-Year MAC SOFR Swap Futures,CBOT,Rates
+US,TI3,Three-Month F-TIIE Futures,CME,Rates
+US,TIE,Mexican Funding TIIE (Monthly Contracts) Futures,CME,Rates
+US,TWE,20-Year U.S. Treasury Bond Futures,CBOT,Rates
+US,XEU,EUR XCCY Futures,CME,Rates
+US,YIA,1-Year Eris SOFR Swap Futures,CBOT,Rates
+US,YIB,7-Year Eris SOFR Swap Futures,CBOT,Rates
+US,YIC,3-Year Eris SOFR Swap Futures,CBOT,Rates
+US,YID,4-Year Eris SOFR Swap Futures,CBOT,Rates
+US,YIE,30-Year Eris SOFR Swap Futures,CBOT,Rates
+US,YII,12-Year Eris SOFR Swap Futures,CBOT,Rates
+US,YIL,15-Year Eris SOFR Swap Futures,CBOT,Rates
+US,YIO,20-Year Eris SOFR Swap Futures,CBOT,Rates
+US,YIW,5-Year Eris SOFR Swap Futures,CBOT,Rates
+US,Z3N,3-Year T-Note Futures,CBOT,Rates
+US,CL,Crude Oil Futures,NYMEX,Energy
+US,NG,Henry Hub Natural Gas Futures,NYMEX,Energy
+US,RB,RBOB Gasoline Futures,NYMEX,Energy
+US,TTF,Dutch TTF Natural Gas Calendar Month Futures,NYMEX,Energy
+US,JKM,LNG Japan/Korea Marker (Platts) Futures,NYMEX,Energy
+US,HH,Natural Gas (Henry Hub) Last-day Financial Futures,NYMEX,Energy
+US,HO,NY Harbor ULSD Futures,NYMEX,Energy
+US,1S,Propane Non-LDH Mont Belvieu (OPIS) BALMO Futures,NYMEX,Energy
+US,TD3,Freight Route Middle East to China (TD3C) (Platts) Futures,NYMEX,Energy
+US,BZ,Brent Last Day Financial Futures,NYMEX,Energy
+US,QG,E-mini Natural Gas Futures,NYMEX,Energy
+US,ABY,WTI-Brent Bullet Futures,NYMEX,Energy
+US,WTI,WTI Midland (Argus) Trade Month Futures,NYMEX,Energy
+US,CU,Chicago Ethanol (Platts) Futures,NYMEX,Energy
+US,QM,E-mini Crude Oil Futures,NYMEX,Energy
+US,AD8,PJM ComEd Zone 5 MW Peak Calendar-Month Day-Ahead LMP Futures,NYMEX,Energy
+US,AVK,New York Harbor 1.0% Fuel Oil (Platts) BALMO Futures,NYMEX,Energy
+US,MNG,Micro Henry Hub Natural Gas Futures,NYMEX,Energy
+US,A50,PJM PENELEC Zone Off-Peak Calendar-Month Day-Ahead LMP Futures,NYMEX,Energy
+US,A9N,Argus Propane (Saudi Aramco) Futures,NYMEX,Energy
+US,BZL,Brent Crude Oil London Trade at Marker Futures,NYMEX,Energy
+US,DCB,Dubai Crude Oil (Platts) Financial Futures,NYMEX,Energy
+US,POC,PJM PENELEC Zone Off-Peak Calendar-Day 5 MW Day-Ahead LMP Futures,NYMEX,Energy
+US,TL,Freight Route Middle East to China (TD3C) (Baltic) Futures,NYMEX,Energy
+US,WDB,WTI Houston (Argus) vs. Dubai (Platts) Calendar Month Futures,NYMEX,Energy
+US,88,1% Fuel Oil Cargoes FOB NWE (Platts) vs. 3.5% Fuel Oil Barges FOB Rdam (Platts) BALMO Futures,NYMEX,Energy
+US,ABI,Dubai Crude Oil (Platts) BALMO Futures,NYMEX,Energy
+US,AD9,PJM ComEd Zone 5 MW Off-Peak Calendar-Month Day-Ahead LMP Futures,NYMEX,Energy
+US,AGA,Singapore Gasoil (Platts) vs. Low Sulphur Gasoil Futures,NYMEX,Energy
+US,AI1,ERCOT Houston 345 kV Hub 5 MW Peak Futures,NYMEX,Energy
+US,AI9,ERCOT South 345 kV Hub 5 MW Peak Futures,NYMEX,Energy
+US,AL1,PJM Western Hub Peak Calendar-Month Real-Time LMP Futures,NYMEX,Energy
+US,ANT,Argus WTI Diff vs. CMA NYMEX Trade Month Futures,NYMEX,Energy
+US,AR3,PJM BGE Zone Off-Peak Calendar-Month Day-Ahead LMP Futures,NYMEX,Energy
+US,AU2,ISO New England New Hampshire Zone 5 MW Peak Calendar-Month Day-Ahead LMP Futures,NYMEX,Energy
+US,CMB,3.5% Fuel Oil CIF Med (Platts) vs. 3.5% Fuel Oil FOB Med (Platts) BALMO Futures,NYMEX,Energy
+US,CS5,Container Freight (North Europe to China/East Asia) (FBX12) (Baltic) Futures,NYMEX,Energy
+US,DAX,CAISO SP15 EZ Gen Hub 5 MW Off-Peak Calendar-Month Day-Ahead LMP Futures,NYMEX,Energy
+US,DCW,WTI vs. Dubai Crude Oil (Platts) Futures,NYMEX,Energy
+US,FEF,Alberta Power Pool Extended Off-Peak Calendar-Month Futures,NYMEX,Energy
+US,FL,3.5% Fuel Oil Cargoes FOB MED (Platts) Crack Spread Futures,NYMEX,Energy
+US,GCC,Gulf Coast Unl 87 Gasoline M2 (Platts) Crack Spread Futures,NYMEX,Energy
+US,HGB,USGC Marine Fuel 0.5% Barges (Platts) vs. Gulf Coast HSFO (Platts) BALMO Futures,NYMEX,Energy
+US,JBT,Japanese Power (Day-Ahead) Tokyo Base-Load Futures,NYMEX,Energy
+US,JCY,Japan Crude Cocktail (Detailed) JPY Futures,NYMEX,Energy
+US,MAS,Mini Argus Propane (Saudi Aramco) Futures,NYMEX,Energy
+US,MH,Los Angeles CARBOB Gasoline (OPIS) Futures,NYMEX,Energy
+US,MTF,Coal (API2) CIF ARA (ARGUS-McCloskey) Futures,NYMEX,Energy
+US,NBO,Gasoline Eurobob Non-Oxy NWE Barges (Argus) Crack Spread (1000mt) Futures,NYMEX,Energy
+US,NWM,LNG North West Europe Marker (Platts) Futures,NYMEX,Energy
+US,POL,PJM Northern Illinois Hub Day-Ahead Off-Peak Calendar-Day 5 MW Futures,NYMEX,Energy
+US,PYP,PJM Eastern Hub Peak Calendar-Day 5 MW Day-Ahead LMP Futures,NYMEX,Energy
+US,RBL,RBOB Gasoline London Trade at Marker Futures,NYMEX,Energy
+US,SD,Singapore Fuel Oil 180 cst (Platts) vs. 380 cst (Platts) Futures,NYMEX,Energy
+US,SGB,Singapore Gasoil (Platts) Futures,NYMEX,Energy
+US,SRT,PJM Western Hub Real-Time Peak Average Price Monthly Futures 5 MW,NYMEX,Energy
+US,THB,Freight Middle East to Japan (TC5) (Platts) BALMO Futures,NYMEX,Energy
+US,UCO,Gulf Coast UCO (Argus) Futures,NYMEX,Energy
+US,UN,European Naphtha Cargoes CIF NWE (Platts) Futures,NYMEX,Energy
+US,WS,Crude Oil Bullet Futures,NYMEX,Energy
+US,1E,RBOB Gasoline Crack Spread BALMO Futures,NYMEX,Energy
+US,1H,NY Harbor ULSD Crack Spread BALMO Futures,NYMEX,Energy
+US,1NA,Singapore Mogas 92 Unleaded (Platts) Dubai (Platts) Crack Spread Futures,NYMEX,Energy
+US,1NM,MTBE FOB Singapore (Platts) Futures,NYMEX,Energy
+US,1T,Jet Aviation Fuel Cargoes FOB MED (Platts) Futures,NYMEX,Energy
+US,1ZA,CAISO SP15 EZ Gen Hub 5 MW Peak Calendar-Month Real-Time LMP Futures,NYMEX,Energy
+US,22,Argus Propane Far East Index BALMO Futures,NYMEX,Energy
+US,23,NY Harbor ULSD Last Day Financial Futures,NYMEX,Energy
+US,26,Crude Oil Last Day Financial Futures,NYMEX,Energy
+US,27,RBOB Gasoline Last Day Financial Futures,NYMEX,Energy
+US,2C,Chicago CBOB Gasoline (Platts) Futures,NYMEX,Energy
+US,2D,CAISO NP15 EZ Gen Hub 5 MW Off-Peak Calendar-Month Real-Time LMP Futures,NYMEX,Energy
+US,2FW,CAISO NP15 EZ Gen Hub 5 MW Peak Calendar-Day Real-Time LMP Futures,NYMEX,Energy
+US,2JW,CAISO NP15 EZ Gen Hub 5 MW Off-Peak Calendar-Day Real-Time LMP Futures,NYMEX,Energy
+US,2ZW,CAISO NP15 EZ Gen Hub 5 MW Off-Peak Calendar-Day Day-Ahead LMP Futures,NYMEX,Energy
+US,3L,Mont Belvieu Physical Iso-Butane (OPIS) Futures,NYMEX,Energy
+US,3NA,Argus Propane Far East Index vs. Japan C&F Naphtha (Platts) Futures,NYMEX,Energy
+US,3NB,Argus Propane Far East Index vs. Japan C&F Naphtha (Platts) BALMO Futures,NYMEX,Energy
+US,3P,Mont Belvieu Physical Non-LDH Propane (OPIS) Futures,NYMEX,Energy
+US,3V,ULSD 10ppm Cargoes CIF NWE (Platts) vs. Low Sulphur Gasoil BALMO Futures,NYMEX,Energy
+US,3XW,CAISO NP15 EZ Gen Hub 5 MW Off-Peak Calendar-Month Day-Ahead LMP Futures,NYMEX,Energy
+US,3ZW,CAISO NP15 EZ Gen Hub 5 MW Peak Calendar-Day Day-Ahead LMP Futures,NYMEX,Energy
+US,4C,Chicago ULSD (Platts) Futures,NYMEX,Energy
+US,4V,Gasoil 0.1% Cargoes CIF NWE (Platts) vs. Low Sulphur Gasoil BALMO Futures,NYMEX,Energy
+US,4XW,CAISO NP15 EZ Gen Hub 5 MW Peak Calendar-Month Day-Ahead LMP Futures,NYMEX,Energy
+US,51,Mont Belvieu LDH Propane (OPIS) vs. European Propane CIF ARA (Argus) Futures,NYMEX,Energy
+US,5L,Mini Singapore Fuel Oil 180 cst (Platts) BALMO Futures,NYMEX,Energy
+US,5Y,NY ULSD (Argus) Futures,NYMEX,Energy
+US,63,3.5% Fuel Oil Cargoes FOB MED (Platts) vs. 3.5% Fuel Oil Barges FOB Rdam (Platts) BALMO Futures,NYMEX,Energy
+US,7D,3.5% Fuel Oil CIF MED (Platts) Futures,NYMEX,Energy
+US,7F,European Low Sulphur Gasoil (100mt) Bullet Futures,NYMEX,Energy
+US,7N,Premium Unleaded Gasoline 10 ppm Barges FOB Rdam (Platts) BALMO Futures,NYMEX,Energy
+US,7V,ULSD 10ppm CIF MED (Platts) vs. Low Sulphur Gasoil BALMO Futures,NYMEX,Energy
+US,7X,Diesel 10ppm Barges FOB ARA (Platts) vs. Low Sulphur Gasoil BALMO Futures,NYMEX,Energy
+US,8D,3.5% Fuel Oil CIF MED (Platts) BALMO Futures,NYMEX,Energy
+US,8W,Gasoil 0.1% Cargoes CIF MED (Platts) vs. Low Sulphur Gasoil BALMO Futures,NYMEX,Energy
+US,9Q,Jet Fuel Barges FOB Rdam (Platts) vs. Low Sulphur Gasoil BALMO Futures,NYMEX,Energy
+US,A0D,Mini European 3.5% Fuel Oil Barges FOB Rdam (Platts) Futures,NYMEX,Energy
+US,A0F,Mini Singapore Fuel Oil 180 cst (Platts) Futures,NYMEX,Energy
+US,A1D,RBOB Gasoline BALMO Futures,NYMEX,Energy
+US,A1G,NY Harbor ULSD BALMO Futures,NYMEX,Energy
+US,A1L,Gulf Coast ULSD (Platts) Up-Down BALMO Futures,NYMEX,Energy
+US,A1M,Gulf Coast Jet (Platts) Up-Down BALMO Futures,NYMEX,Energy
+US,A1P,Singapore Mogas 92 Unleaded (Platts) BALMO Futures,NYMEX,Energy
+US,A1Q,NY Jet Fuel (Platts) Futures,NYMEX,Energy
+US,A1R,Propane Non-LDH Mont Belvieu (OPIS) Futures,NYMEX,Energy
+US,A1U,NY Jet Fuel (Platts) vs. NY Harbor ULSD Futures,NYMEX,Energy
+US,A1V,Jet Aviation Fuel Cargoes FOB MED (Platts) vs. Low Sulphur Gasoil Futures,NYMEX,Energy
+US,A1W,1% Fuel Oil Cargoes CIF MED (Platts) Futures,NYMEX,Energy
+US,A1X,1% Fuel Oil Cargoes CIF NWE (Platts) Futures,NYMEX,Energy
+US,A32,European Propane CIF ARA (Argus) BALMO Futures,NYMEX,Energy
+US,A33,1% Fuel Oil Rdam (Platts) vs. 1% Fuel Oil NWE (Platts) Futures,NYMEX,Energy
+US,A3C,Chicago CBOB Gasoline (Platts) vs. RBOB Gasoline Futures,NYMEX,Energy
+US,A3G,Premium Unleaded Gasoline 10 ppm FOB MED (Platts) Futures,NYMEX,Energy
+US,A3M,Mont Belvieu Physical Normal Butane (OPIS) Futures,NYMEX,Energy
+US,A3N,Mont Belvieu Physical LDH Propane (OPIS) Futures,NYMEX,Energy
+US,A3Q,Mont Belvieu Physical Ethane (OPIS) Futures,NYMEX,Energy
+US,A3R,Mont Belvieu Physical Natural Gasoline (OPIS) Futures,NYMEX,Energy
+US,A42,WTI BALMO Futures,NYMEX,Energy
+US,A43,European Naphtha (Platts) Crack Spread BALMO Futures,NYMEX,Energy
+US,A46,PJM METED Zone Off-Peak Calendar-Month Day-Ahead LMP Futures,NYMEX,Energy
+US,A47,PJM METED Zone Peak Calendar-Month Day-Ahead LMP Futures,NYMEX,Energy
+US,A49,PJM PENELEC Zone Peak Calendar-Month Day-Ahead LMP Futures,NYMEX,Energy
+US,A4L,NYISO Zone F 5 MW Peak Calendar-Month Day-Ahead LBMP Futures,NYMEX,Energy
+US,A4M,NYISO Zone F 5 MW Off-Peak Calendar-Month Day-Ahead LBMP Futures,NYMEX,Energy
+US,A4N,PJM PECO Zone 5 MW Peak Calendar-Month Day-Ahead LMP Futures,NYMEX,Energy
+US,A4P,PJM PECO Zone 5 MW Off-Peak Calendar-Month Day-Ahead LMP Futures,NYMEX,Energy
+US,A4Q,MISO Illinois Hub 5 MW Peak Calendar-Month Day-Ahead Futures,NYMEX,Energy
+US,A4R,MISO Illinois Hub 5 MW Off-Peak Calendar-Month Day-Ahead Futures,NYMEX,Energy
+US,A55,NYISO Zone E 5 MW Peak Calendar-Month Day-Ahead LBMP Futures,NYMEX,Energy
+US,A58,NYISO Zone E 5 MW Off-Peak Calendar-Month Day-Ahead LBMP Futures,NYMEX,Energy
+US,A59,Dated Brent (Platts) vs. Brent Second Month (BFOE) (Platts) Daily CFD Futures,NYMEX,Energy
+US,A5C,Chicago ULSD (Platts) vs. NY Harbor ULSD Futures,NYMEX,Energy
+US,A6L,European 1% Fuel Oil Barges FOB Rdam (Platts) BALMO Futures,NYMEX,Energy
+US,A6V,Gasoil 0.1% Barges FOB ARA (Platts) vs. Low Sulphur Gasoil BALMO Futures,NYMEX,Energy
+US,A6W,Dated Brent (Platts) vs. Brent First Month (BFOE) (Platts) Daily CFD Future,NYMEX,Energy
+US,A6X,Jet Fuel Cargoes CIF NWE (Platts) vs. Low Sulphur Gasoil BALMO Futures,NYMEX,Energy
+US,A7E,Argus Propane Far East Index Futures,NYMEX,Energy
+US,A7G,Dated Brent (Platts) Daily Futures,NYMEX,Energy
+US,A7I,Gasoline Euro-bob Oxy NWE Barges (Argus) Crack Spread BALMO Futures,NYMEX,Energy
+US,A7L,Premium Unleaded Gasoline 10 ppm Barges FOB Rdam (Platts) Futures,NYMEX,Energy
+US,A7Q,Mont Belvieu Natural Gasoline (OPIS) Futures,NYMEX,Energy
+US,A7Y,NY ULSD (Argus) vs. NY Harbor ULSD Futures,NYMEX,Energy
+US,A81,Mont Belvieu Mini LDH Propane (OPIS) Futures,NYMEX,Energy
+US,A8B,Group Three Sub-octane Gasoline (Platts) vs. RBOB Gasoline BALMO Futures,NYMEX,Energy
+US,A8C,Mont Belvieu Ethane (OPIS) BALMO Futures,NYMEX,Energy
+US,A8G,Premium Unleaded Gasoline 10 ppm FOB MED (Platts) BALMO Futures,NYMEX,Energy
+US,A8I,Mont Belvieu Iso-Butane (OPIS) Futures,NYMEX,Energy
+US,A8J,Mont Belvieu Normal Butane (OPIS) BALMO Futures,NYMEX,Energy
+US,A8K,Conway Propane (OPIS) Futures,NYMEX,Energy
+US,A8L,Conway Natural Gasoline (OPIS) Futures,NYMEX,Energy
+US,A8M,Conway Normal Butane (OPIS) Futures,NYMEX,Energy
+US,A8O,Mont Belvieu LDH Propane (OPIS) BALMO Futures,NYMEX,Energy
+US,A91,Argus Propane Far East Index vs. European Propane CIF ARA (Argus) Futures,NYMEX,Energy
+US,AA3,NYISO Zone C 5 MW Off-Peak Calendar-Month Day-Ahead LBMP Futures,NYMEX,Energy
+US,AA4,Argus LLS Trade Month Futures,NYMEX,Energy
+US,AA5,EIA Flat Tax On-Highway Diesel Futures,NYMEX,Energy
+US,AA6,Group Three ULSD (Platts) vs. NY Harbor ULSD Futures,NYMEX,Energy
+US,AA7,Group Three ULSD (Platts) Futures,NYMEX,Energy
+US,AA8,Group Three Sub-octane Gasoline (Platts) vs. RBOB Futures,NYMEX,Energy
+US,AA9,Group Three Sub-octane Gasoline (Platts) Futures,NYMEX,Energy
+US,AB3,PJM Northern Illinois Hub 5 MW Peak Calendar-Month Real-Time LMP Futures,NYMEX,Energy
+US,AB6,Group Three ULSD (Platts) vs. NY Harbor ULSD BALMO Futures,NYMEX,Energy
+US,AB7,Gasoil 0.1% Cargoes CIF NWE (Platts) BALMO Futures,NYMEX,Energy
+US,ABH,NY Harbor ULSD Bullet Futures,NYMEX,Energy
+US,ABS,Singapore Fuel Oil 180 cst (Platts) BALMO Futures,NYMEX,Energy
+US,ABT,Singapore Fuel Oil 380 cst (Platts) BALMO Futures,NYMEX,Energy
+US,ABX,Singapore Jet Kerosene (Platts) BALMO Futures,NYMEX,Energy
+US,AC0,Mont Belvieu Ethane (OPIS) Futures,NYMEX,Energy
+US,ACB,Freight Route US Gulf to China (TD22) (Baltic) Futures,NYMEX,Energy
+US,ACS,WTI Annual Financial Futures,NYMEX,Energy
+US,ACU,CBL Australian Carbon Credit Unit (ACCU) Futures,NYMEX,Energy
+US,AD0,Mont Belvieu Normal Butane (OPIS) Futures,NYMEX,Energy
+US,AD5,PJM Duquesne Zone 5 MW Peak Calendar-Month Day-Ahead LMP Futures,NYMEX,Energy
+US,AD6,PJM Duquesne Zone 5 MW Off-Peak Calendar-Month Day-Ahead LMP Futures,NYMEX,Energy
+US,ADB,Brent Crude Oil vs. Dubai Crude Oil (Platts) Futures,NYMEX,Energy
+US,AE3,PJM BGE Zone Peak Calendar-Month Day-Ahead LMP Futures,NYMEX,Energy
+US,AE5,Argus LLS vs. WTI (Argus) Trade Month Futures,NYMEX,Energy
+US,AE8,PJM DPL Zone Off-Peak Calendar-Month Day-Ahead LMP Futures,NYMEX,Energy
+US,AE9,PJM Eastern Hub Peak Calendar-Month Day-Ahead LMP Futures,NYMEX,Energy
+US,AEB,Freight Route US Gulf to ARA (TD25) (Baltic) Futures,NYMEX,Energy
+US,AET,European Diesel 10 ppm Barges FOB ARA (Platts) vs. Low Sulphur Gasoil Futures,NYMEX,Energy
+US,AEZ,NY Ethanol (Platts) Futures,NYMEX,Energy
+US,AF2,PJM JCPL Zone Off-Peak Calendar-Month Day-Ahead LMP Futures,NYMEX,Energy
+US,AF4,PJM Eastern Hub Off-Peak Calendar-Month Day-Ahead LMP Futures,NYMEX,Energy
+US,AF5,PJM PPL Zone Off-Peak Calendar-Month Day-Ahead LMP Futures,NYMEX,Energy
+US,AFE,Dated Brent (Platts) to Frontline Brent BALMO Futures,NYMEX,Energy
+US,AFF,WTI Midland (Argus) vs. WTI Financial Futures,NYMEX,Energy
+US,AFH,WTS (Argus) vs. WTI Trade Month Futures,NYMEX,Energy
+US,AFI,1% Fuel Oil Cargoes FOB NWE (Platts) Crack Spread Futures,NYMEX,Energy
+US,AFK,3.5% Fuel Oil Cargoes FOB MED (Platts) vs. 3.5% Fuel Oil Barges FOB Rdam (Platts) Futures,NYMEX,Energy
+US,AFY,Dated Brent (Platts) to Frontline Brent Futures,NYMEX,Energy
+US,AGE,Gulf Coast Jet Fuel (Platts) Futures,NYMEX,Energy
+US,AGT,European Diesel 10 ppm Barges FOB ARA (Platts) Futures,NYMEX,Energy
+US,AGX,European Low Sulphur Gasoil Financial Futures,NYMEX,Energy
+US,AH3,MISO Indiana Hub (formerly Cinergy Hub) 5 Month Peak Calendar-Month Real-Time Futures,NYMEX,Energy
+US,AHJ,MISO Michigan Hub Real-Time Off-Peak Calendar-Month 5 MW Futures,NYMEX,Energy
+US,AHL,NY Harbor ULSD Crack Spread Futures,NYMEX,Energy
+US,AHM,MISO Michigan Hub Real-Time Peak Calendar-Month 5 MW Futures,NYMEX,Energy
+US,AI2,ERCOT Houston 345 kV Hub 5 MW Off-Peak Futures,NYMEX,Energy
+US,AI3,ERCOT Houston 345 kV Hub 5 MW Peak Calendar-Day Futures,NYMEX,Energy
+US,AI4,ERCOT Houston 345 kV Hub 5 MW Off-Peak Calendar-Day Futures,NYMEX,Energy
+US,AI5,ERCOT North 345 kV Hub 5 MW Peak Futures,NYMEX,Energy
+US,AI6,ERCOT North 345 kV Hub 5 MW Off-Peak Futures,NYMEX,Energy
+US,AI7,ERCOT North 345 kV Hub 5 MW Peak Calendar-Day Futures,NYMEX,Energy
+US,AJ,Gulf Coast ULSD (Argus) Futures,NYMEX,Energy
+US,AJ1,ERCOT South 345 kV Hub 5 MW Off-Peak Futures,NYMEX,Energy
+US,AJ2,PJM JCPL Zone Peak Calendar-Month Day-Ahead LMP Futures,NYMEX,Energy
+US,AJ9,Brent Crude Oil BALMO Futures,NYMEX,Energy
+US,AJB,Japan C&F Naphtha (Platts) Brent Crack Spread Futures,NYMEX,Energy
+US,AJJ,MISO Minnesota Hub Off-Peak Calendar-Month LMP 5 MW Futures,NYMEX,Energy
+US,AJL,Los Angeles CARBOB Gasoline (OPIS) vs. RBOB Gasoline Futures,NYMEX,Energy
+US,AJR,Jet Barges FOB Rdam (Platts) vs. Low Sulphur Gasoil Futures,NYMEX,Energy
+US,AJS,Los Angeles Jet (OPIS) vs. NY Harbor ULSD Futures,NYMEX,Energy
+US,AK1,ERCOT South 345 kV Hub 5 MW Peak Calendar-Day Futures,NYMEX,Energy
+US,AKL,Los Angeles CARB Diesel (OPIS) vs. NY Harbor ULSD Futures,NYMEX,Energy
+US,AKR,European 3.5% Fuel Oil Barges FOB Rdam (Platts) BALMO Futures,NYMEX,Energy
+US,AKS,Singapore Jet Kerosene (Platts) Futures,NYMEX,Energy
+US,AKX,European 1% Fuel Oil Cargoes FOB NWE (Platts) BALMO Futures,NYMEX,Energy
+US,AKZ,European Naphtha (Platts) BALMO Futures,NYMEX,Energy
+US,AL5,PJM PPL Zone Peak Calendar-Month Day-Ahead LMP Futures,NYMEX,Energy
+US,AL6,PJM PSEG Zone Peak Calendar-Month Day-Ahead LMP 5 MW Futures,NYMEX,Energy
+US,AL8,PJM DPL Zone Peak Calendar-Month Day-Ahead LMP Futures,NYMEX,Energy
+US,AL9,ISO New England West Central Massachusetts Zone 5 MW Off-Peak Calendar-Month Day Ahead LMP Futures,NYMEX,Energy
+US,ALM,MISO Minnesota Hub Peak Calendar-Month LMP 5 MW Futures,NYMEX,Energy
+US,ALX,Los Angeles CARB Diesel (OPIS) Futures,NYMEX,Energy
+US,ALY,Gulf Coast ULSD (Platts) Futures,NYMEX,Energy
+US,AM1,ERCOT South 345 kV Hub 5 MW Off-Peak Calendar-Day Futures,NYMEX,Energy
+US,AML,New York Harbor Residual Fuel (Platts) Crack Spread Futures,NYMEX,Energy
+US,AN1,ERCOT West 345 kV Hub 5 MW Peak Futures,NYMEX,Energy
+US,ANL,NYISO Zone A Day-Ahead Peak Calendar-Day 5 MW Futures,NYMEX,Energy
+US,AO1,ERCOT West 345 kV Hub 5 MW Off-Peak Futures,NYMEX,Energy
+US,AOB,1% Fuel Oil Cargoes CIF MED (Platts) BALMO Futures,NYMEX,Energy
+US,AOH,MISO Illinois Hub Peak Calendar-Month LMP 5 MW Futures,NYMEX,Energy
+US,AOJ,MISO Illinois Hub Off-Peak Calendar Month LMP 5 MW Futures,NYMEX,Energy
+US,AOL,PJM AEP Dayton Hub Real-Time Off-Peak Calendar-Day 5 MW Futures,NYMEX,Energy
+US,AP1,ERCOT North 345 kV Hub 5 MW Off-Peak Calendar-Day Futures,NYMEX,Energy
+US,AP2,ISO New England Connecticut Zone 5 MW Peak Calendar-Month Day-Ahead LMP Futures,NYMEX,Energy
+US,AP3,ISO New England Connecticut Zone 5 MW Off-Peak Calendar-Month Day-Ahead LMP Futures,NYMEX,Energy
+US,AP4,ISO New England South East Massachusetts Zone 5 MW Peak Calendar-Month Day-Ahead LMP Futures,NYMEX,Energy
+US,AP5,ISO New England South East Massachusetts Zone 5 MW Off-Peak Calendar-Month Day-Ahead LMP Futures,NYMEX,Energy
+US,AP7,ISO New England North East Massachusetts Zone 5 MW Peak Calendar-Month Day-Ahead LMP Futures,NYMEX,Energy
+US,AP8,ISO New England North East Massachusetts Zone 5 MW Off-Peak Calendar-Month Day-Ahead LMP Futures,NYMEX,Energy
+US,AP9,ISO New England Maine Zone 5 MW Peak Calendar-Month Day-Ahead LMP Futures,NYMEX,Energy
+US,APA,Alberta Power Pool Peak Calendar-Month Futures,NYMEX,Energy
+US,APS,European Propane CIF ARA (Argus) Futures,NYMEX,Energy
+US,AQ5,NYISO Zone C 5 MW Peak Calendar-Month Day-Ahead LBMP Futures,NYMEX,Energy
+US,AQ8,PJM PEPCO Zone Off-Peak Calendar-Month Day-Ahead LMP Futures,NYMEX,Energy
+US,AQA,Low Sulphur Gasoil Mini Financial Futures,NYMEX,Energy
+US,AQK,Alberta Power Pool Calendar Month 1 MW Futures,NYMEX,Energy
+US,AR0,Mont Belvieu Natural Gasoline (OPIS) BALMO Futures,NYMEX,Energy
+US,AR1,ERCOT West 345 kV Hub 5 MW Peak Calendar-Day Futures,NYMEX,Energy
+US,AR4,ERCOT West 345 kV Hub 5 MW Off-Peak Calendar-Day Futures,NYMEX,Energy
+US,AR6,ISO New England West Central Massachusetts Zone 5 MW Peak Calendar-Month Day-Ahead LMP Futures,NYMEX,Energy
+US,AR8,PJM PEPCO Zone Peak Calendar-Month Day-Ahead LMP 5 MW Futures,NYMEX,Energy
+US,ARE,RBOB Gasoline Crack Spread Futures,NYMEX,Energy
+US,ARY,RBOB Gasoline vs. NY Harbor ULSD Futures,NYMEX,Energy
+US,AS4,PJM APS Zone Peak Calendar-Month Day-Ahead LMP Futures,NYMEX,Energy
+US,ASD,Singapore Jet Kerosene (Platts) Dubai (Platts) Crack Spread Futures,NYMEX,Energy
+US,ASP,Singapore Naphtha (Platts) Futures,NYMEX,Energy
+US,AT0,Mini European 1% Fuel Oil Barges FOB Rdam (Platts) Futures,NYMEX,Energy
+US,ATP,ULSD 10ppm Cargoes CIF NWE (Platts) vs. Low Sulphur Gasoil Futures,NYMEX,Energy
+US,ATU,Gasoil 0.1% Cargoes CIF NWE (Platts) vs. Low Sulphur Gasoil Futures,NYMEX,Energy
+US,ATY,ULSD 10ppm Cargoes CIF NWE (Platts) Futures,NYMEX,Energy
+US,AU3,ISO New England New Hampshire Zone 5 MW Off-Peak Calendar-Month Day-Ahead LMP Futures,NYMEX,Energy
+US,AU4,ISO New England Rhode Island Zone 5 MW Peak Calendar-Month Day-Ahead LMP Futures,NYMEX,Energy
+US,AU5,ISO New England Rhode Island Zone 5 MW Off-Peak Calendar-Month Day-Ahead LMP Futures,NYMEX,Energy
+US,AU6,ISO New England Mass Hub 5 MW Peak Calendar-Month Day-Ahead LMP Futures,NYMEX,Energy
+US,AUB,Dated Brent (Platts) Financial Futures,NYMEX,Energy
+US,AUF,European 1% Fuel Oil Cargoes FOB NWE (Platts) Futures,NYMEX,Energy
+US,AUH,European 1% Fuel Oil Barges FOB Rdam (Platts) Futures,NYMEX,Energy
+US,AUI,European 3.5% Fuel Oil Cargoes FOB MED (Platts) Futures,NYMEX,Energy
+US,AUJ,European Jet Kerosene Cargoes CIF NWE (Platts) Futures,NYMEX,Energy
+US,AUS,Gulf Coast ULSD (Argus) Up-Down Futures,NYMEX,Energy
+US,AV0,Singapore Mogas 95 Unleaded (Platts) Futures,NYMEX,Energy
+US,AVL,Gasoil 0.1% Barges FOB ARA (Platts) Futures,NYMEX,Energy
+US,AVU,Singapore Gasoil (Platts) BALMO Futures,NYMEX,Energy
+US,AVZ,Gulf Coast HSFO (Platts) BALMO Futures,NYMEX,Energy
+US,AW2,ISO New England Maine Zone 5 MW Off-Peak Calendar-Month Day-Ahead LMP Futures,NYMEX,Energy
+US,AW4,PJM APS Zone Off-Peak Calendar-Month Day-Ahead LMP Futures,NYMEX,Energy
+US,AW6,PJM PSEG Zone Off-Peak Calendar-Month Day-Ahead LMP Futures,NYMEX,Energy
+US,AWJ,LLS (Argus) vs. WTI Financial Futures,NYMEX,Energy
+US,AWQ,Gasoil 0.1% Barges FOB ARA (Platts) vs. Low Sulphur Gasoil Futures,NYMEX,Energy
+US,AX1,PJM AECO Zone Off-Peak Calendar-Month Day-Ahead LMP Futures,NYMEX,Energy
+US,AXB,WTI Midland (Argus) Financial Futures,NYMEX,Energy
+US,AY,WTS (Argus) Trade Month Futures,NYMEX,Energy
+US,AY1,PJM AECO Zone Peak Calendar-Month Day-Ahead LMP Futures,NYMEX,Energy
+US,AYV,Mars (Argus) vs. WTI Trade Month Futures,NYMEX,Energy
+US,AYX,Mars (Argus) vs. WTI Financial Futures,NYMEX,Energy
+US,AZ0,Singapore Jet Kerosene (Platts) vs. Gasoil (Platts) BALMO Futures,NYMEX,Energy
+US,AZ1,Ethanol T2 FOB Rdam Including Duty (Platts) Futures,NYMEX,Energy
+US,AZ5,Gasoil 0.1% Cargoes CIF MED (Platts) vs. Low Sulphur Gasoil Futures,NYMEX,Energy
+US,AZ7,ULSD 10ppm CIF MED (Platts) vs. Low Sulphur Gasoil Futures,NYMEX,Energy
+US,AZ9,PJM AEP Dayton Hub 5MW Peak Calendar-Month Real-Time LMP Futures,NYMEX,Energy
+US,B0,Mont Belvieu LDH Propane (OPIS) Futures,NYMEX,Energy
+US,B1,ULSD 10ppm Cargoes CIF NWE (Platts) BALMO Futures,NYMEX,Energy
+US,B2K,CAISO SP15 EZ Gen Hub 5 MW Off-Peak Calendar-Day Real-Time LMP Futures,NYMEX,Energy
+US,B6L,PJM Northern Illinois Hub Real-Time Off-Peak Calendar-Month 5 MW Futures,NYMEX,Energy
+US,B7H,Gasoline Euro-bob Oxy NWE Barges (Argus) Futures,NYMEX,Energy
+US,BEB,European Butane CIF ARA (Argus) BALMO Futures,NYMEX,Energy
+US,BEF,European Butane CIF ARA (Argus) Futures,NYMEX,Energy
+US,BFR,RME Biodiesel FOB Rdam (Argus) (RED Compliant) vs. Low Sulphur Gasoil Futures,NYMEX,Energy
+US,BG1,LNG Freight Australia to Japan (BLNG1-174),NYMEX,Energy
+US,BG2,LNG Freight US Gulf to Continent (BLNG2-174),NYMEX,Energy
+US,BG3,LNG Freight US Gulf to Japan (BLNG3-174),NYMEX,Energy
+US,BHO,Soybean Oil - NY Harbor ULSD Spread Financial Futures,NYMEX,Energy
+US,BK,WTI-Brent Financial Futures,NYMEX,Energy
+US,BKB,WTI-Brent BALMO Futures,NYMEX,Energy
+US,BKT,Bakken Cushing (Argus) vs. WTI Trade Month Futures,NYMEX,Energy
+US,BOO,3.5% Fuel Oil Barges FOB Rdam (Platts) Crack Spread (1000mt) Futures,NYMEX,Energy
+US,BPA,Bakken Patoka (EMDA) Monthly Futures,NYMEX,Energy
+US,BPU,USGC Marine Fuel 0.5% Barges (Platts) (mt) vs. European FOB Rdam Marine Fuel 0.5% Barges (Platts) BALMO Futures,NYMEX,Energy
+US,BR7,Gasoline Euro-bob Oxy NWE Barges (Argus) BALMO Futures,NYMEX,Energy
+US,BUC,NY Buckeye Jet Fuel (Platts) Futures,NYMEX,Energy
+US,BWH,WCS Houston (Argus) vs. WTI Trade Month BALMO Futures,NYMEX,Energy
+US,BZS,Brent Crude Oil Singapore Trade at Marker Futures,NYMEX,Energy
+US,C2E,CAISO SP15 EZ Gen Hub 5 MW Off-Peak Calendar-Month Real-Time LMP Futures,NYMEX,Energy
+US,C3D,Daily Mont Belvieu LDH Propane (OPIS) Futures,NYMEX,Energy
+US,C4D,Daily Mont Belvieu Normal Butane (Non-LDH) (OPIS) Futures,NYMEX,Energy
+US,C4Z,CAISO SP15 EZ Gen Hub 5 MW Off-Peak Calendar-Day Day-Ahead LMP Futures,NYMEX,Energy
+US,C5D,Daily Mont Belvieu Natural Gasoline (Non-LDH) (OPIS) Futures,NYMEX,Energy
+US,CBB,Conway Normal Butane (OPIS) BALMO Futures,NYMEX,Energy
+US,CC3,CBL California Carbon Allowance Vintage-Specific Futures 2023,NYMEX,Energy
+US,CCM,CPC Blend CIF Med Cargoes (Platts) vs. Dated Brent (Platts) BALMO Futures,NYMEX,Energy
+US,CFB,Dated Brent (Platts) vs. Brent First Month (BFOE) (Platts) Weekly Futures,NYMEX,Energy
+US,CFC,Dated Brent (Platts) vs. Brent Second Month (BFOE) (Platts) Weekly Futures,NYMEX,Energy
+US,CGB,Conway Natural Gasoline (OPIS) BALMO Futures,NYMEX,Energy
+US,CLC,WTI Shanghai Marker TAM,NYMEX,Energy
+US,CLD,WTI vs. Dated Brent (Platts) Calendar Month Futures,NYMEX,Energy
+US,CLL,WTI Crude Oil London Trade at Marker Futures,NYMEX,Energy
+US,CLS,WTI Crude Oil Singapore Trade at Marker Futures,NYMEX,Energy
+US,CMF,3.5% Fuel Oil CIF Med (Platts) vs. 3.5% Fuel Oil FOB Med (Platts) Futures,NYMEX,Energy
+US,CMS,Methanol CFR China Specific Origin (ICIS) Futures,NYMEX,Energy
+US,COL,ISO New England Mass Hub Day-Ahead Peak Calendar-Day 5 MW Futures,NYMEX,Energy
+US,CPB,Conway Propane (OPIS) BALMO Futures,NYMEX,Energy
+US,CPD,CPC Blend CIF Med Cargoes (Platts) vs. Dated Brent (Platts) Futures,NYMEX,Energy
+US,CPP,Conway Physical Propane In-Well (OPIS) Futures,NYMEX,Energy
+US,CRB,Gulf Coast CBOB Gasoline A2 (Platts) vs. RBOB Gasoline Futures,NYMEX,Energy
+US,CRG,Gulf Coast CBOB Gasoline A2 (Platts) Futures,NYMEX,Energy
+US,CS1,Container Freight (China/East Asia to US West Coast) (FBX01) (Baltic) Futures,NYMEX,Energy
+US,CS2,Container Freight (US West Coast to China/East Asia) (FBX02) (Baltic) Futures,NYMEX,Energy
+US,CS3,Container Freight (China/East Asia to US East Coast) (FBX03) (Baltic) Futures,NYMEX,Energy
+US,CS4,Container Freight (China/East Asia to North Europe) (FBX11) (Baltic) Futures,NYMEX,Energy
+US,CS6,Container Freight (China/East Asia to Mediterranean) (FBX13) (Baltic) Futures,NYMEX,Energy
+US,CSX,WTI Financial Futures,NYMEX,Energy
+US,CY,Brent Financial Futures,NYMEX,Energy
+US,D1N,Singapore Mogas 92 Unleaded (Platts) Brent Crack Spread Futures,NYMEX,Energy
+US,D2L,NYISO Zone G Day-Ahead Off-Peak Calendar-Month 5 MW Futures,NYMEX,Energy
+US,D3L,NYISO Zone J Day-Ahead Peak Calendar-Month 5 MW Futures,NYMEX,Energy
+US,D4L,NYISO Zone J Day-Ahead Off-Peak Calendar-Month 5 MW Futures,NYMEX,Energy
+US,D7L,PJM AEP Dayton Hub Day-Ahead LMP Peak Calendar-Month 5 MW Futures,NYMEX,Energy
+US,DAB,Bakken DAPL (EMDA) Monthly Futures,NYMEX,Energy
+US,DAZ,CAISO SP15 EZ Gen Hub 5 MW Peak Calendar-Day Day-Ahead LMP Futures,NYMEX,Energy
+US,DBB,Dated Brent (Platts) BALMO Futures,NYMEX,Energy
+US,DBL,Mini Dubai Crude Oil (Platts) Futures,NYMEX,Energy
+US,DBT,Mini Dubai Crude Oil (Platts) BALMO Futures,NYMEX,Energy
+US,DCL,Daily WTI Financial Futures,NYMEX,Energy
+US,DEB,German Power Baseload Calendar Month Futures,NYMEX,Energy
+US,DEP,German Power Peakload Calendar Month Futures,NYMEX,Energy
+US,DHA,CAISO SP15 EZ Gen Hub 5 MW Peak Calendar-Day Real-Time LMP Futures,NYMEX,Energy
+US,DTF,Dutch TTF Natural Gas Financial Day-Ahead/Weekend (ICIS Heren) Daily Futures,NYMEX,Energy
+US,DTH,Dutch TTF Natural Gas Physical Day-Ahead/Weekend (ICIS Heren) Daily Futures,NYMEX,Energy
+US,E4L,PJM Western Hub Day-Ahead Off-Peak Calendar-Month 5 MW Futures,NYMEX,Energy
+US,E6,Japan C&F Naphtha (Platts) BALMO Futures,NYMEX,Energy
+US,E6M,Mini Japan C&F Naphtha (Platts) BALMO Futures,NYMEX,Energy
+US,E9X,CAISO SP15 EZ Gen Hub 5 MW Peak Calendar-Month Day-Ahead LMP Futures,NYMEX,Energy
+US,EAA,ERCOT Houston 345 kV Hub Day-Ahead 5 MW Off-Peak Futures,NYMEX,Energy
+US,EAB,ERCOT South 345 kV Hub Day-Ahead 5 MW Off-Peak Futures,NYMEX,Energy
+US,EAC,ERCOT North 345 kV Hub Day-Ahead 5 MW Peak Futures,NYMEX,Energy
+US,EAE,ERCOT Houston 345 kV Hub Day-Ahead 5 MW Off-Peak Calendar-Day Futures,NYMEX,Energy
+US,EAW,ERCOT West 345 kV Hub Day-Ahead 5 MW Peak Calendar-Day Futures,NYMEX,Energy
+US,EBE,1% Fuel Oil Barges FOB Rdam (Platts) vs. 1% Fuel Oil Cargoes FOB NWE (Platts) BALMO Futures,NYMEX,Energy
+US,ECF,European Union Allowance (EUA) Futures,NYMEX,Energy
+US,EFF,European 3.5% Fuel Oil Cargoes FOB MED (Platts) BALMO Futures,NYMEX,Energy
+US,EFM,European 1% Fuel Oil Cargoes FOB MED (Platts) Futures,NYMEX,Energy
+US,EGB,Gasoline Euro-bob Oxy NWE Barges (Argus) vs European Naphtha CIF NWE (Platts) BALMO Futures,NYMEX,Energy
+US,EGN,Gasoline Euro-bob Oxy NWE Barges (Argus) vs European Naphtha CIF NWE (Platts) Futures,NYMEX,Energy
+US,EJL,MISO Indiana Hub (formerly Cinergy Hub) Real-Time Off-Peak Calendar-Month 5 MW Futures,NYMEX,Energy
+US,EL,Denatured Fuel Ethanol Futures,NYMEX,Energy
+US,EL1,European Diesel 10ppm Barges FOB ARA (Platts) vs. NY Harbor ULSD Futures,NYMEX,Energy
+US,EMC,ERCOT Daily Load Forecast Futures,NYMEX,Energy
+US,EN,European Naphtha (Platts) Crack Spread Futures,NYMEX,Energy
+US,ENP,ERCOT South 345 kV Hub Day-Ahead 5 MW Off-Peak Calendar-Day Futures,NYMEX,Energy
+US,ENS,European 1% Fuel Oil Cargoes FOB MED vs. European 1% Fuel Oil Cargoes FOB NWE Spread (Platts) Futures,NYMEX,Energy
+US,EO1,ULSD 10ppm Cargoes CIF NWE (Platts) vs. New York Harbor ULSD Futures,NYMEX,Energy
+US,EOB,Argus Gasoline Eurobob Oxy Barges NWE Crack Spread (1000mt) Futures,NYMEX,Energy
+US,EP1,ULSD 10ppm Cargoes CIF Med (Platts) vs. New York Harbor ULSD Futures,NYMEX,Energy
+US,EPN,European Propane CIF ARA (Argus) vs. Naphtha Cargoes CIF NWE (Platts) Futures,NYMEX,Energy
+US,ERL,ERCOT North 345 kV Hub Day-Ahead 5 MW Off-Peak Futures,NYMEX,Energy
+US,ESB,European Low Sulphur Gasoil Brent Crack Spread BALMO Futures,NYMEX,Energy
+US,ESS,Low Sulphur Gasoil Crack Spread (1000mt) BALMO Financial Futures,NYMEX,Energy
+US,EUB,ERCOT South 345 kV Hub Day-Ahead 5 MW Peak Calendar-Day Futures,NYMEX,Energy
+US,EVC,Singapore Fuel Oil 380 cst (Platts) vs. European 3.5% Fuel Oil Barges FOB Rdam (Platts) Futures,NYMEX,Energy
+US,EWB,East-West Fuel Oil Spread (Platts) BALMO Futures,NYMEX,Energy
+US,EWG,East-West Gasoline Spread (Platts-Argus) Futures,NYMEX,Energy
+US,EWN,East-West Naphtha: Japan C&F vs. Cargoes CIF NWE Spread (Platts) Futures,NYMEX,Energy
+US,EXR,"RBOB Gasoline vs. Euro-bob Oxy NWE Barges (Argus) (350,000 gallons) Futures",NYMEX,Energy
+US,F3,Jet Fuel Cargoes CIF NWE (Platts) BALMO Futures,NYMEX,Energy
+US,FAL,MISO Indiana Hub Day-Ahead Off-Peak Calendar-Day 5 MW Futures,NYMEX,Energy
+US,FBD,FAME 0 Biodiesel FOB Rdam (Argus) (RED Compliant) Futures,NYMEX,Energy
+US,FCB,3.5% Fuel Oil Barges FOB Rdam (Platts) Crack Spread BALMO Futures,NYMEX,Energy
+US,FCN,Daily European 1% Fuel Oil Cargoes FOB NWE (Platts) Futures,NYMEX,Energy
+US,FEW,East-West Fuel Oil Spread (Platts) Futures,NYMEX,Energy
+US,FLB,LPG Freight Route Middle East to Japan (BLPG1) (Baltic) BALMO Futures,NYMEX,Energy
+US,FLJ,LPG Freight Route US Gulf to Japan (BLPG3) (Baltic) Futures,NYMEX,Energy
+US,FLP,LPG Freight Route Middle East to Japan (BLPG1) (Baltic) Futures,NYMEX,Energy
+US,FO,3.5% Fuel Oil Barges FOB Rdam (Platts) Crack Spread Futures,NYMEX,Energy
+US,FOA,3.5% Fuel Oil Cargoes FOB MED (Platts) Crack Spread BALMO Futures,NYMEX,Energy
+US,FOM,1% Fuel Oil Cargoes FOB MED (Platts) BALMO Futures,NYMEX,Energy
+US,FOR,Daily European 3.5% Fuel Oil Barges FOB Rdam (Platts) Futures,NYMEX,Energy
+US,FRC,Freight Route US Gulf to Continent (TC14) (Baltic) Futures,NYMEX,Energy
+US,FRS,Freight Route West Coast India to Japan (TC12) (Baltic) Futures,NYMEX,Energy
+US,FSS,1% Fuel Oil Cargoes FOB NWE (Platts) vs. 3.5% Fuel Oil Barges FOB Rdam (Platts) Futures,NYMEX,Energy
+US,FTL,MISO Indiana Hub Real-Time Off-Peak Calendar-Day 5 MW Futures,NYMEX,Energy
+US,FVB,1.0% Fuel Oil Cargoes FOB NWE (Platts) Crack Spread (1000mt) Futures,NYMEX,Energy
+US,GBB,Gulf Coast Unl 87 Gasoline M2 (Platts) vs. RBOB Gasoline BALMO Futures,NYMEX,Energy
+US,GBR,Daily Gasoline Euro-bob Oxy NWE Barges (Argus) Futures,NYMEX,Energy
+US,GCB,Gulf Coast HSFO (Platts) vs. European 3.5% Fuel Oil Barges FOB Rdam (Platts) BALMO Futures,NYMEX,Energy
+US,GCG,Gulf Coast CBOB Gasoline A2 (Platts) Crack Spread Futures,NYMEX,Energy
+US,GCI,Gulf Coast HSFO (Platts) Brent Crack Spread Futures,NYMEX,Energy
+US,GCM,Gulf Coast Unl 87 Gasoline M2 (Platts) Futures,NYMEX,Energy
+US,GCU,Gulf Coast HSFO (Platts) vs. European 3.5% Fuel Oil Barges FOB Rdam (Platts) Futures,NYMEX,Energy
+US,GDL,Singapore Gasoil (Platts) Dubai (Platts) Crack Spread Futures,NYMEX,Energy
+US,GEO,CBL Global Emissions Offset Futures,NYMEX,Energy
+US,GES,Gasoline Eurobob Non-Oxy NWE Barges (Argus) vs Gasoline Eurobob Oxy NWE Barges (Argus) Futures,NYMEX,Energy
+US,GFC,Gulf Coast HSFO (Platts) Crack Spread BALMO Futures,NYMEX,Energy
+US,GKS,Gasoline 10 ppm FOB MED (Platts) Crack Spread Futures,NYMEX,Energy
+US,GMB,Singapore Gasoil (Platts) vs. Singapore Marine Fuel 0.5% (Platts) Spread BALMO Futures,NYMEX,Energy
+US,GMS,Singapore Gasoil (Platts) vs. Singapore Marine Fuel 0.5% (Platts) Spread Futures,NYMEX,Energy
+US,GNB,Gasoline Eurobob Non-Oxy NWE Bargues (Argus) BALMO Futures,NYMEX,Energy
+US,GNL,NYISO Zone G Day-Ahead Peak Calendar-Day 5 MW Futures,NYMEX,Energy
+US,GNO,Gasoline Eurobob Non-Oxy NWE Barges (Argus) Futures,NYMEX,Energy
+US,GNS,Gasoline Eurobob Non-Oxy NWE Barges (Argus) Crack Spread Futures,NYMEX,Energy
+US,GOC,Low Sulphur Gasoil Crack Spread (1000mt) Financial Futures,NYMEX,Energy
+US,GSW,Guernsey Light Sweet (EMDA) Monthly Futures,NYMEX,Energy
+US,GUD,Gulf Coast ULSD (Argus) Up-Down BALMO Futures,NYMEX,Energy
+US,GWT,Guernsey Light Sweet (EMDA) vs. WTI Trade Month Futures,NYMEX,Energy
+US,GY,Gulf Coast ULSD (Platts) Crack Spread Futures,NYMEX,Energy
+US,GZ,European Low Sulphur Gasoil Brent Crack Spread Futures,NYMEX,Energy
+US,H2L,ISO New England Mass Hub Day-Ahead Off-Peak Calendar-Month 5 MW Futures,NYMEX,Energy
+US,H5B,USGC Marine Fuel 0.5% Barges (Platts) BALMO Futures,NYMEX,Energy
+US,H5F,USGC Marine Fuel 0.5% Barges (Platts) Futures,NYMEX,Energy
+US,H5G,USGC Marine Fuel 0.5% Barges (Platts) vs. Gulf Coast HSFO (Platts) Futures,NYMEX,Energy
+US,H5L,MISO Indiana Hub (formerly Cinergy Hub) Day-Ahead Peak Calendar-Month 5 MW Futures,NYMEX,Energy
+US,HBX,WTI Houston (Argus) vs. Brent Cross-Month Futures,NYMEX,Energy
+US,HCS,WTI Semi-Annual Financial Futures,NYMEX,Energy
+US,HHT,Henry Hub Natural Gas Look-Alike Last Day Financial TAS,NYMEX,Energy
+US,HHW,Henry Hub Natural Gas Weekly Futures,NYMEX,Energy
+US,HIA,WTI Houston (Argus) Financial Futures,NYMEX,Energy
+US,HIL,WTI Houston (Argus) vs. WTI Financial Futures,NYMEX,Energy
+US,HJC,Jet Cargoes CIF NWE (Platts) vs. Low Sulphur Gasoil Futures,NYMEX,Energy
+US,HLT,HLS (Argus) vs. WTI Trade Month Futures,NYMEX,Energy
+US,HOA,MISO Michigan Hub 5 MW Off-Peak Calendar-Month Day-Ahead Futures,NYMEX,Energy
+US,HOB,NY Harbor ULSD Brent Crack Spread Futures,NYMEX,Energy
+US,HOL,NY Harbor ULSD London Tradable Marker,NYMEX,Energy
+US,HP,Natural Gas (Henry Hub) Penultimate Financial Futures,NYMEX,Energy
+US,HPD,HDPE High Density Polyethylene (PCW) BALMO Futures,NYMEX,Energy
+US,HPE,HDPE High Density Polyethylene (PCW) Financial Futures,NYMEX,Energy
+US,HTA,WTI Houston (Argus) Trade Month Futures,NYMEX,Energy
+US,HTB,WTI Houston (Argus) vs. WTI Trade Month BALMO Futures,NYMEX,Energy
+US,HTT,WTI Houston (Argus) vs. WTI Trade Month Futures,NYMEX,Energy
+US,HVG,HVO FOB ARA Range (Class II) (Argus) vs Low Sulphur Gasoil Futures,NYMEX,Energy
+US,HVO,HVO FOB ARA Range (Class II) (Argus) Futures,NYMEX,Energy
+US,HWA,MISO Michigan Hub 5 MW Peak Calendar-Month Day-Ahead Futures,NYMEX,Energy
+US,IBS,Brent (Singapore Marker) Futures,NYMEX,Energy
+US,IDL,ISO New England Mass Hub Day-Ahead Off-Peak Calendar-Day 5 MW Futures,NYMEX,Energy
+US,ITB,Italian Power Baseload (GME) Calendar Month Futures,NYMEX,Energy
+US,ITP,Italian Power Peakload (GME) Calendar Month Futures,NYMEX,Energy
+US,J4L,PJM Western Hub Day-Ahead Peak Calendar-Month 5 MW Futures,NYMEX,Energy
+US,JA,Japan C&F Naphtha (Platts) Futures,NYMEX,Energy
+US,JBK,Japanese Power (Day-Ahead) Kansai Base-Load Futures,NYMEX,Energy
+US,JCC,Japan Crude Cocktail (Detailed) Futures,NYMEX,Energy
+US,JDL,PJM Western Hub Real-Time Peak Calendar-Day 5 MW Futures,NYMEX,Energy
+US,JE,EIA Flat Tax U.S. Retail Gasoline Futures,NYMEX,Energy
+US,JET,NY Buckeye Jet Fuel (Platts) vs. NY Harbor ULSD Futures,NYMEX,Energy
+US,JFB,Jet Fuel Cargoes CIF NWE (Platts) Crack Spread BALMO Futures,NYMEX,Energy
+US,JFC,Jet Fuel Cargoes CIF NWE (Platts) Crack Spread Futures,NYMEX,Energy
+US,JKB,LNG Japan/Korea Marker (Platts) Back Half Month Futures,NYMEX,Energy
+US,JKF,LNG Japan/Korea Marker (Platts) Front Half Month Futures,NYMEX,Energy
+US,JKY,Mini LNG Japan/Korea Marker (Platts) Yen Denominated Futures,NYMEX,Energy
+US,JNC,Japan C&F Naphtha Dubai (Platts) Crack Spread Futures,NYMEX,Energy
+US,JNL,NYISO Zone J Day-Ahead Peak Calendar-Day 5 MW Futures,NYMEX,Energy
+US,JPK,Japanese Power (Day-Ahead) Kansai Peak-Load Futures,NYMEX,Energy
+US,JPT,Japanese Power (Day-Ahead) Tokyo Peak-Load Futures,NYMEX,Energy
+US,JTB,NY Buckeye Jet Fuel (Platts) vs. NY Harbor ULSD BALMO Futures,NYMEX,Energy
+US,K2L,MISO Indiana Hub (formerly Cinergy Hub) Day-Ahead Off-Peak Calendar-Month 5 MW Futures,NYMEX,Energy
+US,K3L,NYISO Zone A Day-Ahead Peak Calendar-Month 5 MW Futures,NYMEX,Energy
+US,K4L,NYISO Zone A Day-Ahead Off-Peak Calendar-Month 5 MW Futures,NYMEX,Energy
+US,L3L,PJM Northern Illinois Hub Day-Ahead Off-Peak Calendar-Month 5 MW Futures,NYMEX,Energy
+US,LAF,Alberta Power Pool Off-Peak Calendar-Day Futures,NYMEX,Energy
+US,LAP,Alberta Power Pool Peak Calendar-Day Futures,NYMEX,Energy
+US,LBU,"Gulf Coast UCO (Argus) (60,000 lb) Futures",NYMEX,Energy
+US,LHV,NYISO Lower Hudson Valley Capacity Calendar-Month Futures,NYMEX,Energy
+US,LL,Los Angeles Jet (OPIS) Futures,NYMEX,Energy
+US,LNG,Gulf Coast LNG Export Futures,NYMEX,Energy
+US,LPE,LLDPE Linear Low Density Polyethylene (PCW) Financial Futures,NYMEX,Energy
+US,LT,Gulf Coast ULSD (Platts) Up-Down Futures,NYMEX,Energy
+US,M1B,Micro Gasoil 0.1% Barges FOB ARA (Platts) Futures,NYMEX,Energy
+US,M35,Micro European 3.5% Fuel Oil Cargoes FOB Med (Platts) Futures,NYMEX,Energy
+US,MAA,Mini-Argus Butane (Saudi Aramco) Futures,NYMEX,Energy
+US,MAB,Mars (Argus) vs. Brent Calendar Month Futures,NYMEX,Energy
+US,MAE,Mini Argus Propane Far East Index Futures,NYMEX,Energy
+US,MAF,Micro Singapore Fuel Oil 380CST (Platts) Futures,NYMEX,Energy
+US,MBA,Argus Butane (Saudi Aramco) Futures,NYMEX,Energy
+US,MBB,Mont Belvieu Ethylene (OPIS PCW) BALMO Futures,NYMEX,Energy
+US,MBC,Mini Brent Financial Futures,NYMEX,Energy
+US,MBE,Mont Belvieu Spot Ethylene In-Well (OPIS PCW) Futures,NYMEX,Energy
+US,MBL,Mont Belvieu LDH Iso-Butane (OPIS) Futures,NYMEX,Energy
+US,MBM,Mars (Argus) vs. Brent Trade Month Futures,NYMEX,Energy
+US,MBO,Mini Gasoline Eurobob Non-Oxy NWE Barges (Argus) BALMO Futures,NYMEX,Energy
+US,MBR,Mont Belvieu Ethylene (OPIS PCW) Futures,NYMEX,Energy
+US,MBS,Middle East Gasoil FOB Arab Gulf (Platts) BALMO Futures,NYMEX,Energy
+US,MCB,Gasoline Eurobob Non-Oxy NWE Barges (Argus) Crack Spread (1000mt) BALMO Futures,NYMEX,Energy
+US,MCF,Gasoline Eurobob Non-Oxy NWE Barges (Argus) vs. European Naphtha CIF NWE (Platts) Futures,NYMEX,Energy
+US,MCN,Gasoline Eurobob Non-Oxy NWE Barges (Argus) vs. European Naphtha CIF NWE (Platts) BALMO Futures,NYMEX,Energy
+US,MCS,Mini Gasoline Eurobob Non-Oxy NWE Barges (Argus) Crack Spread (100mt) Futures,NYMEX,Energy
+US,MCT,Micro Crude Oil TAS,NYMEX,Energy
+US,MDB,Mini Dated Brent (Platts) Financial Futures,NYMEX,Energy
+US,MDD,PJM ATSI Zone 5 MW Off-Peak Calendar-Month Day-Ahead Futures,NYMEX,Energy
+US,ME,Gulf Coast Jet (Platts) Up-Down Futures,NYMEX,Energy
+US,MEB,Mini Gasoline Euro-bob Oxy NWE Barges (Argus) BALMO Futures,NYMEX,Energy
+US,MEE,Mini European Naphtha (Platts) BALMO Futures,NYMEX,Energy
+US,MEF,Micro European 3.5% Fuel Oil Barges FOB Rdam (Platts) Futures,NYMEX,Energy
+US,MEO,Mini Gasoline Euro-bob Oxy NWE Barges (Argus) Futures,NYMEX,Energy
+US,MEW,Mini East-West Fuel Oil Spread (Platts) Futures,NYMEX,Energy
+US,MFB,Gulf Coast HSFO (Platts) Futures,NYMEX,Energy
+US,MFD,Mini 1% Fuel Oil Cargoes FOB MED (Platts) Futures,NYMEX,Energy
+US,MFP,Mini 1% Fuel Oil Cargoes CIF NWE (Platts) Futures,NYMEX,Energy
+US,MFR,Mini 3.5% Fuel Oil Barges FOB Rdam (Platts) Crack Spread (100mt) Futures,NYMEX,Energy
+US,MGB,Mini Gasoil 0.1% Barges FOB ARA (Platts) vs. Low Sulphur Gasoil Futures,NYMEX,Energy
+US,MGF,Mini Gasoil 0.1% Cargoes CIF NWE (Platts) vs. Low Sulphur Gasoil Futures,NYMEX,Energy
+US,MGH,Gulf Coast HSFO (Platts) Crack Spread Futures,NYMEX,Energy
+US,MGN,Mini ULSD 10ppm Cargoes CIF NWE (Platts) vs. Low Sulphur Gasoil Futures,NYMEX,Energy
+US,MGS,Mini Middle East HSFO 180 cst FOB Arab Gulf (Platts) BALMO Futures,NYMEX,Energy
+US,MHE,Mini Middle East HSFO 180 cst FOB Arab Gulf (Platts) Futures,NYMEX,Energy
+US,MHO,Micro NY Harbor ULSD Futures,NYMEX,Energy
+US,MIP,MISO Illinois Hub Peak Calendar-Day 5 MW Day-Ahead LMP Futures,NYMEX,Energy
+US,MJB,Mini European Jet Kero Barges FOB Rdam (Platts) vs. Low Sulphur Gasoil Futures,NYMEX,Energy
+US,MJC,Mini European Jet Kero Cargoes CIF NWE (Platts) vs. Low Sulphur Gasoil Futures,NYMEX,Energy
+US,MJN,Mini Japan C&F Naphtha (Platts) Futures,NYMEX,Energy
+US,MM,New York Harbor Residual Fuel 1.0% (Platts) Futures,NYMEX,Energy
+US,MMF,Mini 3.5% Fuel Oil Cargoes FOB MED (Platts) Financial Futures,NYMEX,Energy
+US,MMO,MISO Michigan Hub Off-Peak Calendar-Day 5 MW Day-Ahead LMP Futures,NYMEX,Energy
+US,MMP,MISO Michigan Hub Peak Calendar-Day 5 MW Day-Ahead LMP Futures,NYMEX,Energy
+US,MNB,Mont Belvieu Normal Butane LDH (OPIS) Futures,NYMEX,Energy
+US,MNC,Mini European Naphtha CIF NWE (Platts) Futures,NYMEX,Energy
+US,MNS,Mini 1% Fuel oil Cargoes FOB NWE (Platts) Crack Spread (100mt) Futures,NYMEX,Energy
+US,MNT,MISO Minnesota Hub Peak Calendar-Day 5 MW Real-Time LMP Futures,NYMEX,Energy
+US,MO,Mars (Argus) Trade Month Futures,NYMEX,Energy
+US,MOA,PJM ATSI Zone 5 MW Off-Peak Calendar-Month Real-Time Futures,NYMEX,Energy
+US,MOI,MISO Illinois Hub Off-Peak Calendar-Day 5 MW Day-Ahead LMP Futures,NYMEX,Energy
+US,MPE,Middle East Gasoil FOB Arab Gulf (Platts) Futures,NYMEX,Energy
+US,MPS,Mini European Propane CIF ARA (Argus) Futures,NYMEX,Energy
+US,MPX,NY Harbor ULSD Financial Futures,NYMEX,Energy
+US,MQ,Los Angeles Jet Fuel (Platts) vs. NY Harbor ULSD Futures,NYMEX,Energy
+US,MQA,Low Sulphur Gasoil (10 mt) Financial Futures,NYMEX,Energy
+US,MRB,Micro RBOB Gasoline Futures,NYMEX,Energy
+US,MRI,MISO Illinois Hub Off-Peak Calendar-Day 5 MW Real-Time LMP Futures,NYMEX,Energy
+US,MRT,MISO Michigan Hub Off-Peak Calendar-Day 5 MW Real-Time LMP Futures,NYMEX,Energy
+US,MSB,Mini Singapore Fuel Oil 380cst (Platts) vs. European 3.5%Fuel Oil Barges FOB Rdam (Platts) Futures,NYMEX,Energy
+US,MSD,Singapore Fuel Oil 180 cst (Platts) vs. 380 cst (Platts) BALMO Futures,NYMEX,Energy
+US,MSG,Mini Singapore Gasoil (Platts) Futures,NYMEX,Energy
+US,MT2,Methanol T2 FOB Rdam (ICIS) Futures,NYMEX,Energy
+US,MTB,Mini Singapore Fuel Oil 380 cst (Platts) BALMO Futures,NYMEX,Energy
+US,MTH,Methanol FOB Houston (Argus) Futures,NYMEX,Energy
+US,MTI,MISO Illinois Hub Peak Calendar-Day 5 MW Real-Time LMP Futures,NYMEX,Energy
+US,MTS,Mini Singapore Fuel Oil 380 cst (Platts) Futures,NYMEX,Energy
+US,MUD,Mini European Diesel 10 ppm Barges FOB ARA (Platts) vs. Low Sulphur Gasoil Futures,NYMEX,Energy
+US,MXB,Mini RBOB Gasoline vs. Gasoline Euro-bob Oxy NWE Barges (Argus) Futures,NYMEX,Energy
+US,MXR,Mini RBOB Gasoline vs. Gasoline Euro-bob Oxy NWE Barges (Argus) BALMO Futures,NYMEX,Energy
+US,N1B,Singapore Mogas 92 Unleaded (Platts) Futures,NYMEX,Energy
+US,N3L,PJM Northern Illinois Hub Day-Ahead LMP Peak Calendar-Month 5 MW Futures,NYMEX,Energy
+US,N3P,NYISO Zone C Peak Calendar-Day 5 MW Day-Ahead LBMP Futures,NYMEX,Energy
+US,N9L,PJM Western Hub Real-Time Off-Peak Calendar-Month 5 MW Futures,NYMEX,Energy
+US,NA2,Ethylene CFR NE Asia (ICIS) Futures,NYMEX,Energy
+US,NA3,Propylene CFR NE Asia (ICIS) Futures,NYMEX,Energy
+US,NBB,Naphtha Cargoes CIF NWE (Platts) Crack Spread (1000mt) BALMO Futures,NYMEX,Energy
+US,NBD,UK NBP Natural Gas Daily Futures,NYMEX,Energy
+US,NBP,UK NBP Natural Gas (USD/MMBtu) (ICIS Heren) Front Month Futures,NYMEX,Energy
+US,NCD,NYISO Zone C Off-Peak Calendar-Day 5 MW Day-Ahead LBMP Futures,NYMEX,Energy
+US,NCO,ISO New England Connecticut Zone Off-Peak Calendar-Day 5 MW Day-Ahead LMP Futures,NYMEX,Energy
+US,NCP,Daily European Naphtha CIF NWE (Platts) Futures,NYMEX,Energy
+US,NEO,ISO New England North East Massachusetts Zone Off-Peak Calendar-Day 5 MW Day-Ahead LMP Futures,NYMEX,Energy
+US,NEP,NYISO Zone E Peak Calendar-Day 5 MW Day-Ahead LBMP Futures,NYMEX,Energy
+US,NFC,NY 1% Fuel Oil (Platts) Crack Spread BALMO Futures,NYMEX,Energy
+US,NFD,NYISO Zone F Peak Calendar-Day 5 MW Day-Ahead LBMP Futures,NYMEX,Energy
+US,NFG,NY 1% Fuel Oil (Platts) vs. Gulf Coast HSFO (Platts) BALMO Futures,NYMEX,Energy
+US,NFO,NYISO Zone F Off-Peak Calendar-Day 5 MW Day-Ahead LBMP Futures,NYMEX,Energy
+US,NGO,CBL Nature-Based Global Emissions Offset Futures,NYMEX,Energy
+US,NHH,NYISO NYC In-City Capacity Calendar-Month Futures,NYMEX,Energy
+US,NHO,ISO New England New Hampshire Zone Off-Peak Calendar-Day 5 MW Day-Ahead LMP Futures,NYMEX,Energy
+US,NHP,ISO New England New Hampshire Zone Peak Calendar-Day 5 MW Day-Ahead LMP Futures,NYMEX,Energy
+US,NIE,NY Harbor ITT Ethanol (Platts) Futures,NYMEX,Energy
+US,NLS,NY Harbor ULSD vs Low Sulphur Gasoil Financial Futures,NYMEX,Energy
+US,NMO,ISO New England Maine Zone Off-Peak Calendar-Day 5 MW Day-Ahead LMP Futures,NYMEX,Energy
+US,NMP,ISO New England Maine Zone Peak Calendar-Day 5 MW Day-Ahead LMP Futures,NYMEX,Energy
+US,NN,Henry Hub Natural Gas Last Day Financial Futures,NYMEX,Energy
+US,NNP,ISO New England North East Massachusetts Zone Peak Calendar-Day 5 MW Day-Ahead LMP Futures,NYMEX,Energy
+US,NOD,NYISO Zone E Off-Peak Calendar-Day 5 MW Day-Ahead LBMP Futures,NYMEX,Energy
+US,NOI,PJM Northern Illinois Hub Real-Time Off-Peak Calendar-Day 5 MW Futures,NYMEX,Energy
+US,NOO,Naphtha Cargoes CIF NWE (Platts) Crack Spread (1000mt) Futures,NYMEX,Energy
+US,NOT,CBL Nature-Based Global Emissions Offset Trailing (N-GEO-TR) Futures,NYMEX,Energy
+US,NPG,Henry Hub Natural Gas Penultimate Financial Futures,NYMEX,Energy
+US,NRO,ISO New England Rhode Island Zone Off-Peak Calendar-Day 5 MW Day-Ahead LMP Futures,NYMEX,Energy
+US,NRP,ISO New England Rhode Island Zone Peak Calendar-Day 5 MW Day-Ahead LMP Futures,NYMEX,Energy
+US,NRR,NYISO Rest of the State Capacity Calendar-Month Futures,NYMEX,Energy
+US,NSO,ISO New England South East Massachusetts Zone Off-Peak Calendar-Day 5 MW Day-Ahead LMP Futures,NYMEX,Energy
+US,NSP,ISO New England South East Massachusetts Zone Peak Calendar-Day 5 MW Day-Ahead LMP Futures,NYMEX,Energy
+US,NTP,ISO New England Connecticut Zone Peak Calendar-Day 5 MW Day-Ahead LMP Futures,NYMEX,Energy
+US,NWO,ISO New England West Central Massachusetts Zone Off-Peak Calendar-Day 5 MW Day-Ahead LMP Futures,NYMEX,Energy
+US,NWP,ISO New England West Central Massachusetts Zone Peak Calendar-Day 5 MW Day-Ahead LMP Futures,NYMEX,Energy
+US,NYF,NY Fuel Oil 1.0% (Platts) vs. European 1% Fuel Oil Cargoes FOB NWE (Platts) Futures,NYMEX,Energy
+US,NYP,Henry Hub NBP (ICIS Heren) Natural Gas Spread Futures,NYMEX,Energy
+US,OAD,Alberta Power Pool Calendar Day 1 MW Futures,NYMEX,Energy
+US,OFF,Ontario Real-Time Off-Peak Calendar-Month Futures,NYMEX,Energy
+US,OMM,Ontario Real-Time Peak Calendar-Month Futures,NYMEX,Energy
+US,OMN,Mini Gasoline Eurobob Non-Oxy NWE Barges (Argus) Futures,NYMEX,Energy
+US,OOD,Ontario Real-Time Off-Peak Calendar-Day Futures,NYMEX,Energy
+US,OPO,Ontario Real-Time Peak Calendar-Day Futures,NYMEX,Energy
+US,PAL,PJM AEP Dayton Hub Day-Ahead Peak Calendar-Day 5 MW Futures,NYMEX,Energy
+US,PBO,PJM BGE Zone Off-Peak Calendar-Day 5 MW Day-Ahead LMP Futures,NYMEX,Energy
+US,PBP,PJM BGE Zone Peak Calendar-Day 5 MW Day-Ahead LMP Futures,NYMEX,Energy
+US,PBT,Bakken Patoka (EMDA) vs. WTI Trade Month Futures,NYMEX,Energy
+US,PCO,PJM ComEd Zone Off-Peak Calendar-Day 5 MW Day-Ahead LMP Futures,NYMEX,Energy
+US,PCP,PJM ComEd Zone Peak Calendar-Day 5 MW Day-Ahead LMP Futures,NYMEX,Energy
+US,PDJ,PJM Daily Load Forecast Futures,NYMEX,Energy
+US,PDL,MISO Indiana Hub Day-Ahead Peak Calendar-Day 5 MW Futures,NYMEX,Energy
+US,PEL,PJM AEP Dayton Hub Day-Ahead Off-Peak Calendar-Day 5 MW Futures,NYMEX,Energy
+US,PEX,Alberta Power Pool Extended Peak Calendar-Month Futures,NYMEX,Energy
+US,PFO,PJM AECO Zone Off-Peak Calendar-Day 5 MW Day-Ahead LMP Futures,NYMEX,Energy
+US,PFP,Alberta Power Pool Extended Off-Peak Calendar-Day Futures,NYMEX,Energy
+US,PGG,PGP Polymer Grade Propylene (PCW) Financial Futures,NYMEX,Energy
+US,PHF,Alberta Power Pool Off-Peak Calendar-Month Futures,NYMEX,Energy
+US,PHO,PJM ATSI Zone Off-Peak Calendar-Day 5 MW Day-Ahead LMP Futures,NYMEX,Energy
+US,PHP,PJM ATSI Zone Peak Calendar-Day 5 MW Day-Ahead LMP Futures,NYMEX,Energy
+US,PKP,PJM PENELEC Zone Peak Calendar-Day 5 MW Day-Ahead LMP Futures,NYMEX,Energy
+US,PLO,PJM PPL Zone Off-Peak Calendar-Day 5 MW Day-Ahead LMP Futures,NYMEX,Energy
+US,PLP,PJM PPL Zone Peak Calendar-Day 5 MW Day-Ahead LMP Futures,NYMEX,Energy
+US,PMF,Mont Belvieu LDH Propane (OPIS) vs. Argus Propane Far East Index Futures,NYMEX,Energy
+US,PMO,PJM METED Zone Off-Peak Calendar-Day 5 MW Day-Ahead LMP Futures,NYMEX,Energy
+US,PMP,PJM METED Zone Peak Calendar-Day 5 MW Day-Ahead LMP Futures,NYMEX,Energy
+US,PNF,Mont Belvieu Non-LDH Propane (OPIS) vs. Argus Propane Far East Index Futures,NYMEX,Energy
+US,PNL,PJM Northern Illinois Hub Day-Ahead Peak Calendar-Day 5 MW Futures,NYMEX,Energy
+US,POB,"Mini RBOB Gasoline vs. Eurobob Non-Oxy NWE Barges (Argus) (34,986 gallons) Futures",NYMEX,Energy
+US,PPL,PJM JCPL Zone Peak Calendar-Day 5 MW Day-Ahead LMP Futures,NYMEX,Energy
+US,PPP,PP Polypropylene (PCW) Financial Futures,NYMEX,Energy
+US,PPW,PP Polypropylene (PCW) BALMO Futures,NYMEX,Energy
+US,PQO,PJM Duquesne Zone Off-Peak Calendar-Day 5 MW Day-Ahead LMP Futures,NYMEX,Energy
+US,PQP,PJM Duquesne Zone Peak Calendar-Day 5 MW Day-Ahead LMP Futures,NYMEX,Energy
+US,PR4,D4 Biodiesel RINs (OPIS) Previous Year Futures,NYMEX,Energy
+US,PR6,D6 Biodiesel RINs (OPIS) Previous Year Futures,NYMEX,Energy
+US,PRO,PJM ATSI Zone Off-Peak Calendar-Day 5 MW Real-Time LMP Futures,NYMEX,Energy
+US,PRP,PJM ATSI Zone Peak Calendar-Day 5 MW Real-Time LMP Futures,NYMEX,Energy
+US,PSO,PJM PSEG Zone Off-Peak Calendar-Day 5 MW Day-Ahead LMP Futures,NYMEX,Energy
+US,PSP,PJM PSEG Zone Peak Calendar-Day 5 MW Day-Ahead LMP Futures,NYMEX,Energy
+US,PTL,MISO Indiana Hub Real-Time Peak Calendar-Day 5 MW Futures,NYMEX,Energy
+US,PTO,PJM JCPL Zone Off-Peak Calendar-Day 5 MW Day-Ahead LMP Futures,NYMEX,Energy
+US,PUO,PJM DPL Zone Off-Peak Calendar-Day 5 MW Day-Ahead LMP Futures,NYMEX,Energy
+US,PUP,PJM DPL Zone Peak Calendar-Day 5 MW Day-Ahead LMP Futures,NYMEX,Energy
+US,PVO,PJM PECO Zone Off-Peak Calendar-Day 5 MW Day-Ahead LMP Futures,NYMEX,Energy
+US,PVP,PJM PECO Zone Peak Calendar-Day 5 MW Day-Ahead LMP Futures,NYMEX,Energy
+US,PWL,PJM Western Hub Day-Ahead Off-Peak Calendar-Day 5 MW Futures,NYMEX,Energy
+US,PXO,PJM PEPCO Zone Off-Peak Calendar-Day 5 MW Day-Ahead LMP Futures,NYMEX,Energy
+US,PXP,PJM PEPCO Zone Peak Calendar-Day 5 MW Day-Ahead LMP 5 MW Futures,NYMEX,Energy
+US,PYO,PJM Eastern Hub Off-Peak Calendar-Day 5 MW Day-Ahead LMP Futures,NYMEX,Energy
+US,PZO,PJM APS Zone Off-Peak Calendar-Day 5 MW Day-Ahead LMP Futures,NYMEX,Energy
+US,PZP,PJM APS Zone Peak Calendar-Day 5 MW Day-Ahead LMP Futures,NYMEX,Energy
+US,QCS,WTI Quarterly Financial Futures,NYMEX,Energy
+US,QH,E-mini NY Harbor ULSD Futures,NYMEX,Energy
+US,QU,E-mini RBOB Gasoline Futures,NYMEX,Energy
+US,R4B,D4 Biodiesel RINs (OPIS) BALMO Futures,NYMEX,Energy
+US,R53,European FOB Rdam Marine Fuel 0.5% (Platts) vs. European 3.5% FOB Barges (Platts) Futures,NYMEX,Energy
+US,R5B,European FOB Rdam Marine Fuel 0.5% Barges (Platts) BALMO Futures,NYMEX,Energy
+US,R5E,European FOB Rdam Marine Fuel 0.5% (Platts) vs. European 3.5% FOB Barges (Platts) BALMO Futures,NYMEX,Energy
+US,R5F,European FOB Rdam Marine Fuel 0.5% Barges (Platts) Futures,NYMEX,Energy
+US,R5M,Mini European FOB Rdam Marine Fuel 0.5% Barges (Platts) Futures,NYMEX,Energy
+US,R5O,Micro European FOB Rdam Marine Fuel 0.5% Barges (Platts) Futures,NYMEX,Energy
+US,R6B,D6 Ethanol RINs (OPIS) BALMO Futures,NYMEX,Energy
+US,R7L,PJM AEP Dayton Hub Day-Ahead Off-Peak Calendar-Month 5 MW Futures,NYMEX,Energy
+US,RBB,RBOB Gasoline Brent Crack Spread Futures,NYMEX,Energy
+US,RBF,RME Biodiesel FOB Rdam (Argus) (RED Compliant) Futures,NYMEX,Energy
+US,RBM,Mini European FOB Rdam Marine Fuel 0.5% Barges (Platts) BALMO Futures,NYMEX,Energy
+US,RGF,"RBOB Gasoline vs Eurobob Non-Oxy NWE Barges (Argus) (349,860 gallons) Futures",NYMEX,Energy
+US,RGI,Regional Greenhouse Gas Initiative (RGGI) CO2 Allowance Futures,NYMEX,Energy
+US,RKA,Singapore Jet Kerosene (Platts) vs. Gasoil (Platts) Futures,NYMEX,Energy
+US,RLX,RBOB Gasoline Financial Futures,NYMEX,Energy
+US,RN3,D3 Cellulosic RINs (OPIS) Futures,NYMEX,Energy
+US,RN4,D4 Biodiesel RINs (OPIS) Futures,NYMEX,Energy
+US,RN6,D6 Ethanol RINs (OPIS) Futures,NYMEX,Energy
+US,RT,RBOB Gasoline Bullet Futures,NYMEX,Energy
+US,RVR,Gulf Coast Unl 87 Gasoline M2 (Platts) vs. RBOB Gasoline Futures,NYMEX,Energy
+US,S53,Singapore FOB Marine Fuel 0.5% (Platts) vs. Singapore 380 CST Fuel Oil (Platts) Futures,NYMEX,Energy
+US,S5B,Singapore FOB Marine Fuel 0.5% (Platts) BALMO Futures,NYMEX,Energy
+US,S5F,Singapore FOB Marine Fuel 0.5% (Platts) Futures,NYMEX,Energy
+US,S5M,Mini Singapore FOB Marine Fuel 0.5% (Platts) Futures,NYMEX,Energy
+US,S5O,Micro Singapore FOB Marine Fuel 0.5% (Platts) Futures,NYMEX,Energy
+US,SBM,Mini Singapore FOB Marine Fuel 0.5% (Platts) BALMO Futures,NYMEX,Energy
+US,SCB,Southern Green Canyon (Argus) vs. WTI Trade Month BALMO Futures,NYMEX,Energy
+US,SCT,Southern Green Canyon (Argus) vs. WTI Trade Month Futures,NYMEX,Energy
+US,SDD,PJM Western Hub Day-Ahead Peak Average Price Monthly Futures 5 MW,NYMEX,Energy
+US,SE,Singapore Fuel Oil 380 cst (Platts) Futures,NYMEX,Energy
+US,SF1,Singapore Fuel Oil 180cst (Platts) Brent Crack Spread (1000mt) Futures,NYMEX,Energy
+US,SF3,Singapore Fuel Oil 380cst (Platts) Brent Crack Spread (1000mt) Futures,NYMEX,Energy
+US,SFB,Singapore Fuel Oil 380 cst (Platts) vs. European 3.5% Fuel Oil Barges FOB Rdam (Platts) BALMO Futures,NYMEX,Energy
+US,SGF,Singapore Gasoline 92 Unleaded (Platts) vs Gasoline Eurobob Non-Oxy NWE Barges (Argus) Futures,NYMEX,Energy
+US,SGO,Singapore Gasoline 92 Unleaded (Platts) vs. Gasoline Eurobob Non-Oxy NWE Barges (Argus) BALMO Futures,NYMEX,Energy
+US,SMU,Singapore Mogas 95 Unleaded (Platts) vs. Singapore Mogas 92 Unleaded (Platts) Futures,NYMEX,Energy
+US,SR5,Singapore FOB Marine Fuel 0.5% (Platts) vs. European FOB Rdam Marine Fuel 0.5% Barges (Platts) Futures,NYMEX,Energy
+US,SRB,Singapore FOB Marine Fuel 0.5% (Platts) vs. European FOB Rdam Marine Fuel 0.5% Barges (Platts) BALMO Futures,NYMEX,Energy
+US,STI,Singapore Fuel Oil 380 cst (Platts) 6.35 Dubai (Platts) Crack Spread Futures,NYMEX,Energy
+US,STR,Singapore Fuel Oil 180 cst (Platts) 6.35 Brent Crack Spread Futures,NYMEX,Energy
+US,STS,Singapore Fuel Oil 180 cst (Platts) 6.35 Dubai (Platts) Crack Spread Futures,NYMEX,Energy
+US,STY,Singapore Fuel Oil 180 cst (Platts) 6.35 Dubai (Platts) Crack Spread BALMO Futures,NYMEX,Energy
+US,T1B,Freight Route South Korea to Singapore (TC11) (Baltic) BALMO Futures,NYMEX,Energy
+US,T2B,Freight Route West Africa to UK Continent (TD20) (Baltic) BALMO Futures,NYMEX,Energy
+US,T2D,Freight Route West Africa to UK Continent (TD20) (Baltic) Futures,NYMEX,Energy
+US,T2M,Mini Freight Route West Africa to UK Continent (TD20) (Baltic) Daily Futures,NYMEX,Energy
+US,T3B,Freight Route Middle East to China (TD3C) (Platts) BALMO Futures,NYMEX,Energy
+US,T3L,NYISO Zone G Day-Ahead Peak Calendar-Month 5 MW Futures,NYMEX,Energy
+US,T4B,Freight Route US Gulf to Continent (TC14) (Baltic) BALMO Futures,NYMEX,Energy
+US,T4D,Mini Freight Route US Gulf to Continent (TC14) (Baltic) Daily Futures,NYMEX,Energy
+US,T5B,Freight Route Med to Far East (TC15) (Baltic) BALMO Futures,NYMEX,Energy
+US,T5C,"Freight Route Skikda, Algeria to Japan (TC15) (Baltic) Futures",NYMEX,Energy
+US,T6B,"Freight Route Skikda, Algeria to Euromed (TC6) (Baltic) BALMO Futures",NYMEX,Energy
+US,T7C,Freight Route Middle East to East Africa (TC17) (Baltic) Futures,NYMEX,Energy
+US,T7K,Gasoline Euro-bob Oxy NWE Barges (Argus) Crack Spread Futures,NYMEX,Energy
+US,T8B,Freight Route Kuwait to Singapore (TD8) (Baltic) BALMO Futures,NYMEX,Energy
+US,T8C,Freight Route US Gulf to Brazil (TC18) (Baltic) Futures,NYMEX,Energy
+US,TAS,Dutch TTF Natural Gas Calendar Month TAS,NYMEX,Energy
+US,TB2,Freight Route West Coast India to Japan (TC12) (Baltic) BALMO Futures,NYMEX,Energy
+US,TBK,WTI-Brent Trade Month Financial Futures,NYMEX,Energy
+US,TC1,Freight Route South Korea to Singapore (TC11) (Baltic) Futures,NYMEX,Energy
+US,TC6,"Freight Route Skikda, Algeria to Euromed (TC6) (Baltic) Futures",NYMEX,Energy
+US,TC7,Freight Route Singapore to East Coast Australia (TC7) (Baltic) Futures,NYMEX,Energy
+US,TCS,WTI Trade Month Futures,NYMEX,Energy
+US,TEF,Mont Belvieu Normal Butane (OPIS) vs European Butane CIF ARA (Argus) Futures,NYMEX,Energy
+US,TF2,Freight Route Middle East to UK Continent (TC20) (Baltic) Futures,NYMEX,Energy
+US,TFB,Freight Route Middle East to UK Continent (TC20) (Baltic) BALMO Futures,NYMEX,Energy
+US,TFU,Dutch TTF Natural Gas (USD/MMBtu) Futures,NYMEX,Energy
+US,TH,Freight Middle East to Japan (TC5) (Platts) Futures,NYMEX,Energy
+US,THD,Henry Hub TTF (ICIS Heren) Natural Gas Spread Futures,NYMEX,Energy
+US,TIL,WTL Midland (Argus) vs. WTI Calendar Month Futures,NYMEX,Energy
+US,TK,Freight Route North Sea to Continent (TD7) (Baltic) Futures,NYMEX,Energy
+US,TKB,Freight Route North Sea to UK Continent (TD7) (Baltic) BALMO Futures,NYMEX,Energy
+US,TLB,Freight Route Middle East to China (TD3C) (Baltic) BALMO Futures,NYMEX,Energy
+US,TLD,Mini Freight Route Middle East to China (TD3C) (Baltic) Daily Futures,NYMEX,Energy
+US,TM,Freight Route Continent to US Atlantic Coast (TC2) (Baltic) Futures,NYMEX,Energy
+US,TMB,Freight Route Continent to US Atlantic Coast (TC2) (Baltic) BALMO Futures,NYMEX,Energy
+US,TMD,Mini Freight Route Continent to US Atlantic Coast (TC2) (Baltic) Daily Futures,NYMEX,Energy
+US,TTB,Dutch TTF Natural Gas Financial (USD/MMBtu) (ICIS Heren) M-1 Average Price Calendar Month Futures,NYMEX,Energy
+US,TTD,Dutch TTF Natural Gas Daily Futures,NYMEX,Energy
+US,TTE,Dutch TTF Natural Gas (USD/MMBtu) (ICIS Heren) Front Month Futures,NYMEX,Energy
+US,TTG,Dutch TTF Natural Gas Financial Calendar Month Futures,NYMEX,Energy
+US,TTH,Dutch TTF Natural Gas Physical Day-Ahead/Weekend (ICIS Heren) Calendar Month Futures,NYMEX,Energy
+US,TTI,Dutch TTF Natural Gas Financial Day-Ahead/Weekend (ICIS Heren) Calendar Month Futures,NYMEX,Energy
+US,TTP,Dutch TTF Natural Gas (Early Expiry) Financial Calendar Month Futures,NYMEX,Energy
+US,TTS,Dutch TTF Natural Gas Financial Calendar Month TAS,NYMEX,Energy
+US,TW,Gasoil 0.1% Cargoes CIF NWE (Platts) Futures,NYMEX,Energy
+US,U7,Diesel 10ppm Barges FOB ARA (Platts) BALMO Futures,NYMEX,Energy
+US,U9,Low Sulphur Gasoil BALMO Futures,NYMEX,Energy
+US,UA,Singapore Fuel Oil 180 cst (Platts) Futures,NYMEX,Energy
+US,UCD,UCO fob ARA (Argus) Futures,NYMEX,Energy
+US,UCG,UCO fob ARA (Argus) vs. Low Sulphur Gasoil Futures,NYMEX,Energy
+US,UCM,Mini ULSD 10ppm Cargoes CIF MED (Platts) vs. Low Sulphur Gasoil Futures,NYMEX,Energy
+US,UCR,UCOME Biodiesel (RED Compliant) FOB ARA (Argus) Futures,NYMEX,Energy
+US,UCS,UCOME Biodiesel (RED Compliant) FOB ARA (Argus) vs Low Sulphur Gasoil Futures,NYMEX,Energy
+US,UDL,PJM Northern Illinois Hub Real-Time Peak Calendar-Day 5 MW Futures,NYMEX,Energy
+US,UHC,UHC Clearbrook (EMDA) Monthly Futures,NYMEX,Energy
+US,UHT,UHC Clearbrook (EMDA) vs. WTI Trade Month Futures,NYMEX,Energy
+US,UKG,UK NBP Natural Gas Calendar Month Futures,NYMEX,Energy
+US,ULB,NY ULSD (Argus) vs. NY Harbor ULSD BALMO Futures,NYMEX,Energy
+US,UP5,USGC Marine Fuel 0.5% Barges (Platts) (mt) Futures,NYMEX,Energy
+US,UPB,USGC Marine Fuel 0.5% Barges (Platts) (mt) BALMO Futures,NYMEX,Energy
+US,UPM,USGC Marine Fuel 0.5% Barges (Platts) (mt) vs. European FOB Rdam Marine Fuel 0.5% Barges (Platts) Futures,NYMEX,Energy
+US,UR,European Jet Kerosene Barges FOB Rdam (Platts) Futures,NYMEX,Energy
+US,USC,USGC to China (Platts) Dirty Freight Futures,NYMEX,Energy
+US,USE,USGC to UK Continent (Platts) Dirty Freight Futures,NYMEX,Energy
+US,UV,European 3.5% Fuel Oil Barges FOB Rdam (Platts) Futures,NYMEX,Energy
+US,V3L,PJM AEP Dayton Hub Real-Time Off-Peak Calendar-Month 5 MW Futures,NYMEX,Energy
+US,V7,Argus WTI Trade Month Futures,NYMEX,Energy
+US,VDL,PJM AEP Dayton Hub Real-Time Peak Calendar-Day 5 MW Futures,NYMEX,Energy
+US,VR,NY 1% Fuel Oil (Platts) vs. Gulf Coast HSFO (Platts) Futures,NYMEX,Energy
+US,VV,Gulf Coast ULSD (Platts) vs. Gulf Coast Jet (Platts) Futures,NYMEX,Energy
+US,W0,Singapore Mogas 95 Unleaded (Platts) BALMO Futures,NYMEX,Energy
+US,WBR,WTI Houston (Argus) vs. Brent Calendar Month Futures,NYMEX,Energy
+US,WBX,WTI Midland (Argus) vs. Brent Cross-Month Futures,NYMEX,Energy
+US,WHB,WTI Houston (Argus) vs. Brent Trade Month Futures,NYMEX,Energy
+US,WHD,WTI Houston (Argus) vs. Dubai (Platts) Trade Month Futures,NYMEX,Energy
+US,WHT,WCS Houston (Argus) vs. WTI Trade Month Futures,NYMEX,Energy
+US,WMB,WTI Midland (Argus) vs. Brent Trade Month Futures,NYMEX,Energy
+US,WMD,WTI Midland (Argus) vs. Dubai (Platts) Trade Month Futures,NYMEX,Energy
+US,WMR,WTI Midland (Argus) vs. Brent Calendar Month Futures,NYMEX,Energy
+US,WNB,WCS Cushing (Argus) vs. WTI Trade Month BALMO Futures,NYMEX,Energy
+US,WNT,WCS Cushing (Argus) vs. WTI Trade Month Futures,NYMEX,Energy
+US,WOL,PJM Western Hub Real-Time Off-Peak Calendar-Day 5 MW Futures,NYMEX,Energy
+US,WPL,PJM Western Hub Day-Ahead Peak Calendar-Day 5 MW Futures,NYMEX,Energy
+US,WTB,WTI Midland (Argus) vs. WTI Trade Month BALMO Futures,NYMEX,Energy
+US,WTD,WTI Midland (Argus) vs. Dubai (Platts) Calendar Month Futures,NYMEX,Energy
+US,WTL,WTL Midland (Argus) vs. WTI Trade Month Futures,NYMEX,Energy
+US,WTT,WTI Midland (Argus) vs. WTI Trade Month Futures,NYMEX,Energy
+US,X0,Singapore Mogas 97 Unleaded (Platts) Futures,NYMEX,Energy
+US,X6,Gasoil 0.1% Cargoes CIF MED (Platts) BALMO Futures,NYMEX,Energy
+US,X7,ULSD 10ppm CIF MED (Platts) BALMO Futures,NYMEX,Energy
+US,X9,Jet Fuel Barges FOB Rdam (Platts) BALMO Futures,NYMEX,Energy
+US,XER,RBOB Gasoline vs. Euro-bob Oxy NWE Barges (Argus) Futures,NYMEX,Energy
+US,XPP,Alberta Power Pool Extended Peak Calendar-Day Futures,NYMEX,Energy
+US,XTT,WTI Ex-Pipe (Argus) vs. WTI Trade Month Futures,NYMEX,Energy
+US,XUB,Cross North Sea Dirty Freight 80kt (Platts) BALMO Futures,NYMEX,Energy
+US,XUK,Cross North Sea Dirty Freight 80kt (Platts) Futures,NYMEX,Energy
+US,YHE,ERCOT Houston 345 kV Hub Day-Ahead 5 MW Peak Futures,NYMEX,Energy
+US,YHF,ERCOT Houston 345 kV Hub Day-Ahead 5 MW Peak Calendar-Day Futures,NYMEX,Energy
+US,YNO,Singapore Mogas 97 Unleaded (Platts) BALMO Futures,NYMEX,Energy
+US,YRP,ERCOT North 345 kV Hub Day-Ahead 5 MW Off-Peak Calendar-Day Futures,NYMEX,Energy
+US,YRW,ERCOT North 345 kV Hub Day-Ahead 5 MW Peak Calendar-Day Futures,NYMEX,Energy
+US,YUE,ERCOT South 345 kV Hub Day-Ahead 5 MW Peak Futures,NYMEX,Energy
+US,YVB,Mars (Argus) vs. WTI Trade Month BALMO Futures,NYMEX,Energy
+US,YWE,ERCOT West 345 kV Hub Day-Ahead 5 MW Peak Futures,NYMEX,Energy
+US,YWF,ERCOT West 345 kV Hub Day-Ahead 5 MW Off-Peak Calendar-Day Futures,NYMEX,Energy
+US,YWK,ERCOT West 345 kV Hub Day-Ahead 5 MW Off-Peak Futures,NYMEX,Energy
+US,Z1B,Ethanol T2 FOB Rdam Including Duty (Platts) BALMO Futures,NYMEX,Energy
+US,Z4,Gasoil 0.1% Cargoes CIF MED (Platts) Futures,NYMEX,Energy
+US,Z6,ULSD 10ppm Cargoes CIF MED (Platts) Futures,NYMEX,Energy
+US,ZAL,NYISO Zone A Day-Ahead Off-Peak Calendar-Day 5 MW Futures,NYMEX,Energy
+US,ZGL,NYISO Zone G Day-Ahead Off-Peak Calendar-Day 5 MW Futures,NYMEX,Energy
+US,ZJL,NYISO Zone J Day-Ahead Off-Peak Calendar-Day 5 MW Futures,NYMEX,Energy
+US,ZKU,Singapore Naphtha (Platts) BALMO Futures,NYMEX,Energy
+US,ZS,Soybean Futures,CBOT,Agriculture
+US,LE,Live Cattle Futures,CME,Agriculture
+US,ZC,Corn Futures,CBOT,Agriculture
+US,ZM,Soybean Meal Futures,CBOT,Agriculture
+US,ZW,Chicago SRW Wheat Futures,CBOT,Agriculture
+US,KC,Coffee C Futures,ICEUS,Agriculture
+US,ZL,Soybean Oil Futures,CBOT,Agriculture
+US,CT,Cotton No. 2 Futures,ICEUS,Agriculture
+US,SB,Sugar No. 11 Futures,ICEUS,Agriculture
+US,CC,Cocoa Futures,ICEUS,Agriculture
+US,HE,Lean Hog Futures,CME,Agriculture
+US,UME,Urea (Granular) FOB Middle East Futures,CBOT,Agriculture
+US,XK,Mini Soybean Futures,CBOT,Agriculture
+US,GF,Feeder Cattle Futures,CME,Agriculture
+US,ZR,Rough Rice Futures,CBOT,Agriculture
+US,MZS,Micro Soybean Futures,CBOT,Agriculture
+US,CJ,Cocoa Futures,NYMEX,Agriculture
+US,LBR,Lumber Futures,CME,Agriculture
+US,OJ,Frozen Concentrate Orange Juice A Futures,ICEUS,Agriculture
+US,ZO,Oat Futures,CBOT,Agriculture
+US,PRK,Pork Cutout Futures,CME,Agriculture
+US,BET,BTIC on Bloomberg Commodity Energy Subindex Futures,CBOT,Agriculture
+US,BPE,Bloomberg Commodity Petroleum Subindex Futures,CBOT,Agriculture
+US,KE,KC HRW Wheat Futures,CBOT,Agriculture
+US,TT,Cotton Futures,NYMEX,Agriculture
+US,UFV,Urea (Granular) FOB US Gulf Futures,CBOT,Agriculture
+US,XC,Mini-Corn Futures,CBOT,Agriculture
+US,BLK,Block Cheese Futures,CME,Agriculture
+US,DC,Class III Milk Futures,CME,Agriculture
+US,KT,Coffee Futures,NYMEX,Agriculture
+US,KWD,KC Wheat - Euronext Wheat Spread,CBOT,Agriculture
+US,MZC,Micro Corn Futures,CBOT,Agriculture
+US,MZM,Micro Soybean Meal Futures,CBOT,Agriculture
+US,MZW,Micro Wheat Futures,CBOT,Agriculture
+US,OPF,USD Malaysian Palm Olein Calendar Futures,CME,Agriculture
+US,RS,Canola Futures,ICEUS,Agriculture
+US,RS.Z,Canola TAS Futures,ICEUS,Agriculture
+US,SAS,FOB Santos Soybeans Financially Settled (Platts) Futures,CBOT,Agriculture
+US,UFB,Urea (Granular) CFR Brazil Futures,CBOT,Agriculture
+US,UFE,Urea (Granular) FOB Egypt Futures,CBOT,Agriculture
+US,XW,Mini-sized Chicago SRW Wheat Futures,CBOT,Agriculture
+US,AC,Metric Arabica Coffee Future,ICEUS,Agriculture
+US,AUW,Australian Wheat FOB (Platts) Futures,CBOT,Agriculture
+US,BAG,Bloomberg Commodity Agriculture Subindex Futures,CBOT,Agriculture
+US,BAT,BTIC on Bloomberg Commodity Agriculture Subindex Futures,CBOT,Agriculture
+US,BEN,Bloomberg Commodity Energy Subindex Futures,CBOT,Agriculture
+US,BGR,Bloomberg Commodity Grains Subindex Futures,CBOT,Agriculture
+US,BGT,BTIC on Bloomberg Commodity Grains Subindex Futures,CBOT,Agriculture
+US,BLI,Bloomberg Commodity Livestock Subindex Futures,CBOT,Agriculture
+US,BLT,BTIC on Bloomberg Commodity Livestock Subindex Futures,CBOT,Agriculture
+US,BME,Bloomberg Commodity All Metals Subindex Futures,CBOT,Agriculture
+US,BMT,BTIC on Bloomberg Commodity All Metals Subindex Futures,CBOT,Agriculture
+US,BPR,Bloomberg Commodity Precious Metals Subindex Futures,CBOT,Agriculture
+US,BPT,BTIC on Bloomberg Commodity Petroleum Subindex Futures,CBOT,Agriculture
+US,BST,BTIC on Bloomberg Commodity Precious Metals Subindex Futures,CBOT,Agriculture
+US,CB,Cash-settled Butter Futures,CME,Agriculture
+US,CC.Z,Cocoa Futures (TAS),ICEUS,Agriculture
+US,CCI,FTSE CoreCommodity CRB Index Futures,CME,Agriculture
+US,CCT,BTIC on FTSE CoreCommodity CRB Index Futures,CME,Agriculture
+US,CPO,USD Malaysian Crude Palm Oil Calendar Futures,CME,Agriculture
+US,CPV,USD Malaysian Crude Palm Oil Day 15th Bullet Futures,CME,Agriculture
+US,CSC,Cash-Settled Cheese Futures,CME,Agriculture
+US,CT.Z,Cotton No. 2 TAS - NYCC - Dec25,ICEUS,Agriculture
+US,CVB,Black Sea Wheat (CVB) Financially Settled (Argus) Futures,CBOT,Agriculture
+US,CWD,Chicago Wheat - Euronext Wheat Spread,CBOT,Agriculture
+US,CWR,Canadian Wheat (Platts) Futures,CBOT,Agriculture
+US,DFN,DAP FOB NOLA Futures,CBOT,Agriculture
+US,DY,Dry Whey Futures,CME,Agriculture
+US,GDK,Class IV Milk Futures,CME,Agriculture
+US,GNF,Nonfat Dry Milk Futures,CME,Agriculture
+US,HRS,Spring Wheat Futures,CBOT,Agriculture
+US,JQ,Mid-Sized Milk Synthetic Futures,CME,Agriculture
+US,KC.Z,"Coffee ""C"" TAS - NYCC - Dec25",ICEUS,Agriculture
+US,MFC,MAP CFR Brazil Futures,CBOT,Agriculture
+US,MFV,10-Ton Urea US Gulf Futures,CBOT,Agriculture
+US,MKC,Mini-Sized KC HRW Wheat Futures,CBOT,Agriculture
+US,MZL,Micro Soybean Oil Futures,CBOT,Agriculture
+US,OJ.Z,Frozen Concentrate Orange Juice A Futures (TAS),ICEUS,Agriculture
+US,OSF,Soybean Oilshare Futures,CBOT,Agriculture
+US,POG,USD Malaysian Crude Palm Oil - European Low Sulphur Gasoil Spread Futures,CME,Agriculture
+US,QCW,Chicago SRW Wheat-Corn ICS Synthetic Futures,CBOT,Agriculture
+US,RSO,European FOB Dutch Mill Rapeseed Oil (Argus) Futures,CBOT,Agriculture
+US,SB.Z,Sugar No. 11 TAS - NYCC - Mar26,ICEUS,Agriculture
+US,SF,Sugar No. 16 Futures,ICEUS,Agriculture
+US,SYP,Southern Yellow Pine (Fastmarkets) Futures,CME,Agriculture
+US,UNO,UAN FOB NOLA Futures,CBOT,Agriculture
+US,YO,No. 11 Sugar Futures,NYMEX,Agriculture
+US,GC,Gold Futures,COMEX,Metals
+US,MGC,Micro Gold Futures,COMEX,Metals
+US,SI,Silver Futures,COMEX,Metals
+US,HG,Copper Futures,COMEX,Metals
+US,MHG,Micro Copper Futures,COMEX,Metals
+US,SIL,Micro Silver Futures,COMEX,Metals
+US,PL,Platinum Futures,NYMEX,Metals
+US,PA,Palladium Futures,NYMEX,Metals
+US,ALI,Aluminum Futures,COMEX,Metals
+US,UX,UxC Uranium U3O8 Futures,COMEX,Metals
+US,1OZ,1-Ounce Gold Futures,COMEX,Metals
+US,QO,Gold (Mini) Futures,COMEX,Metals
+US,LTC,Lithium Carbonate CIF CJK (Fastmarkets) Futures,COMEX,Metals
+US,TIO,"Iron Ore 62% Fe, CFR China (Platts) Futures",COMEX,Metals
+US,HRC,U.S. Midwest Domestic Hot-Rolled Coil Steel (CRU) Index Futures,COMEX,Metals
+US,QC,E-mini Copper Futures,COMEX,Metals
+US,COB,Cobalt Metal (Fastmarkets) Futures,COMEX,Metals
+US,QI,E-mini Silver Futures,COMEX,Metals
+US,SGU,Shanghai Gold (USD) Futures,COMEX,Metals
+US,BCH,Chicago No1 Busheling Ferrous Scrap (Fastmarkets) Futures,COMEX,Metals
+US,CUP,Copper Premium Grade A CIF Shanghai (Metal Bulletin) Futures,COMEX,Metals
+US,ZNC,Zinc Futures,COMEX,Metals
+US,4GC,Gold (Enhanced Delivery) Futures,COMEX,Metals
+US,COH,Cobalt Hydroxide CIF China (Fastmarkets) Futures,COMEX,Metals
+US,EHR,North European Hot-Rolled Coil Steel (Argus) Futures,COMEX,Metals
+US,GCD,Gold Trade at Marker First PM Futures,COMEX,Metals
+US,HGS,Copper Financial Futures,COMEX,Metals
+US,LTH,Lithium Hydroxide CIF CJK (Fastmarkets) Futures,COMEX,Metals
+US,MST,Micro Silver TAS,COMEX,Metals
+US,PAC,Iron Ore China Portside Fines CNH fot Qingdao (Argus) Futures,COMEX,Metals
+US,SGC,Shanghai Gold (CNH) Futures,COMEX,Metals
+US,1OT,1-Ounce Gold TAS,COMEX,Metals
+US,A38,Aluminum A380 Alloy (Platts) Futures,COMEX,Metals
+US,AEP,Aluminium European Premium Duty-Unpaid (Metal Bulletin) Futures,COMEX,Metals
+US,ALA,Alumina FOB Australia (Platts) Futures,COMEX,Metals
+US,ALB,Aluminum FOB Australia Metals Bulletin Futures,COMEX,Metals
+US,AUP,Aluminum MW US Premium 25MT Futures,COMEX,Metals
+US,BUS,U.S. Midwest Busheling Ferrous Scrap (AMM) Futures,COMEX,Metals
+US,EDP,Metal Bulletin Aluminum European Premium Duty-Paid Futures,COMEX,Metals
+US,FSF,"HMS 80/20 Ferrous Scrap, CFR Turkey (Platts TSI) Futures",COMEX,Metals
+US,HDG,U.S. Midwest Domestic Steel Premium (CRU) Futures,COMEX,Metals
+US,HRP,U.S. Midwest Hot-Rolled Coil Steel (Platts) Futures,COMEX,Metals
+US,LED,Lead Futures,COMEX,Metals
+US,MHT,Micro Copper TAS,COMEX,Metals
+US,MJP,Aluminum Japan Premium (Platts) Futures,COMEX,Metals
+US,MOX,Molybdenum Oxide (Platts) Futures,COMEX,Metals
+US,PAM,Micro Palladium Futures,NYMEX,Metals
+US,PAU,Iron Ore China Portside Fines USD Seaborne Equivalent (Argus) Futures,COMEX,Metals
+US,PLM,Micro Platinum Futures,NYMEX,Metals
+US,QOT,E-Mini Gold TAS,COMEX,Metals
+US,SHR,U.S. Midwest Shredded Scrap (Platts) Futures,COMEX,Metals
+US,SPM,Spodumene CIF China (Fastmarkets) Futures,COMEX,Metals
+HK,HSI,Hang Seng Index Futures,HKEX,Indexes
+HK,HTI,Hang Seng TECH Index Futures,HKEX,Indexes
+HK,MHI,Mini Hang Seng Index Futures,HKEX,Indexes
+HK,HHI,Hang Seng China Enterprises Index (HSCEI) Futures,HKEX,Indexes
+HK,MCH,Mini Hang Seng China Enterprises Index (HSCEI) Futures,HKEX,Indexes
+HK,GDR,CNH Gold Futures,HKEX,Metals
+HK,MIU,XiaoMi Corporation Futures,HKEX,Stocks
+HK,CUS,USD/CNH Futures,HKEX,Currencies
+HK,MCS,Mini USD/CNH Futures,HKEX,Currencies
+HK,BYD,BYD Company Limited Futures,HKEX,Stocks
+HK,HB3,Three-Month Hong Kong Interbank Offered Rate Futures,HKEX,Rates
+HK,MCA,MSCI China A 50 Connect (USD) Index Futures,HKEX,Indexes
+HK,A50,iShares FTSE A50 China Index ETF Futures,HKEX,Indexes
+HK,ALB,Alibaba Group Holding Limited Futures,HKEX,Stocks
+HK,HB1,One-Month Hong Kong Interbank Offered Rate Futures,HKEX,Rates
+HK,PEN,XPeng Inc Futures,HKEX,Stocks
+HK,YZC,Yankuang Energy Group Company Limited Futures,HKEX,Stocks
+HK,CCB,China Construction Bank Corporation Futures,HKEX,Stocks
+HK,DHS,HSI Dividend Point Index Futures,HKEX,Indexes
+HK,FEM,Iron Ore Futures - Monthly Contract Futures,HKEX,Metals
+HK,HKB,HSBC Holdings Plc Futures,HKEX,Stocks
+HK,MEI,MSCI Emerging Markets Index Futures,HKEX,Indexes
+HK,MET,Meituan Futures,HKEX,Stocks
+HK,NWD,New World Development Company Limited Futures,HKEX,Stocks
+HK,SUN,Sunac China Holdings Ltd Futures,HKEX,Stocks
+HK,TCH,Tencent Holdings Ltd Futures,HKEX,Stocks
+HK,AAC,AAC Technologies Holdings Inc Futures,HKEX,Stocks
+HK,ABC,Agricultural Bank of China Ltd Futures,HKEX,Stocks
+HK,ACC,Anhui Conch Cement Co Ltd Futures,HKEX,Stocks
+HK,AIA,AIA Group Ltd Futures,HKEX,Stocks
+HK,ALC,Aluminum Corporation of China Limited Futures,HKEX,Stocks
+HK,ALH,Alibaba Health Information Technology Ltd Futures,HKEX,Stocks
+HK,AMC,China AMC CSI300 Index ETF Futures,HKEX,Indexes
+HK,BCL,Bank of China Limited Futures,HKEX,Stocks
+HK,BCM,Bank of Communications Co Ltd Futures,HKEX,Stocks
+HK,BEA,The Bank of East Asia Limited Futures,HKEX,Stocks
+HK,BIU,Baidu Inc Futures,HKEX,Stocks
+HK,BLI,Bilibili Inc Futures,HKEX,Stocks
+HK,BUD,Budweiser Brewing Company APAC Limited Futures,HKEX,Stocks
+HK,BYE,BYD Electronic International Company Limited Futures,HKEX,Stocks
+HK,CAU,AUD/CNH Futures,HKEX,Currencies
+HK,CCC,China Communications Construction Company Limited Futures,HKEX,Stocks
+HK,CCE,China Coal Energy Co Ltd Futures,HKEX,Stocks
+HK,CDA,China Cinda Asset Management Co Ltd Futures,HKEX,Stocks
+HK,CEU,EUR/CNH Futures,HKEX,Currencies
+HK,CGN,CGN Power Co Ltd Futures,HKEX,Stocks
+HK,CHH,CES China 120 Index (CES 120) Futures,HKEX,Indexes
+HK,CHI,MSCI China Index Futures,HKEX,Indexes
+HK,CHN,MSCI China Net Total Return Index Futures,HKEX,Indexes
+HK,CHT,China Mobile Limited Futures,HKEX,Stocks
+HK,CHU,China Unicom (Hong Kong) Limited Futures,HKEX,Stocks
+HK,CIN,INR/CNH Futures,HKEX,Currencies
+HK,CIT,CITIC Limited Futures,HKEX,Stocks
+HK,CJP,JPY/CNH Futures,HKEX,Currencies
+HK,CKH,CK Hutchison Holdings Ltd Futures,HKEX,Stocks
+HK,CLI,China Life Insurance Company Limited Futures,HKEX,Stocks
+HK,CLP,CLP Holdings Limited Futures,HKEX,Stocks
+HK,CMB,China Merchants Bank Co Ltd Futures,HKEX,Stocks
+HK,CNC,CNOOC Limited Futures,HKEX,Stocks
+HK,COG,Country Garden Holdings Co Ltd Futures,HKEX,Stocks
+HK,COL,China Overseas Land & Investment Ltd Futures,HKEX,Stocks
+HK,COS,COSCO Shipping Holdings Co Ltd Futures,HKEX,Stocks
+HK,CPC,China Petroleum & Chemical Corporation Futures,HKEX,Stocks
+HK,CPI,China Pacific Insurance Group Co Ltd Futures,HKEX,Stocks
+HK,CSA,CSOP FTSE China A50 ET Futures,HKEX,Stocks
+HK,CSE,China Shenhua Energy Co Ltd Futures,HKEX,Stocks
+HK,CTB,China CITIC Bank Corporation Ltd Futures,HKEX,Stocks
+HK,CTC,China Telecom Corporation Limited Futures,HKEX,Stocks
+HK,CTS,CITIC Securities Co Ltd Futures,HKEX,Stocks
+HK,DHH,HSCEI Dividend Point Index Futures,HKEX,Indexes
+HK,EAN,MSCI EM Asia Net Total Return Index Futures,HKEX,Indexes
+HK,EMN,MSCI Emerging Markets Net Total Return Index Futures,HKEX,Indexes
+HK,EVG,China Evergrande Group Futures,HKEX,Stocks
+HK,FEQ,Iron Ore Futures - Quaterly Contract Futures,HKEX,Metals
+HK,GAC,Guangzhou Automobile Group Co Ltd Futures,HKEX,Stocks
+HK,GAH,Geely Automobile Holdings Ltd Futures,HKEX,Stocks
+HK,GDU,USD GOLD Futures,HKEX,Metals
+HK,GHL,Xinyi Glass Holdings Limited Futures,HKEX,Stocks
+HK,GJA,HAI CAP ADJ Futures,HKEX,Stocks
+HK,GLI,Ganfeng Lithium Group Company Limited Futures,HKEX,Stocks
+HK,GLX,Galaxy Entertainment Group Ltd Futures,HKEX,Stocks
+HK,GWM,Great Wall Motor Co Ltd Futures,HKEX,Stocks
+HK,H1S,One-Month Hong Kong Interbank Offered Rate Strip Futures,HKEX,Rates
+HK,H3S,Three-Month Hong Kong Interbank Offered Rate Strip Futures,HKEX,Rates
+HK,HAI,Haitong Securities Co Ltd Futures,HKEX,Stocks
+HK,HCF,Hang Seng China Enterprises Index ETF Futures,HKEX,Indexes
+HK,HDO,Haidilao International Holding Ltd Futures,HKEX,Stocks
+HK,HEH,Power Assets Holdings Limited Futures,HKEX,Stocks
+HK,HEX,Hong Kong Exchanges and Clearing Limited Futures,HKEX,Stocks
+HK,HGT,HSI Gross Total Return Index Futures,HKEX,Indexes
+HK,HHN,HSCEI Net Total Return Index Futures,HKEX,Indexes
+HK,HHT,HSCEI Gross Total Return Index Futures,HKEX,Indexes
+HK,HKG,The Hong Kong and China Gas Company Limited Futures,HKEX,Stocks
+HK,HLD,Henderson Land Development Company Limited Futures,HKEX,Stocks
+HK,HNP,Huaneng Power International Inc Futures,HKEX,Stocks
+HK,HNT,HSI Net Total Return Index Futures,HKEX,Indexes
+HK,HSB,Hang Seng Bank Limited Futures,HKEX,Stocks
+HK,ICB,Industrial and Commercial Bank of China Limited Futures,HKEX,Stocks
+HK,JDC,JDcom Inc Futures,HKEX,Stocks
+HK,JDH,JD Health International Inc Futures,HKEX,Stocks
+HK,KDS,Kingdee International Software Group CoLtd Futures,HKEX,Stocks
+HK,KSO,Kingsoft Corporation Ltd Futures,HKEX,Stocks
+HK,KST,Kuaishou Technology Futures,HKEX,Stocks
+HK,LAU,Li Auto Inc Futures,HKEX,Stocks
+HK,LNI,Li Ning Company Limited Futures,HKEX,Stocks
+HK,LNK,Link Real Estate Investment Trust Futures,HKEX,Stocks
+HK,LRA,MINI - CNH London Aluminium Futures,HKEX,Metals
+HK,LRC,MINI - CNH London Copper Futures,HKEX,Metals
+HK,LUA,MINI - USD London Aluminium Futures,HKEX,Metals
+HK,LUC,MINI - USD London Copper Futures,HKEX,Metals
+HK,LUN,MINI - USD London Nickel Futures,HKEX,Metals
+HK,LUS,MINI - USD London Tin Futures,HKEX,Metals
+HK,MAC,MSCI EM Asia ex China Net Total Return Index Futures,HKEX,Indexes
+HK,MAK,MSCI EM Asia ex Korea Net Total Return Index Futures,HKEX,Indexes
+HK,MIA,MSCI Indonesia Index Futures,HKEX,Indexes
+HK,MIN,MSCI India Net Total Return Index Futures,HKEX,Indexes
+HK,MND,MSCI India Index Futures,HKEX,Indexes
+HK,MOL,China Molybdenum Company Limited Futures,HKEX,Stocks
+HK,MPC,MSCI Pacific Net Total Return Index Futures,HKEX,Indexes
+HK,MPS,MSCI Philippines Index Futures,HKEX,Indexes
+HK,MSB,China Minsheng Banking Corp Ltd Futures,HKEX,Stocks
+HK,MTW,MSCI Taiwan Index Futures,HKEX,Indexes
+HK,NTE,NetEase Inc Futures,HKEX,Stocks
+HK,PHT,Ping An Healthcare and Technology Co Ltd Futures,HKEX,Stocks
+HK,PIC,PICC Property and Casualty Company Limited Futures,HKEX,Stocks
+HK,SIR,CNH Silver Futures,HKEX,Metals
+HK,SIU,USD Silver Futures,HKEX,Metals
+HK,TWN,MSCI Taiwan 25/50 Net Total Return Index Futures,HKEX,Indexes
+HK,TWP,MSCI Taiwan 25/50 Index Futures,HKEX,Indexes
+HK,TWR,China Tower Corporation Limited Futures,HKEX,Stocks
+HK,UCN,CNH/USD Futures,HKEX,Currencies
+HK,UIN,INR\USD Futures,HKEX,Stocks
+HK,VHS,HSI Volatility Index Futures,HKEX,Indexes
+HK,ZAO,ZhongAn Online P & C Insurance Company Limited Futures,HKEX,Stocks
+HK,ZJM,Zijin Mining Group Co Ltd Futures,HKEX,Stocks
+HK,BOC,BOC Hong Kong (Holdings) Limited Futures,HKEX,Stocks
+HK,LRN,MINI - CNH London Nickel Futures,HKEX,Metals
+HK,LRP,MINI - CNH London Lead Futures,HKEX,Metals
+HK,LRS,MINI - CNH London Tin Futures,HKEX,Metals
+HK,LRZ,MINI - CNH London Zinc Futures,HKEX,Metals
+HK,LUP,MINI - USD London Lead Futures,HKEX,Metals
+HK,LUZ,MINI - USD London Zinc Futures,HKEX,Metals
+HK,MAN,MSCI Australia NTR (USD) Index Futures,HKEX,Indexes
+HK,MBI,Hang Seng Mainland Banks Index Futures,HKEX,Indexes
+HK,MDN,MSCI Indonesia Net Total Return Index Futures,HKEX,Indexes
+HK,MEE,MSCI EM EMEA Net Total Return Index Futures,HKEX,Indexes
+HK,MEL,MSCI EM LatAm Net Total Return Index Futures,HKEX,Indexes
+HK,MGN,MSCI Singapore Free Net Total Return Index Futures,HKEX,Indexes
+HK,MHK,MSCI Hong Kong Net Total Return Index Futures,HKEX,Indexes
+HK,MJU,MSCI Japan Net Total Return Index Futures,HKEX,Indexes
+HK,MMA,MSCI Malaysia Index Futures,HKEX,Indexes
+HK,MMN,MSCI Malaysia Net Total Return Index Futures,HKEX,Indexes
+HK,MNZ,MSCI New Zealand Net Total Return Index Futures,HKEX,Indexes
+HK,MPJ,MSCI Pacific ex Japan Net Total Return Index Futures,HKEX,Indexes
+HK,MPN,MSCI Philippines Net Total Return Index Futures,HKEX,Indexes
+HK,MSG,MSCI Singapore Free Index Futures,HKEX,Indexes
+HK,MSN,MSCI Singapore Net Total Return Index Futures,HKEX,Indexes
+HK,MTD,MSCI Thailand Index Futures,HKEX,Indexes
+HK,MTN,MSCI Thailand Net Total Return Index Futures,HKEX,Indexes
+HK,MTR,MTR Corporation Limited Futures,HKEX,Stocks
+HK,MVI,MSCI Vietnam Index Futures,HKEX,Indexes
+HK,MVN,MSCI Vietnam Net Total Return Index Futures,HKEX,Indexes
+HK,MWN,MSCI Taiwan Net Total Return Index Futures,HKEX,Indexes
+HK,MXC,MSCI EM ex China Net Total Return Index Futures,HKEX,Indexes
+HK,MXJ,MSCI AC Asia ex Japan Net Total Return Index Futures,HKEX,Indexes
+HK,MXK,MSCI EM ex Korea Net Total Return Index Futures,HKEX,Indexes
+HK,NCL,New China Life Insurance Co Ltd Futures,HKEX,Stocks
+HK,NFU,Nongfu Spring Company Limited Futures,HKEX,Stocks
+HK,PAI,Ping An Insurance (Group) Company of China Ltd Futures,HKEX,Stocks
+HK,PEC,PetroChina Company Limited Futures,HKEX,Stocks
+HK,PHA,PA GOODDOCTOR CAP ADJ Futures,HKEX,Stocks
+HK,SAN,Sands China Ltd Futures,HKEX,Stocks
+HK,SHK,Sun Hung Kai Properties Limited Futures,HKEX,Stocks
+HK,SHL,Xinyi Solar Holdings Ltd Futures,HKEX,Stocks
+HK,SMC,Semiconductor Manufacturing International Corp Futures,HKEX,Stocks
+HK,SNO,Sunny Optical Technology (Group) Co Ltd Futures,HKEX,Stocks
+HK,SWA,Swire Pacific Limited A Futures,HKEX,Stocks
+HK,TRF,Tracker Fund of Hong Kong Futures,HKEX,Indexes
+HK,TRP,Tripcom Group Ltd Futures,HKEX,Stocks
+HK,TWA,CHINA TOWER ($0 001) CAP ADJ Futures,HKEX,Stocks
+HK,WEB,Weibo Corporation Futures,HKEX,Stocks
+HK,WHL,The Wharf (Holdings) Limited Futures,HKEX,Stocks
+HK,WXB,WuXi Biologics (Cayman) Inc Futures,HKEX,Stocks
+CN,FG,Flat Glass Futures,CZCE/DCE,Energy
+CN,RB,Steel Rebar Futures,SHFE,Metals
+CN,FU,Fuel Oil Futures,SHFE,Energy
+CN,IM,CSI 1000 Index Futures,CFFEX,Indexes
+CN,IF,CSI 300 Index Futures,CFFEX,Indexes
+CN,AU,Gold Futures,SHFE,Metals
+CN,AG,Silver Futures,SHFE,Metals
+CN,TL,30-year Treasury Bond Futures,CFFEX,Rates
+CN,OI,Rapeseed Oil Futures,CZCE/DCE,Agriculture
+CN,MA,Methanol Futures,CZCE/DCE,Energy
+CN,IH,SSE 50 Index Futures,CFFEX,Indexes
+CN,HC,Hot-Rolled Coil Futures,SHFE,Metals
+CN,RU,Natural Rubber Futures,SHFE,Energy
+CN,SA,Soda Ash Futures,CZCE/DCE,Energy
+CN,SR,White Sugar Futures,CZCE/DCE,Agriculture
+CN,IC,CSI 500 Index Futures,CFFEX,Indexes
+CN,CU,Copper Cathode Futures,SHFE,Metals
+CN,RM,Rapeseed Meal Futures,CZCE/DCE,Agriculture
+CN,CF,Cotton Futures,CZCE/DCE,Agriculture
+CN,SP,Pulp Futures,SHFE,Energy
+CN,T,10-year Treasury Bond Futures,CFFEX,Rates
+CN,SH,Sodium Hydroxide Futures,CZCE/DCE,Energy
+CN,TA,Purified Terephthalic Acid (PTA) Futures,CZCE/DCE,Energy
+CN,SN,Tin Futures,SHFE,Metals
+CN,UR,Urea Futures,CZCE/DCE,Energy
+CN,NI,Nickel Futures,SHFE,Metals
+CN,ZN,Zinc Futures,SHFE,Metals
+CN,AP,Fresh Apple Futures,CZCE/DCE,Agriculture
+CN,AO,Aluminum Oxide Futures,SHFE,Metals
+CN,AL,Aluminium Futures,SHFE,Metals
+CN,SS,Stainless Steel Futures,SHFE,Metals
+CN,BR,Butadiene Rubber Futures,SHFE,Energy
+CN,BU,Bitumen Futures,SHFE,Energy
+CN,SM,Manganese Silicon Futures,CZCE/DCE,Metals
+CN,TF,5-year Treasury Bond Futures,CFFEX,Rates
+CN,TS,2-year Treasury Bond Futures,CFFEX,Rates
+CN,PF,Polyester Staple Fiber Futures,CZCE/DCE,Energy
+CN,PB,Lead Futures,SHFE,Metals
+CN,PK,Peanut Kernel Futures,CZCE/DCE,Agriculture
+CN,CJ,Dried Jujube Futures,CZCE/DCE,Agriculture
+CN,SF,Ferrosilicon Futures,CZCE/DCE,Metals
+CN,PX,p-Xylene Futures,CZCE/DCE,Energy
+CN,PR,Polyethylene Terephthalate Resin For Bottles Futures,CZCE/DCE,Energy
+CN,ZC,Thermal Coal Futures,CZCE/DCE,Energy
+CN,CY,Cotton Yarn futures,CZCE/DCE,Agriculture
+CN,WR,Wire Rod Futures,SHFE,Metals
+CN,PM,Common Wheat Futures,CZCE/DCE,Agriculture
+CN,RS,Rapeseed Futures,CZCE/DCE,Agriculture
+CN,JR,Medium to Short-Grain Nonglutinous Paddy Futures,CZCE/DCE,Agriculture
+CN,RI,Early Long-Grain Nonglutinous Paddy Futures,CZCE/DCE,Agriculture
+CN,WH,Strong Gluten Wheat Futures,CZCE/DCE,Agriculture
+CN,LR,Late Long-Grain Nonglutinous Paddy Futures,CZCE/DCE,Agriculture

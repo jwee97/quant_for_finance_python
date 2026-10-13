@@ -14,12 +14,12 @@ from __future__ import annotations
 
 import threading
 from collections import OrderedDict
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import numpy as np
 import pandas as pd
 
-from .common import AssetSnapshot, add_flag, last_zscore, liquidity_score, percentile_rank, realized_vol
+from .common import TRADING_DAYS, AssetSnapshot, add_flag, last_zscore, liquidity_score, percentile_rank, realized_vol
 from .futures import SchwartzSmithParams, basis_momentum, carry, contract_returns, excess_return_series, synthetic_term_structure, term_structure
 
 
@@ -128,6 +128,19 @@ def simulated_curve(root: str, as_of=None, n_days: int = HISTORY_DAYS) -> CurveD
     return data
 
 
+MARGIN_SHARE = {"commodity": 0.09, "metal": 0.06, "agricultural": 0.06, "equity_index": 0.06, "rates": 0.02, "fx": 0.035, "crypto": 0.15}      # ILLUSTRATIVE initial margin as a share of a contract's value
+
+
+def illustrative_margin(asset_class: str, notional: float) -> tuple[float, float] | None:
+    """``(initial, maintenance)`` margin per contract as an illustrative share of its value for the asset class (maintenance is nine tenths of initial), or ``None`` for a class this does not know
+    or a value that is not positive. The exchanges set the real figures and change them with volatility; the platform's own roots have rounder, hand-set numbers."""
+    share = MARGIN_SHARE.get(asset_class)
+    if share is None or not np.isfinite(notional) or notional <= 0:
+        return None
+    initial = round(share * notional, -1 if notional > 1000 else 2)
+    return initial, round(0.9 * initial, -1 if notional > 1000 else 2)
+
+
 def load_curve_file(path, root: str, spec: RootSpec | None = None, source: str = "user_file", extra_notes=()) -> CurveData:
     """A contract table from a CSV with columns ``date, contract, expiry, price`` and optionally ``open_interest``, ``volume`` and ``spot``. Contract terms come from ``spec`` when given (a downloaded root's
     terms), else from ``ROOTS`` when the root is known; otherwise a generic specification (multiplier 1, no margin) is used and margin figures are not meaningful. ``source`` is ``user_file`` for your file
@@ -153,7 +166,14 @@ def load_curve_file(path, root: str, spec: RootSpec | None = None, source: str =
         if root.upper() not in ROOTS:
             notes.append("The contract terms of this root are unknown (multiplier 1, no margin): dollar figures are in price units.")
     elif spec.initial_margin == 0.0:
-        notes.append("Margins for this root are not known to the platform (shown as zero); the contract multiplier and tick are the exchange's.")
+        last = raw[raw["date"] == raw["date"].max()].sort_values("expiry")
+        guess = illustrative_margin(spec.asset_class, float(last["price"].iloc[0]) * spec.multiplier) if len(last) else None
+        if guess is not None:
+            spec = replace(spec, initial_margin=guess[0], maintenance_margin=guess[1])
+            notes.append(f"Margins for this root are not known to the platform: the figures shown are an ILLUSTRATIVE {MARGIN_SHARE[spec.asset_class]:.0%} (initial) of the front contract's value, a typical share for "
+                         "its asset class, not an exchange's current requirement. The contract multiplier and tick are the exchange's.")
+        else:
+            notes.append("Margins for this root are not known to the platform (shown as zero); the contract multiplier and tick are the exchange's.")
     spot = raw.drop_duplicates("date").set_index("date")["spot"] if "spot" in raw.columns and raw["spot"].notna().any() else None
     return CurveData(root.upper(), spec, raw[["date", "contract", "expiry", "price", "ttm", "open_interest", "volume"]].reset_index(drop=True), spot, source, notes)
 
@@ -440,3 +460,77 @@ def run_futures_strategy(config, strategy: str, roots: list[str] | None = None, 
                 "notes": ["The futures are a Schwartz-Smith model simulation: the result checks that carry, roll and costs are booked correctly, not whether the strategy earns money.",
                           "Returns are the excess return of holding the front contract and rolling it; margin and funding are not modelled."]})
     return out
+
+
+# ------------------------------------------------------------------------------------------------------------------ a price history without a curve
+def _thin(n: int, limit: int) -> np.ndarray:
+    """Positions of at most ``limit`` evenly spread points of ``n``, always including the first and the last."""
+    if n <= limit:
+        return np.arange(n)
+    return np.unique(np.r_[np.linspace(0, n - 1, limit).round().astype(int), n - 1])
+
+
+def series_view(frame: pd.DataFrame, max_points: int = 2600) -> dict:
+    """What a daily price history of a futures product says: the latest price and returns over a day, a month, a quarter and a year, volatility, the worst fall, the calendar months, and the largest
+    one-day moves (which, for a series spliced from successive contracts, are where the splices show). ``frame`` has ``date`` and ``close`` and optionally ``volume``.
+
+    There is no curve here, so none of the carry, roll or basis figures: a product history cannot say what holding one contract earns. The largest moves are listed so that a jump from a contract
+    change can be told from a market event by its date.
+    """
+    if "date" not in frame or "close" not in frame:
+        raise ValueError("a price history needs the columns date and close")
+    df = frame.dropna(subset=["close"]).copy()
+    df["date"] = pd.to_datetime(df["date"])
+    df = df[df["close"] > 0].drop_duplicates("date", keep="last").sort_values("date").reset_index(drop=True)
+    if len(df) < 30:
+        raise ValueError(f"the price history has {len(df)} bars; at least 30 are needed")
+    close = df.set_index("date")["close"].astype(float)
+    ret = close.pct_change()
+    logret = np.log(close).diff()
+    last, last_date = float(close.iloc[-1]), close.index[-1]
+
+    def back(n: int) -> float | None:
+        return float(close.iloc[-1] / close.iloc[-1 - n] - 1.0) if len(close) > n else None
+
+    year_start = close[close.index < pd.Timestamp(last_date.year, 1, 1)]
+    peak = close.cummax()
+    drawdown = close / peak - 1.0
+    vol = {w: (float(logret.tail(w).std(ddof=1) * np.sqrt(TRADING_DAYS)) if len(logret.dropna()) >= w else None) for w in (21, 63, 252)}
+    window = close.tail(252)
+    rv21, rv63 = realized_vol(close, 21), realized_vol(close, 63)
+    r = ret.dropna()
+    best, worst = r.idxmax(), r.idxmin()
+    by_month = close.groupby(close.index.to_period("M")).last()
+    monthly = by_month.pct_change().dropna().iloc[:-1]                                    # the month in progress is not a month yet
+    seasonal = []
+    if len(monthly) >= 30:
+        for month in range(1, 13):
+            m = monthly[monthly.index.month == month]
+            seasonal.append({"month": month, "mean": float(m.mean()), "median": float(m.median()), "hit_rate": float((m > 0).mean()), "n": int(len(m))})
+    big = r.abs().nlargest(8)
+    moves = [{"date": str(d.date()), "change": float(r[d]), "from": float(close.shift(1)[d]), "to": float(close[d])} for d in big.index]
+    gaps = int((close.index.to_series().diff().dt.days > 7).sum())
+    age = int((pd.Timestamp.now().normalize() - last_date).days)
+    warnings = []
+    if age > 10:
+        warnings.append(f"The newest bar is {age} days old ({last_date.date()}): download the history again to bring it up to date.")
+    if gaps:
+        warnings.append(f"The history has {gaps} gap{'s' if gaps != 1 else ''} longer than a week; returns across a gap are multi-day returns.")
+    if len(moves) and abs(moves[0]["change"]) >= 0.15:
+        warnings.append(f"The largest one-day move is {moves[0]['change']:+.1%} on {moves[0]['date']}: for a futures product that is often the day the series switched from one contract to the next, not a market move.")
+    keep = _thin(len(close), max_points)
+    dates = [str(d.date()) for d in close.index[keep]]
+
+    def clean(values) -> list:
+        return [None if not np.isfinite(v) else float(v) for v in np.asarray(values)[keep]]
+
+    stats = {"last": last, "last_date": str(last_date.date()), "first_date": str(close.index[0].date()), "bars": int(len(close)), "years": float((close.index[-1] - close.index[0]).days / 365.25),
+             "return_1d": back(1), "return_1w": back(5), "return_1m": back(21), "return_3m": back(63), "return_1y": back(252), "return_ytd": float(last / year_start.iloc[-1] - 1.0) if len(year_start) else None,
+             "vol_1m": vol[21], "vol_3m": vol[63], "vol_1y": vol[252], "high_52w": float(window.max()), "low_52w": float(window.min()), "off_high": float(last / window.max() - 1.0),
+             "max_drawdown": float(drawdown.min()), "max_drawdown_date": str(drawdown.idxmin().date()), "drawdown": float(drawdown.iloc[-1]),
+             "best_day": float(r[best]), "best_day_date": str(best.date()), "worst_day": float(r[worst]), "worst_day_date": str(worst.date()), "hit_rate": float((r > 0).mean()),
+             "skew": float(r.skew()) if len(r) > 3 else None, "excess_kurtosis": float(r.kurt()) if len(r) > 3 else None}
+    if "volume" in df and df["volume"].notna().any():
+        stats["volume_21d"] = float(df["volume"].tail(21).mean())
+    return {"stats": stats, "dates": dates, "close": clean(close.to_numpy()), "drawdown": clean(drawdown.to_numpy()), "vol_21": clean(rv21.to_numpy()), "vol_63": clean(rv63.to_numpy()),
+            "volume": clean(df["volume"].to_numpy()) if "volume" in df and df["volume"].notna().any() else None, "seasonal": seasonal, "moves": moves, "warnings": warnings}

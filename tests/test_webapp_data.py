@@ -63,12 +63,12 @@ def yahoo_route(level: float = 90.0, days: int = 40):
 
 # ------------------------------------------------------------------------------------------------------------------ the page and its routes
 def test_the_routes_the_version_and_the_status_describe_what_can_be_downloaded(app):
-    assert api.API_VERSION == 5 and app.catalog()["api_version"] == 5
+    assert api.API_VERSION == 6 and app.catalog()["api_version"] == 6
     assert "/api/data/status" in app.extra_get and {"/api/data/fetch", "/api/data/delete"} <= set(app.extra_post)
     st = _safe(app.extra_get["/api/data/status"]({}))
     assert set(st["kinds"]) == {"options", "futures", "crypto"} and st["running"] == [] and st["directory"] == "data/user/downloads/"
     assert "SPY" in st["kinds"]["options"]["symbols"] and st["kinds"]["options"]["crypto"] == ["BTC", "ETH"] and st["kinds"]["options"]["defaults"] == {"max_dte": 365}
-    assert [r["id"] for r in st["kinds"]["futures"]["roots"]][:5] == ["CL", "NG", "GC", "SI", "HG"] and "BTC" in [r["id"] for r in st["kinds"]["futures"]["crypto"]]
+    assert [r["id"] for r in st["kinds"]["futures"]["roots"]][:5] == ["CL", "NG", "HO", "RB", "BZ"] and "BTC" in [r["id"] for r in st["kinds"]["futures"]["crypto"]]
     assert st["kinds"]["crypto"]["defaults"]["what"] == ["history", "venues", "funding"] and "SOL" in st["kinds"]["crypto"]["coins"]
     for kind, part in st["kinds"].items():
         assert part["downloads"] == [] and part["sources"] and all(s["label"] and s["delay"] and s["url"].startswith("https://") for s in part["sources"]), kind
@@ -317,4 +317,4 @@ def test_the_default_client_paces_the_hosts_that_rate_limit_and_retries_with_a_l
     client.http = None
     http = DataApi._client(client)
     assert http.retries == 3 and http.backoff == 3.0 and http.pauses == HOSTS and HOSTS["query1.finance.yahoo.com"] >= 0.5
-    assert fo.MAX_DTE >= 730 and len(ff.FREE_ROOTS) == 13
+    assert fo.MAX_DTE >= 730 and len(ff.FREE_ROOTS) == 44

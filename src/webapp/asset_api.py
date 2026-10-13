@@ -82,7 +82,7 @@ class AssetApi:
     # ------------------------------------------------------------------------------------------------------------ routes
     def get_routes(self) -> dict:
         return {"/api/assets/catalog": self.catalog, "/api/options/chain": self.options_chain, "/api/options/surface": self.options_surface, "/api/futures/curve": self.futures_curve,
-                "/api/futures/roll": self.futures_roll, "/api/crypto/overview": self.crypto_overview, "/api/crypto/funding": self.crypto_funding, "/api/crypto/cross-exchange": self.crypto_cross_exchange}
+                "/api/futures/roll": self.futures_roll, "/api/futures/series": self.futures_series, "/api/crypto/overview": self.crypto_overview, "/api/crypto/funding": self.crypto_funding, "/api/crypto/cross-exchange": self.crypto_cross_exchange}
 
     def post_routes(self) -> dict:
         return {"/api/options/portfolio-risk": self.options_portfolio_risk, "/api/options/strategy/payoff": self.options_strategy_payoff, "/api/options/strategy/backtest": self.options_strategy_backtest,
@@ -106,6 +106,8 @@ class AssetApi:
         b = self._bundle()
         opt_files, fut_files, cry_files = self._user_files("options"), self._user_files("futures"), self._user_files("crypto")
         dl_chains, dl_curves, dl_coins = self._downloaded("options", "chain"), self._downloaded("futures", "curve"), self._downloaded("crypto", "history")
+        dl_series = [{"id": n, "code": r.get("code", n), "region": r.get("region", ""), "name": r.get("root_name", n), "exchange": r.get("exchange", ""), "group": r.get("group", ""), "source": "downloaded",
+                      "as_of": r.get("as_of"), "first_date": r.get("first_date"), "bars": r.get("bars"), "fetched_at": r.get("fetched_at"), "provider": r.get("source", "")} for n, r in self._downloaded("futures", "series").items()]
         underlyings = [{"id": a, "label": a, "source": "simulated chain on real prices", "has_index": a in oa.REFERENCE_INDEX} for a in b.assets if a in b.prices.columns]
         underlyings += [{"id": f"dl:{n}", "label": f"{n} (real chain, {r.get('source', 'downloaded')}, {r.get('as_of', '?')})", "source": "downloaded", "has_index": str(r.get("underlying", "")).upper() in oa.REFERENCE_INDEX,
                          "as_of": r.get("as_of"), "fetched_at": r.get("fetched_at")} for n, r in dl_chains.items()]
@@ -119,7 +121,7 @@ class AssetApi:
         symbols += [{"id": s, "source": "user_file" if s in cry_files else "downloaded"} for s in dl_coins if s not in ca.REAL_SYMBOLS and s not in ca.SIMULATED_ALTS]
         symbols += [{"id": s, "source": "user_file"} for s in cry_files if s not in ca.REAL_SYMBOLS and s not in ca.SIMULATED_ALTS and s not in dl_coins]
         return clean({"underlyings": underlyings, "option_strategies": [{"id": k, "text": v} for k, v in oa.STRATEGY_INFO.items()], "option_backtests": [{"id": k, "text": oa.BACKTEST_TEXT[k], "params": oa.backtest_params(k)} for k in oa.BACKTEST_STRATEGIES],
-                      "defaults": {"rate": oa.DEFAULT_RATE, "premium": 0.15, "dividend_yields": oa.DIVIDEND_YIELDS}, "futures_roots": roots,
+                      "defaults": {"rate": oa.DEFAULT_RATE, "premium": 0.15, "dividend_yields": oa.DIVIDEND_YIELDS}, "futures_roots": roots, "futures_series": dl_series,
                       "futures_strategies": [{"id": k, "label": v["label"], "text": v["text"]} for k, v in fa.FUTURES_STRATEGIES.items()],
                       "crypto_symbols": symbols, "crypto_strategies": [{"id": k, "label": v["label"], "text": v["text"], "available": v["model"] is not None} for k, v in ca.CRYPTO_STRATEGIES.items()],
                       "venues": list(ca.VENUE_ORDER), "data_dir": "data/user/", "as_of": str(b.index[-1].date())})
@@ -143,19 +145,39 @@ class AssetApi:
             raise ApiError(f"{name}: {exc}") from None
         spot, quote_date = float(chain["underlying"].iloc[0]), pd.Timestamp(chain["date"].iloc[0])
         b, ctx = self._bundle(), None
+        price_note = ""
         if symbol in b.prices.columns:
             try:
                 ctx = replace(oa.underlying_context(symbol, b.prices[symbol], b.volume[symbol] if b.volume is not None and symbol in b.volume.columns else None), spot=spot, as_of=quote_date)
+                price_note = f"Realised volatility is from the platform's prices of {symbol} through {b.index[-1].date()}."
             except ValueError:
                 ctx = None
+        else:
+            ctx, price_note = self._context_from_download(symbol, spot, quote_date)
         if ctx is None:
             ctx = oa.UnderlyingContext(symbol, spot, quote_date, float("nan"), float("nan"), float("nan"), pd.Series(dtype=float), float("nan"))
         notes = [f"Downloaded {str(rec.get('fetched_at', '?')).replace('T', ' ').rstrip('Z')} UTC from {rec.get('source', 'a free source')}; the quotes are for {rec.get('as_of')}."] + [str(n) for n in rec.get("notes", [])]
-        if ctx.rv_21 == ctx.rv_21:
-            notes.append(f"Realised volatility is from the platform's prices of {symbol} through {b.index[-1].date()}.")
+        if ctx.rv_21 == ctx.rv_21 and price_note:
+            notes.append(price_note)
+        elif ctx.rv_21 != ctx.rv_21:
+            notes.append(f"{symbol} is not in the platform's price data, so there is no realised volatility to set beside the implied one. Tick \"Also download the underlying's daily prices\" in the Free data card to get one.")
         if rate is not None or dividend is not None:
             notes.append("The rate and dividend yield of a downloaded chain come with it and are not editable here.")
         return chain, ctx, "downloaded", notes
+
+    def _context_from_download(self, symbol: str, spot: float, quote_date: pd.Timestamp):
+        """``(context, note)`` from the daily prices downloaded for an underlying the platform does not hold (``<SYMBOL>_prices``), or ``(None, "")``."""
+        rec = self._downloaded("options", "prices").get(f"{symbol}_prices")
+        if rec is None:
+            return None, ""
+        try:
+            frame = pd.read_csv(self.downloads.folder("options") / rec["file"], parse_dates=["date"]).set_index("date").sort_index()
+            frame = frame[frame.index <= quote_date + pd.Timedelta(days=1)]                            # prices after the chain's date would be a look ahead
+            volume = frame["volume"] if "volume" in frame and frame["volume"].notna().any() else None
+            ctx = replace(oa.underlying_context(symbol, frame["close"], volume), spot=spot, as_of=quote_date)
+        except (ValueError, OSError, KeyError):
+            return None, ""
+        return ctx, f"Realised volatility is from the daily prices of {symbol} downloaded from {rec.get('source', 'a free source')} through {frame.index[-1].date()}."
 
     def _option_chain(self, underlying: str, rate: float | None, dividend: float | None, premium: float):
         """``(chain, context, source, notes)`` for an underlying. ``source`` is ``downloaded`` (a real chain from a free source, ``dl:NAME``), ``user_file`` (your chain file, ``file:NAME``) or ``simulated`` (a
@@ -437,6 +459,22 @@ class AssetApi:
             raise ApiError(str(exc)) from None
         return _wrap("futures_roll", {"root": data.root, "roll": roll, "spec": {"multiplier": data.spec.multiplier, "tick_value": data.spec.tick_value}}, self._curve_parts(data),
                                      roll["risk_flags"], data.as_of, data.notes + ["Roll cost is for a LONG position (negative: rolling earns the backwardation); a short position's is the opposite."])
+
+    def futures_series(self, q: dict) -> dict:
+        """``GET /api/futures/series?name=US_NQ``: the price history of a futures product downloaded from iTick: returns, volatility, drawdown, the calendar months and the largest one-day moves."""
+        name = str(q.get("name") or "")
+        known = self._downloaded("futures", "series")
+        if not DOWNLOAD_NAME.match(name) or name not in known:
+            raise ApiError(f"no downloaded price history '{name}'; use the Free data card on this tab, choose iTick and download a product (downloaded so far: {sorted(known) or 'none'})")
+        rec = known[name]
+        try:
+            view = fa.series_view(pd.read_csv(self.downloads.folder("futures") / rec["file"]))
+        except (ValueError, OSError, KeyError) as exc:
+            raise ApiError(f"{name}: {exc}") from None
+        notes = [f"Downloaded {str(rec.get('fetched_at', '?')).replace('T', ' ').rstrip('Z')} UTC from {rec.get('source', 'a free source')}; the newest bar is for {rec.get('as_of')}."] + [str(n) for n in rec.get("notes", [])]
+        warnings = view.pop("warnings")
+        out = {"name": name, "code": rec.get("code", name), "region": rec.get("region", ""), "label": rec.get("root_name", name), "exchange": rec.get("exchange", ""), "group": rec.get("group", ""), **view}
+        return _wrap("futures_series", out, {"prices": "downloaded"}, warnings, rec.get("as_of"), notes)
 
     def futures_margin(self, body: dict) -> dict:
         """``POST /api/futures/margin``: notional, initial and maintenance margin, leverage and warnings for a book of futures positions."""

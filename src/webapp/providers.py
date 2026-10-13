@@ -174,9 +174,12 @@ SYMBOL_HELP = ("US stocks as AAPL, Hong Kong as 0700.HK, Shanghai 600519.SS, She
                "(other markets use Yahoo's suffix: .T Tokyo, .L London, .DE Germany, .SI Singapore, .TW Taiwan, .NS India)")
 
 
+FUTURE_REGIONS = {"US": "America/New_York", "HK": "Asia/Hong_Kong", "CN": "Asia/Shanghai"}      # iTick's futures regions and the exchange time zone of each
+
+
 @dataclass(frozen=True)
 class Instrument:
-    kind: str                                      # stock | crypto | forex | indices
+    kind: str                                      # stock | crypto | forex | indices | future
     region: str
     code: str
     tz: str
@@ -201,6 +204,8 @@ def map_symbol(ticker: str) -> Instrument:
         return Instrument("indices", "GB", t[1:], "UTC")
     if t.endswith("=X") and len(t) > 2:
         return Instrument("forex", "GB", t[:-2], "UTC")
+    if t.endswith("=F") and len(t) > 2:
+        return future_instrument("US", t[:-2])                                   # Yahoo's front-month series of a US future: CL=F, ES=F
     for quote in ("-USDT", "-USD"):
         if t.endswith(quote) and len(t) > len(quote):
             return Instrument("crypto", "BA", t[: -len(quote)] + "USDT", "UTC")
@@ -219,19 +224,38 @@ def map_symbol(ticker: str) -> Instrument:
     return Instrument("stock", region, t, tz)
 
 
+def future_instrument(region: str, code: str) -> Instrument:
+    """The iTick instrument of a futures product: ``region`` is US, HK or CN and ``code`` the product (``NQ``, ``CL``, ``HSI``), not a delivery month. Raises :class:`ITickError` for anything else."""
+    region, code = str(region or "").strip().upper(), str(code or "").strip().upper()
+    if region not in FUTURE_REGIONS:
+        raise ITickError(f"iTick lists futures in the regions {', '.join(FUTURE_REGIONS)}, not '{region}'")
+    if not code or not code[0].isalnum() or not all(ch.isalnum() or ch == "." for ch in code) or len(code) > 12:
+        raise ITickError(f"'{code}' is not a futures product code (letters and digits, such as NQ or HSI)")
+    return Instrument("future", region, code, FUTURE_REGIONS[region])
+
+
+def crypto_instrument(coin: str) -> Instrument:
+    """The iTick instrument of a coin's market against the US-dollar stablecoin USDT (``BTCUSDT``)."""
+    coin = str(coin or "").strip().upper()
+    if not coin or not coin.isalnum() or len(coin) > 12:
+        raise ITickError(f"'{coin}' is not a coin symbol (letters and digits, such as BTC)")
+    return Instrument("crypto", "BA", coin + "USDT", "UTC")
+
+
 # --------------------------------------------------------------------------------------------------------------------------- bar parsing
-def session_dates(stamps_ms: np.ndarray, tz: str, weekdays_only: bool) -> pd.DatetimeIndex:
+def session_dates(stamps_ms: np.ndarray, tz: str, weekdays_only: bool, trade_day: bool = False) -> pd.DatetimeIndex:
     """The calendar date of each daily bar. iTick does not say when in the day a daily bar is stamped, so the exchange-local date is used unless that puts bars on weekends for
-    a market that is closed then, in which case the UTC date is used if it fits better."""
+    a market that is closed then, in which case the UTC date is used if it fits better. ``trade_day`` is for futures, whose trading day starts the evening before (Sunday 18:00 in
+    New York for Monday): a date six hours after the stamp is then a third candidate, and the one with the fewest weekend dates wins (the first of the three on a tie)."""
     utc = pd.to_datetime(np.asarray(stamps_ms, dtype="int64"), unit="ms", utc=True)
-    local = utc.tz_convert(tz).tz_localize(None).normalize()
+    local_time = utc.tz_convert(tz).tz_localize(None)
+    candidates = [local_time.normalize()]
     if weekdays_only:
-        weekend = int((local.dayofweek >= 5).sum())
-        if weekend:
-            flat = utc.tz_localize(None).normalize()
-            if int((flat.dayofweek >= 5).sum()) < weekend:
-                local = flat
-    return pd.DatetimeIndex(local)
+        if trade_day:
+            candidates.append((local_time + pd.Timedelta(hours=6)).normalize())
+        candidates.append(utc.tz_localize(None).normalize())
+    best = min(candidates, key=lambda days: int((days.dayofweek >= 5).sum())) if weekdays_only else candidates[0]
+    return pd.DatetimeIndex(best)
 
 
 def _empty() -> pd.DataFrame:
@@ -260,12 +284,13 @@ def bars_to_frame(rows: list, inst: Instrument) -> tuple[pd.DataFrame, int | Non
         if not 18.0 <= gap_hours <= 36.0:
             raise ITickError(f"iTick returned bars about {gap_hours:.1f} hours apart, not daily bars. The daily interval code is 8 in iTick's documentation; if your account uses another, "
                              "set ITICK_DAILY_KTYPE to it", fatal=True)
-    out = pd.DataFrame({"close": c.to_numpy(dtype="float64")}, index=pd.DatetimeIndex(session_dates(stamps, inst.tz, inst.kind == "stock"), name="date"))
+    weekdays = inst.kind in ("stock", "future")
+    out = pd.DataFrame({"close": c.to_numpy(dtype="float64")}, index=pd.DatetimeIndex(session_dates(stamps, inst.tz, weekdays, trade_day=inst.kind == "future"), name="date"))
     for source, name in (("h", "high"), ("l", "low"), ("v", "volume")):
         if source in df:
             out[name] = pd.to_numeric(df[source], errors="coerce").to_numpy(dtype="float64")
     out = out[~out.index.duplicated(keep="last")].sort_index()
-    if inst.kind == "stock":
+    if weekdays:
         out = out[out.index.dayofweek < 5]
     return out, int(stamps[0])
 
@@ -380,10 +405,14 @@ class ITickProvider:
         ok, why = self.available()
         setup = "url" if self.config_error else ("" if self._key() else "key")                # what is missing: the address is wrong, or there is no key yet
         return {"configured": ok, "problem": why, "setup": setup, "calls_per_minute": self.limiter.calls, "calls_available_now": self.limiter.remaining(),
-                "host": parse.urlparse(self.base_url).netloc, "symbols": SYMBOL_HELP}
+                "host": parse.urlparse(self.base_url).netloc, "symbols": SYMBOL_HELP, "page_size": self.page_size}
 
     def _clean(self, text: object) -> str:
         return redact(text, self._key())
+
+    def local_today(self, tz: str) -> pd.Timestamp:
+        """Today's date in the exchange's time zone (a day's bar is complete only after it)."""
+        return self._today(tz)
 
     def preflight(self, ticker: str) -> str | None:
         """Why ``ticker`` could not be downloaded (no key, a symbol iTick cannot place), found without making a call; ``None`` when it looks fine."""
@@ -533,6 +562,26 @@ class ITickProvider:
             notes += split_warnings(frame["close"])
         frame.attrs["warnings"] = notes
         return frame
+
+    def series(self, inst: Instrument, start, known: pd.DataFrame | None = None, progress=None) -> pd.DataFrame:
+        """The daily bars of one instrument from ``start`` (extending ``known``, an earlier result, when given): ``close``, ``high``, ``low`` and ``volume`` by date, today's unfinished bar left out.
+        Raises :class:`ITickError` (``fatal`` when no other instrument would fare better) or :class:`RateLimitTimeout`; no message contains the key."""
+        ok, why = self.available()
+        if not ok:
+            raise ITickError(why, fatal=True)
+
+        def say(text: str) -> None:
+            if progress:
+                progress(f"iTick {inst.label}: {text}")
+
+        try:
+            return self._download(inst.label, inst, start, known, say)
+        except ITickError as error:
+            raise ITickError(self._clean(error), fatal=error.fatal) from None
+        except RateLimitTimeout as error:
+            raise RateLimitTimeout(self._clean(error)) from None
+        except Exception as error:                                                  # a bug here must reach the page as a message, without ever echoing the key
+            raise ITickError(self._clean(f"unexpected {type(error).__name__}: {str(error)[:160]}")) from None
 
     # ---------------------------------------------------------------------------------------------------------------------------- main
     def __call__(self, tickers, start, known: dict | None = None, progress=None) -> dict:

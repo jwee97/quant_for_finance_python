@@ -72,6 +72,8 @@ class FakeITick:
     def _stamp(self, day: pd.Timestamp) -> int:
         if self.stamp == "open_local":
             return int((day + pd.Timedelta(hours=13, minutes=30)).value // 10**6)       # 09:30 New York in winter, UTC
+        if self.stamp == "evening_prior":                                                 # a futures trading day opens the evening before: 18:00 New York (23:00 UTC in winter) of the day before,
+            return int((day - pd.Timedelta(days=1) + pd.Timedelta(hours=23)).value // 10**6)   # Sunday evening for Monday
         return int(day.value // 10**6)
 
     # ------------------------------------------------------------------------------------------------------------------------ the call

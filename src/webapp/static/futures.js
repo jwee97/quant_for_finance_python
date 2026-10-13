@@ -1,6 +1,6 @@
-/* The Futures workspace: the forward curve and how it moved, the roll (which contract to hold and when to leave it), carry and basis, a margin dashboard for a book of futures, and strategies run on the
-   simulated roots through the platform's pipeline. It talks to /api/futures/*. No futures prices are held in this repository: the curves are a model (Schwartz-Smith) unless a file of yours replaces them, and
-   every payload says which, and this page prints it. */
+/* The Futures workspace: the forward curve and how it moved, the roll (which contract to hold and when to leave it), carry and basis, the price history of any futures product, a margin dashboard for a book of
+   futures, and strategies run on the simulated roots through the platform's pipeline. It talks to /api/futures/*. No futures prices are held in this repository: the curves are a model (Schwartz-Smith)
+   unless a file of yours or a download replaces them, and every payload says which, and this page prints it. */
 (function () {
   "use strict";
   const Q = window.QL, W = window.WS, C = Q.C, h = Q.h, css = Q.css, num = Q.num, pct = Q.pct, money = Q.money, smoney = Q.smoney, tile = Q.tile, chartCard = Q.chartCard, table = Q.simpleTable;
@@ -11,38 +11,76 @@
     mixed: "The curve is neither clearly rising nor clearly falling over its front contracts." };
 
   const F = {
-    id: "futures", root: "#futures", view: "#view-futures", title: "Futures", api: 5, mode: "curve", busy: "", results: {}, errors: {}, cache: new Map(), guard: null, go: null, progress: null,
-    about: "Read a futures curve, decide when to roll, see carry and basis, check the margin of a book and test a strategy on several roots. The prices are a model unless you download real curves (free, below) or bring a file.",
-    modes: [["curve", "Curve"], ["roll", "Roll"], ["carry", "Carry and basis"], ["margin", "Margin"], ["backtest", "Backtest"]],
-    runLabel: { curve: "Refresh", roll: "Refresh", carry: "Refresh", margin: "Check the margin", backtest: "Run the backtest" },
+    id: "futures", root: "#futures", view: "#view-futures", title: "Futures", api: 6, mode: "curve", busy: "", results: {}, errors: {}, cache: new Map(), guard: null, go: null, progress: null,
+    about: "Read a futures curve, decide when to roll, see carry and basis, read the price history of any futures product, check the margin of a book and test a strategy on several roots. The prices are a model unless you download real data (below) or bring a file.",
+    modes: [["curve", "Curve"], ["roll", "Roll"], ["carry", "Carry and basis"], ["history", "History"], ["margin", "Margin"], ["backtest", "Backtest"]],
+    runLabel: { curve: "Refresh", roll: "Refresh", carry: "Refresh", history: "Refresh", margin: "Check the margin", backtest: "Run the backtest" },
     blurb: { curve: "Price by contract month, how the curve has moved over the last two months, the roll yield of each contract and the contract specification.",
       roll: "Which contract you hold, the next one, the suggested roll date (by calendar and by open interest), what the roll costs, and the rolls of the past.",
       carry: "Carry (the annualised roll yield) through time against its own history, and the basis: how far a futures price sits from the spot price.",
+      history: "The daily price history of a futures product downloaded from iTick: returns, volatility, drawdown, the calendar months and the biggest one-day moves. It is one price series, so there is no curve, roll or carry here.",
       margin: "Notional, initial and maintenance margin, leverage and the distance to a margin call for a book of futures, with warnings for heavy use, concentration and contracts close to expiry.",
       backtest: "Trade carry, trend, breakout or momentum across the roots through the platform's pipeline: costed, lagged and volatility-targeted like any other backtest." },
-    form: { root: "CL", rollDays: "5", book: [], equity: "100000", scale: "1", near: "7", strategy: "carry_ts", roots: new Set(["CL", "NG", "GC", "HG", "ES"]), lookback: "", frequency: "weekly", targetVol: "", cost: "2" },
+    form: { root: "CL", series: "", rollDays: "5", book: [], equity: "100000", scale: "1", near: "7", strategy: "carry_ts", roots: new Set(["CL", "NG", "GC", "HG", "ES"]), lookback: "", frequency: "weekly", targetVol: "", cost: "2" },
     catalog: null,
   };
   const contractColor = W.palette();
-  const setCatalog = (c) => { F.catalog = c; if (!c.futures_roots.some((r) => r.id === F.form.root)) F.form.root = (c.futures_roots[0] || {}).id || "CL"; };
+  const setCatalog = (c) => {
+    F.catalog = c; if (!c.futures_roots.some((r) => r.id === F.form.root)) F.form.root = (c.futures_roots[0] || {}).id || "CL";
+    const list = c.futures_series || []; if (!list.some((x) => x.id === F.form.series)) F.form.series = (list[0] || {}).id || "";
+  };
   const CONTRACTS = [["4", "4 contracts"], ["6", "6 contracts"], ["8", "8 contracts"], ["10", "10 contracts"], ["12", "12 contracts"], ["16", "16 contracts"]];
   const HISTORY = { "6mo": "6 months", "1y": "1 year", "2y": "2 years", "5y": "5 years" };
-  /* The Free data card: each contract's daily prices from Yahoo Finance, stacked into a curve, and Bitcoin and Ether futures from Deribit. */
+  const YEARS = { 1: "1 year", 2: "2 years", 3: "3 years", 5: "5 years", 10: "10 years", 20: "20 years" };
+  const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  let itick = null;                                                                          // the server's iTick status, kept by the card for its time estimate
+  /* The Free data card, from two sources. Yahoo Finance: each contract's daily prices, stacked into a curve, for 44 roots (and Bitcoin and Ether futures from Deribit). iTick: the daily price history of any of
+     the ~1,600 futures products it lists, which has no contract months and so no curve; the History view reads it. */
   const FREE = {
-    kind: "futures", title: "Real futures curves (free)",
-    intro: "Download the real forward curve of a root: the delayed daily price of each contract month from Yahoo Finance (no account, no key), or Bitcoin and Ether futures from Deribit. Expiry dates are computed from each exchange's rule, Yahoo has no open interest, and a later download is merged with the earlier one, so the history of contracts that have expired is kept.",
-    defaults: () => ({ chosen: new Set(["CL", "ES", "GC"]), contracts: "10", history: "1y" }),
-    controls: (box, f, ks, changed) => {
+    kind: "futures", title: "Real futures data (free)",
+    intro: "Download real futures prices. Yahoo Finance (no account, no key) gives the delayed daily price of each contract month of 44 roots, stacked into a forward curve; Bitcoin and Ether futures come from Deribit. iTick (needs your key) gives the daily price history of any futures product it lists, about 1,600 in the United States, Hong Kong and China, but no curve. Expiry dates are computed from each exchange's rule, Yahoo has no open interest, and a later download is merged with the earlier one, so the contracts that have expired keep their history.",
+    defaults: () => ({ source: "yahoo", chosen: new Set(["CL", "ES", "GC"]), contracts: "10", history: "1y", products: new Set(["US:NQ"]), names: { "US:NQ": "E-mini Nasdaq-100 Futures" }, years: "5" }),
+    controls: (box, f, ks, changed, redraw) => {
+      itick = ks.itick_status;
+      const seg = W.seg(box, [["yahoo", "Yahoo Finance: curves"], ["itick", "iTick: any product"]], f.source, (v) => { f.source = v; redraw(); });
+      seg.setAttribute("role", "group"); seg.setAttribute("aria-label", "data source"); seg.dataset.role = "source";
+      if (f.source === "itick") {
+        W.itickBox(box, ks.itick_status);
+        h("p", "hint", box, "iTick keeps one daily price series for each futures product (NQ, CL, HSI), not one for each contract month: you get a price history to read in the History view, not a curve, a roll or carry, and no open interest.");
+        W.finder(box, f.products, f.names, { kind: "futures", regions: ks.itick.regions, groups: ks.itick.groups, after: changed });
+        Q.labField(box, { key: "years", label: "Years of history", kind: "choice", options: ks.itick.years.map((y) => [String(y), YEARS[y] || y + " years"]), help: "Each 1,000 daily bars (about four years) cost one call of your plan" }, f, changed);
+        return;
+      }
       h("span", "hint", box, "Pick roots:");
-      W.picks(box, [...ks.roots.map((r) => [r.id, r.id, `${r.name} · ${r.exchange}`]), ...ks.crypto.map((c) => [c.id, c.id + " · Deribit", `${c.name} futures from Deribit, live`])], f.chosen, changed);
+      for (const g of ks.groups) {
+        h("span", "grouplabel", box, g);
+        W.picks(box, ks.roots.filter((r) => r.group === g).map((r) => [r.id, r.id, `${r.name} · ${r.exchange}`]), f.chosen, changed);
+      }
+      h("span", "grouplabel", box, "Crypto");
+      W.picks(box, ks.crypto.map((c) => [c.id, c.id + " · Deribit", `${c.name} futures from Deribit, live`]), f.chosen, changed);
       Q.labField(box, { key: "contracts", label: "Contracts per root", kind: "choice", options: CONTRACTS, help: "How many of the next delivery months to ask Yahoo for" }, f, changed);
       Q.labField(box, { key: "history", label: "History to download", kind: "choice", options: ks.history.map((x) => [x, HISTORY[x] || x]), help: "Not used for the Deribit futures, which are a snapshot of today" }, f, changed);
+      h("p", "hint", box, "Need a product that is not here (lean hogs, the Nikkei, Hang Seng, iron ore …)? Choose iTick above and search its list.");
     },
-    request: (f) => { if (!f.chosen.size) throw new Error("Pick at least one root"); return { kind: "futures", items: [...f.chosen], contracts: Number(f.contracts), history: f.history }; },
-    estimate: (b) => b.items.length * (4 + b.contracts * 0.5),
-    describe: (rec) => [`${rec.name} · ${rec.root_name || ""}`.replace(/ · $/, ""), `${rec.source} · ${rec.contracts} contracts · ${rec.first_date && rec.first_date !== rec.as_of ? rec.first_date + " to " : ""}${rec.as_of}`],
+    request: (f) => {
+      if (f.source === "itick") { if (!f.products.size) throw new Error("Choose at least one product"); return { kind: "futures", source: "itick", items: [...f.products], years: Number(f.years) }; }
+      if (!f.chosen.size) throw new Error("Pick at least one root");
+      return { kind: "futures", items: [...f.chosen], contracts: Number(f.contracts), history: f.history };
+    },
+    estimate: (b) => {
+      if (b.source !== "itick") return b.items.length * (4 + b.contracts * 0.5);
+      const info = itick || {}, cpm = info.calls_per_minute || 5, page = info.page_size || 1000, free = info.calls_available_now === undefined ? cpm : info.calls_available_now;
+      const calls = b.items.length * Math.max(1, Math.ceil((b.years * ((info.bars_per_year || {}).future || 260)) / page));
+      return 2 * calls + Math.max(0, calls - free) * (60 / cpm);
+    },
+    describe: (rec) => rec.item === "series" ? [`${rec.code} · ${rec.root_name || rec.name} (${rec.region})`, `iTick · price history · ${Number(rec.bars || rec.rows).toLocaleString("en-US")} daily bars · ${rec.first_date} to ${rec.as_of}`]
+      : [`${rec.name} · ${rec.root_name || ""}`.replace(/ · $/, ""), `${rec.source} · ${rec.contracts} contracts · ${rec.first_date && rec.first_date !== rec.as_of ? rec.first_date + " to " : ""}${rec.as_of}`],
     setCatalog,
-    pick: (res) => { const first = res.results.find((r) => r.ok); if (first) F.form.root = first.name; },
+    pick: (res) => {
+      const first = res.results.find((r) => r.ok); if (!first) return;
+      if (first.what === "series") { F.mode = "history"; F.form.series = first.name; return; }
+      F.form.root = first.name; if (F.mode === "history") F.mode = "curve";
+    },
   };
   W.catalog().then((c) => { F.catalog = c; if (!Q.$(F.view).hidden) Q.renderLab(F); }, () => {});
   const rootsList = () => (F.catalog ? F.catalog.futures_roots : []);
@@ -52,6 +90,7 @@
   /* ---------- the form ---------- */
   F.check = () => {
     if (!F.catalog) return "Loading the list of roots…";
+    if (F.mode === "history" && !F.form.series) return "Download a product first (the card below: choose iTick).";
     if (F.mode === "backtest") { if (!F.form.roots.size) return "Tick at least one root."; if (["carry_xs", "xs_momentum"].includes(F.form.strategy) && F.form.roots.size < 2) return "A cross-sectional strategy needs at least two roots."; }
     return "";
   };
@@ -65,6 +104,13 @@
       const info = rootInfo(f.root);
       h("p", "hint", b, info.source === "user_file" ? "Prices are read from your file in data/user/futures/." : info.source === "downloaded" ? "Real prices, downloaded from a free source and delayed: see the notes under the badge for what they are and are not." : "This curve is a model (Schwartz-Smith: a short-term factor that decays and a long-term level), with simulated open interest. Download the real curve below, or put " + f.root + ".csv in data/user/futures/ to use your own.");
       if (m === "roll") Q.labField(b, { key: "rollDays", label: "Leave the contract this many days before expiry", kind: "number", step: 1, min: 0, max: 60 }, f, () => F.run(true));
+    }
+    if (m === "history") {
+      const b = sec("1. Product"), list = cat.futures_series || [];
+      if (list.length) {
+        Q.labField(b, { key: "series", label: "Downloaded price history", kind: "choice", options: list.map((x) => [x.id, `${x.code}: ${x.name} (${x.region})`]) }, f, () => F.run(true));
+        h("p", "hint", b, "Daily prices as iTick keeps them for the product. They are not the prices of one contract: see the notes under the badge for how the series is joined, and the list of the biggest moves for where it may jump.");
+      } else h("p", "hint", b, "No price history is downloaded yet. Use the card below: choose iTick, search for a product (nasdaq, crude, gold, hang seng …) and press Download real data.");
     }
     if (m !== "backtest") W.dataCard(panel, F, FREE);
     if (m === "margin") {
@@ -125,6 +171,13 @@
         return steps;
       }, "Reading the curve…");
     }
+    if (m === "history") {
+      return W.request(F, () => {
+        if (!f.series) throw new Error("Download a product first");
+        const q = { name: f.series };
+        return [{ modes: ["history"], path: "/api/futures/series", query: q, cacheKey: key("series", q) }];
+      }, "Reading the price history…");
+    }
     if (m === "margin") return W.request(F, () => {
       if (!f.book.length) throw new Error("Add at least one position");
       return [{ modes: ["margin"], path: "/api/futures/margin", body: { positions: f.book.map((x, i) => { const q = Number(x.quantity); if (!isFinite(q) || q === 0) throw new Error(`Row ${i + 1} needs a quantity`); return { root: x.root, contract: x.contract || undefined, quantity: q }; }),
@@ -133,14 +186,15 @@
     return W.request(F, () => [{ modes: ["backtest"], job: true, path: "/api/futures/strategy/backtest", body: { strategy: f.strategy, roots: [...f.roots], frequency: f.frequency, lookback: f.lookback === "" ? undefined : Number(f.lookback),
       target_vol: f.targetVol === "" ? undefined : Number(f.targetVol) / 100, cost_bps: Number(f.cost) } }], "Running the backtest…");
   };
-  F.auto = () => { if (CURVE_MODES.has(F.mode) && F.catalog) F.run(true); };
+  F.auto = () => { if ((CURVE_MODES.has(F.mode) || (F.mode === "history" && F.form.series)) && F.catalog) F.run(true); };
   F.empty = (root) => {
-    const text = { margin: ["Check the margin of a book", "Add the contracts you hold (or load the example) to see the notional, the margin they need, the leverage and how far you are from a margin call."],
+    const text = { history: ["Read a price history", "Download a futures product with iTick (the card below: choose iTick, search, press Download real data) and its returns, volatility, drawdown and biggest moves appear here."],
+      margin: ["Check the margin of a book", "Add the contracts you hold (or load the example) to see the notional, the margin they need, the leverage and how far you are from a margin call."],
       backtest: ["Backtest a futures strategy", "Carry, trend, breakout or momentum across the roots, costed and lagged like every other backtest here. The prices are a model, so this checks the machinery, not the strategy."] }[F.mode] || ["Read the curve", "Loading."];
     Q.labEmpty(root, F, text[0], [text[1]], F.runLabel[F.mode]);
   };
   F.draw = () => Q.drawLab(F);
-  F.build = (root, d, body) => ({ curve: buildCurve, roll: buildRoll, carry: buildCarry, margin: buildMargin, backtest: buildBacktest })[F.mode](root, d, body);
+  F.build = (root, d, body) => ({ curve: buildCurve, roll: buildRoll, carry: buildCarry, history: buildHistory, margin: buildMargin, backtest: buildBacktest })[F.mode](root, d, body);
   const header = (root, title, sub) => Q.labHead(root, title, sub, GUIDE);
 
   /* ---------- curve ---------- */
@@ -232,6 +286,41 @@
     if (hasMomentum) chartCard(ch, "Basis momentum", "The front contract's trailing return less the second's. Positive means the front has been stronger: the shape of the curve has been tightening.", {
       draw: (c) => C.line(c, { dates: b.basis_momentum_series.dates, series: [{ name: "Basis momentum", color: css("--s1"), values: b.basis_momentum_series.values }], baseline: 0, include: 0, yFormat: (v) => (v * 100).toFixed(0) + "%", tipFormat: (v) => pct(v, 1), height: 240, label: "Basis momentum" }),
       table: (c) => table(c, [{ label: "Date", get: (n) => b.basis_momentum_series.dates[n] }, { label: "Basis momentum", num: true, get: (n) => pct(b.basis_momentum_series.values[n], 2) }], b.basis_momentum_series.dates.map((_, n) => n).filter((n) => n % 10 === 0)) });
+  }
+
+  /* ---------- the price history of a product ---------- */
+  function buildHistory(root, d) {
+    const s = d.stats, mv = (v) => (v === null || v === undefined ? "n/a" : Q.fmt.spct(v)), pv = (v, n = 0) => (v === null || v === undefined ? "n/a" : pct(v, n));
+    header(root, `${d.label} (${d.code}): price history`, `${d.exchange ? d.exchange + " · " : ""}${d.region} market · ${s.bars.toLocaleString("en-US")} daily bars · ${s.first_date} to ${s.last_date}`);
+    W.provenance(root, d);
+    const k = h("div", "earnrow", root);
+    tile(k, "Last price", num(s.last, 2), { text: `${s.last_date} · ${mv(s.return_1d)} on the day`, dir: s.return_1d >= 0 ? "up" : "down" }, "", "The newest daily close in the file");
+    tile(k, "Last month", mv(s.return_1m), { text: `3 months ${mv(s.return_3m)}`, dir: s.return_1m >= 0 ? "up" : "down" }, "", "Change over the last 21 trading days; the text gives the last 63");
+    tile(k, "Last year", mv(s.return_1y), { text: `this calendar year ${mv(s.return_ytd)}` }, "", "Change over the last 252 trading days");
+    tile(k, "Volatility, a year", pv(s.vol_1y), { text: `1 month ${pv(s.vol_1m)} · 3 months ${pv(s.vol_3m)}` }, "", "Annualised standard deviation of daily log returns");
+    tile(k, "Worst fall", pv(s.max_drawdown), { text: `trough ${s.max_drawdown_date} · now ${pv(s.drawdown, 1)} from the peak` }, "", "The largest peak-to-trough fall in the file");
+    tile(k, "From the year's high", pv(s.off_high, 1), { text: `high ${num(s.high_52w, 2)} · low ${num(s.low_52w, 2)}` }, "", "The last close against the highest close of the last 252 trading days; the text gives that high and low");
+    tile(k, "Best day", mv(s.best_day), { text: s.best_day_date, dir: "up" }, "", "The largest one-day gain in the file");
+    tile(k, "Worst day", mv(s.worst_day), { text: s.worst_day_date, dir: "down" }, "", "The largest one-day loss in the file");
+    const ch = h("div", "charts", root), idx = d.dates.map((_, n) => n), every = Math.max(1, Math.round(d.dates.length / 60)), rows = idx.filter((n) => n % every === 0 || n === idx.length - 1);
+    const finite = d.close.filter((v) => v !== null && v > 0), logScale = finite.length > 0 && Math.max(...finite) / Math.min(...finite) > 2;
+    chartCard(ch, "Price", `Daily close${logScale ? ", on a log scale (equal distances are equal percentage moves)" : ""}. A futures product's series is joined from successive contracts, so a sudden step can be a contract change rather than the market.`, { wide: true,
+      draw: (b) => C.line(b, { dates: d.dates, series: [{ name: d.code, color: css("--s1"), values: d.close }], log: logScale, yFormat: (v) => num(v, v >= 100 ? 0 : 2), tipFormat: (v) => num(v, 2), height: 300, label: `${d.code} price`, endLabels: false }),
+      table: (b) => table(b, [{ label: "Date", get: (n) => d.dates[n] }, { label: "Close", num: true, get: (n) => num(d.close[n], 3) }], rows) });
+    chartCard(ch, "Drawdown from the previous peak", "How far below its high the price has been.", {
+      draw: (b) => C.line(b, { dates: d.dates, series: [{ name: "Drawdown", color: css("--s1"), values: d.drawdown }], area: true, areaBase: 0, baseline: 0, ceil: 0, yFormat: (v) => (v * 100).toFixed(0) + "%", tipFormat: (v) => pct(v, 1), height: 230, label: "Drawdown" }),
+      table: (b) => table(b, [{ label: "Date", get: (n) => d.dates[n] }, { label: "Drawdown", num: true, get: (n) => pv(d.drawdown[n], 1) }], rows) });
+    chartCard(ch, "Realised volatility", "Annualised standard deviation of daily returns over the last 21 and 63 trading days.", {
+      draw: (b) => C.line(b, { dates: d.dates, series: [{ name: "21 days", color: css("--s1"), values: d.vol_21, width: 1.2 }, { name: "63 days", color: css("--s2"), values: d.vol_63 }], include: 0, yFormat: (v) => (v * 100).toFixed(0) + "%", tipFormat: (v) => pct(v, 1), height: 230, label: "Realised volatility", endLabels: false }),
+      table: (b) => table(b, [{ label: "Date", get: (n) => d.dates[n] }, { label: "21 days", num: true, get: (n) => pv(d.vol_21[n], 1) }, { label: "63 days", num: true, get: (n) => pv(d.vol_63[n], 1) }], rows) });
+    if (d.seasonal.length) chartCard(ch, "Average return by calendar month", `Each month's average return over the ${Math.max(...d.seasonal.map((m) => m.n))} years or so in the file. With so few observations a month tells you little: treat it as a description, not a signal.`, {
+      draw: (b) => C.columns(b, { labels: d.seasonal.map((m) => MONTHS[m.month - 1]), values: d.seasonal.map((m) => m.mean), yFormat: (v) => (v * 100).toFixed(0) + "%", tipFormat: (v) => pct(v, 1), height: 230, name: "Average return", label: "Return by calendar month",
+        tipLabel: (i) => `${MONTHS[d.seasonal[i].month - 1]}: up in ${pct(d.seasonal[i].hit_rate, 0)} of ${d.seasonal[i].n} years` }),
+      table: (b) => table(b, [{ label: "Month", get: (m) => MONTHS[m.month - 1] }, { label: "Average", num: true, get: (m) => pct(m.mean, 2) }, { label: "Median", num: true, get: (m) => pct(m.median, 2) }, { label: "Up in", num: true, get: (m) => pct(m.hit_rate, 0) }, { label: "Years", num: true, get: (m) => m.n }], d.seasonal) });
+    const moves = h("div", "card wide", ch); h("h3", "", moves, "The eight largest one-day moves");
+    h("p", "note", moves, "A step this size on a futures product is often the day the series switched from one contract to the next, not a market event: compare the dates with the contract expiries before reading anything into them.");
+    table(moves, [{ label: "Date", get: (m) => m.date }, { label: "Move", num: true, get: (m) => Q.fmt.spct(m.change) }, { label: "From", num: true, get: (m) => num(m.from, 3) }, { label: "To", num: true, get: (m) => num(m.to, 3) }], d.moves);
+    W.hint(root, "This is a price history, not a curve: there is no roll yield, carry or basis in it, and no open interest. For those, download the curve of a root from Yahoo Finance instead.");
   }
 
   /* ---------- margin ---------- */

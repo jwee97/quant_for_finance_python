@@ -1,6 +1,6 @@
 """The free public sources, described once, for the page, the status endpoint and the documentation.
 
-None of them needs an account or a key. All of them are somebody else's service: they can change a field, refuse an address or go away, and what they publish is delayed or unaudited. The
+None of them needs an account or a key, except iTick (``needs_key``): its key is the ``ITICK_API_KEY`` secret that the Backtest tab's iTick source uses too. All of them are somebody else's service: they can change a field, refuse an address or go away, and what they publish is delayed or unaudited. The
 dashboard says so beside the data; a download is for your own research on your own machine, and each provider's terms of use are theirs.
 """
 
@@ -15,6 +15,8 @@ SOURCES: dict[str, dict] = {
     "coinbase": {"label": "Coinbase Exchange", "url": "https://docs.cdp.coinbase.com/exchange/docs/welcome", "provides": "spot quotes and order books in US dollars; daily candles", "delay": "live", "kinds": ["crypto"]},
     "kraken": {"label": "Kraken", "url": "https://docs.kraken.com/api/", "provides": "spot quotes and order books in US dollars; two years of daily candles", "delay": "live", "kinds": ["crypto"]},
     "bitstamp": {"label": "Bitstamp", "url": "https://www.bitstamp.net/api/", "provides": "spot quotes and order books in US dollars; daily candles", "delay": "live", "kinds": ["crypto"]},
+    "itick": {"label": "iTick", "url": "https://docs.itick.org/", "provides": "the daily price history of any futures product (United States, Hong Kong, mainland China) and of coins against USDT, and of stocks and indexes; "
+              "no option data, no prices of single futures contracts (so no curves), no open interest", "delay": "end of day; the free plan allows 5 calls a minute", "kinds": ["futures", "crypto", "options"], "needs_key": True},
     "okx": {"label": "OKX", "url": "https://www.okx.com/docs-v5/en/", "provides": "spot and perpetual prices, order books, daily candles and funding-rate history", "delay": "live", "kinds": ["crypto"]},
 }
 

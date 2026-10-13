@@ -162,7 +162,7 @@
 
 
   /* ---------- free data: real data downloaded from free public sources ---------- */
-  const WHAT_LABEL = { history: "daily history", venues: "order books", funding: "OKX funding" };           // the parts of a coin's download
+  const WHAT_LABEL = { history: "daily history", venues: "order books", funding: "OKX funding", series: "price history", prices: "underlying prices" };           // the parts of a download
   let statusPromise = null, statusCache = null;
   const dataStatus = (fresh) => {                                                           // what is downloaded and what can be asked for (GET /api/data/status)
     if (fresh) statusPromise = null;
@@ -183,8 +183,83 @@
     }
     return box;
   }
-  /* The "Real data (free)" section of an asset tab. ``spec``: kind (options | futures | crypto), title, intro, defaults() (the form's initial state), controls(box, form, kindStatus, changed) (the inputs, filled
-     from the server's presets; call ``changed`` when one is edited), request(form) (the body for /api/data/fetch; throws a message), estimate(body) (seconds, for the hint beside the button), describe(record) ([headline, detail]), setCatalog(catalog), pick(result) (select what
+  /* iTick in a card: either the steps that turn it on (the key is never typed into this page) or the plan's allowance and a button that spends one call to show what the account returns. ``info`` is the
+     server's iTick status (GET /api/data/status). */
+  function itickBox(parent, info) {
+    const box = h("div", "itick", parent);
+    if (!info || !info.configured) {
+      if (info && info.setup === "key") Q.setupGuide(box, "Come back to this card, choose iTick and press Download real data.");
+      else { const w = h("p", "hint", box, (info && info.problem) || "iTick is not available."); w.style.color = Q.css("--warn"); }
+      return box;
+    }
+    h("p", "hint", box, `Your iTick key is set. Your plan allows ${info.calls_per_minute} call${info.calls_per_minute === 1 ? "" : "s"} a minute (${info.calls_available_now} free right now), shared with the Backtest tab: a download waits between calls and says so while it does.`);
+    const row = h("div", "row tight", box), test = h("button", "btn small", row, "Test the iTick connection (one call)"), out = h("span", "hint", row); test.type = "button";
+    test.addEventListener("click", async () => {
+      test.disabled = true; out.textContent = "Testing…"; out.style.color = "";
+      try { const r = await api("/api/source/test", { source: "itick" }); out.textContent = r.message; out.style.color = Q.css(r.ok ? "--good-text" : "--crit"); }
+      catch (e) { out.textContent = e.message; out.style.color = Q.css("--crit"); }
+      test.disabled = false;
+    });
+    return box;
+  }
+  /* A search over the products iTick lists (the list is bundled with the app: searching costs no call). ``chosen`` is a Set of items such as "US:NQ" and ``names`` an object that remembers the name of each,
+     so a chosen product keeps its label when the search moves on. ``opts``: kind ("futures" or "crypto"), regions [{id, name}] and groups for the futures filters, ``after`` (called when the choice changes). */
+  function finder(parent, chosen, names, opts) {
+    const box = h("div", "finder", parent), chips = h("div", "picks chosen", box), bar = h("div", "finderbar", box), q = h("input", "", bar), hits = h("div", "hits", box), note = h("p", "hint", box);
+    q.type = "search"; q.placeholder = opts.kind === "crypto" ? "Search a coin: sol, doge, avalanche" : "Search a product: nasdaq, crude, gold, hang seng, rebar"; q.spellcheck = false; q.setAttribute("aria-label", "search iTick products");
+    q.dataset.role = "finder-search";
+    const state = { region: "", group: "" };
+    const select = (label, key, options) => {
+      const sel = h("select", "", bar); sel.setAttribute("aria-label", label); sel.dataset.role = "finder-" + key;
+      for (const [value, text] of options) { const o = h("option", "", sel, text); o.value = value; }
+      sel.addEventListener("change", () => { state[key] = sel.value; look(); });
+    };
+    if (opts.kind === "futures") {
+      select("market", "region", [["", "All markets"], ...(opts.regions || []).map((r) => [r.id, r.id === "US" ? "United States" : r.id === "HK" ? "Hong Kong" : "Mainland China"])]);
+      select("group", "group", [["", "All groups"], ...(opts.groups || []).map((g) => [g, g])]);
+    }
+    const paintChosen = () => {
+      chips.replaceChildren();
+      if (!chosen.size) { h("span", "hint", chips, "Nothing chosen yet: click a product below."); return; }
+      for (const item of chosen) {
+        const b = h("button", "", chips, `${item}${names[item] ? " · " + names[item] : ""} ✕`); b.type = "button"; b.dataset.value = item; b.setAttribute("aria-pressed", "true"); b.title = "Remove";
+        b.addEventListener("click", () => { chosen.delete(item); paintChosen(); paintHits(last); if (opts.after) opts.after(); });
+      }
+    };
+    let last = null, seq = 0, timer = null;
+    const paintHits = (res) => {
+      last = res; hits.replaceChildren(); note.textContent = "";
+      if (!res) return;
+      for (const r of res.results) {
+        const b = h("button", "hit", hits); b.type = "button"; b.dataset.value = r.item; b.setAttribute("aria-pressed", String(chosen.has(r.item)));
+        h("b", "", b, r.item); h("span", "", b, r.name + (r.exchange ? " · " + r.exchange : ""));
+        b.addEventListener("click", () => {
+          if (chosen.has(r.item)) chosen.delete(r.item); else { chosen.add(r.item); names[r.item] = r.name; }
+          b.setAttribute("aria-pressed", String(chosen.has(r.item))); paintChosen(); if (opts.after) opts.after();
+        });
+      }
+      const typed = String(q.value).trim();
+      if (!res.results.length) {
+        note.textContent = opts.kind === "crypto" ? "iTick's list has no such coin." : "No product in the list matches.";
+        if (opts.kind === "futures" && /^([A-Za-z]{2}:)?[A-Za-z0-9.]{1,12}$/.test(typed)) {
+          const item = /:/.test(typed) ? typed.toUpperCase() : "US:" + typed.toUpperCase(), use = h("button", "link", note, `Try ${item} anyway`); use.type = "button";
+          use.addEventListener("click", () => { chosen.add(item); names[item] = ""; paintChosen(); if (opts.after) opts.after(); });
+        }
+      } else if (!typed && !state.region && !state.group) note.textContent = `The ${res.shown} products people look for most${res.total > res.shown ? " (of " + res.total + ")" : ""}. Type to search all of iTick's list.`;
+      else if (res.total > res.shown) note.textContent = `${res.shown} of ${res.total} shown: type more to narrow the list.`;
+    };
+    const look = async () => {
+      const mine = ++seq;
+      try { const res = await api("/api/data/search" + qs({ kind: opts.kind, q: q.value, region: state.region, group: state.group, limit: 24 })); if (mine === seq) paintHits(res); }
+      catch (e) { if (mine === seq) { hits.replaceChildren(); note.textContent = e.status === 404 ? "The app behind this page cannot search iTick's list: it is older than the page. " + Q.RESTART : e.message; } }
+    };
+    q.addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(look, 200); });
+    paintChosen(); look();
+    return box;
+  }
+
+  /* The "Real data (free)" section of an asset tab. ``spec``: kind (options | futures | crypto), title, intro, defaults() (the form's initial state), controls(box, form, kindStatus, changed, redraw) (the inputs, filled
+     from the server's presets; call ``changed`` when one is edited and ``redraw`` when the set of inputs itself changes), request(form) (the body for /api/data/fetch; throws a message), estimate(body) (seconds, for the hint beside the button), describe(record) ([headline, detail]), setCatalog(catalog), pick(result) (select what
      was downloaded). The card keeps its state in ``lab.free``, so it survives a redraw of the form while a download runs. */
   function dataCard(panel, lab, spec) {
     const st = lab.free = lab.free || { form: spec.defaults(), busy: "", error: "", last: null, open: null, armed: "" };
@@ -202,7 +277,8 @@
         let text = ""; try { const s = spec.estimate(spec.request(st.form)); text = s ? "takes about " + (s < 90 ? Math.round(s) + " seconds" : Math.round(s / 60) + " minutes") : ""; } catch (e) { /* not a valid request yet */ }
         st.el.estimate.textContent = text;
       };
-      const box = h("div", "fdcontrols", body); spec.controls(box, st.form, ks, estimate);
+      const box = h("div", "fdcontrols", body), redraw = () => { box.replaceChildren(); spec.controls(box, st.form, ks, estimate, redraw); estimate(); };         // ``redraw``: the controls themselves change (another source)
+      spec.controls(box, st.form, ks, estimate, redraw);
       const row = h("div", "row tight fdgo", body), go = h("button", "btn primary", row, "Download real data"); go.type = "button"; go.dataset.action = "download";
       go.addEventListener("click", () => { let req; try { req = spec.request(st.form); } catch (e) { Q.toast(e.message); return; } submit(lab, spec, req); });
       const est = h("span", "hint", row, ""); est.dataset.role = "estimate"; st.el.estimate = est; st.el.go = go; estimate();
@@ -281,5 +357,5 @@
     st.busy = ""; paintLive(lab);
   }
 
-  window.WS = { pipelineResult, request, catalog, refreshCatalog, dataCard, picks, ago, provenance, flags, seg, pills, meter, palette, kv, sub, hint, card, signed, points, shortDate, dayMonth, percentList, csvDownload, qs, sourceText };
+  window.WS = { pipelineResult, request, catalog, refreshCatalog, dataCard, picks, finder, itickBox, ago, provenance, flags, seg, pills, meter, palette, kv, sub, hint, card, signed, points, shortDate, dayMonth, percentList, csvDownload, qs, sourceText };
 })();

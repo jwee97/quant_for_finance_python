@@ -75,7 +75,7 @@ SAFE_SLUG = re.compile(r"^[a-z0-9][a-z0-9_-]{0,80}$")
 # Crypto tabs (``data_api``) and the ``downloaded`` source kind those tabs now read. The page compares it with its own number and says so
 # when the server behind it is older (the files were updated while the app was running, so it still runs the old code): the whole page needs 2, and the newer tabs ask for 3 or 4 on their own, so an
 # older app still runs the Backtest tab.
-API_VERSION = 5
+API_VERSION = 6
 CODE_ROOT = Path(__file__).resolve().parents[1]
 
 

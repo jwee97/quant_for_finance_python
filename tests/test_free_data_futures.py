@@ -141,3 +141,63 @@ def test_deribits_strip_becomes_one_days_curve_with_open_interest_and_the_perpet
     with pytest.raises(ValueError, match="BTC, ETH"):
         ff.fetch_deribit_curve(_http({}), "SOL")
     assert np.isfinite(df["price"]).all()
+
+
+# ------------------------------------------------------------------------------------------------------------------ the wider list of roots
+def test_the_newer_expiry_rules_land_on_the_days_the_exchanges_publish():
+    cases = [("last_bday", 2026, 12, "2026-12-31"), ("last_bday_prior", 2026, 12, "2026-11-30"), ("last_bday_prior", 2027, 1, "2026-12-31"),         # heating oil, gasoline and sugar stop at the end of the month before delivery
+             ("brent", 2026, 12, "2026-10-30"), ("brent", 2027, 1, "2026-11-30"), ("tenth_bday", 2026, 12, "2026-12-14"), ("tenth_bday", 2026, 8, "2026-08-14"),
+             ("last_thursday", 2026, 12, "2026-12-31"), ("last_thursday", 2026, 10, "2026-10-29"), ("cad", 2026, 12, "2026-12-15"), ("coffee", 2026, 12, "2026-11-19"),
+             ("cocoa", 2026, 12, "2026-12-16"), ("cotton", 2026, 12, "2026-12-08"), ("oj", 2026, 11, "2026-11-10")]
+    for rule, year, month, expected in cases:
+        assert str(ff.last_trade_date(rule, year, month).date()) == expected, (rule, year, month)
+
+
+def test_every_free_root_has_a_known_rule_real_terms_and_a_group_and_names_a_yahoo_symbol():
+    assert len(ff.FREE_ROOTS) == 44 and all(ff.ROOT.match(r) for r in ff.FREE_ROOTS)
+    groups = {r.group for r in ff.FREE_ROOTS.values()}
+    assert groups == {"Energy", "Metals", "Grains", "Livestock", "Softs", "Equity indexes", "Rates", "Currencies"}
+    today = pd.Timestamp(TODAY)
+    for root, spec in ff.FREE_ROOTS.items():
+        assert spec.root == root and spec.multiplier > 0 and spec.tick_size > 0 and spec.tick_value > 0 and spec.asset_class in fa.MARGIN_SHARE and spec.exchange and spec.name
+        assert set(spec.months) <= set(range(1, 13)) and list(spec.months) == sorted(spec.months)
+        out = ff.upcoming_contracts(spec, today, 6)
+        assert len(out) == 6 and [c["expiry"] for c in out] == sorted(c["expiry"] for c in out), root
+        assert all(c["expiry"] >= today and c["symbol"] == f"{root}{c['contract']}{spec.suffix}" and c["expiry"].weekday() < 5 for c in out), root
+        assert not set(spec.terms()) & {"months", "rule", "suffix", "group"} and spec.terms()["root_name"] == spec.name
+    assert {r.suffix for r in ff.FREE_ROOTS.values()} == {".NYM", ".CMX", ".CBT", ".CME", ".NYB"}
+    # contract sizes spot-checked against the exchanges' specifications: 42,000 gallons of heating oil, 5,000 bushels of corn quoted in cents, $5 a point on the Dow, 12.5 million yen
+    assert ff.FREE_ROOTS["HO"].multiplier == 42000 and ff.FREE_ROOTS["ZC"].multiplier == 50 and ff.FREE_ROOTS["YM"].multiplier == 5 and ff.FREE_ROOTS["6J"].multiplier == 12_500_000
+    assert round(ff.FREE_ROOTS["6J"].tick_value, 2) == 6.25 and round(ff.FREE_ROOTS["ZT"].tick_value, 4) == 7.8125 and round(ff.FREE_ROOTS["LE"].tick_value, 2) == 10.0
+
+
+@pytest.mark.parametrize("root", sorted(ff.FREE_ROOTS))
+def test_each_root_downloads_through_the_same_code_path(root):
+    seen = []
+
+    def route(url):
+        symbol = url.split("/chart/")[1].split("?")[0]
+        seen.append(symbol)
+        shift = sum(map(ord, symbol)) % 5
+        return yahoo_chart(symbol, _days(30), [50.0 + shift + 0.1 * i for i in range(30)])
+
+    d = ff.fetch_yahoo_curve(_http({"https://query1.finance.yahoo.com/v8/finance/chart/": route}), root, 3, "1y", today=TODAY)
+    spec = ff.FREE_ROOTS[root]
+    assert d.name == root and d.meta["contracts"] == 3 and d.meta["multiplier"] == spec.multiplier and d.meta["exchange"] == spec.exchange and d.meta["asset_class"] == spec.asset_class
+    assert all(x.startswith(root) and x.endswith(spec.suffix) for x in seen) and d.frame["contract"].nunique() == 3
+
+
+# ------------------------------------------------------------------------------------------------------------------ margins of a root the platform does not simulate
+def test_a_downloaded_root_without_known_margins_gets_an_illustrative_share_of_its_value_and_says_so(tmp_path):
+    d = ff.fetch_yahoo_curve(_http({"https://query1.finance.yahoo.com/v8/finance/chart/": lambda url: yahoo_chart(url.split("/chart/")[1].split("?")[0], _days(30), [2000.0 + i for i in range(30)])}), "PL", 3, "1y", today=TODAY)
+    path = tmp_path / "PL.csv"
+    d.frame.to_csv(path, index=False)
+    spec = fa.RootSpec("PL", "Platinum", "NYMEX", "metal", 50.0, 0.10, tuple(range(1, 13)), "last_business_day", fa.SchwartzSmithParams(), 0.0, 0.0)
+    data = fa.load_curve_file(path, "PL", spec=spec, source="downloaded")
+    front = float(data.long[data.long["date"] == data.long["date"].max()].sort_values("expiry")["price"].iloc[0])
+    assert data.spec.initial_margin == pytest.approx(0.06 * front * 50.0, rel=0.01) and data.spec.maintenance_margin == pytest.approx(0.9 * data.spec.initial_margin, rel=0.01)
+    assert any("ILLUSTRATIVE 6%" in n for n in data.notes) and not any("shown as zero" in n for n in data.notes)
+    unknown = fa.RootSpec("PL", "Platinum", "NYMEX", "mystery", 50.0, 0.10, tuple(range(1, 13)), "last_business_day", fa.SchwartzSmithParams(), 0.0, 0.0)
+    again = fa.load_curve_file(path, "PL", spec=unknown, source="downloaded")
+    assert again.spec.initial_margin == 0.0 and any("shown as zero" in n for n in again.notes), "a class the platform has no share for stays unknown, and says so"
+    assert fa.illustrative_margin("rates", 100_000) == (2000.0, 1800.0) and fa.illustrative_margin("metal", 0) is None and fa.illustrative_margin("nope", 1e5) is None

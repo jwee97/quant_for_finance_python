@@ -46,6 +46,7 @@ include = ["src*"]
 
 [tool.setuptools.package-data]
 "src.webapp" = ["static/*"]
+"src.assets.free_data" = ["*.csv"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -9,7 +9,7 @@
   const WINDOWS = [["5", "±5%"], ["10", "±10%"], ["15", "±15%"], ["25", "±25%"], ["40", "±40%"]];
 
   const O = {
-    id: "options", root: "#options", view: "#view-options", title: "Options", api: 5, mode: "overview", busy: "", results: {}, errors: {}, cache: new Map(), guard: null, go: null, progress: null,
+    id: "options", root: "#options", view: "#view-options", title: "Options", api: 6, mode: "overview", busy: "", results: {}, errors: {}, cache: new Map(), guard: null, go: null, progress: null,
     about: "Read an option chain, see what a book of options is exposed to, draw what a structure pays and test a rolling strategy. The chain is a model quoted at the underlying's real price unless you download a real one (free, below) or bring your own file.",
     modes: [["overview", "Overview"], ["chain", "Chain"], ["smile", "Smile and skew"], ["surface", "Surface and term"], ["risk", "Greeks and risk"], ["strategy", "Strategy builder"], ["backtest", "Backtest"]],
     runLabel: { overview: "Refresh", chain: "Refresh", smile: "Refresh", surface: "Refresh", risk: "Revalue the book", strategy: "Draw the payoff", backtest: "Run the backtest" },
@@ -31,24 +31,44 @@
     O.catalog = c;
     if (!c.underlyings.some((u) => u.id === O.form.underlying)) { O.form.underlying = (c.underlyings.find((u) => u.id === "SPY") || c.underlyings[0] || {}).id || ""; O.form.expiry = ""; O.spot = null; }
   };
-  /* The Free data card: real chains from Cboe (and Yahoo when Cboe cannot be reached), and Bitcoin and Ether from Deribit. */
+  let itick = null;                                                                          // the server's iTick status, kept by the card for its time estimate
+  /* The Free data card: real chains from Cboe (and Yahoo when Cboe cannot be reached), and Bitcoin and Ether from Deribit; and, optionally, the underlying's daily prices (Yahoo or iTick) so that the chain
+     has a realised volatility to be compared with. iTick has no option data. */
   const FREE = {
     kind: "options", title: "Real option chains (free)",
-    intro: "Download real option quotes, about 15 minutes late, for US-listed tickers from Cboe, or Bitcoin and Ether options from Deribit. No account and no key. A downloaded chain appears in the Underlying menu as “real chain” and is analysed exactly like a model chain.",
-    defaults: () => ({ chosen: new Set(["SPY"]), extra: "", maxDte: "365" }),
-    controls: (box, f, ks, changed) => {
+    intro: "Download real option quotes, about 15 minutes late, for US-listed tickers from Cboe, or Bitcoin and Ether options from Deribit. No account and no key. A downloaded chain appears in the Underlying menu as “real chain” and is analysed exactly like a model chain. iTick has no option data; it can only supply the underlying's daily prices.",
+    defaults: () => ({ chosen: new Set(["SPY"]), extra: "", maxDte: "365", prices: false, pricesSource: "yahoo", pricesYears: "3" }),
+    controls: (box, f, ks, changed, redraw) => {
+      itick = ks.itick_status;
       h("span", "hint", box, "Pick tickers:");
       W.picks(box, [...ks.symbols.map((s) => [s, s]), ...ks.crypto.map((c) => ["deribit:" + c, c + " · Deribit", "Bitcoin and Ether options from Deribit, live"])], f.chosen, changed);
       Q.labField(box, { key: "extra", label: "Other tickers (separated by spaces)", kind: "text", placeholder: "NVDA AMD", help: "Any ticker that has listed options in the US" }, f, changed);
       Q.labField(box, { key: "maxDte", label: "Expiries up to", kind: "choice", options: ks.max_dte.map((d) => [String(d), d < 365 ? d + " days" : d === 365 ? "1 year" : d / 365 + " years"]), help: "Longer chains are bigger files and slower pages" }, f, changed);
+      Q.labField(box, { key: "prices", label: "Also download the underlying's daily prices", kind: "bool", help: "Gives a downloaded chain a realised volatility to set beside the implied one, for a ticker the platform's own price data does not hold" }, f, redraw);
+      if (!f.prices) return;
+      Q.labField(box, { key: "pricesSource", label: "Prices from", kind: "choice", options: ks.prices.sources.map((x) => [x.id, x.text]) }, f, redraw);
+      Q.labField(box, { key: "pricesYears", label: "Years of prices", kind: "choice", options: ks.prices.years.map((y) => [String(y), y === 1 ? "1 year" : y + " years"]) }, f, changed);
+      if (f.pricesSource === "itick") W.itickBox(box, ks.itick_status);
+      h("p", "hint", box, "The prices are for the realised volatility only. A ticker the platform already holds (the ETFs of the Backtest tab) keeps its own prices.");
     },
     request: (f) => {
       const items = [...f.chosen, ...String(f.extra).split(/[\s,;]+/).filter(Boolean)];
       if (!items.length) throw new Error("Pick a ticker, or type one");
-      return { kind: "options", items, max_dte: Number(f.maxDte) };
+      const body = { kind: "options", items, max_dte: Number(f.maxDte) };
+      if (f.prices) Object.assign(body, { what: ["chain", "prices"], prices_source: f.pricesSource, years: Number(f.pricesYears) });
+      return body;
     },
-    estimate: (b) => b.items.length * 4,
-    describe: (rec) => [rec.name, `${rec.source} · quotes of ${rec.as_of} · ${Number(rec.contracts || rec.rows).toLocaleString("en-US")} contracts`],
+    estimate: (b) => {
+      let seconds = b.items.length * 4;
+      if (!(b.what || []).includes("prices")) return seconds;
+      const n = b.items.filter((x) => !String(x).startsWith("deribit:")).length;
+      if (b.prices_source !== "itick") return seconds + n * 3;
+      const info = itick || {}, cpm = info.calls_per_minute || 5, page = info.page_size || 1000, free = info.calls_available_now === undefined ? cpm : info.calls_available_now;
+      const calls = n * Math.max(1, Math.ceil((b.years * ((info.bars_per_year || {}).stock || 252)) / page));
+      return seconds + 2 * calls + Math.max(0, calls - free) * (60 / cpm);
+    },
+    describe: (rec) => rec.item === "prices" ? [`${rec.underlying} · daily prices`, `${rec.source} · ${Number(rec.bars || rec.rows).toLocaleString("en-US")} days to ${rec.as_of}`]
+      : [rec.name, `${rec.source} · quotes of ${rec.as_of} · ${Number(rec.contracts || rec.rows).toLocaleString("en-US")} contracts`],
     setCatalog,
     pick: (res) => { const first = res.results.find((r) => r.ok && r.what === "chain"); if (first) { O.form.underlying = "dl:" + first.name; O.form.expiry = ""; O.spot = null; } },
   };

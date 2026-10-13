@@ -283,14 +283,14 @@ def test_an_app_without_the_data_routes_explains_the_card_instead_of_leaving_it_
 
 
 def test_an_app_one_version_behind_keeps_the_machine_learning_tab_and_asks_the_asset_tabs_for_a_restart(browser, live_ws):  # noqa: F811
-    """The Free data cards arrived with API version 5: an app at 4 still serves the Machine learning tab, but the three asset tabs need the newer one."""
-    pg = _page_with(browser, live_ws, rewrite=lambda catalog: catalog.update(api_version=4))
+    """The iTick source arrived with API version 6: an app at 5 still serves the Machine learning tab, but the three asset tabs need the newer one."""
+    pg = _page_with(browser, live_ws, rewrite=lambda catalog: catalog.update(api_version=5))
     try:
         pg.wait_for_selector(".chip")
         for tab in ("options", "futures", "crypto"):
             pg.click(f"#tab-{tab}")
             pg.wait_for_selector(f"#{tab} .card.empty")
-            assert "needs a newer app" in pg.inner_text(f"#{tab}") and "this tab needs 5" in pg.inner_text(f"#{tab}")
+            assert "needs a newer app" in pg.inner_text(f"#{tab}") and "this tab needs 6" in pg.inner_text(f"#{tab}")
         pg.click("#tab-ml")
         pg.wait_for_selector("#ml .panel")
         assert "needs a newer app" not in pg.inner_text("#ml") and not pg.problems, pg.problems

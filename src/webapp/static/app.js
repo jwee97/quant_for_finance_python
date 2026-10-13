@@ -148,14 +148,14 @@
   const sources = () => (S.catalog && Array.isArray(S.catalog.sources) ? S.catalog.sources : []);
   /* What turns iTick on. The key is never typed into this page: it goes into a Replit secret, and an app only sees the secrets that existed when it started. */
   const KEY_NAME = "ITICK_API_KEY";
-  function setupGuide(box) {
+  function setupGuide(box, last) {                                                            // ``last``: the final step, when the guide is shown somewhere other than the Backtest tab
     const guide = h("div", "setup", box);
     const lead = h("p", "", guide, "iTick is not set up yet. It takes about two minutes, and the key never goes through this page."); lead.style.color = css("--warn");
     const steps = h("ol", "steps", guide);
     h("li", "", steps, "Copy your API key from your iTick account.");
     const two = h("li", "", steps, "In Replit open Tools, then Secrets, then New Secret. Name it "); h("code", "", two, KEY_NAME); two.appendChild(document.createTextNode(", paste the key as its value and click Add Secret."));
     h("li", "", steps, "Press Stop and then Run: an app only sees the secrets that existed when it started. Then reload this page.");
-    h("li", "", steps, "Choose iTick here and press Test the iTick connection (it spends one call).");
+    h("li", "", steps, last || "Choose iTick here and press Test the iTick connection (it spends one call).");
     const row = h("div", "row tight", guide);
     const name = h("button", "btn", row, "Copy the secret name"); name.addEventListener("click", () => copy(KEY_NAME, "The secret name"));
     const again = h("button", "btn", row, "I added it and restarted: reload"); again.addEventListener("click", () => location.reload());
@@ -1352,6 +1352,6 @@
     if (booted && store("tab") === name) showTab(name);
   }
   window.QL = { C, h, fmt, $, api, css, store, toast, copy, download, num, pct, money, smoney, axisMoney, bad, bps, grouped, plain, unsign, colorOf, SLOTS, tile, chartCard, simpleTable, sampleRows, keepScroll, labField, checkList, numbers,
-    labHead, labBanner, labEmpty, labOld, syncLab, renderLab, drawLab, openGuide, serverApi, RESTART, notice, registerWorkspace, labelPx, running, S };
+    labHead, labBanner, labEmpty, labOld, syncLab, renderLab, drawLab, openGuide, serverApi, RESTART, notice, registerWorkspace, labelPx, running, S, setupGuide };
   boot();
 })();

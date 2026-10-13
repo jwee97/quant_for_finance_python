@@ -73,7 +73,7 @@ def test_a_task_runs_on_the_worker_and_reports_its_result_or_its_message(assets)
 
 
 def test_the_version_announces_the_new_workspaces_and_the_routes_are_registered(assets):
-    assert assets.catalog()["api_version"] == api.API_VERSION == 5
+    assert assets.catalog()["api_version"] == api.API_VERSION == 6
     for path in ("/api/options/chain", "/api/options/surface", "/api/futures/curve", "/api/futures/roll", "/api/crypto/funding", "/api/ml/catalog", "/api/ml/experiments"):
         assert path in assets.extra_get, path
     for path in ("/api/options/portfolio-risk", "/api/options/strategy/payoff", "/api/options/strategy/backtest", "/api/ml/train", "/api/ml/search", "/api/ml/combine"):

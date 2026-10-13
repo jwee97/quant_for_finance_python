@@ -11,6 +11,9 @@ uses them to measure the time between contracts, where a day is a small error.
 
 **Bitcoin and Ether (Deribit).** Deribit lists dated futures as well as the perpetual and publishes the whole strip at once, with open interest. One download is one day's curve; the file adds a day
 with every download, so the history of the curve is the history of your downloads.
+
+**Any futures product (iTick).** iTick serves one daily price series per product (``NQ``, ``HSI``, ``RB``), not one per contract month, so it cannot draw a curve; ``data_itick`` downloads it
+as a price history, which the Futures tab's History view reads. The product list is ``itick_catalog``.
 """
 
 from __future__ import annotations
@@ -44,6 +47,7 @@ class FreeRoot:
     tick_size: float
     months: tuple
     rule: str
+    group: str = "Other"                  # how the page groups the roots: Energy, Metals, Grains, Livestock, Softs, Equity indexes, Rates, Currencies
 
     @property
     def tick_value(self) -> float:
@@ -52,7 +56,7 @@ class FreeRoot:
     def terms(self) -> dict:
         """What a record keeps of the root: its long name as ``root_name`` (``name`` is the file's), exchange, class, multiplier and tick size."""
         d = asdict(self)
-        d.pop("months"), d.pop("rule"), d.pop("suffix")
+        d.pop("months"), d.pop("rule"), d.pop("suffix"), d.pop("group")
         d["root_name"] = d.pop("name")
         return d
 
@@ -63,20 +67,57 @@ def _roots(*rows: FreeRoot) -> dict[str, FreeRoot]:
 
 ALL = tuple(range(1, 13))
 QUARTERLY = (3, 6, 9, 12)
+EVEN = (2, 4, 6, 8, 10, 12)
+GRAIN_CYCLE = (3, 5, 7, 9, 12)
+SOY_CYCLE = (1, 3, 5, 7, 8, 9, 10, 12)
+# Contract terms are the exchanges' published specifications (price units: a bushel crop in cents, meat in cents a pound, fuels in dollars a gallon, metals in dollars an ounce, rates in points).
+# The delivery months are the standard cycle; Yahoo lists only the nearest few of the later ones and the fetcher skips any contract Yahoo does not have. Margins are not kept: they change every few
+# months, so the workspace shows an illustrative share of the contract's value for these (see ``futures_analytics.illustrative_margin``).
 FREE_ROOTS = _roots(
-    FreeRoot("CL", "WTI crude oil", "NYMEX", ".NYM", "commodity", 1000.0, 0.01, ALL, "cl"),
-    FreeRoot("NG", "Henry Hub natural gas", "NYMEX", ".NYM", "commodity", 10000.0, 0.001, ALL, "ng"),
-    FreeRoot("GC", "Gold", "COMEX", ".CMX", "metal", 100.0, 0.10, (2, 4, 6, 8, 10, 12), "third_last_bday"),
-    FreeRoot("SI", "Silver", "COMEX", ".CMX", "metal", 5000.0, 0.005, (1, 3, 5, 7, 9, 12), "third_last_bday"),
-    FreeRoot("HG", "Copper", "COMEX", ".CMX", "commodity", 25000.0, 0.0005, ALL, "third_last_bday"),
-    FreeRoot("ES", "E-mini S&P 500", "CME", ".CME", "equity_index", 50.0, 0.25, QUARTERLY, "third_friday"),
-    FreeRoot("NQ", "E-mini Nasdaq-100", "CME", ".CME", "equity_index", 20.0, 0.25, QUARTERLY, "third_friday"),
-    FreeRoot("ZN", "10-year Treasury note", "CBOT", ".CBT", "rates", 1000.0, 0.015625, QUARTERLY, "treasury"),
-    FreeRoot("ZB", "Treasury bond", "CBOT", ".CBT", "rates", 1000.0, 0.03125, QUARTERLY, "treasury"),
-    FreeRoot("6E", "Euro FX", "CME", ".CME", "fx", 125000.0, 0.00005, QUARTERLY, "euro_fx"),
-    FreeRoot("ZC", "Corn", "CBOT", ".CBT", "agricultural", 50.0, 0.25, (3, 5, 7, 9, 12), "grain"),
-    FreeRoot("ZS", "Soybeans", "CBOT", ".CBT", "agricultural", 50.0, 0.25, (1, 3, 5, 7, 8, 9, 11), "grain"),
-    FreeRoot("ZW", "Chicago wheat", "CBOT", ".CBT", "agricultural", 50.0, 0.25, (3, 5, 7, 9, 12), "grain"),
+    FreeRoot("CL", "WTI crude oil", "NYMEX", ".NYM", "commodity", 1000.0, 0.01, ALL, "cl", "Energy"),
+    FreeRoot("NG", "Henry Hub natural gas", "NYMEX", ".NYM", "commodity", 10000.0, 0.001, ALL, "ng", "Energy"),
+    FreeRoot("HO", "NY Harbor ULSD (heating oil)", "NYMEX", ".NYM", "commodity", 42000.0, 0.0001, ALL, "last_bday_prior", "Energy"),
+    FreeRoot("RB", "RBOB gasoline", "NYMEX", ".NYM", "commodity", 42000.0, 0.0001, ALL, "last_bday_prior", "Energy"),
+    FreeRoot("BZ", "Brent crude oil (last day)", "NYMEX", ".NYM", "commodity", 1000.0, 0.01, ALL, "brent", "Energy"),
+    FreeRoot("GC", "Gold", "COMEX", ".CMX", "metal", 100.0, 0.10, EVEN, "third_last_bday", "Metals"),
+    FreeRoot("SI", "Silver", "COMEX", ".CMX", "metal", 5000.0, 0.005, (1, 3, 5, 7, 9, 12), "third_last_bday", "Metals"),
+    FreeRoot("HG", "Copper", "COMEX", ".CMX", "commodity", 25000.0, 0.0005, ALL, "third_last_bday", "Metals"),
+    FreeRoot("PL", "Platinum", "NYMEX", ".NYM", "metal", 50.0, 0.10, (1, 4, 7, 10), "third_last_bday", "Metals"),
+    FreeRoot("PA", "Palladium", "NYMEX", ".NYM", "metal", 100.0, 0.05, QUARTERLY, "third_last_bday", "Metals"),
+    FreeRoot("ZC", "Corn", "CBOT", ".CBT", "agricultural", 50.0, 0.25, GRAIN_CYCLE, "grain", "Grains"),
+    FreeRoot("ZS", "Soybeans", "CBOT", ".CBT", "agricultural", 50.0, 0.25, (1, 3, 5, 7, 8, 9, 11), "grain", "Grains"),
+    FreeRoot("ZW", "Chicago wheat", "CBOT", ".CBT", "agricultural", 50.0, 0.25, GRAIN_CYCLE, "grain", "Grains"),
+    FreeRoot("KE", "Kansas City hard red winter wheat", "CBOT", ".CBT", "agricultural", 50.0, 0.25, GRAIN_CYCLE, "grain", "Grains"),
+    FreeRoot("ZM", "Soybean meal", "CBOT", ".CBT", "agricultural", 100.0, 0.10, SOY_CYCLE, "grain", "Grains"),
+    FreeRoot("ZL", "Soybean oil", "CBOT", ".CBT", "agricultural", 600.0, 0.01, SOY_CYCLE, "grain", "Grains"),
+    FreeRoot("ZO", "Oats", "CBOT", ".CBT", "agricultural", 50.0, 0.25, GRAIN_CYCLE, "grain", "Grains"),
+    FreeRoot("ZR", "Rough rice", "CBOT", ".CBT", "agricultural", 2000.0, 0.005, (1, 3, 5, 7, 9, 11), "grain", "Grains"),
+    FreeRoot("LE", "Live cattle", "CME", ".CME", "agricultural", 400.0, 0.025, EVEN, "last_bday", "Livestock"),
+    FreeRoot("HE", "Lean hogs", "CME", ".CME", "agricultural", 400.0, 0.025, (2, 4, 5, 6, 7, 8, 10, 12), "tenth_bday", "Livestock"),
+    FreeRoot("GF", "Feeder cattle", "CME", ".CME", "agricultural", 500.0, 0.025, (1, 3, 4, 5, 8, 9, 10, 11), "last_thursday", "Livestock"),
+    FreeRoot("SB", "Sugar No. 11", "ICE US", ".NYB", "agricultural", 1120.0, 0.01, (3, 5, 7, 10), "last_bday_prior", "Softs"),
+    FreeRoot("KC", "Coffee C", "ICE US", ".NYB", "agricultural", 375.0, 0.05, GRAIN_CYCLE, "coffee", "Softs"),
+    FreeRoot("CC", "Cocoa", "ICE US", ".NYB", "agricultural", 10.0, 1.0, GRAIN_CYCLE, "cocoa", "Softs"),
+    FreeRoot("CT", "Cotton No. 2", "ICE US", ".NYB", "agricultural", 500.0, 0.01, (3, 5, 7, 10, 12), "cotton", "Softs"),
+    FreeRoot("OJ", "Orange juice", "ICE US", ".NYB", "agricultural", 150.0, 0.05, (1, 3, 5, 7, 9, 11), "oj", "Softs"),
+    FreeRoot("ES", "E-mini S&P 500", "CME", ".CME", "equity_index", 50.0, 0.25, QUARTERLY, "third_friday", "Equity indexes"),
+    FreeRoot("NQ", "E-mini Nasdaq-100", "CME", ".CME", "equity_index", 20.0, 0.25, QUARTERLY, "third_friday", "Equity indexes"),
+    FreeRoot("YM", "E-mini Dow Jones", "CBOT", ".CBT", "equity_index", 5.0, 1.0, QUARTERLY, "third_friday", "Equity indexes"),
+    FreeRoot("RTY", "E-mini Russell 2000", "CME", ".CME", "equity_index", 50.0, 0.10, QUARTERLY, "third_friday", "Equity indexes"),
+    FreeRoot("ZT", "2-year Treasury note", "CBOT", ".CBT", "rates", 2000.0, 0.00390625, QUARTERLY, "last_bday", "Rates"),
+    FreeRoot("ZF", "5-year Treasury note", "CBOT", ".CBT", "rates", 1000.0, 0.0078125, QUARTERLY, "last_bday", "Rates"),
+    FreeRoot("ZN", "10-year Treasury note", "CBOT", ".CBT", "rates", 1000.0, 0.015625, QUARTERLY, "treasury", "Rates"),
+    FreeRoot("TN", "Ultra 10-year Treasury note", "CBOT", ".CBT", "rates", 1000.0, 0.015625, QUARTERLY, "treasury", "Rates"),
+    FreeRoot("ZB", "Treasury bond", "CBOT", ".CBT", "rates", 1000.0, 0.03125, QUARTERLY, "treasury", "Rates"),
+    FreeRoot("UB", "Ultra Treasury bond", "CBOT", ".CBT", "rates", 1000.0, 0.03125, QUARTERLY, "treasury", "Rates"),
+    FreeRoot("6E", "Euro FX", "CME", ".CME", "fx", 125000.0, 0.00005, QUARTERLY, "euro_fx", "Currencies"),
+    FreeRoot("6J", "Japanese yen", "CME", ".CME", "fx", 12500000.0, 0.0000005, QUARTERLY, "euro_fx", "Currencies"),
+    FreeRoot("6B", "British pound", "CME", ".CME", "fx", 62500.0, 0.0001, QUARTERLY, "euro_fx", "Currencies"),
+    FreeRoot("6A", "Australian dollar", "CME", ".CME", "fx", 100000.0, 0.0001, QUARTERLY, "euro_fx", "Currencies"),
+    FreeRoot("6C", "Canadian dollar", "CME", ".CME", "fx", 100000.0, 0.00005, QUARTERLY, "cad", "Currencies"),
+    FreeRoot("6S", "Swiss franc", "CME", ".CME", "fx", 125000.0, 0.0001, QUARTERLY, "euro_fx", "Currencies"),
+    FreeRoot("6N", "New Zealand dollar", "CME", ".CME", "fx", 100000.0, 0.0001, QUARTERLY, "euro_fx", "Currencies"),
+    FreeRoot("DX", "US dollar index", "ICE US", ".NYB", "fx", 1000.0, 0.005, QUARTERLY, "euro_fx", "Currencies"),
 )
 CRYPTO_ROOTS = {"BTC": "Bitcoin", "ETH": "Ether"}
 
@@ -91,6 +132,15 @@ def _third(weekday: int, year: int, month: int) -> pd.Timestamp:
     return first + pd.Timedelta(days=(weekday - first.weekday()) % 7 + 14)
 
 
+def _prior_month(year: int, month: int, back: int = 1) -> tuple[int, int]:
+    index = year * 12 + (month - 1) - back
+    return index // 12, index % 12 + 1
+
+
+def _first_bday(year: int, month: int) -> pd.Timestamp:
+    return pd.bdate_range(pd.Timestamp(year, month, 1), periods=1)[0]
+
+
 def last_trade_date(rule: str, year: int, month: int) -> pd.Timestamp:
     """The last trading day of the contract that delivers in ``year``-``month``, by the exchange's rule and without holidays (so it can be a day off):
 
@@ -101,6 +151,18 @@ def last_trade_date(rule: str, year: int, month: int) -> pd.Timestamp:
     ``treasury``         the seventh business day before the last business day of the delivery month
     ``euro_fx``          two business days before the third Wednesday of the delivery month
     ``grain``            the business day before the 15th calendar day of the delivery month
+    ``last_bday``        the last business day of the delivery month (the 2- and 5-year notes, live cattle)
+    ``last_bday_prior``  the last business day of the month before delivery (heating oil, gasoline, sugar)
+    ``brent``            the last business day of the second month before delivery
+    ``tenth_bday``       the tenth business day of the delivery month (lean hogs)
+    ``last_thursday``    the last Thursday of the delivery month (feeder cattle)
+    ``cad``              the business day before the third Wednesday of the delivery month (Canadian dollar)
+    ``coffee``           eight business days before the first business day of the delivery month (one before the first notice day)
+    ``cocoa``            eleven business days before the last business day of the delivery month
+    ``cotton``           seventeen business days before the last business day of the delivery month
+    ``oj``               fourteen business days before the last business day of the delivery month
+
+    These follow the exchanges' published specifications from memory of their wording and without a holiday calendar: a date can be a day or two off.
     """
     if rule == "cl":
         prior = pd.Timestamp(year, month, 1) - pd.offsets.MonthBegin(1)
@@ -120,6 +182,27 @@ def last_trade_date(rule: str, year: int, month: int) -> pd.Timestamp:
         return _third(2, year, month) - pd.offsets.BDay(2)
     if rule == "grain":
         return pd.Timestamp(year, month, 15) - pd.offsets.BDay(1)
+    if rule == "last_bday":
+        return _last_bday(year, month)
+    if rule == "last_bday_prior":
+        return _last_bday(*_prior_month(year, month))
+    if rule == "brent":
+        return _last_bday(*_prior_month(year, month, 2))
+    if rule == "tenth_bday":
+        return pd.bdate_range(pd.Timestamp(year, month, 1), periods=10)[-1]
+    if rule == "last_thursday":
+        last = pd.Timestamp(year, month, 1) + pd.offsets.MonthEnd(0)
+        return last - pd.Timedelta(days=(last.weekday() - 3) % 7)
+    if rule == "cad":
+        return _third(2, year, month) - pd.offsets.BDay(1)
+    if rule == "coffee":
+        return _first_bday(year, month) - pd.offsets.BDay(8)
+    if rule == "cocoa":
+        return _last_bday(year, month) - pd.offsets.BDay(11)
+    if rule == "cotton":
+        return _last_bday(year, month) - pd.offsets.BDay(17)
+    if rule == "oj":
+        return _last_bday(year, month) - pd.offsets.BDay(14)
     raise ValueError(f"unknown expiry rule '{rule}'")
 
 

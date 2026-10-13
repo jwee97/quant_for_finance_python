@@ -315,3 +315,26 @@ def fetch_deribit_chain(http: Http, currency: str, max_dte: int = 365) -> Downlo
     meta = {"source_id": "deribit", "source": "Deribit", "url": DERIBIT_URL, "as_of": str(quote_date.date()), "underlying": currency, "spot": spot, "contracts": int(len(df)),
             "expiries": int(df["expiry"].nunique()), "american_style": False, "rate": 0.0, "carry": counts["carry"], "notes": notes}
     return Download("options", f"{currency}-Deribit", "chain", frame=df, meta=meta)
+
+
+# ------------------------------------------------------------------------------------------------------------------ the underlying's prices
+YAHOO_INDEXES = {"SPX": "^GSPC", "NDX": "^NDX", "RUT": "^RUT", "VIX": "^VIX", "DJX": "^DJI", "OEX": "^OEX", "XSP": "^XSP"}       # Yahoo writes an index with a caret, and the S&P 500 as ^GSPC
+
+
+def fetch_underlying_prices(http: Http, symbol: str, years: float = 3.0) -> Download:
+    """The daily closes and volumes of an option underlying from Yahoo Finance (``date, close, volume``), saved as ``<SYMBOL>_prices`` beside its chain. The Options tab measures the realised
+    volatility of a downloaded chain from it, for the tickers the platform's own price data does not hold. Split-adjusted by Yahoo, not for dividends: the right basis for a volatility."""
+    from .futures import YAHOO_CHART, yahoo_history
+
+    symbol = check_symbol(symbol)
+    yahoo = YAHOO_INDEXES.get(symbol, symbol)
+    span = "1y" if years <= 1 else "2y" if years <= 2 else "5y" if years <= 5 else "10y"
+    history = yahoo_history(http.get_json(YAHOO_CHART.format(symbol=yahoo), {"range": span, "interval": "1d"}))
+    if len(history) < 60:
+        raise FetchError(f"Yahoo Finance has only {len(history)} daily prices of {yahoo}; the Options tab needs at least 60 to measure a volatility")
+    frame = history.rename(columns={"price": "close"})[["date", "close", "volume"]]
+    notes = [f"Yahoo Finance's daily closes of {yahoo} ({len(frame):,} days, {frame['date'].iloc[0].date()} to {frame['date'].iloc[-1].date()}), used for the realised volatility beside the implied one. "
+             "Adjusted for splits, not for dividends. The last bar can be a session in progress."]
+    meta = {"source_id": "yahoo", "source": "Yahoo Finance", "url": YAHOO_CHART.format(symbol=yahoo), "as_of": str(frame["date"].iloc[-1].date()), "first_date": str(frame["date"].iloc[0].date()),
+            "underlying": symbol, "bars": int(len(frame)), "notes": notes}
+    return Download("options", f"{symbol}_prices", "prices", frame=frame, meta=meta)
