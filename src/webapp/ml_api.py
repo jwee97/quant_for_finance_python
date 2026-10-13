@@ -270,7 +270,7 @@ class MlApi:
         return over
 
     def _submit(self, label: str, work) -> dict:
-        return self.app.submit_task(label, work)
+        return self.app.submit_task(label, work, "ml")
 
     # ------------------------------------------------------------------------------------------------------------ catalogue
     def catalog(self, q: dict | None = None) -> dict:

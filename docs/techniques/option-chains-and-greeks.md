@@ -5,9 +5,9 @@ difficulty: 2
 chapter: Ch. 18
 prerequisites: [option-pricing-and-greeks]
 stages: []
-files: [src/assets/options_analytics.py, src/webapp/asset_api.py, src/webapp/static/options.js, src/derivatives/synthetic.py, src/assets/free_data/options.py, src/webapp/data_api.py]
+files: [src/assets/options_analytics.py, src/webapp/asset_api.py, src/webapp/static/options.js, src/derivatives/synthetic.py, src/assets/free_data/options.py, src/webapp/data_api.py, src/webapp/data_itick.py]
 figures: []
-tests: [tests/test_assets_workspaces.py, tests/test_free_data_options.py, tests/test_webapp_data.py]
+tests: [tests/test_assets_workspaces.py, tests/test_free_data_options.py, tests/test_webapp_data.py, tests/test_webapp_data_itick.py]
 models: []
 ---
 
@@ -31,7 +31,7 @@ The **Options** tab of the dashboard (`src/assets/options_analytics.py`, served 
 
 **Provenance is part of the data.** The repository holds no option quotes. For an ETF in the platform's universe the chain is *generated*: the platform's arbitrage-free SSVI surface anchored to the underlying's real last close and real realised volatility, with an assumed rate and yield and simulated volume, open interest and quote ages. Every payload says `simulated` and the page prints "Simulated: a model" above every table. A vendor CSV in `data/user/options/` is analysed exactly as it is and labelled "Your file".
 
-**Real chains without sourcing them.** The **Real option chains (free)** card of the tab downloads a chain from Cboe's delayed quotes (about 15 minutes late; Yahoo Finance when Cboe cannot be reached) for any US stock, ETF or index with listed options, or Bitcoin and Ether options from Deribit, and saves it under `data/user/downloads/options/`. The chain appears in the Underlying menu as "SPY (real chain, …)", is analysed like any other and is badged "Downloaded: free data". A vendor chain gives prices but not the rate and the dividend yield they were struck with, so the page assumes the rate (4% a year, stored with the download) and reads the dividend yield of **each expiry from put-call parity at the money** (the forward the market implies); Deribit publishes its forwards, which are used as they are. The vendor's own implied volatilities are ignored and every row is inverted from its mid, so a downloaded chain and a model chain are treated the same. [What is downloaded and what it is not](../free_data.md).
+**Real chains without sourcing them.** The **Real option chains (free)** card of the tab downloads a chain from Cboe's delayed quotes (about 15 minutes late; Yahoo Finance when Cboe cannot be reached) for any US stock, ETF or index with listed options, or Bitcoin and Ether options from Deribit, and saves it under `data/user/downloads/options/`. The chain appears in the Underlying menu as "SPY (real chain, …)", is analysed like any other and is badged "Downloaded: free data". A vendor chain gives prices but not the rate and the dividend yield they were struck with, so the page assumes the rate (4% a year, stored with the download) and reads the dividend yield of **each expiry from put-call parity at the money** (the forward the market implies); Deribit publishes its forwards, which are used as they are. The vendor's own implied volatilities are ignored and every row is inverted from its mid, so a downloaded chain and a model chain are treated the same. A chain does not carry the price history of its underlying, so for a ticker the platform's own price data does not hold the overview has no realised volatility to put beside the implied one; tick "Also download the underlying's daily prices" in the card (from Yahoo Finance or iTick) and it shows the 21- and 63-day realised volatility and the gap to the implied. iTick has no option data at all: it can supply only that underlying price history. [What is downloaded and what it is not](../free_data.md).
 
 ## What we found
 

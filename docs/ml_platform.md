@@ -61,8 +61,17 @@ Served by `src/webapp/ml_api.py`; JSON in, JSON out. Anything slow returns `{"jo
 | `GET /api/ml/compare`, `/api/ml/explain`, `POST /api/ml/combine` | comparison, one prediction explained, strategy combination |
 | `GET /api/ml/forward`, `POST /api/ml/forward/step` (job) | forward-test signals and the daily step |
 | `POST /api/ml/promote`, `/api/ml/delete` | model stages; delete an experiment (needs `confirm: true`) |
+| `GET /api/jobs`, `GET /api/job/<id>` | every job the app has run, newest first (without results), and one job with its result: a page that was reloaded, or an app that was restarted, finds a run again (see below) |
 
 The browser may send only the settings of `SPEC` in `ml_api.py`, each checked for type and range; the merged configuration is then validated by `experiment_config`. A request cannot name a file path.
+
+## Runs in the background
+
+A training, a search, a re-backtest or a forward step is a *job*: it runs on the app's one worker thread, one at a time (models set process-wide flags and share the data caches), and the page polls `/api/job/<id>`. The thread belongs to the app, not to the page, so closing the tab or reloading the page does not stop it, and `run_experiment` saves the experiment to the registry when it ends, whether or not anything is watching (`tests/test_jobs.py` trains a model and never asks after the job).
+
+What used to be lost was the knowledge of the job: the table of jobs lived in memory, so a reloaded page could not find its run and a restarted app forgot it. `src/webapp/jobs.py` keeps one small record per job under `data/user/jobs/` (label, kind, status, the last progress message at most every two seconds, the times it started and ended, and the process that ran it) and the result of a finished one. `GET /api/jobs` lists them; the Machine learning tab shows a card with what is running, waiting or ended in the last six hours, follows it, and opens the experiment a finished run made. A job whose process is gone when the app starts again can never finish: it is marked `interrupted`, with the last thing it said it was doing. **Nothing is resumed**: a training is not checkpointed, so an interrupted run starts again from the beginning. The log keeps the last 60 jobs.
+
+Whether the run outlives *you* depends on whether the app does. Your own computer or a server: yes, as long as the process lives. Replit: the app lives as long as the workspace does, which Replit does not promise after you close the tab; [replit.md](../replit.md#training-in-the-background-on-replit) says what Replit documents, what keeping a run alive costs there, and the command-line route (`python -m src ml-train ...`) for a run you start from the Shell or from a Scheduled deployment.
 
 ## Extending it
 

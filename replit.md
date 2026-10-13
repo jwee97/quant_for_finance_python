@@ -38,17 +38,74 @@ Your saved tickers and runs are kept across restarts.
 
 Each of those three tabs has a **Real data (free)** card in its left panel: tick tickers,
 futures roots or coins and press **Download real data**. The app fetches real option
-chains (Cboe, Deribit), futures curves (Yahoo Finance, Deribit) and crypto prices, order
-books and funding (OKX, Coinbase, Kraken, Bitstamp, Deribit), saves them under
-`data/user/downloads/` and the tab switches to them, badged *Downloaded: free data*. No
-account, no key and no Secret are needed, and nothing has to be sourced by hand.
+chains (Cboe, Deribit), futures curves of 44 roots (Yahoo Finance, Deribit) and crypto
+prices, order books and funding (OKX, Coinbase, Kraken, Bitstamp, Deribit), saves them
+under `data/user/downloads/` and the tab switches to them, badged *Downloaded: free data*.
+Those sources need no account, no key and no Secret, and nothing has to be sourced by hand.
 
-These are public feeds that rate-limit shared cloud addresses, and a Repl's address is
-shared. If a provider answers *HTTP 403* or *HTTP 429* the card says which one and the app
-waits before asking that host again: try again in a few minutes, download fewer items at a
-time (Yahoo is the strictest), or run the dashboard on your own computer. What is
-downloaded, how it is read and what it is not (delayed, unaudited, no open interest from
-Yahoo): [docs/free_data.md](docs/free_data.md).
+**iTick** is the optional second source of the Futures and Crypto cards (choose it above
+the list of roots or coins) and of the Options card's price download. It uses the same
+`ITICK_API_KEY` Secret as the Backtest tab's iTick source (see below), the same 5-calls-a-
+minute limit and the same cost per download, and it gives you the daily price history of
+**any** of about 1,600 futures products (search the list in the card; you are not limited
+to the 44 roots), a coin's daily history, and an option underlying's daily prices. It has
+no option data and no curve (iTick keeps one series per futures product, not one per
+contract month). A card with iTick chosen and no key set shows the steps that turn it on.
+The author could not call iTick, so press **Test the iTick connection** in the card once
+the Secret is set: it spends one call and says what your account returns.
+
+The public feeds rate-limit shared cloud addresses, and a Repl's address is shared. If a
+provider answers *HTTP 403* or *HTTP 429* the card says which one and the app waits before
+asking that host again: try again in a few minutes, download fewer items at a time (Yahoo
+is the strictest), or run the dashboard on your own computer. What is downloaded, how it is
+read and what it is not (delayed, unaudited, no open interest from Yahoo): [docs/free_data.md](docs/free_data.md).
+
+## Training in the background on Replit
+
+**What the app does.** A training, a search or a re-backtest runs on the app's own worker
+thread, not in the browser: closing the tab or reloading the page does not stop it, and the
+experiment is saved to the registry when it ends. Because a reloaded page used to forget what
+it had started, the app keeps a small record of every job in `data/user/jobs/`, and the
+Machine learning tab shows a card, *Runs in the background*, with what is running, waiting
+or ended in the last six hours: it follows them, opens the experiment a finished run made, and
+shows a run that was lost as *Stopped*, with the last thing it was doing. Nothing is
+checkpointed or resumed: a lost run starts again from the beginning. Runs go one at a time, so
+a long search delays anything queued behind it.
+
+**What Replit does.** This is from Replit's documentation as of October 2026; it could not
+be tried from here. The workspace's preview address is described as temporary and live only
+while you actively work on the app, so once you leave, Replit can stop the Repl, and with it
+the training. No grace period is documented, and the app cannot prevent it: it can only tell
+you afterwards that the run was lost. What that means in practice:
+
+- **Short runs are fine if you stay.** Timed on a 4-core machine with nothing else running,
+  `python -m src ml-train --universe etf --rebalance weekly` trained a ridge model on the
+  15 ETFs in about 30 seconds and a boosted-tree model (`--model hist_gb`) in about two
+  minutes, each peaking near 440 MB of memory. The same boosted-tree run took seven minutes
+  when other work was using the machine at the same time, so expect more on a smaller Repl,
+  and more while a backtest or a download runs in it. Keep the Replit tab open and the
+  device awake until the card says *Finished*. A search of a dozen trials or more takes much
+  longer: do not count on leaving Replit for it.
+- **Run it from the Shell, and read the answer in the log.** The same pipeline is a command:
+  `python -m src ml-train --model hist_gb --universe etf --rebalance weekly --name nightly`.
+  `nohup python -m src ml-train ... > train.log 2>&1 &` runs it detached from the Shell, and
+  `tail -f train.log` follows it; the experiment goes to the same registry, so it appears in
+  the Experiments list. It still stops if the Repl does.
+- **A run you want to leave alone: a Scheduled deployment.** Publish the command above (not
+  the dashboard) as a *Scheduled* deployment: Replit runs it on a schedule, on its own machine
+  (1 vCPU and 2 GiB when it was announced), for up to 11 hours, and bills compute per second
+  while it runs. The run's printed summary (Sharpe by segment, rank IC, the warnings) is in the
+  deployment's logs. The file system of a published app is *not persistent and resets every
+  time you publish* (Replit's own words), so the saved experiment does not come back to your
+  workspace: treat the log as the result, or copy what you need out. (Replit's
+  troubleshooting page says a published program that runs once and exits is restarted
+  automatically, so a one-off command belongs in a Scheduled deployment, not in a Reserved VM
+  or an Autoscale one.)
+- **Do not publish the dashboard to keep it awake.** A Reserved VM never sleeps, and would keep
+  the app and its runs alive, but a published address is open to anyone who has it, and this
+  dashboard has no login (see the access warning at the top): strangers could spend your iTick
+  calls and your machine. Add authentication first, or use your own computer or server, where a
+  process lives as long as the machine does.
 
 ## If the Machine learning tab says LightGBM or XGBoost is not available
 

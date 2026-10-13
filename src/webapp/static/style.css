@@ -317,6 +317,16 @@ ul.plain { margin: 0 0 6px; padding-left: 20px; display: grid; gap: 2px; font-si
 .finder .hits button.hit[aria-pressed="true"] { background: var(--ghost); }
 .finder .hits button.hit[aria-pressed="true"] b::before { content: "✓ "; color: var(--good-text); }
 .itick { display: grid; gap: 6px; }
+.runs .runlist { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 6px; }
+.runs .runlist li { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); font-size: 12.5px; color: var(--ink-2); }
+.runs .runlist .main { flex: 1 1 220px; min-width: 0; display: grid; }
+.runs .runlist .main b { color: var(--ink); }
+.runs .runlist .main span:first-child { overflow-wrap: anywhere; }
+.runs .runlist .meta { color: var(--muted); font-size: 11.5px; overflow-wrap: anywhere; }
+.runs .runlist li.running b, .runs .runlist li.queued b { color: var(--s1); }
+.runs .runlist li.done b { color: var(--good-text); }
+.runs .runlist li.error b { color: var(--crit); }
+.runs .runlist li.interrupted b { color: var(--warn); }
 .fdgo { justify-content: space-between; }
 .fdgo .hint { flex: 1 1 110px; }
 .fdlive { display: grid; gap: 8px; }

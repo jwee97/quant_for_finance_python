@@ -506,7 +506,7 @@ See: [causal-inference](techniques/causal-inference.md)
 
 ### Downloaded data
 
-Real data the dashboard fetched for you from a free public source (Cboe, Yahoo Finance, Deribit, OKX, Coinbase, Kraken, Bitstamp) with the Free data card of the Options, Futures or Crypto tab, saved under `data/user/downloads/` with a record of its source, its time and its limits. It is badged "Downloaded: free data": real, but delayed or unaudited and somebody else's service.
+Real data the dashboard fetched for you from a public source (Cboe, Yahoo Finance, Deribit, OKX, Coinbase, Kraken, Bitstamp, or iTick with your own key) with the Free data card of the Options, Futures or Crypto tab, saved under `data/user/downloads/` with a record of its source, its time and its limits. It is badged "Downloaded: free data": real, but delayed or unaudited and somebody else's service.
 
 See: [option-chains-and-greeks](techniques/option-chains-and-greeks.md), [futures-curves-carry-and-rolls](techniques/futures-curves-carry-and-rolls.md), [crypto-funding-basis-and-venues](techniques/crypto-funding-basis-and-venues.md)
 

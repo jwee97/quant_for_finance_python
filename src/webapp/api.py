@@ -32,6 +32,7 @@ from ..equity.factors import names as factor_names
 from ..equity.portfolio import PRESETS as book_presets
 from ..strategies.factor_models import KINDS as learner_kinds
 from ..strategies.factor_timing import CALENDAR_STATES, MACRO_STATES
+from .jobs import ACTIVE, JobLog
 from .universe import CLASSES, MAX_TICKERS, TickerStore, UniverseBuilder, UniverseError, itick_source, normalise
 
 COMBINATIONS = {
@@ -129,13 +130,45 @@ def parameters(registry_kind: str, name: str, factory) -> list[dict]:
 
 
 class Job:
-    def __init__(self, label: str):
-        self.id, self.label, self.status, self.message = uuid.uuid4().hex[:12], label, "queued", "waiting for a free worker"
-        self.created, self.result, self.error = time.time(), None, None
+    """One run on the worker: a backtest, a training, a search, a download. ``kind`` says which (``backtest``, ``ml``, ``data`` or ``task``). The table of jobs lives in memory; when a ``sink`` is set (the
+    app's :class:`~webapp.jobs.JobLog`) every change of state, and the progress message at most every ``MESSAGE_GAP`` seconds, is also written to disk."""
+
+    MESSAGE_GAP = 2.0
+
+    def __init__(self, label: str, kind: str = "task"):
+        self.id, self.label, self.kind, self.status, self._message = uuid.uuid4().hex[:12], label, kind, "queued", "waiting for a free worker"
+        self.created, self.result, self.error, self.finished = time.time(), None, None, None
+        self.sink = None                                              # called as sink(job, final); set by ``App._register``
+        self._saved_at = 0.0
+
+    @property
+    def message(self) -> str:
+        return self._message
+
+    @message.setter
+    def message(self, text: str) -> None:
+        self._message = text
+        if self.sink is not None and time.time() - self._saved_at >= self.MESSAGE_GAP:
+            self.save()
+
+    def save(self, final: bool = False) -> None:
+        if self.sink is not None:
+            self._saved_at = time.time()
+            self.sink(self, final)
+
+    @property
+    def ref(self) -> str | None:
+        """What a finished job made, when it made one thing with an id (a saved experiment), so that the page can link to it."""
+        result = self.result
+        return result["id"] if isinstance(result, dict) and isinstance(result.get("id"), str) else None
+
+    def record(self) -> dict:
+        """The small summary kept on disk and listed by ``/api/jobs`` (never the result)."""
+        return {"id": self.id, "label": self.label, "kind": self.kind, "status": self.status, "message": self._message, "error": self.error, "created": self.created, "finished": self.finished, "ref": self.ref}
 
     def view(self) -> dict:
-        return {"id": self.id, "label": self.label, "status": self.status, "message": self.message, "error": self.error, "result": self.result,
-                "elapsed": round(time.time() - self.created, 1)}
+        return {"id": self.id, "label": self.label, "kind": self.kind, "status": self.status, "message": self._message, "error": self.error, "result": self.result,
+                "elapsed": round((self.finished or time.time()) - self.created, 1)}
 
 
 class App:
@@ -144,6 +177,8 @@ class App:
         load_library()
         self.builder = builder or UniverseBuilder(config, store or TickerStore(self.root / "data" / "user" / "prices"), sources={"itick": itick_source(self.root)})
         self.jobs: dict[str, Job] = {}
+        self.joblog = JobLog(self.root / "data" / "user" / "jobs")   # every job's record on disk: a reloaded page finds its run again, and a restarted app knows what it lost
+        self.joblog.mark_interrupted()
         self.trials: dict[str, set] = {}
         self._pool = ThreadPoolExecutor(max_workers=1)             # one at a time: the models set process-wide torch flags and share the data caches
         self._lock = threading.Lock()
@@ -153,7 +188,7 @@ class App:
         from .data_api import DataApi
         from .ml_api import MlApi
 
-        self.extra_get: dict = {}                                  # path -> fn(query: dict) for GET /api/...?a=1&b=2
+        self.extra_get: dict = {"/api/jobs": lambda q=None: self.jobs_list()}   # path -> fn(query: dict) for GET /api/...?a=1&b=2
         self.extra_post: dict = {}                                 # path -> fn(body: dict) for POST /api/...
         self.data = DataApi(self)                                  # the free-data downloads of the three asset tabs (their own worker, apart from the backtests)
         for part in (AssetApi(self), MlApi(self), self.data):
@@ -328,7 +363,7 @@ class App:
             raise ApiError(str(error)) from None
         spec = self.build_spec(body, n_tickers=len(tickers))
         capital = self._capital(body)
-        job = self._register(Job(spec["name"]))
+        job = self._register(Job(spec["name"], "backtest"))
         self._pool.submit(self._run, job, spec, tickers, body, capital)
         return {"job": job.id}
 
@@ -337,12 +372,14 @@ class App:
             self.jobs[job.id] = job
             for old in list(self.jobs)[:-60]:
                 self.jobs.pop(old, None)
+        job.sink = lambda j, final: self.joblog.save(j.record(), j.result if final and j.status == "done" else None)
+        job.save()
         return job
 
-    def submit_task(self, label: str, work) -> dict:
+    def submit_task(self, label: str, work, kind: str = "task") -> dict:
         """Run ``work(progress)`` on the single worker and return ``{"job": id}``; the page polls ``/api/job/<id>`` like it does for a backtest. ``work`` returns a JSON-able result and calls
         ``progress(text)`` to say what it is doing; whatever it raises that the user can fix (``ApiError``, ``ValueError``, ``KeyError``) reaches the page as the job's message."""
-        job = self._register(Job(label))
+        job = self._register(Job(label, kind))
         self._pool.submit(self._run_task, job, work)
         return {"job": job.id}
 
@@ -353,6 +390,7 @@ class App:
 
         try:
             job.status, job.message = "running", "starting"
+            job.save()
             job.result = clean(work(progress))
             job.status, job.message = "done", "finished"
         except (ApiError, ValueError, KeyError) as error:
@@ -360,6 +398,8 @@ class App:
         except Exception as error:                                   # a bug must reach the user as a message, not a hung page
             traceback.print_exc()
             job.status, job.error = "error", f"{type(error).__name__}: {error}"
+        job.finished = time.time()
+        job.save(final=True)
 
     def _run(self, job: Job, spec: dict, tickers: list[str], body: dict, capital: float = 100_000.0) -> None:
         def progress(text: str) -> None:
@@ -367,6 +407,7 @@ class App:
 
         try:
             job.status, job.message = "running", "building the universe (downloading any new tickers)"
+            job.save()
             started = time.perf_counter()
             bundle, universe = self.builder.resolve(tickers, body.get("classes"), body.get("start"), bool(body.get("refresh")), body.get("source"), progress)
             key = hashlib.sha1(json.dumps([universe["tickers"], universe["first"]], sort_keys=True).encode()).hexdigest()[:10]
@@ -393,12 +434,31 @@ class App:
         except Exception as error:                                   # a model bug must reach the user as a message, not a hung page
             traceback.print_exc()
             job.status, job.error = "error", f"{type(error).__name__}: {error}"
+        job.finished = time.time()
+        job.save(final=True)
 
     def job(self, job_id: str) -> dict:
+        """``GET /api/job/<id>``: a job's state and, once it is done, its result. A job from before the app was restarted is read back from its record."""
         job = self.jobs.get(job_id)
-        if job is None:
+        if job is not None:
+            return job.view()
+        kept = self.joblog.get(job_id)
+        if kept is None:
             raise ApiError("unknown job")
-        return job.view()
+        return kept
+
+    def jobs_list(self) -> dict:
+        """``GET /api/jobs``: the recent jobs, newest first, without their results: what is running or waiting, what finished, failed or was lost when the app stopped. The page uses it to find a run again
+        after a reload."""
+        with self._lock:
+            live = {j.id: j.record() | {"elapsed": round((j.finished or time.time()) - j.created, 1)} for j in self.jobs.values()}
+        rows = list(live.values())
+        for record in self.joblog.records():
+            if record["id"] not in live:
+                rows.append({k: record.get(k) for k in ("id", "label", "kind", "status", "message", "error", "created", "finished", "ref")}
+                            | {"elapsed": round(float(record.get("finished") or record.get("updated") or time.time()) - float(record.get("created") or 0.0), 1)})
+        rows.sort(key=lambda r: float(r["created"] or 0.0), reverse=True)
+        return clean({"jobs": rows[:60], "active": sum(r["status"] in ACTIVE for r in rows)})
 
     def reset_trials(self) -> dict:
         with self._lock:

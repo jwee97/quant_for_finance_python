@@ -205,6 +205,7 @@
     }
   }
   M.sections = (panel) => {
+    watchRuns();                                                                             // find the runs again when the tab opens or the mode changes
     const m = M.mode, f = M.form, cat = M.catalog, after = () => Q.syncLab(M);
     const sec = (title, open = true) => { const d = h("details", "", panel); d.open = open; h("summary", "", d, title); return h("div", "body", d); };
     if (!cat) { h("p", "hint", sec("1. Settings"), M.catalogError || "Loading what the page offers…"); return; }
@@ -301,10 +302,12 @@
   const baseBody = (f) => ({ dataset: datasetBody(f), split: splitBody(f), signal: signalBody(f), backtest: backtestBody(f) });
   const experiment = (id) => ({ modes: [], path: "/api/ml/experiment", query: { id }, cacheKey: "exp:" + id });
   const fresh = (mode) => { M.results[mode] = null; M.errors[mode] = null; };
+  const JOB_MODES = new Set(["dataset", "train", "search", "forward"]);
 
   M.run = async (fromForm) => {
     const m = M.mode, f = M.form;
     if (!M.catalog) { loadCatalog(); return; }
+    if (JOB_MODES.has(m)) setTimeout(watchRuns, 1200);                                       // a run that was just started appears in the list of runs
     if (m === "experiments") return W.request(M, () => [{ modes: ["experiments"], path: "/api/ml/experiments", query: { sort: f.sort, limit: 100, model: f.fModel, stage: f.fStage, universe: f.fUniverse } }, { modes: ["models"], path: "/api/ml/models", query: {} }], "Reading the registry…");
     if (m === "dataset") return W.request(M, () => [{ modes: ["dataset"], job: true, path: "/api/ml/dataset/build", body: { name: f.name.trim() || "dataset", dataset: datasetBody(f), split: splitBody(f) } }], "Building the dataset…");
     if (m === "train") {
@@ -353,7 +356,56 @@
     combine: ["Combine strategies", ["Choose two to twelve experiments on the left: ten ways to weight them, each estimated only from the returns up to the day it is used."]],
     forward: ["Forward test", ["Record the saved model's signal for the newest date, settle the signals whose window has passed, and watch the live rank IC and the drift of each feature against the backtest."]] };
   M.empty = (root) => Q.labEmpty(root, M, EMPTY[M.mode][0], EMPTY[M.mode][1], M.runLabel[M.mode]);
-  M.draw = () => Q.drawLab(M);
+  M.draw = () => { Q.drawLab(M); paintRuns(); };
+
+  /* ---------- runs in the background ----------
+     A training, a search or a re-backtest runs on the app's own worker, not in this page: closing the tab does not stop it, and the experiment is saved when it ends. What a reloaded page lost was the knowledge
+     of it, so the server keeps a record of every job (GET /api/jobs). This card lists the runs that are going, waiting, or ended in the last hours (finished, failed, or lost when the app stopped), and
+     follows them until they end. An app that predates the list answers 404 and the card stays away. */
+  const ACTIVE = new Set(["queued", "running"]);
+  const RUN_WORD = { queued: "Waiting", running: "Running", done: "Finished", error: "Failed", interrupted: "Stopped" };
+  const RECENT_MS = 6 * 3600 * 1000;
+  M.runs = { jobs: [], seen: new Map(), timer: null };
+  async function watchRuns() {
+    clearTimeout(M.runs.timer); M.runs.timer = null;
+    if (!isOpen()) return;
+    let got;
+    try { got = await api("/api/jobs"); } catch (e) { M.runs.jobs = []; paintRuns(); return; }
+    const mine = got.jobs.filter((j) => j.kind === "ml");
+    let completed = false;
+    for (const j of mine) {
+      const before = M.runs.seen.get(j.id);
+      if (before !== undefined && ACTIVE.has(before) && j.status === "done") completed = true;                // it ended while this page was open: the lists are out of date
+      M.runs.seen.set(j.id, j.status);
+    }
+    M.runs.jobs = mine;
+    if (completed) { invalidate(); if (M.mode === "experiments" && !M.busy) M.run(true); }
+    paintRuns();
+    if (mine.some((j) => ACTIVE.has(j.status))) M.runs.timer = setTimeout(watchRuns, 2000);
+  }
+  function paintRuns() {
+    const root = Q.$("#ml-results"); if (!root) return;
+    const old = root.querySelector(".runs"); if (old) old.remove();
+    const now = Date.now(), order = { running: 0, queued: 1 };
+    const jobs = M.runs.jobs.filter((j) => ACTIVE.has(j.status) || (j.finished && now - j.finished * 1000 < RECENT_MS))
+      .sort((a, b) => (order[a.status] ?? 2) - (order[b.status] ?? 2) || (ACTIVE.has(a.status) ? a.created - b.created : (b.finished || 0) - (a.finished || 0))).slice(0, 6);       // what is running, then what waits in the order it was queued, then the latest endings
+    if (!jobs.length) return;
+    const card = h("div", "card runs", root); root.prepend(card);
+    const going = jobs.some((j) => ACTIVE.has(j.status));
+    h("h3", "", card, going ? "Runs in the background" : "Recent runs");
+    if (going) h("p", "note", card, "These go on at the app's computer if you close this page, and the experiment is saved when a run ends. If the app itself stops (on Replit, when the workspace goes idle after you leave), the run is lost: it shows here as stopped and has to be started again from the beginning.");
+    const ul = h("ul", "runlist", card);
+    for (const j of jobs) {
+      const li = h("li", j.status, ul); li.dataset.job = j.id; li.dataset.status = j.status;
+      const main = h("div", "main", li), head = h("span", "", main); h("b", "", head, (RUN_WORD[j.status] || j.status) + " · "); head.appendChild(document.createTextNode(String(j.label).replace(/^ml: /, "")));
+      const detail = ACTIVE.has(j.status) ? `${j.message} (${Math.round(j.elapsed)} s)` : j.status === "done" ? `ended ${W.ago(new Date(j.finished * 1000).toISOString())} after ${Math.round(j.elapsed)} s` : j.status === "error" ? String(j.error || "it failed") : String(j.message || "");
+      h("span", "meta", main, detail);
+      if (j.status === "done" && (j.ref || /^ml: /.test(j.label))) {                                  // a dataset build makes no experiment: nothing to open
+        const open = h("button", "btn small", li, j.ref ? "Open" : "Show the experiments"); open.type = "button"; open.dataset.action = "open-run";
+        open.addEventListener("click", () => { if (j.ref) openExperiment(j.ref); else { invalidate(); go("experiments"); } });
+      }
+    }
+  }
   M.build = (root, d, body) => ({ dataset: buildDataset, train: buildTrain, experiments: buildExperiments, compare: buildCompare, explain: buildExplain, overfit: buildOverfit, search: buildSearch, combine: buildCombine, forward: buildForward })[M.mode](root, d, body);
   const header = (root, title, sub) => Q.labHead(root, title, sub, GUIDE);
 

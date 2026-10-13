@@ -170,7 +170,8 @@ STOCK_MARKETS = {                                  # Yahoo suffix -> (iTick regi
     "BK": ("TH", "Asia/Bangkok"), "DE": ("DE", "Europe/Berlin"), "L": ("GB", "Europe/London"), "MX": ("MX", "America/Mexico_City"), "KL": ("MY", "Asia/Kuala_Lumpur"),
     "IS": ("TR", "Europe/Istanbul"), "MC": ("ES", "Europe/Madrid"), "AS": ("NL", "Europe/Amsterdam"), "JK": ("ID", "Asia/Jakarta"), "VN": ("VN", "Asia/Ho_Chi_Minh"),
 }
-SYMBOL_HELP = ("US stocks as AAPL, Hong Kong as 0700.HK, Shanghai 600519.SS, Shenzhen 000001.SZ, crypto as BTC-USD, forex as EURUSD=X, indices as ^SPX "
+SYMBOL_HELP = ("US stocks as AAPL, Hong Kong as 0700.HK, Shanghai 600519.SS, Shenzhen 000001.SZ, crypto as BTC-USD, forex as EURUSD=X, indices as ^SPX, "
+               "US futures as ES=F (the price series of the product, not of one contract) "
                "(other markets use Yahoo's suffix: .T Tokyo, .L London, .DE Germany, .SI Singapore, .TW Taiwan, .NS India)")
 
 

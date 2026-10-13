@@ -365,7 +365,7 @@ class DataApi:
             return {"kind": kind, "results": results, "ok": len(worked), "failed": len(results) - len(worked), "downloads": self.store.list(kind)}
 
         try:
-            job = self.app._register(Job(f"free data: {kind} ({len(items)})"))
+            job = self.app._register(Job(f"free data: {kind} ({len(items)})", "data"))
             self._pool.submit(self.app._run_task, job, work)
         except BaseException:
             with self._lock:
