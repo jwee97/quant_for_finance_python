@@ -79,22 +79,27 @@ def test_a_job_whose_process_is_gone_is_marked_interrupted_and_anothers_running_
     log = JobLog(tmp_path / "jobs")
     folder = tmp_path / "jobs"
     folder.mkdir()
-    dead = _record(id="aaaaaaaaaaaa", pid=_dead_pid(), message="training fold 3 of 9")
-    queued = _record(id="bbbbbbbbbbbb", status="queued", pid=_dead_pid(), message="waiting for a free worker")
-    foreign = _record(id="cccccccccccc", pid=os.getppid(), process="another app")      # the process that started this one is alive: another app's run, not ours to end
-    own = _record(id="dddddddddddd", pid=os.getpid(), process=PROCESS)               # written by this very process (another app in it)
-    done = _record(id="eeeeeeeeeeee", status="done", pid=_dead_pid(), message="finished")
-    reused = _record(id="999999999999", pid=os.getpid(), process="an earlier run of the interpreter", message="training fold 5 of 9")   # a container restarts the app with the same process id (1)
-    for r in (dead, queued, foreign, own, done, reused):
-        (folder / f"{r['id']}.json").write_text(json.dumps(r))
-    assert log.mark_interrupted() == 3
-    status = {r["id"]: r["status"] for r in log.records()}
-    assert status == {"aaaaaaaaaaaa": "interrupted", "bbbbbbbbbbbb": "interrupted", "cccccccccccc": "running", "dddddddddddd": "running", "eeeeeeeeeeee": "done", "999999999999": "interrupted"}, \
-        "a record from an earlier run of the app is lost even when its process id is ours again"
-    lost = log.get("aaaaaaaaaaaa")
-    assert "the app stopped while this was running" in lost["message"] and "training fold 3 of 9" in lost["message"] and lost["finished"] is not None and lost["result"] is None
-    assert log.mark_interrupted() == 0, "a second start finds nothing more to end"
-    assert _alive(os.getpid()) and not _alive(_dead_pid()) and not _alive(0) and not _alive(-5)
+    other_app = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])      # another app, alive while this test runs (this process's parent cannot stand for it: in a container this is process 1)
+    try:
+        dead = _record(id="aaaaaaaaaaaa", pid=_dead_pid(), message="training fold 3 of 9")
+        queued = _record(id="bbbbbbbbbbbb", status="queued", pid=_dead_pid(), message="waiting for a free worker")
+        foreign = _record(id="cccccccccccc", pid=other_app.pid, process="another app")        # alive: another app's run, not ours to end
+        own = _record(id="dddddddddddd", pid=os.getpid(), process=PROCESS)               # written by this very process (another app in it)
+        done = _record(id="eeeeeeeeeeee", status="done", pid=_dead_pid(), message="finished")
+        reused = _record(id="999999999999", pid=os.getpid(), process="an earlier run of the interpreter", message="training fold 5 of 9")   # a container restarts the app with the same process id (1)
+        for r in (dead, queued, foreign, own, done, reused):
+            (folder / f"{r['id']}.json").write_text(json.dumps(r))
+        assert log.mark_interrupted() == 3
+        status = {r["id"]: r["status"] for r in log.records()}
+        assert status == {"aaaaaaaaaaaa": "interrupted", "bbbbbbbbbbbb": "interrupted", "cccccccccccc": "running", "dddddddddddd": "running", "eeeeeeeeeeee": "done", "999999999999": "interrupted"}, \
+            "a record from an earlier run of the app is lost even when its process id is ours again"
+        lost = log.get("aaaaaaaaaaaa")
+        assert "the app stopped while this was running" in lost["message"] and "training fold 3 of 9" in lost["message"] and lost["finished"] is not None and lost["result"] is None
+        assert log.mark_interrupted() == 0, "a second start finds nothing more to end"
+        assert _alive(other_app.pid) and _alive(os.getpid()) and not _alive(_dead_pid()) and not _alive(0) and not _alive(-5)
+    finally:
+        other_app.kill()
+        other_app.wait()
 
 
 def test_a_progress_message_is_saved_at_most_every_couple_of_seconds_and_a_change_of_state_at_once(monkeypatch):
