@@ -38,8 +38,12 @@ def new_york_today() -> pd.Timestamp:
 
 class FakeITick:
     def __init__(self, bars: int = 2600, last: str | None = None, key: str = KEY, cap: int | None = None, stamp: str = "midnight_utc", split: tuple | None = None,
-                 include_today: bool = False, daily: bool = True):
+                 include_today: bool = False, daily: bool = True, hosts: dict[str, str] | None = None, gateway: bool = False, forbidden: dict[str, str] | None = None):
         self.n, self.key, self.cap, self.stamp, self.split, self.include_today, self.daily = bars, key, cap, stamp, split, include_today, daily
+        self.hosts = hosts                              # host -> the key that host accepts (the free and the production host are separate gateways); ``None``: every host takes ``key``
+        self.gateway = gateway                          # answer a refused key the way iTick's gateway does (HTTP 401 and {"message": "Invalid API key in request"}) instead of the application's E002
+        self.forbidden = dict(forbidden or {})          # kind ("future", "crypto", ...) -> the message of an HTTP 403 for a key that is accepted but not allowed that data
+        self.hosts_called: list[str] = []               # the host of every call
         self.last = pd.Timestamp(last) if last else new_york_today() - pd.Timedelta(days=1)
         self.calls: list[dict] = []                     # the query parameters of every call
         self.tokens: list[str | None] = []              # the token header of every call
@@ -82,10 +86,18 @@ class FakeITick:
         self.calls.append(query)
         self.tokens.append(headers.get("token"))
         self.urls.append(url)
+        parts = parse.urlparse(url)
+        self.hosts_called.append(parts.netloc)
         if self.script:
             return self.script.pop(0)
-        if headers.get("token") != self.key:
+        token = headers.get("token")
+        if token != (self.hosts.get(parts.netloc) if self.hosts is not None else self.key):
+            if self.gateway:
+                return 401, {}, json.dumps({"message": "Invalid API key in request" if token else "Missing API key in request"}).encode()
             return 200, {}, json.dumps({"code": "E002", "msg": "auth failed", "data": None}).encode()
+        kind = parts.path.strip("/").split("/")[0]
+        if kind in self.forbidden:
+            return 403, {}, json.dumps({"message": self.forbidden[kind]}).encode()
         code = query.get("code", "")
         if code.startswith(self.unknown_prefix):
             return 200, {}, json.dumps({"code": "E001", "msg": "not found this produce", "data": None}).encode()

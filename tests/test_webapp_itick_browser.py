@@ -251,6 +251,23 @@ def test_the_options_tab_can_also_download_the_underlyings_prices_and_then_shows
         page.live.app.data.store.delete("options", name)
 
 
+def test_the_test_button_on_the_futures_and_crypto_cards_asks_for_that_tabs_own_data_and_names_the_host(itick):
+    page = itick
+    for tab, asked, path in (("futures", "(futures data)", "/future/kline?region=US&code=ES"), ("crypto", "(crypto data)", "/crypto/kline?region=BA&code=BTCUSDT")):
+        page.click(f"#tab-{tab}")
+        page.wait_for_selector(f"#{tab}-results .tile", timeout=90_000)
+        page.wait_for_selector(f"#{tab} details.freedata button[data-action=download]")
+        _source(page, tab, "itick")
+        card = page.locator(f"#{tab} details.freedata")
+        assert "Requests go to api-free.itick.org" in card.inner_text(), "the card says which iTick host the key goes to"
+        before = len(page.live.fake.urls)
+        card.locator("button", has_text="Test the iTick connection").click()
+        _wait_until(page, f"(document.querySelector('#{tab} [data-role=itick-test-result]') || {{textContent: ''}}).textContent.indexOf('iTick works') === 0")
+        text = card.locator("[data-role=itick-test-result]").inner_text()
+        assert f"iTick works at api-free.itick.org {asked}" in text and KEY not in text
+        assert len(page.live.fake.urls) == before + 1 and path in page.live.fake.urls[-1], "one call, for that tab's own data"
+
+
 @pytest.mark.parametrize("tab, results", [("futures", "#futures-results .tile"), ("crypto", "#crypto-results .tile"), ("options", "#options-results .tile")])
 def test_the_itick_cards_fit_a_phone(browser, live_itick, tab, results):  # noqa: F811
     pg = _page(browser, live_itick, width=390, height=800)

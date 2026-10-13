@@ -7,8 +7,12 @@ starts, sent in one request header to iTick and nowhere else, and never put in a
 **The rate limit.** iTick's free plan allows 5 calls a minute. Every call goes through one :class:`RateLimiter` shared by all threads. It remembers the time of recent calls on disk, so
 restarting the app does not hand out a fresh allowance, and it backs off for as long as iTick asks after an HTTP 429. A download that has to wait says so in its progress message.
 
+**Hosts.** iTick documents a free-trial host (``api-free.itick.org``, the default here) and a production host (``api.itick.org``). A key that one refuses (HTTP 401, ``Invalid API key in request``)
+is tried once on the other, and the host that knows it is used from then on; ``ITICK_BASE_URL`` chooses an address and switches that off. An HTTP 403 is reported as a plan or address problem, not as a
+wrong key. Every refusal is shown in iTick's own words.
+
 **What is and is not verified.** The request and response formats follow iTick's published documentation (``/stock/kline``: ``region``, ``code``, ``kType``, ``limit``, ``et``). The author
-could not call the live API, so the client checks what comes back instead of trusting it: the bars must be about a day apart (the documentation and community code disagree on which
+could not call the live API with a working key (only its refusals of a request without one were seen), so the client checks what comes back instead of trusting it: the bars must be about a day apart (the documentation and community code disagree on which
 ``kType`` is daily; ``ITICK_DAILY_KTYPE`` overrides it), a history that does not reach back as far as asked is reported, and a one-day price jump that looks like an unadjusted stock
 split is flagged (iTick does not document whether its bars are adjusted). :meth:`ITickProvider.test` spends one call to show what your account actually returns.
 """
@@ -18,6 +22,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 import threading
 import time
 from dataclasses import dataclass
@@ -29,8 +34,11 @@ import numpy as np
 import pandas as pd
 
 KEY_VARIABLE = "ITICK_API_KEY"
-DEFAULT_BASE_URL = "https://api-free.itick.org"          # the documented host for free accounts; ``ITICK_BASE_URL`` overrides it
+FREE_HOST = "https://api-free.itick.org"                  # "Free trial api url" in iTick's documentation
+PAID_HOST = "https://api.itick.org"                       # "Production api url", and the host its own examples use
+DEFAULT_BASE_URL = FREE_HOST                              # ``ITICK_BASE_URL`` overrides it; with it set, the other host is never tried
 LOOPBACK = ("127.0.0.1", "localhost", "::1")
+TEST_SYMBOLS = {"futures": "ES=F", "crypto": "BTC-USD"}  # what the connection test asks for on a tab whose data a plan may not include
 MAX_BODY_BYTES = 8_000_000
 USER_AGENT = "QuantLab/1.0 (daily-price client)"        # some gateways refuse urllib's default agent
 NOT_CONFIGURED = "iTick is not set up: add your key as the ITICK_API_KEY secret (on Replit: Tools > Secrets) and restart the app"
@@ -54,6 +62,47 @@ def read_secret(name: str, root: Path | None = None) -> str:
         if key.strip().removeprefix("export ").strip() == name:
             return rest.strip().strip("'\"")
     return ""
+
+
+_INVISIBLE = dict.fromkeys(map(ord, "\u200b\u200c\u200d\u2060\ufeff\u00a0"))       # what a copy and paste can carry along that nobody can see
+_PLACEHOLDER = re.compile(r"(?i)^<?\s*(?:your|my)[ _-]*(?:itick[ _-]*)?(?:api[ _-]*)?(?:key|token)\s*>?$|^(?:key|token|xxx+|\*+)$")
+
+
+def tidy_key(raw: object, name: str = KEY_VARIABLE) -> tuple[str, list[str]]:
+    """``(key, notes)``: the key without the wrapping a paste often adds (quotes, spaces, a line break, invisible characters, ``ITICK_API_KEY=`` or ``Bearer`` in front of it), and a note for
+    everything removed or still wrong. The notes never contain the key."""
+    notes: list[str] = []
+    text = str(raw or "")
+    cleaned = text.translate(_INVISIBLE)
+    if cleaned != text:
+        notes.append("invisible characters (a zero-width or non-breaking space) were removed from it")
+    text, cleaned = cleaned, cleaned.strip()
+    if cleaned != text:
+        notes.append("spaces or a line break around it were removed")
+    text = cleaned
+
+    def unquote(value: str) -> str:
+        while len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"`":
+            value = value[1:-1].strip()
+            if "quotation marks around it were removed" not in notes:
+                notes.append("quotation marks around it were removed")
+        return value
+
+    text = unquote(text)
+    for pattern, what in ((rf"(?i)^(?:export\s+)?{re.escape(name)}\s*=\s*", f"the secret's name ({name}=) was pasted in front of the key and was removed"),
+                          (r"(?i)^(?:token|api[_-]?key)\s*[=:]\s*", "a label (token= or apikey=) was pasted in front of the key and was removed"),
+                          (r"(?i)^bearer\s+", "the word Bearer was pasted in front of the key and was removed")):
+        match = re.match(pattern, text)
+        if match:
+            text = unquote(text[match.end():].strip())
+            notes.append(what)
+    if re.search(r"\s", text):
+        notes.append("it has a space or a line break inside, which no key has: only the key itself should be pasted")
+    if text and not text.isascii():
+        notes.append("it has characters outside plain ASCII (often a copied smart quote)")
+    if _PLACEHOLDER.match(text):
+        notes.append("it looks like a placeholder, not a key")
+    return text, notes
 
 
 def redact(text: object, *secrets: str) -> str:
@@ -340,22 +389,22 @@ def urllib_transport(url: str, headers: dict, timeout: float) -> tuple[int, dict
         return int(error.code), dict(error.headers or {}), error.read(MAX_BODY_BYTES)
 
 
-def _problem(payload) -> tuple[str, bool] | None:
-    """``(message, fatal)`` when an answer's own status says it failed, else ``None``."""
+def _problem(payload) -> tuple[str, bool, str] | None:
+    """``(message, fatal, kind)`` when an answer's own status says it failed, else ``None``; ``kind`` is ``auth`` (the key), ``plan`` (the account's allowance), ``symbol`` or ``other``."""
     if not isinstance(payload, dict):
-        return "iTick's answer was not a JSON object", False
+        return "iTick's answer was not a JSON object", False, "other"
     code = payload.get("code")
     if code in (0, "0", 200, "200", None) and "data" in payload:
         return None
     text = f"{code} {payload.get('msg') or ''}".strip()
     lowered = text.lower()
     if code == "E002" or "auth" in lowered:
-        return f"iTick rejected the API key ({text}): check the ITICK_API_KEY secret", True
+        return text, True, "auth"
     if code == "E003" or "exceeding" in lowered or "subscription limit" in lowered:
-        return f"your iTick plan does not allow this request ({text})", True
+        return f"your iTick plan does not allow this request ({text})", True, "plan"
     if code == "E001" or "not found" in lowered:
-        return f"iTick does not have this symbol ({text})", False
-    return f"iTick reported an error: {text}", False
+        return f"iTick does not have this symbol ({text})", False, "symbol"
+    return f"iTick reported an error: {text}", False, "other"
 
 
 class ITickProvider:
@@ -370,7 +419,10 @@ class ITickProvider:
                  max_calls_per_run: int | None = None, sleep=time.sleep, today=None):
         self.root = Path(root) if root else None
         self._key_override = key
-        self.base_url = (base_url or os.environ.get("ITICK_BASE_URL") or DEFAULT_BASE_URL).rstrip("/")
+        explicit = base_url or os.environ.get("ITICK_BASE_URL")
+        self.base_url = (explicit or DEFAULT_BASE_URL).rstrip("/")
+        self.auto_host = not explicit                                         # no address was chosen: iTick's two documented hosts are tried in turn when a key is not recognised
+        self._learned: tuple[str, str] | None = None                          # (host, key) of the last host that accepted the key (kept in memory only)
         self.config_error = self._check_url(self.base_url)
         state = (self.root / "data" / "user" / "itick_calls.json") if self.root else None
         self.limiter = limiter or RateLimiter(calls_per_minute or _int_env("ITICK_CALLS_PER_MINUTE", 5, 1, 1200), path=state, sleep=sleep)
@@ -391,8 +443,27 @@ class ITickProvider:
             return ""
         return "ITICK_BASE_URL must start with https:// (the key travels in a request header)"
 
+    def _raw_key(self) -> str:
+        return self._key_override or read_secret(KEY_VARIABLE, self.root)
+
     def _key(self) -> str:
-        return (self._key_override or read_secret(KEY_VARIABLE, self.root)).strip()
+        return tidy_key(self._raw_key())[0]
+
+    def key_notes(self) -> list[str]:
+        """What was removed from, or looks wrong with, the secret as it was pasted (never the key itself)."""
+        return tidy_key(self._raw_key())[1]
+
+    @property
+    def host(self) -> str:
+        """The address calls go to: the one chosen with ``ITICK_BASE_URL``, else the host that last accepted this key, else the free host."""
+        if self.auto_host and self._learned and self._learned[1] == self._key():
+            return self._learned[0]
+        return self.base_url
+
+    @staticmethod
+    def other_host(host: str) -> str | None:
+        """The other of iTick's two documented hosts, or ``None`` for any other address."""
+        return {FREE_HOST: PAID_HOST, PAID_HOST: FREE_HOST}.get(host.rstrip("/"))
 
     def available(self) -> tuple[bool, str]:
         """``(usable, why not)``. Only whether a key exists is ever reported, never the key."""
@@ -406,10 +477,10 @@ class ITickProvider:
         ok, why = self.available()
         setup = "url" if self.config_error else ("" if self._key() else "key")                # what is missing: the address is wrong, or there is no key yet
         return {"configured": ok, "problem": why, "setup": setup, "calls_per_minute": self.limiter.calls, "calls_available_now": self.limiter.remaining(),
-                "host": parse.urlparse(self.base_url).netloc, "symbols": SYMBOL_HELP, "page_size": self.page_size}
+                "host": parse.urlparse(self.host).netloc, "symbols": SYMBOL_HELP, "page_size": self.page_size}
 
     def _clean(self, text: object) -> str:
-        return redact(text, self._key())
+        return redact(text, self._key(), self._raw_key().strip())
 
     def local_today(self, tz: str) -> pd.Timestamp:
         """Today's date in the exchange's time zone (a day's bar is complete only after it)."""
@@ -431,26 +502,53 @@ class ITickProvider:
         return self.calls_needed(map_symbol(ticker), start)
 
     # ---------------------------------------------------------------------------------------------------------------------- the call
+    def _reason(self, body: bytes) -> str:
+        """What iTick itself said about a refusal, on one line and without the key. Its gateway answers like ``{"message": "Invalid API key in request"}``."""
+        text = body[:600].decode("utf-8", "replace").strip()
+        try:
+            data = json.loads(text)
+        except ValueError:
+            data = None
+        if isinstance(data, dict):
+            for field in ("message", "msg", "error_msg", "error", "detail"):
+                if isinstance(data.get(field), str) and data[field].strip():
+                    text = data[field]
+                    break
+        return self._clean(" ".join(str(text).split()))[:160]
+
+    def _refused(self, tried: list[tuple[str, int, str]], path: str) -> str:
+        """The message for a key iTick would not accept: what each host said, and the usual causes. ``tried`` holds ``(host, HTTP status, iTick's words)`` for every host asked."""
+        said = "; ".join(f'{parse.urlparse(host).netloc} said "{reason}" (HTTP {status})' if reason else f"{parse.urlparse(host).netloc} answered HTTP {status}" for host, status, reason in tried)
+        if any(status == 403 for _, status, _ in tried):
+            kind = {"future": "futures"}.get(path.strip("/").split("/")[0], path.strip("/").split("/")[0] or "this")
+            return (f"iTick refused this request: {said}. HTTP 403 usually means the key was recognised but is not allowed this data: your plan may not include {kind} prices "
+                    "(iTick's pricing page lists stocks, forex, indices and crypto), or the key may be limited to certain IP addresses (a Repl's address changes). The key itself may be fine.")
+        unchosen = " ITICK_BASE_URL is set, so iTick's other host was not tried." if not self.auto_host and self.other_host(tried[0][0]) else ""
+        return (f"iTick rejected the API key: {said}.{unchosen} Copy the key again from the iTick dashboard into the ITICK_API_KEY secret with no quotes or spaces, and stop and run the app "
+                "again (a changed secret is read only when the app starts). A key from a time-limited free trial stops working when the trial ends.")
+
     def _get(self, path: str, params: dict, say=None) -> dict:
         key = self._key()
         if not key:
             raise ITickError(NOT_CONFIGURED, fatal=True)
         if self.config_error:
             raise ITickError(self.config_error, fatal=True)
-        url = f"{self.base_url}{path}?{parse.urlencode(params)}"
+        query = parse.urlencode(params)
 
         def waiting(delay: float, why: str) -> None:
             if say:
                 say(f"waiting {int(delay) + 1} s for a free call ({why})")
 
+        host, tried, attempt = self.host, [], 0                                     # tried: (host, status, iTick's words) of every host that did not accept the key
         failure = "iTick did not answer"
-        for attempt in range(3):
+        while attempt < 3:
             self.limiter.acquire(waiting)
             try:
-                status, headers, body = self.transport(url, {"accept": "application/json", "token": key, "User-Agent": USER_AGENT}, self.timeout)
+                status, headers, body = self.transport(f"{host}{path}?{query}", {"accept": "application/json", "token": key, "User-Agent": USER_AGENT}, self.timeout)
             except Exception as error:                                              # no connection, a timeout, a certificate problem
                 failure = f"could not reach iTick ({type(error).__name__}); check the network and ITICK_BASE_URL"
                 self._sleep(min(2.0 ** attempt, 5.0))
+                attempt += 1
                 continue
             if status == 429:
                 after = next((v for k, v in headers.items() if k.lower() == "retry-after"), "")
@@ -460,12 +558,21 @@ class ITickProvider:
                     pause = self.limiter.window
                 self.limiter.hold(pause)
                 failure = "iTick said the call limit was exceeded (HTTP 429)"
+                attempt += 1
                 continue
             if status in (401, 403):
-                raise ITickError(f"iTick rejected the API key (HTTP {status}): check the ITICK_API_KEY secret", fatal=True)
+                tried.append((host, status, self._reason(body)))
+                other = self.other_host(host) if status == 401 and self.auto_host and len(tried) == 1 else None
+                if other is None:
+                    raise ITickError(self._refused(tried, path), fatal=True)
+                if say:
+                    say(f"{parse.urlparse(host).netloc} did not recognise the key; trying {parse.urlparse(other).netloc}")
+                host = other                                                         # a second host, not another attempt
+                continue
             if status >= 500:
                 failure = f"iTick had a server problem (HTTP {status})"
                 self._sleep(min(2.0 ** attempt, 5.0))
+                attempt += 1
                 continue
             if status != 200:
                 raise ITickError(f"iTick answered HTTP {status} for {path}; check ITICK_BASE_URL and the symbol. {self._clean(body[:160].decode('utf-8', 'replace'))}")
@@ -474,8 +581,19 @@ class ITickProvider:
             except ValueError:
                 raise ITickError("iTick's answer was not JSON; check ITICK_BASE_URL") from None
             problem = _problem(payload)
+            if problem and problem[2] == "auth":                                    # the application's own refusal ("E002 auth failed") is handled like the gateway's
+                tried.append((host, status, self._clean(problem[0])))
+                other = self.other_host(host) if self.auto_host and len(tried) == 1 else None
+                if other is None:
+                    raise ITickError(self._refused(tried, path), fatal=True)
+                if say:
+                    say(f"{parse.urlparse(host).netloc} did not recognise the key; trying {parse.urlparse(other).netloc}")
+                host = other
+                continue
             if problem:
                 raise ITickError(self._clean(problem[0]), fatal=problem[1])
+            if self.auto_host and host != self.host:
+                self._learned = (host, key)                                         # the other host knows this key: use it from now on
             return payload
         raise ITickError(failure, fatal=True)
 
@@ -623,24 +741,31 @@ class ITickProvider:
         return out
 
     # ----------------------------------------------------------------------------------------------------------------------- self-test
-    def test(self, symbol: str = "AAPL") -> dict:
-        """Spend one call on the last few daily bars of ``symbol`` and report what came back (never the key): the quickest way to learn whether the key, the host and the daily
-        interval code work for your account."""
+    def test(self, symbol: str = "AAPL", kind: str | None = None) -> dict:
+        """Spend one call on the last few daily bars of ``symbol`` (two when the first host does not recognise the key) and report what came back, in words that say what to do next, and never the key:
+        the quickest way to learn whether the key, the host, the plan and the daily interval code work for your account. ``kind`` (``futures`` or ``crypto``) tests that tab's own data instead of a stock,
+        because a plan can include one and not the other."""
         started = time.time()
+        notes = self.key_notes()
         ok, why = self.available()
         if not ok:
-            return {"ok": False, "message": why}
+            return {"ok": False, "message": why, "notes": notes}
         if self.limiter.remaining() < 1:
-            return {"ok": False, "message": f"the {self.limiter.calls} calls a minute your plan allows are in use right now; try again in a minute"}
+            return {"ok": False, "message": f"the {self.limiter.calls} calls a minute your plan allows are in use right now; try again in a minute", "notes": notes}
+        what = TEST_SYMBOLS.get(kind or "", symbol)
+        asked = f" ({kind} data)" if kind in TEST_SYMBOLS else ""
+        fixed = f" Also: {'; '.join(notes)}." if notes else ""
         try:
-            inst = map_symbol(symbol)
+            inst = map_symbol(what)
             frame, _ = self._bars(inst, 10, None)
         except (ITickError, RateLimitTimeout) as error:
-            return {"ok": False, "message": self._clean(error)}
+            return {"ok": False, "message": self._clean(error) + fixed, "notes": notes, "host": parse.urlparse(self.host).netloc}
         except Exception as error:
-            return {"ok": False, "message": self._clean(f"unexpected {type(error).__name__}: {str(error)[:160]}")}
+            return {"ok": False, "message": self._clean(f"unexpected {type(error).__name__}: {str(error)[:160]}") + fixed, "notes": notes}
+        host = parse.urlparse(self.host).netloc
         if frame.empty:
-            return {"ok": False, "message": f"iTick answered but returned no daily bars for {inst.label}"}
-        return {"ok": True, "message": f"iTick works: {len(frame)} daily bars for {inst.label}, the latest dated {frame.index[-1].date()} (close {frame['close'].iloc[-1]:g}). "
-                                      f"Prices come as delivered; iTick does not say whether they are adjusted for splits and dividends.",
-                "bars": int(len(frame)), "first": str(frame.index[0].date()), "last": str(frame.index[-1].date()), "seconds": round(time.time() - started, 1)}
+            return {"ok": False, "message": f"iTick ({host}) answered but returned no daily bars for {inst.label}{asked}", "notes": notes, "host": host}
+        moved = f" Your key was not recognised at {parse.urlparse(self.base_url).netloc}, so the app now uses {host}." if self.auto_host and self.host != self.base_url else ""
+        return {"ok": True, "message": f"iTick works at {host}{asked}: {len(frame)} daily bars for {inst.label}, the latest dated {frame.index[-1].date()} (close {frame['close'].iloc[-1]:g}).{moved} "
+                                      f"Prices come as delivered; iTick does not say whether they are adjusted for splits and dividends.{fixed}",
+                "bars": int(len(frame)), "first": str(frame.index[0].date()), "last": str(frame.index[-1].date()), "seconds": round(time.time() - started, 1), "host": host, "notes": notes}

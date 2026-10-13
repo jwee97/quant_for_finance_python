@@ -56,7 +56,7 @@ def futures_series(provider: ITickProvider, region: str, code: str, years: float
         notes.append(f"{inst.code} is not in the product list bundled with the app, but iTick answered for it.")
     notes += [str(w) for w in daily.attrs.get("warnings") or []]
     frame = _frame(daily)
-    meta = {"source_id": "itick", "source": "iTick", "url": f"{provider.base_url}/future/kline?region={inst.region}&code={inst.code}", "as_of": str(last.date()), "first_date": str(first.date()),
+    meta = {"source_id": "itick", "source": "iTick", "url": f"{provider.host}/future/kline?region={inst.region}&code={inst.code}", "as_of": str(last.date()), "first_date": str(first.date()),
             "region": inst.region, "code": inst.code, "root": inst.code, "root_name": name, "exchange": product.exchange if product else "", "group": product.group if product else "", "bars": int(len(frame)),
             "years": float(years), "notes": notes}
     return Download("futures", series_name(inst.region, inst.code), "series", frame=frame, meta=meta)
@@ -85,7 +85,7 @@ def coin_history(provider: ITickProvider, coin: str, days: int = 400, known: pd.
              "compare a few closes with an exchange you trust before relying on them.",
              "The platform's own BTC and ETH series use the 08:00 UTC mark; iTick's daily bar is read as a UTC day, so the two are not on the same clock."]
     notes += [str(w) for w in daily.attrs.get("warnings") or []]
-    meta = {"source_id": "itick", "source": "iTick (USDT)", "url": f"{provider.base_url}/crypto/kline?region={inst.region}&code={inst.code}", "as_of": str(last.date()), "coin": coin,
+    meta = {"source_id": "itick", "source": "iTick (USDT)", "url": f"{provider.host}/crypto/kline?region={inst.region}&code={inst.code}", "as_of": str(last.date()), "coin": coin,
             "sources": {"spot": "iTick (USDT)"}, "first_date": str(first.date()), "notes": notes}
     return Download("crypto", coin, "history", frame=frame, meta=meta)
 
@@ -109,5 +109,5 @@ def underlying_prices(provider: ITickProvider, ticker: str, years: float = 3.0, 
     notes = [f"iTick's daily prices of {symbol} ({len(frame):,} days, {first.date()} to {last.date()}), used for the realised volatility beside the implied one. Prices come as iTick delivers them: it does not say "
              "whether they are adjusted for splits and dividends."] + [str(w) for w in daily.attrs.get("warnings") or []]
     name = str(ticker).strip().upper()
-    meta = {"source_id": "itick", "source": "iTick", "url": f"{provider.base_url}/stock/kline", "as_of": str(last.date()), "first_date": str(first.date()), "underlying": name, "bars": int(len(frame)), "notes": notes}
+    meta = {"source_id": "itick", "source": "iTick", "url": f"{provider.host}/stock/kline", "as_of": str(last.date()), "first_date": str(first.date()), "underlying": name, "bars": int(len(frame)), "notes": notes}
     return Download("options", f"{name}_prices", "prices", frame=frame, meta=meta)

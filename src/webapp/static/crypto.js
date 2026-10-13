@@ -47,7 +47,7 @@
       W.picks(box, ks.coins.map((c) => [c, c]), f.chosen, changed);
       if (f.source === "itick") {
         Q.labField(box, { key: "extra", label: "Other coins (separated by spaces)", kind: "text", placeholder: "DOT ATOM", help: "Any coin iTick quotes against USDT (about " + ks.itick.coins + " of them)" }, f, changed);
-        W.itickBox(box, ks.itick_status);
+        W.itickBox(box, ks.itick_status, "crypto");
         h("p", "hint", box, "iTick has the daily closes of a coin against USDT: spot only, no perpetual, funding or order books (the exchanges have those). Which exchange its prices come from is not documented. BTC and ETH keep the platform's longer Deribit history.");
         Q.labField(box, { key: "days", label: "Days of history", kind: "choice", options: DAYS, help: "Each 1,000 daily bars cost one call of your plan" }, f, changed);
         return;

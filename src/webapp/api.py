@@ -234,13 +234,15 @@ class App:
             raise ApiError(str(error)) from None
 
     def test_source(self, body: dict) -> dict:
-        """Check that a data source works with one cheap call (for iTick: the key, the host and the daily interval). Never returns the key."""
+        """Check that a data source works with one cheap call (for iTick: the key, the host, the plan and the daily interval). Never returns the key."""
         try:
             src = self.builder.source(body.get("source"))
         except UniverseError as error:
             raise ApiError(str(error)) from None
         test = getattr(src.provider, "test", None)
-        return clean(test() if test else {"ok": True, "message": f"{src.label} needs no key"})
+        if test is None:
+            return clean({"ok": True, "message": f"{src.label} needs no key"})
+        return clean(test(kind=body["kind"]) if body.get("kind") in ("futures", "crypto") else test())            # a tab can ask for its own data: a plan may include stocks and not futures
 
     # ------------------------------------------------------------------------------------------------------ formulas
     def check_formula(self, body: dict) -> dict:

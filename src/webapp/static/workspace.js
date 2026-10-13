@@ -183,20 +183,22 @@
     }
     return box;
   }
-  /* iTick in a card: either the steps that turn it on (the key is never typed into this page) or the plan's allowance and a button that spends one call to show what the account returns. ``info`` is the
-     server's iTick status (GET /api/data/status). */
-  function itickBox(parent, info) {
+  /* iTick in a card: either the steps that turn it on (the key is never typed into this page) or the plan's allowance and a button that spends one call (two when the first host does not recognise the key)
+     to show what the account returns. ``info`` is the server's iTick status (GET /api/data/status); ``kind`` ("futures" or "crypto") makes the test ask for that tab's own data, because a plan can include
+     stocks and not futures. */
+  function itickBox(parent, info, kind) {
     const box = h("div", "itick", parent);
     if (!info || !info.configured) {
       if (info && info.setup === "key") Q.setupGuide(box, "Come back to this card, choose iTick and press Download real data.");
       else { const w = h("p", "hint", box, (info && info.problem) || "iTick is not available."); w.style.color = Q.css("--warn"); }
       return box;
     }
-    h("p", "hint", box, `Your iTick key is set. Your plan allows ${info.calls_per_minute} call${info.calls_per_minute === 1 ? "" : "s"} a minute (${info.calls_available_now} free right now), shared with the Backtest tab: a download waits between calls and says so while it does.`);
-    const row = h("div", "row tight", box), test = h("button", "btn small", row, "Test the iTick connection (one call)"), out = h("span", "hint", row); test.type = "button";
+    h("p", "hint", box, `Your iTick key is set. Your plan allows ${info.calls_per_minute} call${info.calls_per_minute === 1 ? "" : "s"} a minute (${info.calls_available_now} free right now), shared with the Backtest tab: a download waits between calls and says so while it does. Requests go to ${info.host || "iTick"}.`);
+    const row = h("div", "row tight", box), test = h("button", "btn small", row, "Test the iTick connection (one or two calls)"), out = h("span", "hint", row); test.type = "button";
+    out.dataset.role = "itick-test-result";
     test.addEventListener("click", async () => {
       test.disabled = true; out.textContent = "Testing…"; out.style.color = "";
-      try { const r = await api("/api/source/test", { source: "itick" }); out.textContent = r.message; out.style.color = Q.css(r.ok ? "--good-text" : "--crit"); }
+      try { const r = await api("/api/source/test", kind ? { source: "itick", kind } : { source: "itick" }); out.textContent = r.message; out.style.color = Q.css(r.ok ? "--good-text" : "--crit"); }
       catch (e) { out.textContent = e.message; out.style.color = Q.css("--crit"); }
       test.disabled = false;
     });

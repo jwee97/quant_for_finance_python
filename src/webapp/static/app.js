@@ -155,7 +155,7 @@
     h("li", "", steps, "Copy your API key from your iTick account.");
     const two = h("li", "", steps, "In Replit open Tools, then Secrets, then New Secret. Name it "); h("code", "", two, KEY_NAME); two.appendChild(document.createTextNode(", paste the key as its value and click Add Secret."));
     h("li", "", steps, "Press Stop and then Run: an app only sees the secrets that existed when it started. Then reload this page.");
-    h("li", "", steps, last || "Choose iTick here and press Test the iTick connection (it spends one call).");
+    h("li", "", steps, last || "Choose iTick here and press Test the iTick connection (it spends one call, or two if the first iTick host does not recognise the key).");
     const row = h("div", "row tight", guide);
     const name = h("button", "btn", row, "Copy the secret name"); name.addEventListener("click", () => copy(KEY_NAME, "The secret name"));
     const again = h("button", "btn", row, "I added it and restarted: reload"); again.addEventListener("click", () => location.reload());
@@ -172,11 +172,11 @@
       if (cur.setup === "key") setupGuide(box);
       else { const w = h("p", "hint", box, cur.problem); w.style.color = css("--warn"); }
     } else if (cur.name === "itick") {
-      h("p", "hint", box, `Your plan allows ${cur.calls_per_minute} call${cur.calls_per_minute === 1 ? "" : "s"} a minute; the app waits between calls and says so while it does. A ticker costs about one call per four years of daily history, once; after that a top-up is one call.`);
+      h("p", "hint", box, `Your plan allows ${cur.calls_per_minute} call${cur.calls_per_minute === 1 ? "" : "s"} a minute; the app waits between calls and says so while it does. A ticker costs about one call per four years of daily history, once; after that a top-up is one call. Requests go to ${cur.host || "iTick"}.`);
     }
     if (cur.symbols) { const more = h("button", "link", box, "How to write symbols"), para = h("p", "hint", box, cur.symbols + "."); para.hidden = true; more.addEventListener("click", () => { para.hidden = !para.hidden; }); }
     if (cur.name === "itick" && cur.available) {
-      const row = h("div", "row tight", box), test = h("button", "btn", row, "Test the iTick connection (one call)"), out = h("span", "hint", row); out.id = "u-source-result";
+      const row = h("div", "row tight", box), test = h("button", "btn", row, "Test the iTick connection (one or two calls)"), out = h("span", "hint", row); out.id = "u-source-result";
       test.addEventListener("click", async () => {
         test.disabled = true; out.textContent = "Testing…"; out.style.color = "";
         try { const r = await api("/api/source/test", { source: S.source }); out.textContent = r.message; out.style.color = css(r.ok ? "--good-text" : "--crit"); }

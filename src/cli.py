@@ -277,7 +277,7 @@ def cmd_serve(args, config) -> int:
 def cmd_itick_test(args, config) -> int:
     from .webapp.providers import ITickProvider
 
-    out = ITickProvider(root=config.root).test(args.symbol)
+    out = ITickProvider(root=config.root).test(args.symbol, kind=args.kind)
     print(("OK: " if out["ok"] else "FAILED: ") + out["message"])
     return 0 if out["ok"] else 1
 
@@ -546,7 +546,8 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("serve", help="open the dashboard: backtest on your own tickers, compare runs, build formula strategies, read the guides")
     p.add_argument("--host", default="127.0.0.1"); p.add_argument("--port", type=int, default=8765); p.add_argument("--no-browser", action="store_true"); p.set_defaults(func=cmd_serve)
     p = sub.add_parser("itick-test", help="spend one iTick call to check your ITICK_API_KEY, the host and the daily interval (the key is never printed)")
-    p.add_argument("--symbol", default="AAPL"); p.set_defaults(func=cmd_itick_test)
+    p.add_argument("--symbol", default="AAPL"); p.add_argument("--kind", choices=["futures", "crypto"], default=None, help="test that tab's own data (a plan can include stocks and not futures)")
+    p.set_defaults(func=cmd_itick_test)
     p = sub.add_parser("new-strategy", help="write a template for your own strategy into user_strategies/"); p.add_argument("name"); p.set_defaults(func=cmd_new_strategy)
     p = sub.add_parser("ask", help="ask the research database a question in words"); p.add_argument("question", nargs="+"); p.add_argument("--llm", help="model that writes the SQL (needs the anthropic package and an API key)"); p.set_defaults(func=cmd_ask)
     p = sub.add_parser("causal", help="causal estimators against simulated worlds with a known effect"); p.add_argument("--n", type=int, default=3000); p.add_argument("--seed", type=int, default=7); p.set_defaults(func=cmd_causal)

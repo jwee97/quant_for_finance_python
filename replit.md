@@ -146,7 +146,8 @@ Optional Anthropic assistant features need their separate dependency and
    environment variables.
 2. In the dashboard choose **iTick** under *Download other tickers from* and press
    **Test the iTick connection** (or run `python -m src itick-test` in the Shell): it
-   spends one call and shows whether the key, the host and the daily interval work.
+   spends one call (two if the first iTick host does not recognise the key) and shows
+   which host answered and whether the key, the plan and the daily interval work.
 
 Rules for the key:
 
@@ -161,6 +162,12 @@ Rules for the key:
   the key, but they can use the dashboard and so spend your iTick calls. Do not
   share the link.
 - If a key leaks, create a new one in your iTick account and replace the secret.
+- If iTick says the key is not valid: paste the key again with no quotes or spaces, then
+  Stop and Run (a secret is read when the app starts). The app sends it to
+  `api-free.itick.org`, iTick's free-trial host, and asks `api.itick.org`, its production
+  host, once if the first does not know it; the test button says which one answered. An HTTP
+  403 means the key is known but your plan does not include that data (futures, for
+  example). [docs/dashboard.md](docs/dashboard.md#if-itick-rejects-the-key) has the details.
 
 The free plan allows 5 calls a minute. The app enforces that for every iTick call
 (a download waits and the progress line says so), remembers recent calls across

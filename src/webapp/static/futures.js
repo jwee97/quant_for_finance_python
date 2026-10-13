@@ -45,7 +45,7 @@
       const seg = W.seg(box, [["yahoo", "Yahoo Finance: curves"], ["itick", "iTick: any product"]], f.source, (v) => { f.source = v; redraw(); });
       seg.setAttribute("role", "group"); seg.setAttribute("aria-label", "data source"); seg.dataset.role = "source";
       if (f.source === "itick") {
-        W.itickBox(box, ks.itick_status);
+        W.itickBox(box, ks.itick_status, "futures");
         h("p", "hint", box, "iTick keeps one daily price series for each futures product (NQ, CL, HSI), not one for each contract month: you get a price history to read in the History view, not a curve, a roll or carry, and no open interest.");
         W.finder(box, f.products, f.names, { kind: "futures", regions: ks.itick.regions, groups: ks.itick.groups, after: changed });
         Q.labField(box, { key: "years", label: "Years of history", kind: "choice", options: ks.itick.years.map((y) => [String(y), YEARS[y] || y + " years"]), help: "Each 1,000 daily bars (about four years) cost one call of your plan" }, f, changed);

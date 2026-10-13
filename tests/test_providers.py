@@ -662,6 +662,8 @@ def test_the_command_line_check_reports_without_printing_the_key(monkeypatch, ca
     assert cli.main(["itick-test", "--symbol", "MSFT"]) == 1
     out = capsys.readouterr().out
     assert "FAILED" in out and KEY not in out
+    assert cli.main(["itick-test", "--kind", "futures"]) == 1                          # a tab's own data can be asked for from the command line too
+    assert "FAILED" in capsys.readouterr().out
 
 
 def test_the_repository_keeps_secrets_out_of_git():
