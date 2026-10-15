@@ -23,28 +23,53 @@ sync_api = pytest.importorskip("playwright.sync_api")
 SOURCES = {"Platform data", "Your file", "Downloaded: free data", "Simulated: a model", "Mixed sources"}
 
 
-@pytest.fixture(scope="module")
-def live_ws(tmp_path_factory):
+def _start(tmp_path_factory, tag):
     """An app on synthetic prices with a planted signal. Its registry lives in a temporary directory; the repository's data (Deribit, your files) and guides are reached through links, read only."""
     config = load_config()
-    root = tmp_path_factory.mktemp("ws_root")
+    root = tmp_path_factory.mktemp(f"{tag}_root")
     for folder in ("data", "docs"):
         (root / folder).symlink_to(config.root / folder, target_is_directory=True)
     bundle = make_bundle(n_assets=8, n=1300, seed=3, alpha=1.0)
-    store = TickerStore(tmp_path_factory.mktemp("ws_prices"), fetch=_fetch)
-    running = server.start(App(config, builder=UniverseBuilder(config, store, default_loader=lambda c: bundle), root=root), "127.0.0.1", 0)
+    store = TickerStore(tmp_path_factory.mktemp(f"{tag}_prices"), fetch=_fetch)
+    return server.start(App(config, builder=UniverseBuilder(config, store, default_loader=lambda c: bundle), root=root), "127.0.0.1", 0)
+
+
+@pytest.fixture(scope="module")
+def live_ws(tmp_path_factory):
+    running = _start(tmp_path_factory, "ws")
     yield running
     running.stop()
 
 
-@pytest.fixture()
-def ws(browser, live_ws):  # noqa: F811
-    pg = browser.new_page(viewport={"width": 1400, "height": 1000})
+@pytest.fixture(scope="module")
+def live_tune(tmp_path_factory):
+    """An app of its own for the tuning search: it records experiments, and the first view of the Machine learning tab in the other tests is a registry with none."""
+    running = _start(tmp_path_factory, "tune")
+    yield running
+    running.stop()
+
+
+def _page(chromium, live):
+    pg = chromium.new_page(viewport={"width": 1400, "height": 1000})
     pg.problems = []
     pg.on("pageerror", lambda e: pg.problems.append(f"pageerror: {e}"))
     pg.on("console", lambda m: pg.problems.append(f"console {m.type}: {m.text}") if m.type == "error" else None)
-    pg.goto(live_ws.url)
+    pg.goto(live.url)
     pg.wait_for_selector(".chip")
+    return pg
+
+
+@pytest.fixture()
+def ws(browser, live_ws):  # noqa: F811
+    pg = _page(browser, live_ws)
+    yield pg
+    assert not pg.problems, pg.problems
+    pg.close()
+
+
+@pytest.fixture()
+def tune_ws(browser, live_tune):  # noqa: F811
+    pg = _page(browser, live_tune)
     yield pg
     assert not pg.problems, pg.problems
     pg.close()
@@ -324,7 +349,8 @@ def test_a_form_that_cannot_run_is_not_sent(ws):
     assert ws.locator("#ml .runbar button.primary").is_disabled() and "between two and eight" in ws.inner_text("#ml .runbar .guard")
 
 
-def test_tuning_one_model_says_what_it_varies_how_long_it_looks_and_whether_the_gain_held_up(ws):
+def test_tuning_one_model_says_what_it_varies_how_long_it_looks_and_whether_the_gain_held_up(tune_ws):
+    ws = tune_ws
     ws.click("#tab-ml")
     ws.wait_for_selector("#ml .panel")
     _mode(ws, "ml", "search")
