@@ -15,6 +15,7 @@ import pytest
 
 from src.webapp import server
 from src.webapp.api import ApiError, Job
+from src.webapp import jobs as jobs_module
 from src.webapp.jobs import PROCESS, JobLog, _alive
 from tests.ml_helpers import make_bundle
 from tests.test_webapp import _http
@@ -83,7 +84,7 @@ def test_a_job_whose_process_is_gone_is_marked_interrupted_and_anothers_running_
     try:
         dead = _record(id="aaaaaaaaaaaa", pid=_dead_pid(), message="training fold 3 of 9")
         queued = _record(id="bbbbbbbbbbbb", status="queued", pid=_dead_pid(), message="waiting for a free worker")
-        foreign = _record(id="cccccccccccc", pid=other_app.pid, process="another app")        # alive: another app's run, not ours to end
+        foreign = _record(id="cccccccccccc", pid=other_app.pid, process="another app", updated=time.time())   # alive and beating: another app's run, not ours to end
         own = _record(id="dddddddddddd", pid=os.getpid(), process=PROCESS)               # written by this very process (another app in it)
         done = _record(id="eeeeeeeeeeee", status="done", pid=_dead_pid(), message="finished")
         reused = _record(id="999999999999", pid=os.getpid(), process="an earlier run of the interpreter", message="training fold 5 of 9")   # a container restarts the app with the same process id (1)
@@ -216,3 +217,123 @@ def test_a_training_goes_on_with_no_page_asking_after_it_and_its_experiment_is_t
     assert [r["name"] for r in saved] == ["left alone"] and row["ref"] == saved[0]["id"], "the experiment is in the registry, and the job says which one it made"
     reread = _app(tmp_path / "other", lambda config: bundle, root=tmp_path)               # the app restarted: the run and its experiment are still found
     assert reread.job(job_id)["status"] == "done" and reread.job(job_id)["result"]["id"] == saved[0]["id"] and reread.extra_get["/api/ml/experiments"]({})["rows"][0]["id"] == saved[0]["id"]
+
+
+# ------------------------------------------------------------------------------------------------------------------ a crash must not leave a run "running"
+def test_a_process_id_that_exists_again_is_not_taken_for_the_app_that_died(tmp_path, monkeypatch):
+    """After a crash the numbers are reused: some other process has the id the dead app had. Only the app's own signs of life tell, so a record that stops beating is lost after STALE seconds."""
+    other = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
+    try:
+        log = JobLog(tmp_path / "jobs")
+        folder = tmp_path / "jobs"
+        folder.mkdir()
+        now = time.time()
+        fresh = _record(id="aaaaaaaaaaaa", pid=other.pid, process="the app before the crash", updated=now - 5)
+        silent = _record(id="bbbbbbbbbbbb", pid=other.pid, process="the app before the crash", updated=now - jobs_module.STALE - 5, message="training fold 4 of 9")
+        for r in (fresh, silent):
+            (folder / f"{r['id']}.json").write_text(json.dumps(r))
+        assert not JobLog.gone(fresh) and JobLog.gone(silent)
+        assert log.mark_interrupted() == 1
+        assert {r["id"]: r["status"] for r in log.records()} == {"aaaaaaaaaaaa": "running", "bbbbbbbbbbbb": "interrupted"}, "a fresh record is left alone: its app may be right there"
+        assert "fold 4 of 9" in log.get("bbbbbbbbbbbb")["message"]
+        monkeypatch.setattr(jobs_module, "STALE", 0.01)
+        time.sleep(0.05)
+        assert log.mark_interrupted() == 1 and log.get("aaaaaaaaaaaa")["status"] == "interrupted", "and when it falls silent it is lost too"
+    finally:
+        other.kill()
+        other.wait()
+
+
+def test_a_beat_refreshes_a_running_record_and_never_brings_back_a_job_that_has_ended(tmp_path):
+    log = JobLog(tmp_path / "jobs")
+    log.save(_record(id="aaaaaaaaaaaa"))
+    first = json.loads((tmp_path / "jobs" / "aaaaaaaaaaaa.json").read_text())["updated"]
+    time.sleep(0.02)
+    log.beat(["aaaaaaaaaaaa", "ffffffffffff", "../x"])                       # an unknown id and an unsafe one are ignored
+    second = json.loads((tmp_path / "jobs" / "aaaaaaaaaaaa.json").read_text())["updated"]
+    assert second > first
+    log.save(_record(id="aaaaaaaaaaaa", status="done", finished=time.time()), {"ok": 1})
+    ended = json.loads((tmp_path / "jobs" / "aaaaaaaaaaaa.json").read_text())
+    log.beat(["aaaaaaaaaaaa"])
+    after = json.loads((tmp_path / "jobs" / "aaaaaaaaaaaa.json").read_text())
+    assert after == ended and after["status"] == "done", "a beat that read the record a moment earlier must not put a finished job back to running"
+    elsewhere = _record(id="bbbbbbbbbbbb", process="another app", updated=1.0)
+    (tmp_path / "jobs" / "bbbbbbbbbbbb.json").write_text(json.dumps(elsewhere))
+    log.beat(["bbbbbbbbbbbb"])
+    assert json.loads((tmp_path / "jobs" / "bbbbbbbbbbbb.json").read_text())["updated"] == 1.0, "only this process's own jobs are vouched for"
+
+
+def test_the_app_beats_while_a_job_runs_and_stops_when_none_does(two_apps):
+    app = two_apps()
+    app.beat_every = 0.05
+    gate, started = threading.Event(), threading.Event()
+
+    def slow(progress):
+        started.set()
+        gate.wait(30)
+        return {"done": True}
+
+    job = app.submit_task("ml: slow", slow, "ml")
+    assert started.wait(10)
+    path = app.joblog.directory / f"{job['job']}.json"
+    first = json.loads(path.read_text())["updated"]
+    deadline = time.time() + 10
+    while time.time() < deadline and json.loads(path.read_text())["updated"] <= first:
+        time.sleep(0.05)
+    assert json.loads(path.read_text())["updated"] > first, "the record is refreshed while the job runs, with no progress message at all"
+    gate.set()
+    assert wait(app, job)["status"] == "done"
+    deadline = time.time() + 10
+    while time.time() < deadline and app._beating:
+        time.sleep(0.05)
+    assert not app._beating, "the beat stops when nothing is queued or running"
+    again = app.submit_task("ml: again", lambda progress: {"ok": 1}, "ml")           # and starts again with the next job
+    assert wait(app, again)["status"] == "done"
+
+
+def test_a_crashed_apps_run_is_listed_as_stopped_and_can_be_cleared(two_apps, tmp_path, monkeypatch):
+    other = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])         # a process that has the id the crashed app had
+    try:
+        app = two_apps()
+        monkeypatch.setattr(jobs_module, "STALE", 0.05)
+        app.joblog.directory.mkdir(parents=True, exist_ok=True)
+        (tmp_path / "data" / "user" / "jobs" / "aaaaaaaaaaaa.json").write_text(json.dumps(_record(id="aaaaaaaaaaaa", pid=other.pid, process="before the crash", updated=time.time() - 3, message="training fold 3 of 9")))
+        listing = _safe(app.jobs_list())
+        row = next(r for r in listing["jobs"] if r["id"] == "aaaaaaaaaaaa")
+        assert row["status"] == "interrupted" and listing["active"] == 0 and "fold 3 of 9" in row["message"], "read, not restarted: the sign does not hang"
+        assert app.job("aaaaaaaaaaaa")["status"] == "interrupted"
+        assert app.jobs_clear({"id": "aaaaaaaaaaaa"}) == {"cleared": 1}
+        assert all(r["id"] != "aaaaaaaaaaaa" for r in app.jobs_list()["jobs"]) and not (app.joblog.directory / "aaaaaaaaaaaa.json").exists()
+        with pytest.raises(ApiError, match="unknown job"):
+            app.job("aaaaaaaaaaaa")
+        assert app.jobs_clear({"id": "aaaaaaaaaaaa"}) == {"cleared": 0}, "clearing what is not there is not an error"
+    finally:
+        other.kill()
+        other.wait()
+
+
+def test_a_run_that_is_really_going_cannot_be_cleared_and_clearing_the_ended_ones_leaves_it(two_apps):
+    app = two_apps()
+    gate, started = threading.Event(), threading.Event()
+
+    def slow(progress):
+        started.set()
+        gate.wait(30)
+        return {"done": True}
+
+    running = app.submit_task("ml: going", slow, "ml")
+    assert started.wait(10)
+    with pytest.raises(ApiError, match="still going in this app"):
+        app.jobs_clear({"id": running["job"]})
+    old_ml = app.submit_task("ml: old", lambda progress: {"ok": 1}, "ml")            # queued behind the running one
+    gate.set()
+    assert wait(app, running)["status"] == "done" and wait(app, old_ml)["status"] == "done"
+    data = app.submit_task("free data", lambda progress: {"ok": 1}, "data")
+    assert wait(app, data)["status"] == "done"
+    assert app.jobs_clear({"ended": True, "kind": "ml"}) == {"cleared": 2}
+    assert [r["label"] for r in app.jobs_list()["jobs"]] == ["free data"], "only the ml runs went"
+    assert app.jobs_clear({"ended": True}) == {"cleared": 1} and app.jobs_list()["jobs"] == []
+    with pytest.raises(ApiError, match="say which run to clear"):
+        app.jobs_clear({})
+    with pytest.raises(ApiError, match="say which run to clear"):
+        app.jobs_clear({"ended": "yes"})

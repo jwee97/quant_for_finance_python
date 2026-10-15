@@ -32,7 +32,7 @@ from ..equity.factors import names as factor_names
 from ..equity.portfolio import PRESETS as book_presets
 from ..strategies.factor_models import KINDS as learner_kinds
 from ..strategies.factor_timing import CALENDAR_STATES, MACRO_STATES
-from .jobs import ACTIVE, JobLog
+from .jobs import ACTIVE, BEAT, JobLog
 from .universe import CLASSES, MAX_TICKERS, TickerStore, UniverseBuilder, UniverseError, itick_source, normalise
 
 COMBINATIONS = {
@@ -179,6 +179,7 @@ class App:
         self.jobs: dict[str, Job] = {}
         self.joblog = JobLog(self.root / "data" / "user" / "jobs")   # every job's record on disk: a reloaded page finds its run again, and a restarted app knows what it lost
         self.joblog.mark_interrupted()
+        self.beat_every, self._beating = BEAT, False                 # while a job is queued or running the app says so every few seconds (see _beat), so a crashed app's jobs can be told from live ones
         self.trials: dict[str, set] = {}
         self._pool = ThreadPoolExecutor(max_workers=1)             # one at a time: the models set process-wide torch flags and share the data caches
         self._lock = threading.Lock()
@@ -189,7 +190,7 @@ class App:
         from .ml_api import MlApi
 
         self.extra_get: dict = {"/api/jobs": lambda q=None: self.jobs_list()}   # path -> fn(query: dict) for GET /api/...?a=1&b=2
-        self.extra_post: dict = {}                                 # path -> fn(body: dict) for POST /api/...
+        self.extra_post: dict = {"/api/jobs/clear": self.jobs_clear}           # path -> fn(body: dict) for POST /api/...
         self.data = DataApi(self)                                  # the free-data downloads of the three asset tabs (their own worker, apart from the backtests)
         for part in (AssetApi(self), MlApi(self), self.data):
             self.extra_get.update(part.get_routes())
@@ -374,9 +375,23 @@ class App:
             self.jobs[job.id] = job
             for old in list(self.jobs)[:-60]:
                 self.jobs.pop(old, None)
+            start, self._beating = not self._beating, True
         job.sink = lambda j, final: self.joblog.save(j.record(), j.result if final and j.status == "done" else None)
         job.save()
+        if start:
+            threading.Thread(target=self._beat, name="job-heartbeat", daemon=True).start()
         return job
+
+    def _beat(self) -> None:
+        """While a job is queued or running, say so on its record every few seconds, then stop. A process id cannot tell a crashed app's job from a live one (the numbers are reused), the beat can."""
+        while True:
+            time.sleep(self.beat_every)
+            with self._lock:
+                alive = [j.id for j in self.jobs.values() if j.status in ACTIVE]
+                if not alive:
+                    self._beating = False
+                    return
+            self.joblog.beat(alive)
 
     def submit_task(self, label: str, work, kind: str = "task") -> dict:
         """Run ``work(progress)`` on the single worker and return ``{"job": id}``; the page polls ``/api/job/<id>`` like it does for a backtest. ``work`` returns a JSON-able result and calls
@@ -447,11 +462,14 @@ class App:
         kept = self.joblog.get(job_id)
         if kept is None:
             raise ApiError("unknown job")
+        if kept["status"] in ACTIVE and self.joblog.mark_interrupted():                      # a record that still says running: is its app still there?
+            kept = self.joblog.get(job_id) or kept
         return kept
 
     def jobs_list(self) -> dict:
         """``GET /api/jobs``: the recent jobs, newest first, without their results: what is running or waiting, what finished, failed or was lost when the app stopped. The page uses it to find a run again
         after a reload."""
+        self.joblog.mark_interrupted()                                                        # a run whose app crashed is shown as stopped, not as running
         with self._lock:
             live = {j.id: j.record() | {"elapsed": round((j.finished or time.time()) - j.created, 1)} for j in self.jobs.values()}
         rows = list(live.values())
@@ -461,6 +479,34 @@ class App:
                             | {"elapsed": round(float(record.get("finished") or record.get("updated") or time.time()) - float(record.get("created") or 0.0), 1)})
         rows.sort(key=lambda r: float(r["created"] or 0.0), reverse=True)
         return clean({"jobs": rows[:60], "active": sum(r["status"] in ACTIVE for r in rows)})
+
+    def jobs_clear(self, body: dict) -> dict:
+        """``POST /api/jobs/clear``: take runs off the list. ``{"id": ...}`` clears one (a run that is really going in this app cannot be: it would only come back, and a run cannot be stopped from here);
+        ``{"ended": true, "kind": "ml"}`` clears every finished, failed or stopped run (of that kind, when given). Returns ``{"cleared": n}``. A record that still says running, but whose app is gone, is
+        cleared as well: that is the stuck sign after a crash."""
+        self.joblog.mark_interrupted()
+        if body.get("id") is not None:
+            job_id = str(body["id"])
+            with self._lock:
+                job = self.jobs.get(job_id)
+                if job is not None and job.status in ACTIVE:
+                    raise ApiError("this run is still going in this app, and a run cannot be stopped from here: stop the app (on Replit: Stop, then Run) to end it")
+                known = self.jobs.pop(job_id, None) is not None
+            return {"cleared": int(self.joblog.remove(job_id) or known)}
+        if body.get("ended") is True:
+            kind = body.get("kind")
+            gone = []
+            with self._lock:
+                gone += [j.id for j in self.jobs.values() if j.status not in ACTIVE and kind in (None, j.kind)]
+                for job_id in gone:
+                    self.jobs.pop(job_id, None)
+            for record in self.joblog.records():
+                if record.get("status") not in ACTIVE and kind in (None, record.get("kind")) and record["id"] not in gone:
+                    gone.append(record["id"])
+            for job_id in gone:
+                self.joblog.remove(job_id)
+            return {"cleared": len(gone)}
+        raise ApiError('say which run to clear: {"id": ...} for one, or {"ended": true} for every run that is over')
 
     def reset_trials(self) -> dict:
         with self._lock:

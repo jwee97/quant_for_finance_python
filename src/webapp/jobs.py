@@ -7,8 +7,11 @@ under ``data/user/jobs/``:
 ``<id>.json``         the record: label, kind, status, the last progress message, when it started and finished, and the process that ran it
 ``<id>.result.json``  the result of a finished job (what ``/api/job/<id>`` returns once it is done), read back only when asked for
 
-A job that was queued or running when its process ended (the app was stopped, restarted or killed; on Replit, the workspace went idle) can never finish: the next start marks it ``interrupted``, with
-the last thing it said it was doing. Nothing is resumed: a training is not checkpointed, so an interrupted run is started again from the beginning. The log keeps the last 60 jobs, like the table.
+A job that was queued or running when its process ended (the app was stopped, restarted or killed; on Replit, the workspace crashed or went idle) can never finish. It is marked ``interrupted``,
+with the last thing it said it was doing, as soon as that is known: at the next start, and whenever the list is read. A process id alone cannot say whether the app is still there (the numbers are
+reused, and an app in a container is process 1 every time), so a running app also says so every few seconds (:meth:`JobLog.beat`) and another process's job with no sign of life for
+``STALE`` seconds counts as gone. Nothing is resumed: a training is not checkpointed, so an interrupted run is started again from the beginning. The log keeps the last 60 jobs, like the table,
+and a run can be taken off the list (:meth:`JobLog.remove`).
 """
 
 from __future__ import annotations
@@ -24,6 +27,8 @@ from pathlib import Path
 
 JOB_ID = re.compile(r"^[0-9a-f]{12}$")
 ACTIVE = ("queued", "running")
+BEAT = 10.0                                                            # seconds between the signs of life of an app that has a job queued or running
+STALE = 45.0                                                           # another process's job that has shown none for this long is gone: a process id alone can be reused
 PROCESS = uuid.uuid4().hex                                             # names this run of the interpreter: after a restart the process id can be the same (an app in a container is process 1 every time)
 RESULT_LIMIT = 40_000_000                                              # a result larger than this is not kept (the record still is)
 
@@ -97,6 +102,35 @@ class JobLog:
                 except OSError:
                     pass
 
+    def beat(self, job_ids) -> None:
+        """A sign of life: refresh ``updated`` on the records of these jobs while they are still queued or running in this process. Only the time is touched, and under the same lock as a save, so
+        a job that has just ended is not put back to running by a beat that read it a moment earlier."""
+        with self._lock:
+            for job_id in job_ids:
+                path = self.directory / f"{job_id}.json"
+                record = self._read(path)
+                if record and record.get("status") in ACTIVE and record.get("process") == PROCESS:
+                    record["updated"] = time.time()
+                    try:
+                        _write(path, json.dumps(record, allow_nan=False))
+                    except (OSError, ValueError, TypeError):
+                        pass
+
+    def remove(self, job_id: str) -> bool:
+        """Take a job off the list: delete its record and its result. ``True`` when there was a record."""
+        if not JOB_ID.match(str(job_id)):
+            return False
+        found = False
+        with self._lock:
+            for name in (f"{job_id}.json", f"{job_id}.result.json"):
+                try:
+                    (self.directory / name).unlink()
+                    found = True
+                except OSError:
+                    pass
+            self._seen.discard(job_id)
+        return found
+
     # ------------------------------------------------------------------------------------------------------------ read
     def _read(self, path: Path) -> dict | None:
         try:
@@ -129,19 +163,23 @@ class JobLog:
         view["elapsed"] = round(float(record.get("finished") or record.get("updated") or time.time()) - float(record.get("created") or 0.0), 1)
         return view
 
-    # ------------------------------------------------------------------------------------------------------------ start
+    # ------------------------------------------------------------------------------------------------------------ lost jobs
+    @staticmethod
+    def gone(record: dict, now: float | None = None) -> bool:
+        """Whether the app that was running this queued or running job is gone."""
+        if record.get("process") == PROCESS:
+            return False                                                # this very process: it is running it
+        pid = int(record.get("pid") or 0)
+        if pid == os.getpid() or not _alive(pid):
+            return True                                                 # the process is gone, or its id is ours again after a restart (an app in a container is process 1 every time)
+        return (time.time() if now is None else now) - float(record.get("updated") or 0.0) > STALE   # some process has that id: it is the app only while it keeps saying so
+
     def mark_interrupted(self) -> int:
-        """At start: every job recorded as queued or running whose process is gone can never finish. Mark it ``interrupted`` and say so; returns how many."""
+        """Every job recorded as queued or running whose app is gone can never finish. Mark it ``interrupted`` and say so; returns how many. Called at start and whenever the list is read."""
         count = 0
         for record in self.records():
-            if record.get("status") not in ACTIVE:
+            if record.get("status") not in ACTIVE or not self.gone(record):
                 continue
-            if record.get("process") == PROCESS:
-                continue                                                # written by this very process (this app, or another one in it): still running, not ours to end
-            pid = int(record.get("pid") or 0)
-            if pid != os.getpid() and _alive(pid):
-                continue                                                # another app, running now, that shares this folder
-            # the process is gone, or its id was reused (ours, after a restart in a container): either way this job can never finish
             record.update(status="interrupted", message=f"the app stopped while this was {record.get('status')}: {record.get('message') or 'no progress was recorded'}", finished=time.time())
             self.save(record)
             count += 1

@@ -4,6 +4,8 @@ experiment it made, and says plainly when a run was lost because the app stopped
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 import threading
 import time
 
@@ -86,12 +88,12 @@ def test_a_reloaded_page_finds_a_run_follows_it_to_its_end_and_opens_the_experim
         gate.set()                                                                  # the first run ends; the training starts, then ends
         _wait_until(page, "Array.from(document.querySelectorAll('#ml-results .runs li[data-status=done]')).some((li) => li.textContent.includes('left running') && !!li.querySelector('button'))", 300.0)
         done = page.locator("#ml-results .runs li[data-status=done]", has_text="left running")
-        assert done.count() == 1 and "Finished · left running" in done.inner_text() and "ended just now" in done.inner_text() and done.locator("button").inner_text() == "Open"
-        assert page.locator("#ml-results .runs li[data-status=done]", has_text="a long search").locator("button").inner_text() == "Show the experiments", "a run that made no single experiment points at the list"
+        assert done.count() == 1 and "Finished · left running" in done.inner_text() and "ended just now" in done.inner_text() and done.locator("button[data-action=open-run]").inner_text() == "Open"
+        assert page.locator("#ml-results .runs li[data-status=done]", has_text="a long search").locator("button[data-action=open-run]").inner_text() == "Show the experiments", "a run that made no single experiment points at the list"
         _wait_until(page, "Array.from(document.querySelectorAll('#ml-results .runs li[data-status=done]')).some((li) => li.textContent.includes('dataset: sample') || li.textContent.includes('sample'))", 120.0)
         sample = page.locator("#ml-results .runs li[data-status=done]", has_text="sample")
-        assert sample.count() == 1 and sample.locator("button").count() == 0, "a dataset build made no experiment, so there is nothing to open"
-        done.locator("button").click()
+        assert sample.count() == 1 and sample.locator("button[data-action=open-run]").count() == 0, "a dataset build made no experiment, so there is nothing to open"
+        done.locator("button[data-action=open-run]").click()
         page.wait_for_selector("#ml-results h1", timeout=60_000)
         assert "left running" in page.inner_text("#ml-results"), "Open shows the experiment the run made"
         assert page.locator("#view-ml .tabsmall button[aria-selected=true]").get_attribute("data-mode") == "train"
@@ -101,3 +103,48 @@ def test_a_reloaded_page_finds_a_run_follows_it_to_its_end_and_opens_the_experim
         gate.set()
         page.close()
     assert app.job(first["job"])["status"] == "done" and app.job(job)["status"] == "done" and app.job(built["job"])["status"] == "done"
+
+
+def test_a_page_never_waits_for_a_run_that_was_lost_and_a_stuck_row_can_be_cleared(browser, live_runs):  # noqa: F811
+    """After a crash the record of a run can say running for a while (another process may have the old process id), or interrupted. The page must stop waiting for the second, and the person must be
+    able to take either off the list."""
+    app, root = live_runs.app, live_runs.root
+    app.jobs_clear({"ended": True})
+    folder = root / "data" / "user" / "jobs"
+    folder.mkdir(parents=True, exist_ok=True)
+    other = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(300)"])           # has the process id the crashed app had
+    try:
+        now = time.time()
+
+        def record(job_id, status, label, **more):
+            return json.dumps({"id": job_id, "label": label, "kind": "ml", "status": status, "message": "training fold 3 of 9", "error": None, "created": now - 300, "finished": None, "ref": None,
+                               "pid": other.pid, "process": "the app before the crash", "updated": now, **more})
+
+        (folder / "aaaaaaaaaaaa.json").write_text(record("aaaaaaaaaaaa", "running", "ml: stuck by a crash"))
+        (folder / "bbbbbbbbbbbb.json").write_text(record("bbbbbbbbbbbb", "interrupted", "ml: lost one", message="the app stopped while this was running: training fold 2 of 9", finished=now - 100))
+        (folder / "cccccccccccc.json").write_text(record("cccccccccccc", "error", "ml: failed one", error="boom", finished=now - 50))
+        page = _page(browser, live_runs)
+        try:
+            page.click("#tab-ml")
+            page.wait_for_selector("#ml-results .runs li", timeout=60_000)
+            assert _status(page, "stuck by a crash") == "running" and _status(page, "lost one") == "interrupted" and _status(page, "failed one") == "error"
+            assert page.locator("#ml-results .runs li", has_text="stuck by a crash").locator("button[data-action=clear-run]").inner_text() == "Not running? Clear"
+            assert page.locator("#ml-results .runs li", has_text="lost one").locator("button[data-action=clear-run]").inner_text() == "Clear"
+            lost = page.evaluate("""async () => { try { await window.QL.waitJob("bbbbbbbbbbbb", null, 50); return "returned"; } catch (e) { return e.message; } }""")
+            assert "training fold 2 of 9" in lost and "start it again" in lost, "a page waiting for a lost run is told, instead of waiting for ever"
+            unknown = page.evaluate("""async () => { try { await window.QL.waitJob("dddddddddddd", null, 50); return "returned"; } catch (e) { return e.message; } }""")
+            assert "no longer knows this run" in unknown
+
+            assert page.locator("#ml-results .runs button[data-action=clear-ended]").count() == 1, "two ended runs: one button clears both"
+            page.click("#ml-results .runs button[data-action=clear-ended]")
+            _wait_until(page, "document.querySelectorAll('#ml-results .runs li').length === 1")
+            assert _status(page, "stuck by a crash") == "running" and not (folder / "bbbbbbbbbbbb.json").exists() and not (folder / "cccccccccccc.json").exists()
+            page.locator("#ml-results .runs li", has_text="stuck by a crash").locator("button[data-action=clear-run]").click()
+            _wait_until(page, "document.querySelectorAll('#ml-results .runs li').length === 0")
+            assert not (folder / "aaaaaaaaaaaa.json").exists() and page.locator("#ml-results .runs").count() == 0, "the card goes when nothing is left"
+            assert not [p for p in page.problems if "status of 4" not in p], page.problems
+        finally:
+            page.close()
+    finally:
+        other.kill()
+        other.wait()

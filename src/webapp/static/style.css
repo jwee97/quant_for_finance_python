@@ -323,6 +323,8 @@ ul.plain { margin: 0 0 6px; padding-left: 20px; display: grid; gap: 2px; font-si
 .runs .runlist .main b { color: var(--ink); }
 .runs .runlist .main span:first-child { overflow-wrap: anywhere; }
 .runs .runlist .meta { color: var(--muted); font-size: 11.5px; overflow-wrap: anywhere; }
+.runs .runlist li button { flex: 0 0 auto; }
+.runs > button { margin: 2px 0 4px; }
 .runs .runlist li.running b, .runs .runlist li.queued b { color: var(--s1); }
 .runs .runlist li.done b { color: var(--good-text); }
 .runs .runlist li.error b { color: var(--crit); }

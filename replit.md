@@ -68,7 +68,7 @@ experiment is saved to the registry when it ends. Because a reloaded page used t
 it had started, the app keeps a small record of every job in `data/user/jobs/`, and the
 Machine learning tab shows a card, *Runs in the background*, with what is running, waiting
 or ended in the last six hours: it follows them, opens the experiment a finished run made, and
-shows a run that was lost as *Stopped*, with the last thing it was doing. Nothing is
+shows a run that was lost as *Stopped* (within about a minute of a crash), with the last thing it was doing. *Clear* takes a row off the list, and *Not running? Clear* takes off a run that still says running after a crash. Nothing is
 checkpointed or resumed: a lost run starts again from the beginning. Runs go one at a time, so
 a long search delays anything queued behind it.
 

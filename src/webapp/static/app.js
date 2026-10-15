@@ -13,6 +13,27 @@
     if (!res.ok) { const error = new Error(data.error || res.statusText); error.status = res.status; throw error; }
     return data;
   }
+  /* Ask after a job until it ends and return its result. ``tick(v)`` hears every answer. A run that was lost because the app stopped (status "interrupted": a crash, a restart, Replit going idle)
+     ends like a failure and says what it was doing, so a page never waits for ever for a run that cannot finish. An app that does not answer at all is waited for (it may be restarting) for about
+     a minute before the page gives up. */
+  async function waitJob(job, tick, every) {
+    let silent = 0;
+    for (;;) {
+      await new Promise((r) => setTimeout(r, every || 600));
+      let v;
+      try { v = await api("/api/job/" + job); silent = 0; }
+      catch (e) {
+        if (e.status === 400 && /unknown job/.test(e.message)) throw new Error("The app no longer knows this run: it was restarted. Start it again.");
+        if (e.status) throw e;                                                              // the app answered with an error: that is the answer
+        if (++silent > 60) throw new Error("The app has stopped answering. If it was restarted (on Replit: Stop, then Run) this run is gone: reload the page and start it again.");
+        continue;                                                                            // no answer at all: the app may be restarting
+      }
+      if (tick) tick(v);
+      if (v.status === "done") return v.result;
+      if (v.status === "error") throw new Error(v.error);
+      if (v.status === "interrupted") throw new Error(`${v.message || "The app stopped while this was running."} Nothing is resumed: start it again from the beginning.`);
+    }
+  }
   /* The server API this page was written for (API_VERSION in api.py). A server that reports less is older than the page: the files were updated while the app was running, so it still runs the
      old code. Say so, instead of drawing half a page. */
   const PAGE_API = 2;                                                                       // what the whole page needs; the Execution and Cash flows tabs ask for more (LAB_API below) and say so on their own
@@ -361,13 +382,8 @@
     if (!S.current) { const r = $("#results"); r.replaceChildren(); const c = h("div", "card empty", r); h("div", "spinner", c).style.margin = "0 auto 12px"; h("h2", "", c, "Running…"); h("p", "", c, "New tickers are downloaded first, then the strategy runs through the same pipeline as the command line. Neural-network strategies take longer.").id = "wait-note"; }
     try {
       const { job } = await api("/api/backtest", body);
-      for (;;) {
-        await new Promise((r) => setTimeout(r, 600));
-        const v = await api("/api/job/" + job);
-        const t = $("#progress-text"); if (t) t.textContent = `${v.message} (${Math.round(v.elapsed)} s)`;
-        if (v.status === "done") { addRun(v.result); if (S.tickers.some((x) => x.later)) recheckTickers(true); break; }
-        if (v.status === "error") throw new Error(v.error);
-      }
+      const result = await waitJob(job, (v) => { const t = $("#progress-text"); if (t) t.textContent = `${v.message} (${Math.round(v.elapsed)} s)`; });
+      addRun(result); if (S.tickers.some((x) => x.later)) recheckTickers(true);
     } catch (e) { showError(e.message); }
     setBusy(false);
   }
@@ -1352,6 +1368,6 @@
     if (booted && store("tab") === name) showTab(name);
   }
   window.QL = { C, h, fmt, $, api, css, store, toast, copy, download, num, pct, money, smoney, axisMoney, bad, bps, grouped, plain, unsign, colorOf, SLOTS, tile, chartCard, simpleTable, sampleRows, keepScroll, labField, checkList, numbers,
-    labHead, labBanner, labEmpty, labOld, syncLab, renderLab, drawLab, openGuide, serverApi, RESTART, notice, registerWorkspace, labelPx, running, S, setupGuide };
+    labHead, labBanner, labEmpty, labOld, syncLab, renderLab, drawLab, openGuide, serverApi, RESTART, notice, registerWorkspace, labelPx, running, S, setupGuide, waitJob };
   boot();
 })();

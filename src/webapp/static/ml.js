@@ -383,6 +383,10 @@
     paintRuns();
     if (mine.some((j) => ACTIVE.has(j.status))) M.runs.timer = setTimeout(watchRuns, 2000);
   }
+  async function clearRuns(body) {
+    try { await api("/api/jobs/clear", body); } catch (e) { Q.toast(e.message); }
+    await watchRuns();
+  }
   function paintRuns() {
     const root = Q.$("#ml-results"); if (!root) return;
     const old = root.querySelector(".runs"); if (old) old.remove();
@@ -394,12 +398,20 @@
     const going = jobs.some((j) => ACTIVE.has(j.status));
     h("h3", "", card, going ? "Runs in the background" : "Recent runs");
     if (going) h("p", "note", card, "These go on at the app's computer if you close this page, and the experiment is saved when a run ends. If the app itself stops (on Replit, when the workspace goes idle after you leave), the run is lost: it shows here as stopped and has to be started again from the beginning.");
+    const ended = jobs.filter((j) => !ACTIVE.has(j.status)).length;
+    if (ended >= 2) {
+      const all = h("button", "btn small", card, "Clear all ended runs"); all.type = "button"; all.dataset.action = "clear-ended";
+      all.addEventListener("click", () => clearRuns({ ended: true, kind: "ml" }));
+    }
     const ul = h("ul", "runlist", card);
     for (const j of jobs) {
       const li = h("li", j.status, ul); li.dataset.job = j.id; li.dataset.status = j.status;
       const main = h("div", "main", li), head = h("span", "", main); h("b", "", head, (RUN_WORD[j.status] || j.status) + " · "); head.appendChild(document.createTextNode(String(j.label).replace(/^ml: /, "")));
       const detail = ACTIVE.has(j.status) ? `${j.message} (${Math.round(j.elapsed)} s)` : j.status === "done" ? `ended ${W.ago(new Date(j.finished * 1000).toISOString())} after ${Math.round(j.elapsed)} s` : j.status === "error" ? String(j.error || "it failed") : String(j.message || "");
       h("span", "meta", main, detail);
+      const clear = h("button", "btn small", li, ACTIVE.has(j.status) ? "Not running? Clear" : "Clear"); clear.type = "button"; clear.dataset.action = "clear-run";
+      clear.title = ACTIVE.has(j.status) ? "If the app was stopped or crashed while this ran, take it off the list. A run that really is going in this app cannot be cleared." : "Take this run off the list (a finished experiment stays in the registry).";
+      clear.addEventListener("click", () => clearRuns({ id: j.id }));
       if (j.status === "done" && (j.ref || /^ml: /.test(j.label))) {                                  // a dataset build makes no experiment: nothing to open
         const open = h("button", "btn small", li, j.ref ? "Open" : "Show the experiments"); open.type = "button"; open.dataset.action = "open-run";
         open.addEventListener("click", () => { if (j.ref) openExperiment(j.ref); else { invalidate(); go("experiments"); } });

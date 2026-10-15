@@ -20,14 +20,8 @@
     for (const [k, v] of Object.entries(obj || {})) if (v !== undefined && v !== null && v !== "") p.set(k, Array.isArray(v) ? v.join(",") : String(v));
     const s = p.toString(); return s ? "?" + s : "";
   };
-  async function poll(lab, job, message) {                                                  // a long computation runs as a job on the server; ask after it until it is done
-    for (;;) {
-      await new Promise((r) => setTimeout(r, 500));
-      const v = await api("/api/job/" + job);
-      lab.busy = `${message} ${v.message} (${Math.round(v.elapsed)} s)`; Q.syncLab(lab);
-      if (v.status === "done") return v.result;
-      if (v.status === "error") throw new Error(v.error);
-    }
+  function poll(lab, job, message) {                                                        // a long computation runs as a job on the server; ask after it until it ends (or is lost with the app)
+    return Q.waitJob(job, (v) => { lab.busy = `${message} ${v.message} (${Math.round(v.elapsed)} s)`; Q.syncLab(lab); }, 500);
   }
   /* Run the requests of a plan one after the other and file each answer under the modes that draw from it. A step is { modes, path, query | body, job, cacheKey }: a GET with a query string, or a POST
      (a job when ``job`` is set); an answer kept under ``cacheKey`` in ``lab.cache`` is not asked for twice. Whatever goes wrong is shown on the mode that was open when the request was made. */
@@ -345,13 +339,7 @@
     st.busy = "Starting…"; st.error = ""; st.last = null; paintLive(lab);
     try {
       const { job } = await api("/api/data/fetch", body);
-      for (;;) {
-        await new Promise((r) => setTimeout(r, 600));
-        const v = await api("/api/job/" + job);
-        st.busy = `${v.message} (${Math.round(v.elapsed)} s)`; paintLive(lab);
-        if (v.status === "done") { st.last = v.result; break; }
-        if (v.status === "error") throw new Error(v.error);
-      }
+      st.last = await Q.waitJob(job, (v) => { st.busy = `${v.message} (${Math.round(v.elapsed)} s)`; paintLive(lab); });
       st.busy = "";
       if (spec.pick) spec.pick(st.last);
       await changed(lab, spec);
