@@ -281,10 +281,10 @@ def test_the_page_carries_the_token_and_security_headers(live):
     status, body, headers = _http(live, "/", token=False)
     assert status == 200 and live.token.encode() in body and "frame-ancestors 'none'" in headers["Content-Security-Policy"]
     assert _http(live, "/static/app.js", token=False)[0] == 200
-    for name in ("charts.js", "workspace.js", "options.js", "futures.js", "crypto.js", "ml.js", "style.css"):         # the workspaces' scripts are served like the page's own
+    for name in ("charts.js", "workspace.js", "options.js", "futures.js", "crypto.js", "ml.js", "tune.js", "style.css"):         # the workspaces' scripts are served like the page's own
         status, body, head = _http(live, f"/static/{name}", token=False)
         assert status == 200 and body and head["Content-Type"].startswith(("text/javascript", "application/javascript", "text/css")), name
-    assert b"/static/ml.js" in _http(live, "/", token=False)[1] and b"/static/workspace.js" in _http(live, "/", token=False)[1]
+    assert all(b"/static/" + n in _http(live, "/", token=False)[1] for n in (b"ml.js", b"tune.js", b"workspace.js"))
     for path in ["/static/../../README.md", "/static/index.html", "/static/%2e%2e/api.py", "/nothing"]:
         assert _http(live, path, token=False)[0] == 404
 
@@ -551,7 +551,7 @@ def test_the_catalog_states_its_version_and_that_the_code_has_not_changed_since_
     from src.webapp import api
 
     catalog = app.catalog()
-    assert catalog["api_version"] == api.API_VERSION == 7
+    assert catalog["api_version"] == api.API_VERSION == 8
     assert catalog["restart_needed"] is False                       # nothing under src/ was touched while this test process ran
 
 

@@ -51,12 +51,12 @@ Served by `src/webapp/ml_api.py`; JSON in, JSON out. Anything slow returns `{"jo
 
 | route | what |
 |---|---|
-| `GET /api/ml/catalog` | models and their settings, feature groups, targets, position rules, combination methods, defaults, limits |
+| `GET /api/ml/catalog` | models and their settings, feature groups, targets, position rules, combination methods, defaults, limits, and what tuning each model varies (`tune_spaces`, `tune_efforts`) |
 | `POST /api/ml/dataset/build` (job) | build and describe a dataset |
 | `POST /api/ml/train` (job) | the whole experiment; returns the id and the report |
 | `POST /api/ml/rebacktest` (job) | saved predictions under other signal, backtest or robustness settings |
 | `POST /api/ml/meta-label` (job) | size an experiment's bets by a second classifier |
-| `POST /api/ml/search`, `/api/ml/tune` (jobs) | strategy search; tuning one model |
+| `POST /api/ml/search`, `/api/ml/tune` (jobs), `POST /api/ml/tune/stop` | strategy search; tuning one model (with `effort`: from the form's own settings, with a verdict); end a tuning early |
 | `GET /api/ml/experiments`, `/api/ml/experiment`, `/api/ml/models`, `/api/ml/trials`, `/api/ml/feature-sets` | the registry |
 | `GET /api/ml/compare`, `/api/ml/explain`, `POST /api/ml/combine` | comparison, one prediction explained, strategy combination |
 | `GET /api/ml/forward`, `POST /api/ml/forward/step` (job) | forward-test signals and the daily step |
@@ -64,6 +64,20 @@ Served by `src/webapp/ml_api.py`; JSON in, JSON out. Anything slow returns `{"jo
 | `GET /api/jobs`, `GET /api/job/<id>` | every job the app has run, newest first (without results), and one job with its result: a page that was reloaded, or an app that was restarted, finds a run again (see below) |
 
 The browser may send only the settings of `SPEC` in `ml_api.py`, each checked for type and range; the merged configuration is then validated by `experiment_config`. A request cannot name a file path.
+
+## Tuning a model for beginners
+
+*Search*, then *Tune one model*, finds good settings for one model on the tab's dataset without choosing any numbers of trials. Pick the model, and the form lists what will be tried: the model's own settings (a ridge's `alpha`, the Kalman regression's `q` and number of features, a tree's depth and learning rate) and the ones that decide how its predictions become trades (how many days ahead it predicts, how scores become positions, how many assets on each side, how long a position is held, how often positions change), each with its range and a line on what it does. Then choose how long to look: **Quick** (8 tries), **Standard** (16) or **Thorough** (30). A try is a whole walk-forward experiment on the validation segment, so it takes seconds to a minute, and a Thorough search of a slow model can take half an hour; it runs as a background job, and **Stop** on its row in the runs card ends it after the try it is on.
+
+What it does, in order:
+
+1. **The first try is the settings in the Train form** (the model's own defaults where a box is blank), so the answer comes with a comparison. The search space is stretched to hold them.
+2. **A Tree-structured Parzen Estimator** proposes the rest (a random start of a third of the tries), never running a combination twice. Every try is scored on the validation segment only, with the penalties of `search.objective_weights` for turnover, drawdown, instability and the gap between train and validation; every try is recorded and counted against the dataset's looks at the same data. The test and forward segments are not predicted during the search.
+3. **The winner and the starting settings are each run once on every segment**, and saved as experiments called *`<model>` tuned* and *`<model>` starting settings* (one run only when the starting settings won), with the number of tries counted against them.
+4. **A verdict in words**, by the same rules as the Tune tab ([Tuning a strategy's settings](tuning.md)): the Sharpe ratio on the validation segment, where the search chose, and on the test and forward segments (weighted by days), where it did not, for the starting settings and the winner. *The improvement held up*, *only part of it held up*, *no real difference*, *probably overfitted* or *keep what you have*, with the chance that the winner's Sharpe ratio is more than luck after so many tries.
+5. **Use these settings in the Train form** copies the winner's settings (the model's own, the horizon, the position rule, the holding period and the rebalance) into the Train view; the Tune tab link on the card is for tuning a library strategy such as the Kalman trend filter on the Backtest tab's tickers.
+
+The plain search of `method` and `n_trials` (random or TPE, no comparison with the form's settings) is still what `POST /api/ml/tune` does when no `effort` is sent. `src/ml/optimization.py::tune` takes `start` (the first trial, which counts as one of the `n_trials`) and `stop`; `current_settings` reads a configuration's value for each searched setting and `include` stretches a space to hold them.
 
 ## Runs in the background
 

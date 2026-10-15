@@ -40,7 +40,7 @@ header.top { position: sticky; top: 0; z-index: 20; display: flex; flex-wrap: wr
 .brand { font-weight: 650; font-size: 16px; letter-spacing: -0.01em; white-space: nowrap; }
 .brand small { font-weight: 400; color: var(--muted); margin-left: 8px; }
 nav.tabs { display: flex; flex-wrap: wrap; gap: 2px; }                      /* six tabs: on a narrow screen they go on a second row instead of widening the page */
-nav.tabs button { background: none; border: 0; padding: 8px 14px; border-radius: 8px; cursor: pointer; color: var(--ink-2); font-weight: 500; white-space: nowrap; }
+nav.tabs button { background: none; border: 0; padding: 8px 11px; border-radius: 8px; cursor: pointer; color: var(--ink-2); font-weight: 500; white-space: nowrap; }
 nav.tabs button:hover { background: var(--ghost); }
 nav.tabs button[aria-selected="true"] { color: var(--ink); background: var(--ghost); box-shadow: inset 0 -2px 0 var(--accent); border-radius: 8px 8px 0 0; }
 .top .grow { flex: 1; }
@@ -351,3 +351,27 @@ ul.plain { margin: 0 0 6px; padding-left: 20px; display: grid; gap: 2px; font-si
   header.top { padding: 8px 12px; }
   nav.tabs { flex-wrap: nowrap; overflow-x: auto; max-width: 100%; order: 3; flex-basis: 100%; scrollbar-width: thin; }
 }
+
+/* ---------- the Tune tab ---------- */
+.tunesets { display: grid; }
+.tuneset { display: grid; gap: 6px; padding: 10px 0; border-top: 1px solid var(--border); }
+.tuneset:first-child { border-top: 0; padding-top: 0; }
+.tuneset .top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.tuneset .top label { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
+.tuneset .top .meta { color: var(--muted); font-size: 11px; border: 1px solid var(--border); border-radius: 999px; padding: 0 7px; }
+.tuneset .help { margin: 0; font-size: 12px; color: var(--ink-2); }
+.tuneset .vals { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; }
+.tuneset .vals.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.tuneset .vals label { display: grid; gap: 2px; font-size: 11.5px; color: var(--muted); }
+.verdict-card { border-left: 4px solid var(--axis); display: grid; gap: 8px; }
+.verdict-card .vhead { display: flex; align-items: center; gap: 12px; }
+.verdict-card .vhead h2 { margin: 0; font-size: 17px; }
+.verdict-card .vicon { flex: 0 0 auto; width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; color: var(--surface); background: var(--axis); }
+.verdict-card ul { margin: 0; padding-left: 20px; display: grid; gap: 4px; color: var(--ink-2); }
+.verdict-card.good { border-left-color: var(--good-text); } .verdict-card.good .vicon { background: var(--good-text); }
+.verdict-card.mixed { border-left-color: var(--warn); } .verdict-card.mixed .vicon { background: var(--warn); }
+.verdict-card.bad { border-left-color: var(--crit); } .verdict-card.bad .vicon { background: var(--crit); }
+.verdict-card.keep { border-left-color: var(--ink-2); } .verdict-card.keep .vicon { background: var(--ink-2); }
+.card.compare.honest { border-color: var(--axis); box-shadow: inset 3px 0 0 var(--accent); }
+.tunevary { display: grid; gap: 6px; }
+.tunelist { margin: 0; padding-left: 18px; font-size: 12px; color: var(--ink-2); display: grid; gap: 3px; }

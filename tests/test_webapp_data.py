@@ -63,7 +63,7 @@ def yahoo_route(level: float = 90.0, days: int = 40):
 
 # ------------------------------------------------------------------------------------------------------------------ the page and its routes
 def test_the_routes_the_version_and_the_status_describe_what_can_be_downloaded(app):
-    assert api.API_VERSION == 7 and app.catalog()["api_version"] == 7
+    assert api.API_VERSION == 8 and app.catalog()["api_version"] == 8
     assert "/api/data/status" in app.extra_get and {"/api/data/fetch", "/api/data/delete"} <= set(app.extra_post)
     st = _safe(app.extra_get["/api/data/status"]({}))
     assert set(st["kinds"]) == {"options", "futures", "crypto"} and st["running"] == [] and st["directory"] == "data/user/downloads/"

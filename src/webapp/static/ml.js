@@ -30,7 +30,7 @@
   const optNumber = (s, name) => (String(s).trim() === "" ? undefined : needNumber(s, name));
 
   const M = {
-    id: "ml", root: "#ml", view: "#view-ml", title: "Machine learning", api: 7, mode: "experiments", busy: "", results: {}, errors: {}, cache: new Map(), guard: null, go: null, progress: null,
+    id: "ml", root: "#ml", view: "#view-ml", title: "Machine learning", api: 8, mode: "experiments", busy: "", results: {}, errors: {}, cache: new Map(), guard: null, go: null, progress: null,
     about: "Train models only inside the whole pipeline: features without look-ahead, walk-forward fits, a backtest with costs, and results cut into train, validation, test and forward segments, with every look at the data counted.",
     modes: [["dataset", "Dataset"], ["train", "Train"], ["experiments", "Experiments"], ["compare", "Compare"], ["explain", "Explain"], ["overfit", "Overfitting"], ["search", "Search"], ["combine", "Combine"], ["forward", "Forward test"]],
     runLabel: { dataset: "Build the dataset", train: "Train and backtest", experiments: "Refresh", compare: "Compare", explain: "Explain", overfit: "Check again", search: "Run the search", combine: "Combine", forward: "Record today's signal" },
@@ -48,7 +48,7 @@
       window: "expanding", rollingDays: "1260", minTrain: "756", refit: "", embargo: "0", valFrac: "20", testFrac: "15", fwdFrac: "15", model: "ridge", params: {},
       signal: "top_n_long_short", n: "3", quantile: "30", threshold: "0", gross: "1", net: "0", maxWeight: "35", holding: "5", rebalance: "weekly", cost: "5", slippage: "2", targetVol: "10", maxLev: "1.5",
       explain: true, robust: false, seed: "0", sort: "validation.sharpe", fModel: "", fStage: "", fUniverse: "", exp: "", asset: "", date: "", perms: "40",
-      searchKind: "search", kinds: new Set(), nRandom: "8", nBayes: "6", generations: "2", population: "6", topK: "2", tuneMethod: "random", tuneTrials: "12",
+      searchKind: "search", kinds: new Set(), nRandom: "8", nBayes: "6", generations: "2", population: "6", topK: "2", tuneEffort: "standard",
       methods: new Set(), lookback: "252", every: "21", riskAversion: "5", capital: "100000", asOf: "" },
   };
 
@@ -258,11 +258,27 @@
           { key: "population", label: "Genetic population", min: 2, max: cat.limits.search_population }, { key: "topK", label: "Finalists run on every segment", min: 1, max: cat.limits.search_top_k }]) Q.labField(b, { kind: "number", step: 1, ...s }, f, after);
         h("p", "hint", b, "The search varies the model, its settings, the horizon, the position rule and the rebalancing. The data and cost settings below stay as they are.");
       } else {
-        const tunable = cat.models.filter((k) => k.available && Object.values(k.params).some((v) => typeof v === "number"));
+        const spaces = cat.tune_spaces || {}, tunable = cat.models.filter((k) => k.available && spaces[k.kind]);
         if (!tunable.some((k) => k.kind === f.model)) f.model = tunable[0].kind;                 // the form shows what it sends
-        Q.labField(b, { key: "model", label: "Model to tune", kind: "choice", options: tunable.map((k) => [k.kind, k.label]) }, f, after);
-        Q.labField(b, { key: "tuneMethod", label: "Method", kind: "choice", options: [["random", "Random"], ["tpe", "Bayesian (TPE)"]] }, f, after);
-        Q.labField(b, { key: "tuneTrials", label: "Trials", kind: "number", step: 1, min: 4, max: cat.limits.tune_trials }, f, after);
+        function paintVary() {                                                                   // what tuning this model varies, so nothing happens that the page did not say
+          vary.replaceChildren();
+          const rows = spaces[f.model] || [], label = (tunable.find((k) => k.kind === f.model) || {}).label || f.model;
+          h("p", "hint", vary, `Tuning ${label} tries ${rows.length} settings: its own, and the ones that decide how its predictions become trades. The first try is the settings in the Train form (the model's own where you left them blank), so the answer comes with a comparison.`);
+          const ul = h("ul", "tunelist", vary);
+          for (const r of rows) {
+            const li = h("li", "", ul); h("b", "", li, r.label + ": ");
+            li.appendChild(document.createTextNode((r.kind === "categorical" ? r.choices.join(" or ") : `${setting(r.low)} to ${setting(r.high)}`) + ". " + r.text + "."));
+          }
+        }
+        const box = h("div", "", b);
+        Q.labField(box, { key: "model", label: "Model to tune", kind: "choice", options: tunable.map((k) => [k.kind, k.label]) }, f, () => { paintVary(); after(); });
+        const vary = h("div", "tunevary", box), efforts = cat.tune_efforts || [];
+        h("span", "hint", box, "How long to look:");
+        const how = W.seg(box, efforts.map((e) => [e.id, cap(e.id)]), f.tuneEffort, (v) => { f.tuneEffort = v; paintEffort(); });
+        how.dataset.role = "tune-effort";
+        const effort = h("p", "hint", box, "");
+        function paintEffort() { effort.textContent = ((efforts.find((e) => e.id === f.tuneEffort) || {}).text || "") + ". Each try is a walk-forward experiment on the validation segment, which takes seconds to a minute."; }
+        paintVary(); paintEffort();
       }
       const d = sec("2. Data", false); universeBlock(d); featureBlock(d); targetBlock(d);
       prepBlock(sec("3. Preparation and window", false)); segmentBlock(sec("4. Segments and refits", false)); signalBlock(sec("5. Position rule", false)); costBlock(sec("6. Costs and risk", false));
@@ -322,7 +338,7 @@
     if (m === "search") {
       const tune = f.searchKind === "tune", before = M.results.search;
       await W.request(M, () => (tune
-        ? [{ modes: ["search"], job: true, path: "/api/ml/tune", body: { ...baseBody(f), model: modelBody(f), n_trials: needNumber(f.tuneTrials, "Trials"), method: f.tuneMethod, finalize: true } }]
+        ? [{ modes: ["search"], job: true, path: "/api/ml/tune", body: { ...baseBody(f), model: modelBody(f), effort: f.tuneEffort, finalize: true } }]
         : [{ modes: ["search"], job: true, path: "/api/ml/search", body: { ...baseBody(f), kinds: [...f.kinds], n_random: needNumber(f.nRandom, "Random trials"), n_bayes: needNumber(f.nBayes, "Bayesian trials"), generations: needNumber(f.generations, "Generations"),
           population: needNumber(f.population, "Population"), top_k: needNumber(f.topK, "Finalists") } }]), tune ? "Tuning…" : "Searching…");
       if (M.results.search !== before) invalidate();
@@ -356,7 +372,8 @@
     combine: ["Combine strategies", ["Choose two to twelve experiments on the left: ten ways to weight them, each estimated only from the returns up to the day it is used."]],
     forward: ["Forward test", ["Record the saved model's signal for the newest date, settle the signals whose window has passed, and watch the live rank IC and the drift of each feature against the backtest."]] };
   M.empty = (root) => Q.labEmpty(root, M, EMPTY[M.mode][0], EMPTY[M.mode][1], M.runLabel[M.mode]);
-  M.draw = () => { Q.drawLab(M); paintRuns(); };
+  M.draw = () => Q.drawLab(M);
+  M.paint = () => paintRuns();
 
   /* ---------- runs in the background ----------
      A training, a search or a re-backtest runs on the app's own worker, not in this page: closing the tab does not stop it, and the experiment is saved when it ends. What a reloaded page lost was the knowledge
@@ -409,6 +426,10 @@
       const main = h("div", "main", li), head = h("span", "", main); h("b", "", head, (RUN_WORD[j.status] || j.status) + " · "); head.appendChild(document.createTextNode(String(j.label).replace(/^ml: /, "")));
       const detail = ACTIVE.has(j.status) ? `${j.message} (${Math.round(j.elapsed)} s)` : j.status === "done" ? `ended ${W.ago(new Date(j.finished * 1000).toISOString())} after ${Math.round(j.elapsed)} s` : j.status === "error" ? String(j.error || "it failed") : String(j.message || "");
       h("span", "meta", main, detail);
+      if (j.status === "running" && /^ml: tune /.test(j.label)) {
+        const stop = h("button", "btn small", li, "Stop"); stop.type = "button"; stop.dataset.action = "stop-run"; stop.title = "End the tuning after the trial it is on; the best so far is still run on every segment";
+        stop.addEventListener("click", async () => { stop.disabled = true; try { await api("/api/ml/tune/stop", { job: j.id }); } catch (e) { Q.toast(e.message); stop.disabled = false; } });
+      }
       const clear = h("button", "btn small", li, ACTIVE.has(j.status) ? "Not running? Clear" : "Clear"); clear.type = "button"; clear.dataset.action = "clear-run";
       clear.title = ACTIVE.has(j.status) ? "If the app was stopped or crashed while this ran, take it off the list. A run that really is going in this app cannot be cleared." : "Take this run off the list (a finished experiment stays in the registry).";
       clear.addEventListener("click", () => clearRuns({ id: j.id }));
@@ -771,9 +792,37 @@
   /* ---------- search and tune ---------- */
   const family = (stage) => String(stage).replace(/-\d+$/, "");
   function paramText(p) { return Object.entries(p).map(([k, v]) => `${k.split(".").pop()}=${typeof v === "number" ? +v.toPrecision(3) : v}`).join(", "); }
+  const ICON = { good: "✓", mixed: "!", bad: "✗", keep: "=" };                              // a verdict is never colour alone
+  const setting = (v) => (typeof v === "number" ? String(+Number(v).toPrecision(3)) : String(v));
+  /* A tuning that started from the form's own settings: the verdict in words, the settings it chose against the ones it started from, and a button that puts the chosen ones in the Train form. */
+  function plainTune(root, d) {
+    const v = d.summary, card = h("div", "card verdict-card " + v.level, root); card.dataset.level = v.level;
+    const head = h("div", "vhead", card); h("span", "vicon", head, ICON[v.level] || "?"); h("h2", "", head, v.headline);
+    const ul = h("ul", "", card); for (const r of v.reasons) h("li", "", ul, r);
+    const c = W.card(root, "The settings", "The settings you started from, and the best the search found. Values are rounded; the button uses the exact ones.");
+    table(c, [{ label: "Setting", get: (p) => p.split(".").pop().replace(/_/g, " ") }, { label: "Starting", num: true, get: (p) => setting(d.start[p]) }, { label: "Best found", num: true, get: (p) => setting(d.best.params[p]) },
+      { label: "What it does", get: (p) => (d.texts || {})[p] || "" }], d.order || d.space);
+    const row = h("div", "row tight", c), use = h("button", "btn primary", row, "Use these settings in the Train form"); use.type = "button"; use.dataset.action = "use-tuned";
+    use.addEventListener("click", () => useTuned(d));
+    const other = h("button", "link", row, "Tuning a strategy from the Backtest tab (the Kalman trend filter, momentum…)? The Tune tab does that."); other.type = "button"; other.addEventListener("click", () => Q.showTab("tune"));
+  }
+  function useTuned(d) {
+    const f = M.form; f.model = d.kind; f.params[d.kind] = f.params[d.kind] || {};
+    for (const [path, value] of Object.entries(d.best.params)) {
+      const leaf = path.split(".").pop();
+      if (path.startsWith("model.params.")) f.params[d.kind][leaf] = String(value);
+      else if (path === "dataset.horizon") f.horizon = String(value);
+      else if (path === "signal.method") f.signal = value;
+      else if (path === "signal.n") f.n = String(value);
+      else if (path === "signal.holding_period") f.holding = String(value);
+      else if (path === "backtest.rebalance") f.rebalance = value;
+    }
+    Q.toast("The Train form has these settings: press Train and backtest"); go("train");
+  }
   function buildSearch(root, d) {
     const tune = !d.finalists, sel = d.selection || {}, trials = d.trials || [], best = d.best;
     header(root, tune ? "Tuning one model" : "Strategy search", `${d.n_trials} trials${d.n_failed ? ` (${d.n_failed} failed)` : ""}${d.seconds ? ` · ${num(d.seconds, 1)} s` : ""}${d.stages ? " · " + Object.entries(d.stages).map(([s, n]) => `${n} ${s}`).join(", ") : ""}`);
+    if (tune && d.summary) plainTune(root, d);
     W.flags(root, [d.note || "Scores are validation-only: the test and forward segments were not predicted during the search."], "Read first. ");
     const k = h("div", "earnrow", root);
     tile(k, "Trials", String(d.n_trials), { text: tune ? "validation only" : `${(d.kinds || []).length} model kinds` });

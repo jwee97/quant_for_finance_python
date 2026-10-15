@@ -6,7 +6,7 @@ quant serve            # opens http://127.0.0.1:8765 ; --port, --no-browser, --h
 
 Everything runs on your machine. The server listens on localhost only, and every request needs a token that exists only in the page it served.
 
-The server loads its code when it starts. After you update the files (a `git pull`), stop it and start it again: the page is read from disk on every load, so it can be newer than the server behind it. When it is, a banner says so (*The app is older than this page* needs a restart before anything works; *The app was updated after it started* means some of its code changed since it started). The Execution and Cash flows tabs need a newer app than the Backtest tab does, the Options, Futures, Crypto and Machine learning tabs need a newer one still, and the Free data cards of the first three the newest: with an older app the Backtest keeps working and those tabs say they need a restart.
+The server loads its code when it starts. After you update the files (a `git pull`), stop it and start it again: the page is read from disk on every load, so it can be newer than the server behind it. When it is, a banner says so (*The app is older than this page* needs a restart before anything works; *The app was updated after it started* means some of its code changed since it started). The Execution and Cash flows tabs need a newer app than the Backtest tab does, the Options, Futures and Crypto tabs need a newer one still, and the Free data cards of the first three, the Machine learning tab and the Tune tab the newest: with an older app the Backtest keeps working and those tabs say they need a restart.
 
 ## Backtest
 
@@ -126,6 +126,12 @@ Every run of the session, with up to six overlaid, rebased to 100 at the latest 
 
 The builder has the formula editor (check against your tickers, function reference, examples) and the Python template; see [How to add a strategy](how_to_add_a_strategy.md).
 
+## Tune
+
+The Tune tab finds good settings for one strategy on the tickers listed in the Backtest tab, and says whether to believe them: [Tuning a strategy's settings](tuning.md) has the whole story. You choose a strategy (the Kalman trend filter, for instance), tick the settings that may change (each has a range, and a line on what a higher or lower value does), choose how long to look (Quick, Standard, Thorough or your own limits) and press **Find the best settings**. It runs as a background job like a backtest, with **Stop and show what it has so far**, and a finished search is listed again under *Recent runs* after a reload.
+
+The first try is your starting settings, so there is always something to compare with, and the last 30% of the days are kept back: the search never sees them, and at the end the starting settings and the winner are compared on them. The answer is a verdict in words (*the improvement held up on the untouched days*, *probably overfitted*, *keep what you have*), the best settings against the starting ones, the two windows side by side with holding every ticker equally, the growth of 1 with the divide marked, a chart of the score against each setting (a broad flat top is safe; a spike is fragile), what each ticker added on the untouched days, and the deflated Sharpe ratio and probability of backtest overfitting of the search. Every try counts as a trial in the top bar's counter, under the same fingerprint as a backtest of those settings, so running the winner in the Backtest tab afterwards (**Open the Backtest tab with these settings**) does not count it twice. The JSON routes are `GET /api/tune/plan?strategy=`, `POST /api/tune/run` (a job) and `POST /api/tune/stop`.
+
 ## Execution
 
 The Execution tab runs the simulators behind the [execution algorithms](techniques/execution-algorithms.md) from a form, with no code. Nothing is downloaded and nothing is sent to a broker: the market is made from the numbers you type (shares, average daily volume, price, daily volatility, spread, slices in the day). Each mode keeps its form and its last result while you use other tabs, and each result has a *Read the guide* button.
@@ -180,7 +186,7 @@ The Machine learning tab trains models **only inside the whole research pipeline
 - **Compare.** Two to eight experiments: settings and Sharpe by segment side by side, equity curves over the days they share, the correlation matrix and a map of how alike they are.
 - **Explain.** Why the saved model scored an asset as it did on a date: a Shapley waterfall that sums exactly to the score, the day's scores for every asset, and the global importances.
 - **Overfitting.** The generalisation score, the deflated Sharpe ratio, the probability that the true Sharpe is positive on test and forward, the Sharpe through the validation blocks, the rank IC by refit, ten stress tests with a random-signal control, and meta-labelling.
-- **Search.** Random, then Bayesian, then genetic search over model kind, settings, horizon, position rule and rebalancing on validation only, with the deflated Sharpe, the probability of backtest overfitting and the Romano-Wolf p-value of the winner; or tune the settings of one model.
+- **Search.** Random, then Bayesian, then genetic search over model kind, settings, horizon, position rule and rebalancing on validation only, with the deflated Sharpe, the probability of backtest overfitting and the Romano-Wolf p-value of the winner; or **tune the settings of one model**: choose Quick, Standard or Thorough and it starts from the Train form's own settings, tries the rest, runs the winner and the starting settings once on the test and forward segments, and says in words whether the gain held up there ([how](ml_platform.md#tuning-a-model-for-beginners)).
 - **Combine.** Ten ways to weight several strategies, each estimated from the past only, with the similarity map of the strategies.
 - **Forward test.** Record the saved model's signal for the newest date as paper orders, settle the signals whose window has ended and watch the live rank IC and the drift of every feature against the backtest.
 
@@ -194,7 +200,7 @@ The Guides tab reads the technique guides, the glossary, the strategy cards and 
 
 ## What it will not do
 
-- It does not tune anything for you or choose a strategy.
+- It does not choose a strategy for you. The Tune tab searches one strategy's settings and says how much of the improvement survived days it never saw, but a strategy without an edge stays without one.
 - Platform ETFs end on the dataset snapshot date; other tickers run to today. A mixed universe stops at the shorter end and never fills a missing price.
 - Weekend and holiday gaps: for mixed universes it keeps weekdays on which at least 60% of the tickers traded.
 - Yahoo Finance data are free and unaudited: corporate actions and delistings are not curated. iTick's adjustments are undocumented (see above). The platform's 15 ETFs are the versioned, cleaned dataset.

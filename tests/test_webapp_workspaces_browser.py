@@ -282,20 +282,26 @@ def test_an_app_without_the_data_routes_explains_the_card_instead_of_leaving_it_
         pg.close()
 
 
-def test_an_app_one_version_behind_keeps_the_machine_learning_tab_and_asks_the_asset_tabs_for_a_restart(browser, live_ws):  # noqa: F811
-    """The iTick source arrived with API version 6: an app at 5 still serves the Machine learning tab, but the three asset tabs need the newer one."""
-    pg = _page_with(browser, live_ws, rewrite=lambda catalog: catalog.update(api_version=5))
-    try:
-        pg.wait_for_selector(".chip")
-        for tab in ("options", "futures", "crypto"):
-            pg.click(f"#tab-{tab}")
-            pg.wait_for_selector(f"#{tab} .card.empty")
-            assert "needs a newer app" in pg.inner_text(f"#{tab}") and "this tab needs 6" in pg.inner_text(f"#{tab}")
-        pg.click("#tab-ml")
-        pg.wait_for_selector("#ml .panel")
-        assert "needs a newer app" not in pg.inner_text("#ml") and not pg.problems, pg.problems
-    finally:
-        pg.close()
+def test_an_app_behind_the_page_asks_for_a_restart_on_the_tabs_that_need_more_and_keeps_the_others(browser, live_ws):  # noqa: F811
+    """Each tab needs the API version it was written for: iTick arrived with 6 (Options, Crypto), the Futures tab's Yahoo search with 7, the Tune tab and the Machine learning tab's beginner tuning with 8. An older app
+    says so on exactly the tabs that need a newer one, and the Backtest tab keeps working."""
+    needs = {"options": 6, "futures": 7, "crypto": 6, "ml": 8, "tune": 8}
+    for served in (5, 6, 7, 8):
+        pg = _page_with(browser, live_ws, rewrite=lambda catalog, served=served: catalog.update(api_version=served))
+        try:
+            pg.wait_for_selector(".chip")
+            for tab, need in needs.items():
+                pg.click(f"#tab-{tab}")
+                if need > served:
+                    pg.wait_for_selector(f"#{tab} .card.empty")
+                    assert "needs a newer app" in pg.inner_text(f"#{tab}") and f"this tab needs {need}" in pg.inner_text(f"#{tab}") and f"reports version {served}" in pg.inner_text(f"#{tab}"), (served, tab)
+                else:
+                    pg.wait_for_selector(f"#{tab} .panel")
+                    assert "needs a newer app" not in pg.inner_text(f"#{tab}"), (served, tab)
+            pg.click("#tab-backtest")
+            assert pg.locator("#panel details").count() >= 3 and not pg.problems, pg.problems
+        finally:
+            pg.close()
 
 
 # ------------------------------------------------------------------------------------------------------ machine learning
@@ -316,6 +322,42 @@ def test_a_form_that_cannot_run_is_not_sent(ws):
     assert ws.locator("#ml .runbar button.primary").is_disabled() and "at least 30%" in ws.inner_text("#ml .runbar .guard")
     _mode(ws, "ml", "compare")
     assert ws.locator("#ml .runbar button.primary").is_disabled() and "between two and eight" in ws.inner_text("#ml .runbar .guard")
+
+
+def test_tuning_one_model_says_what_it_varies_how_long_it_looks_and_whether_the_gain_held_up(ws):
+    ws.click("#tab-ml")
+    ws.wait_for_selector("#ml .panel")
+    _mode(ws, "ml", "search")
+    ws.click("#ml .seg button[data-value=tune]")
+    ws.wait_for_selector("[data-role=tune-effort]")
+    varied = ws.inner_text("#ml .tunevary")
+    assert "alpha" in varied and "held back from fitting noise" in varied and "horizon" in varied and "How many assets are held on each side" in varied and "first try is the settings in the Train form" in varied
+    assert [b.get_attribute("data-value") for b in ws.locator("[data-role=tune-effort] button").all()] == ["quick", "standard", "thorough"]
+    assert "16 tries" in ws.inner_text("#ml .panel") and "Each try is a walk-forward experiment" in ws.inner_text("#ml .panel")
+    ws.click("[data-role=tune-effort] button[data-value=quick]")
+    assert "8 tries" in ws.inner_text("#ml .panel")
+    _open_all(ws, "ml")
+    ws.fill("#ml input[data-key=minTrain]", "500")
+    ws.fill("#ml input[data-key=refit]", "63")
+    assert ws.locator("#ml .runbar button.primary").inner_text() == "Run the search"
+    _run(ws, "ml")
+    ws.wait_for_selector("#ml-results .verdict-card", timeout=300_000)
+    card = ws.locator("#ml-results .verdict-card")
+    assert card.get_attribute("data-level") in ("good", "mixed", "bad", "keep") and card.locator(".vicon").inner_text() in ("✓", "!", "✗", "=")
+    text = ws.inner_text("#ml-results")
+    assert "validation segment" in card.inner_text() and ("test and forward segments" in card.inner_text() or "Nothing tried did better" in card.inner_text()), card.inner_text()
+    assert "8 trials" in text and "The settings" in text and "Use these settings in the Train form" in text and "Probability of overfitting" in text
+    assert ws.locator("#ml-results .card:has(h3:text-is('The settings')) tbody tr").count() == 6
+    row = ws.locator("#ml-results .card:has(h3:text-is('The settings')) tbody tr").first
+    assert row.locator("td").first.inner_text() == "alpha", "the model's own settings come first, then the ones that turn predictions into trades"
+    best = row.locator("td").nth(2).inner_text()
+    ws.click("button[data-action=use-tuned]")
+    assert ws.locator("#view-ml .tabsmall button[aria-selected=true]").get_attribute("data-mode") == "train"
+    assert float(ws.locator("#ml input[data-key=alpha]").input_value()) == pytest.approx(float(best), rel=0.01), "the Train form has the alpha the search found"
+    _mode(ws, "ml", "search")
+    ws.wait_for_selector("#ml-results .verdict-card")                                                 # the result stays while the form is used elsewhere
+    ws.click("#ml-results button:has-text('The Tune tab does that')")
+    assert ws.locator("#tab-tune").get_attribute("aria-selected") == "true"
 
 
 def test_the_machine_learning_tab_trains_a_model_checks_it_explains_it_and_follows_it_forward(ws):

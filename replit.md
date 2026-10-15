@@ -30,8 +30,8 @@ this page* means the app must be restarted, and a banner reading *The app was
 updated after it started* means some of its code changed on disk since it started.
 The Execution and Cash flows tabs need a newer app than the Backtest tab does, so with an
 older one the Backtest keeps working and those two tabs say that they need a restart; the
-Options, Futures, Crypto and Machine learning tabs, and the Free data cards on the first
-three, need newer ones still, and say so in the same way.
+Options, Futures and Crypto tabs, and the Free data cards on them, need newer ones still, and
+the Tune tab and the Machine learning tab the newest, and say so in the same way.
 Your saved tickers and runs are kept across restarts.
 
 ## Free data for the Options, Futures and Crypto tabs
@@ -80,7 +80,9 @@ Machine learning tab shows a card, *Runs in the background*, with what is runnin
 or ended in the last six hours: it follows them, opens the experiment a finished run made, and
 shows a run that was lost as *Stopped* (within about a minute of a crash), with the last thing it was doing. *Clear* takes a row off the list, and *Not running? Clear* takes off a run that still says running after a crash. Nothing is
 checkpointed or resumed: a lost run starts again from the beginning. Runs go one at a time, so
-a long search delays anything queued behind it.
+a long search delays anything queued behind it. The Tune tab's searches ([docs/tuning.md](docs/tuning.md)) and the
+Machine learning tab's tuning are jobs of the same kind, with a *Stop* button on the row: a Kalman trend search on
+the 15 ETFs takes about a second a try (Quick: half a minute), a model that is fitted every month takes much longer.
 
 **What Replit does.** This is from Replit's documentation as of October 2026; it could not
 be tried from here. The workspace's preview address is described as temporary and live only

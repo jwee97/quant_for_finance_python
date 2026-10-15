@@ -59,6 +59,39 @@ def test_a_search_never_predicts_the_reserved_segments_and_deflates_its_winner(b
     assert tpe["n_trials"] == 12 and tpe["best"] is not None
 
 
+def test_the_current_settings_are_read_from_the_configuration_and_the_space_is_stretched_to_hold_them():
+    space = ss.kind_space("ridge")
+    now = opt.current_settings({**BASE, "model": {"kind": "ridge", "params": {"alpha": 30.0}}, "signal": {"n": 2, "holding_period": 10}}, space)
+    assert now["model.params.alpha"] == 30.0 and now["signal.n"] == 2 and now["signal.holding_period"] == 10 and now["backtest.rebalance"] == "weekly" and now["dataset.horizon"] == 5
+    assert opt.current_settings({**BASE, "model": {"kind": "ridge", "params": {}}}, space)["model.params.alpha"] == 10.0, "a setting the form leaves alone is the model's own default"
+    wide = opt.include(space, {**now, "model.params.alpha": 5000.0, "signal.n": 9})
+    assert wide["model.params.alpha"].high == 5000.0 and wide["model.params.alpha"].low == 0.1 and wide["signal.n"].high == 9 and 10 in wide["signal.holding_period"].choices
+    assert wide["signal.method"] is space["signal.method"], "a distribution that already holds the value is left as it is"
+    with pytest.raises(ValueError, match="above zero"):
+        opt.include({"model.params.alpha": LogFloat(0.1, 10.0)}, {"model.params.alpha": 0.0})
+    with pytest.raises(ValueError, match="not known"):
+        opt.current_settings(BASE, {"model.params.nonsense": Float(0, 1)})
+
+
+def test_a_tuning_that_starts_from_given_settings_runs_them_first_never_repeats_and_can_be_stopped(bundle):
+    space = {"model.params.alpha": LogFloat(0.1, 1000.0), "signal.n": Int(1, 3)}
+    begin = {"model.params.alpha": 30.0, "signal.n": 2}
+    out = opt.tune(BASE, space, n_trials=6, method="tpe", seed=1, bundle=bundle, study_name="t3", start=begin)
+    assert out["n_trials"] == 6 and out["start_number"] == 0 and out["trials"][0]["params"] == begin and out["stopped"] is None
+    keys = [(round(t["params"]["model.params.alpha"], 9), t["params"]["signal.n"]) for t in out["trials"]]
+    assert len(set(keys)) == 6, "no configuration is run twice"
+    calls = {"n": 0}
+
+    def stop():
+        calls["n"] += 1
+        return calls["n"] >= 2
+
+    cut = opt.tune(BASE, space, n_trials=10, method="tpe", seed=1, bundle=bundle, study_name="t4", start=begin, stop=stop)
+    assert cut["stopped"] == "user" and cut["n_trials"] == 3 and cut["best"] is not None, "the trial in progress finishes, then it ends; what ran is kept and reported"
+    plain = opt.tune(BASE, {"model.params.alpha": LogFloat(0.1, 1000.0)}, n_trials=4, method="random", seed=1, bundle=bundle, study_name="t5")
+    assert plain["start_number"] is None and plain["n_trials"] == 4, "without a start the search is what it always was"
+
+
 def test_a_failed_candidate_is_counted_not_hidden(bundle):
     runner = opt.TrialRunner({**BASE, "split": {"min_train_days": 500, "refit_every": 63}}, bundle=bundle, study="bad")
     score, net, detail = runner.evaluate({"split.min_train_days": 100000})

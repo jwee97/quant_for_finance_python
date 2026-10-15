@@ -20,7 +20,7 @@ from .api import ApiError, App
 
 STATIC = Path(__file__).parent / "static"
 JS = "text/javascript; charset=utf-8"
-FILES = {"app.js": JS, "style.css": "text/css; charset=utf-8", "charts.js": JS, "workspace.js": JS, "options.js": JS, "futures.js": JS, "crypto.js": JS, "ml.js": JS}
+FILES = {"app.js": JS, "style.css": "text/css; charset=utf-8", "charts.js": JS, "workspace.js": JS, "options.js": JS, "futures.js": JS, "crypto.js": JS, "ml.js": JS, "tune.js": JS}
 MAX_BODY = 200_000
 MAX_QUERY_FIELDS = 40
 LOOPBACK = {"127.0.0.1", "localhost", "::1", "[::1]"}

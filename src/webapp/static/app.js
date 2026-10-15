@@ -292,14 +292,16 @@
     }
     refreshGuard();
   }
+  function pickAllocator(entry) {                                                            // the allocation this tab chooses by itself for one strategy (the Tune tab asks for the same)
+    const only = entry ? modelInfo(entry.name) : null;
+    if (only && only.book === "sleeves") return "sleeves";
+    if (only && only.family === "custom") return (entry.params.mode || (only.params.find((p) => p.name === "mode") || {}).default) === "time_series" ? "sleeves" : "score_stack";
+    if (only && only.user) return only.position_mode === "time_series" ? "sleeves" : "score_stack";
+    return "";
+  }
   function autoAllocator() {
     if (S.allocatorTouched) return;
-    const entry = S.models.length === 1 ? S.models[0] : null, only = entry ? modelInfo(entry.name) : null;
-    let pick = "";
-    if (only && only.book === "sleeves") pick = "sleeves";
-    else if (only && only.family === "custom") pick = (entry.params.mode || (only.params.find((p) => p.name === "mode") || {}).default) === "time_series" ? "sleeves" : "score_stack";
-    else if (only && only.user) pick = only.position_mode === "time_series" ? "sleeves" : "score_stack";
-    S.allocator = pick; S.allocParams = {};
+    S.allocator = S.models.length === 1 ? pickAllocator(S.models[0]) : ""; S.allocParams = {};
   }
   function renderPortfolio() {
     const box = $("#p-body"); box.replaceChildren();
@@ -360,15 +362,27 @@
   }
 
   /* ================================================================= run */
-  function buildBody() {
+  /* The universe this tab has chosen: the tickers with their asset classes, the start date and the data source. The Tune tab runs on the same one, so what it finds is about the tickers listed here. */
+  function universeBody() {
     const tickers = S.tickers.filter((x) => x.status !== "bad");
     if (S.tickers.some((x) => x.status === "pending")) throw new Error("Wait for the ticker checks to finish");
     if (tickers.length < 1) throw new Error("Choose at least one ticker");
-    if (!S.guard.ok) throw new Error(S.guard.message);
     const classes = {}; const isDefault = new Set(S.catalog.default_tickers); for (const x of tickers) if (!isDefault.has(x.t) && x.cls !== "unknown") classes[x.t] = x.cls;
-    return { tickers: tickers.map((x) => x.t), classes, start: S.start || null, models: S.models.map((m) => ({ name: m.name, params: m.params })), combination: S.combination,
+    return { tickers: tickers.map((x) => x.t), classes, start: S.start || null, source: S.source, refresh: S.refresh };
+  }
+  function buildBody() {
+    const universe = universeBody();
+    if (!S.guard.ok) throw new Error(S.guard.message);
+    return { ...universe, models: S.models.map((m) => ({ name: m.name, params: m.params })), combination: S.combination,
       allocator: S.allocator || null, allocator_params: S.allocParams, regime: S.regime || null, regime_risk: S.regimeRisk, aum: S.aum ? parseFloat(S.aum) : null,
-      validate: S.validate, refresh: S.refresh, label: S.label || null, source: S.source, capital: S.capital ? parseFloat(S.capital) : null };
+      validate: S.validate, label: S.label || null, capital: S.capital ? parseFloat(S.capital) : null };
+  }
+  /* Put one strategy with these settings into the Backtest tab (the Tune tab's "Use these settings") and open it. The tickers stay; the strategy list is replaced. */
+  function useStrategy(name, params) {
+    if (!modelInfo(name)) { toast(`${name} is not in this app's strategy list`); return false; }
+    S.models = [{ name, params: { ...params } }];
+    autoAllocator(); renderStrategies(); renderPortfolio(); showTab("backtest");
+    return true;
   }
   function setBusy(busy, message) {
     S.busy = busy; syncRun(); const p = $("#progress"); p.replaceChildren();
@@ -402,6 +416,7 @@
     renderResult({ fresh: true });
   }
   function updateTrials() { const n = S.trials.n || 0; $("#trials").textContent = n ? `${n} trial${n === 1 ? "" : "s"} on this universe` : "no trials yet"; }
+  function setTrials(n) { S.trials = { n }; updateTrials(); }                                // the Tune tab adds one trial per setting it tries on this universe
   $("#trials").addEventListener("dblclick", async () => { await api("/api/trials/reset", {}); S.trials = {}; updateTrials(); toast("Trial counter reset"); });
 
   /* ================================================================= window maths */
@@ -823,8 +838,10 @@
     if (serverApi() < (lab.api || LAB_API)) { labOld(root, lab.api || LAB_API); return; }
     const panel = h("aside", "card panel", root); panel.setAttribute("aria-label", lab.title + " setup");
     const top = h("div", "labtop", panel); h("h2", "", top, lab.title); h("p", "hint", top, lab.about);
-    const pills = h("div", "tabsmall", top);
-    for (const [key, text] of lab.modes) { const b = h("button", "", pills, text); b.dataset.mode = key; b.setAttribute("aria-selected", String(key === lab.mode)); b.addEventListener("click", () => { lab.mode = key; renderLab(lab); }); }
+    if (lab.modes.length > 1) {                                                              // a tab with one mode has nothing to switch between
+      const pills = h("div", "tabsmall", top);
+      for (const [key, text] of lab.modes) { const b = h("button", "", pills, text); b.dataset.mode = key; b.setAttribute("aria-selected", String(key === lab.mode)); b.addEventListener("click", () => { lab.mode = key; renderLab(lab); }); }
+    }
     h("p", "hint", top, lab.blurb[lab.mode]);
     lab.sections(panel);
     const foot = h("div", "runbar", panel); lab.guard = h("p", "guard", foot); lab.guard.setAttribute("role", "status"); lab.guard.hidden = true;
@@ -841,6 +858,7 @@
       const error = lab.errors[lab.mode], got = lab.results[lab.mode];
       if (error) labBanner(root, "That did not run. ", error, true);
       if (got) lab.build(root, got.data, got.body); else if (!error) lab.empty(root);
+      if (lab.paint) lab.paint(root);                                                        // what a tab keeps on top of its results (the list of runs in the background) survives every redraw
     }, root);
   }
 
@@ -1368,6 +1386,7 @@
     if (booted && store("tab") === name) showTab(name);
   }
   window.QL = { C, h, fmt, $, api, css, store, toast, copy, download, num, pct, money, smoney, axisMoney, bad, bps, grouped, plain, unsign, colorOf, SLOTS, tile, chartCard, simpleTable, sampleRows, keepScroll, labField, checkList, numbers,
-    labHead, labBanner, labEmpty, labOld, syncLab, renderLab, drawLab, openGuide, serverApi, RESTART, notice, registerWorkspace, labelPx, running, S, setupGuide, waitJob };
+    labHead, labBanner, labEmpty, labOld, syncLab, renderLab, drawLab, openGuide, serverApi, RESTART, notice, registerWorkspace, labelPx, running, S, setupGuide, waitJob,
+    universeBody, pickAllocator, useStrategy, setTrials, showTab };
   boot();
 })();

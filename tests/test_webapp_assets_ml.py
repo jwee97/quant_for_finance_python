@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from src.ml import optimization as opt
 from src.utils.config import load_config
 from src.webapp import api, server
 from src.webapp.api import ApiError, App
@@ -73,7 +74,7 @@ def test_a_task_runs_on_the_worker_and_reports_its_result_or_its_message(assets)
 
 
 def test_the_version_announces_the_new_workspaces_and_the_routes_are_registered(assets):
-    assert assets.catalog()["api_version"] == api.API_VERSION == 7
+    assert assets.catalog()["api_version"] == api.API_VERSION == 8
     for path in ("/api/options/chain", "/api/options/surface", "/api/futures/curve", "/api/futures/roll", "/api/crypto/funding", "/api/ml/catalog", "/api/ml/experiments"):
         assert path in assets.extra_get, path
     for path in ("/api/options/portfolio-risk", "/api/options/strategy/payoff", "/api/options/strategy/backtest", "/api/ml/train", "/api/ml/search", "/api/ml/combine"):
@@ -412,6 +413,57 @@ def test_tuning_one_model_searches_its_settings_and_can_finalise_the_best(mlapp)
         mlapp.extra_post["/api/ml/tune"]({**BASE, "model": {"kind": "linear"}})
     with pytest.raises(ApiError, match="method must be"):
         mlapp.extra_post["/api/ml/tune"]({**BASE, "method": "grid"})
+
+
+def test_a_tuning_with_an_effort_starts_from_the_forms_settings_and_says_in_words_whether_the_gain_held_up(mlapp):
+    catalog = mlapp.extra_get["/api/ml/catalog"]({})
+    rows = catalog["tune_spaces"]["ridge"]
+    assert [r["path"] for r in rows] == ["model.params.alpha", "dataset.horizon", "signal.method", "signal.n", "signal.holding_period", "backtest.rebalance"]
+    assert rows[0]["kind"] == "log" and rows[0]["low"] == 0.1 and "held back from fitting noise" in rows[0]["text"] and rows[2]["kind"] == "categorical" and "linear" not in catalog["tune_spaces"]
+    assert [e["id"] for e in catalog["tune_efforts"]] == ["quick", "standard", "thorough"] and catalog["tune_efforts"][0]["trials"] == 8
+    out = finished(mlapp, mlapp.extra_post["/api/ml/tune"]({**BASE, "model": {"kind": "ridge", "params": {"alpha": 30}}, "effort": "quick"}))
+    assert out["n_trials"] == 8 and out["start_number"] == 0 and out["effort"] == "quick" and out["start"]["model.params.alpha"] == 30 and out["start"]["signal.n"] == 2
+    assert out["trials"][0]["params"] == out["start"], "the form's own settings are the first trial"
+    assert out["order"] == [r["path"] for r in rows] and out["kind"] == "ridge" and out["texts"]["model.params.alpha"].startswith("How strongly")
+    summary = out["summary"]
+    assert summary["level"] in ("good", "mixed", "bad", "keep") and any("validation segment" in r for r in summary["reasons"]) and any("test and forward segments" in r or "nothing tried did better" in r.lower() for r in summary["reasons"])
+    assert out["final"]["report"]["config"]["name"] == "ridge tuned"
+    if out["best"]["number"] == 0:
+        assert out["final_start"] is None and summary["level"] == "keep"
+    else:
+        assert out["final_start"]["report"]["config"]["name"] == "ridge starting settings" and out["final_start"]["id"] != out["final"]["id"]
+    names = [r["name"] for r in mlapp.extra_get["/api/ml/experiments"]({"limit": 50})["rows"]]
+    assert "ridge tuned" in names
+    with pytest.raises(ApiError, match="effort must be one of"):
+        mlapp.extra_post["/api/ml/tune"]({**BASE, "model": {"kind": "ridge"}, "effort": "forever"})
+    with pytest.raises(ApiError, match="not running in this app"):
+        mlapp.extra_post["/api/ml/tune/stop"]({"job": "000000000000"})
+
+
+def test_stop_ends_a_tuning_after_the_trial_it_is_on_and_the_best_so_far_is_still_run_on_every_segment(mlapp):
+    import threading
+
+    gate = threading.Event()
+    real = opt.TrialRunner.evaluate
+
+    def slow(self, params, stage="random"):
+        if len(self.records) >= 2:
+            assert gate.wait(60)
+        return real(self, params, stage)
+
+    opt.TrialRunner.evaluate = slow
+    try:
+        started = mlapp.extra_post["/api/ml/tune"]({**BASE, "model": {"kind": "ridge"}, "effort": "standard"})
+        t0 = time.time()
+        while time.time() - t0 < 60 and "trial 3" not in mlapp.job(started["job"])["message"]:
+            time.sleep(0.05)
+        assert mlapp.extra_post["/api/ml/tune/stop"]({"job": started["job"]}) == {"ok": True}
+        gate.set()
+        out = finished(mlapp, started)
+    finally:
+        opt.TrialRunner.evaluate = real
+        gate.set()
+    assert out["stopped"] == "user" and 3 <= out["n_trials"] < 16 and out["final"] is not None and out["summary"] is not None
 
 
 def test_forward_testing_records_paper_signals_settles_them_and_flags_replayed_history(mlapp, runs):

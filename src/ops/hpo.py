@@ -174,17 +174,38 @@ class Study:
         self.trials.append(trial)
         return trial
 
-    def optimize(self, objective: Callable, n_trials: int = 30, method: str = "random", grid_points: int = 4, **kwargs) -> "Study":
-        """Run the search. ``objective(params)`` returns a number or ``(number, returns_series)``; for ``halving`` it is ``objective(params, budget)``."""
+    def _fresh(self, rng, method: str, **kwargs) -> dict | None:
+        """The next configuration to try that no earlier trial used (a small integer or categorical space repeats itself otherwise, and a repeat is a wasted run that is counted as a trial); ``None`` once
+        the space is as good as exhausted."""
+        used = {tuple(t.params.get(k) for k in self.space) for t in self.trials}
+        for attempt in range(40):
+            params = self._tpe(rng, **kwargs) if method == "tpe" and attempt < 8 else self._random(rng)
+            if tuple(params[k] for k in self.space) not in used:
+                return params
+        return None
+
+    def optimize(self, objective: Callable, n_trials: int = 30, method: str = "random", grid_points: int = 4, callback: Callable | None = None, unique: bool = False, **kwargs) -> "Study":
+        """Run the search. ``objective(params)`` returns a number or ``(number, returns_series)``; for ``halving`` it is ``objective(params, budget)``. ``callback(study, trial)``, when given, is
+        called after every trial of a ``random``, ``tpe`` or ``grid`` search; returning ``True`` stops the search there (a time limit, a Stop button): the trials run so far are kept and counted.
+        With ``unique`` a ``random`` or ``tpe`` search never repeats a configuration (earlier trials count, so a first trial run by hand is not repeated) and ends early when the space is used up."""
         rng = np.random.default_rng(self.seed + len(self.trials))
         if method == "grid":
             axes = [self.space[k].grid(grid_points) for k in self.space]
             for combo in product(*axes):
-                self._run(objective, dict(zip(self.space, combo)))
+                trial = self._run(objective, dict(zip(self.space, combo)))
+                if callback is not None and callback(self, trial):
+                    break
         elif method in ("random", "tpe"):
             for _ in range(n_trials):
-                params = self._random(rng) if method == "random" else self._tpe(rng, **kwargs)
-                self._run(objective, params)
+                if unique:
+                    params = self._fresh(rng, method, **kwargs)
+                    if params is None:
+                        break
+                else:
+                    params = self._random(rng) if method == "random" else self._tpe(rng, **kwargs)
+                trial = self._run(objective, params)
+                if callback is not None and callback(self, trial):
+                    break
         elif method == "halving":
             self._halving(objective, n_trials, rng, **kwargs)
         else:

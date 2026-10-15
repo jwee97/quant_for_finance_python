@@ -68,15 +68,16 @@ SLOW = {"multi_period": "plans the next few months as a quadratic programme ever
         "timesfm": "runs a 200M-parameter model on CPU: many minutes on a long history", "es_policy": "trains a policy: about 10 seconds", "q_learning_exposure": "refits a small Q-function every month: several seconds"}
 DOC_ROOT_FILES = {"dashboard": "dashboard.md", "how_to_add_a_strategy": "how_to_add_a_strategy.md", "start_here": "START_HERE.md", "glossary": "glossary.md", "tour_of_a_backtest_day": "tour_of_a_backtest_day.md",
                   "roadmap_coverage": "roadmap_coverage.md", "algorithmic_trading": "algorithmic_trading.md", "quant_books_coverage": "quant_books_coverage.md", "platform_integration": "platform_integration.md", "feature_audit": "feature_audit.md",
-                  "free_data": "free_data.md"}
+                  "free_data": "free_data.md", "tuning": "tuning.md"}
 SAFE_SLUG = re.compile(r"^[a-z0-9][a-z0-9_-]{0,80}$")
 
 # What the page needs from this server. 1 was the first catalogue; 2 added data sources (``sources``), the ticker-count check (``/api/requirements``), earnings and trades; 3 added the Execution and
 # Cash flows tabs (``/api/exec``, ``/api/cash``); 4 added the Options, Futures, Crypto and Machine learning workspaces (``asset_api``, ``ml_api``); 5 added the Free data downloads of the Options, Futures and
-# Crypto tabs (``data_api``) and the ``downloaded`` source kind those tabs now read. The page compares it with its own number and says so
-# when the server behind it is older (the files were updated while the app was running, so it still runs the old code): the whole page needs 2, and the newer tabs ask for 3 or 4 on their own, so an
+# Crypto tabs (``data_api``) and the ``downloaded`` source kind those tabs now read; 6 added iTick data to the Futures, Crypto and Options cards; 7 added the Yahoo futures search and the Clear buttons
+# of the background runs (``/api/jobs/clear``); 8 added the Tune tab (``tune_api``). The page compares it with its own number and says so
+# when the server behind it is older (the files were updated while the app was running, so it still runs the old code): the whole page needs 2, and the newer tabs ask for 3 or more on their own, so an
 # older app still runs the Backtest tab.
-API_VERSION = 7
+API_VERSION = 8
 CODE_ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -188,11 +189,12 @@ class App:
         from .asset_api import AssetApi
         from .data_api import DataApi
         from .ml_api import MlApi
+        from .tune_api import TuneApi
 
         self.extra_get: dict = {"/api/jobs": lambda q=None: self.jobs_list()}   # path -> fn(query: dict) for GET /api/...?a=1&b=2
         self.extra_post: dict = {"/api/jobs/clear": self.jobs_clear}           # path -> fn(body: dict) for POST /api/...
         self.data = DataApi(self)                                  # the free-data downloads of the three asset tabs (their own worker, apart from the backtests)
-        for part in (AssetApi(self), MlApi(self), self.data):
+        for part in (AssetApi(self), MlApi(self), self.data, TuneApi(self)):
             self.extra_get.update(part.get_routes())
             self.extra_post.update(part.post_routes())
 
@@ -418,6 +420,17 @@ class App:
         job.finished = time.time()
         job.save(final=True)
 
+    @staticmethod
+    def universe_key(universe: dict) -> str:
+        """What counts as 'the same data' for the trial counter: the tickers and the first date."""
+        return hashlib.sha1(json.dumps([universe["tickers"], universe["first"]], sort_keys=True).encode()).hexdigest()[:10]
+
+    @staticmethod
+    def spec_digest(spec: dict) -> str:
+        """What counts as 'the same idea': the specification without its name and evaluation settings. The Backtest tab and the Tune tab fingerprint a try the same way, so a setting found by a search
+        and then run in the Backtest tab is one trial, not two."""
+        return hashlib.sha1(json.dumps({k: v for k, v in spec.items() if k not in ("name", "evaluation")}, sort_keys=True, default=str).encode()).hexdigest()[:12]
+
     def _run(self, job: Job, spec: dict, tickers: list[str], body: dict, capital: float = 100_000.0) -> None:
         def progress(text: str) -> None:
             job.message = text
@@ -427,8 +440,7 @@ class App:
             job.save()
             started = time.perf_counter()
             bundle, universe = self.builder.resolve(tickers, body.get("classes"), body.get("start"), bool(body.get("refresh")), body.get("source"), progress)
-            key = hashlib.sha1(json.dumps([universe["tickers"], universe["first"]], sort_keys=True).encode()).hexdigest()[:10]
-            digest = hashlib.sha1(json.dumps({k: v for k, v in spec.items() if k not in ("name", "evaluation")}, sort_keys=True, default=str).encode()).hexdigest()[:12]
+            key, digest = self.universe_key(universe), self.spec_digest(spec)
             with self._lock:
                 seen = self.trials.setdefault(key, set())
                 seen.add(digest)

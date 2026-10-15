@@ -61,4 +61,4 @@ What iTick has, and what it does not:
 
 The tests replace the network with a table of answers in the shape of the live feeds (`tests/free_data_helpers.py`) and iTick with a fake service (`tests/fake_itick.py`), so none of them goes to the internet. See also [the dashboard guide](dashboard.md), and the guides to [option chains](techniques/option-chains-and-greeks.md), [futures curves](techniques/futures-curves-carry-and-rolls.md) and [crypto funding and venues](techniques/crypto-funding-basis-and-venues.md).
 
-After an update, stop the app and press Run again (on Replit, Stop and then Run): the cards need the app's API version 7, and an older app says so instead of leaving the card empty.
+After an update, stop the app and press Run again (on Replit, Stop and then Run): the cards need the app's API version 7 or newer, and an older app says so instead of leaving the card empty.

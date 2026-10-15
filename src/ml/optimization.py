@@ -18,10 +18,11 @@ import time
 
 import numpy as np
 
-from ..ops.hpo import Study
+from ..ops.hpo import Param, Study
 from .config import build_key, config_hash, dataset_key, experiment_config, merge
 from .datasets import Dataset
 from .experiments import Experiment, ExperimentError, prepare, run_experiment
+from .models import model_catalog
 from .registry import Registry
 
 TURNOVER_UNIT = 20.0                                                         # annual one-way turnover that counts as 1.0 in the score
@@ -104,23 +105,75 @@ class TrialRunner:
         return score, net, detail
 
 
+def current_settings(base_overrides: dict, space: dict) -> dict:
+    """The value each searched setting has in this configuration (what the form shows now): the configuration's own, else the model's default. A tuning that starts from these has the person's current
+    settings as its first trial, so the answer can be compared with them."""
+    cfg = experiment_config(base_overrides)
+    defaults = next((m["params"] for m in model_catalog() if m["kind"] == cfg["model"]["kind"]), {})
+    out = {}
+    for path in space:
+        node = cfg
+        parts = path.split(".")
+        for part in parts[:-1]:
+            node = node.get(part, {}) if isinstance(node, dict) else {}
+        value = node.get(parts[-1]) if isinstance(node, dict) else None
+        if value is None and path.startswith("model.params."):
+            value = defaults.get(parts[-1])
+        if value is None:
+            raise ValueError(f"the current value of {path} is not known, so it cannot be tuned from the current settings")
+        out[path] = value
+    return out
+
+
+def include(space: dict, start: dict) -> dict:
+    """The space with every distribution stretched to contain the starting value (a choice added, a range widened): the starting settings are a trial the search learns from, so they must lie in it."""
+    out = {}
+    for path, p in space.items():
+        v = start[path]
+        if p.kind == "categorical":
+            out[path] = p if v in p.choices else Param("categorical", choices=tuple(p.choices) + (v,))
+            continue
+        if p.kind == "log" and not v > 0:
+            raise ValueError(f"{path} must be above zero to be tuned on a logarithmic scale")
+        lo, hi = min(p.low, v), max(p.high, v)
+        out[path] = p if (lo, hi) == (p.low, p.high) else Param(p.kind, int(lo) if p.kind == "int" else float(lo), int(hi) if p.kind == "int" else float(hi))
+    return out
+
+
 def tune(base_overrides: dict, space: dict, n_trials: int = 20, method: str = "random", seed: int = 0, bundle=None, config=None, builder=None, registry: Registry | None = None,
-         study_name: str = "tune", objective_weights: dict | None = None, progress=None) -> dict:
+         study_name: str = "tune", objective_weights: dict | None = None, progress=None, start: dict | None = None, stop=None) -> dict:
     """Search ``space`` (dotted path -> ``ops.hpo`` distribution) with ``method`` (random, tpe, grid, halving not supported here) for ``n_trials`` candidates. Returns the trials, the best parameters,
-    and the selection report that deflates the best one by the number of trials."""
+    and the selection report that deflates the best one by the number of trials.
+
+    ``start`` (a value for every path of the space, inside it: see ``include``) is run first as trial 0 and counts as one of the ``n_trials``; no configuration is then run twice, and a TPE search
+    begins proposing after a third of the trials. ``stop()`` returning ``True`` ends the search after the trial it is on."""
     runner = TrialRunner(base_overrides, bundle, config, builder, registry, study_name, objective_weights)
     st = Study(space, "maximize", seed)
 
     def objective(params):
         if progress:
-            progress(f"{study_name}: trial {len(runner.records) + 1}")
+            progress(f"{study_name}: trial {len(runner.records) + 1} of {n_trials}")
         score, net, _ = runner.evaluate(params, method)
         if not np.isfinite(score):
             raise ValueError("candidate could not be evaluated")
         return score, net
 
-    st.optimize(objective, n_trials=n_trials, method=method)
-    return finish(st, runner)
+    asked = {"stop": False}
+
+    def callback(_, __):
+        asked["stop"] = bool(stop())
+        return asked["stop"]
+
+    if start is None:
+        st.optimize(objective, n_trials=n_trials, method=method, callback=callback if stop is not None else None)
+    else:
+        st._run(objective, dict(start))
+        extra = {"n_startup": max(4, n_trials // 3)} if method == "tpe" else {}
+        st.optimize(objective, n_trials=max(0, n_trials - 1), method=method, callback=callback if stop is not None else None, unique=True, **extra)
+    out = finish(st, runner)
+    out["start_number"] = None if start is None else 0
+    out["stopped"] = "user" if asked["stop"] else None
+    return out
 
 
 def finish(st: Study, runner: TrialRunner) -> dict:
@@ -139,7 +192,9 @@ def finish(st: Study, runner: TrialRunner) -> dict:
 
 
 def finalize(base_overrides: dict, params: dict, bundle=None, config=None, builder=None, registry: Registry | None = None, trials_extra: int = 0, parent_id: str | None = None,
-             progress=None, robustness: bool | None = None) -> Experiment:
+             progress=None, robustness: bool | None = None, name: str | None = None) -> Experiment:
     """Re-run a chosen parameter set on ALL segments (the first time the test and forward segments are predicted for it), save it, and count the search's trials against it."""
     cfg = apply_params(experiment_config(base_overrides), params)
+    if name:
+        cfg["name"] = str(name)[:80]
     return run_experiment(merge(cfg, {}), bundle=bundle, config=config, builder=builder, registry=registry, progress=progress, trials_extra=trials_extra, parent_id=parent_id, robustness=robustness)

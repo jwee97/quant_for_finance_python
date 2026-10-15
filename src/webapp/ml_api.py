@@ -35,6 +35,7 @@ from ..ml.targets import CLASSIFICATION
 from ..ml.targets import KINDS as TARGET_KINDS
 from ..ml.training import plan_for
 from ..ml.visualization import jsonable, leaderboard_payload, render_html, shap_payload
+from . import tuning
 from .api import ApiError
 from .payload import clean
 from .universe import MAX_TICKERS, UniverseError, normalise
@@ -43,6 +44,16 @@ ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,100}$")
 KEY = re.compile(r"^[a-z_]{1,20}\.[a-z_0-9]{1,30}$")
 PARAM = re.compile(r"^[a-z_][a-z_0-9]{0,30}$")
 LIMITS = {"search_random": 30, "search_bayes": 30, "search_generations": 4, "search_population": 10, "search_top_k": 4, "search_kinds": 8, "tune_trials": 40, "compare": 8, "combine": 12}
+# How long to look when tuning one model, for a person who does not want to choose a number of trials: each is a full walk-forward experiment, so a try takes tens of seconds, not one.
+TUNE_EFFORT = {"quick": (8, "8 tries: a first look, a few minutes"), "standard": (16, "16 tries: enough for a model with two or three settings"), "thorough": (30, "30 tries: for several settings; this can take half an hour")}
+TUNE_TEXT = {"alpha": "How strongly the model is held back from fitting noise: higher gives simpler, steadier fits", "l1_ratio": "How much of the penalty switches features off altogether (1) rather than shrinking them (0)",
+             "max_depth": "How deep each tree may grow: deeper trees fit more detail and overfit more easily", "min_samples_leaf": "How many examples a leaf of a tree must hold: more makes steadier, blunter trees",
+             "max_features": "How many features each split or each filter step may look at", "learning_rate": "How big each learning step is: lower is slower and steadier", "max_iter": "How many trees are added",
+             "n_estimators": "How many trees are added", "l2_regularization": "A penalty on large leaf values: higher is steadier", "reg_lambda": "A penalty on large leaf values: higher is steadier",
+             "num_leaves": "How many leaves each tree may have", "q": "How fast the Kalman filter lets the model's coefficients drift: higher follows the data closely, lower assumes steadier relationships",
+             "forgetting": "How fast old data is forgotten: 0.99 remembers about 100 days, 0.9999 about 10,000", "eta": "How big each learning step is", "l2": "A penalty on large coefficients",
+             "horizon": "How many days ahead the model predicts", "method": "How predictions become positions", "n": "How many assets are held on each side", "holding_period": "Days a position is held before it is reconsidered",
+             "rebalance": "How often positions are changed"}
 
 GROUP_TEXT = {"price": "Trailing returns, distance from highs and lows, moving-average gaps", "momentum": "Return over the last 1, 3, 6 and 12 months, skipping the most recent month", "mean_reversion": "Short-term reversal and distance from the mean in standard deviations",
               "volatility": "Realised volatility over several windows, its ratio, range-based estimates, downside volatility", "volume": "Dollar volume and its surprise; only where the data has volume",
@@ -140,6 +151,7 @@ class MlApi:
         self._registry: Registry | None = None
         self._lock = threading.Lock()
         self._heavy = threading.Lock()                       # explanations and combinations: numpy work of a few seconds, one request at a time
+        self.stops: dict[str, threading.Event] = {}          # job id -> the flag that ends that tuning early
 
     # ------------------------------------------------------------------------------------------------------------ routes
     def get_routes(self) -> dict:
@@ -147,7 +159,7 @@ class MlApi:
                 "/api/ml/feature-sets": self.feature_sets, "/api/ml/models": self.models, "/api/ml/trials": self.trials, "/api/ml/forward": self.forward, "/api/ml/report-html": self.report_html}
 
     def post_routes(self) -> dict:
-        return {"/api/ml/dataset/build": self.dataset_build, "/api/ml/train": self.train, "/api/ml/rebacktest": self.rebacktest, "/api/ml/search": self.search, "/api/ml/tune": self.tune,
+        return {"/api/ml/dataset/build": self.dataset_build, "/api/ml/train": self.train, "/api/ml/rebacktest": self.rebacktest, "/api/ml/search": self.search, "/api/ml/tune": self.tune, "/api/ml/tune/stop": self.tune_stop,
                 "/api/ml/combine": self.combine, "/api/ml/meta-label": self.meta_label, "/api/ml/forward/step": self.forward_step, "/api/ml/promote": self.promote, "/api/ml/delete": self.delete}
 
     # ------------------------------------------------------------------------------------------------------------ plumbing
@@ -292,10 +304,25 @@ class MlApi:
             "signals": [{"id": s, "text": SIGNAL_TEXT.get(s, "")} for s in SIGNAL_METHODS], "ensembles": [{"id": k, "text": v} for k, v in ENSEMBLE_TEXT.items()],
             "universes": [{"id": "etf", "text": "The platform's ETFs (real prices)", "source": "platform"}, {"id": "crypto", "text": "Deribit BTC and ETH with their carry indices (real data)", "source": "platform"},
                           {"id": "futures", "text": "Simulated futures roots (a Schwartz-Smith model; checks the machinery, not a market)", "source": "simulated"}],
+            "tune_spaces": {m["kind"]: self._space_rows(m["kind"]) for m in model_catalog() if m["available"] and m["params"]}, "tune_efforts": [{"id": k, "trials": n, "text": t} for k, (n, t) in TUNE_EFFORT.items()],
             "defaults": {k: cfg[k] for k in ("dataset", "split", "model", "signal", "backtest", "robustness", "search")}, "stages": list(STAGES), "limits": LIMITS,
             "registry": {"root": str(Path(cfg["registry"]["root"])), **counts}, "as_of": str(self.app.builder.default_bundle().index[-1].date()),
             "timing": {"decision": "the close of day t", "trade": "lag days later (the engine's signal lag, 1)", "target": "from the close of t + lag to the close of t + lag + horizon",
                        "purge": "training rows whose label window overlaps a test day are dropped (lag + horizon + embargo)", "segments": "train (warm-up) / validation (selection) / test and forward (reserved, reported once)"}})
+
+    @staticmethod
+    def _space_rows(kind: str) -> list[dict]:
+        """What tuning one model of this kind varies, for the form: each setting with its range or its choices and a line on what it does."""
+        try:
+            space = ss.kind_space(kind)
+        except ValueError:
+            return []
+        rows = []
+        for path, p in space.items():
+            leaf = path.split(".")[-1]
+            rows.append({"path": path, "label": leaf.replace("_", " "), "kind": p.kind, "low": p.low, "high": p.high, "choices": list(p.choices), "text": TUNE_TEXT.get(leaf, "A setting of the model"),
+                         "model": path.startswith("model.params.")})
+        return rows
 
     # ------------------------------------------------------------------------------------------------------------ datasets
     def dataset_build(self, body: dict) -> dict:
@@ -430,30 +457,87 @@ class MlApi:
         return self._submit(f"ml: search {sum(budget[k] for k in ('n_random', 'n_bayes'))}+ trials", work)
 
     def tune(self, body: dict) -> dict:
-        """``POST /api/ml/tune`` (a job): hyperparameters of ONE model kind, random or TPE, validation-only, and (optionally) the best set finalised on every segment."""
+        """``POST /api/ml/tune`` (a job): the settings of ONE model kind, validation-only, and (optionally) the best set finalised on every segment. With ``effort`` (``quick``, ``standard`` or ``thorough``)
+        the search is a TPE one that starts from the settings in the request, as its first trial, so the answer comes with a comparison against them: the best and the starting settings are both run on the
+        test and forward segments once, at the end, and ``summary`` says in words whether the improvement held up there. Without ``effort`` it is the plain search of ``method`` and ``n_trials``."""
         over = self._overrides(body)
         kind = over["model"]["kind"]
-        method = str(body.get("method") or "random")
-        if method not in ("random", "tpe"):
-            raise ApiError("method must be random or tpe")
+        effort = str(body.get("effort") or "")
+        if effort:
+            if effort not in TUNE_EFFORT:
+                raise ApiError(f"effort must be one of {', '.join(TUNE_EFFORT)}")
+            trials, method = TUNE_EFFORT[effort][0], "tpe"
+        else:
+            method = str(body.get("method") or "random")
+            if method not in ("random", "tpe"):
+                raise ApiError("method must be random or tpe")
+            trials = _int(body, "n_trials", 12, 4, LIMITS["tune_trials"])
         if kind not in {m["kind"] for m in model_catalog() if m["available"]}:
             raise ApiError(f"the {kind} model is not available here")
         space = ss.kind_space(kind)
         if not any(k.startswith("model.params.") for k in space):
             raise ApiError(f"the {kind} model has no hyperparameters to tune; tune its signal settings with a search instead")
-        trials, finalise, seed = _int(body, "n_trials", 12, 4, LIMITS["tune_trials"]), bool(body.get("finalize", True)), _int(body, "seed", 0, 0, 1_000_000)
+        finalise, seed = bool(body.get("finalize", True)), _int(body, "seed", 0, 0, 1_000_000)
+        begin = None
+        if effort:                                                                   # the settings in the form are the first trial: the space is stretched to hold them
+            try:
+                begin = opt.current_settings(over, space)
+                space = opt.include(space, begin)
+            except ValueError as exc:
+                raise ApiError(str(exc)) from None
+        stop = threading.Event()
 
         def work(progress):
             with _user_errors():
-                out = opt.tune(over, space, trials, method, seed, config=self.app.config, builder=self.app.builder, registry=self.registry, study_name=f"tune-{kind}", progress=progress)
-                final = None
+                out = opt.tune(over, space, trials, method, seed, config=self.app.config, builder=self.app.builder, registry=self.registry, study_name=f"tune-{kind}", progress=progress, start=begin,
+                               stop=stop.is_set)
+                final = final_start = None
                 if finalise and out.get("best"):
                     progress("running the best settings on every segment")
-                    exp = opt.finalize(over, out["best"]["params"], config=self.app.config, builder=self.app.builder, registry=self.registry, trials_extra=out["n_trials"], robustness=False, progress=progress)
+                    exp = opt.finalize(over, out["best"]["params"], config=self.app.config, builder=self.app.builder, registry=self.registry, trials_extra=out["n_trials"], robustness=False, progress=progress,
+                                       name=f"{kind} tuned" if begin is not None else None)
                     final = {"id": exp.id, "report": exp.report}
-            return jsonable({**out, "space": sorted(space), "final": final})
+                    if begin is not None and out["best"]["number"] != 0:
+                        progress("running your starting settings on every segment, for the comparison")
+                        start_exp = opt.finalize(over, begin, config=self.app.config, builder=self.app.builder, registry=self.registry, trials_extra=out["n_trials"], robustness=False, progress=progress,
+                                                 name=f"{kind} starting settings")
+                        final_start = {"id": start_exp.id, "report": start_exp.report}
+                summary = self._tune_summary(out, final, final_start)
+            return jsonable({**out, "kind": kind, "space": sorted(space), "order": list(space), "final": final, "final_start": final_start, "summary": summary, "start": begin, "effort": effort or None,
+                             "texts": {path: TUNE_TEXT.get(path.split(".")[-1], "") for path in space}})
 
-        return self._submit(f"ml: tune {kind}", work)
+        started = self._submit(f"ml: tune {kind}", work)
+        for old in [j for j in self.stops if j not in self.app.jobs or self.app.jobs[j].status not in ("queued", "running")]:
+            self.stops.pop(old, None)
+        self.stops[started["job"]] = stop
+        return started
+
+    def tune_stop(self, body: dict) -> dict:
+        """``POST /api/ml/tune/stop {"job": id}``: end a tuning after the trial it is on; the trials so far are kept, and the best of them is still run on every segment."""
+        flag = self.stops.get(str(body.get("job") or ""))
+        if flag is None:
+            raise ApiError("that tuning is not running in this app")
+        flag.set()
+        return {"ok": True}
+
+    @staticmethod
+    def _tune_summary(out: dict, final: dict | None, final_start: dict | None) -> dict | None:
+        """The verdict of a tuning that started from the person's own settings: the validation Sharpe ratio (where the search chose) and the test and forward Sharpe ratios (days-weighted, where it did not) for
+        the starting settings and for the winner, put in words by the same rules as the Tune tab."""
+        if out.get("start_number") is None or not out.get("best") or final is None:
+            return None
+
+        def held(report: dict):
+            stats = report["segments"]["stats"]
+            parts = [(stats[s]["sharpe"], stats[s].get("n_days") or 1) for s in ("test", "forward") if s in stats and stats[s].get("sharpe") is not None]
+            return sum(v * n for v, n in parts) / sum(n for _, n in parts) if parts else None
+
+        same = out["best"]["number"] == 0
+        first = next((t for t in out["trials"] if t["number"] == 0), {})
+        best = {"tuning": {"sharpe": out["best"].get("validation_sharpe")}, "holdout": {"sharpe": held(final["report"])}}
+        start = {"tuning": {"sharpe": first.get("validation_sharpe")}, "holdout": {"sharpe": held(final["report"]) if same else (held(final_start["report"]) if final_start else None)}}
+        selection = out.get("selection") if isinstance(out.get("selection"), dict) and out["selection"].get("deflated_sharpe_probability") is not None else None
+        return tuning.judge("sharpe", start, best, "", "", same, selection, out["n_trials"], 0, None, None, ("the validation segment", "the test and forward segments", "those segments"))
 
     # ------------------------------------------------------------------------------------------------------------ the registry
     def experiments(self, q: dict) -> dict:
