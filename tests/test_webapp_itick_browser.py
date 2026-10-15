@@ -268,6 +268,26 @@ def test_the_test_button_on_the_futures_and_crypto_cards_asks_for_that_tabs_own_
         assert len(page.live.fake.urls) == before + 1 and path in page.live.fake.urls[-1], "one call, for that tab's own data"
 
 
+def test_the_finder_marks_the_products_iTick_returned_or_refused_for_the_key(itick):
+    page = itick
+    provider = page.live.app.builder.sources["itick"].provider
+    provider.note_access("future", "US:ES", False, "iTick does not have this symbol for your key (E001 not found this produce)")
+    provider.note_access("future", "US:NQ", True)
+    try:
+        page.click("#tab-futures")
+        page.wait_for_selector("#futures-results .tile", timeout=90_000)
+        page.wait_for_selector("#futures details.freedata button[data-action=download]")
+        _source(page, "futures", "itick")
+        page.wait_for_selector("#futures .finder .hits button.hit")
+        es = page.locator("#futures .finder .hits button.hit[data-value='US:ES']")
+        nq = page.locator("#futures .finder .hits button.hit[data-value='US:NQ']")
+        assert es.locator(".access.no").inner_text() == "✗ not for your key" and "E001" in es.locator(".access.no").get_attribute("title")
+        assert nq.locator(".access.ok").inner_text() == "✓ worked"
+        assert page.locator("#futures .finder .hits button.hit[data-value='US:CL'] .access").count() == 0, "a product never asked for has no mark"
+    finally:
+        provider._access.clear()
+
+
 @pytest.mark.parametrize("tab, results", [("futures", "#futures-results .tile"), ("crypto", "#crypto-results .tile"), ("options", "#options-results .tile")])
 def test_the_itick_cards_fit_a_phone(browser, live_itick, tab, results):  # noqa: F811
     pg = _page(browser, live_itick, width=390, height=800)

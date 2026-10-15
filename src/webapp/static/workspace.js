@@ -229,6 +229,10 @@
       for (const r of res.results) {
         const b = h("button", "hit", hits); b.type = "button"; b.dataset.value = r.item; b.setAttribute("aria-pressed", String(chosen.has(r.item)));
         h("b", "", b, r.item); h("span", "", b, r.name + (r.exchange ? " · " + r.exchange : ""));
+        if (r.access) {                                                                      // what iTick gave this key when it was asked: the list is iTick's, the plan is yours
+          const tag = h("span", "access " + (r.access.ok ? "ok" : "no"), b, r.access.ok ? "✓ worked" : "✗ not for your key");
+          tag.title = (r.access.ok ? "iTick returned this product for your key" : "iTick did not return this product for your key") + " on " + r.access.at + (r.access.why ? ": " + r.access.why : "") + ". It may have changed since.";
+        }
         b.addEventListener("click", () => {
           if (chosen.has(r.item)) chosen.delete(r.item); else { chosen.add(r.item); names[r.item] = r.name; }
           b.setAttribute("aria-pressed", String(chosen.has(r.item))); paintChosen(); if (opts.after) opts.after();

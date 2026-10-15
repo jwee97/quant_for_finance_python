@@ -13,7 +13,8 @@ import pytest
 
 from src.webapp.providers import FREE_HOST, PAID_HOST, ITickError, ITickProvider, RateLimiter, future_instrument, tidy_key
 from tests.fake_itick import KEY, FakeClock, FakeITick
-from tests.test_webapp_data_itick import ik  # noqa: F401  (the app with a fake iTick behind it)
+from tests.test_webapp_data import run
+from tests.test_webapp_data_itick import _provider, _use, ik  # noqa: F401  (the app with a fake iTick behind it)
 
 START = "2024-01-01"
 ES = future_instrument("US", "ES")
@@ -205,3 +206,82 @@ def test_the_source_test_endpoint_passes_the_tab_kind_on(ik):  # noqa: F811
     assert app.test_source({"source": "itick"})["ok"] and "/stock/kline?region=US&code=AAPL" in fake.urls[-1]
     assert app.test_source({"source": "itick", "kind": "../../etc"})["ok"] and "/stock/kline" in fake.urls[-1], "only the two known kinds change what is asked"
     assert KEY not in json.dumps(out)
+
+
+# ------------------------------------------------------------------------------------------------------------------------------ "not found" is not "wrong key"
+def missing(*codes, **kwargs):
+    """A service for which the codes asked are unknown (the application's E001 "not found this produce"): the key itself is fine."""
+    fake = FakeITick(**kwargs)
+    fake.unknown_prefix = tuple(codes) if len(codes) > 1 else codes[0]
+    return fake
+
+
+def test_a_product_iTick_does_not_return_is_explained_as_a_code_or_a_plan_problem_not_a_bad_key():
+    fake = missing("ES")
+    p, _ = auto(fake)
+    with pytest.raises(ITickError) as caught:
+        p.series(ES, START)
+    message = str(caught.value)
+    assert caught.value.kind == "symbol" and not caught.value.fatal, "one missing product does not stop a run: the next may work"
+    assert "does not have this symbol for your key (E001 not found this produce)" in message and "added to your plan" in message and "customer service" in message
+    assert "pricing page does not list futures" in message and "Test the iTick connection" in message
+    assert "rejected the API key" not in message and KEY not in message
+
+
+def test_the_test_asks_for_the_product_iTick_uses_in_its_documentation_and_says_what_the_two_answers_mean():
+    p, _ = auto(missing("ES"))
+    out = p.test(kind="futures")                                                       # ES is not found, NQ is: the plan has futures, this product was not added
+    assert not out["ok"] and out["control"] == {"item": "US:NQ", "ok": True}
+    assert "no US:ES for your key, but it does return US:NQ" in out["message"] and "has probably not been added to your plan" in out["message"]
+    none, _ = auto(missing("ES", "NQ"))
+    out = none.test(kind="futures")                                                    # neither: the plan has no futures
+    assert not out["ok"] and out["control"] == {"item": "US:NQ", "ok": False}
+    assert "returns neither US:ES nor US:NQ" in out["message"] and "does not include futures data" in out["message"] and "Yahoo Finance has futures without a key" in out["message"]
+    coin, _ = auto(missing("BTCUSDT"))
+    out = coin.test(kind="crypto")
+    assert not out["ok"] and out["control"] == {"item": "BA:ETHUSDT", "ok": True}
+    again, _ = auto(missing("NQ"))
+    out = again.test(symbol="NQ=F", kind="nonsense")                                   # a stock test (the kind is ignored) asks no control
+    assert not out["ok"] and "control" not in out
+
+
+def test_the_control_is_not_asked_when_the_tested_product_is_the_control_or_the_failure_is_something_else():
+    fake = missing("NQ")
+    fake.script = []
+    p, _ = auto(fake)
+    p.test(symbol="NQ=F")
+    assert len(fake.calls) == 1, "a stock-style test of NQ itself asks nothing more"
+    wrong, _ = auto(FakeITick(key="the-key-this-service-knows", gateway=True))
+    out = wrong.test(kind="futures")
+    assert "control" not in out and "rejected the API key" in out["message"]
+    forbidden, _ = auto(FakeITick(gateway=True, forbidden={"future": "You cannot consume this service"}))
+    out = forbidden.test(kind="futures")
+    assert "control" not in out and "refused this request" in out["message"]
+
+
+def test_what_iTick_returned_for_the_key_is_remembered_and_marked_in_the_search(ik, tmp_path):  # noqa: F811
+    app, fake, clock = ik
+    _use(app, _provider(clock, fake, root=tmp_path), tmp_path)                         # a provider that keeps its memory under the app's folder
+    fake.unknown_prefix = "ES"
+    result = run(app, kind="futures", source="itick", items=["US:ES", "US:NQ"], years=1)
+    by = {r["item"]: r for r in result["results"]}
+    assert result["failed"] == 1 and not by["US:ES"]["ok"] and "does not have this symbol for your key" in by["US:ES"]["message"] and by["US:NQ"]["ok"]
+    found = app.extra_get["/api/data/search"]({"kind": "futures", "q": "nasdaq"})["results"]
+    nq = next(r for r in found if r["item"] == "US:NQ")
+    assert nq["access"]["ok"] is True and nq["access"]["at"]
+    sp = app.extra_get["/api/data/search"]({"kind": "futures", "q": "e-mini s&p"})["results"]
+    es = next(r for r in sp if r["item"] == "US:ES")
+    assert es["access"]["ok"] is False and "E001" in es["access"]["why"] and KEY not in json.dumps(es)
+    assert all("access" not in r for r in app.extra_get["/api/data/search"]({"kind": "futures", "q": "crude"})["results"]), "a product never asked for has no mark"
+    saved = json.loads((tmp_path / "data" / "user" / "itick_access.json").read_text())
+    assert saved["future:US:ES"]["ok"] is False and saved["future:US:NQ"]["ok"] is True and KEY not in json.dumps(saved), "product codes and dates only"
+    app.builder.sources["itick"].provider._access.clear()
+    app.builder.sources["itick"].provider._load_access()
+    assert set(app.builder.sources["itick"].provider.access("future")) == {"US:ES", "US:NQ"}, "the memory survives a restart"
+
+
+def test_the_memory_of_what_iTick_returned_forgets_after_a_month(tmp_path):
+    p = ITickProvider(key=KEY, root=tmp_path, base_url=FREE_HOST)
+    p.note_access("future", "US:ES", False, "E001")
+    p._access["future:US:OLD"] = {"ok": True, "at": "2020-01-01", "why": ""}
+    assert set(p.access("future")) == {"US:ES"} and p.access("crypto") == {}

@@ -166,7 +166,12 @@ class DataApi:
             if region is not None and region not in ic.REGIONS:
                 raise ApiError(f"region must be one of {list(ic.REGIONS)}")
             group = str(q.get("group") or "") or None
-            return clean({"kind": kind, **ic.search(text, region, group, limit), "groups": ic.groups(region)})
+            found = ic.search(text, region, group, limit)
+            seen = self._itick().access("future")                                  # what iTick returned or refused for this key lately: the list is iTick's, the plan is yours
+            for row in found["results"]:
+                if row["item"] in seen:
+                    row["access"] = seen[row["item"]]
+            return clean({"kind": kind, **found, "groups": ic.groups(region)})
         if kind == "crypto":
             return clean({"kind": kind, **ic.search_coins(text, limit)})
         raise ApiError("kind must be futures or crypto")

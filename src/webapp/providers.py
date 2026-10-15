@@ -39,6 +39,7 @@ PAID_HOST = "https://api.itick.org"                       # "Production api url"
 DEFAULT_BASE_URL = FREE_HOST                              # ``ITICK_BASE_URL`` overrides it; with it set, the other host is never tried
 LOOPBACK = ("127.0.0.1", "localhost", "::1")
 TEST_SYMBOLS = {"futures": "ES=F", "crypto": "BTC-USD"}  # what the connection test asks for on a tab whose data a plan may not include
+CONTROL_SYMBOLS = {"futures": "NQ=F", "crypto": "ETH-USD"}   # asked next when that product is not found: iTick's own documentation uses NQ (and BTCUSDT) as its examples
 MAX_BODY_BYTES = 8_000_000
 USER_AGENT = "QuantLab/1.0 (daily-price client)"        # some gateways refuse urllib's default agent
 NOT_CONFIGURED = "iTick is not set up: add your key as the ITICK_API_KEY secret (on Replit: Tools > Secrets) and restart the app"
@@ -242,9 +243,10 @@ class Instrument:
 class ITickError(Exception):
     """A problem worth telling the user about; ``fatal`` means no other ticker will fare better (a rejected key, an exhausted plan)."""
 
-    def __init__(self, message: str, fatal: bool = False):
+    def __init__(self, message: str, fatal: bool = False, kind: str = ""):
         super().__init__(message)
         self.fatal = fatal
+        self.kind = kind                                                         # "auth", "plan" or "symbol" when iTick said so; "" for everything else
 
 
 def map_symbol(ticker: str) -> Instrument:
@@ -403,7 +405,7 @@ def _problem(payload) -> tuple[str, bool, str] | None:
     if code == "E003" or "exceeding" in lowered or "subscription limit" in lowered:
         return f"your iTick plan does not allow this request ({text})", True, "plan"
     if code == "E001" or "not found" in lowered:
-        return f"iTick does not have this symbol ({text})", False, "symbol"
+        return text, False, "symbol"                                            # the caller adds what it means (see ``ITickProvider._not_found``)
     return f"iTick reported an error: {text}", False, "other"
 
 
@@ -423,7 +425,10 @@ class ITickProvider:
         self.base_url = (explicit or DEFAULT_BASE_URL).rstrip("/")
         self.auto_host = not explicit                                         # no address was chosen: iTick's two documented hosts are tried in turn when a key is not recognised
         self._learned: tuple[str, str] | None = None                          # (host, key) of the last host that accepted the key (kept in memory only)
+        self._access: dict[str, dict] = {}                                    # "future:US:ES" -> {"ok", "at", "why"}: what iTick returned for this key lately (product codes and dates, never the key)
+        self._access_path = (Path(root) / "data" / "user" / "itick_access.json") if root else None
         self.config_error = self._check_url(self.base_url)
+        self._load_access()
         state = (self.root / "data" / "user" / "itick_calls.json") if self.root else None
         self.limiter = limiter or RateLimiter(calls_per_minute or _int_env("ITICK_CALLS_PER_MINUTE", 5, 1, 1200), path=state, sleep=sleep)
         self.page_size = page_size or _int_env("ITICK_PAGE_SIZE", 1000, 10, 5000)
@@ -442,6 +447,37 @@ class ITickProvider:
         if parts.scheme == "http" and parts.hostname in LOOPBACK:
             return ""
         return "ITICK_BASE_URL must start with https:// (the key travels in a request header)"
+
+    ACCESS_DAYS = 30
+
+    def _load_access(self) -> None:
+        if self._access_path is None:
+            return
+        try:
+            data = json.loads(self._access_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return
+        if isinstance(data, dict):
+            self._access = {str(k): v for k, v in data.items() if isinstance(v, dict) and isinstance(v.get("ok"), bool) and isinstance(v.get("at"), str)}
+
+    def note_access(self, kind: str, item: str, ok: bool, why: str = "") -> None:
+        """Remember whether iTick returned a product for this key, so that the finder can mark it (``kind`` is iTick's own: ``future``, ``crypto``...; ``item`` like ``US:ES``)."""
+        self._access[f"{kind}:{item}"] = {"ok": bool(ok), "at": pd.Timestamp.now().date().isoformat(), "why": self._clean(why)[:160]}
+        if self._access_path is None:
+            return
+        try:
+            self._access_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self._access_path.with_suffix(".part")
+            tmp.write_text(json.dumps(self._access), encoding="utf-8")
+            tmp.replace(self._access_path)
+        except OSError:
+            pass
+
+    def access(self, kind: str) -> dict[str, dict]:
+        """``{item: {"ok", "at", "why"}}`` for the products of this kind that iTick returned or refused in the last ``ACCESS_DAYS`` days."""
+        cutoff = (pd.Timestamp.now() - pd.Timedelta(days=self.ACCESS_DAYS)).date().isoformat()
+        prefix = f"{kind}:"
+        return {k[len(prefix):]: dict(v) for k, v in self._access.items() if k.startswith(prefix) and v["at"] >= cutoff}
 
     def _raw_key(self) -> str:
         return self._key_override or read_secret(KEY_VARIABLE, self.root)
@@ -527,6 +563,14 @@ class ITickProvider:
         return (f"iTick rejected the API key: {said}.{unchosen} Copy the key again from the iTick dashboard into the ITICK_API_KEY secret with no quotes or spaces, and stop and run the app "
                 "again (a changed secret is read only when the app starts). A key from a time-limited free trial stops working when the trial ends.")
 
+    @staticmethod
+    def _not_found(text: str, path: str) -> str:
+        """iTick's "not found this produce" (E001), with what it means: its documentation says the code is wrong or the product has not been added to the plan."""
+        kind = path.strip("/").split("/")[0]
+        more = " iTick's pricing page does not list futures among the free plan's features, so futures may need a paid plan." if kind == "future" else ""
+        check = " Test the iTick connection on the Futures or Crypto card also tries a product iTick uses in its own examples, which tells a plan without that data from one missing product." if kind in ("future", "crypto") else ""
+        return f"iTick does not have this symbol for your key ({text}). iTick says that means the product code is wrong or the product has not been added to your plan (its customer service adds products).{more}{check}"
+
     def _get(self, path: str, params: dict, say=None) -> dict:
         key = self._key()
         if not key:
@@ -591,7 +635,8 @@ class ITickProvider:
                 host = other
                 continue
             if problem:
-                raise ITickError(self._clean(problem[0]), fatal=problem[1])
+                text = self._not_found(problem[0], path) if problem[2] == "symbol" else problem[0]
+                raise ITickError(self._clean(text), fatal=problem[1], kind=problem[2])
             if self.auto_host and host != self.host:
                 self._learned = (host, key)                                         # the other host knows this key: use it from now on
             return payload
@@ -693,14 +738,19 @@ class ITickProvider:
             if progress:
                 progress(f"iTick {inst.label}: {text}")
 
+        item = f"{inst.region}:{inst.code}"
         try:
-            return self._download(inst.label, inst, start, known, say)
+            frame = self._download(inst.label, inst, start, known, say)
         except ITickError as error:
-            raise ITickError(self._clean(error), fatal=error.fatal) from None
+            if error.kind == "symbol":
+                self.note_access(inst.kind, item, False, str(error).split(". ", 1)[0])
+            raise ITickError(self._clean(error), fatal=error.fatal, kind=error.kind) from None
         except RateLimitTimeout as error:
             raise RateLimitTimeout(self._clean(error)) from None
         except Exception as error:                                                  # a bug here must reach the page as a message, without ever echoing the key
             raise ITickError(self._clean(f"unexpected {type(error).__name__}: {str(error)[:160]}")) from None
+        self.note_access(inst.kind, item, True)
+        return frame
 
     # ---------------------------------------------------------------------------------------------------------------------------- main
     def __call__(self, tickers, start, known: dict | None = None, progress=None) -> dict:
@@ -744,7 +794,8 @@ class ITickProvider:
     def test(self, symbol: str = "AAPL", kind: str | None = None) -> dict:
         """Spend one call on the last few daily bars of ``symbol`` (two when the first host does not recognise the key) and report what came back, in words that say what to do next, and never the key:
         the quickest way to learn whether the key, the host, the plan and the daily interval code work for your account. ``kind`` (``futures`` or ``crypto``) tests that tab's own data instead of a stock,
-        because a plan can include one and not the other."""
+        because a plan can include one and not the other. When that product is not found, one more call asks for a product iTick uses in its own documentation, which tells a plan that lacks the data
+        from a product that is merely missing."""
         started = time.time()
         notes = self.key_notes()
         ok, why = self.available()
@@ -757,9 +808,12 @@ class ITickProvider:
         fixed = f" Also: {'; '.join(notes)}." if notes else ""
         try:
             inst = map_symbol(what)
-            frame, _ = self._bars(inst, 10, None)
+            frame = self._tested(inst)
         except (ITickError, RateLimitTimeout) as error:
-            return {"ok": False, "message": self._clean(error) + fixed, "notes": notes, "host": parse.urlparse(self.host).netloc}
+            out = {"ok": False, "message": self._clean(error) + fixed, "notes": notes, "host": parse.urlparse(self.host).netloc}
+            if getattr(error, "kind", "") == "symbol" and kind in CONTROL_SYMBOLS:
+                out.update(self._control(inst, kind, error, fixed))
+            return out
         except Exception as error:
             return {"ok": False, "message": self._clean(f"unexpected {type(error).__name__}: {str(error)[:160]}") + fixed, "notes": notes}
         host = parse.urlparse(self.host).netloc
@@ -769,3 +823,35 @@ class ITickProvider:
         return {"ok": True, "message": f"iTick works at {host}{asked}: {len(frame)} daily bars for {inst.label}, the latest dated {frame.index[-1].date()} (close {frame['close'].iloc[-1]:g}).{moved} "
                                       f"Prices come as delivered; iTick does not say whether they are adjusted for splits and dividends.{fixed}",
                 "bars": int(len(frame)), "first": str(frame.index[0].date()), "last": str(frame.index[-1].date()), "seconds": round(time.time() - started, 1), "host": host, "notes": notes}
+
+    def _tested(self, inst: Instrument) -> pd.DataFrame:
+        """The last ten daily bars of ``inst``, remembering whether iTick had it (for the finder's marks)."""
+        item = f"{inst.region}:{inst.code}"
+        try:
+            frame, _ = self._bars(inst, 10, None)
+        except ITickError as error:
+            if error.kind == "symbol":
+                self.note_access(inst.kind, item, False, str(error).split(". ", 1)[0])
+            raise
+        if not frame.empty:
+            self.note_access(inst.kind, item, True)
+        return frame
+
+    def _control(self, inst: Instrument, kind: str, error: ITickError, fixed: str) -> dict:
+        """The product was not found: ask for the one iTick's own documentation uses and say what the two answers together mean."""
+        control = map_symbol(CONTROL_SYMBOLS[kind])
+        if control.label == inst.label:
+            return {}
+        try:
+            frame = self._tested(control)
+        except (ITickError, RateLimitTimeout) as second:
+            if getattr(second, "kind", "") == "symbol":
+                return {"message": f"iTick returns neither {inst.label} nor {control.label}, the product its own documentation uses as an example: your plan probably does not include {kind} data "
+                                   f"(iTick's pricing page lists it separately from the free plan's features). Yahoo Finance has futures without a key: choose it as the source, or ask iTick's customer service what your plan "
+                                   f"includes.{fixed}", "control": {"item": control.label, "ok": False}}
+            return {}
+        if frame.empty:
+            return {}
+        return {"message": f"iTick has no {inst.label} for your key, but it does return {control.label}, the product its own documentation uses as an example. So the key and the plan do work for "
+                           f"{kind} data: {inst.label} has probably not been added to your plan. Choose another product (the search marks the ones that worked), or ask iTick's customer service to add it.{fixed}",
+                "control": {"item": control.label, "ok": True}}
