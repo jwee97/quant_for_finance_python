@@ -30,7 +30,7 @@
   const optNumber = (s, name) => (String(s).trim() === "" ? undefined : needNumber(s, name));
 
   const M = {
-    id: "ml", root: "#ml", view: "#view-ml", title: "Machine learning", api: 4, mode: "experiments", busy: "", results: {}, errors: {}, cache: new Map(), guard: null, go: null, progress: null,
+    id: "ml", root: "#ml", view: "#view-ml", title: "Machine learning", api: 7, mode: "experiments", busy: "", results: {}, errors: {}, cache: new Map(), guard: null, go: null, progress: null,
     about: "Train models only inside the whole pipeline: features without look-ahead, walk-forward fits, a backtest with costs, and results cut into train, validation, test and forward segments, with every look at the data counted.",
     modes: [["dataset", "Dataset"], ["train", "Train"], ["experiments", "Experiments"], ["compare", "Compare"], ["explain", "Explain"], ["overfit", "Overfitting"], ["search", "Search"], ["combine", "Combine"], ["forward", "Forward test"]],
     runLabel: { dataset: "Build the dataset", train: "Train and backtest", experiments: "Refresh", compare: "Compare", explain: "Explain", overfit: "Check again", search: "Run the search", combine: "Combine", forward: "Record today's signal" },

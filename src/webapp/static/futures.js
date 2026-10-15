@@ -11,14 +11,14 @@
     mixed: "The curve is neither clearly rising nor clearly falling over its front contracts." };
 
   const F = {
-    id: "futures", root: "#futures", view: "#view-futures", title: "Futures", api: 6, mode: "curve", busy: "", results: {}, errors: {}, cache: new Map(), guard: null, go: null, progress: null,
+    id: "futures", root: "#futures", view: "#view-futures", title: "Futures", api: 7, mode: "curve", busy: "", results: {}, errors: {}, cache: new Map(), guard: null, go: null, progress: null,
     about: "Read a futures curve, decide when to roll, see carry and basis, read the price history of any futures product, check the margin of a book and test a strategy on several roots. The prices are a model unless you download real data (below) or bring a file.",
     modes: [["curve", "Curve"], ["roll", "Roll"], ["carry", "Carry and basis"], ["history", "History"], ["margin", "Margin"], ["backtest", "Backtest"]],
     runLabel: { curve: "Refresh", roll: "Refresh", carry: "Refresh", history: "Refresh", margin: "Check the margin", backtest: "Run the backtest" },
     blurb: { curve: "Price by contract month, how the curve has moved over the last two months, the roll yield of each contract and the contract specification.",
       roll: "Which contract you hold, the next one, the suggested roll date (by calendar and by open interest), what the roll costs, and the rolls of the past.",
       carry: "Carry (the annualised roll yield) through time against its own history, and the basis: how far a futures price sits from the spot price.",
-      history: "The daily price history of a futures product downloaded from iTick: returns, volatility, drawdown, the calendar months and the biggest one-day moves. It is one price series, so there is no curve, roll or carry here.",
+      history: "The daily price history of a futures product downloaded from iTick or Yahoo Finance: returns, volatility, drawdown, the calendar months and the biggest one-day moves. It is one price series, so there is no curve, roll or carry here.",
       margin: "Notional, initial and maintenance margin, leverage and the distance to a margin call for a book of futures, with warnings for heavy use, concentration and contracts close to expiry.",
       backtest: "Trade carry, trend, breakout or momentum across the roots through the platform's pipeline: costed, lagged and volatility-targeted like any other backtest." },
     form: { root: "CL", series: "", rollDays: "5", book: [], equity: "100000", scale: "1", near: "7", strategy: "carry_ts", roots: new Set(["CL", "NG", "GC", "HG", "ES"]), lookback: "", frequency: "weekly", targetVol: "", cost: "2" },
@@ -39,11 +39,18 @@
   const FREE = {
     kind: "futures", title: "Real futures data (free)",
     intro: "Download real futures prices. Yahoo Finance (no account, no key) gives the delayed daily price of each contract month of 44 roots, stacked into a forward curve; Bitcoin and Ether futures come from Deribit. iTick (needs your key) gives the daily price history of any futures product it lists, about 1,600 in the United States, Hong Kong and China, but no curve. Expiry dates are computed from each exchange's rule, Yahoo has no open interest, and a later download is merged with the earlier one, so the contracts that have expired keep their history.",
-    defaults: () => ({ source: "yahoo", chosen: new Set(["CL", "ES", "GC"]), contracts: "10", history: "1y", products: new Set(["US:NQ"]), names: { "US:NQ": "E-mini Nasdaq-100 Futures" }, years: "5" }),
+    defaults: () => ({ source: "yahoo", chosen: new Set(["CL", "ES", "GC"]), contracts: "10", history: "1y", products: new Set(["US:NQ"]), names: { "US:NQ": "E-mini Nasdaq-100 Futures" }, years: "5",
+      yproducts: new Set(["ES=F"]), ynames: { "ES=F": "E-Mini S&P 500" }, yyears: "5" }),
     controls: (box, f, ks, changed, redraw) => {
       itick = ks.itick_status;
-      const seg = W.seg(box, [["yahoo", "Yahoo Finance: curves"], ["itick", "iTick: any product"]], f.source, (v) => { f.source = v; redraw(); });
+      const seg = W.seg(box, [["yahoo", "Yahoo: curves"], ["yahoo_series", "Yahoo: search any future"], ["itick", "iTick: any product"]], f.source, (v) => { f.source = v; redraw(); });
       seg.setAttribute("role", "group"); seg.setAttribute("aria-label", "data source"); seg.dataset.role = "source";
+      if (f.source === "yahoo_series") {
+        h("p", "hint", box, "Search every future Yahoo Finance lists (CME Group and ICE US: about 340 continuous series are in the list, and “Ask Yahoo” finds the rest by name). Each gives one daily price history, the front month rolled by Yahoo, to read in the History view: no curve, roll or carry, and Yahoo has no open interest. No key is needed.");
+        W.finder(box, f.yproducts, f.ynames, { kind: "futures", source: "yahoo", groups: ks.yahoo.groups, after: changed });
+        Q.labField(box, { key: "yyears", label: "Years of history", kind: "choice", options: ks.yahoo.years.map((y) => [String(y), YEARS[y] || y + " years"]), help: "One call whatever you choose" }, f, changed);
+        return;
+      }
       if (f.source === "itick") {
         W.itickBox(box, ks.itick_status, "futures");
         h("p", "hint", box, "iTick keeps one daily price series for each futures product (NQ, CL, HSI), not one for each contract month: you get a price history to read in the History view, not a curve, a roll or carry, and no open interest.");
@@ -60,20 +67,22 @@
       W.picks(box, ks.crypto.map((c) => [c.id, c.id + " · Deribit", `${c.name} futures from Deribit, live`]), f.chosen, changed);
       Q.labField(box, { key: "contracts", label: "Contracts per root", kind: "choice", options: CONTRACTS, help: "How many of the next delivery months to ask Yahoo for" }, f, changed);
       Q.labField(box, { key: "history", label: "History to download", kind: "choice", options: ks.history.map((x) => [x, HISTORY[x] || x]), help: "Not used for the Deribit futures, which are a snapshot of today" }, f, changed);
-      h("p", "hint", box, "Need a product that is not here (lean hogs, the Nikkei, Hang Seng, iron ore …)? Choose iTick above and search its list.");
+      h("p", "hint", box, "Need a product that is not here (lumber, the Nikkei, a single stock, iron ore, Hang Seng …)? Choose Yahoo's search or iTick above and search their lists.");
     },
     request: (f) => {
+      if (f.source === "yahoo_series") { if (!f.yproducts.size) throw new Error("Choose at least one future"); return { kind: "futures", source: "yahoo_series", items: [...f.yproducts], years: Number(f.yyears) }; }
       if (f.source === "itick") { if (!f.products.size) throw new Error("Choose at least one product"); return { kind: "futures", source: "itick", items: [...f.products], years: Number(f.years) }; }
       if (!f.chosen.size) throw new Error("Pick at least one root");
       return { kind: "futures", items: [...f.chosen], contracts: Number(f.contracts), history: f.history };
     },
     estimate: (b) => {
+      if (b.source === "yahoo_series") return b.items.length * 2;
       if (b.source !== "itick") return b.items.length * (4 + b.contracts * 0.5);
       const info = itick || {}, cpm = info.calls_per_minute || 5, page = info.page_size || 1000, free = info.calls_available_now === undefined ? cpm : info.calls_available_now;
       const calls = b.items.length * Math.max(1, Math.ceil((b.years * ((info.bars_per_year || {}).future || 260)) / page));
       return 2 * calls + Math.max(0, calls - free) * (60 / cpm);
     },
-    describe: (rec) => rec.item === "series" ? [`${rec.code} · ${rec.root_name || rec.name} (${rec.region})`, `iTick · price history · ${Number(rec.bars || rec.rows).toLocaleString("en-US")} daily bars · ${rec.first_date} to ${rec.as_of}`]
+    describe: (rec) => rec.item === "series" ? [`${rec.code} · ${rec.root_name || rec.name} (${rec.region === "YF" ? "Yahoo" : rec.region})`, `${rec.region === "YF" ? "Yahoo Finance" : "iTick"} · price history · ${Number(rec.bars || rec.rows).toLocaleString("en-US")} daily bars · ${rec.first_date} to ${rec.as_of}`]
       : [`${rec.name} · ${rec.root_name || ""}`.replace(/ · $/, ""), `${rec.source} · ${rec.contracts} contracts · ${rec.first_date && rec.first_date !== rec.as_of ? rec.first_date + " to " : ""}${rec.as_of}`],
     setCatalog,
     pick: (res) => {
@@ -90,7 +99,7 @@
   /* ---------- the form ---------- */
   F.check = () => {
     if (!F.catalog) return "Loading the list of roots…";
-    if (F.mode === "history" && !F.form.series) return "Download a product first (the card below: choose iTick).";
+    if (F.mode === "history" && !F.form.series) return "Download a product first (the card below: choose Yahoo's search or iTick).";
     if (F.mode === "backtest") { if (!F.form.roots.size) return "Tick at least one root."; if (["carry_xs", "xs_momentum"].includes(F.form.strategy) && F.form.roots.size < 2) return "A cross-sectional strategy needs at least two roots."; }
     return "";
   };
@@ -109,8 +118,8 @@
       const b = sec("1. Product"), list = cat.futures_series || [];
       if (list.length) {
         Q.labField(b, { key: "series", label: "Downloaded price history", kind: "choice", options: list.map((x) => [x.id, `${x.code}: ${x.name} (${x.region})`]) }, f, () => F.run(true));
-        h("p", "hint", b, "Daily prices as iTick keeps them for the product. They are not the prices of one contract: see the notes under the badge for how the series is joined, and the list of the biggest moves for where it may jump.");
-      } else h("p", "hint", b, "No price history is downloaded yet. Use the card below: choose iTick, search for a product (nasdaq, crude, gold, hang seng …) and press Download real data.");
+        h("p", "hint", b, "Daily prices as the provider keeps them for the product. They are not the prices of one contract: see the notes under the badge for how the series is joined, and the list of the biggest moves for where it may jump.");
+      } else h("p", "hint", b, "No price history is downloaded yet. Use the card below: choose Yahoo's search (no key) or iTick, search for a product (nasdaq, crude, gold, lumber …) and press Download real data.");
     }
     if (m !== "backtest") W.dataCard(panel, F, FREE);
     if (m === "margin") {

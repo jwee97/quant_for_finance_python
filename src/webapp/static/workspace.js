@@ -211,7 +211,7 @@
       sel.addEventListener("change", () => { state[key] = sel.value; look(); });
     };
     if (opts.kind === "futures") {
-      select("market", "region", [["", "All markets"], ...(opts.regions || []).map((r) => [r.id, r.id === "US" ? "United States" : r.id === "HK" ? "Hong Kong" : "Mainland China"])]);
+      if (opts.regions) select("market", "region", [["", "All markets"], ...opts.regions.map((r) => [r.id, r.id === "US" ? "United States" : r.id === "HK" ? "Hong Kong" : "Mainland China"])]);
       select("group", "group", [["", "All groups"], ...(opts.groups || []).map((g) => [g, g])]);
     }
     const paintChosen = () => {
@@ -228,7 +228,7 @@
       if (!res) return;
       for (const r of res.results) {
         const b = h("button", "hit", hits); b.type = "button"; b.dataset.value = r.item; b.setAttribute("aria-pressed", String(chosen.has(r.item)));
-        h("b", "", b, r.item); h("span", "", b, r.name + (r.exchange ? " · " + r.exchange : ""));
+        h("b", "", b, r.item); h("span", "", b, r.name + (r.exchange ? " · " + r.exchange : "") + (r.kind === "contract" ? " · one contract" : ""));
         if (r.access) {                                                                      // what iTick gave this key when it was asked: the list is iTick's, the plan is yours
           const tag = h("span", "access " + (r.access.ok ? "ok" : "no"), b, r.access.ok ? "✓ worked" : "✗ not for your key");
           tag.title = (r.access.ok ? "iTick returned this product for your key" : "iTick did not return this product for your key") + " on " + r.access.at + (r.access.why ? ": " + r.access.why : "") + ". It may have changed since.";
@@ -240,17 +240,37 @@
       }
       const typed = String(q.value).trim();
       if (!res.results.length) {
-        note.textContent = opts.kind === "crypto" ? "iTick's list has no such coin." : "No product in the list matches.";
-        if (opts.kind === "futures" && /^([A-Za-z]{2}:)?[A-Za-z0-9.]{1,12}$/.test(typed)) {
+        note.textContent = opts.kind === "crypto" ? "iTick's list has no such coin." : opts.source === "yahoo" ? "No future in the bundled list matches: ask Yahoo, below." : "No product in the list matches.";
+        if (opts.source === "yahoo") {
+          if (/^[A-Za-z0-9]{1,9}=F$/.test(typed)) {
+            const item = typed.toUpperCase(), use = h("button", "link", note, ` Try ${item} anyway`); use.type = "button";
+            use.addEventListener("click", () => { chosen.add(item); names[item] = ""; paintChosen(); if (opts.after) opts.after(); });
+          }
+        } else if (opts.kind === "futures" && /^([A-Za-z]{2}:)?[A-Za-z0-9.]{1,12}$/.test(typed)) {
           const item = /:/.test(typed) ? typed.toUpperCase() : "US:" + typed.toUpperCase(), use = h("button", "link", note, `Try ${item} anyway`); use.type = "button";
           use.addEventListener("click", () => { chosen.add(item); names[item] = ""; paintChosen(); if (opts.after) opts.after(); });
         }
-      } else if (!typed && !state.region && !state.group) note.textContent = `The ${res.shown} products people look for most${res.total > res.shown ? " (of " + res.total + ")" : ""}. Type to search all of iTick's list.`;
+      } else if (!typed && !state.region && !state.group) note.textContent = opts.source === "yahoo" ? `${res.shown} of the ${res.total} futures in the list, the best known first. Type a name to search them all.` : `The ${res.shown} products people look for most${res.total > res.shown ? " (of " + res.total + ")" : ""}. Type to search all of iTick's list.`;
       else if (res.total > res.shown) note.textContent = `${res.shown} of ${res.total} shown: type more to narrow the list.`;
     };
+    let ask = null;
+    if (opts.source === "yahoo") {                                                          // Yahoo has no list to read, only a search: ask it for the words typed (one to three calls) and keep the answer
+      ask = h("button", "btn small", box, "Ask Yahoo for what you typed"); ask.type = "button"; ask.dataset.role = "finder-ask"; ask.hidden = true;
+      ask.title = "Yahoo's lookup finds futures by name (lumber, nikkei, 6E). It makes one to three calls and the answer is kept, so the next search finds it without a call.";
+      ask.addEventListener("click", async () => {
+        const typed = String(q.value).trim(); if (!typed) return;
+        ask.disabled = true; note.textContent = "Asking Yahoo…";
+        try {
+          const res = await api("/api/data/lookup", { kind: "futures", source: "yahoo", q: typed }); paintHits(res);
+          note.textContent = res.found ? `Yahoo found ${res.found} future${res.found === 1 ? "" : "s"} for “${typed}”${res.new ? ` (${res.new} new to the list, kept)` : ""}.${res.incomplete ? " It stopped answering part-way." : ""}` : `Yahoo has no future for “${typed}”.`;
+        } catch (e) { note.textContent = e.status === 404 ? "The app behind this page cannot ask Yahoo: it is older than the page. " + Q.RESTART : e.message; }
+        ask.disabled = false;
+      });
+    }
     const look = async () => {
       const mine = ++seq;
-      try { const res = await api("/api/data/search" + qs({ kind: opts.kind, q: q.value, region: state.region, group: state.group, limit: 24 })); if (mine === seq) paintHits(res); }
+      if (ask) ask.hidden = !String(q.value).trim();
+      try { const res = await api("/api/data/search" + qs({ kind: opts.kind, source: opts.source, q: q.value, region: state.region, group: state.group, limit: 24 })); if (mine === seq) paintHits(res); }
       catch (e) { if (mine === seq) { hits.replaceChildren(); note.textContent = e.status === 404 ? "The app behind this page cannot search iTick's list: it is older than the page. " + Q.RESTART : e.message; } }
     };
     q.addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(look, 200); });

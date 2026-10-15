@@ -1,7 +1,8 @@
 """The Free data endpoints of the Options, Futures and Crypto tabs: download real data from free public sources so that nothing has to be found and formatted by hand.
 
 ``GET  /api/data/status``   what is downloaded (with where from and when), what each tab can ask for, and which downloads are running
-``GET  /api/data/search``   the products of iTick's bundled list that match a search (futures) or the coins it quotes (crypto)
+``GET  /api/data/search``   the products of iTick's bundled list that match a search (futures) or the coins it quotes (crypto); with ``source=yahoo``, the futures Yahoo lists
+``POST /api/data/lookup``  ask Yahoo's lookup service for the futures matching a word, and keep what it finds (one to three calls)
 ``POST /api/data/fetch``    (a job) download for one tab: ``{"kind": "options" | "futures" | "crypto", "items": [...], ...settings}``
 ``POST /api/data/delete``   remove one download: ``{"kind", "name", "confirm": true}``
 
@@ -26,6 +27,7 @@ from ..assets.free_data import crypto as fc
 from ..assets.free_data import futures as ff
 from ..assets.free_data import itick_catalog as ic
 from ..assets.free_data import options as fo
+from ..assets.free_data import yahoo_futures as yf
 from ..assets.free_data.http import FetchError, Http
 from ..assets.free_data.sources import describe
 from ..assets.free_data.store import KINDS, DownloadStore
@@ -39,7 +41,7 @@ MAX_ITEMS = 15
 OPTION_PRESETS = ("SPY", "QQQ", "IWM", "DIA", "TLT", "GLD", "AAPL", "MSFT", "NVDA", "TSLA", "AMZN", "SPX")
 WHAT = ("history", "venues", "funding")
 SOURCE_IDS = {"options": ("cboe", "yahoo", "deribit", "itick"), "futures": ("yahoo", "deribit", "itick"), "crypto": ("okx", "coinbase", "kraken", "bitstamp", "deribit", "itick")}
-FUTURES_SOURCES = ("yahoo", "itick")                       # the curve of each contract month, or the price history of a product
+FUTURES_SOURCES = ("yahoo", "itick", "yahoo_series")       # the curve of each contract month, the price history of a product from iTick, or of any future Yahoo lists
 CRYPTO_SOURCES = ("exchanges", "itick")
 PRICE_SOURCES = ("itick", "yahoo")                         # where an option underlying's daily prices can come from
 BARS_PER_YEAR = {"future": 260, "crypto": 365, "stock": 252}
@@ -81,6 +83,13 @@ def _check_root(x: str) -> str:
     return root
 
 
+def _check_yahoo_future(x: str) -> str:
+    symbol = x.strip().upper()
+    if not yf.SYMBOL.match(symbol):
+        raise ValueError(f"{x.strip()[:20]} is not a futures symbol Yahoo uses: ES=F (the front month) or CLZ26.NYM (one contract). Search the list in the card to find one")
+    return symbol
+
+
 def _check_product(x: str) -> str:
     region, code = ic.parse_item(x)
     return f"{region}:{code}"
@@ -108,7 +117,7 @@ class DataApi:
         return {"/api/data/status": self.status, "/api/data/search": self.search}
 
     def post_routes(self) -> dict:
-        return {"/api/data/fetch": self.fetch, "/api/data/delete": self.delete}
+        return {"/api/data/fetch": self.fetch, "/api/data/delete": self.delete, "/api/data/lookup": self.lookup}
 
     # ------------------------------------------------------------------------------------------------------------ iTick
     def _itick(self):
@@ -141,7 +150,8 @@ class DataApi:
                         "prices": {"sources": [{"id": "itick", "text": "iTick (needs your key)"}, {"id": "yahoo", "text": "Yahoo Finance"}], "years": [1, 2, 3, 5, 10], "defaults": {"years": 3, "source": "yahoo"}}},
             "futures": {"roots": [{"id": r.root, "name": r.name, "exchange": r.exchange, "group": r.group} for r in roots], "groups": list(dict.fromkeys(r.group for r in roots)),
                         "crypto": [{"id": k, "name": v} for k, v in ff.CRYPTO_ROOTS.items()], "history": ["6mo", "1y", "2y", "5y"], "defaults": {"contracts": 10, "history": "1y"},
-                        "itick": {"regions": [{"id": k, "name": v} for k, v in ic.REGION_NAMES.items()], "groups": ic.groups(), "years": [1, 2, 3, 5, 10, 20], "products": len(ic.futures_products()), "defaults": {"years": 5}}},
+                        "itick": {"regions": [{"id": k, "name": v} for k, v in ic.REGION_NAMES.items()], "groups": ic.groups(), "years": [1, 2, 3, 5, 10, 20], "products": len(ic.futures_products()), "defaults": {"years": 5}},
+                        "yahoo": {"groups": yf.groups(self._yahoo_list()), "years": [1, 2, 3, 5, 10, 20], "products": len(yf.catalog(self._yahoo_list())), "defaults": {"years": 5}}},
             "crypto": {"coins": list(fc.DEFAULT_COINS), "what": [{"id": "history", "text": "Daily history: spot, perpetual and funding"}, {"id": "venues", "text": "Real quotes and order books on six venues, now"},
                                                                   {"id": "funding", "text": "OKX funding history, for the funding view"}], "defaults": {"days": 400, "what": list(WHAT)},
                        "itick": {"coins": len(ic.coins())}},
@@ -157,17 +167,26 @@ class DataApi:
                               "iTick is the exception: it needs your key (the ITICK_API_KEY secret) and counts every call against your plan."})
 
     def search(self, q: dict) -> dict:
-        """``GET /api/data/search?kind=futures&q=nasdaq&region=US&group=Energy&limit=30``: products from iTick's bundled list (no call is made), best match first; ``kind=crypto`` searches its coins."""
+        """``GET /api/data/search?kind=futures&q=nasdaq&region=US&group=Energy&limit=30``: products from iTick's bundled list (no call is made), best match first; ``kind=crypto`` searches its coins;
+        ``source=yahoo`` searches the futures Yahoo lists (the bundled snapshot and what earlier lookups added)."""
         kind = str(q.get("kind") or "futures")
         text = str(q.get("q") or "")[:60]
         limit = _number(q, "limit", 30, 1, 100, integer=True)
+        if kind == "futures" and str(q.get("source") or "") == "yahoo":
+            group = str(q.get("group") or "") or None
+            if group is not None and group not in yf.GROUPS:
+                raise ApiError(f"group must be one of {list(yf.GROUPS)}")
+            return clean({"kind": kind, "source": "yahoo", **yf.search(text, group, None, limit, self._yahoo_list()), "groups": yf.groups(self._yahoo_list())})
         if kind == "futures":
             region = str(q.get("region") or "").upper() or None
             if region is not None and region not in ic.REGIONS:
                 raise ApiError(f"region must be one of {list(ic.REGIONS)}")
             group = str(q.get("group") or "") or None
             found = ic.search(text, region, group, limit)
-            seen = self._itick().access("future")                                  # what iTick returned or refused for this key lately: the list is iTick's, the plan is yours
+            try:
+                seen = self._itick().access("future")                              # what iTick returned or refused for this key lately: the list is iTick's, the plan is yours
+            except ApiError:
+                seen = {}                                                          # an app without the iTick source has no marks to show
             for row in found["results"]:
                 if row["item"] in seen:
                     row["access"] = seen[row["item"]]
@@ -175,6 +194,21 @@ class DataApi:
         if kind == "crypto":
             return clean({"kind": kind, **ic.search_coins(text, limit)})
         raise ApiError("kind must be futures or crypto")
+
+    def _yahoo_list(self) -> Path:
+        return self.root / "data" / "user" / "yahoo_futures.json"
+
+    def lookup(self, body: dict) -> dict:
+        """``POST /api/data/lookup`` with ``{"kind": "futures", "source": "yahoo", "q": "lumber"}``: ask Yahoo's lookup service for the futures that match (one to three calls, a few seconds), keep what it
+        found so that the search has it from now on, and return it in the shape of a search. Yahoo has no page that lists its futures; this is how a name you type is found."""
+        if str(body.get("kind") or "futures") != "futures" or str(body.get("source") or "yahoo") != "yahoo":
+            raise ApiError("only the futures of Yahoo Finance can be looked up this way; iTick's list is searched with no call")
+        http = self.http or Http(pauses=HOSTS, retries=1, backoff=1.5, cooldown=60.0)
+        try:
+            found = yf.lookup(http, str(body.get("q") or ""), self._yahoo_list())
+        except (ValueError, FetchError) as exc:
+            raise ApiError(str(exc)) from None
+        return clean({"kind": "futures", "source": "yahoo", **found, "total": found["found"], "shown": len(found["results"]), "groups": yf.groups(self._yahoo_list())})
 
     # ------------------------------------------------------------------------------------------------------------ one item of each kind
     def _client(self) -> Http:
@@ -262,6 +296,14 @@ class DataApi:
         except Exception as exc:                                              # noqa: BLE001
             return [self._fail(item, "series", exc)]
 
+    def _one_yahoo_series(self, http: Http, item: str, s: dict, progress) -> list[dict]:
+        """The daily price history of one future Yahoo lists (a continuous series such as ES=F, or one contract): one call, saved for the History view."""
+        try:
+            d = yf.fetch_series(http, item, s["years"], self._yahoo_list())
+            return [self._save(d, f"{len(d.frame):,} daily bars, {d.meta['first_date']} to {d.meta['as_of']} (Yahoo Finance)", {"source": "yahoo_series", "items": [item], "years": s["years"]}, item)]
+        except Exception as exc:                                              # noqa: BLE001
+            return [self._fail(item, "series", exc)]
+
     def _one_coin(self, http: Http, coin: str, s: dict, progress) -> list[dict]:
         out = []
         for what in s["what"]:
@@ -300,6 +342,8 @@ class DataApi:
             source = _choice(body, "source", "yahoo", FUTURES_SOURCES)
             if source == "itick":
                 return _items(body, _check_product), {"source": "itick", "years": _number(body, "years", 5, 1, 20, integer=True)}
+            if source == "yahoo_series":
+                return _items(body, _check_yahoo_future), {"source": "yahoo_series", "years": _number(body, "years", 5, 1, 20, integer=True)}
             history = str(body.get("history") or "1y")
             if history not in ("6mo", "1y", "2y", "5y"):
                 raise ApiError("history must be 6mo, 1y, 2y or 5y")
@@ -352,7 +396,12 @@ class DataApi:
                     if kind == "options":
                         results += self._one_option(http, item, settings) + self._one_prices(http, item, settings, progress)
                     elif kind == "futures":
-                        results += self._one_series(item, settings, progress) if settings["source"] == "itick" else self._one_root(http, item, settings, progress)
+                        if settings["source"] == "itick":
+                            results += self._one_series(item, settings, progress)
+                        elif settings["source"] == "yahoo_series":
+                            results += self._one_yahoo_series(http, item, settings, progress)
+                        else:
+                            results += self._one_root(http, item, settings, progress)
                     else:
                         results += self._one_coin(http, item, settings, progress)
                     if results and results[-1].get("fatal"):                  # iTick refused the key or the plan: asking again for the rest would only spend calls

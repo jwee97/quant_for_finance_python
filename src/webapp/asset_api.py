@@ -461,11 +461,12 @@ class AssetApi:
                                      roll["risk_flags"], data.as_of, data.notes + ["Roll cost is for a LONG position (negative: rolling earns the backwardation); a short position's is the opposite."])
 
     def futures_series(self, q: dict) -> dict:
-        """``GET /api/futures/series?name=US_NQ``: the price history of a futures product downloaded from iTick: returns, volatility, drawdown, the calendar months and the largest one-day moves."""
+        """``GET /api/futures/series?name=US_NQ``: the price history of a futures product downloaded from iTick (``US_NQ``) or Yahoo Finance (``YF_ES``): returns, volatility, drawdown, the calendar months and the
+        largest one-day moves."""
         name = str(q.get("name") or "")
         known = self._downloaded("futures", "series")
         if not DOWNLOAD_NAME.match(name) or name not in known:
-            raise ApiError(f"no downloaded price history '{name}'; use the Free data card on this tab, choose iTick and download a product (downloaded so far: {sorted(known) or 'none'})")
+            raise ApiError(f"no downloaded price history '{name}'; use the Free data card on this tab, choose iTick or Yahoo (search all futures) and download a product (downloaded so far: {sorted(known) or 'none'})")
         rec = known[name]
         try:
             view = fa.series_view(pd.read_csv(self.downloads.folder("futures") / rec["file"]))

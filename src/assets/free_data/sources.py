@@ -9,7 +9,7 @@ from __future__ import annotations
 SOURCES: dict[str, dict] = {
     "cboe": {"label": "Cboe delayed quotes", "url": "https://www.cboe.com/delayed_quotes/", "provides": "US stock, ETF and index option chains: bid, ask, volume, open interest",
              "delay": "about 15 minutes during the session; after the close, the last session", "kinds": ["options"]},
-    "yahoo": {"label": "Yahoo Finance", "url": "https://finance.yahoo.com/", "provides": "daily prices of each individual futures contract (for the curve); option chains when Cboe cannot be reached",
+    "yahoo": {"label": "Yahoo Finance", "url": "https://finance.yahoo.com/", "provides": "daily prices of each individual futures contract (for the curve) and the price history of any future it lists, found by name (CME Group and ICE US only); option chains when Cboe cannot be reached",
               "delay": "end-of-day settlements; delayed during the session; no open interest", "kinds": ["futures", "options"]},
     "deribit": {"label": "Deribit", "url": "https://docs.deribit.com/", "provides": "Bitcoin and Ether option chains, dated futures and the perpetual", "delay": "live", "kinds": ["options", "futures", "crypto"]},
     "coinbase": {"label": "Coinbase Exchange", "url": "https://docs.cdp.coinbase.com/exchange/docs/welcome", "provides": "spot quotes and order books in US dollars; daily candles", "delay": "live", "kinds": ["crypto"]},

@@ -43,6 +43,12 @@ prices, order books and funding (OKX, Coinbase, Kraken, Bitstamp, Deribit), save
 under `data/user/downloads/` and the tab switches to them, badged *Downloaded: free data*.
 Those sources need no account, no key and no Secret, and nothing has to be sourced by hand.
 
+**Finding a future without guessing its symbol.** The Futures card's *Yahoo: search any future*
+source searches every future Yahoo Finance lists (about 340 in the list that ships with the
+app, and *Ask Yahoo for what you typed* finds the rest by name) and downloads its daily price
+history, no key needed, to read in the History view. Yahoo has CME Group and ICE US futures
+only; iTick's list below has Hong Kong and mainland China as well.
+
 **iTick** is the optional second source of the Futures and Crypto cards (choose it above
 the list of roots or coins) and of the Options card's price download. It uses the same
 `ITICK_API_KEY` Secret as the Backtest tab's iTick source (see below), the same 5-calls-a-
@@ -51,8 +57,12 @@ minute limit and the same cost per download, and it gives you the daily price hi
 to the 44 roots), a coin's daily history, and an option underlying's daily prices. It has
 no option data and no curve (iTick keeps one series per futures product, not one per
 contract month). A card with iTick chosen and no key set shows the steps that turn it on.
-The author could not call iTick, so press **Test the iTick connection** in the card once
-the Secret is set: it spends one call and says what your account returns.
+The author could not call iTick with a working key, so press **Test the iTick connection** in
+the card once the Secret is set: it spends one call (two if the first iTick host does not
+recognise the key) and says what your account returns. If a product is "not found", iTick
+says its code is wrong or it is not in your plan; the test then also tries NQ, iTick's own
+example, to tell a plan without futures from one missing product, and the search marks what
+your key could and could not get.
 
 The public feeds rate-limit shared cloud addresses, and a Repl's address is shared. If a
 provider answers *HTTP 403* or *HTTP 429* the card says which one and the app waits before

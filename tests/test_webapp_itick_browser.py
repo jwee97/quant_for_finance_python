@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import pytest
 
+from src.assets.free_data import yahoo_futures as yf
 from src.assets.free_data.http import Http
 from src.utils.config import load_config
 from src.webapp import server
@@ -12,6 +13,7 @@ from src.webapp.api import App
 from src.webapp.providers import ITickProvider, RateLimiter
 from src.webapp.universe import TickerStore, UniverseBuilder, itick_source
 from tests.fake_itick import KEY, FakeClock, FakeITick
+from tests import free_data_helpers as fh
 from tests.free_data_helpers import FakeFeeds, cboe_payload
 from tests.ml_helpers import make_bundle
 from tests.test_webapp import _fetch
@@ -286,6 +288,49 @@ def test_the_finder_marks_the_products_iTick_returned_or_refused_for_the_key(iti
         assert page.locator("#futures .finder .hits button.hit[data-value='US:CL'] .access").count() == 0, "a product never asked for has no mark"
     finally:
         provider._access.clear()
+
+
+def test_the_futures_card_searches_every_future_yahoo_lists_asks_yahoo_for_a_word_and_reads_the_history(itick):
+    page = itick
+    routes = page.live.feeds.routes
+    routes[YAHOO + "LBR=F"] = yahoo_route(500.0, days=300)
+    routes[YAHOO + "OATZ=F"] = yahoo_route(300.0, days=300)
+    routes[yf.LOOKUP] = fh.yahoo_lookup([fh.yahoo_future_doc("OATZ=F", "Oat Futures,Dec-2026", "CBT"), fh.yahoo_future_doc("OATZ26.CBT", "Oat Futures,Dec-2026", "CBT")])
+    page.click("#tab-futures")
+    page.wait_for_selector("#futures-results .tile", timeout=90_000)
+    page.wait_for_selector("#futures details.freedata button[data-action=download]")
+    card = page.locator("#futures details.freedata")
+    _source(page, "futures", "yahoo_series")
+    page.wait_for_selector("#futures .finder .hits button.hit")
+    assert card.locator("[data-role=source] button[aria-pressed=true]").inner_text().startswith("Yahoo: search") and "No key is needed" in card.inner_text()
+    assert card.locator("[data-role=finder-region]").count() == 0 and card.locator("[data-role=finder-group] option").count() >= 8, "Yahoo's list has groups, not markets"
+    assert _first_hit(page, "futures") == "CL=F" and "ES=F" in page.locator("#futures .finder .chosen button").inner_text() and card.locator("[data-role=finder-ask]").is_hidden()
+    page.fill("#futures [data-role=finder-search]", "lumber")
+    _wait_until(page, "(document.querySelector('#futures .finder .hits button.hit b') || {textContent: ''}).textContent.indexOf('LBR=F') >= 0")
+    page.click("#futures .finder .hits button[data-value='LBR=F']")
+    page.fill("#futures [data-role=finder-search]", "zzoats")
+    page.wait_for_selector("#futures .finder .note, #futures .finder p.hint", timeout=20_000)
+    _wait_until(page, "document.querySelectorAll('#futures .finder .hits button.hit').length === 0")
+    assert card.locator("[data-role=finder-ask]").is_visible() and "ask yahoo" in page.inner_text("#futures .finder").lower()
+    card.locator("[data-role=finder-ask]").click()
+    _wait_until(page, "document.querySelectorAll('#futures .finder .hits button.hit').length === 2")
+    assert "Yahoo found 2 futures" in page.inner_text("#futures .finder") and "OATZ=F" in page.locator("#futures .finder .hits").inner_text()
+    page.click("#futures .finder .hits button[data-value='OATZ=F']")
+    assert [b.get_attribute("data-value") for b in page.locator("#futures .finder .chosen button").all()] == ["ES=F", "LBR=F", "OATZ=F"]
+    page.click("#futures .finder .chosen button[data-value='ES=F']")                            # ES=F is not asked for: no route, and a chosen product is removed by clicking it
+    card.locator("select[data-key=yyears]").select_option("3")
+    _finish(page, "futures")
+    ok = [t.replace("✓", "").strip() for t in page.locator("#futures .fdres li:not(.fail) b").all_inner_texts()]
+    assert ok == ["LBR=F · price history", "OATZ=F · price history"] and page.locator("#futures .fdres li.fail").count() == 0
+    page.wait_for_selector("#futures .fdlist li[data-name=YF_LBR]", timeout=30_000)
+    assert "Yahoo Finance · price history" in page.inner_text("#futures .fdlist li[data-name=YF_LBR]") and "Lumber" in page.inner_text("#futures .fdlist li[data-name=YF_LBR]")
+    assert page.locator("#view-futures .tabsmall button[aria-selected=true]").get_attribute("data-mode") == "history"
+    page.wait_for_selector("#futures-results .prov .src", timeout=60_000)
+    text = page.locator("#futures-results").text_content()
+    assert "Lumber" in text and "rolled by Yahoo" in text and "Downloaded: free data" in text and page.locator("#futures-results .banner.err").count() == 0
+    for name in ("YF_LBR", "YF_OATZ"):
+        page.live.app.data.store.delete("futures", name)
+    page.live.app.data._yahoo_list().unlink(missing_ok=True)
 
 
 @pytest.mark.parametrize("tab, results", [("futures", "#futures-results .tile"), ("crypto", "#crypto-results .tile"), ("options", "#options-results .tile")])

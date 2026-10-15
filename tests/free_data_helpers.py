@@ -82,6 +82,15 @@ def yahoo_chart(symbol: str, dates, closes, volumes=None, gmtoffset: int = -1440
                       "error": None}}
 
 
+def yahoo_future_doc(symbol: str, name: str, exchange: str = "CME", kind: str = "future") -> dict:
+    """One document of Yahoo's lookup service (``/v1/finance/lookup?type=future``): a name that carries the delivery month and is cut at about thirty characters, as the live one is."""
+    return {"exchange": exchange, "quoteType": kind, "shortName": name[:31], "symbol": symbol, "rank": 1000, "regularMarketPrice": 100.0}
+
+
+def yahoo_lookup(docs: list[dict]) -> dict:
+    return {"finance": {"result": [{"count": len(docs), "start": 0, "total": len(docs), "documents": docs}], "error": None}}
+
+
 YAHOO_MISSING = {"chart": {"result": None, "error": {"code": "Not Found", "description": "No data found, symbol may be delisted"}}}
 
 
