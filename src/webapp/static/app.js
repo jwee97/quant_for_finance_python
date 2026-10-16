@@ -1347,14 +1347,15 @@
     };
     search.addEventListener("input", () => { G.filter = search.value; draw(); }); draw();
     const doc = h("article", "card md", root); doc.id = "doc";
-    if (!G.slug) loadDoc(store("doc") || "dashboard"); else loadDoc(G.slug);
+    if (!G.slug) loadDoc(store("doc") || "dashboard", false); else loadDoc(G.slug, false);                  // drawing the open tab's guide: it must not bring the Guides tab back after the reader has moved on
   }
-  async function loadDoc(slug) {
+  async function loadDoc(slug, show = true) {
     G.slug = slug; store("doc", slug);
-    if ($("#view-guides").hidden) showTab("guides");
+    if (show && $("#view-guides").hidden) showTab("guides");
     const doc = $("#doc"); if (!doc) return; doc.replaceChildren(); h("p", "", doc, "Loading…");
     try {
-      const d = await api("/api/docs/" + encodeURIComponent(slug)); doc.replaceChildren(); markdown(d.markdown, doc); doc.scrollIntoView({ block: "start" }); window.scrollTo({ top: 0 });
+      const d = await api("/api/docs/" + encodeURIComponent(slug)); doc.replaceChildren(); markdown(d.markdown, doc);
+      if (!$("#view-guides").hidden) { doc.scrollIntoView({ block: "start" }); window.scrollTo({ top: 0 }); }               // only when the reader is still on the Guides tab
       document.querySelectorAll(".toc button").forEach((b) => b.removeAttribute("aria-current"));
       const idx = G.index.findIndex((x) => x.slug === slug); if (idx >= 0) [...document.querySelectorAll(".toc button")].find((b) => b.textContent === G.index[idx].title)?.setAttribute("aria-current", "true");
     } catch (e) { doc.replaceChildren(); const b = h("div", "banner err", doc); b.textContent = e.message; }

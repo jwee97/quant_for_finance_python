@@ -216,8 +216,9 @@ def test_a_missing_ticker_count_check_is_explained_and_not_reported_as_not_found
 SETTLE_MS = 800            # longer than the page's 180 ms redraw debounce: a redraw triggered by a click would have happened by then
 
 
-def _scroll_card_to_top(page, selector, offset=150):
-    page.evaluate("([sel, off]) => { const r = document.querySelector(sel).getBoundingClientRect(); window.scrollBy(0, r.top - off); }", [selector, offset])
+def _scroll_card_to_top(page, selector, offset=None):
+    """Scroll so that the card sits ``offset`` pixels from the top of the window, by default just under the sticky header (whatever its height: it is one to three rows of tabs and buttons, by width)."""
+    page.evaluate("([sel, off]) => { const head = document.querySelector('header.top').getBoundingClientRect().height; const r = document.querySelector(sel).getBoundingClientRect(); window.scrollBy(0, r.top - (off ?? head + 24)); }", [selector, offset])
     page.wait_for_timeout(100)
 
 
@@ -259,7 +260,7 @@ def test_opening_a_table_keeps_the_page_where_it_is_and_does_not_redraw_the_resu
 def test_choosing_another_details_tab_keeps_the_page_where_it_is(page):
     _run_and_wait(page)
     _mark_result(page)
-    _scroll_card_to_top(page, ".tabsmall", 100)
+    _scroll_card_to_top(page, ".tabsmall")
     y = _scroll_y(page)
     assert y > 1000
     tabs = page.locator(".tabsmall button")
@@ -280,7 +281,7 @@ def test_a_resize_redraws_the_charts_at_the_new_width_and_keeps_what_the_reader_
     drawdown.locator(".seg button:text-is('Table')").click()
     page.locator(".chartcard .seg button:text-is('Log')").click()
     page.locator(".tabsmall button").nth(2).click()
-    _scroll_card_to_top(page, ".tabsmall", 100)
+    _scroll_card_to_top(page, ".tabsmall")
     y = _scroll_y(page)
     width_before = page.evaluate("document.querySelector('.chartcard svg.chart').viewBox.baseVal.width")
     page.set_viewport_size({"width": 1180, "height": 1000})
@@ -303,7 +304,7 @@ def test_a_new_run_starts_from_the_top_with_the_default_view(page):
     _run_and_wait(page)
     page.locator(".chartcard .seg button:text-is('Table')").first.click()
     page.locator(".tabsmall button").nth(2).click()
-    _scroll_card_to_top(page, ".tabsmall", 100)
+    _scroll_card_to_top(page, ".tabsmall")
     assert _scroll_y(page) > 1000
     page.click("#run")
     page.wait_for_selector("#runcount:text-is('2')", timeout=120_000)

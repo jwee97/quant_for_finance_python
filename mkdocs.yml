@@ -20,6 +20,7 @@ nav:
       - How to add a strategy: how_to_add_a_strategy.md
       - Free data for options, futures and crypto: free_data.md
       - Tuning a strategy's settings: tuning.md
+      - Forecasting a stock's price, and how far to trust it: forecasting.md
       - Glossary: glossary.md
       - Chapter map: chapter_map.md
   - Technique guides: techniques/index.md

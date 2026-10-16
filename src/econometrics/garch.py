@@ -165,6 +165,53 @@ class GARCHResult:
         out = np.array([sbar + persist ** h * (nxt - sbar) for h in range(steps)])
         return out * self.scale ** 2
 
+    def simulate(self, steps: int, n_paths: int, seed: int = 0, returns=None, innovations=None) -> np.ndarray:
+        """``n_paths`` simulated continuations of ``steps`` returns (``(n_paths, steps)``, in the units of the input), starting from the conditional variance the model has on the last day.
+
+        ``returns`` brings that state up to date with later days (the same units, the fitted numbers held fixed): the recursion runs over them from the fit's own start, so a model fitted months ago
+        forecasts from today's volatility without being refitted. By default it runs over the sample the model was fitted on. ``innovations`` are standardised residuals to resample (filtered historical
+        simulation, Barone-Adesi, Giannopoulos and Vosper 1999) instead of the model's normal or Student-t shocks; they are recentred and rescaled to zero mean and unit variance first.
+        """
+        if steps < 1 or n_paths < 1:
+            raise ValueError("steps and n_paths must be at least one")
+        rng = np.random.default_rng(seed)
+        p, pr, scale = self.params, self._params_scaled(), self.scale
+        r = self._r.to_numpy() if returns is None else np.asarray(returns, dtype=float)
+        e = (r[np.isfinite(r)] - p["mu"]) / scale
+        gamma = pr.get("gamma", 0.0)
+        s2 = _variance_path(self.model, e, pr["omega"], pr["alpha"], gamma, pr["beta"], self._bc)
+        if innovations is not None:
+            pool = np.asarray(innovations, dtype=float)
+            pool = pool[np.isfinite(pool)]
+            if len(pool) < 20 or pool.std() <= 0:
+                raise ValueError("resampling needs at least twenty standardised residuals that are not all equal")
+            z = rng.choice((pool - pool.mean()) / pool.std(), size=(n_paths, steps))
+        elif self.dist == "normal":
+            z = rng.standard_normal((n_paths, steps))
+        else:
+            nu = p["nu"]
+            z = rng.standard_t(nu, (n_paths, steps)) * math.sqrt((nu - 2.0) / nu)
+        last_e, last_s2 = e[-1], s2[-1]
+        out = np.empty((n_paths, steps))
+        if self.model == "egarch":
+            ls2 = np.full(n_paths, pr["omega"] + pr["alpha"] * (abs(last_e) / math.sqrt(last_s2) - SQRT2PI) + gamma * last_e / math.sqrt(last_s2) + pr["beta"] * math.log(last_s2))
+            for k in range(steps):
+                ls2 = np.clip(ls2, -50.0, 50.0)
+                out[:, k] = np.exp(0.5 * ls2) * z[:, k]
+                ls2 = pr["omega"] + pr["alpha"] * (np.abs(z[:, k]) - SQRT2PI) + gamma * z[:, k] + pr["beta"] * ls2
+        elif self.model == "tgarch":
+            sig = np.full(n_paths, pr["omega"] + (pr["alpha"] + gamma * float(last_e < 0)) * abs(last_e) + pr["beta"] * math.sqrt(last_s2))
+            for k in range(steps):
+                sig = np.maximum(sig, 1e-12)
+                out[:, k] = sig * z[:, k]
+                sig = pr["omega"] + (pr["alpha"] + gamma * (out[:, k] < 0)) * np.abs(out[:, k]) + pr["beta"] * sig
+        else:
+            var = np.full(n_paths, pr["omega"] + (pr["alpha"] + gamma * float(last_e < 0)) * last_e * last_e + pr["beta"] * last_s2)
+            for k in range(steps):
+                out[:, k] = np.sqrt(var) * z[:, k]
+                var = pr["omega"] + (pr["alpha"] + gamma * (out[:, k] < 0)) * out[:, k] ** 2 + pr["beta"] * var
+        return p["mu"] + scale * out
+
     def _params_scaled(self) -> dict:
         s = self.scale
         out = dict(self.params)

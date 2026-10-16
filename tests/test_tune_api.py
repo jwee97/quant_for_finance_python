@@ -243,4 +243,4 @@ def test_the_routes_and_the_script_are_served_and_a_search_can_be_started_over_h
 
 
 def test_the_api_version_says_the_tune_tab_is_there(app):
-    assert app.catalog()["api_version"] == 8
+    assert app.catalog()["api_version"] >= 8

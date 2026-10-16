@@ -68,9 +68,12 @@ class Kernel:
 class Stationary(Kernel):
     """``variance * g(r)`` of the scaled distance ``r``: ``rbf`` (squared exponential), ``matern32`` or ``matern52``. With ``ard`` there is a length scale for every input, else one for all."""
 
-    def __init__(self, kind: str = "rbf", length_scale=1.0, variance: float = 1.0, ard: bool = False, dim: int | None = None):
+    def __init__(self, kind: str = "rbf", length_scale=1.0, variance: float = 1.0, ard: bool = False, dim: int | None = None, length_bounds: tuple[float, float] = (0.03, 100.0)):
         if kind not in ("rbf", "matern32", "matern52"):
             raise ValueError("kind must be rbf, matern32 or matern52")
+        if not 0 < length_bounds[0] < length_bounds[1]:
+            raise ValueError("length_bounds must be two positive numbers, the lower one below the upper")
+        self.length_bounds = (float(length_bounds[0]), float(length_bounds[1]))
         ls = np.atleast_1d(np.asarray(length_scale, dtype=float))
         if ard and dim is not None and len(ls) == 1:
             ls = np.full(dim, float(ls[0]))
@@ -127,7 +130,7 @@ class Stationary(Kernel):
 
     @property
     def bounds(self):
-        return [(np.log(0.03), np.log(100.0))] * len(self.length_scale) + [(np.log(1e-4), np.log(1e3))]
+        return [(np.log(self.length_bounds[0]), np.log(self.length_bounds[1]))] * len(self.length_scale) + [(np.log(1e-4), np.log(1e3))]
 
 
 class Linear(Kernel):
@@ -191,15 +194,16 @@ class SumKernel(Kernel):
         return self.a.bounds + self.b.bounds
 
 
-def make_kernel(spec: str, dim: int) -> Kernel:
-    """A kernel from a short name: ``rbf``, ``matern32``, ``matern52`` (each with a length scale per input), ``linear``, or sums such as ``rbf+linear``."""
+def make_kernel(spec: str, dim: int, length_bounds: tuple[float, float] = (0.03, 100.0)) -> Kernel:
+    """A kernel from a short name: ``rbf``, ``matern32``, ``matern52`` (each with a length scale per input), ``linear``, or sums such as ``rbf+linear``. ``length_bounds`` is the range the length
+    scales may take when the hyperparameters are optimised: a lower bound above the spacing of the data keeps the function smooth instead of interpolating the noise."""
     parts = [p.strip() for p in spec.split("+") if p.strip()]
     if not parts:
         raise ValueError("an empty kernel")
     kernels = []
     for p in parts:
         if p in ("rbf", "matern32", "matern52"):
-            kernels.append(Stationary(p, 1.0, 1.0, ard=True, dim=dim))
+            kernels.append(Stationary(p, min(max(1.0, length_bounds[0]), length_bounds[1]), 1.0, ard=True, dim=dim, length_bounds=length_bounds))
         elif p == "linear":
             kernels.append(Linear(0.5))
         else:
@@ -219,11 +223,16 @@ class _Fit:
 
 class GaussianProcess:
     """Exact GP regression with Gaussian noise. ``noise`` is the noise *variance* (after the targets are standardised if ``normalize_y``); ``optimize`` maximises the log marginal likelihood over the kernel's
-    hyperparameters and the noise from the current values and from ``restarts`` random starts, and keeps the best."""
+    hyperparameters and the noise from the current values and from ``restarts`` random starts, and keeps the best. ``noise_bounds`` limits the noise variance it may choose (in units of the standardised
+    targets): a floor of 0.75 says that at most a quarter of the variance of the targets is predictable, which is the honest prior for returns."""
 
-    def __init__(self, kernel: Kernel | None = None, noise: float = 0.1, normalize_y: bool = True, optimize: bool = True, restarts: int = 0, seed: int = 0, jitter: float = 1e-8):
+    def __init__(self, kernel: Kernel | None = None, noise: float = 0.1, normalize_y: bool = True, optimize: bool = True, restarts: int = 0, seed: int = 0, jitter: float = 1e-8,
+                 noise_bounds: tuple[float, float] = (1e-5, 10.0)):
         if noise <= 0 or restarts < 0 or jitter < 0:
             raise ValueError("noise > 0, restarts >= 0, jitter >= 0")
+        if not 0 < noise_bounds[0] < noise_bounds[1]:
+            raise ValueError("noise_bounds must be two positive numbers, the lower one below the upper")
+        self.noise_bounds = (float(noise_bounds[0]), float(noise_bounds[1]))
         self.kernel, self.noise, self.normalize_y, self.optimize, self.restarts, self.seed, self.jitter = kernel, float(noise), bool(normalize_y), bool(optimize), int(restarts), int(seed), float(jitter)
         self._fit: _Fit | None = None
         self.y_mean, self.y_scale = 0.0, 1.0
@@ -279,7 +288,7 @@ class GaussianProcess:
         z = (y - self.y_mean) / self.y_scale
         if self.optimize:
             k = len(self.kernel.theta)
-            bounds = self.kernel.bounds + [(np.log(1e-5), np.log(10.0))]
+            bounds = self.kernel.bounds + [(np.log(self.noise_bounds[0]), np.log(self.noise_bounds[1]))]
             start = np.clip(np.concatenate([self.kernel.theta, [np.log(self.noise)]]), [b[0] for b in bounds], [b[1] for b in bounds])
             starts = [start]
             rng = np.random.default_rng(self.seed)

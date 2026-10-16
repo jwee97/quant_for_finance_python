@@ -126,6 +126,31 @@ def momentum_world():
     return bundle_from_prices(w.prices, min_history=60, name="gp-world")
 
 
+def test_the_noise_and_the_length_scales_stay_inside_the_bounds_they_are_given():
+    rng = np.random.default_rng(1)
+    X = rng.normal(size=(120, 2))
+    y = rng.normal(size=120)                                                   # pure noise: left alone the process would shrink its length scales and its noise to fit it
+    free = GaussianProcess(make_kernel("matern52", 2), noise=0.5, restarts=0).fit(X, y)
+    held = GaussianProcess(make_kernel("matern52", 2, length_bounds=(1.5, 40.0)), noise=1.0, noise_bounds=(0.8, 3.0), restarts=0).fit(X, y)
+    assert held.noise >= 0.8 - 1e-9 and (np.asarray(held.length_scales) >= 1.5 - 1e-9).all() and (np.asarray(held.length_scales) <= 40.0 + 1e-9).all()
+    resid_free, resid_held = y - free.predict(X), y - held.predict(X)
+    assert resid_held.var() > resid_free.var(), "with a noise floor the fit cannot interpolate the noise"
+    assert resid_held.var() > 0.6 * y.var()
+
+
+def test_the_bounds_of_the_noise_and_the_length_scales_must_be_sensible():
+    with pytest.raises(ValueError):
+        GaussianProcess(noise_bounds=(1.0, 0.5))
+    with pytest.raises(ValueError):
+        GaussianProcess(noise_bounds=(0.0, 1.0))
+    with pytest.raises(ValueError):
+        Stationary("rbf", length_bounds=(2.0, 1.0))
+    with pytest.raises(ValueError):
+        make_kernel("rbf", 2, length_bounds=(-1.0, 1.0))
+    default = make_kernel("rbf+linear", 2)
+    assert default.bounds[0] == (np.log(0.03), np.log(100.0)), "without bounds given the kernels behave as before"
+
+
 def test_the_factor_model_finds_a_linear_effect_forecasts_with_a_spread_and_looks_only_back(momentum_world):
     model = MODELS.create("gp_factor_model", kernel="rbf+linear", max_points=300, optimize_every=24)
     grid = rebalance_dates(momentum_world.index, "monthly")

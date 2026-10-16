@@ -54,6 +54,14 @@ An option that can be exercised at any time up to its expiry, as stock and ETF o
 
 See: [option-chains-and-greeks](techniques/option-chains-and-greeks.md)
 
+### Analogue forecast
+
+*Also: nearest-neighbour forecast*
+
+A forecast made from what followed the past days that looked most like today (by recent moves, volatility and distance from the high), scaled to today's volatility. The closest of a few hundred days in five dimensions are close partly by luck, and neighbouring days share most of their sequel, so there are fewer independent examples than it looks.
+
+See: [har-kalman-and-analogue-forecasts](techniques/har-kalman-and-analogue-forecasts.md)
+
 ### Annualised volatility
 
 *Also: ann vol*
@@ -302,7 +310,7 @@ See: [var-cvar-and-backtests](techniques/var-cvar-and-backtests.md)
 
 A test of whether a larger forecasting model improves on a smaller model nested inside it, corrected for the noise cost of the extra parameters.
 
-See: [macro-and-alternative-data](techniques/macro-and-alternative-data.md)
+See: [macro-and-alternative-data](techniques/macro-and-alternative-data.md), [forecast-evaluation](techniques/forecast-evaluation.md)
 
 ### Clique centrality
 
@@ -404,7 +412,7 @@ See: [crypto-funding-basis-and-venues](techniques/crypto-funding-basis-and-venue
 
 Continuous ranked probability score: a proper scoring rule for a whole forecast distribution that generalises absolute error; lower is better.
 
-See: [probabilistic-forecasting](techniques/probabilistic-forecasting.md)
+See: [probabilistic-forecasting](techniques/probabilistic-forecasting.md), [forecast-evaluation](techniques/forecast-evaluation.md)
 
 ### CSCV
 
@@ -476,7 +484,7 @@ See: [event-driven-engine-and-ledger](techniques/event-driven-engine-and-ledger.
 
 A test of whether two forecasts have different average loss, with a robust standard error.
 
-See: [probabilistic-forecasting](techniques/probabilistic-forecasting.md)
+See: [probabilistic-forecasting](techniques/probabilistic-forecasting.md), [forecast-evaluation](techniques/forecast-evaluation.md)
 
 ### Difference in differences
 
@@ -644,6 +652,14 @@ Run one cross-sectional regression of returns on characteristics per date, then 
 
 See: [regression-and-panel-statistics](techniques/regression-and-panel-statistics.md)
 
+### Filtered historical simulation
+
+*Also: FHS*
+
+Monte Carlo forecasting in which a volatility model such as GARCH supplies the spread and the shocks are the stock's own past standardised residuals, drawn at random, so the tails are the ones it really had rather than the ones a Student-t has.
+
+See: [monte-carlo-forecasting](techniques/monte-carlo-forecasting.md)
+
 ### Flight to quality
 
 *Also: flight to safety*
@@ -706,13 +722,19 @@ See: [reinforcement-learning-from-tables-to-networks](techniques/reinforcement-l
 
 A volatility model in which today's variance depends on yesterday's squared return and yesterday's variance, with reversion to a long-run level.
 
-See: [volatility-forecasting](techniques/volatility-forecasting.md)
+See: [volatility-forecasting](techniques/volatility-forecasting.md), [monte-carlo-forecasting](techniques/monte-carlo-forecasting.md)
 
 ### Gaussian mixture
 
 A distribution made of several weighted normal distributions; used to combine forecasts while keeping their disagreement.
 
 See: [forecast-combination](techniques/forecast-combination.md)
+
+### Gaussian process
+
+A distribution over smooth functions: a kernel says how alike two inputs should be in their outputs, and conditioning on data gives a prediction and an honest uncertainty at every new input, wider where the data are thin. Used here to learn how the next return depends on recent moves, to follow a slowly changing drift and, as a control, to extend the price path.
+
+See: [gaussian-process-forecasting](techniques/gaussian-process-forecasting.md), [hierarchical-bayes-decisions-and-gaussian-processes](techniques/hierarchical-bayes-decisions-and-gaussian-processes.md)
 
 ### Generalization score
 
@@ -778,6 +800,14 @@ The continuous-time Bellman equation: a partial differential equation for the va
 
 See: [dynamic-programming-and-optimal-control](techniques/dynamic-programming-and-optimal-control.md)
 
+### HAR model
+
+*Also: heterogeneous autoregression*
+
+A volatility model that regresses the volatility of the next days on the volatility of the last day, the last week and the last month, because traders act on different horizons and so volatility has memory at all three.
+
+See: [har-kalman-and-analogue-forecasts](techniques/har-kalman-and-analogue-forecasts.md), [volatility-forecasting](techniques/volatility-forecasting.md)
+
 ### Hedge (algorithm)
 
 An online expert-aggregation rule that multiplicatively down-weights experts with recent losses.
@@ -790,7 +820,7 @@ See: [online-learning](techniques/online-learning.md)
 
 A model where an unobserved state follows a Markov chain and each state generates returns from its own distribution.
 
-See: [regime-detection](techniques/regime-detection.md)
+See: [regime-detection](techniques/regime-detection.md), [markov-forecasting](techniques/markov-forecasting.md)
 
 ### Hierarchical sensitivity parity
 
@@ -799,6 +829,14 @@ See: [regime-detection](techniques/regime-detection.md)
 A generalisation of hierarchical risk parity: at each split of a dendrogram the two branches are weighted so their sensitivity (risk contribution, or exposure to factor shocks) is equal. The definition used here is the author's reading of the name.
 
 See: [graph-portfolios-and-hierarchical-sensitivity-parity](techniques/graph-portfolios-and-hierarchical-sensitivity-parity.md)
+
+### Holm adjustment
+
+*Also: Holm-Bonferroni*
+
+A correction of p-values for having compared many methods at once: sort them, multiply the smallest by the number of tests, the next by one fewer and so on, never letting an adjusted value fall below the one before it. It controls the chance of any false win among all the methods, and is never weaker than multiplying every p-value by the number of tests.
+
+See: [forecast-evaluation](techniques/forecast-evaluation.md), [multiple-testing](techniques/multiple-testing.md)
 
 ### HRP
 
@@ -880,6 +918,12 @@ A neural-network attribution method that integrates the gradient along a path fr
 
 See: [explainability](techniques/explainability.md)
 
+### Interval coverage
+
+How often the realised outcome falls inside the central range a forecast gave: the central 90% range should hold it 90% of the time. A rate that is too low means the ranges are too narrow (the forecast is overconfident); too high means they are too wide.
+
+See: [forecast-evaluation](techniques/forecast-evaluation.md)
+
 ### Isotonic regression
 
 Fitting a non-decreasing step function; used to recalibrate probabilities without assuming a shape.
@@ -892,11 +936,19 @@ The ledger's record of every movement of cash and value, one entry per cause (a 
 
 See: [event-driven-engine-and-ledger](techniques/event-driven-engine-and-ledger.md)
 
+### Jump diffusion
+
+*Also: Merton model*
+
+A price model with ordinary small daily moves plus rare large jumps, whose rate and size are drawn at random: it gives the fat tails and sudden falls that a normal model lacks. Between jumps its volatility is constant, which is where it is too simple.
+
+See: [monte-carlo-forecasting](techniques/monte-carlo-forecasting.md)
+
 ### Kalman filter
 
 A recursive estimator of a hidden state that updates as each observation arrives; used here for time-varying hedge ratios and coefficients.
 
-See: [pairs-and-statistical-arbitrage](techniques/pairs-and-statistical-arbitrage.md), [online-learning](techniques/online-learning.md)
+See: [pairs-and-statistical-arbitrage](techniques/pairs-and-statistical-arbitrage.md), [online-learning](techniques/online-learning.md), [har-kalman-and-analogue-forecasts](techniques/har-kalman-and-analogue-forecasts.md)
 
 ### Kelly criterion
 
@@ -908,7 +960,7 @@ See: [probabilistic-forecasting](techniques/probabilistic-forecasting.md)
 
 A test that the proportion of value-at-risk breaches equals the promised rate.
 
-See: [var-cvar-and-backtests](techniques/var-cvar-and-backtests.md)
+See: [var-cvar-and-backtests](techniques/var-cvar-and-backtests.md), [forecast-evaluation](techniques/forecast-evaluation.md)
 
 ### Leakage
 
@@ -937,6 +989,14 @@ See: [cash-flow-strategies](techniques/cash-flow-strategies.md)
 The list of resting buy and sell orders at each price. Its depth and the arrival of market orders determine spread and price impact.
 
 See: [market-making-and-order-flow](techniques/market-making-and-order-flow.md)
+
+### Linear opinion pool
+
+*Also: forecast blend*
+
+A combined forecast that draws equally (or by weights) from the distributions of several forecasters. Because CRPS is convex in the forecast, the pool scores no worse than the average of its members, and it is usually better because the members err in different ways.
+
+See: [forecast-evaluation](techniques/forecast-evaluation.md), [forecast-combination](techniques/forecast-combination.md)
 
 ### Liquidity seeking
 
@@ -980,7 +1040,7 @@ See: [regime-detection](techniques/regime-detection.md)
 
 A model in which the next state depends only on the current one. Transition probabilities give expected holding times and the long-run share of time in each state.
 
-See: [bayesian-inference-and-markov-models](techniques/bayesian-inference-and-markov-models.md)
+See: [bayesian-inference-and-markov-models](techniques/bayesian-inference-and-markov-models.md), [markov-forecasting](techniques/markov-forecasting.md)
 
 ### Markov decision process
 
@@ -1054,6 +1114,12 @@ The rate that makes the investor's dated cash flows into and out of a portfolio 
 
 See: [cash-flow-strategies](techniques/cash-flow-strategies.md)
 
+### Monte Carlo simulation
+
+Estimating a distribution by simulating it many times: draw random futures from a model of how returns behave, then read the range of outcomes, the quantiles and the chances of a loss from the draws. Its answer is only as good as the model that generates the draws.
+
+See: [monte-carlo-forecasting](techniques/monte-carlo-forecasting.md), [resampling-and-monte-carlo](techniques/resampling-and-monte-carlo.md)
+
 ### N-BEATS
 
 *Also: N-HiTS*
@@ -1115,6 +1181,14 @@ See: [futures-curves-carry-and-rolls](techniques/futures-curves-carry-and-rolls.
 The net change in resting buy and sell interest at the best quotes over an interval. It explains much of short-horizon mid-price change.
 
 See: [market-making-and-order-flow](techniques/market-making-and-order-flow.md)
+
+### Out-of-sample R-squared
+
+*Also: Campbell-Thompson R-squared*
+
+How much smaller a forecast's squared errors were than those of a benchmark forecast, as a share of the benchmark's: above zero means better than the benchmark. For returns the benchmark is the average of the past years, because a forecast of the average that is no better than that has found nothing. The Clark-West test says whether a positive value is more than luck.
+
+See: [forecast-evaluation](techniques/forecast-evaluation.md)
 
 ### Overfitting
 
@@ -1204,11 +1278,19 @@ A network trained to make a differential equation's residual small at random poi
 
 See: [deep-learning-generative-scenarios-and-pinns](techniques/deep-learning-generative-scenarios-and-pinns.md)
 
+### Pinball loss
+
+*Also: quantile loss*
+
+The score of one quantile forecast: the miss is weighted by the quantile level when the outcome is above it and by one minus the level when it is below, so the 5% quantile is judged by how often and how far the outcome fell under it. Twice its average over all levels is the CRPS.
+
+See: [forecast-evaluation](techniques/forecast-evaluation.md)
+
 ### PIT
 
 Probability integral transform: the forecast's cumulative distribution evaluated at the outcome; uniform if the forecast is calibrated.
 
-See: [probabilistic-forecasting](techniques/probabilistic-forecasting.md)
+See: [probabilistic-forecasting](techniques/probabilistic-forecasting.md), [forecast-evaluation](techniques/forecast-evaluation.md)
 
 ### Platt scaling
 
@@ -1278,6 +1360,12 @@ Declaring hypotheses, rules and decision criteria before looking at results; her
 
 See: [experiment-database-and-reproducibility](techniques/experiment-database-and-reproducibility.md)
 
+### Predictive distribution
+
+The full range of what might happen next, with a probability for each, instead of one number. Every forecasting method in this repository gives a set of simulated futures; the fan chart shows their quantiles and the scores judge the whole set against what happened.
+
+See: [forecast-evaluation](techniques/forecast-evaluation.md), [probabilistic-forecasting](techniques/probabilistic-forecasting.md)
+
 ### Probabilistic Sharpe ratio
 
 *Also: PSR*
@@ -1333,6 +1421,12 @@ See: [reinforcement-learning-from-tables-to-networks](techniques/reinforcement-l
 A loss function for comparing variance forecasts that is robust to noise in the realised-variance proxy; lower is better.
 
 See: [time-series-econometrics](techniques/time-series-econometrics.md)
+
+### Random walk benchmark
+
+A forecast with no view on direction and a constant spread taken from the last year of returns. It is the yardstick every forecasting method has to beat: a method that does not beat it has added nothing to what the last year of prices already says.
+
+See: [forecast-evaluation](techniques/forecast-evaluation.md)
 
 ### Reality Check
 
@@ -1481,6 +1575,12 @@ See: [mean-variance-and-shrinkage](techniques/mean-variance-and-shrinkage.md)
 Alternately rescaling the rows and columns of a positive matrix until its sums match given targets. It solves the static Schroedinger problem and entropy-regularised optimal transport.
 
 See: [dynamic-programming-and-optimal-control](techniques/dynamic-programming-and-optimal-control.md)
+
+### Skill score
+
+One minus the score of a method divided by the score of a baseline: zero is no better than the baseline, a positive number is the share by which the method's loss is smaller, and a negative one says it is worse. Forecast skill here uses the CRPS and the random walk benchmark.
+
+See: [forecast-evaluation](techniques/forecast-evaluation.md)
 
 ### Slippage
 
@@ -1688,11 +1788,19 @@ At-the-money implied volatility plotted against expiry. Upward sloping is the us
 
 See: [option-chains-and-greeks](techniques/option-chains-and-greeks.md), [volatility-surfaces](techniques/volatility-surfaces.md)
 
+### Volatility-scaled historical simulation
+
+*Also: Hull-White method*
+
+Past returns, each divided by the volatility of its own day and multiplied by today's, then resampled in blocks: the shape of history (fat tails, skew) with the current spread.
+
+See: [monte-carlo-forecasting](techniques/monte-carlo-forecasting.md)
+
 ### Walk-forward
 
 Testing by repeatedly fitting on the past and predicting the next block of the future.
 
-See: [walk-forward-and-leakage](techniques/walk-forward-and-leakage.md), [machine-learning-research-pipeline](techniques/machine-learning-research-pipeline.md)
+See: [walk-forward-and-leakage](techniques/walk-forward-and-leakage.md), [machine-learning-research-pipeline](techniques/machine-learning-research-pipeline.md), [forecast-evaluation](techniques/forecast-evaluation.md)
 
 ### Walk-forward learning
 
@@ -1731,5 +1839,3 @@ See: [mean-reversion](techniques/mean-reversion.md)
 Applying a pre-trained model to a new task without any training on that task's data.
 
 See: [foundation-models](techniques/foundation-models.md)
-
-

@@ -7,18 +7,19 @@ An automated audit with axe-core found each of these once (22 views, light and d
 from __future__ import annotations
 
 import re
+import time
 from pathlib import Path
 
 import pytest
 
 from src.webapp import server
 from tests.test_webapp_browser import browser  # noqa: F401  (the module's Chromium fixture)
-from tests.test_webapp_workspaces_browser import _start
+from tests.test_webapp_workspaces_browser import _start, _wait_until
 
 sync_api = pytest.importorskip("playwright.sync_api")
 
 CSS = (Path(server.__file__).parent / "static" / "style.css").read_text(encoding="utf-8")
-READY = {"backtest": ".chip", "compare": "#compare .card", "builder": "#builder .card", "tune": "#tune .panel", "options": "#options-results .tile", "futures": "#futures-results .tile",
+READY = {"backtest": ".chip", "compare": "#compare .card", "builder": "#builder .card", "tune": "#tune .panel", "forecast": "#forecast .panel", "options": "#options-results .tile", "futures": "#futures-results .tile",
          "crypto": "#crypto-results .tile", "ml": "#ml-results .card", "exec": "#exec-results .card", "cash": "#cash-results .card", "guides": "#guides .toc"}
 
 
@@ -116,6 +117,23 @@ def test_the_section_tabs_are_reached_with_the_arrow_keys_and_only_the_selected_
     pg.keyboard.press("Home")
     assert pg.evaluate("document.activeElement.id") == "tab-backtest"
     pg.wait_for_selector("#view-backtest:not([hidden])", timeout=10_000)                      # the view follows the key; a machine busy with a whole suite can show it a moment late
+
+
+def test_a_slow_guides_index_does_not_bring_the_guides_tab_back_after_the_reader_has_moved_on(pg):
+    """The race behind a flaky key test: the Guides tab fetches its index when it opens and, on arrival, drew the guide and opened the tab again, so a reader who had moved on was pulled back to it."""
+    held = []
+    pg.route("**/api/docs", lambda route: held.append(route))                                  # hold the index request: the answer comes late
+    pg.click("#tab-guides")
+    _wait_until(pg, "document.querySelector('#guides').textContent.includes('Loading guides')", timeout=10)
+    pg.click("#tab-backtest")
+    assert held and pg.evaluate("document.querySelector('#view-backtest').hidden") is False
+    for route in held:
+        route.continue_()
+    time.sleep(1.5)
+    assert pg.evaluate("document.querySelector('#view-backtest').hidden") is False and pg.evaluate("document.querySelector('#view-guides').hidden") is True, "the late answer must not switch the tab"
+    pg.click("#tab-guides")                                                                     # and the guide is there when the reader does go back
+    pg.wait_for_selector("#guides .toc", timeout=10_000)
+    pg.wait_for_selector("#doc h1, #doc h2", timeout=10_000)
 
 
 def test_a_labs_view_tabs_keep_the_keyboard_focus_when_the_view_is_redrawn(pg):

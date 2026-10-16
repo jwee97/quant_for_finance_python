@@ -13,6 +13,7 @@
     quant capacity --model momentum       net Sharpe by assets under management
     quant docs build                      regenerate the strategy cards, chapter map and findings digest
     quant tune --model tsmom --space models.0.params.lookback=int:21:504 --trials 24   a hyperparameter search that counts its trials and deflates the winner
+    quant forecast SPY --horizon 21       forecast a price as a distribution with Monte Carlo, Markov, Gaussian-process and other methods, and test each on the past (`--list` names them)
     quant benchmark --models tsmom momentum   score time and peak memory of models on the default bundle
     quant registry list                   versioned models: stages, lineage, promotion
     quant algo list                       the execution algorithms and where each strategy of the taxonomy lives; `quant algo run --algos vwap aim+vwap is:risk_aversion=0.01` compares them on a simulated day
@@ -219,6 +220,59 @@ def cmd_tune(args, config) -> int:
     for key in ("best_annual_sharpe", "deflated_sharpe_probability", "pbo", "mean_oos_sharpe_of_is_winner", "romano_wolf_p_best", "survivors_at_5pct"):
         if key in report:
             print(f"  {key}: {report[key]:.3f}")
+    return 0
+
+
+def cmd_forecast(args, config) -> int:
+    """Forecast one ticker's price as a distribution with several methods and test each of them on the past: the Forecast tab, in the terminal."""
+    import json
+    import time
+
+    from .forecast import BASELINE, BLEND, DEFAULT, METHODS, History, catalog
+    from .forecast import evaluate as ev
+    from .forecast.base import ForecastError
+    from .forecast.report import format_report
+    from .forecast.verdict import judge
+
+    if args.list:
+        for m in catalog():
+            print(f"{m['id']:18s} {m['family']:17s} {m['label']}")
+        return 0
+    bundle = _bundle(config, args.prices)
+    columns = {c.upper(): c for c in bundle.prices.columns}
+    if not args.ticker or args.ticker.upper() not in columns:
+        print(f"choose a ticker from {', '.join(bundle.prices.columns)}" + (f" ('{args.ticker}' is not in the data)" if args.ticker else ""), file=sys.stderr)
+        return 2
+    ticker = columns[args.ticker.upper()]
+    names = list(METHODS) + [BLEND] if args.all else (args.methods or list(DEFAULT))
+    unknown = [n for n in names if n not in METHODS and n != BLEND]
+    if unknown:
+        print(f"unknown forecasting method '{unknown[0]}'; choose from {', '.join(list(METHODS) + [BLEND])}", file=sys.stderr)
+        return 2
+    chosen = [n for n in dict.fromkeys(names) if n != BASELINE]
+    if not chosen:
+        print("choose at least one method besides the random walk, which is always run as the yardstick", file=sys.stderr)
+        return 2
+    history = History.from_frame(bundle.prices[ticker], None if bundle.high is None else bundle.high.get(ticker), None if bundle.low is None else bundle.low.get(ticker))
+    last = [0.0]
+
+    def progress(text: str) -> None:
+        if time.time() - last[0] > 15:
+            print(text, file=sys.stderr, flush=True)
+            last[0] = time.time()
+
+    try:
+        evaluation = ev.evaluate(history, chosen, args.horizon, args.effort, args.seed, progress)
+        now = ev.forecast_now(history, [BASELINE] + chosen, args.horizon, seed=args.seed, progress=progress)
+    except ForecastError as error:
+        print(error, file=sys.stderr)
+        return 2
+    verdict = judge(evaluation, args.horizon)
+    asof = str(history.index[-1].date())
+    print(format_report(ticker, asof, float(history.close[-1]), args.horizon, evaluation, now, verdict))
+    if args.json:
+        Path(args.json).write_text(json.dumps({"ticker": ticker, "asof": asof, "horizon": args.horizon, "evaluation": evaluation, "now": now, "verdict": verdict}, indent=1), encoding="utf-8")
+        print(f"\nwritten to {args.json}")
     return 0
 
 
@@ -564,6 +618,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--trials", type=int, default=20); p.add_argument("--method", default="tpe", choices=["random", "grid", "tpe", "halving"])
     p.add_argument("--blocks", type=int, default=4, help="average the Sharpe ratio over this many contiguous blocks and penalise their dispersion (1: the plain Sharpe)")
     p.add_argument("--seed", type=int, default=0); p.add_argument("--top", type=int, default=8); p.set_defaults(func=cmd_tune)
+    p = sub.add_parser("forecast", help="forecast a price as a distribution with Monte Carlo, Markov chain, Gaussian-process and other methods, and test each one on the past")
+    p.add_argument("ticker", nargs="?", help="a column of the platform's 15 ETFs, or of --prices"); p.add_argument("--list", action="store_true", help="name the methods and stop")
+    p.add_argument("--horizon", type=int, default=21, help="trading days ahead (1 to 63; the methods are also scored at 1, 5 and 21)"); p.add_argument("--methods", nargs="*", help="method ids (default: the recommended set; see --list)")
+    p.add_argument("--all", action="store_true", help="every method and their blend"); p.add_argument("--effort", choices=["quick", "standard", "thorough"], default="standard", help="how many past forecasts to test on (about 1, 3 and 10 minutes)")
+    p.add_argument("--seed", type=int, default=0); p.add_argument("--prices", help="a CSV of prices (one date column and one column per asset) instead of the platform's ETFs"); p.add_argument("--json", help="also write the whole result to this file")
+    p.set_defaults(func=cmd_forecast)
     p = sub.add_parser("benchmark", help="score time and peak memory of registered models on the default bundle")
     p.add_argument("--models", nargs="*"); p.add_argument("--repeats", type=int, default=1); p.add_argument("--prices"); p.add_argument("--csv"); p.set_defaults(func=cmd_benchmark)
     p = sub.add_parser("algo", help="execution algorithms: where every strategy of the taxonomy lives, simulated orders (VWAP, TWAP, IS, AIM ...), the cost-risk frontier, baskets and high-frequency simulations")
