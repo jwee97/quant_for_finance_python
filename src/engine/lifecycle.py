@@ -507,7 +507,7 @@ def check_margin(engine, ts) -> None:
 
 
 def _forced_fill(engine, ts, iid: str, qty: float, mark: float, tag: str) -> None:
-    inst = engine.registry.get(iid)
+    engine.registry.get(iid)                                                     # an unknown instrument is refused here
     penalty = engine.config.liquidation_penalty_bps * 1e-4 * mark
     sign = 1.0 if qty > 0 else -1.0
     price = mark + sign * penalty

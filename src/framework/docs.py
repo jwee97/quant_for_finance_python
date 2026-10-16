@@ -121,7 +121,7 @@ def strategy_cards(config) -> dict[str, str]:
 
 def chapter_map(config) -> str:
     guides = load_guides(config)
-    figures = config.reports_dir("figures")
+    config.reports_dir("figures")                                                            # the folder the chapter map's links point into exists
 
     def chapter_key(g):
         c = str(g.meta["chapter"]).replace("Ch. ", "")

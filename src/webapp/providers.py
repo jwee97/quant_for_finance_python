@@ -19,10 +19,13 @@ split is flagged (iTick does not document whether its bars are adjusted). :meth:
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import math
 import os
 import re
+import secrets
 import threading
 import time
 from dataclasses import dataclass
@@ -391,6 +394,20 @@ def urllib_transport(url: str, headers: dict, timeout: float) -> tuple[int, dict
         return int(error.code), dict(error.headers or {}), error.read(MAX_BODY_BYTES)
 
 
+IP_ECHO_URL = "https://api.ipify.org"                      # answers with the caller's public address as plain text
+
+
+def lookup_egress_ip(timeout: float = 5.0) -> str | None:
+    """The public address this machine's requests come from (one call to ipify), or ``None`` if it cannot be found. Asked only when iTick refuses a key: some keys are limited to certain addresses,
+    and a Repl's address changes."""
+    try:
+        status, _, body = urllib_transport(IP_ECHO_URL, {"User-Agent": USER_AGENT}, timeout)
+    except Exception:
+        return None
+    text = body[:64].decode("ascii", "replace").strip()
+    return text if status == 200 and re.fullmatch(r"[0-9a-fA-F:.]{3,45}", text) else None
+
+
 def _problem(payload) -> tuple[str, bool, str] | None:
     """``(message, fatal, kind)`` when an answer's own status says it failed, else ``None``; ``kind`` is ``auth`` (the key), ``plan`` (the account's allowance), ``symbol`` or ``other``."""
     if not isinstance(payload, dict):
@@ -418,7 +435,7 @@ class ITickProvider:
 
     def __init__(self, key: str | None = None, root: Path | None = None, base_url: str | None = None, calls_per_minute: int | None = None, limiter: RateLimiter | None = None,
                  transport=None, timeout: float = 20.0, page_size: int | None = None, max_pages: int | None = None, daily_ktype: int | None = None,
-                 max_calls_per_run: int | None = None, sleep=time.sleep, today=None):
+                 max_calls_per_run: int | None = None, sleep=time.sleep, today=None, ip_lookup=None):
         self.root = Path(root) if root else None
         self._key_override = key
         explicit = base_url or os.environ.get("ITICK_BASE_URL")
@@ -427,8 +444,13 @@ class ITickProvider:
         self._learned: tuple[str, str] | None = None                          # (host, key) of the last host that accepted the key (kept in memory only)
         self._access: dict[str, dict] = {}                                    # "future:US:ES" -> {"ok", "at", "why"}: what iTick returned for this key lately (product codes and dates, never the key)
         self._access_path = (Path(root) / "data" / "user" / "itick_access.json") if root else None
+        self._history_path = (Path(root) / "data" / "user" / "itick_history.json") if root else None
+        self._history: dict = {}                                              # when this key was last accepted and last refused (times, host, what iTick said; never the key)
+        self._hist_lock = threading.Lock()
+        self._ip_lookup, self._ip_seen = ip_lookup, (0.0, None)               # how to find this machine's public address (``None``: do not look), and the last answer with its time
         self.config_error = self._check_url(self.base_url)
         self._load_access()
+        self._load_history()
         state = (self.root / "data" / "user" / "itick_calls.json") if self.root else None
         self.limiter = limiter or RateLimiter(calls_per_minute or _int_env("ITICK_CALLS_PER_MINUTE", 5, 1, 1200), path=state, sleep=sleep)
         self.page_size = page_size or _int_env("ITICK_PAGE_SIZE", 1000, 10, 5000)
@@ -473,6 +495,79 @@ class ITickProvider:
         except OSError:
             pass
 
+    # --------------------------------------------------------------------------------------------------------------- what happened to this key
+    def _load_history(self) -> None:
+        if self._history_path is None:
+            return
+        try:
+            data = json.loads(self._history_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return
+        if isinstance(data, dict):
+            self._history = {k: v for k, v in data.items() if k == "salt" and isinstance(v, str) or k in ("accepted", "refused") and isinstance(v, dict)}
+
+    def _key_mark(self) -> str:
+        """A short mark of the key in use (an HMAC with a salt kept beside it), so that "the key was changed since it last worked" can be told from "the same key stopped working". It cannot give the key back."""
+        if "salt" not in self._history:
+            self._history["salt"] = secrets.token_hex(8)
+        return hmac.new(self._history["salt"].encode(), self._key().encode(), hashlib.sha256).hexdigest()[:8]
+
+    def _note_key(self, accepted: bool, host: str, kind: str, http: int = 0, said: str = "") -> None:
+        """Remember that iTick accepted, or refused, this key (at most one write a minute for the same thing)."""
+        with self._hist_lock:
+            now = pd.Timestamp.now(tz="UTC")
+            entry = {"at": now.strftime("%Y-%m-%dT%H:%M:%SZ"), "fp": self._key_mark(), "host": parse.urlparse(host).netloc, "kind": kind, "http": int(http), "said": self._clean(said)[:120]}
+            slot = "accepted" if accepted else "refused"
+            old = self._history.get(slot) or {}
+            if old and all(old.get(k) == entry[k] for k in ("fp", "host", "kind", "http", "said")) and now - pd.Timestamp(old["at"]) < pd.Timedelta(seconds=60):
+                return
+            self._history[slot] = entry
+            if self._history_path is None:
+                return
+            try:
+                self._history_path.parent.mkdir(parents=True, exist_ok=True)
+                tmp = self._history_path.with_suffix(".part")
+                tmp.write_text(json.dumps(self._history), encoding="utf-8")
+                tmp.replace(self._history_path)
+            except OSError:
+                pass
+
+    def history(self) -> dict:
+        """``{"accepted": {...}|None, "refused": {...}|None, "same_key": bool|None}``: the last time iTick took this key and the last time it did not, and whether the key now in the secret is the one that was
+        last accepted (``None`` when it never was). The key itself is not in it."""
+        with self._hist_lock:
+            accepted, refused = self._history.get("accepted"), self._history.get("refused")
+            same = None if not accepted or not self._key() else accepted.get("fp") == self._key_mark()
+        return {"accepted": {k: v for k, v in accepted.items() if k != "fp"} if accepted else None, "refused": {k: v for k, v in refused.items() if k != "fp"} if refused else None, "same_key": same}
+
+    def egress_ip(self) -> str | None:
+        """This machine's public address, asked for at most once in ten minutes and only if a lookup was given."""
+        if self._ip_lookup is None:
+            return None
+        when, ip = self._ip_seen
+        if time.time() - when > 600:
+            try:
+                ip = self._ip_lookup()
+            except Exception:
+                ip = None
+            self._ip_seen = (time.time(), ip)
+        return ip
+
+    def _diagnosis(self) -> str:
+        """After a refusal: when this key last worked and whether it is still the same key, and the address iTick sees this app at. Says what that points to, because the refusal alone does not."""
+        h, parts = self.history(), []
+        if h["accepted"]:
+            when = h["accepted"]["at"].replace("T", " ").replace("Z", " UTC")[:20]
+            what = {"stock": "stock prices", "future": "futures prices", "crypto": "crypto prices", "forex": "forex prices", "indices": "index prices"}.get(h["accepted"].get("kind", ""), "a request")
+            if h["same_key"]:
+                parts.append(f"This same key was accepted on {when} ({what}), so it was valid then: look in the iTick dashboard for an ended free trial, a reset key, or a limit to certain IP addresses.")
+            else:
+                parts.append(f"A key was accepted on {when} ({what}), but it is not the key in the secret now: the secret was changed since.")
+        ip = self.egress_ip()
+        if ip:
+            parts.append(f"iTick sees this app at {ip}. If the key is limited to certain addresses, add it there (a Repl's address can change when it restarts).")
+        return (" " + " ".join(parts)) if parts else ""
+
     def access(self, kind: str) -> dict[str, dict]:
         """``{item: {"ok", "at", "why"}}`` for the products of this kind that iTick returned or refused in the last ``ACCESS_DAYS`` days."""
         cutoff = (pd.Timestamp.now() - pd.Timedelta(days=self.ACCESS_DAYS)).date().isoformat()
@@ -513,7 +608,7 @@ class ITickProvider:
         ok, why = self.available()
         setup = "url" if self.config_error else ("" if self._key() else "key")                # what is missing: the address is wrong, or there is no key yet
         return {"configured": ok, "problem": why, "setup": setup, "calls_per_minute": self.limiter.calls, "calls_available_now": self.limiter.remaining(),
-                "host": parse.urlparse(self.host).netloc, "symbols": SYMBOL_HELP, "page_size": self.page_size}
+                "host": parse.urlparse(self.host).netloc, "symbols": SYMBOL_HELP, "page_size": self.page_size, "history": self.history()}
 
     def _clean(self, text: object) -> str:
         return redact(text, self._key(), self._raw_key().strip())
@@ -558,10 +653,10 @@ class ITickProvider:
         if any(status == 403 for _, status, _ in tried):
             kind = {"future": "futures"}.get(path.strip("/").split("/")[0], path.strip("/").split("/")[0] or "this")
             return (f"iTick refused this request: {said}. HTTP 403 usually means the key was recognised but is not allowed this data: your plan may not include {kind} prices "
-                    "(iTick's pricing page lists stocks, forex, indices and crypto), or the key may be limited to certain IP addresses (a Repl's address changes). The key itself may be fine.")
+                    "(iTick's pricing page lists stocks, forex, indices and crypto), or the key may be limited to certain IP addresses (a Repl's address changes). The key itself may be fine." + self._diagnosis())
         unchosen = " ITICK_BASE_URL is set, so iTick's other host was not tried." if not self.auto_host and self.other_host(tried[0][0]) else ""
         return (f"iTick rejected the API key: {said}.{unchosen} Copy the key again from the iTick dashboard into the ITICK_API_KEY secret with no quotes or spaces, and stop and run the app "
-                "again (a changed secret is read only when the app starts). A key from a time-limited free trial stops working when the trial ends.")
+                "again (a changed secret is read only when the app starts). A key from a time-limited free trial stops working when the trial ends." + self._diagnosis())
 
     @staticmethod
     def _not_found(text: str, path: str) -> str:
@@ -608,6 +703,7 @@ class ITickProvider:
                 tried.append((host, status, self._reason(body)))
                 other = self.other_host(host) if status == 401 and self.auto_host and len(tried) == 1 else None
                 if other is None:
+                    self._note_key(False, host, path.strip("/").split("/")[0], status, tried[-1][2])
                     raise ITickError(self._refused(tried, path), fatal=True)
                 if say:
                     say(f"{parse.urlparse(host).netloc} did not recognise the key; trying {parse.urlparse(other).netloc}")
@@ -629,11 +725,13 @@ class ITickProvider:
                 tried.append((host, status, self._clean(problem[0])))
                 other = self.other_host(host) if self.auto_host and len(tried) == 1 else None
                 if other is None:
+                    self._note_key(False, host, path.strip("/").split("/")[0], status, tried[-1][2])
                     raise ITickError(self._refused(tried, path), fatal=True)
                 if say:
                     say(f"{parse.urlparse(host).netloc} did not recognise the key; trying {parse.urlparse(other).netloc}")
                 host = other
                 continue
+            self._note_key(True, host, path.strip("/").split("/")[0])                  # iTick took the key, whatever it then said about the product or the plan
             if problem:
                 text = self._not_found(problem[0], path) if problem[2] == "symbol" else problem[0]
                 raise ITickError(self._clean(text), fatal=problem[1], kind=problem[2])

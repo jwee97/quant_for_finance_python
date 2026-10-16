@@ -55,7 +55,6 @@ def test_zero_aum_is_exactly_the_generation1_linear_model(book, state, synthetic
 
 def test_impact_cost_formula_on_one_trade(synthetic_returns):
     index = synthetic_returns.index[:3]
-    cols = ["A"]
     trades = pd.DataFrame({"A": [0.0, 0.04, 0.0]}, index=index)
     sigma = pd.DataFrame({"A": [0.01] * 3}, index=index)
     adv = pd.DataFrame({"A": [1e8] * 3}, index=index)

@@ -17,6 +17,7 @@ from src.webapp import server
 from src.webapp.api import ApiError, App
 from src.webapp.providers import ITickProvider, RateLimiter
 from src.webapp.universe import TickerStore, UniverseBuilder, UniverseError, itick_source, normalise
+from tests.app_roots import isolated_root
 from tests.fake_itick import KEY, FakeClock, FakeITick
 
 N = 2300
@@ -52,7 +53,7 @@ def _fetch(tickers, start):
 def app(tmp_path):
     config = load_config()
     store = TickerStore(tmp_path / "prices", fetch=_fetch)
-    return App(config, builder=UniverseBuilder(config, store, default_loader=_default), root=config.root)
+    return App(config, builder=UniverseBuilder(config, store, default_loader=_default), root=isolated_root(tmp_path / "root", config))
 
 
 def _wait(app, job_id, timeout=120):
@@ -351,7 +352,7 @@ def itick(tmp_path):
     fake, clock = FakeITick(), FakeClock()
     provider = ITickProvider(key=KEY, base_url="https://api-free.itick.org", limiter=RateLimiter(5, clock=clock.now, sleep=clock.sleep), transport=fake, sleep=clock.sleep)
     builder = UniverseBuilder(config, TickerStore(tmp_path / "yahoo", fetch=_fetch), default_loader=_default, sources={"itick": itick_source(tmp_path, provider, tmp_path / "itick")})
-    return App(config, builder=builder, root=config.root), fake, clock, tmp_path
+    return App(config, builder=builder, root=isolated_root(tmp_path / "root", config)), fake, clock, tmp_path
 
 
 def test_the_catalog_lists_the_sources_without_ever_carrying_the_key(itick):
@@ -367,7 +368,7 @@ def test_an_unset_key_shows_as_not_available_and_says_how_to_fix_it(tmp_path, mo
     monkeypatch.delenv("ITICK_API_KEY", raising=False)
     config = load_config()
     builder = UniverseBuilder(config, TickerStore(tmp_path / "yahoo", fetch=_fetch), default_loader=_default, sources={"itick": itick_source(tmp_path)})
-    app = App(config, builder=builder, root=config.root)
+    app = App(config, builder=builder, root=isolated_root(tmp_path / "root", config))
     entry = next(s for s in app.catalog()["sources"] if s["name"] == "itick")
     assert entry["available"] is False and "ITICK_API_KEY" in entry["problem"] and "Secrets" in entry["problem"]
     assert entry["setup"] == "key"                                                                  # the page shows its set-up guide for exactly this case
@@ -495,7 +496,7 @@ def test_a_rejected_key_reaches_the_user_as_a_message_that_does_not_contain_the_
     fake, clock = FakeITick(key="the-real-key-is-different"), FakeClock()
     provider = ITickProvider(key=KEY, base_url="https://api-free.itick.org", limiter=RateLimiter(5, clock=clock.now, sleep=clock.sleep), transport=fake, sleep=clock.sleep)
     builder = UniverseBuilder(config, TickerStore(tmp_path / "yahoo", fetch=_fetch), default_loader=_default, sources={"itick": itick_source(tmp_path, provider, tmp_path / "itick")})
-    app = App(config, builder=builder, root=config.root)
+    app = App(config, builder=builder, root=isolated_root(tmp_path / "root", config))
     view = _run(app, tickers=["NVDA", "MSFT"], source="itick", models=[{"name": "ma_crossover"}])
     assert view["status"] == "error" and "rejected the API key" in view["error"] and KEY not in json.dumps(view) and len(fake.calls) == 1
     out = app.test_source({"source": "itick"})
@@ -524,7 +525,7 @@ def test_an_unadjusted_split_is_flagged_on_the_ticker_and_in_the_result(tmp_path
     fake, clock = FakeITick(split=("2022-06-01", 4.0)), FakeClock()
     provider = ITickProvider(key=KEY, base_url="https://api-free.itick.org", limiter=RateLimiter(5, clock=clock.now, sleep=clock.sleep), transport=fake, sleep=clock.sleep)
     builder = UniverseBuilder(config, TickerStore(tmp_path / "yahoo", fetch=_fetch), default_loader=_default, sources={"itick": itick_source(tmp_path, provider, tmp_path / "itick")})
-    app = App(config, builder=builder, root=config.root)
+    app = App(config, builder=builder, root=isolated_root(tmp_path / "root", config))
     view = _run(app, tickers=["NVDA"], source="itick", start="2016-01-01", models=[{"name": "ma_crossover"}])
     assert view["status"] == "done"
     notes = view["result"]["universe"]["data_notes"]

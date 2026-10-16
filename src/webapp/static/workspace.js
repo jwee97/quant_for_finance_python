@@ -81,10 +81,10 @@
     }
     return box;
   }
-  function pills(parent, items, current, pick) {                                            // rounded chips, for choosing among many (expiries, experiments)
-    const box = h("div", "tabsmall", parent);
+  function pills(parent, items, current, pick, label) {                                     // rounded chips, for choosing among many (expiries, experiments); toggle buttons in a group
+    const box = h("div", "tabsmall", parent); box.setAttribute("role", "group"); if (label) box.setAttribute("aria-label", label);
     for (const [value, text, title] of items) {
-      const b = h("button", "", box, text); b.type = "button"; b.dataset.value = value; b.setAttribute("aria-selected", String(value === current)); if (title) b.title = title;
+      const b = h("button", "", box, text); b.type = "button"; b.dataset.value = value; b.setAttribute("aria-pressed", String(value === current)); if (title) b.title = title;
       b.addEventListener("click", () => pick(value));
     }
     return box;
@@ -188,6 +188,7 @@
       return box;
     }
     h("p", "hint", box, `Your iTick key is set. Your plan allows ${info.calls_per_minute} call${info.calls_per_minute === 1 ? "" : "s"} a minute (${info.calls_available_now} free right now), shared with the Backtest tab: a download waits between calls and says so while it does. Requests go to ${info.host || "iTick"}.`);
+    const past = Q.keyHistory(info.history); if (past) h("p", "hint", box, past);
     const row = h("div", "row tight", box), test = h("button", "btn small", row, "Test the iTick connection (one or two calls)"), out = h("span", "hint", row); test.type = "button";
     out.dataset.role = "itick-test-result";
     test.addEventListener("click", async () => {

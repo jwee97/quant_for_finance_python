@@ -100,7 +100,7 @@ def test_deep_learning_numbers_and_the_controls_the_report_relies_on():
 
 def test_text_numbers():
     declared = pd.read_csv(TABLES / "stage28_clark_west_declared.csv")
-    matched = pd.read_csv(TABLES / "stage28_clark_west_matched_posthoc.csv")
+    pd.read_csv(TABLES / "stage28_clark_west_matched_posthoc.csv")                              # the matched table must be there, though these checks read the declared one
     features = pd.read_csv(TABLES / "stage28_features_by_statement.csv")
     agreement = pd.read_csv(TABLES / "stage28_action_agreement.csv", index_col=0)
     text = _text()

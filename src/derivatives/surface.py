@@ -99,7 +99,6 @@ def fit_svi_slice(k, iv, T, weights=None, n_starts: int = 12, seed: int = 0) -> 
         if best is None or sol.cost < best.cost:
             best = sol
     a, b, rho, m, s = best.x
-    err = svi_total_variance(k, a, b, rho, m, s) - w_mkt
     return SVISlice(a, b, rho, m, s, T, float(np.sqrt(np.mean((np.sqrt(np.maximum(svi_total_variance(k, a, b, rho, m, s), 1e-12) / T) - iv) ** 2))))
 
 

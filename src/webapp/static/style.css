@@ -2,9 +2,9 @@
 :root {
   color-scheme: light;
   --page: #f9f9f7; --surface: #fcfcfb; --ink: #0b0b0b; --ink-2: #52514e; --muted: #6f6d67; --grid: #e1e0d9; --axis: #c3c2b7;
-  --border: rgba(11, 11, 11, 0.10); --ghost: rgba(11, 11, 11, 0.045); --accent: #2a78d6; --accent-ink: #ffffff;
+  --border: rgba(11, 11, 11, 0.10); --ghost: rgba(11, 11, 11, 0.045); --accent: #226fcb; --accent-ink: #ffffff;
   --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100; --s5: #e87ba4; --s6: #008300; --s7: #4a3aa7; --s8: #e34948;
-  --pos: #2a78d6; --neg: #e34948; --mid: #f0efec; --good-text: #006300; --crit: #d03b3b; --warn: #b45f00;
+  --pos: #2a78d6; --neg: #e34948; --mid: #f0efec; --good-text: #006300; --crit: #d03b3b; --warn: #a85700;
   --seq-100: #cde2fb; --seq-400: #3987e5; --seq-700: #0d366b;
   --scale-lo: #cde2fb; --scale-mid: #3987e5; --scale-hi: #0d366b;                 /* a sequential scale: near zero recedes toward the surface, so on dark it runs the other way */
   --shadow: 0 1px 2px rgba(11, 11, 11, 0.04);
@@ -37,7 +37,7 @@ a { color: var(--accent); }
 
 /* ---------- top bar ---------- */
 header.top { position: sticky; top: 0; z-index: 20; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 20px; padding: 10px 24px; background: var(--surface); border-bottom: 1px solid var(--border); }
-.brand { font-weight: 650; font-size: 16px; letter-spacing: -0.01em; white-space: nowrap; }
+.brand { margin: 0; font-weight: 650; font-size: 16px; letter-spacing: -0.01em; white-space: nowrap; }
 .brand small { font-weight: 400; color: var(--muted); margin-left: 8px; }
 nav.tabs { display: flex; flex-wrap: wrap; gap: 2px; }                      /* six tabs: on a narrow screen they go on a second row instead of widening the page */
 nav.tabs button { background: none; border: 0; padding: 8px 11px; border-radius: 8px; cursor: pointer; color: var(--ink-2); font-weight: 500; white-space: nowrap; }
@@ -98,7 +98,7 @@ button.link { background: none; border: 0; padding: 0; color: var(--accent); cur
 /* ---------- results ---------- */
 .stack { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; min-width: 0; }                 /* a wide table scrolls inside its card instead of widening the page */
 .head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px; align-items: flex-start; }
-.head h1 { margin: 0; font-size: 20px; letter-spacing: -0.01em; }
+.head h2 { margin: 0; font-size: 20px; letter-spacing: -0.01em; }
 .head .sub { color: var(--muted); font-size: 12.5px; margin: 2px 0 0; }
 .banner { border: 1px solid var(--border); border-left: 3px solid var(--warn); border-radius: 8px; padding: 10px 14px; background: var(--surface); font-size: 13px; }
 .banner.err { border-left-color: var(--crit); }
@@ -161,7 +161,7 @@ table.data td.num, table.data th.num { text-align: right; font-variant-numeric: 
 .fade { opacity: 0.55; transition: opacity 0.15s; }
 .tabsmall { display: flex; gap: 4px; margin-bottom: 8px; flex-wrap: wrap; }
 .tabsmall button { background: none; border: 1px solid var(--border); padding: 4px 10px; border-radius: 999px; cursor: pointer; font-size: 12px; color: var(--ink-2); }
-.tabsmall button[aria-selected="true"] { background: var(--ghost); color: var(--ink); border-color: var(--axis); font-weight: 600; }
+.tabsmall button[aria-selected="true"], .tabsmall button[aria-pressed="true"] { background: var(--ghost); color: var(--ink); border-color: var(--axis); font-weight: 600; }
 
 /* ---------- compare / builder / guides ---------- */
 .runs { display: grid; gap: 6px; }
@@ -186,7 +186,7 @@ pre code { background: none; padding: 0; }
 .guides { display: grid; grid-template-columns: 280px minmax(0, 1fr); gap: 20px; align-items: start; }
 @media (max-width: 1000px) { .guides { grid-template-columns: 1fr; } }
 .toc { position: sticky; top: 64px; max-height: calc(100vh - 84px); overflow: auto; padding: 12px; }
-.toc h4 { margin: 12px 0 4px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+.toc h2 { margin: 12px 0 4px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
 .toc button { display: block; width: 100%; text-align: left; background: none; border: 0; padding: 5px 8px; border-radius: 6px; cursor: pointer; color: var(--ink-2); font-size: 13px; }
 .toc button:hover { background: var(--ghost); }
 .toc button[aria-current="true"] { background: var(--ghost); color: var(--ink); font-weight: 600; }

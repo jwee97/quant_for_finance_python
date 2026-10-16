@@ -20,7 +20,7 @@ from pathlib import Path
 import pandas as pd
 
 from ..framework.data import MarketBundle, bundle_from_prices, load_default_bundle
-from .providers import ITickProvider
+from .providers import ITickProvider, lookup_egress_ip
 
 TICKER = re.compile(r"^[A-Z0-9^][A-Z0-9.^=\-]{0,11}$")
 MAX_TICKERS, MIN_TICKERS, MIN_OBSERVATIONS, TTL_SECONDS = 40, 1, 300, 24 * 3600
@@ -198,7 +198,7 @@ class Source:
 
 def itick_source(root: Path, provider: ITickProvider | None = None, directory: Path | None = None) -> Source:
     """The iTick source: its own cache folder, a provider that reads the key from the environment, and no downloading while a ticker is merely being checked."""
-    provider = provider or ITickProvider(root=root)
+    provider = provider or ITickProvider(root=root, ip_lookup=lookup_egress_ip)
     store = TickerStore(directory or Path(root) / "data" / "user" / "prices_itick", fetch=provider, provider="itick")
     return Source("itick", "iTick", store, provider, downloads_on_check=False, default_years=10,
                   note="Daily prices as iTick delivers them (not documented as adjusted for splits or dividends). Needs the ITICK_API_KEY secret; every call counts against your plan's rate limit. "

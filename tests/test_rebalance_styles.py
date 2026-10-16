@@ -211,7 +211,7 @@ def test_market_outlook_bias_and_tilt_move_the_view_and_the_scores():
     biased = MODELS.create("market_outlook", bias=0.5, tilt=2.0)
     o, ob = plain.outlook(b), biased.outlook(b)
     assert np.allclose(ob.dropna().to_numpy(), o.dropna().to_numpy())                                         # the bias is applied to the view, not to the readings
-    sp, sb = plain.score(b)["EQ1"].dropna(), biased.score(b)["EQ1"].dropna()
+    sb = biased.score(b)["EQ1"].dropna()
     assert np.allclose(sb.to_numpy(), 2.0 * np.clip(o.loc[sb.index] + 0.5, -1, 1).to_numpy())
 
 

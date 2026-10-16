@@ -12,6 +12,7 @@ from src.webapp import server
 from src.webapp.api import App
 from src.webapp.providers import ITickProvider, RateLimiter
 from src.webapp.universe import TickerStore, UniverseBuilder, itick_source
+from tests.app_roots import isolated_root
 from tests.fake_itick import KEY, FakeClock, FakeITick
 from tests.test_webapp import _default, _fetch
 from tests.test_webapp_labs import _rich
@@ -20,11 +21,13 @@ sync_api = pytest.importorskip("playwright.sync_api")
 
 
 def _chromium():
-    roots = [os.environ.get("PLAYWRIGHT_BROWSERS_PATH", ""), "/opt/pw-browsers"]
+    """The Chromium Playwright installed (``playwright install chromium``), wherever it put it: the folder named by PLAYWRIGHT_BROWSERS_PATH, the sandbox's /opt/pw-browsers, or the per-user cache."""
+    roots = [os.environ.get("PLAYWRIGHT_BROWSERS_PATH", ""), "/opt/pw-browsers", os.path.expanduser("~/.cache/ms-playwright")]
     for root in roots:
-        found = sorted(glob.glob(os.path.join(root, "chromium-*", "chrome-linux", "chrome")))
-        if found:
-            return found[-1]
+        for layout in ("chrome-linux", "chrome-linux64"):
+            found = sorted(glob.glob(os.path.join(root, "chromium-*", layout, "chrome")))
+            if found:
+                return found[-1]
     return None
 
 
@@ -32,7 +35,7 @@ def _chromium():
 def live(tmp_path_factory):
     config = load_config()
     store = TickerStore(tmp_path_factory.mktemp("prices"), fetch=_fetch)
-    app = App(config, builder=UniverseBuilder(config, store, default_loader=_default), root=config.root)
+    app = App(config, builder=UniverseBuilder(config, store, default_loader=_default), root=isolated_root(tmp_path_factory.mktemp("root"), config))
     running = server.start(app, "127.0.0.1", 0)
     yield running
     running.stop()
@@ -43,7 +46,7 @@ def _app_with_itick(tmp, key):
     fake, clock = FakeITick(), FakeClock()
     provider = ITickProvider(key=key, base_url="https://api-free.itick.org", limiter=RateLimiter(5, clock=clock.now, sleep=clock.sleep), transport=fake, sleep=clock.sleep)
     builder = UniverseBuilder(config, TickerStore(tmp / "yahoo", fetch=_fetch), default_loader=_default, sources={"itick": itick_source(tmp, provider, tmp / "itick")})
-    return App(config, builder=builder, root=config.root), fake
+    return App(config, builder=builder, root=isolated_root(tmp / "root", config)), fake
 
 
 @pytest.fixture(scope="module")
@@ -321,7 +324,7 @@ def test_a_formula_is_checked_then_backtested_as_written_and_appears_in_compare(
     page.wait_for_selector("#builder svg.chart")
     page.click("button:has-text('Backtest this formula')")
     page.wait_for_selector(".kpis", timeout=120_000)
-    assert page.inner_text(".head h1") == "expression" and "Heads up" not in page.inner_text("#results")
+    assert page.inner_text(".head h2") == "expression" and "Heads up" not in page.inner_text("#results")
     page.click("#tab-compare")
     assert page.locator(".run:not(.header)").count() == 1 and page.locator("#compare svg.chart").count() == 1
     page.click("#tab-builder")
@@ -538,7 +541,7 @@ def live_labs(tmp_path_factory):
     """A server whose platform data also has dollar volume and the ten-year yield (the redemption and liability tools need them)."""
     config = load_config()
     store = TickerStore(tmp_path_factory.mktemp("lab_prices"), fetch=_fetch)
-    running = server.start(App(config, builder=UniverseBuilder(config, store, default_loader=_rich), root=config.root), "127.0.0.1", 0)
+    running = server.start(App(config, builder=UniverseBuilder(config, store, default_loader=_rich), root=isolated_root(tmp_path_factory.mktemp("lab_root"), config)), "127.0.0.1", 0)
     yield running
     running.stop()
 
@@ -610,14 +613,14 @@ def test_the_form_and_the_result_stay_when_another_tab_is_opened_and_each_mode_r
     for mode, heading in (("frontier", "The cost-risk frontier"), ("basket", "A basket of 8 names"), ("hft", "ETF against its basket")):
         labs.click(f"#exec .labtop button[data-mode={mode}]")
         labs.click("#exec .runbar button")
-        labs.wait_for_selector(f"#exec-results h1:has-text('{heading}')", timeout=60_000)
+        labs.wait_for_selector(f"#exec-results .head h2:has-text('{heading}')", timeout=60_000)
         assert labs.locator("#exec-results svg.chart").count() >= 1 and labs.locator("#exec-results .banner.err").count() == 0, mode
     labs.click("#exec .labtop button[data-mode=run]")
     assert "123,456 shares" in labs.inner_text("#exec-results"), "going back to a mode shows the result it had"
     labs.click("#exec .labtop button[data-mode=hft]")
     labs.select_option("#exec select[data-key=sim]", "pairs")
     labs.click("#exec .runbar button")
-    labs.wait_for_selector("#exec-results h1:has-text('Pair trading')", timeout=60_000)
+    labs.wait_for_selector("#exec-results .head h2:has-text('Pair trading')", timeout=60_000)
     assert labs.locator("#exec-results svg.chart").count() == 1 and "Cumulative profit" in labs.inner_text("#exec-results")
     labs.click("#exec-results button:text-is('Read the guide')")
     labs.wait_for_selector("article.md h1:has-text('Black-box and high-frequency')")
@@ -645,7 +648,7 @@ def test_the_cash_flows_tab_runs_each_question_on_the_tickers_in_the_list(labs):
     for mode, heading, charts in (("simulate", "Money in and money out", 2), ("spending", "Spending 4.0% of $1,000,000 a year for 30 years", 2), ("redeem", "Redeeming 10.0% of a $1,000,000,000 fund", 2), ("ldi", "A plan that owes payments", 2)):
         labs.click(f"#cash .labtop button[data-mode={mode}]")
         labs.click("#cash .runbar button")
-        labs.wait_for_selector(f"#cash-results h1:has-text({heading!r})", timeout=90_000)
+        labs.wait_for_selector(f"#cash-results .head h2:has-text({heading!r})", timeout=90_000)
         assert labs.locator("#cash-results svg.chart").count() == charts and labs.locator("#cash-results .banner.err").count() == 0, mode
         assert labs.locator("#cash-results table.data").count() >= 1 and "Read the guide" in labs.inner_text("#cash-results")
     assert "Hedge with CCC; seek return with AAA, BBB" in labs.inner_text("#cash-results")                 # the liability mode picked a bond fund and two equity funds from the list
@@ -699,7 +702,7 @@ def test_opening_a_table_in_a_lab_keeps_the_page_where_it_is_and_does_not_redraw
 
 
 def test_a_resize_and_a_theme_change_redraw_a_lab_and_keep_what_the_reader_opened(labs):
-    _lab_run(labs, "cash", "#cash-results h1", 90_000)
+    _lab_run(labs, "cash", "#cash-results .head h2", 90_000)
     card = _card(labs, "#cash-results", "Distance from the target weights")
     card.locator(".seg button:text-is('Table')").click()
     width_before = labs.evaluate("document.querySelector('#cash-results svg.chart').viewBox.baseVal.width")
@@ -721,7 +724,7 @@ def test_the_new_tabs_fit_a_phone(browser, live_labs):
         pg.goto(live_labs.url)
         pg.wait_for_selector(".chip")
         assert pg.evaluate("document.documentElement.scrollWidth") <= 392, "six tabs go on two rows instead of widening the page"
-        for tab, wait_for in (("exec", "#exec-results .earnrow"), ("cash", "#cash-results h1")):
+        for tab, wait_for in (("exec", "#exec-results .earnrow"), ("cash", "#cash-results .head h2")):
             _lab_run(pg, tab, wait_for, 90_000)
             assert pg.evaluate("document.documentElement.scrollWidth") <= 392, tab
         assert not pg.problems, pg.problems

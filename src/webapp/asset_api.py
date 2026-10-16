@@ -252,7 +252,6 @@ class AssetApi:
         """``GET /api/options/surface?underlying=SPY``: the implied-volatility surface (strike by expiry), the term structure, the skew metrics of every expiry and the static no-arbitrage checks."""
         underlying, rate, dividend, premium = self._option_params(q)
         chain, ctx, source, notes = self._option_chain(underlying, rate, dividend, premium)
-        simulated = source == "simulated"
         skews = []
         for e in oa.expiry_list(chain):
             if e["dte"] < 4:

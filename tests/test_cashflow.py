@@ -406,7 +406,7 @@ def _constant(rate: float, years: int = 30, paths: int = 1):
 
 def test_fixed_real_spending_follows_the_recursion_and_runs_out_when_the_pot_does():
     out = simulate_spending(annual_returns=_constant(0.03), rule="fixed_real", initial=1_000.0, rate=0.10, inflation=0.02, years=30)
-    nav, s = 1_000.0, 100.0
+    nav = 1_000.0
     funded = 0
     for y in range(30):
         want = 100.0 * 1.02 ** y

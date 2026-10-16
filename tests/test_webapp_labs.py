@@ -13,6 +13,7 @@ from src.utils.config import load_config
 from src.webapp import api, server
 from src.webapp.api import ApiError, App
 from src.webapp.universe import TickerStore, UniverseBuilder
+from tests.app_roots import isolated_root
 from tests.test_webapp import CLASSES, IDX, N, _default, _fetch, _http, _prices
 
 
@@ -27,7 +28,7 @@ def _rich(config):
 
 def _app(tmp_path, loader):
     config = load_config()
-    return App(config, builder=UniverseBuilder(config, TickerStore(tmp_path / "prices", fetch=_fetch), default_loader=loader), root=config.root)
+    return App(config, builder=UniverseBuilder(config, TickerStore(tmp_path / "prices", fetch=_fetch), default_loader=loader), root=isolated_root(tmp_path / "root", config))
 
 
 @pytest.fixture(scope="module")

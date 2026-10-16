@@ -86,7 +86,6 @@ def test_garch_variance_path_starts_at_the_next_day_decays_to_the_long_run_and_i
 
 
 def test_fit_garch11_recovers_persistence():
-    rng = np.random.default_rng(1)
     r = simulate_dcc(4000, seed=1)[:, 0]
     g = fit_garch11(r)
     assert 0.95 < g.persistence < 1.0

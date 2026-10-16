@@ -12,6 +12,7 @@ from src.utils.config import load_config
 from src.webapp import server
 from src.webapp.api import App
 from src.webapp.universe import TickerStore, UniverseBuilder
+from tests.app_roots import isolated_root
 from tests.free_data_helpers import FakeFeeds, cboe_payload
 from tests.ml_helpers import make_bundle
 from tests.test_webapp import _fetch
@@ -26,9 +27,7 @@ SOURCES = {"Platform data", "Your file", "Downloaded: free data", "Simulated: a 
 def _start(tmp_path_factory, tag):
     """An app on synthetic prices with a planted signal. Its registry lives in a temporary directory; the repository's data (Deribit, your files) and guides are reached through links, read only."""
     config = load_config()
-    root = tmp_path_factory.mktemp(f"{tag}_root")
-    for folder in ("data", "docs"):
-        (root / folder).symlink_to(config.root / folder, target_is_directory=True)
+    root = isolated_root(tmp_path_factory.mktemp(f"{tag}_root"), config)
     bundle = make_bundle(n_assets=8, n=1300, seed=3, alpha=1.0)
     store = TickerStore(tmp_path_factory.mktemp(f"{tag}_prices"), fetch=_fetch)
     return server.start(App(config, builder=UniverseBuilder(config, store, default_loader=lambda c: bundle), root=root), "127.0.0.1", 0)
@@ -436,7 +435,7 @@ def test_the_machine_learning_tab_trains_a_model_checks_it_explains_it_and_follo
     for box in ws.locator("#ml-results table.lb tbody input[type=checkbox]").all():
         box.check()
     ws.click("#ml-results button:text-is('Compare the selected')")
-    ws.wait_for_selector("#ml-results h1:has-text('Comparing 2 experiments')", timeout=60_000)
+    ws.wait_for_selector("#ml-results .head h2:has-text('Comparing 2 experiments')", timeout=60_000)
     assert ws.locator("#ml-results svg.chart").count() >= 1 and "Settings and results" in ws.inner_text("#ml-results")
     _mode(ws, "ml", "experiments")
     ws.wait_for_selector("#ml-results table.lb tbody tr")

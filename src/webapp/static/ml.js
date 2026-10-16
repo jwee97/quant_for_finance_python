@@ -646,7 +646,7 @@
       table: (b) => featureTable(b, d.features) });
     const card = h("div", "card", root); h("h3", "", card, "Every feature");
     let group = "";
-    const bar = W.pills(card, [["", "All"], ...Object.keys(d.groups).map((g) => [g, `${g} (${d.groups[g]})`])], group, (v) => { group = v; for (const x of bar.querySelectorAll("button")) x.setAttribute("aria-selected", String(x.dataset.value === v)); paint(); });
+    const bar = W.pills(card, [["", "All"], ...Object.keys(d.groups).map((g) => [g, `${g} (${d.groups[g]})`])], group, (v) => { group = v; for (const x of bar.querySelectorAll("button")) x.setAttribute("aria-pressed", String(x.dataset.value === v)); paint(); }, "Filter the features by group");
     const slot = h("div", "", card), paint = () => { slot.replaceChildren(); featureTable(slot, group ? d.features.filter((x) => x.group === group) : d.features); };
     paint();
     if (plan.error) W.flags(root, [plan.error], "Segments. "); else {

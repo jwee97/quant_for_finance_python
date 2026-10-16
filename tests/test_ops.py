@@ -185,7 +185,7 @@ def test_search_methods_find_the_optimum_and_count_every_trial():
     with pytest.raises(ValueError):
         Study(space).optimize(_bowl, 3, "nope")
     with pytest.raises(ValueError):
-        Study(space).best
+        _ = Study(space).best                                                                   # a study with no trial has no best
 
 
 def test_failed_trials_are_recorded_counted_and_skipped():

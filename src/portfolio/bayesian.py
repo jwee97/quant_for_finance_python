@@ -116,13 +116,11 @@ def posterior_weight_draws(post: Posterior, constraints: Constraints, risk_avers
     """Constrained mean-variance optimum for each posterior draw: array (draws, N); failed solves are dropped."""
     mus, sigmas = post.draw(n_draws, rng)
     out = []
-    start = np.full(post.n_assets, 1.0 / post.n_assets)
     for mu, sigma in zip(mus, sigmas):
         result = mean_variance_weights(pd.Series(ANN * mu, index=post.assets), _frame(ANN * sigma, post.assets),
                                        risk_aversion, constraints)
         if result.success:
             out.append(result.weights.reindex(post.assets).to_numpy())
-            start = out[-1]
     if not out:
         raise RuntimeError("no posterior draw produced a feasible optimum")
     return np.vstack(out)

@@ -76,8 +76,25 @@
   const TABS = ["backtest", "compare", "builder", "exec", "cash", "guides"];
   const WORKSPACES = {};                                                                  // tab name -> lab, for the tabs that live in their own files (options.js, futures.js, crypto.js, ml.js)
   let booted = false;
+  /* The keyboard half of the tab pattern: only the selected tab is in the tab order, and the arrow keys, Home and End move to another tab and open it. ``bar`` holds the role="tab" buttons;
+     ``then`` runs after a key opened a tab (a redraw can replace the buttons, so it puts focus back on the selected one; without it the button that was reached keeps the focus). Returns the
+     function that re-reads which tab is selected. */
+  function tabKeys(bar, then) {
+    const tabs = () => [...bar.querySelectorAll('[role="tab"]')], selected = (x) => x.getAttribute("aria-selected") === "true";
+    const sync = () => tabs().forEach((x) => { x.tabIndex = selected(x) ? 0 : -1; });
+    bar.addEventListener("keydown", (e) => {
+      const list = tabs(), i = list.indexOf(document.activeElement), n = list.length;
+      const go = { ArrowRight: (i + 1) % n, ArrowDown: (i + 1) % n, ArrowLeft: (i + n - 1) % n, ArrowUp: (i + n - 1) % n, Home: 0, End: n - 1 }[e.key];
+      if (i < 0 || go === undefined) return;
+      e.preventDefault(); list[go].click();
+      if (then) then(); else list[go].focus();
+    });
+    sync(); return sync;
+  }
+  let syncNav = () => {};
   function showTab(name) {
     for (const t of TABS) { $("#tab-" + t).setAttribute("aria-selected", String(t === name)); $("#view-" + t).hidden = t !== name; }
+    syncNav();
     if (name === "compare") renderCompare();
     if (name === "builder") renderBuilder();
     if (name === "exec") renderLab(X);
@@ -88,6 +105,7 @@
     store("tab", name);
   }
   for (const t of TABS) $("#tab-" + t).addEventListener("click", () => showTab(t));
+  syncNav = tabKeys($("nav.tabs"));
 
   /* ================================================================= universe */
   function defaultTickers() { return S.catalog.default_tickers.map((t) => ({ t, cls: S.catalog.default_classes[t] || "unknown", status: "default" })); }
@@ -169,6 +187,16 @@
   const sources = () => (S.catalog && Array.isArray(S.catalog.sources) ? S.catalog.sources : []);
   /* What turns iTick on. The key is never typed into this page: it goes into a Replit secret, and an app only sees the secrets that existed when it started. */
   const KEY_NAME = "ITICK_API_KEY";
+  /* What iTick did with the key lately (times and iTick's own words, never the key): shown beside the connection test, so that a refusal comes with its history. */
+  function keyHistory(hist) {
+    if (!hist || (!hist.accepted && !hist.refused)) return "";
+    const when = (e) => e.at.replace("T", " ").replace("Z", " UTC").slice(0, 20), parts = [];
+    if (hist.accepted) parts.push(`iTick last accepted this key on ${when(hist.accepted)}`);
+    if (hist.refused) parts.push(`last refused it on ${when(hist.refused)}${hist.refused.said ? ` ("${hist.refused.said}")` : ""}`);
+    let out = parts.join(", ") + ".";
+    if (hist.accepted && hist.refused && hist.refused.at > hist.accepted.at) out += hist.same_key === false ? " The key in the secret is not the one that last worked." : " It is the same key that last worked: look for an ended trial, a reset key or a limit to certain addresses in the iTick dashboard.";
+    return out;
+  }
   function setupGuide(box, last) {                                                            // ``last``: the final step, when the guide is shown somewhere other than the Backtest tab
     const guide = h("div", "setup", box);
     const lead = h("p", "", guide, "iTick is not set up yet. It takes about two minutes, and the key never goes through this page."); lead.style.color = css("--warn");
@@ -194,6 +222,7 @@
       else { const w = h("p", "hint", box, cur.problem); w.style.color = css("--warn"); }
     } else if (cur.name === "itick") {
       h("p", "hint", box, `Your plan allows ${cur.calls_per_minute} call${cur.calls_per_minute === 1 ? "" : "s"} a minute; the app waits between calls and says so while it does. A ticker costs about one call per four years of daily history, once; after that a top-up is one call. Requests go to ${cur.host || "iTick"}.`);
+      const past = keyHistory(cur.history); if (past) h("p", "hint", box, past);
     }
     if (cur.symbols) { const more = h("button", "link", box, "How to write symbols"), para = h("p", "hint", box, cur.symbols + "."); para.hidden = true; more.addEventListener("click", () => { para.hidden = !para.hidden; }); }
     if (cur.name === "itick" && cur.available) {
@@ -489,7 +518,7 @@
   function buildResult(root, run) {
     const r = run.result, w = windowOf(run, S.range), st = statsOf(w.equity), single = r.universe.tickers.length === 1, refName = single ? "buy and hold" : "equal weight", eqw = w.bench.equal_weight ? statsOf(w.bench.equal_weight) : null;
     const head = h("div", "head", root), left = h("div", "", head);
-    h("h1", "", left, r.name);
+    h("h2", "", left, r.name);
     h("p", "sub", left, `${r.universe.tickers.length} ticker${single ? "" : "s"} · ${r.universe.source} · ${r.metrics.start} to ${r.metrics.end} (${(r.stats.years).toFixed(1)} years) · ran in ${r.seconds} s · run #${run.id}`);
     const acts = h("div", "row tight", head);
     const ex = h("button", "btn", acts, "Copy spec (YAML)"); ex.addEventListener("click", () => copy(r.yaml, "Spec"));
@@ -651,9 +680,9 @@
     if (fq.length) add("fq", "Forecast quality", (b) => simpleTable(b, [{ label: "Measure", get: (x) => x[0].replace("forecast_", "").replace(/_/g, " ") }, { label: "Value", num: true, get: (x) => num(x[1], 4) }], fq));
     if (r.validation.causality) add("caus", "Look-ahead check", (b) => simpleTable(b, [{ label: "Component", get: (x) => x[0] }, { label: "Result", get: (x) => (x[1].ok ? "✓ passes" : "✗ FAILS") }, { label: "Largest change when the future was replaced by noise", num: true, get: (x) => String(x[1].max_abs_difference) }], Object.entries(r.validation.causality)));
     add("spec", "Specification (YAML)", (b) => { const pre = h("pre", "", b); h("code", "", pre, r.yaml); });
-    const card = h("div", "card", root); h("h2", "", card, "Details"); const bar = h("div", "tabsmall", card), body = h("div", "tabbody", card);
-    const open = (t) => { S.view.detail = t.id; [...bar.children].forEach((c) => c.setAttribute("aria-selected", String(c.dataset.id === t.id))); keepScroll(() => { body.replaceChildren(); t.draw(body); }, body); };
-    tabs.forEach((t) => { const b = h("button", "", bar, t.label); b.dataset.id = t.id; b.setAttribute("aria-selected", "false"); b.addEventListener("click", () => open(t)); });
+    const card = h("div", "card", root); h("h2", "", card, "Details"); const bar = h("div", "tabsmall", card), body = h("div", "tabbody", card); bar.setAttribute("role", "tablist"); bar.setAttribute("aria-label", "Detail views"); body.setAttribute("role", "tabpanel"); const syncDetail = tabKeys(bar);
+    const open = (t) => { S.view.detail = t.id; [...bar.children].forEach((c) => c.setAttribute("aria-selected", String(c.dataset.id === t.id))); syncDetail(); keepScroll(() => { body.replaceChildren(); t.draw(body); }, body); };
+    tabs.forEach((t) => { const b = h("button", "", bar, t.label); b.dataset.id = t.id; b.setAttribute("role", "tab"); b.setAttribute("aria-selected", "false"); b.tabIndex = -1; b.addEventListener("click", () => open(t)); });
     if (tabs.length) open(tabs.find((t) => t.id === S.view.detail) || tabs[0]);
   }
   function cell(v) { if (v === null || v === undefined) return ""; if (typeof v === "number") return Math.abs(v) >= 1000 ? v.toFixed(0) : Math.abs(v) >= 10 ? v.toFixed(1) : v.toFixed(3); return String(v); }
@@ -674,7 +703,7 @@
   /* ================================================================= compare */
   function renderCompare() {
     const root = $("#compare"); root.replaceChildren();
-    const head = h("div", "head", root), l = h("div", "", head); h("h1", "", l, "Compare runs"); h("p", "sub", l, "Every run you make this session. Tick up to six to overlay them. Colour belongs to the run, so it never changes when you tick or untick others.");
+    const head = h("div", "head", root), l = h("div", "", head); h("h2", "", l, "Compare runs"); h("p", "sub", l, "Every run you make this session. Tick up to six to overlay them. Colour belongs to the run, so it never changes when you tick or untick others.");
     if (!S.runs.length) { const c = h("div", "card empty", root); h("h2", "", c, "No runs yet"); h("p", "", c, "Run a backtest and it appears here."); const b = h("button", "btn primary", c, "Go to Backtest"); b.addEventListener("click", () => showTab("backtest")); return; }
     const clr = h("button", "btn", head, "Clear all runs"); clr.addEventListener("click", () => { S.runs = []; S.selected.clear(); S.current = null; $("#runcount").textContent = "0"; renderCompare(); renderEmpty(); });
     const card = h("div", "card", root), list = h("div", "runs", card);
@@ -709,12 +738,12 @@
   const B = { expr: "rank(mom(126, 21)) - rank(vol(63))", mode: "cross_sectional" };
   function renderBuilder() {
     const root = $("#builder"); root.replaceChildren();
-    const head = h("div", "head", root), l = h("div", "", head); h("h1", "", l, "Strategy builder"); h("p", "sub", l, "Two ways to test your own idea: a one-line formula (no code), or a Python file for anything bigger.");
+    const head = h("div", "head", root), l = h("div", "", head); h("h2", "", l, "Strategy builder"); h("p", "sub", l, "Two ways to test your own idea: a one-line formula (no code), or a Python file for anything bigger.");
     const grid = h("div", "builder", root), left = h("div", "stack", grid), right = h("div", "stack", grid);
     const f = h("div", "card", left); h("h2", "", f, "1. Write a formula"); h("p", "sub", f, "The formula gives every asset a score each day. Higher means you expect a higher return. It may only look backwards, so it cannot cheat.");
     const ta = h("textarea", "", f); ta.rows = 3; ta.value = B.expr; ta.spellcheck = false; ta.setAttribute("aria-label", "formula"); ta.addEventListener("input", () => { B.expr = ta.value; });
     const mrow = h("div", "row", f);
-    const ms = h("select", "", mrow); ms.style.width = "auto"; for (const [v, t] of [["cross_sectional", "Rank assets against each other"], ["time_series", "Each asset on its own"]]) { const o = h("option", "", ms, t); o.value = v; if (v === B.mode) o.selected = true; } ms.addEventListener("change", () => { B.mode = ms.value; });
+    const ms = h("select", "", mrow); ms.setAttribute("aria-label", "How the formula is used"); ms.style.width = "auto"; for (const [v, t] of [["cross_sectional", "Rank assets against each other"], ["time_series", "Each asset on its own"]]) { const o = h("option", "", ms, t); o.value = v; if (v === B.mode) o.selected = true; } ms.addEventListener("change", () => { B.mode = ms.value; });
     const chk = h("button", "btn", mrow, "Check on my tickers"), go = h("button", "btn primary", mrow, "Backtest this formula");
     const out = h("div", "", f);
     chk.addEventListener("click", async () => {
@@ -810,7 +839,7 @@
     const again = h("button", "btn primary", c, "Reload this page"); again.addEventListener("click", () => location.reload());
   }
   function labHead(root, title, sub, guide) {
-    const head = h("div", "head", root), left = h("div", "", head); h("h1", "", left, title); if (sub) h("p", "sub", left, sub);
+    const head = h("div", "head", root), left = h("div", "", head); h("h2", "", left, title); if (sub) h("p", "sub", left, sub);
     if (guide) { const acts = h("div", "row tight", head), b = h("button", "btn", acts, "Read the guide"); b.addEventListener("click", () => openGuide(guide)); }
   }
   function labBanner(root, title, text, serious) { const b = h("div", "banner" + (serious ? " err" : ""), root); h("strong", "", b, title); b.appendChild(document.createTextNode(text)); return b; }
@@ -839,8 +868,12 @@
     const panel = h("aside", "card panel", root); panel.setAttribute("aria-label", lab.title + " setup");
     const top = h("div", "labtop", panel); h("h2", "", top, lab.title); h("p", "hint", top, lab.about);
     if (lab.modes.length > 1) {                                                              // a tab with one mode has nothing to switch between
-      const pills = h("div", "tabsmall", top);
-      for (const [key, text] of lab.modes) { const b = h("button", "", pills, text); b.dataset.mode = key; b.setAttribute("aria-selected", String(key === lab.mode)); b.addEventListener("click", () => { lab.mode = key; renderLab(lab); }); }
+      const pills = h("div", "tabsmall", top); pills.setAttribute("role", "tablist"); pills.setAttribute("aria-label", lab.title + " views");
+      for (const [key, text] of lab.modes) {
+        const b = h("button", "", pills, text); b.dataset.mode = key; b.setAttribute("role", "tab"); b.setAttribute("aria-selected", String(key === lab.mode)); b.setAttribute("aria-controls", lab.id + "-results");
+        b.addEventListener("click", () => { lab.mode = key; renderLab(lab); });
+      }
+      tabKeys(pills, () => { const now = document.querySelector(`#${lab.id} .labtop [role="tab"][aria-selected="true"]`); if (now) now.focus(); });
     }
     h("p", "hint", top, lab.blurb[lab.mode]);
     lab.sections(panel);
@@ -1308,7 +1341,7 @@
       list.replaceChildren(); let group = null; const q = search.value.toLowerCase();
       for (const d of G.index) {
         if (q && !(d.title + " " + d.slug).toLowerCase().includes(q)) continue;
-        if (d.group !== group) { group = d.group; h("h4", "", list, group); }
+        if (d.group !== group) { group = d.group; h("h2", "", list, group); }
         const b = h("button", "", list, d.title); if (d.slug === G.slug) b.setAttribute("aria-current", "true"); b.addEventListener("click", () => loadDoc(d.slug));
       }
     };
@@ -1375,6 +1408,7 @@
     if (failed.length) notice("draw", "Part of the page could not be drawn: ", failed.join("; ") + ". Reload the page; if it happens again, restart the app.", true);
     booted = true;
     const t = store("tab"); if (t && TABS.includes(t) && t !== "backtest") showTab(t);
+    document.body.dataset.ready = "1";                                                      // the page has drawn itself: what a test or a script waits for before it acts
   }
 
   /* ================================================================= workspaces in their own files
@@ -1386,7 +1420,7 @@
     if (booted && store("tab") === name) showTab(name);
   }
   window.QL = { C, h, fmt, $, api, css, store, toast, copy, download, num, pct, money, smoney, axisMoney, bad, bps, grouped, plain, unsign, colorOf, SLOTS, tile, chartCard, simpleTable, sampleRows, keepScroll, labField, checkList, numbers,
-    labHead, labBanner, labEmpty, labOld, syncLab, renderLab, drawLab, openGuide, serverApi, RESTART, notice, registerWorkspace, labelPx, running, S, setupGuide, waitJob,
+    labHead, labBanner, labEmpty, labOld, syncLab, renderLab, drawLab, openGuide, serverApi, RESTART, notice, registerWorkspace, labelPx, running, S, setupGuide, waitJob, keyHistory,
     universeBody, pickAllocator, useStrategy, setTrials, showTab };
   boot();
 })();

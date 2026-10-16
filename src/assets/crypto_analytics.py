@@ -246,7 +246,6 @@ def funding_dashboard(series: dict[str, CryptoSeries], venues: tuple = VENUE_ORD
             f, src = venue_funding(s, v)
             f = f.dropna()
             hours = VENUES[v]["funding_hours"]
-            now = float(f.tail(3).mean())                                         # the last few days smooth a single reading
             rows.append({"symbol": sym, "venue": v, "interval_hours": hours, "rate_per_interval": float(f.iloc[-1] * hours / 24.0), "annualised": float(f.iloc[-1] * ANN), "avg_7d": float(f.tail(7).mean() * ANN),
                          "avg_30d": float(f.tail(30).mean() * ANN), "zscore_90d": last_zscore(f, 90), "percentile_1y": percentile_rank(f.tail(365), float(f.iloc[-1])), "source": src})
             by_venue[v] = (f, src)

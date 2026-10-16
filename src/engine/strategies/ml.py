@@ -124,7 +124,7 @@ class WalkForwardMLStrategy(Strategy):
         self.fits: list[dict] = []
 
     def _panel(self, ctx):
-        xs, ys, regs = [], [], []
+        xs, ys = [], []
         for iid in self.instruments:
             p = _prices(ctx, iid, self.train_window + 300)
             if len(p) < 200:

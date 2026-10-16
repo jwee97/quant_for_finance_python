@@ -73,7 +73,7 @@ def render(table: pd.DataFrame, first: str, last: str, years: float) -> str:
     failed = table[table["error"] != ""]
     if len(failed):
         lines += ["", "Could not run on this bundle:", ""] + [f"- `{r['strategy']}`: {r['error']}" for _, r in failed.iterrows()]
-    lines += ["", "Regenerate with `python -m experiments.library_survey`. Single runs of this kind are exploratory: see [the research reports](../README.md) for the pre-registered studies.", ""]
+    lines += ["", "Regenerate with `python -m experiments.library_survey`. Single runs of this kind are exploratory: see the research reports in the repository's `reports/` folder for the pre-registered studies.", ""]
     return "\n".join(lines)
 
 

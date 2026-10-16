@@ -126,6 +126,14 @@ Repl may not provide. The tab lists them as not available, with the reason, and 
 model works; scikit-learn's histogram gradient boosting is the same kind of model and needs
 nothing extra. See [docs/ml_platform.md](docs/ml_platform.md) for how to switch them on.
 
+## Locking the page with an access code
+
+A Replit preview address can be opened by anyone who has the link, and the page hands its per-launch token to whoever loads it, so the token alone does not keep a stranger out of your backtests, your
+background runs or your iTick allowance. To ask for a code first, add a Secret named `QUANT_LAB_ACCESS_CODE` (Tools > Secrets) with a code you choose, then **Stop** and **Run**. The page, its scripts and
+the API are then served only to a browser that has typed the code into a small form. The browser keeps a cookie (HttpOnly, SameSite=Strict, and Secure behind Replit's HTTPS) that the app forgets when it
+restarts; ten wrong guesses in five minutes close the form for five minutes; `/logout` signs a browser out. Without the secret nothing changes. The code is compared in constant time and is never written to
+a log, a file or a page.
+
 ## Dependencies and command-line use
 
 Python 3.10 is configured. Project dependencies are declared in

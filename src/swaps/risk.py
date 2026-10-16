@@ -69,7 +69,6 @@ def carry_rolldown(spec, curves: CurveSet, valuation, horizon_days: int = 30, fi
     rate_of = {spec.currency: 1.0}
     if hasattr(spec, "currency_2"):
         rate_of[spec.currency_2] = spot if spot is not None else 1.0
-    paid = table[(table["pay_date"] > val) & (table["pay_date"] <= end) & (table["leg"] != "exchange")]
     cash = float(sum(r.amount * rate_of[r.currency] for r in table[(table["pay_date"] > val) & (table["pay_date"] <= end)].itertuples(index=False)))
     carry = 0.0
     for r in table[table["leg"] != "exchange"].itertuples(index=False):

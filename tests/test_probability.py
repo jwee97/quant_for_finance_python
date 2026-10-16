@@ -131,7 +131,6 @@ def test_copula_density_integrates_to_one_and_cdf_respects_frechet_bounds(family
 
 
 def test_marginals_and_copula_scenarios_preserve_dependence_and_tails():
-    rng = np.random.default_rng(6)
     cop = copulas.Copula("student", {"corr": np.array([[1, 0.7], [0.7, 1.0]]), "df": 3.0}, 2)
     u = cop.simulate(4000, 1)
     data = pd.DataFrame({"a": sps.t.ppf(u[:, 0], 5) * 0.01, "b": sps.t.ppf(u[:, 1], 5) * 0.012})

@@ -45,7 +45,7 @@ def paid_only(**kwargs):
     ("export ITICK_API_KEY='abc123def456ghi789'", "abc123def456ghi789", ["quotation marks", "secret's name"]),
     ("Bearer abc123def456ghi789", "abc123def456ghi789", ["Bearer"]),
     ("token: abc123def456ghi789", "abc123def456ghi789", ["label"]),
-    ("abc123​def456ghi789", "abc123def456ghi789", ["invisible"]),
+    ("abc123\u200bdef456ghi789", "abc123def456ghi789", ["invisible"]),
     ("abc123 def456", "abc123 def456", ["space or a line break inside"]),
     ("abc123édef456", "abc123édef456", ["ASCII"]),
     ("YOUR_API_KEY", "YOUR_API_KEY", ["placeholder"]),

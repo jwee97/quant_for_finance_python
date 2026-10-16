@@ -123,7 +123,6 @@ def _kama(prices: np.ndarray, n: int, fast: int, slow: int) -> np.ndarray:
         if len(finite) <= n:
             continue
         start = finite[0] + n
-        change = np.abs(p[n:] - p[:-n])
         path = np.abs(np.diff(p, prepend=np.nan))
         csum = np.concatenate([np.zeros(n), np.nancumsum(path)[n:] - np.nancumsum(path)[:-n]]) if len(p) > n else np.zeros_like(p)
         k = np.nan

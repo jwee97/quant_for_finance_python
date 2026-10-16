@@ -94,7 +94,7 @@ def test_a_reloaded_page_finds_a_run_follows_it_to_its_end_and_opens_the_experim
         sample = page.locator("#ml-results .runs li[data-status=done]", has_text="sample")
         assert sample.count() == 1 and sample.locator("button[data-action=open-run]").count() == 0, "a dataset build made no experiment, so there is nothing to open"
         done.locator("button[data-action=open-run]").click()
-        page.wait_for_selector("#ml-results h1", timeout=60_000)
+        page.wait_for_selector("#ml-results .head h2", timeout=60_000)
         assert "left running" in page.inner_text("#ml-results"), "Open shows the experiment the run made"
         assert page.locator("#view-ml .tabsmall button[aria-selected=true]").get_attribute("data-mode") == "train"
         assert [r for r in app.extra_get["/api/ml/experiments"]({})["rows"]][0]["name"] == "left running"

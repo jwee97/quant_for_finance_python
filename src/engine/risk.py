@@ -128,7 +128,6 @@ class PortfolioRisk:
         pv01_total, krp = 0.0, pd.Series(dtype=float)
         funding = 0.0
         rollover = []
-        base = engine.config.base_currency
         for iid, pos in led.positions.items():
             inst = engine.registry.get(iid)
             mark = marks.get(iid, pos.last_mark)

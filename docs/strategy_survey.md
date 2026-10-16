@@ -91,4 +91,4 @@ Could not run on this bundle:
 - `carry_ts`: KeyError: 'needs macro series named CARRY_<asset>; this bundle has none (build one with src.assets.bundles)'
 - `carry_xs`: KeyError: 'needs macro series named CARRY_<asset>; this bundle has none (build one with src.assets.bundles)'
 
-Regenerate with `python -m experiments.library_survey`. Single runs of this kind are exploratory: see [the research reports](../README.md) for the pre-registered studies.
+Regenerate with `python -m experiments.library_survey`. Single runs of this kind are exploratory: see the research reports in the repository's `reports/` folder for the pre-registered studies.

@@ -449,7 +449,6 @@ def tune(run: Callable[[dict], Run], settings: list[Setting], base: dict | None 
     started = clock()
     say = progress or (lambda text: None)
     starts = {s.name: (s.default if s.start is None else s.start) for s in settings}
-    names = list(starts)
 
     say("running the starting settings")
     first = run({**base, **starts})

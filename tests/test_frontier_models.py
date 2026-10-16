@@ -82,7 +82,7 @@ def test_correlation_neighbours_are_causal_and_find_the_planted_pair():
 def test_graph_network_shapes_masking_and_learning():
     import torch
 
-    n, f, k = 6, 4, 2
+    n, f = 6, 4
     rng = np.random.default_rng(4)
     days = 260
     F = rng.normal(size=(days, n, f))

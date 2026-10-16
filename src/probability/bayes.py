@@ -53,7 +53,7 @@ def rhat(chains: np.ndarray) -> np.ndarray:
     m, n, d = chains.shape
     half = n // 2
     split = np.concatenate([chains[:, :half], chains[:, half: 2 * half]], axis=0)
-    mm, nn = split.shape[0], split.shape[1]
+    nn = split.shape[1]
     means, var = split.mean(axis=1), split.var(axis=1, ddof=1)
     W, B = var.mean(axis=0), nn * means.var(axis=0, ddof=1)
     return np.sqrt(((nn - 1) / nn * W + B / nn) / W)

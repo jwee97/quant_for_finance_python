@@ -22,9 +22,9 @@ def test_dashboard_embeds_the_ledger_and_is_valid_json(tmp_path):
 
 def test_dashboard_renders_without_script_errors(tmp_path):
     pw = pytest.importorskip("playwright.sync_api")
-    import os
-    exe = "/opt/pw-browsers/chromium-1194/chrome-linux/chrome"
-    if not os.path.exists(exe):
+    from tests.test_webapp_browser import _chromium
+    exe = _chromium()
+    if exe is None:
         pytest.skip("no chromium")
     path = build_dashboard(load_config(), tmp_path / "dashboard.html")
     errors = []

@@ -158,7 +158,7 @@ def test_the_futures_tab_searches_itick_downloads_products_and_reads_their_histo
 
     # a second product in the menu, then the curve views know nothing of a price history
     select.select_option("HK_HSI")
-    page.wait_for_selector("#futures-results h1:has-text('Hang Seng')", timeout=60_000)
+    page.wait_for_selector("#futures-results .head h2:has-text('Hang Seng')", timeout=60_000)
     _mode(page, "futures", "curve")
     page.wait_for_selector("#futures select[data-key=root]", timeout=60_000)
     assert page.locator("#futures select[data-key=root] option[value='US_NQ']").count() == 0 and page.locator("#futures select[data-key=root] option[value='HK_HSI']").count() == 0

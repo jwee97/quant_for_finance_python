@@ -31,7 +31,6 @@ def test_frames_align_the_spot_index_with_the_perpetual_candle_and_sum_hourly_fu
     _write(tmp_path)
     frames = build_crypto_frames(tmp_path)
     spot, perp, funding = frames["spot"], frames["perp"], frames["funding"]
-    both = spot.index.tz_localize(None) if spot.index.tz is not None else spot.index
     day = pd.Timestamp("2020-03-10", tz="UTC")
     assert (perp.loc[day, "BTC"] / spot.loc[day, "BTC"] - 1) == pytest.approx(0.001, abs=1e-9)     # aligned: the planted basis is recovered exactly
     assert funding.loc[day, "BTC"] == pytest.approx(24e-6)
