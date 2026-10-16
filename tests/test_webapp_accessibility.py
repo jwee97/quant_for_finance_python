@@ -114,7 +114,8 @@ def test_the_section_tabs_are_reached_with_the_arrow_keys_and_only_the_selected_
     pg.keyboard.press("ArrowLeft")
     assert pg.evaluate("document.activeElement.id") == "tab-guides"
     pg.keyboard.press("Home")
-    assert pg.evaluate("document.activeElement.id") == "tab-backtest" and pg.get_attribute("#view-backtest", "hidden") is None
+    assert pg.evaluate("document.activeElement.id") == "tab-backtest"
+    pg.wait_for_selector("#view-backtest:not([hidden])", timeout=10_000)                      # the view follows the key; a machine busy with a whole suite can show it a moment late
 
 
 def test_a_labs_view_tabs_keep_the_keyboard_focus_when_the_view_is_redrawn(pg):

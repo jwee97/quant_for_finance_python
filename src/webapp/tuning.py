@@ -12,7 +12,17 @@ version of a proper search, and what makes it safe is what it does around the se
   many tries (the deflated Sharpe ratio) and the probability of backtest overfitting come from the tries' own return streams (``ops.hpo.Study.selection_report``).
 
 ``tune`` is independent of how a strategy is run: it takes ``run(params) -> Run`` (the net daily returns of the strategy with those settings, and optionally its weights), so the search can be tested with
-synthetic return streams, and ``webapp.tune_api`` supplies the real pipeline. The search is a random start followed by a Tree-structured Parzen Estimator (``ops.hpo``); no configuration is run twice.
+synthetic return streams, and ``webapp.tune_api`` supplies the real pipeline. The search is a space-filling start (a scrambled Sobol sequence) followed by a Tree-structured Parzen Estimator or a
+Gaussian process (``ops.hpo``); no configuration is run twice.
+
+What is done with the search's result is as much of the method as the search:
+
+* the winner can be the trial whose *neighbourhood* did best (``Study.plateau``) rather than the single best score, which on a noisy objective is mostly luck;
+* the tries that were drawn before the search learned anything do not depend on the data, so they can be used to ask a second question honestly: had the settings been re-chosen on the past
+  alone, again and again, would they have beaten the starting settings on what came next (``walk_forward_check``)?
+* a gain that held on the hold-out is called *good* only when it is also more than the hold-out's own noise (a paired t statistic of the gain), when the winner is not what the best of that many
+  lucky tries would show (the Romano-Wolf p-value over every try's return stream) and when that re-choosing did not lose. The thresholds were set by simulation on strategies with a known truth
+  (``experiments/tune_selection_study.py``): the hold-out gain alone said "good" one time in five when no setting had any edge.
 """
 
 from __future__ import annotations
@@ -32,6 +42,7 @@ import pandas as pd
 from ..backtest.metrics import annualised_volatility, cagr, calmar_ratio, sharpe_ratio, sortino_ratio
 from ..features.returns import cumulative_returns, max_drawdown
 from ..ops.hpo import Categorical, Float, Int, LogFloat, Param, Study
+from ..stats.inference import sharpe_standard_error
 
 MIN_TUNE_DAYS, MIN_HOLD_DAYS = 252, 63                                     # a year to learn from, a quarter to check on: less says nothing
 MIN_TRIALS, MAX_TRIALS = 6, 300                                            # a search of fewer than six tries is not a search; more than 300 is a way to fool oneself
@@ -39,10 +50,27 @@ MAX_TICKED = 6                                                             # set
 CURVE_POINTS = 500
 EDGE = 0.1                                                                 # a best value in the outer tenth of its range (on the range's own scale) is flagged: the range may be too narrow
 STABILITY_BLOCKS, STABILITY_PENALTY = 4, 0.5                               # the consistency score: mean of the metric over four equal parts, minus half their spread
+SEARCH, SELECT = "tpe", "best"                                             # how tries are proposed and which one wins (see ``tune``)
+SEARCHES = {"tpe": {"label": "Smart search (recommended)", "text": "An evenly spread start, then a model of where the good settings and the bad ones sat, which proposes values like the good ones. Works with any mix of numbers and choices."},
+            "bayes": {"label": "Gaussian process", "text": "Fits a smooth surface to the scores and tries where an improvement looks likeliest. Strong with a few numeric settings; with more than about eight, or over a hundred tries, it is slower and no better."},
+            "random": {"label": "Random (a baseline)", "text": "Every try is drawn blindly. Use it to see how much the smarter searches add."}}
+SELECTS = {"best": {"label": "The highest score", "text": "The setting that scored best on the tuning window. The usual choice, and the one that measured best on strategies whose neighbouring settings behave alike."},
+           "plateau": {"label": "The middle of the best region", "text": "The setting whose neighbours also scored well, so a lone spike is passed over. Useful when a score jumps about between nearby values."}}
+WALK_FOLDS = 4                                                             # the later stretches of the tuning window that the walk-forward check re-chooses for
+HOLD_T_MIN, RW_MAX = 1.0, 0.3                                              # what a "good" verdict asks of the untouched days (a paired t of the gain) and of the search (the Romano-Wolf p of the winner): see ``judge``
 
 EFFORTS = {"quick": {"label": "Quick", "trials": 20, "seconds": 90, "text": "up to 20 tries or about a minute and a half: a first look at which settings matter"},
            "standard": {"label": "Standard", "trials": 50, "seconds": 300, "text": "up to 50 tries or five minutes: enough for most strategies with three or four settings"},
            "thorough": {"label": "Thorough", "trials": 120, "seconds": 900, "text": "up to 120 tries or fifteen minutes: for many settings, or when the answer will be relied on"}}
+
+def cautious_sharpe(returns: pd.Series, errors: float = 1.0) -> float:
+    """The annual Sharpe ratio less ``errors`` standard errors of that estimate (skewness and kurtosis included, Mertens 2002): a lower bound. Two settings with the same ratio are not equally good
+    when one of them rests on less evidence (a shorter stretch, fatter tails), and this marks that one down."""
+    r = _clean(returns)
+    if len(r) < 60 or not r.std(ddof=1) > 1e-12:                                          # a stream that never moves has no ratio (and no standard error)
+        return float("nan")
+    return float((r.mean() / r.std(ddof=1) - errors * sharpe_standard_error(r.to_numpy(), "mertens")) * math.sqrt(252))
+
 
 OBJECTIVES = {
     "sharpe": {"label": "Return for the risk taken (Sharpe ratio)", "short": "Sharpe ratio", "unit": "ratio", "fn": sharpe_ratio,
@@ -53,6 +81,8 @@ OBJECTIVES = {
                "text": "Yearly growth divided by the deepest fall from a peak. Favours settings that avoid one terrible stretch."},
     "cagr": {"label": "Yearly growth", "short": "yearly growth", "unit": "pct", "fn": cagr,
              "text": "How fast the money grew, with no allowance for risk: it rewards bold settings, so read the worst fall beside it."},
+    "cautious": {"label": "Cautious Sharpe ratio (a lower bound)", "short": "cautious Sharpe ratio", "unit": "ratio", "fn": cautious_sharpe,
+                 "text": "The Sharpe ratio less one standard error of that estimate: a result that rests on little evidence (a short stretch, big swings in one direction) is marked down. Steadier than the plain ratio on a short history."},
 }
 
 
@@ -278,9 +308,9 @@ def metrics(returns: pd.Series) -> dict:
     """The numbers shown for a stretch of net daily returns."""
     r = _clean(returns)
     if len(r) < 2:
-        return {"days": int(len(r)), "sharpe": None, "sortino": None, "calmar": None, "cagr": None, "vol": None, "max_drawdown": None, "total_return": None}
+        return {"days": int(len(r)), "sharpe": None, "sortino": None, "calmar": None, "cagr": None, "cautious": None, "vol": None, "max_drawdown": None, "total_return": None}
     curve = cumulative_returns(r)
-    return {"days": int(len(r)), "sharpe": sharpe_ratio(r), "sortino": sortino_ratio(r), "calmar": calmar_ratio(r), "cagr": cagr(r), "vol": annualised_volatility(r),
+    return {"days": int(len(r)), "sharpe": sharpe_ratio(r), "sortino": sortino_ratio(r), "calmar": calmar_ratio(r), "cagr": cagr(r), "cautious": cautious_sharpe(r), "vol": annualised_volatility(r),
             "max_drawdown": max_drawdown(curve), "total_return": float(curve.iloc[-1] - 1.0)}
 
 
@@ -359,10 +389,16 @@ def spans(win: Windows) -> tuple[str, str]:
 
 
 def judge(objective: str, start: dict, best: dict, tuning_span: str, hold_span: str, same: bool, selection: dict | None, tried: int, prior: int = 0, edges: list[str] | None = None,
-          benchmark: dict | None = None, labels: tuple[str, str, str] = ("the tuning window", "the untouched days", "these days")) -> dict:
+          benchmark: dict | None = None, labels: tuple[str, str, str] = ("the tuning window", "the untouched days", "these days"), walk: dict | None = None, hold_t: float | None = None) -> dict:
     """The verdict, in words: did the winner's improvement survive the days the search never saw? ``start`` and ``best`` are ``{"tuning": {measure: value}, "holdout": {...}}``; ``tuning_span`` and
     ``hold_span`` are the dates to print (or empty); ``edges`` names the settings whose best value sits at an end of the range tried, ``benchmark`` is the plain hold-everything alternative over the same
-    days, and ``labels`` name the two parts of the data (the Machine learning tab says "the validation segment" and "the test and forward segments")."""
+    days, ``labels`` name the two parts of the data (the Machine learning tab says "the validation segment" and "the test and forward segments"), ``walk`` is the walk-forward check
+    (``walk_forward_check``) and ``hold_t`` the paired t statistic of the gain on the untouched days (``paired_t``).
+
+    A gain that held up on the untouched days is still not called good unless the evidence is more than the gain itself: the t statistic of that gain must reach ``HOLD_T_MIN``, the Romano-Wolf p-value
+    of the winner (the chance that the best of everything tried is this good by luck, allowing for how many were tried and how alike they are) must be under ``RW_MAX``, and re-choosing the settings on the
+    past alone must not have lost to the starting settings. The thresholds come from a simulation on strategies with a known truth (``experiments/tune_selection_study.py``, docs/tuning.md): the
+    hold-out gain rule alone said "good" for a strategy with no edge one time in five."""
     name = OBJECTIVES[objective]["short"]
     tuning_name, hold_name, hold_these = labels
     where = lambda label, span: f"{label} ({span})" if span else label                       # noqa: E731
@@ -396,6 +432,26 @@ def judge(objective: str, start: dict, best: dict, tuning_span: str, hold_span: 
         else:
             level, headline = "mixed", "Only part of the improvement held up"
             reasons.append(f"Less than half of the gain survived outside {tuning_name}, so most of it was probably luck. Treat the new settings with caution.")
+    rw = (selection or {}).get("romano_wolf_p_best")
+    total = (selection or {}).get("n_trials_counted", tried)
+    weak: list[str] = []
+    if level == "good" and not same:
+        if hold_t is not None and np.isfinite(hold_t) and hold_t < HOLD_T_MIN:
+            weak.append(f"The gain on {hold_these} is small beside how much those days wobble: a paired test of the two return streams gives t = {hold_t:.1f}, and at least {HOLD_T_MIN:.1f} is asked for. "
+                        f"A gain this big shows up by chance in about {_normal_tail(hold_t):.0%} of stretches like this.")
+        if rw is not None and np.isfinite(rw) and rw >= RW_MAX:
+            weak.append(f"Of the {total} settings tried, one at least this good would turn up by luck alone about {rw:.0%} of the time (the Romano-Wolf test, which allows for how many were tried and how "
+                        f"alike they are; under {RW_MAX:.0%} is asked for).")
+    walk_bad = bool(walk and not same and walk["of"] >= 3 and walk["gain"] is not None and walk["gain"] <= 0 and 2 * walk["beat"] < walk["of"])
+    if walk and not same and walk["tuned_value"] is not None:
+        reasons.append(f"Re-choosing the settings on the past alone, {walk['of']} times, from the {walk['candidates']} tries drawn before the search had learned anything, and using each choice on the stretch that "
+                       f"followed scored {_fmt(objective, walk['tuned_value'])} ({name}), against {_fmt(objective, walk['start_value'])} for the starting settings on the same days; it was ahead in {walk['beat']} of "
+                       f"{walk['of']} stretches.")
+    if level == "good" and walk_bad:
+        weak.append("Choosing again and again on the past did not beat the starting settings on what came next, so the improvement may not repeat.")
+    if weak:
+        level, headline = "mixed", f"Better on {hold_name}, but not by enough to rule out luck"
+        reasons.extend(weak)
     held = (benchmark or {}).get("holdout", {}).get(objective)
     shown = start if same else best
     mine = shown["holdout"].get(objective)
@@ -404,8 +460,9 @@ def judge(objective: str, start: dict, best: dict, tuning_span: str, hold_span: 
         reasons.append(f"For comparison, holding every ticker in equal amounts scored {_fmt(objective, held)} on {hold_these}, against {_fmt(objective, mine)} for "
                        f"{'the starting settings' if same else 'the tuned settings'}{verdict}.")
     if selection and selection.get("deflated_sharpe_probability") is not None:
-        total = selection.get("n_trials_counted", tried)
-        reasons.append(f"After {total} tries{' (counting ' + str(prior) + ' earlier ones on these tickers)' if prior else ''}, the chance that the winner's Sharpe ratio on {tuning_name} is more than luck is "
+        eff = selection.get("effective_trials")
+        alike = f", about {eff:.0f} of them independent, since settings that sit near each other trade alike" if eff and not prior and eff < 0.8 * total else ""
+        reasons.append(f"After {total} tries{' (counting ' + str(prior) + ' earlier ones on these tickers)' if prior else ''}{alike}, the chance that the winner's Sharpe ratio on {tuning_name} is more than luck is "
                        f"{selection['deflated_sharpe_probability'] * 100:.0f}% (95% or more is convincing).")
     if edges:
         reasons.append(f"The best value of {_join(edges)} sits at the end of the range that was tried, so the real best may lie beyond it. Widen the range and tune again to find out.")
@@ -421,18 +478,91 @@ def _join(names: list[str]) -> str:
     return names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
 
 
+def paired_t(a: pd.Series, b: pd.Series) -> float | None:
+    """The t statistic of the average daily difference ``a - b`` over the days both streams have. A paired test: two settings of one strategy move together, so the difference between them is far
+    steadier than either stream, and it is the difference that a hold-out is asked about. ``None`` for fewer than 20 shared days or a difference that never changes."""
+    d = (pd.Series(a, dtype=float) - pd.Series(b, dtype=float)).replace([np.inf, -np.inf], np.nan).dropna()
+    if len(d) < 20 or not d.std(ddof=1) > 1e-15:
+        return None
+    return float(d.mean() / (d.std(ddof=1) / math.sqrt(len(d))))
+
+
+def _normal_tail(t: float) -> float:
+    """The chance that a standard normal variable is at least ``t``: how often a gain this big appears by luck where there is nothing to find."""
+    return 0.5 * math.erfc(t / math.sqrt(2.0))
+
+
+# ------------------------------------------------------------------------------------------------------------------ the walk-forward check
+def walk_forward_check(kept: dict, candidates: list[int], win: Windows, objective: str, stable: bool, folds: int = WALK_FOLDS) -> dict | None:
+    """Had the settings been re-chosen on the past alone, again and again, would they have beaten the starting settings on what came next?
+
+    The tuning window's second half is cut into ``folds`` stretches. For each, the best of the starting settings and the ``candidates`` on the days before it is used on the days of the stretch; the
+    stretches are laid end to end and compared with the starting settings on the same days. Only the tries drawn before the search learned anything take part (a space-filling start does not depend on
+    the data); a try the search proposed after it had seen the whole window would carry knowledge of the stretches it is then tested on. Needs at least three candidates."""
+    if 0 not in kept or len(candidates) < 3:
+        return None
+    index = kept[0]["tuning"].index
+    n = len(index)
+    if n < 2 * 120:
+        return None
+    edges = np.linspace(n * 0.5, n, folds + 1).astype(int)
+    pool = [0] + [c for c in candidates if c in kept]
+    fn = OBJECTIVES[objective]["fn"]
+    tuned_parts, start_parts, rows = [], [], []
+    for k, lo in enumerate(edges[:-1]):
+        hi = edges[k + 1]
+        if hi - lo < 20:
+            continue
+        first_test, end = index[lo], (index[hi] if hi < n else None)
+        scores = {}
+        for c in pool:
+            r = kept[c]["tuning"]
+            value = score(r[r.index < first_test], objective, stable)
+            if np.isfinite(value):
+                scores[c] = value
+        if not scores:
+            continue
+        pick = max(scores, key=lambda c: (scores[c], -c))
+
+        def window(r, first_test=first_test, end=end):
+            return r[(r.index >= first_test) & ((r.index < end) if end is not None else True)]
+
+        t_part, s_part = window(kept[pick]["tuning"]), window(kept[0]["tuning"])
+        tuned_parts.append(t_part)
+        start_parts.append(s_part)
+        rows.append({"from": str(first_test.date()), "to": str(((end - pd.Timedelta(days=1)) if end is not None else index[-1]).date()), "chosen": int(pick), "chose_start": pick == 0,
+                     "tuned": fn(t_part) if len(t_part) > 1 else None, "start": fn(s_part) if len(s_part) > 1 else None})
+    if len(rows) < 2:
+        return None
+    tuned, start = pd.concat(tuned_parts), pd.concat(start_parts)
+    tv, sv = fn(tuned), fn(start)
+    beat = sum(1 for x in rows if x["tuned"] is not None and x["start"] is not None and np.isfinite(x["tuned"]) and np.isfinite(x["start"]) and x["tuned"] > x["start"] + 1e-9)
+    ok = tv is not None and sv is not None and np.isfinite(tv) and np.isfinite(sv)
+    return {"of": len(rows), "candidates": len(pool) - 1, "beat": int(beat), "tuned_value": float(tv) if ok else None, "start_value": float(sv) if ok else None, "gain": float(tv - sv) if ok else None,
+            "folds": rows, "kept_start": sum(1 for x in rows if x["chose_start"])}
+
+
 # ------------------------------------------------------------------------------------------------------------------ the search
 def tune(run: Callable[[dict], Run], settings: list[Setting], base: dict | None = None, objective: str = "sharpe", holdout: float = 0.3, trials: int = 50, seconds: float = 300.0,
          stable: bool = True, seed: int = 0, progress: Callable[[str], None] | None = None, stop: Callable[[], bool] | None = None, assets: pd.DataFrame | None = None,
-         prior_trials: int = 0, clock: Callable[[], float] = time.monotonic) -> dict:
+         prior_trials: int = 0, clock: Callable[[], float] = time.monotonic, search: str = SEARCH, search_options: dict | None = None, select: str = SELECT,
+         inspect: dict | None = None) -> dict:
     """Search ``settings`` (the ticked ones, each with ``low``/``high``/``scale``/``choices`` and a ``start`` value, ``default`` when ``None``) of a strategy.
 
     ``run(params)`` runs the strategy with ``base`` (the settings that stay as they are) and these values, and returns a :class:`Run`. The first run is the starting settings; it fixes the window and the
     split. Every later run is scored on the tuning window only. The search ends after ``trials`` runs, after ``seconds`` once at least ``MIN_TRIALS`` have run, when ``stop()`` says so, or when no new
     combination is left. ``prior_trials`` are earlier looks at the same prices (they count against the deflated Sharpe ratio).
+
+    ``search`` is ``tpe``, ``bayes`` or ``random`` (``ops.hpo.Study``) and ``search_options`` its keywords. ``select`` says which try is the winner: ``best`` (the single highest score) or ``plateau``
+    (the try whose neighbourhood scored best, ``Study.plateau``; the starting settings stay the winner unless that try also beats them on the tuning window). ``inspect``, when a dict is given, is
+    filled with the study, the kept return streams and the windows, for an experiment that wants to try other rules on the same tries.
     """
     if objective not in OBJECTIVES:
         raise TuningError(f"the measure must be one of {', '.join(OBJECTIVES)}")
+    if search not in SEARCHES:
+        raise TuningError(f"the search must be one of {', '.join(SEARCHES)}")
+    if select not in SELECTS:
+        raise TuningError(f"the way of choosing the winner must be one of {', '.join(SELECTS)}")
     if not settings:
         raise TuningError("tick at least one setting to tune")
     if not 0.1 <= holdout <= 0.5:
@@ -499,14 +629,22 @@ def tune(run: Callable[[dict], Run], settings: list[Setting], base: dict | None 
         return False
 
     n_startup = max(5, min(12, trials // 4))
-    study.optimize(objective_fn, n_trials=trials - 1, method="tpe", callback=callback, unique=True, n_startup=n_startup)
+    if search == "bayes":
+        n_startup = max(8, n_startup)                                                # a surface fitted to fewer points than that says little
+    options = {"n_startup": n_startup, **({"quasi_start": True} if search in ("tpe", "bayes") else {}), **(search_options or {})}
+    study.optimize(objective_fn, n_trials=trials - 1, method=search, callback=callback, unique=True, **options)
     if state["stopped"] is None:
         state["stopped"] = "limit" if len(study.trials) >= trials else "exhausted"
     ok = [t for t in study.trials if t.error is None and np.isfinite(t.value)]
     if len(ok) < 2:
         errors = Counter(str(t.error).split(": ", 1)[-1] for t in study.trials if t.error)
         raise TuningError("fewer than two settings could be scored: " + "; ".join(f"{m} (x{c})" for m, c in errors.most_common(3)))
-    best = study.best
+    raw_best = study.best
+    best, rule = raw_best, "best"
+    if select == "plateau":
+        middle = study.plateau()
+        if middle.number != raw_best.number and middle.value > study.trials[0].value:       # the middle of the best region, if it also beats the starting settings on the tuning window
+            best, rule = middle, "plateau"
 
     def pack(number: int) -> dict:
         k = kept[number]
@@ -514,17 +652,21 @@ def tune(run: Callable[[dict], Run], settings: list[Setting], base: dict | None 
 
     start_pack, best_pack = pack(0), pack(best.number)
     same = best.number == 0
+    choice = {"rule": rule, "raw_best": None if rule == "best" else {"number": raw_best.number, "score": float(raw_best.value), "params": dict(raw_best.params)}}
+    walk = walk_forward_check(kept, [t.number for t in study.trials[1:n_startup] if t.number in kept], win, objective, stable)
+    hold_t = None if same else paired_t(kept[best.number]["holdout"], kept[0]["holdout"])
+    if inspect is not None:
+        inspect.update(study=study, kept=kept, win=win, first=first, start_count=n_startup, run=run, base=base)
 
     # selection: how much of the winner is the choosing?
     selection: dict | None
     try:
-        selection = study.selection_report(n_boot=200)
+        selection = study.selection_report(n_boot=200, winner=best.number)
         mat = study.returns_matrix().dropna()
         if prior_trials and mat.shape[1] >= 2:
             from ..stats.inference import deflated_sharpe_ratio
 
-            sharpes = mat.mean() / mat.std(ddof=1)
-            dsr = deflated_sharpe_ratio(mat[best.number].to_numpy(), trial_sharpes=sharpes.to_numpy(), n_trials=study.n_trials + prior_trials)
+            dsr = deflated_sharpe_ratio(mat[best.number].to_numpy(), n_trials=selection["effective_trials"] + prior_trials)           # earlier looks have no streams here: each counts as independent
             selection["deflated_sharpe_probability"], selection["deflated_benchmark_sharpe_annual"] = dsr["probability"], float(dsr["benchmark"] * np.sqrt(252))
         selection["n_trials_counted"] = study.n_trials + prior_trials
     except (ValueError, KeyError, np.linalg.LinAlgError, IndexError) as error:
@@ -561,7 +703,8 @@ def tune(run: Callable[[dict], Run], settings: list[Setting], base: dict | None 
         top_so_far = max(top_so_far, t.value) if good else top_so_far
         history.append({"number": t.number, "score": float(t.value) if good else None, "best": float(top_so_far) if np.isfinite(top_so_far) else None, "params": dict(t.params)})
     table = []
-    for t in sorted(ok, key=lambda t: -t.value)[:12] + ([study.trials[0]] if study.trials[0] not in sorted(ok, key=lambda t: -t.value)[:12] else []):
+    shown = sorted(ok, key=lambda t: -t.value)[:12]
+    for t in shown + [x for x in (study.trials[0], best) if x not in shown]:                  # the twelve best scores, the starting settings and the winner (which the plateau rule can pick from further down)
         table.append({"number": t.number, "params": dict(t.params), "score": float(t.value), "tuning": metrics(kept[t.number]["tuning"]), "is_start": t.number == 0, "is_best": t.number == best.number})
     failures = Counter(str(t.error).split(": ", 1)[-1] for t in study.trials if t.error)
 
@@ -576,16 +719,19 @@ def tune(run: Callable[[dict], Run], settings: list[Setting], base: dict | None 
         every = assets.reindex(dates).mean(axis=1).fillna(0.0)
         benchmark = {"label": "Hold every ticker in equal amounts", "tuning": metrics(every[every.index < win.split]), "holdout": metrics(every[every.index >= win.split])}
         if first.weights is not None and best_weights["weights"] is not None:
-            tickers = _by_ticker(first.weights, best_weights["weights"], assets, win)
+            weights = best_weights["weights"] if best.number == best_weights.get("number") else run({**base, **study.trials[best.number].params}).weights     # the plateau try's weights were not kept
+            if weights is not None:
+                tickers = _by_ticker(first.weights, weights, assets, win)
     return {
         "objective": {"id": objective, "label": OBJECTIVES[objective]["label"], "short": OBJECTIVES[objective]["short"], "unit": OBJECTIVES[objective]["unit"]},
         "windows": {"tuning": [str(win.start.date()), str(win.tuning_end.date())], "holdout": [str(win.split.date()), str(win.end.date())], "tuning_days": win.n_tune, "holdout_days": win.n_hold,
                     "holdout_share": holdout},
-        "search": {"tried": study.n_trials, "scored": len(ok), "failed": study.n_trials - len(ok), "budget": trials, "seconds": round(clock() - started, 1), "stopped": state["stopped"], "method": "tpe",
+        "search": {"tried": study.n_trials, "scored": len(ok), "failed": study.n_trials - len(ok), "budget": trials, "seconds": round(clock() - started, 1), "stopped": state["stopped"], "method": search, "select": select,
                    "stable": bool(stable), "prior_trials": int(prior_trials), "first_run_seconds": round(first_seconds, 2)},
         "start": start_pack, "best": best_pack, "same_as_start": same, "benchmark": benchmark, "settings": rows, "trials": table, "history": history,
         "failures": [{"reason": m, "count": c} for m, c in failures.most_common(5)], "curves": curves, "selection": selection, "tickers": tickers,
-        "verdict": judge(objective, start_pack, best_pack, *spans(win), same, selection, study.n_trials, prior_trials, [r["label"] for r in rows if r["edge"] and not same], benchmark),
+        "choice": choice, "walk_forward": walk, "holdout_t": hold_t,
+        "verdict": judge(objective, start_pack, best_pack, *spans(win), same, selection, study.n_trials, prior_trials, [r["label"] for r in rows if r["edge"] and not same], benchmark, walk=walk, hold_t=hold_t),
     }
 
 

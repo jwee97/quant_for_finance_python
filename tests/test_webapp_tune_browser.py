@@ -136,6 +136,12 @@ def test_a_search_runs_the_result_reads_in_words_and_the_winner_goes_to_the_back
         assert page.locator("#tune-results .card.compare").count() == 2 and page.locator("#tune-results .card.compare.honest").count() == 1
         assert page.locator("#tune-results svg.chart").count() >= 6, "the growth curve, one chart for each of the four ticked settings, and every try"
         assert page.locator("#tune-results .tile", has_text="Settings tried").count() == 1
+        for tile in ("More than luck?", "Luck alone could do this", "Winner's rank on the other half", "Counted as trials"):
+            assert page.locator("#tune-results .tile", has_text=tile).count() == 1, tile
+        if "nothing beat the starting ones" not in text:                                                  # a winner that is not the starting settings has its two extra checks
+            assert page.locator("#tune-results .tile", has_text="Expected on new days").count() == 1 and page.locator("#tune-results .tile", has_text="Choosing again and again").count() == 1
+        explained = " ".join(page.locator("#tune-results details.how").all_text_contents())                      # the explanations sit in a closed section
+        assert "Luck alone could do this:" in explained and "Choosing again and again:" in explained and "Winner's rank on the other half:" in explained, "and the list that explains the tiles says what they mean"
         assert page.inner_text("#trials") == "6 trials on this universe", "the tries count in the Backtest tab's trial counter"
         assert not page.locator("#tune-results .runs .card").count() and page.locator("#tune-results .runs li[data-status=done]").count() >= 1
 
@@ -152,6 +158,32 @@ def test_a_search_runs_the_result_reads_in_words_and_the_winner_goes_to_the_back
         level = float(page.locator("#s-body .params input").first.input_value())
         assert level == pytest.approx(best, rel=0.01), "the Backtest tab has the level noise the search found (the table shows it to three figures)"
         assert page.locator("#p-body select").first.input_value() == "sleeves", "the Backtest tab chose the same allocation the search used"
+        assert not page.problems, page.problems
+    finally:
+        page.close()
+
+
+def test_the_advanced_choices_of_how_to_search_and_which_try_wins_reach_the_search(browser, live_tune):  # noqa: F811
+    page = _page(browser, live_tune)
+    try:
+        _open_tune(page)
+        adv = page.locator("[data-role=tune-advanced]")
+        assert adv.count() == 1 and adv.get_attribute("open") is None, "they are there for the curious and closed for everyone else"
+        if page.locator("[data-role=tune-advanced]").is_hidden():
+            page.click("#tune summary:has-text('4. What counts as better')")                                   # the section they sit in starts closed
+        adv.locator("summary").click()
+        assert page.locator("[data-role=tune-advanced] select[data-key=search]").input_value() == "tpe" and page.locator("[data-role=tune-advanced] select[data-key=select]").input_value() == "best"
+        assert "Smart search" in page.inner_text("[data-role=tune-advanced]") and "highest score" in page.inner_text("[data-role=tune-advanced]")
+        page.select_option("[data-role=tune-advanced] select[data-key=search]", "random")
+        page.select_option("[data-role=tune-advanced] select[data-key=select]", "plateau")
+        assert "blindly" in page.inner_text("[data-role=tune-advanced]") and "neighbours also scored well" in page.inner_text("[data-role=tune-advanced]"), "each choice says what it does"
+        before = {j["id"] for j in live_tune.app.jobs_list()["jobs"]}
+        _small_search(page)
+        page.wait_for_selector(".verdict-card", timeout=240_000)
+        new = [j for j in live_tune.app.jobs_list()["jobs"] if j["id"] not in before and j["kind"] == "tune"]
+        assert len(new) == 1
+        search = live_tune.app.job(new[0]["id"])["result"]["search"]
+        assert search["method"] == "random" and search["select"] == "plateau"
         assert not page.problems, page.problems
     finally:
         page.close()

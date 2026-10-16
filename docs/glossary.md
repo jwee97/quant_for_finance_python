@@ -280,6 +280,12 @@ A check that replaces all data after a cutoff with noise and requires every outp
 
 See: [walk-forward-and-leakage](techniques/walk-forward-and-leakage.md)
 
+### Cautious Sharpe ratio
+
+The Sharpe ratio less one standard error of that estimate: a lower bound, so a result that rests on little evidence (a short stretch, fat tails) is marked down. A measure the Tune tab can optimise instead of the plain ratio.
+
+See: [performance-metrics](techniques/performance-metrics.md)
+
 ### CDS spread
 
 The price of insurance against a borrower's default; an alternative-data indicator of credit stress.
@@ -538,6 +544,14 @@ The change in a bond's value for a one-basis-point move in yield; used to make b
 
 See: [fixed-income-and-volatility-strategies](techniques/fixed-income-and-volatility-strategies.md)
 
+### Effective number of independent tries
+
+*Also: N_eff*
+
+Settings that sit near each other trade almost the same days, so forty tries of them are worth fewer than forty independent looks. The effective number is the average correlation rho between the tries' returns blended with their count: rho + (1 - rho) N. The deflated Sharpe ratio is asked to beat the best of that many.
+
+See: [multiple-testing](techniques/multiple-testing.md)
+
 ### Effective rank
 
 The exponential of the entropy of normalised eigenvalues: the number of independent risk dimensions a covariance matrix really contains.
@@ -595,6 +609,12 @@ See: [performance-metrics](techniques/performance-metrics.md)
 The weighted average gap between forecast probability and observed frequency across probability bins.
 
 See: [calibration](techniques/calibration.md)
+
+### Expected improvement
+
+The rule a Gaussian-process search uses to choose its next try: the setting where the fitted surface is expected to beat the best value so far by the most, weighing the predicted gain against how unsure the surface is there.
+
+See: [hierarchical-bayes-decisions-and-gaussian-processes](techniques/hierarchical-bayes-decisions-and-gaussian-processes.md)
 
 ### Expected shortfall
 
@@ -1102,6 +1122,12 @@ Fitting noise in the sample so well that performance on new data is much worse.
 
 See: [multiple-testing](techniques/multiple-testing.md), [walk-forward-and-leakage](techniques/walk-forward-and-leakage.md), [machine-learning-research-pipeline](techniques/machine-learning-research-pipeline.md)
 
+### Paired t statistic
+
+The t statistic of the average daily difference between two return streams over the same days. Two settings of one strategy move together, so the difference is far steadier than either stream, and a small steady gain can be told from noise.
+
+See: [paired-sharpe-bootstrap](techniques/paired-sharpe-bootstrap.md)
+
 ### Pairs trading
 
 Taking opposite positions in two related assets to profit when the gap between them closes.
@@ -1113,6 +1139,14 @@ See: [pairs-and-statistical-arbitrage](techniques/pairs-and-statistical-arbitrag
 Running a strategy against live or streamed data with simulated fills and no real money. Here it is the backtest engine fed a stream, so research code runs unchanged.
 
 See: [paper-trading-and-replay](techniques/paper-trading-and-replay.md)
+
+### Parameter plateau
+
+*Also: best neighbourhood*
+
+A region of settings in which the neighbours of a setting score well too, as against a lone spike. On a noisy score the single best setting is partly luck, and the middle of a plateau is the usual advice for choosing a robust one; the Tune tab can pick it, and on its simulations the plain highest score did as well or better where neighbouring settings behave alike.
+
+See: [multiple-testing](techniques/multiple-testing.md)
 
 ### Participation rate
 
@@ -1384,6 +1418,14 @@ The change in a bond or swap's value as it ages along an unchanged yield curve: 
 
 See: [interest-rate-swaps](techniques/interest-rate-swaps.md), [yield-curves-and-fixed-income](techniques/yield-curves-and-fixed-income.md)
 
+### Romano-Wolf test
+
+*Also: stepdown multiple testing*
+
+A multiple-testing correction that compares the best of many tries with the best that a bootstrap of the same days would show if no try had any edge, so it allows for how many were tried and how alike they are. A small p-value means the winner is unlikely to be the best of many lucky draws.
+
+See: [multiple-testing](techniques/multiple-testing.md)
+
 ### Round trip
 
 One stretch in which an asset is held on the same side: it opens when the position appears (a purchase, or a short sale) and closes when the position goes to zero or flips. The dashboard's Trades tab lists each one with its dates, prices and profit.
@@ -1445,6 +1487,14 @@ See: [dynamic-programming-and-optimal-control](techniques/dynamic-programming-an
 The difference between the price you expected and the price you got, beyond spread and impact.
 
 See: [execution-and-impact](techniques/execution-and-impact.md)
+
+### Sobol sequence
+
+*Also: quasi-random sequence*
+
+A sequence of points that fills a space evenly, with no gaps or clumps, unlike random draws. A search that starts from one covers the settings' ranges better in the few tries it has before it begins to learn.
+
+See: [machine-learning-research-pipeline](techniques/machine-learning-research-pipeline.md)
 
 ### Sortino ratio
 
@@ -1681,3 +1731,5 @@ See: [mean-reversion](techniques/mean-reversion.md)
 Applying a pre-trained model to a new task without any training on that task's data.
 
 See: [foundation-models](techniques/foundation-models.md)
+
+

@@ -18,7 +18,9 @@
   const show = (v) => (typeof v === "boolean" ? (v ? "yes" : "no") : typeof v === "number" ? sig(v) : String(v));
   const ratio = (v) => (Q.bad(v) ? "n/a" : num(v, 2));
   const growth = (v) => (Q.bad(v) ? "n/a" : pct(v, 1));
-  const measure = (key, v) => (key === "sharpe" ? ratio(v) : growth(v));
+  const RATIOS = new Set(["sharpe", "sortino", "calmar", "cautious"]);
+  const measure = (key, v) => (RATIOS.has(key) ? ratio(v) : growth(v));
+  const measuresFor = (d) => (MEASURES.some(([key]) => key === d.objective.id) ? MEASURES : [[d.objective.id, d.objective.short.replace(/^./, (c) => c.toUpperCase())], ...MEASURES]);       // the measure that was improved is always a column
   const secs = (s) => (s < 90 ? `${Math.round(s)} seconds` : `${(s / 60).toFixed(1)} minutes`);
   const needNumber = (s, name) => { const t = String(s).trim(), v = Number(t); if (t === "" || !isFinite(v)) throw new Error(`${name} must be a number`); return v; };
   const numeric = (r) => r.kind === "int" || r.kind === "float";
@@ -32,7 +34,7 @@
     modes: [["tune", "Tune"]], runLabel: { tune: "Find the best settings" },
     blurb: { tune: "Tries many combinations of a strategy's settings on the first part of the history, then checks the winner on the last part, which the search never saw." },
     strategy: "", plans: new Map(), plan: null, planError: "", loading: false, rows: [], needs: "", job: null, stopping: false, runs: { jobs: [], timer: null },
-    form: { effort: "standard", trials: "60", seconds: "600", objective: "sharpe", holdout: "0.3", stable: true, seed: "0" },
+    form: { effort: "standard", trials: "60", seconds: "600", objective: "sharpe", holdout: "0.3", stable: true, seed: "0", search: "tpe", select: "best" },
   };
 
   /* ---------- the strategy and its settings ---------- */
@@ -158,6 +160,16 @@
     Q.labField(d, { key: "stable", label: "Prefer settings that work in every part of the period", kind: "bool", help: "Scores each setting on four equal parts of the tuning window and subtracts half of how much they differ." }, T.form, after);
     Q.labField(d, { key: "seed", label: "Random seed", kind: "number", step: 1, min: 0 }, T.form, after);
     h("p", "hint", d, "The same seed and settings give the same search. Every try counts as a trial on these tickers, so the Backtest tab's deflated Sharpe ratio takes it into account.");
+    const searches = T.plan && T.plan.searches ? T.plan.searches : [], selects = T.plan && T.plan.selects ? T.plan.selects : [];
+    if (searches.length && selects.length) {                                                                 // the defaults are the measured best: these are for people who want to compare
+      const adv = h("details", "how", d); adv.dataset.role = "tune-advanced"; h("summary", "", adv, "Advanced: how to search, and which try wins");
+      const explain = (list, key) => { const o = list.find((x) => x.id === T.form[key]); return o ? o.text : ""; };
+      let searchNote, selectNote;
+      Q.labField(adv, { key: "search", label: "How to search", kind: "choice", options: searches.map((o) => [o.id, o.label]) }, T.form, () => { searchNote.textContent = explain(searches, "search"); after(); });
+      searchNote = h("p", "hint", adv, explain(searches, "search"));
+      Q.labField(adv, { key: "select", label: "Which try wins", kind: "choice", options: selects.map((o) => [o.id, o.label]) }, T.form, () => { selectNote.textContent = explain(selects, "select"); after(); });
+      selectNote = h("p", "hint", adv, explain(selects, "select"));
+    }
   };
   /* One setting: a tick box, what it does, and (ticked) the range to look in, or (unticked) the value it stays at. The row is repainted in place so the panel keeps its scroll position. */
   function settingRow(parent, r, changed) {
@@ -195,7 +207,7 @@
       tune.push(numeric(r) ? { name: r.name, low: needNumber(r.from, `${r.label}: the lowest value`), high: needNumber(r.to, `${r.label}: the highest value`), scale: r.scale } : { name: r.name });
     }
     const body = { ...universe, strategy: T.strategy, tune, values, allocator: Q.pickAllocator({ name: T.strategy, params: {} }) || null, allocator_params: {}, objective: f.objective, effort: f.effort,
-      holdout: Number(f.holdout), stable: !!f.stable, seed: needNumber(f.seed, "The seed") };
+      holdout: Number(f.holdout), stable: !!f.stable, seed: needNumber(f.seed, "The seed"), search: f.search, select: f.select };
     if (f.effort === "custom") { body.trials = needNumber(f.trials, "The most tries"); body.seconds = needNumber(f.seconds, "The time limit"); }
     return body;
   }
@@ -325,6 +337,9 @@
       { label: "Range tried", get: (r) => (r.kind === "choice" || r.kind === "bool" ? r.choices.map(show).join(" or ") : `${sig(r.low)} to ${sig(r.high)}${r.scale === "log" ? " (log)" : ""}`) },
       { label: "Mattered", num: true, title: "Share of the differences between tries that goes with this setting, compared with the other ticked ones. Rough: it needs a few dozen tries.", get: (r) => (r.share === null || r.share === undefined ? "n/a" : pct(r.share, 0)) }], d.settings);
     if (edge) h("p", "hint", card, "⚑ The best value is at the end of the range tried: the real best may lie beyond it.");
+    const pick = d.choice && d.choice.rule === "plateau" && d.choice.raw_best ? d.choice.raw_best : null;
+    if (pick) { const won = (d.trials || []).find((t) => t.is_best);
+      h("p", "hint", card, `The winner here is the middle of the best region of settings, not the single highest score. The highest (try ${pick.number + 1}, score ${num(pick.score, 2)}) had weaker neighbours, which with a noisy score usually means luck; the pick scored ${won ? num(won.score, 2) : "less"} and its neighbours did as well.`); }
     const what = h("details", "how", card); h("summary", "", what, "What each setting does"); const dl = h("ul", "", what);
     for (const r of d.settings) { const li = h("li", "", dl); h("b", "", li, r.label + ": "); li.appendChild(document.createTextNode(r.help)); }
     const fixed = Object.entries(d.fixed || {});
@@ -339,7 +354,7 @@
     const card = h("div", "card compare wide" + (honest ? " honest" : ""), parent), rows = [["Starting settings", d.start[part]], [d.same_as_start ? "Best found (the same)" : "Tuned settings", d.best[part]]];
     if (d.benchmark) rows.push(["Holding every ticker equally", d.benchmark[part]]);
     h("h3", "", card, title); h("p", "note", card, note);
-    table(card, [{ label: "", get: (r) => r[0] }, ...MEASURES.map(([key, label]) => ({ label, num: true, get: (r) => measure(key, r[1][key]) }))], rows);
+    table(card, [{ label: "", get: (r) => r[0] }, ...measuresFor(d).map(([key, label]) => ({ label, num: true, get: (r) => measure(key, r[1][key]) }))], rows);
     h("p", "hint", card, "Swings a year is how far the value moves up and down in a year (its volatility); worst fall is the deepest drop from a peak.");
   }
   function growthChart(parent, d) {
@@ -398,15 +413,26 @@
     const k = h("div", "earnrow", card);
     tile(k, "Settings tried", String(d.search.tried), { text: d.search.failed ? `${d.search.failed} could not run` : "all could run" }, "", "How many different combinations were run, the starting settings included.");
     if (sel.deflated_sharpe_probability !== undefined) tile(k, "More than luck?", pct(sel.deflated_sharpe_probability, 0), { text: "95% or more is convincing", dir: sel.deflated_sharpe_probability >= 0.95 ? "up" : "" }, "",
-      "The deflated Sharpe ratio: the chance that the winner's Sharpe ratio on the tuning window beats what the best of this many tries would show by luck alone.");
-    if (sel.pbo !== undefined && sel.pbo !== null) tile(k, "Chance of overfitting", pct(sel.pbo, 0), { text: "under 50% is better", dir: sel.pbo < 0.5 ? "up" : "down" }, "",
-      "The probability of backtest overfitting: how often the best setting on one half of the tuning window ranks below the middle on the other half.");
+      "The deflated Sharpe ratio: the chance that the winner's Sharpe ratio on the tuning window beats what the best of this many tries would show by luck alone" + (sel.effective_trials ? ` (the tries count as about ${Math.round(sel.effective_trials)} independent ones, because settings near each other trade alike).` : "."));
+    if (sel.romano_wolf_p_best !== undefined && sel.romano_wolf_p_best !== null) tile(k, "Luck alone could do this", pct(sel.romano_wolf_p_best, 0), { text: "under 30% is asked for a ✓", dir: sel.romano_wolf_p_best < 0.3 ? "up" : "down" }, "",
+      "The Romano-Wolf test: how often the best of everything tried would look at least this good if no setting had any edge, allowing for how many were tried and how alike they are. A lower number is better.");
+    if (sel.pbo !== undefined && sel.pbo !== null) tile(k, "Winner's rank on the other half", pct(sel.pbo, 0), { text: "of cuts, below the middle" }, "",
+      "The probability of backtest overfitting: how often the best setting on one half of the tuning window ranks below the middle on the other half. With a few settings that behave alike this is high even when there is a real edge, because neighbours swap places; read it beside 'Expected on new days'.");
+    if (!d.same_as_start && !Q.bad(sel.mean_oos_sharpe_of_is_winner) && !Q.bad(sel.best_annual_sharpe)) tile(k, "Expected on new days", ratio(sel.mean_oos_sharpe_of_is_winner), { text: `the winner scored ${ratio(sel.best_annual_sharpe)} over the whole window` }, "",
+      "Inside the tuning window, the setting that won on one half of the days scored this Sharpe ratio, on average, on the other half. A fairer expectation than the winner's own score, which was picked for being high.");
+    const wf = d.walk_forward;
+    if (!d.same_as_start && wf && wf.of) tile(k, "Choosing again and again", `${wf.beat} of ${wf.of}`, { text: Q.bad(wf.tuned_value) ? "stretches ahead of the starting settings" : `${ratio(wf.tuned_value)} against ${ratio(wf.start_value)} for the starting settings`,
+      dir: wf.beat * 2 > wf.of && wf.gain > 0 ? "up" : wf.gain <= 0 ? "down" : "" }, "",
+      `The settings were chosen again ${wf.of} times, each time from tries made before the search had learned anything and using only the days before a stretch, then used on that stretch. This counts the stretches in which that beat the starting settings.`);
     tile(k, "Counted as trials", String(d.trials_in_universe), { text: "on these tickers, in all" }, "", "Every try is a trial of the same data. The counter in the top bar, and the deflated Sharpe ratio in the Backtest tab, use it.");
     if (sel.error) h("p", "hint", card, "The overfitting checks could not be computed for this search: " + sel.error);
     const how = h("details", "how", card); h("summary", "", how, "What these mean"); const ul = h("ul", "", how);
     for (const t of ["More than luck: if you tried many settings, one of them will look good by chance. This asks whether the winner is better than the best of that many lucky tries would be.",
-      "Chance of overfitting: the tuning window is cut into pieces; the winner on some pieces is checked on the others. If it often falls below the middle there, the winner was picked for its luck.",
-      "Both use only the tuning window. The hold-out comparison above is a separate, plainer check."]) h("li", "", ul, t);
+      "Luck alone could do this: pretend no setting had any edge and shuffle the days in the way real returns would vary. How often would the best of all these tries look at least as good as the winner? A ✓ asks for under 30%.",
+      "Winner's rank on the other half: the tuning window is cut into pieces; the winner on some pieces is checked on the others. If it often falls below the middle there, the winner was picked for its luck. It is high whenever the tries are alike, so it is shown but does not decide the verdict.",
+      "Expected on new days: the same cutting, read as a number. The winner on one half of the tuning window is scored on the other half; this is the average. If it is far below the winner's own score, the winner's score was mostly the choosing.",
+      "Choosing again and again: pretend the search had been run before each of four later stretches of the tuning window, using only the days before it, and see whether the settings it picked beat the starting settings on that stretch. A real improvement keeps showing up; luck does not.",
+      "All of these use only the tuning window. The hold-out comparison above is a separate, plainer check."]) h("li", "", ul, t);
   }
   function notesCard(root, d) {
     const notes = [...(d.notes || [])];

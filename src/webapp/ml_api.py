@@ -469,8 +469,8 @@ class MlApi:
             trials, method = TUNE_EFFORT[effort][0], "tpe"
         else:
             method = str(body.get("method") or "random")
-            if method not in ("random", "tpe"):
-                raise ApiError("method must be random or tpe")
+            if method not in ("random", "tpe", "bayes"):
+                raise ApiError("method must be random, tpe or bayes")
             trials = _int(body, "n_trials", 12, 4, LIMITS["tune_trials"])
         if kind not in {m["kind"] for m in model_catalog() if m["available"]}:
             raise ApiError(f"the {kind} model is not available here")
@@ -491,18 +491,22 @@ class MlApi:
             with _user_errors():
                 out = opt.tune(over, space, trials, method, seed, config=self.app.config, builder=self.app.builder, registry=self.registry, study_name=f"tune-{kind}", progress=progress, start=begin,
                                stop=stop.is_set)
-                final = final_start = None
+                final = final_start = hold_t = bench = None
                 if finalise and out.get("best"):
                     progress("running the best settings on every segment")
                     exp = opt.finalize(over, out["best"]["params"], config=self.app.config, builder=self.app.builder, registry=self.registry, trials_extra=out["n_trials"], robustness=False, progress=progress,
                                        name=f"{kind} tuned" if begin is not None else None)
                     final = {"id": exp.id, "report": exp.report}
+                    held_days = exp.labels.reindex(exp.net.index).isin(["test", "forward"])                              # the days no search saw
+                    bench = {"holdout": {"sharpe": tuning.metrics(exp.benchmark[held_days])["sharpe"]}}                  # holding the whole universe in equal amounts: a long-only winner may only be riding it
                     if begin is not None and out["best"]["number"] != 0:
                         progress("running your starting settings on every segment, for the comparison")
                         start_exp = opt.finalize(over, begin, config=self.app.config, builder=self.app.builder, registry=self.registry, trials_extra=out["n_trials"], robustness=False, progress=progress,
                                                  name=f"{kind} starting settings")
                         final_start = {"id": start_exp.id, "report": start_exp.report}
-                summary = self._tune_summary(out, final, final_start)
+                        hold = lambda e: e.net[e.labels.reindex(e.net.index).isin(["test", "forward"])]                 # noqa: E731  the days no search saw
+                        hold_t = tuning.paired_t(hold(exp), hold(start_exp))
+                summary = self._tune_summary(out, final, final_start, hold_t, bench)
             return jsonable({**out, "kind": kind, "space": sorted(space), "order": list(space), "final": final, "final_start": final_start, "summary": summary, "start": begin, "effort": effort or None,
                              "texts": {path: TUNE_TEXT.get(path.split(".")[-1], "") for path in space}})
 
@@ -521,7 +525,7 @@ class MlApi:
         return {"ok": True}
 
     @staticmethod
-    def _tune_summary(out: dict, final: dict | None, final_start: dict | None) -> dict | None:
+    def _tune_summary(out: dict, final: dict | None, final_start: dict | None, hold_t: float | None = None, benchmark: dict | None = None) -> dict | None:
         """The verdict of a tuning that started from the person's own settings: the validation Sharpe ratio (where the search chose) and the test and forward Sharpe ratios (days-weighted, where it did not) for
         the starting settings and for the winner, put in words by the same rules as the Tune tab."""
         if out.get("start_number") is None or not out.get("best") or final is None:
@@ -537,7 +541,7 @@ class MlApi:
         best = {"tuning": {"sharpe": out["best"].get("validation_sharpe")}, "holdout": {"sharpe": held(final["report"])}}
         start = {"tuning": {"sharpe": first.get("validation_sharpe")}, "holdout": {"sharpe": held(final["report"]) if same else (held(final_start["report"]) if final_start else None)}}
         selection = out.get("selection") if isinstance(out.get("selection"), dict) and out["selection"].get("deflated_sharpe_probability") is not None else None
-        return tuning.judge("sharpe", start, best, "", "", same, selection, out["n_trials"], 0, None, None, ("the validation segment", "the test and forward segments", "those segments"))
+        return tuning.judge("sharpe", start, best, "", "", same, selection, out["n_trials"], 0, None, benchmark, ("the validation segment", "the test and forward segments", "those segments"), hold_t=hold_t)
 
     # ------------------------------------------------------------------------------------------------------------ the registry
     def experiments(self, q: dict) -> dict:

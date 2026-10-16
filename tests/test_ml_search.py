@@ -92,6 +92,18 @@ def test_a_tuning_that_starts_from_given_settings_runs_them_first_never_repeats_
     assert plain["start_number"] is None and plain["n_trials"] == 4, "without a start the search is what it always was"
 
 
+def test_a_gaussian_process_tuning_runs_the_start_first_never_repeats_and_begins_with_an_evenly_spread_sample(bundle):
+    space = {"model.params.alpha": LogFloat(0.1, 1000.0), "signal.n": Int(1, 3)}
+    begin = {"model.params.alpha": 30.0, "signal.n": 2}
+    out = opt.tune(BASE, space, n_trials=7, method="bayes", seed=1, bundle=bundle, study_name="t6", start=begin)
+    assert out["n_trials"] == 7 and out["start_number"] == 0 and out["trials"][0]["params"] == begin
+    assert len({(round(t["params"]["model.params.alpha"], 9), t["params"]["signal.n"]) for t in out["trials"]}) == 7
+    first = [t["params"]["model.params.alpha"] for t in out["trials"][1:4]]                       # drawn before the process had anything to learn from: a Sobol sample, so they reach across four decades
+    assert max(first) / min(first) > 10
+    again = opt.tune(BASE, space, n_trials=7, method="bayes", seed=1, bundle=bundle, study_name="t6", start=begin)
+    assert [t["params"] for t in again["trials"]] == [t["params"] for t in out["trials"]], "the same seed gives the same search"
+
+
 def test_a_failed_candidate_is_counted_not_hidden(bundle):
     runner = opt.TrialRunner({**BASE, "split": {"min_train_days": 500, "refit_every": 63}}, bundle=bundle, study="bad")
     score, net, detail = runner.evaluate({"split.min_train_days": 100000})

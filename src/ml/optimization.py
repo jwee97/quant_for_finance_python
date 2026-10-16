@@ -1,6 +1,6 @@
 """Hyperparameter and setting search that counts every trial and keeps the reserved segments out of reach.
 
-``ops.hpo.Study`` does the proposing (random, TPE, grid, halving) and the bookkeeping; this module supplies what the machine-learning pipeline adds:
+``ops.hpo.Study`` does the proposing (random, TPE with an evenly spread start, a Gaussian process, grid, halving) and the bookkeeping; this module supplies what the machine-learning pipeline adds:
 
 * ``apply_params``      dotted paths (``model.params.alpha``, ``signal.n``, ``dataset.horizon``) written into an experiment configuration
 * ``validation_score``  the objective: validation Sharpe less penalties for turnover, drawdown, instability across the validation sub-periods and the gap between the train and validation Sharpe
@@ -142,11 +142,12 @@ def include(space: dict, start: dict) -> dict:
 
 def tune(base_overrides: dict, space: dict, n_trials: int = 20, method: str = "random", seed: int = 0, bundle=None, config=None, builder=None, registry: Registry | None = None,
          study_name: str = "tune", objective_weights: dict | None = None, progress=None, start: dict | None = None, stop=None) -> dict:
-    """Search ``space`` (dotted path -> ``ops.hpo`` distribution) with ``method`` (random, tpe, grid, halving not supported here) for ``n_trials`` candidates. Returns the trials, the best parameters,
-    and the selection report that deflates the best one by the number of trials.
+    """Search ``space`` (dotted path -> ``ops.hpo`` distribution) with ``method`` (random, tpe or bayes; grid and halving are not supported here) for ``n_trials`` candidates. Returns the trials, the best
+    parameters, and the selection report that deflates the best one by the number of trials.
 
-    ``start`` (a value for every path of the space, inside it: see ``include``) is run first as trial 0 and counts as one of the ``n_trials``; no configuration is then run twice, and a TPE search
-    begins proposing after a third of the trials. ``stop()`` returning ``True`` ends the search after the trial it is on."""
+    ``start`` (a value for every path of the space, inside it: see ``include``) is run first as trial 0 and counts as one of the ``n_trials``; no configuration is then run twice, a TPE or Gaussian
+    process search begins proposing after a third of the trials, and what comes before is an evenly spread (scrambled Sobol) sample rather than random draws: with 8 to 30 trials in a space of several
+    settings, gaps and clumps in the start are most of what the search has to learn from. ``stop()`` returning ``True`` ends the search after the trial it is on."""
     runner = TrialRunner(base_overrides, bundle, config, builder, registry, study_name, objective_weights)
     st = Study(space, "maximize", seed)
 
@@ -168,7 +169,7 @@ def tune(base_overrides: dict, space: dict, n_trials: int = 20, method: str = "r
         st.optimize(objective, n_trials=n_trials, method=method, callback=callback if stop is not None else None)
     else:
         st._run(objective, dict(start))
-        extra = {"n_startup": max(4, n_trials // 3)} if method == "tpe" else {}
+        extra = {"n_startup": max(4, n_trials // 3), "quasi_start": True} if method in ("tpe", "bayes") else {}
         st.optimize(objective, n_trials=max(0, n_trials - 1), method=method, callback=callback if stop is not None else None, unique=True, **extra)
     out = finish(st, runner)
     out["start_number"] = None if start is None else 0

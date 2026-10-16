@@ -411,8 +411,10 @@ def test_tuning_one_model_searches_its_settings_and_can_finalise_the_best(mlapp)
     assert out["n_trials"] == 5 and out["best"] and "model.params.alpha" in out["space"] and out["final"]["report"]["trials"]["dataset_trials"] >= 5
     with pytest.raises(ApiError, match="no hyperparameters"):
         mlapp.extra_post["/api/ml/tune"]({**BASE, "model": {"kind": "linear"}})
-    with pytest.raises(ApiError, match="method must be"):
+    with pytest.raises(ApiError, match="method must be random, tpe or bayes"):
         mlapp.extra_post["/api/ml/tune"]({**BASE, "method": "grid"})
+    gp = finished(mlapp, mlapp.extra_post["/api/ml/tune"]({**BASE, "model": {"kind": "ridge"}, "method": "bayes", "n_trials": 4, "finalize": False}))
+    assert gp["n_trials"] == 4 and gp["best"] and gp["final"] is None
 
 
 def test_a_tuning_with_an_effort_starts_from_the_forms_settings_and_says_in_words_whether_the_gain_held_up(mlapp):
@@ -428,6 +430,7 @@ def test_a_tuning_with_an_effort_starts_from_the_forms_settings_and_says_in_word
     summary = out["summary"]
     assert summary["level"] in ("good", "mixed", "bad", "keep") and any("validation segment" in r for r in summary["reasons"]) and any("test and forward segments" in r or "nothing tried did better" in r.lower() for r in summary["reasons"])
     assert out["final"]["report"]["config"]["name"] == "ridge tuned"
+    assert any("holding every ticker in equal amounts scored" in r and "those segments" in r for r in summary["reasons"]), "a winner that only rides the universe is shown beside holding it"
     if out["best"]["number"] == 0:
         assert out["final_start"] is None and summary["level"] == "keep"
     else:

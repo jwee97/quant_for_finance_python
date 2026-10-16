@@ -78,6 +78,8 @@ class TuneApi:
             "note": None if settings else f"{name} has no numeric or yes/no settings that can be tuned: its settings are lists or text. Choose another strategy.",
             "efforts": [{"id": k, **{f: v[f] for f in ("label", "trials", "seconds", "text")}} for k, v in tuning.EFFORTS.items()],
             "objectives": [{"id": k, "label": v["label"], "text": v["text"], "unit": v["unit"]} for k, v in tuning.OBJECTIVES.items()],
+            "searches": [{"id": k, "label": v["label"], "text": v["text"]} for k, v in tuning.SEARCHES.items()], "selects": [{"id": k, "label": v["label"], "text": v["text"]} for k, v in tuning.SELECTS.items()],
+            "default_search": tuning.SEARCH, "default_select": tuning.SELECT,
             "holdouts": list(HOLDOUTS), "default_holdout": 0.3, "max_settings": MAX_SETTINGS, "max_trials": tuning.MAX_TRIALS, "min_trials": tuning.MIN_TRIALS,
         })
 
@@ -152,7 +154,8 @@ class TuneApi:
     def run(self, body: dict) -> dict:
         """``POST /api/tune/run`` (a job). ``body``: the Backtest tab's universe (``tickers``, ``classes``, ``start``, ``source``, ``refresh``), the ``strategy``, the settings to search as ``tune``
         (``[{name, low, high, scale}]``) and every changed setting as ``values``, ``allocator`` and ``allocator_params``, and how to search: ``objective``, ``effort`` (``quick``, ``standard``,
-        ``thorough`` or ``custom`` with ``trials`` and ``seconds``), ``holdout`` (the share of days kept back), ``stable`` and ``seed``. Returns ``{"job": id}``."""
+        ``thorough`` or ``custom`` with ``trials`` and ``seconds``), ``holdout`` (the share of days kept back), ``stable``, ``seed``, ``search`` (``tpe``, ``bayes`` or ``random``) and ``select`` (``best`` or
+        ``plateau``: which try wins). Returns ``{"job": id}``."""
         app = self.app
         name = str(body.get("strategy") or "")
         entry = self._entry(name)
@@ -171,6 +174,11 @@ class TuneApi:
             raise ApiError(f"effort must be one of {', '.join(tuning.EFFORTS)} or custom")
         holdout = _number(body.get("holdout", 0.3), "the hold-out share", 0.1, 0.5)
         stable, seed = _flag(body, "stable", True), _number(body.get("seed", 0), "the seed", 0, 1_000_000, True)
+        search, select = str(body.get("search") or tuning.SEARCH), str(body.get("select") or tuning.SELECT)
+        if search not in tuning.SEARCHES:
+            raise ApiError(f"the search must be one of {', '.join(tuning.SEARCHES)}")
+        if select not in tuning.SELECTS:
+            raise ApiError(f"the way of choosing the winner must be one of {', '.join(tuning.SELECTS)}")
         from .universe import UniverseError
 
         try:
@@ -204,7 +212,7 @@ class TuneApi:
                 return tuning.Run(result.window, result.weights)
 
             with tuning.quiet("src.backtest.engine"):
-                out = tuning.tune(trial, tuned, base, objective, holdout, trials, seconds, stable, seed, progress, stop.is_set, bundle.returns, prior)
+                out = tuning.tune(trial, tuned, base, objective, holdout, trials, seconds, stable, seed, progress, stop.is_set, bundle.returns, prior, search=search, select=select)
             with app._lock:
                 total = len(app.trials.get(key, ()))
             best = {**base, **{k: v for k, v in out["best"]["params"].items() if k not in library or v != library[k]}}

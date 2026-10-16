@@ -146,6 +146,34 @@ def test_the_search_finds_the_planted_optimum_runs_the_starting_settings_first_a
     assert out["selection"]["n_trials"] == 30 and 0 <= out["selection"]["pbo"] <= 1 and out["selection"]["n_trials_counted"] == 30
 
 
+def test_each_search_method_runs_and_is_named_in_the_result_and_an_unknown_one_is_refused():
+    run = run_with(lambda p: peak(p["lookback"]))
+    for method in ("tpe", "bayes", "random"):
+        out = T.tune(run, [LOOKBACK], trials=12, seconds=120, seed=3, search=method)
+        assert out["search"]["method"] == method and out["search"]["tried"] == 12 and out["best"]["tuning"]["sharpe"] >= out["start"]["tuning"]["sharpe"]
+    with pytest.raises(T.TuningError, match="search must be one of tpe, bayes, random"):
+        T.tune(run, [LOOKBACK], trials=10, search="magic")
+    with pytest.raises(T.TuningError, match="winner must be one of best, plateau"):
+        T.tune(run, [LOOKBACK], trials=10, select="worst")
+
+
+def test_choosing_the_middle_of_the_best_region_replaces_the_single_best_score_only_when_it_also_beats_the_start(monkeypatch):
+    run = run_with(lambda p: peak(p["lookback"]))
+    plain = T.tune(run, [LOOKBACK], trials=24, seconds=60, seed=3)
+    assert plain["choice"] == {"rule": "best", "raw_best": None}
+    second = lambda self, *a, **k: sorted(self._done(), key=lambda t: -t.value)[1]                  # noqa: E731  a region's middle that is not the single best score
+    monkeypatch.setattr(Study, "plateau", second)
+    out = T.tune(run, [LOOKBACK], trials=24, seconds=60, seed=3, select="plateau")
+    assert out["choice"]["rule"] == "plateau" and out["choice"]["raw_best"]["number"] == plain["best"]["number"] and out["best"]["number"] != plain["best"]["number"]
+    assert out["best"]["score"] < out["choice"]["raw_best"]["score"] and out["best"]["tuning"]["sharpe"] > out["start"]["tuning"]["sharpe"]
+    assert any(t["is_best"] and t["number"] == out["best"]["number"] for t in out["trials"]), "the table shows the winner even from below the twelve best"
+    assert out["selection"]["best_trial"] == out["best"]["number"], "the checks are about the settings that were chosen"
+    losing = lambda self, *a, **k: self.trials[0]                                                    # noqa: E731  a region whose middle is the starting settings
+    monkeypatch.setattr(Study, "plateau", losing)
+    kept = T.tune(run, [LOOKBACK], trials=24, seconds=60, seed=3, select="plateau")
+    assert kept["choice"]["rule"] == "best" and kept["best"]["number"] == plain["best"]["number"], "a middle that does not beat the starting settings does not replace the best score"
+
+
 def test_the_same_seed_gives_the_same_search_and_another_seed_a_different_one():
     run = run_with(lambda p: peak(p["lookback"]))
     a, b, c = (T.tune(run, [LOOKBACK], trials=12, seconds=60, seed=s) for s in (4, 4, 5))
@@ -316,6 +344,50 @@ def test_a_verdict_is_a_good_one_only_when_half_the_gain_survives_and_the_strate
     assert growth["level"] == "good" and "+4.0 points" in " ".join(growth["reasons"])
 
 
+def test_a_good_verdict_also_needs_a_gain_that_is_more_than_noise_a_winner_that_is_more_than_the_best_of_many_lucky_tries_and_a_choosing_that_did_not_lose():
+    win = T.make_windows(IDX, 0.3)
+    start, best = {"tuning": {"sharpe": 0.1}, "holdout": {"sharpe": 0.1}}, {"tuning": {"sharpe": 0.7}, "holdout": {"sharpe": 0.5}}
+    sure = {"romano_wolf_p_best": 0.01, "deflated_sharpe_probability": 0.9, "n_trials_counted": 30, "effective_trials": 9.0}
+    walk = {"of": 4, "candidates": 6, "beat": 3, "tuned_value": 0.9, "start_value": 0.2, "gain": 0.7, "folds": []}
+    judged = lambda **kw: T.judge("sharpe", start, best, *T.spans(win), False, kw.pop("selection", sure), 30, 0, **kw)       # noqa: E731
+    assert judged(hold_t=2.0, walk=walk)["level"] == "good", "every check passes"
+    assert judged()["level"] == "good" and judged(selection=None)["level"] == "good", "a check that was not made does not count against it"
+
+    noisy = judged(hold_t=0.4, walk=walk)
+    assert noisy["level"] == "mixed" and noisy["headline"] == "Better on the untouched days, but not by enough to rule out luck"
+    assert any("t = 0.4" in r and "at least 1.0 is asked for" in r and "about 34%" in r for r in noisy["reasons"])
+
+    lucky = judged(hold_t=2.0, selection={**sure, "romano_wolf_p_best": 0.45})
+    assert lucky["level"] == "mixed" and any("45% of the time" in r and "Romano-Wolf" in r and "under 30%" in r for r in lucky["reasons"])
+
+    lost = judged(hold_t=2.0, walk={**walk, "beat": 1, "gain": -0.1, "tuned_value": 0.1, "start_value": 0.2})
+    assert lost["level"] == "mixed" and any("did not beat the starting settings on what came next" in r for r in lost["reasons"])
+    assert any("ahead in 1 of 4 stretches" in r for r in lost["reasons"]), "the check is reported whether or not it decides"
+
+    both = judged(hold_t=0.2, selection={**sure, "romano_wolf_p_best": 0.9})
+    assert sum("luck" in r for r in both["reasons"]) >= 2 and both["level"] == "mixed"
+
+    # the gates only ever lower a good verdict: a bad one stays bad, and "keep" is untouched
+    bad = T.judge("sharpe", start, {"tuning": {"sharpe": 0.7}, "holdout": {"sharpe": 0.05}}, *T.spans(win), False, {**sure, "romano_wolf_p_best": 0.9}, 30, 0, hold_t=-1.0)
+    assert bad["level"] == "bad"
+    same = T.judge("sharpe", start, start, *T.spans(win), True, {**sure, "romano_wolf_p_best": 0.9}, 30, 0, hold_t=None)
+    assert same["level"] == "keep"
+
+
+def test_the_paired_t_statistic_is_large_for_a_steady_small_difference_and_nothing_for_a_stream_that_matches():
+    rng = np.random.default_rng(7)
+    shared = pd.Series(rng.normal(0, 0.01, 600), index=IDX[:600])
+    better = shared + 0.0004 + rng.normal(0, 0.002, 600)                           # the same days, a touch more each day, and a little of its own noise
+    assert T.paired_t(better, shared) > 3, "two streams that move together differ by a small, steady amount: that is what a paired test sees (an unpaired one would see 0.9)"
+    assert abs((better.mean() - shared.mean()) / np.sqrt(better.var() / 600 + shared.var() / 600)) < 1.5
+    noisy = pd.Series(rng.normal(0, 0.01, 600), index=IDX[:600])
+    assert abs(T.paired_t(noisy, shared)) < 3.5
+    assert T.paired_t(shared, shared) is None, "a difference that never changes has no statistic"
+    assert T.paired_t(shared.iloc[:10], shared.iloc[:10] * 0.5) is None, "fewer than twenty shared days say nothing"
+    assert T.paired_t(shared.iloc[:300], noisy.iloc[200:500]) is not None and T.paired_t(shared.iloc[:100], noisy.iloc[300:]) is None, "only the days both have count"
+    assert T._normal_tail(0.0) == pytest.approx(0.5) and T._normal_tail(1.0) == pytest.approx(0.1587, abs=1e-3) and T._normal_tail(3.0) < 0.002
+
+
 def test_the_comparison_with_holding_every_ticker_is_in_the_verdict_when_it_beats_the_strategy():
     win = T.make_windows(IDX, 0.3)
     start, best = {"tuning": {"sharpe": 0.1}, "holdout": {"sharpe": 0.1}}, {"tuning": {"sharpe": 0.6}, "holdout": {"sharpe": 0.5}}
@@ -353,3 +425,51 @@ def test_a_unique_search_never_repeats_a_configuration_and_ends_when_none_is_lef
     study2._run(lambda p: float(p["k"]), {"k": 2})                              # a try run by hand is not repeated either
     study2.optimize(lambda p: float(p["k"]), n_trials=10, method="random", unique=True)
     assert sorted(t.params["k"] for t in study2.trials) == [1, 2, 3]
+
+
+# ------------------------------------------------------------------------------------------------------------------ the walk-forward check and the cautious measure
+def _kept(edges: dict[int, np.ndarray | float], days: int = 1200, noise: np.ndarray | None = None) -> dict:
+    """Tries that share one stream of noise and differ only in the daily edge each has (a number, or an array with one value a day)."""
+    index = IDX[:days]
+    base = NOISE[:days] if noise is None else noise
+    return {n: {"tuning": pd.Series(base + e, index=index), "full": pd.Series(base + e, index=index), "holdout": pd.Series(dtype=float)} for n, e in edges.items()}
+
+
+def test_the_walk_forward_check_rewards_settings_that_keep_winning_on_the_stretch_that_follows():
+    kept = _kept({0: 0.0, 1: 0.0, 2: 0.0, 3: 0.002, 4: 0.0})
+    out = T.walk_forward_check(kept, [1, 2, 3, 4], T.make_windows(IDX, 0.3), "sharpe", True)
+    assert out["of"] == 4 and out["candidates"] == 4 and out["beat"] == 4 and out["kept_start"] == 0
+    assert out["tuned_value"] > out["start_value"] + 1 and out["gain"] == pytest.approx(out["tuned_value"] - out["start_value"])
+    assert [f["chosen"] for f in out["folds"]] == [3, 3, 3, 3] and out["folds"][0]["from"] < out["folds"][-1]["from"], "the stretches follow one another"
+    assert all(f["tuned"] > f["start"] for f in out["folds"])
+
+
+def test_the_walk_forward_check_finds_nothing_in_an_edge_that_was_only_in_the_past():
+    edge = np.where(np.arange(1200) < 600, 0.002, 0.0)                         # the edge ends where the first stretch begins
+    kept = _kept({0: 0.0, 1: 0.0, 2: 0.0, 3: edge})
+    out = T.walk_forward_check(kept, [1, 2, 3], T.make_windows(IDX, 0.3), "sharpe", True)
+    assert [f["chosen"] for f in out["folds"]] == [3, 3, 3, 3], "it looked best on the past"
+    assert out["beat"] == 0 and out["gain"] == pytest.approx(0.0, abs=1e-9), "and was no better than the starting settings on what came next"
+
+
+def test_the_walk_forward_check_only_uses_the_tries_it_is_given_and_needs_enough_of_them_and_of_days():
+    kept = _kept({0: 0.0, 1: 0.0, 2: 0.0, 3: 0.0, 4: 0.002})
+    win = T.make_windows(IDX, 0.3)
+    out = T.walk_forward_check(kept, [1, 2, 3], win, "sharpe", True)
+    assert 4 not in {f["chosen"] for f in out["folds"]}, "a try the search proposed after it had learned from the window is not a candidate"
+    assert T.walk_forward_check(kept, [1, 2], win, "sharpe", True) is None, "fewer than three candidates say nothing"
+    assert T.walk_forward_check(_kept({0: 0.0, 1: 0.0, 2: 0.0, 3: 0.0}, days=200), [1, 2, 3], win, "sharpe", True) is None, "nor does a short window"
+    assert T.walk_forward_check({k: v for k, v in kept.items() if k != 0}, [1, 2, 3], win, "sharpe", True) is None, "the starting settings are the yardstick"
+
+
+def test_the_cautious_sharpe_ratio_marks_down_a_result_that_rests_on_less_evidence():
+    rng = np.random.default_rng(3)
+    long_run = pd.Series(0.0006 + rng.normal(0, 0.01, 2500), index=IDX[:2500])
+    short_run = pd.Series(0.0006 + rng.normal(0, 0.01, 250), index=IDX[:250])
+    plain_long, plain_short = T.OBJECTIVES["sharpe"]["fn"](long_run), T.OBJECTIVES["sharpe"]["fn"](short_run)
+    assert T.cautious_sharpe(long_run) < plain_long and T.cautious_sharpe(short_run) < plain_short
+    assert plain_long - T.cautious_sharpe(long_run) < 0.5 * (plain_short - T.cautious_sharpe(short_run)), "ten times the days halves the doubt, a little more than three times"
+    assert T.cautious_sharpe(long_run, errors=0.0) == pytest.approx(plain_long, rel=0.02)
+    assert np.isnan(T.cautious_sharpe(long_run.iloc[:40])) and np.isnan(T.cautious_sharpe(pd.Series(0.001, index=IDX[:300])))
+    assert T.score(long_run, "cautious", False) == pytest.approx(T.cautious_sharpe(long_run)) and T.metrics(long_run)["cautious"] == pytest.approx(T.cautious_sharpe(long_run))
+    assert "cautious" in T.OBJECTIVES and T.OBJECTIVES["cautious"]["unit"] == "ratio"

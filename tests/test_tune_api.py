@@ -84,7 +84,9 @@ def test_the_plan_lists_a_strategys_settings_with_ranges_help_and_the_choices_of
     assert list(names) == ["level_noise", "slope_noise", "vol_halflife", "clip", "scale"] and names["clip"]["tune"] is False and names["scale"]["tune"] is True
     assert names["level_noise"]["scale"] == "log" and names["level_noise"]["low"] == 0.002 and names["level_noise"]["default"] == 0.02 and "Higher" in names["level_noise"]["help"]
     assert plan["note"] is None and [e["id"] for e in plan["efforts"]] == ["quick", "standard", "thorough"] and plan["efforts"][1]["trials"] == 50
-    assert [o["id"] for o in plan["objectives"]] == ["sharpe", "sortino", "calmar", "cagr"] and plan["holdouts"] == [0.2, 0.3, 0.4] and plan["max_settings"] == 12
+    assert [o["id"] for o in plan["objectives"]] == ["sharpe", "sortino", "calmar", "cagr", "cautious"] and plan["holdouts"] == [0.2, 0.3, 0.4] and plan["max_settings"] == 12
+    assert [o["id"] for o in plan["searches"]] == ["tpe", "bayes", "random"] and [o["id"] for o in plan["selects"]] == ["best", "plateau"] and plan["default_search"] == "tpe" and plan["default_select"] == "best"
+    assert all(o["label"] and o["text"] for o in plan["searches"] + plan["selects"])
     cross = app.extra_get["/api/tune/plan"]({"strategy": "dual_momentum"})
     assert {s["name"] for s in cross["settings"]} == {"lookback", "skip", "top_k"}        # the text setting (the cash ticker) cannot be searched
     with pytest.raises(ApiError, match="unknown strategy 'nope'"):
@@ -138,6 +140,7 @@ def test_requests_that_cannot_run_are_refused_before_a_job_starts(app):
                           ({"tune": [{"name": "level_noise", "low": 0.1, "high": 1}] * 2}, "listed twice"), ({"tune": ["level_noise"]}, "each setting to tune must be an object"),
                           ({"tune": [None]}, "each setting to tune must be an object"), ({"tune": {"name": "level_noise"}}, "tick at least one setting"),
                           ({"objective": "nonsense"}, "measure must be one of"), ({"effort": "forever"}, "effort must be one of"), ({"holdout": 0.9}, "between 0.1 and 0.5"),
+                          ({"search": "magic"}, "search must be one of tpe, bayes, random"), ({"select": "worst"}, "winner must be one of best, plateau"),
                           ({"effort": "custom", "trials": 1}, "between 2 and"), ({"stable": "yes"}, "must be true or false"), ({"values": {"level_noise": "big"}}, "must be a number"),
                           ({"values": {"banana": 1}}, "'banana' is not a setting"), ({"values": {"clip": -1.0}}, "must be positive"), ({"values": {"level_noise": -1.0}}, "must be above zero"), ({"values": []}, "mapping of setting name to value"),
                           ({"tickers": ["ZZZ1", "bad ticker!"]}, "not a valid ticker"), ({"allocator": "nope"}, "unknown allocator")]:
@@ -146,6 +149,15 @@ def test_requests_that_cannot_run_are_refused_before_a_job_starts(app):
     with pytest.raises(ApiError, match="needs at least 2 tickers and you have 1"):                   # a strategy that compares tickers needs several
         _run(app, strategy="xs_momentum", tune=[{"name": "lookback", "low": 63, "high": 504}], tickers=["A00"], effort="quick")
     assert len(app.jobs) == jobs_before
+
+
+def test_the_search_and_the_way_of_choosing_the_winner_asked_for_are_used_and_reported(app, fake):
+    r = _wait(app, _run(app, **_body(search="random", select="plateau"))["job"])["result"]
+    assert r["search"]["method"] == "random" and r["search"]["select"] == "plateau" and r["choice"]["rule"] in ("best", "plateau")
+    default = _wait(app, _run(app, **_body())["job"])["result"]
+    assert default["search"]["method"] == "tpe" and default["search"]["select"] == "best" and default["choice"] == {"rule": "best", "raw_best": None}
+    assert default["holdout_t"] is None or isinstance(default["holdout_t"], float)
+    assert "walk_forward" in default and (default["walk_forward"] is None or default["walk_forward"]["of"] >= 2)
 
 
 def test_a_start_outside_the_range_widens_the_range_and_says_so_and_a_changed_value_is_used_as_the_start(app, fake):
