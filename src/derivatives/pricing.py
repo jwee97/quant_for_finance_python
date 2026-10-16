@@ -9,7 +9,7 @@ Conventions. ``S`` spot, ``K`` strike, ``T`` years to expiry, ``r`` continuously
 * ``binomial_price``: Cox-Ross-Rubinstein tree, European or American; converges to Black-Scholes for the European case.
 * ``american_lsmc``: Longstaff & Schwartz (2001) least-squares Monte Carlo for early exercise.
 * ``heston_price``: stochastic volatility (Heston 1993) by Fourier inversion of the characteristic function in the numerically stable form of Albrecher et al. (2007).
-* ``merton_price``: jump diffusion (Merton 1976) as a Poisson-weighted sum of Black-Scholes prices.
+* ``merton_price``: jump diffusion (Merton 1976) as a Poisson-weighted sum of Black-Scholes prices (checked against Fourier inversion and Monte Carlo in the tests).
 * ``sabr_vol``: Hagan et al. (2002) lognormal implied-volatility approximation; ``sabr_calibrate`` fits ``alpha, rho, nu`` to a smile with ``beta`` fixed.
 """
 
@@ -213,18 +213,26 @@ def heston_calibrate(S, strikes, expiries, market_ivs, r=0.0, q=0.0, x0=(0.04, 2
 
 
 # ------------------------------------------------------------------------------------------------------------------------- Merton
-def merton_price(S, K, T, r, q, sigma, lam, jump_mean, jump_std, call=True, n_terms=60):
-    """Merton (1976) jump diffusion: ``sum_n Poisson(n; lam' T) BS(S, K, T, r_n, q, sigma_n)`` with ``lam' = lam (1 + k)``, ``k = e^{m + s^2/2} - 1``,
-    ``sigma_n^2 = sigma^2 + n s^2 / T`` and ``r_n = r - lam k + n (m + s^2/2) / T``."""
+def merton_price(S, K, T, r, q, sigma, lam, jump_mean, jump_std, call=True, n_terms=None):
+    """Merton (1976) jump diffusion as a Poisson-weighted sum of Black-Scholes prices.
+
+    Given ``n`` jumps in ``[0, T]`` the log price is normal with variance ``sigma^2 T + n s^2`` and the forward grows at ``r_n = r - lam k + n (m + s^2/2) / T`` (``m``, ``s`` the mean and
+    standard deviation of a log jump, ``k = e^{m + s^2/2} - 1``), so that option's value is ``e^{(r_n - r) T} BS(S, K, T, r_n, q, sigma_n)`` with ``sigma_n^2 = sigma^2 + n s^2 / T``
+    (the factor undoes the discounting at ``r_n`` that the Black-Scholes price includes). The number of jumps is Poisson with the intensity ``lam`` that the model has; the
+    equivalent textbook form weights the terms by the Poisson probabilities of ``lam' = lam (1 + k)`` and uses the plain Black-Scholes price at ``r_n``. ``n_terms`` defaults to enough
+    terms to carry the Poisson mass (at least 60).
+    """
     S, K, T, r, q, sigma = _arr(S, K, T, r, q, sigma)
     kbar = np.exp(jump_mean + 0.5 * jump_std ** 2) - 1.0
-    lam_p = lam * (1.0 + kbar)
+    if n_terms is None:
+        mean_jumps = float(lam * np.max(T))
+        n_terms = int(max(60, mean_jumps + 12.0 * np.sqrt(mean_jumps) + 20))
     total = np.zeros_like(S, dtype=float)
     for n in range(n_terms):
         sig_n = np.sqrt(sigma ** 2 + n * jump_std ** 2 / T)
         r_n = r - lam * kbar + n * (jump_mean + 0.5 * jump_std ** 2) / T
-        weight = poisson.pmf(n, lam_p * T)
-        total = total + weight * bsm_price(S, K, T, r_n, q, sig_n, call) * np.exp((r_n - r) * T)       # grow at r_n, discount at r
+        weight = poisson.pmf(n, lam * T)
+        total = total + weight * bsm_price(S, K, T, r_n, q, sig_n, call) * np.exp((r_n - r) * T)
     return total
 
 

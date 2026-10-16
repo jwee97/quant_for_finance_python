@@ -101,6 +101,20 @@ def test_merton_jump_diffusion_matches_monte_carlo_and_reduces_to_bsm():
     assert pr.merton_price(100, 100, 1, 0.05, 0.0, 0.15, 0.5, -0.05, 0.1, True) > pr.bsm_price(100, 100, 1, 0.05, 0.0, 0.15, True)
 
 
+def test_merton_series_agrees_with_fourier_inversion_and_exact_monte_carlo_when_jumps_are_frequent():
+    """The jump compensation once entered the series twice: harmless at one jump every two years, a 4% overprice at two a year (16.89 against 16.31 here)."""
+    from src.derivatives import fourier, levy
+
+    sigma, lam, mu_j, sigma_j, T, K = 0.15, 2.0, -0.08, 0.12, 1.0, 90.0
+    series = pr.merton_price(100, K, T, 0.03, 0.01, sigma, lam, mu_j, sigma_j, True)
+    model = levy.Merton(sigma=sigma, lam=lam, mu_j=mu_j, sigma_j=sigma_j)
+    assert series == pytest.approx(float(fourier.price(model, 100, K, T, 0.03, 0.01)), abs=1e-9)
+    ST = levy.simulate_paths(model, 100, 0.03, 0.01, T, 1, 400_000, seed=3)[:, -1]
+    pay = np.exp(-0.03 * T) * np.maximum(ST - K, 0)
+    assert abs(series - pay.mean()) < 4 * pay.std() / np.sqrt(len(pay))
+    assert pr.merton_price(100, K, T, 0.03, 0.01, sigma, lam, mu_j, sigma_j, False) - series == pytest.approx(K * np.exp(-0.03 * T) - 100 * np.exp(-0.01 * T), abs=1e-10)
+
+
 def test_sabr_atm_limit_smile_shape_and_calibration():
     F, T, a, b, rho, nu = 100.0, 1.0, 0.2, 0.5, -0.3, 0.4
     atm = pr.sabr_vol(F, F, T, a, b, rho, nu)
