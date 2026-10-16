@@ -55,7 +55,7 @@ def test_a_forecast_prints_the_verdict_the_scoreboard_and_what_each_method_says_
 def test_a_request_that_cannot_run_says_why_on_stderr_and_exits_with_2(prices, capsys, argv, message):
     assert main([prices if a == "PRICES" else a for a in argv]) == 2
     captured = capsys.readouterr()
-    assert message in captured.err and captured.out == ""
+    assert message in captured.err and "Forecast for" not in captured.out, "the reason goes to stderr and no report is printed (stdout may carry the log lines of a first load of the platform's data)"
 
 
 def test_a_history_too_short_to_test_on_says_how_long_it_must_be(tmp_path, capsys):
