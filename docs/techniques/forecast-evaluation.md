@@ -55,7 +55,7 @@ The adjustment matters on real prices. On SPY at 21 days 15 of 22 methods had a 
 ## Try it
 
 ```bash
-python -m experiments.forecast_study --tickers SPY QQQ                    # the skill tables of the forecasting page (about three minutes)
+python -m experiments.forecast_study --tickers SPY QQQ                    # the skill tables of the forecasting page (about four minutes)
 quant forecast SPY --all --effort quick                                    # the verdict and the scoreboard in the terminal
 ```
 
