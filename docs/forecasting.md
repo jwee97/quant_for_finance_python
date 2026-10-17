@@ -128,7 +128,11 @@ What stands out:
 | Brownian motion | +1.3% | +0.5% | −2.4% |
 | GJR-GARCH | +6.7% ✓ | +6.5% ✓ | +7.7% ✓ |
 | Filtered historical simulation | +6.8% ✓ | +6.7% ✓ | +8.5% ✓ |
+| GJR-GARCH, variance-gamma shocks | +6.6% ✓ | +6.6% ✓ | +8.1% ✓ |
+| GJR-GARCH, NIG shocks | +6.3% ✓ | +6.7% ✓ | +8.6% ✓ |
+| Heston (method of moments) | +5.9% ✓ | +6.7% ✓ | +7.8% ✓ |
 | Jump diffusion | +1.5% | +1.1% | +0.8% |
+| Stochastic-volatility Kalman filter | +4.6% ✓ | +3.0% | +1.0% |
 | HAR volatility | +5.6% ✓ | +3.4% ✓ | +0.7% |
 | Markov chain, daily move | +2.5% | +4.8% | +10.2% |
 | Markov chain, volatility | +3.9% | +6.1% | +13.1% |
@@ -139,9 +143,9 @@ What stands out:
 | Kalman trend | −0.4% | −0.3% | +2.8% |
 | ARMA(1,1) | −0.1% | −0.1% | +0.1% |
 | Analogues | +4.4% | +5.9% | +7.9% |
-| Equal-weight blend | +5.7% ✓ | +7.1% ✓ | +10.6% ✓ |
+| Equal-weight blend | +5.6% ✓ | +7.2% ✓ | +10.5% ✓ |
 
-The zero-average volatility models keep their gain at three months (GJR-GARCH +7.7% ✓, filtered historical simulation +8.5% ✓), while the gain of HAR fades from 5.6% at a week to 0.7% at three months, as it should, since a model of the next days' volatility says little about the next quarter's. The big numbers for the historical simulations, Hull-White and the Markov chains at 63 days (+10% to +15%) are mostly the average again: SPY rose in 76% of the 63-day windows, the methods that carry a positive average score better than the zero-average random walk, and the correction for many methods and the overlap between 63-day windows (about 28 of the forecasts are independent) leaves only GJR-GARCH, the filtered historical simulation and the blend standing.
+The zero-average volatility models keep their gain at three months (GJR-GARCH +7.7% ✓, filtered historical simulation +8.5% ✓, and the three variants with other shocks or other volatility dynamics, +7.8% to +8.6% ✓), while the gain of HAR fades from 5.6% at a week to 0.7% at three months, as it should, since a model of the next days' volatility says little about the next quarter's, and that of the stochastic-volatility Kalman filter from 4.6% to 1.0%. The big numbers for the historical simulations, Hull-White and the Markov chains at 63 days (+10% to +15%) are mostly the average again: SPY rose in 76% of the 63-day windows, the methods that carry a positive average score better than the zero-average random walk, and the correction for many methods and the overlap between 63-day windows (about 28 of the forecasts are independent) leaves only GJR-GARCH, the filtered historical simulation, the two shock-law variants, Heston and the blend standing.
 
 **The average and the direction.** On SPY at 5, 21 and 63 days and on the other four at 21 days, no method beat the five-year average at the threshold the page asks for, and none beat always saying up. The best out-of-sample R-squared at 21 days was +4.6% (SPY, Hull-White), +2.0% (QQQ), +0.7% (EEM), +1.5% (TLT), +1.1% (GLD); the closest to the threshold, GLD's, has p = 0.026 against the 0.004 the page asks for. A forecast of the average is the hardest forecast in finance, and a year or five of daily prices does not make it easier.
 
