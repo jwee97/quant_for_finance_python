@@ -89,6 +89,14 @@ class Model:
         needs ``alpha + 1`` below it."""
         return float("inf")
 
+    def diffusion(self) -> float:
+        """The coefficient of the Brownian part of the Levy process (zero for the pure-jump variance gamma and NIG), which a partial integro-differential solver needs."""
+        return float(self.params.get("sigma", 0.0))
+
+    def levy_density(self, z):
+        """The Levy measure ``nu(dz) / dz`` of the jumps; a model without jumps has none."""
+        return np.zeros_like(np.asarray(z, dtype=float))
+
     # --------------------------------------------------------------------------------------------------------------------------------- moments
     def cumulants(self) -> tuple[float, float, float, float]:
         """The first four cumulants of ``L_1``."""
@@ -242,6 +250,9 @@ class VarianceGamma(Model):
     def _check(self):
         _positive(self, "sigma", "nu")
 
+    def diffusion(self) -> float:
+        return 0.0
+
     def valid(self) -> bool:
         """Whether ``E[exp(L_1)]`` is finite: ``1 - theta nu - sigma^2 nu / 2 > 0``."""
         p = self.params
@@ -293,6 +304,9 @@ class NIG(Model):
 
     def _check(self):
         _positive(self, "sigma", "kappa")
+
+    def diffusion(self) -> float:
+        return 0.0
 
     def valid(self) -> bool:
         """Whether ``E[exp(L_1)]`` is finite: ``1 - 2 theta kappa - sigma^2 kappa > 0``."""

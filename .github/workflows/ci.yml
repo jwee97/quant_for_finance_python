@@ -56,7 +56,7 @@ jobs:
           pip install -e . --no-deps
           pip install pytest
       - name: Numerical packages
-        run: python -m pytest tests/test_stats.py tests/test_probability.py tests/test_econometrics.py tests/test_derivatives.py tests/test_assets.py tests/test_microstructure.py tests/test_ops.py tests/test_hpo_search.py tests/test_instruments.py tests/test_marketdata.py tests/test_ledger.py tests/test_engine.py tests/test_lifecycle.py tests/test_swaps.py tests/test_engine_risk.py tests/test_forecast_scoring.py tests/test_forecast_base.py tests/test_forecast_methods.py tests/test_forecast_evaluate.py tests/test_forecast_verdict.py tests/test_forecast_cli.py tests/test_numerics.py tests/test_sde.py tests/test_levy.py tests/test_fourier.py tests/test_calibration.py
+        run: python -m pytest tests/test_stats.py tests/test_probability.py tests/test_econometrics.py tests/test_derivatives.py tests/test_assets.py tests/test_microstructure.py tests/test_ops.py tests/test_hpo_search.py tests/test_instruments.py tests/test_marketdata.py tests/test_ledger.py tests/test_engine.py tests/test_lifecycle.py tests/test_swaps.py tests/test_engine_risk.py tests/test_forecast_scoring.py tests/test_forecast_base.py tests/test_forecast_methods.py tests/test_forecast_evaluate.py tests/test_forecast_verdict.py tests/test_forecast_cli.py tests/test_numerics.py tests/test_sde.py tests/test_levy.py tests/test_fourier.py tests/test_calibration.py tests/test_pde.py tests/test_pide.py tests/test_exotics.py tests/test_costs.py
 
   replit-python:
     # The dashboard, the iTick client, the tuner, the forecaster and the machine-learning tab on Python 3.10, which is what a Replit workspace runs (the Tests above use 3.11).
