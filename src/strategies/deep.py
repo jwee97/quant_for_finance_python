@@ -10,6 +10,8 @@ refit date; the last fifth of those origins (after a 42-day gap) is the early-st
 
 from __future__ import annotations
 
+import sys
+
 import numpy as np
 import pandas as pd
 
@@ -134,6 +136,21 @@ class ChronosZeroShot(ForecastModel):
         return self.forecast(data).mean
 
 
+def _import_timesfm():
+    """The ``timesfm`` package, or an ``ImportError`` that says what could not be imported and the install command for *this* interpreter (an install into another one, such as a Shell's, does not help the app)."""
+    try:
+        import timesfm
+    except ImportError as error:
+        if getattr(error, "name", None) == "torch":
+            fix = f"{sys.executable} -m pip install --index-url https://download.pytorch.org/whl/cpu torch"
+        else:
+            fix = f"{sys.executable} -m pip install 'timesfm[torch]>=3.0,<4'"
+        raise ImportError(f"the 'timesfm' model needs the optional dependency timesfm with PyTorch, which could not be imported ({error}); install it for the interpreter that runs the app: {fix}") from error
+    if not hasattr(timesfm, "TimesFM_2p5_200M_torch"):
+        raise ImportError(f"the installed timesfm {getattr(timesfm, '__version__', '(unknown version)')} has no TimesFM 2.5 PyTorch model; install a current one: {sys.executable} -m pip install --upgrade 'timesfm[torch]>=3.0,<4'")
+    return timesfm
+
+
 @register_model("timesfm", "machine learning", "TimesFM 2.5 (200M) foundation model used zero-shot on the volatility-normalised 252-day return window (optional dependency, weights from the Hugging Face hub)")
 class TimesFMZeroShot(ForecastModel):
     """Same protocol and same caveat as ``chronos``: nothing is fitted, and the pre-training corpus may overlap the sample."""
@@ -146,10 +163,7 @@ class TimesFMZeroShot(ForecastModel):
         self.model, self.batch, self.min_history = model, batch, min_history
 
     def forecast(self, data, min_observations: int = 504, allow_negative: bool = False, halflife: float = 40.0) -> ForecastPanel:
-        try:
-            import timesfm
-        except ImportError as error:
-            raise ImportError("the 'timesfm' model needs the optional dependency: pip install 'timesfm[torch]'") from error
+        timesfm = _import_timesfm()
         net = timesfm.TimesFM_2p5_200M_torch.from_pretrained(self.model)
         net.compile(timesfm.ForecastConfig(max_context=256, max_horizon=self.horizon, normalize_inputs=True, use_continuous_quantile_head=False,
                                            force_flip_invariance=False, infer_is_positive=False, fix_quantile_crossing=False))

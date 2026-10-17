@@ -133,5 +133,70 @@ def test_foundation_models_say_what_to_install_when_the_dependency_is_missing(mo
     monkeypatch.setitem(sys.modules, "timesfm", None)
     with pytest.raises(ImportError, match=r"\.\[chronos\]"):
         MODELS.create("chronos").forecast(bundle)
-    with pytest.raises(ImportError, match="timesfm"):
+    with pytest.raises(ImportError) as info:
         MODELS.create("timesfm").forecast(bundle)
+    message = str(info.value)
+    assert str(info.value.__cause__) in message and f"{sys.executable} -m pip install 'timesfm[torch]" in message       # why it failed, and the command for the interpreter that is running
+
+
+def test_timesfm_names_pytorch_when_pytorch_is_what_cannot_be_imported(monkeypatch, bundle):
+    import sys
+
+    class NeedsTorch:
+        @staticmethod
+        def find_spec(name, path=None, target=None):
+            if name == "timesfm":
+                raise ModuleNotFoundError("No module named 'torch'", name="torch")
+            return None
+
+    monkeypatch.delitem(sys.modules, "timesfm", raising=False)
+    monkeypatch.setattr(sys, "meta_path", [NeedsTorch(), *sys.meta_path])
+    with pytest.raises(ImportError, match=r"No module named 'torch'.*download\.pytorch\.org/whl/cpu torch"):
+        MODELS.create("timesfm").forecast(bundle)
+
+
+def test_an_old_timesfm_without_the_2_5_model_is_reported_and_not_an_attribute_error(monkeypatch, bundle):
+    import sys
+    import types
+    monkeypatch.setitem(sys.modules, "timesfm", types.SimpleNamespace(__version__="1.3.0"))
+    with pytest.raises(ImportError, match=r"timesfm 1\.3\.0 has no TimesFM 2\.5"):
+        MODELS.create("timesfm").forecast(bundle)
+
+
+def _fake_timesfm(calls):
+    """A stand-in for the ``timesfm`` package with the three calls the plug-in makes: ``from_pretrained``, ``compile`` and ``forecast``. Its point forecast is the mean of the last 21 inputs, so it varies by window."""
+    import types
+
+    class Net:
+        def compile(self, config):
+            calls["config"] = config
+
+        def forecast(self, horizon, inputs):
+            calls.setdefault("batches", []).append((horizon, len(inputs), {w.dtype.name for w in inputs}, {len(w) for w in inputs}))
+            return np.array([[float(np.mean(w[-21:]))] * horizon for w in inputs]), None
+
+    def from_pretrained(model):
+        calls["load"] = model
+        return Net()
+
+    return types.SimpleNamespace(TimesFM_2p5_200M_torch=types.SimpleNamespace(from_pretrained=from_pretrained), ForecastConfig=lambda **kwargs: kwargs)
+
+
+def test_timesfm_runs_a_forecast_with_the_loaded_model(monkeypatch, bundle):
+    """The plug-in loads the 2.5 weights, compiles them for a 21-day horizon and feeds the 252 normalised returns of every month-end: what the app does when the package is installed."""
+    import sys
+    calls = {}
+    monkeypatch.setitem(sys.modules, "timesfm", _fake_timesfm(calls))
+    values = MODELS.create("timesfm", batch=64).forecast(bundle).mean.stack().dropna()
+    assert calls["load"] == "google/timesfm-2.5-200m-pytorch"
+    assert calls["config"]["max_horizon"] == 21 and calls["config"]["max_context"] == 256 and calls["config"]["normalize_inputs"] is True
+    assert all(h == 21 and n <= 64 and kinds == {"float32"} and lengths == {252} for h, n, kinds, lengths in calls["batches"])
+    assert len(values) > 500 and np.isfinite(values).all() and values.nunique() > 100
+
+
+def test_timesfm_runs_through_the_pipeline_like_any_other_model(monkeypatch, bundle):
+    import sys
+    monkeypatch.setitem(sys.modules, "timesfm", _fake_timesfm({}))
+    spec = {"models": [{"name": "timesfm"}], "allocation": {"allocator": "forecast_stack"}, "evaluation": {"causality": False, "benchmarks": []}}
+    out = Pipeline(spec, load_config(), bundle).run(validate=False)
+    assert out.metrics["n_days"] > 200 and np.isfinite(out.metrics["ann_cost_bps"])

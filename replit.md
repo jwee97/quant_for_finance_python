@@ -139,7 +139,9 @@ a log, a file or a page.
 Python 3.10 is configured. Project dependencies are declared in
 `pyproject.toml`; `requirements.txt` additionally includes deep-learning,
 boosting, and testing dependencies. Install project packages through Replit's
-package tools. No Docker or virtual environment is needed.
+package tools. No Docker or virtual environment is needed. Run installs `timesfm` if it is missing (the
+`timesfm` model needs it, and PyTorch); if the model still reports an import error, the error names the
+missing package and the exact `pip` command for the interpreter the app runs on.
 
 Run commands from the repository root so they use the working-tree source:
 

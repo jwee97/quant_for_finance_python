@@ -32,7 +32,7 @@ not be clean evidence, a bad result is.
 Stage 34 feeds the 252 normalised returns before each origin to Chronos-Bolt (small), sums the median path over 21 days and scales by volatility. The stage is descriptive by declaration, and the model revision hash is
 stored with the results.
 
-Two zero-shot plug-ins read the same window: `chronos` (Chronos-Bolt) and `timesfm` (TimesFM 2.5, 200M parameters). Both are optional dependencies (`pip install chronos-forecasting einops`, `pip install 'timesfm[torch]'`) and download their weights from the Hugging Face hub; without them the model raises an error naming what to install. Both pass the repository's causality check on real weights; the contamination caveat above applies to both.
+Two zero-shot plug-ins read the same window: `chronos` (Chronos-Bolt) and `timesfm` (TimesFM 2.5, 200M parameters). Both are optional dependencies and download their weights from the Hugging Face hub. `timesfm` is in `requirements.txt` (the Repl's Run installs it if it is missing) and `chronos` is installed with `pip install chronos-forecasting einops`; when a package cannot be imported the model raises an error that says what failed and gives the install command for the interpreter that runs the app. Both pass the repository's causality check on real weights; the contamination caveat above applies to both.
 
 ## What we found
 

@@ -36,6 +36,9 @@ joblib>=1.3
 #   pip install --index-url https://download.pytorch.org/whl/cpu torch
 torch>=2.2
 
+# TimesFM zero-shot plug-in (the `timesfm` model; needs the torch above, and downloads its weights from the Hugging Face hub on first use)
+timesfm>=3.0,<4
+
 # Text corpus parsing (Generation 4)
 beautifulsoup4>=4.12
 lxml>=5.0
@@ -43,7 +46,7 @@ lxml>=5.0
 # Generation 5 (optional)
 #   Chronos-Bolt model:                 pip install -e ".[chronos]" (first run downloads model weights)
 #   Full foundation model stack:         pip install -e ".[foundation]" (also installs TimesFM)
-#   TimesFM zero-shot plug-in (`timesfm` model):  pip install "timesfm[torch]"   (raises a clear ImportError without it)
+#   (TimesFM is listed above: the `timesfm` model says what failed to import, and how to install it, if it is not there)
 #   Notebooks and docs site:              pip install nbclient ipykernel mkdocs mkdocs-material  (the notebook tests skip without them)
 #   Dashboard rendering test:             pip install playwright   (and a Chromium; the test skips without one)
 # Tests
