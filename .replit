@@ -31,6 +31,9 @@ waitForPort = 5000
 [workflows.workflow.metadata]
 outputType = "webview"
 
+[deployment]
+run = ["sh", "-c", "python -u -m src serve --host 0.0.0.0 --port 5000 --no-browser"]
+
 [[ports]]
 localPort = 5000
 externalPort = 80

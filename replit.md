@@ -117,7 +117,10 @@ you afterwards that the run was lost. What that means in practice:
   the app and its runs alive, but a published address is open to anyone who has it, and this
   dashboard has no login (see the access warning at the top): strangers could spend your iTick
   calls and your machine. Add authentication first, or use your own computer or server, where a
-  process lives as long as the machine does.
+  process lives as long as the machine does. If you do publish it, `.replit` has the `[deployment]`
+  run command that Publish needs (the same server command as Run; without it Replit says "Could not
+  find run command"): choose a Reserved VM, because the app keeps its background runs in memory, and
+  add the `QUANT_LAB_ACCESS_CODE` secret first (see *Locking the page with an access code* below).
 
 ## If the Machine learning tab says LightGBM or XGBoost is not available
 
