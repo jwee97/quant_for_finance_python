@@ -108,6 +108,7 @@ def _r(low, high, scale="linear", tune=True):
 CURATED = {
     "kalman_trend": {"level_noise": _r(0.002, 0.5, "log"), "slope_noise": _r(1e-7, 1e-3, "log"), "vol_halflife": _r(10, 250, "log"), "scale": _r(0.03, 1.0, "log"), "clip": _r(1.0, 10.0, "log", False)},
     "kalman_pairs": {"delta": _r(1e-7, 1e-3, "log"), "obs_var": _r(1e-4, 1e-1, "log"), "clip": _r(1.5, 5.0)},
+    "ou_threshold_pairs": {"window": _r(126, 504), "cost_bps": _r(1.0, 20.0, "log"), "max_half_life": _r(10, 90), "exit_scale": _r(-0.5, 1.0), "stop_sd": _r(2.5, 6.0), "df_critical": _r(-4.5, -2.5, "linear", False)},
     "momentum": {"lookback": _r(42, 378), "skip": _r(0, 21), "vol_lookback": _r(21, 252)},
     "xs_momentum": {"lookback": _r(63, 504), "skip": _r(0, 42)},
     "dual_momentum": {"lookback": _r(63, 504), "skip": _r(0, 42), "top_k": _r(1, 8)},
@@ -152,6 +153,12 @@ HELP = {
     ("kalman_trend", "clip"): "Flattens the signal for very strong trends. It only acts together with scale (only their product matters), so tune one of the two, not both.",
     ("kalman_pairs", "delta"): "How fast the hedge ratio between the two prices is allowed to drift. Higher: it follows the pair closely. Lower: it assumes a steadier relationship.",
     ("kalman_pairs", "obs_var"): "How noisy the spread between the two prices is assumed to be. Higher: the filter trusts each day's price less.",
+    ("ou_threshold_pairs", "window"): "How many past days are used to estimate how fast each spread reverts and how far it wanders. Longer is steadier but slower to notice a change in the pair.",
+    ("ou_threshold_pairs", "cost_bps"): "The cost of one trade of one leg, in basis points. It sets how far the spread must stray before trading pays: a higher cost means wider entry levels and fewer trades.",
+    ("ou_threshold_pairs", "max_half_life"): "The slowest reversion worth trading, in days: a spread that takes longer than this to close half of a gap is left alone. Lower: only quick reversion, more trades.",
+    ("ou_threshold_pairs", "exit_scale"): "Where to take profit. 1 holds until the spread reaches the opposite entry level (the best level for the profit per day if the spread follows the model); 0 closes at the average; below 0 closes before it gets there.",
+    ("ou_threshold_pairs", "stop_sd"): "How many typical spread widths from its average the spread may run before the trade is closed as broken. The pair stays out until the spread is back inside its entry level.",
+    ("ou_threshold_pairs", "df_critical"): "How clearly a pair's spread must look like it reverts (a Dickey-Fuller test, -3.4 is the usual 5% bar for a pair) before it is traded at all. More negative: fewer pairs qualify.",
     ("online_ridge", "process_to_observation"): "How fast the Kalman filter lets the model's coefficients drift, compared with the noise in returns. Only used when the updater is kalman.",
 }
 GENERIC_HELP = [

@@ -79,13 +79,15 @@ def render(table: pd.DataFrame, first: str, last: str, years: float) -> str:
 
 PART_THREE_NOTE = ("How to read it: these are the factor-timing, characteristic-regression, APT, macro-factor and equity-factor rules of the two books. Rules that read a file the repository does not have "
                    "(`fundamental_*`, `earnings_season_premium`) are listed under *could not run*, not scored. Rules that learn from earlier data start late and stay flat while they have no evidence. "
-                   "A negative or flat row on 15 ETFs says the rule does not pay on liquid funds at these costs, not that it fails on the single stocks it was written for.")
+                   "A negative or flat row on 15 ETFs says the rule does not pay on liquid funds at these costs, not that it fails on the single stocks it was written for. "
+                   "`ou_threshold_pairs` (the Ornstein-Uhlenbeck pairs rule) trades a pair only while its spread passes a Dickey-Fuller test with the Engle-Granger critical value, which the six default ETF pairs do "
+                   "on 4 to 10% of days: its row is mostly cash, and it says the pairs here are not cointegrated well enough to trade, which is what the test is for.")
 
 
 def render_supplement(added: pd.DataFrame, earlier: int, total: int, first: str, last: str, years: float, part: int = 2) -> str:
     """The part of the survey written after the first one: same universe, sample, costs and defaults, with the deflated Sharpe probability counting every strategy (``total``) as a trial."""
     ok = added[added["error"] == ""].sort_values("net_sharpe", ascending=False)
-    title = "# Strategy survey, part two: investment, portfolio and economic-outlook strategies" if part == 2 else "# Strategy survey, part three: factor timing, factor models and equity factors"
+    title = "# Strategy survey, part two: investment, portfolio and economic-outlook strategies" if part == 2 else "# Strategy survey, part three: factor timing, factor models, equity factors and an Ornstein-Uhlenbeck pairs rule"
     before = "the first survey ([strategy_survey.md](strategy_survey.md)" if part == 2 else "parts one and two ([strategy_survey.md](strategy_survey.md), [strategy_survey_2.md](strategy_survey_2.md)"
     lines = [
         title, "",

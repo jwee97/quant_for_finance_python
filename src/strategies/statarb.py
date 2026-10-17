@@ -126,6 +126,99 @@ class CointegrationPairs(ForecastModel):
         return out.where(data.investable)
 
 
+@register_model("ou_threshold_pairs", "stat-arb", "Pairs trading at the best levels for an Ornstein-Uhlenbeck spread: refit the spread's reversion by maximum likelihood and trade the levels that earn the most per day after costs (Bertram)")
+class OUThresholdPairs(ForecastModel):
+    """Most pairs rules enter at a round number of standard deviations. If the spread really is a mean-reverting (Ornstein-Uhlenbeck) process there is a best pair of levels, and it depends on how
+    fast the spread reverts and what a round trip costs: wide enough that each trade clears its cost, narrow enough that trades come often. This rule estimates the process on a rolling window,
+    solves for those levels (``probability.ou.optimal_thresholds``) and holds each pair until the spread reaches the opposite level (``exit_scale = 1``) or the mean (``exit_scale = 0``).
+    A pair trades only while the window's spread passes a Dickey-Fuller test (``df_critical``, the Engle-Granger value) and reverts with a half-life between ``min_half_life`` and
+    ``max_half_life`` days; a spread that runs past ``stop_sd`` standard deviations is closed, and the pair stays out until the spread is back inside its entry level."""
+
+    name, family, position_mode = "ou_threshold_pairs", "stat-arb", "time_series"
+    structured = True                                           # the hedged pair trade IS the strategy: the weights are built here, not ranked
+    min_assets = 2                                              # a pair
+
+    def __init__(self, pairs: tuple = DEFAULT_PAIRS, window: int = 252, refit_every: int = 21, cost_bps: float = 5.0, min_half_life: float = 2.0, max_half_life: float = 40.0,
+                 exit_scale: float = 1.0, stop_sd: float = 4.0, df_critical: float = -3.4):
+        if window < 60 or refit_every < 1 or cost_bps < 0 or not 0 < min_half_life < max_half_life or not -1.0 <= exit_scale <= 1.0 or stop_sd <= 1.0 or df_critical >= 0:
+            raise ValueError("window >= 60, refit_every >= 1, cost_bps >= 0, 0 < min_half_life < max_half_life, -1 <= exit_scale <= 1, stop_sd > 1 and a negative df_critical")
+        self.pairs, self.window, self.refit_every, self.cost_bps = tuple(tuple(p) for p in pairs), int(window), int(refit_every), float(cost_bps)
+        self.min_half_life, self.max_half_life, self.exit_scale, self.stop_sd, self.df_critical = float(min_half_life), float(max_half_life), float(exit_scale), float(stop_sd), float(df_critical)
+
+    def pair_positions(self, y: np.ndarray, x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """The position in the spread ``y - beta x`` (``+1`` long it: long ``y``, short ``x``) on each date and the hedge ratio ``beta`` in force. Every window of ``refit_every`` dates uses
+        the hedge ratio, the Ornstein-Uhlenbeck fit and the trading levels estimated on the ``window`` dates before it, so a date uses nothing from its own future."""
+        from ..probability.ou import dickey_fuller_t, fit_ou, optimal_thresholds
+
+        n = len(y)
+        pos, hedge = np.zeros(n), np.full(n, np.nan)
+        state, blocked = 0.0, False
+        for start in range(self.window, n, self.refit_every):
+            end = min(start + self.refit_every, n)
+            ys, xs = y[start - self.window:start], x[start - self.window:start]
+            if not (np.isfinite(ys).all() and np.isfinite(xs).all()):
+                state = 0.0
+                continue
+            beta, alpha = np.polyfit(xs, ys, 1)
+            hedge[start:end] = beta
+            try:
+                window_spread = ys - (alpha + beta * xs)
+                if dickey_fuller_t(window_spread) > self.df_critical:
+                    raise ValueError("the spread cannot be told from a random walk")        # a regression of one random walk on another leaves a residual that looks like reversion
+                fit = fit_ou(window_spread, 1.0 / 252.0)
+                theta, mu, sigma = fit.estimates["theta"], fit.estimates["mu"], fit.estimates["sigma"]
+                half_life = np.log(2.0) / theta * 252.0
+                if not self.min_half_life <= half_life <= self.max_half_life:
+                    raise ValueError("half-life outside the range worth trading")
+                levels = optimal_thresholds(theta, 0.0, sigma, 2.0 * (1.0 + abs(beta)) * self.cost_bps / 1e4)
+            except ValueError:
+                state = 0.0                                              # no usable reversion in this window: flat until the next refit
+                continue
+            d = levels["half_width"]
+            sd_eq = sigma / np.sqrt(2.0 * theta)
+            stop = max(self.stop_sd * sd_eq, d + sd_eq)
+            leave = self.exit_scale * d
+            dev = y[start:end] - (alpha + beta * x[start:end]) - mu      # the spread's deviation from its mean (the levels are symmetric about it)
+            for i, v in enumerate(dev):
+                if not np.isfinite(v):
+                    pos[start + i] = state
+                    continue
+                if state == 0.0:
+                    if blocked:
+                        blocked = abs(v) >= d                            # after a stop, wait for the spread to come back inside before trading again
+                    elif -stop <= v <= -d:
+                        state = 1.0
+                    elif d <= v <= stop:
+                        state = -1.0
+                elif state > 0:
+                    if v < -stop:
+                        state, blocked = 0.0, True
+                    elif v >= leave:
+                        state = -1.0 if (self.exit_scale >= 1.0 and d <= v <= stop) else 0.0
+                else:
+                    if v > stop:
+                        state, blocked = 0.0, True
+                    elif v <= -leave:
+                        state = 1.0 if (self.exit_scale >= 1.0 and -stop <= v <= -d) else 0.0
+                pos[start + i] = state
+        return pos, hedge
+
+    def weights(self, data):
+        out = pd.DataFrame(0.0, index=data.index, columns=data.assets)
+        log = np.log(data.prices)
+        active = [(left, right) for left, right in self.pairs if left in data.assets and right in data.assets]
+        for left, right in active:
+            pos, hedge = self.pair_positions(log[left].to_numpy(), log[right].to_numpy())
+            beta = np.where(np.isfinite(hedge), hedge, 1.0)
+            share = pos / (1.0 + np.abs(beta))                           # a unit of spread is $1 of the left leg against $beta of the right leg
+            out[left] = out[left] + share / len(active)
+            out[right] = out[right] - share * beta / len(active)
+        return out
+
+    def score(self, data):
+        return self.weights(data).where(data.investable)
+
+
 @register_model("sparse_basket", "stat-arb", "Sparse basket mean reversion: regress each asset on a LASSO-selected basket of the others and fade the cumulative residual")
 class SparseBasket(ForecastModel):
     """The few other assets that actually explain an ETF define its fair value; the residual from that sparse basket reverts."""

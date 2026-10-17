@@ -5,10 +5,10 @@ difficulty: 3
 chapter: Ch. 22
 prerequisites: [mean-reversion, pca-effective-rank]
 stages: [14, 30]
-files: [src/signals/pairs.py, src/signals/pca_strategy.py, src/strategies/statarb.py, experiments/stage14_extensions.py]
+files: [src/signals/pairs.py, src/signals/pca_strategy.py, src/strategies/statarb.py, src/probability/ou.py, experiments/stage14_extensions.py]
 figures: [26, 27]
-tests: [tests/test_extensions.py, tests/test_strategies.py]
-models: [cointegration_pairs, kalman_pairs, pca_residual, sparse_basket]
+tests: [tests/test_extensions.py, tests/test_strategies.py, tests/test_ou.py, tests/test_ou_pairs.py]
+models: [cointegration_pairs, kalman_pairs, ou_threshold_pairs, pca_residual, sparse_basket]
 ---
 
 # Pairs, cointegration and statistical arbitrage
@@ -28,7 +28,8 @@ Market-neutral strategies promise returns uncorrelated with the market, but they
 
 ## How this repo uses it
 
-Stage 14 selects pairs on a development sample only and trades them with that hedge ratio; the library adds Kalman, rolling-cointegration, PCA residual and sparse-basket models as plugins.
+Stage 14 selects pairs on a development sample only and trades them with that hedge ratio; the library adds Kalman, rolling-cointegration, PCA residual and sparse-basket models as plugins. The
+`ou_threshold_pairs` model treats the spread as an Ornstein-Uhlenbeck process, fits it by maximum likelihood on a rolling window and trades the levels that earn the most per day after costs (`probability.ou`).
 
 ## What we found
 
@@ -45,9 +46,15 @@ PCA residual: e_i,t = r_i,t - sum_k loading_ik f_k,t (k = 3);  trade the cumulat
 ```
 Always trade dollar-neutral (long one leg, short `beta` of the other) so the market move cancels.
 
+If the spread is an Ornstein-Uhlenbeck process, `dX = -theta (X - mu) dt + sigma dW`, there is a best pair of levels. Buy at `mu - d` and sell at `mu + d`: a trade earns `2d - c` (`c` the round-trip cost)
+and a full cycle takes `(2 pi / theta) erfi(d sqrt(theta) / sigma)` on average, so the profit per unit of time is `(2d - c) theta / (2 pi erfi(d sqrt(theta) / sigma))`, which is largest at one width `d` that grows
+with the cost (Bertram 2010). `ou_threshold_pairs` estimates `theta, mu, sigma` from the exact transition density, requires a Dickey-Fuller t statistic below the Engle-Granger value of -3.4 (a regression of one
+random walk on another leaves a residual that looks like reversion; without the test the rule trades it), and closes a pair whose spread runs past `stop_sd` standard deviations.
+
 ## Pitfalls
 
 - Cointegration estimated in sample often fails out of sample; always re-test.
+- The best levels assume the spread is watched at every instant. On daily closes crossings are missed and the rule trades only 60 to 80% as often as the continuous theory says (`tests/test_ou_pairs.py`).
 - Costs on both legs.
 - A tiny universe offers few genuine pairs.
 
