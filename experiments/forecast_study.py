@@ -6,6 +6,7 @@ each), every forecast made from the prices up to its day and scored against what
     python -m experiments.forecast_study                                   # SPY, QQQ, EEM, TLT and GLD at 21 days (about two minutes each)
     python -m experiments.forecast_study --tickers SPY --horizons 5 21 63  # one ticker at three horizons
     python -m experiments.forecast_study --tickers SPY --methods garch hmm gp_drift --effort quick
+    python -m experiments.forecast_study --cache runs/                     # a result is saved as it finishes, and a rerun picks up where it stopped
 
 It prints, for every horizon, the skill of each method on each ticker (how far below the random walk's CRPS its own was; a star means the gain held up after allowing for the number of methods compared),
 then for each ticker the calibration of the yardstick and the verdict the tab gives, and the tests of the average return and of the direction against the average of the last five years and against always
@@ -15,8 +16,13 @@ saying up. Nothing here touches the network: the prices are the platform's cache
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import time
 import warnings
+from pathlib import Path
+
+import numpy as np
 
 from src.forecast import BASELINE, BLEND, METHODS, History
 from src.forecast import evaluate as ev
@@ -31,6 +37,28 @@ def run(history: History, names: list[str], horizon: int, effort: str, seed: int
     return ev.evaluate(history, names, horizon, effort, seed)
 
 
+def _plain(value):
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    raise TypeError(f"cannot save a {type(value).__name__}")
+
+
+def _saved(folder: Path | None, ticker: str, history: History, names: list[str], horizon: int, effort: str, seed: int) -> tuple[dict, bool]:
+    """The evaluation, from ``folder`` if the same one (the ticker, the prices it saw, the methods, horizon, effort and seed) was saved there, and saved there once it is done."""
+    if folder is None:
+        return run(history, names, horizon, effort, seed), False
+    key = hashlib.sha1(",".join(names).encode()).hexdigest()[:8]
+    path = folder / f"{ticker}_{horizon}d_{effort}_seed{seed}_{history.n}_{key}.json"
+    if path.exists():
+        return json.loads(path.read_text()), True
+    result = run(history, names, horizon, effort, seed)
+    folder.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(result, default=_plain))
+    return result, False
+
+
 def _row(result: dict, mid: str) -> dict:
     return next(m for m in result["methods"] if m["id"] == mid)
 
@@ -42,6 +70,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--methods", nargs="*", help="method ids (default: every method and the blend)")
     ap.add_argument("--effort", choices=list(ev.EFFORTS), default="standard")
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--cache", type=Path, help="a folder to save each finished evaluation in, and to reuse the ones already there")
     args = ap.parse_args(argv)
     warnings.filterwarnings("ignore")
     bundle = load_default_bundle(load_config(), with_macro=False)
@@ -51,8 +80,8 @@ def main(argv: list[str] | None = None) -> int:
         for ticker in args.tickers:
             history = History.from_frame(bundle.prices[ticker], None if bundle.high is None else bundle.high.get(ticker), None if bundle.low is None else bundle.low.get(ticker))
             t0 = time.time()
-            results[(ticker, hz)] = run(history, names, hz, args.effort, args.seed)
-            print(f"{ticker} at {hz} days: {time.time() - t0:.0f} s", flush=True)
+            results[(ticker, hz)], reused = _saved(args.cache, ticker, history, names, hz, args.effort, args.seed)
+            print(f"{ticker} at {hz} days: " + ("from the saved run" if reused else f"{time.time() - t0:.0f} s"), flush=True)
     for hz in args.horizons:
         done = [t for t in args.tickers if (t, hz) in results]
         first = results[(done[0], hz)]["origins"]
@@ -75,6 +104,9 @@ def main(argv: list[str] | None = None) -> int:
         for t in done:
             r = results[(t, hz)]
             rows = [(m["id"], m["scores"][str(hz)]) for m in r["methods"] if "mean" in m["scores"][str(hz)]]
+            if not rows:
+                print(f"{t:5s} none of the chosen methods forecasts the average return (they describe the spread only)")
+                continue
             best = max(rows, key=lambda x: x[1]["mean"]["r2"])
             top = max(rows, key=lambda x: x[1]["direction"]["edge"])
             print(f"{t:5s} best R-squared {best[1]['mean']['r2'] * 100:+.1f}% ({best[0]}, p {best[1]['mean']['p']:.3f}); always up {top[1]['direction']['always_up'] * 100:.0f}%, best caller {top[0]} at {top[1]['direction']['hit'] * 100:.0f}% (p {top[1]['direction']['p']:.2f})")

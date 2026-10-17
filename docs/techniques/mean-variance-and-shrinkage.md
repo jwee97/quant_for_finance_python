@@ -5,9 +5,9 @@ difficulty: 3
 chapter: Ch. 19
 prerequisites: [risk-parity, pca-effective-rank]
 stages: [7, 8, 21]
-files: [src/portfolio/mean_variance.py, src/portfolio/covariance.py, src/portfolio/black_litterman.py]
+files: [src/portfolio/mean_variance.py, src/portfolio/covariance.py, src/portfolio/black_litterman.py, src/portfolio/closed_form.py]
 figures: [18]
-tests: [tests/test_portfolio.py]
+tests: [tests/test_portfolio.py, tests/test_closed_form.py]
 models: []
 ---
 
@@ -31,6 +31,12 @@ It is the textbook answer and the textbook failure. Understanding why it fails, 
 
 `src/portfolio/mean_variance.py` and `black_litterman.py` implement the optimisers with the constraints in `src/portfolio/constraints.py`; Stage 8 evaluates covariance estimators out of
 sample, and Stage 21 adds parameter uncertainty (Bayesian portfolio construction).
+
+`src/portfolio/closed_form.py` adds Markowitz's and Merton's *closed forms* for weights that only have to sum to one. Four numbers `A = 1'S^-1 1`, `B = 1'S^-1 mu`, `C = mu'S^-1 mu` and `D = AC - B^2`
+describe the whole frontier, the hyperbola `var(m) = (A m^2 - 2 B m + C) / D`: `frontier_constants`, `global_minimum_variance` (the nose, at return `B/A` and variance `1/A`), `target_return_portfolio`,
+`efficient_frontier`, `tangency_portfolio` (the highest Sharpe ratio there is), `capital_market_line` and `utility_portfolio` (a risk-averse investor's holding). The tests check them against the
+numerical optimiser with its bounds loosened (they agree), against the frontier's geometry (two-fund separation, the nose) and for the fact that the weights are linear in the expected returns, which
+is why noise in the means moves them so much. Long-only and capped problems have no closed form: use `portfolio.mean_variance`.
 
 ## What we found
 

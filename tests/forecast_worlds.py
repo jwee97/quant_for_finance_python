@@ -83,3 +83,36 @@ def reverting(n: int, strength: float = 0.4, sigma: float = 0.01, seed: int = 0)
         z = r[t - 21:t].sum() / (sigma * np.sqrt(21))
         r[t] = -strength * sigma * np.tanh(z) + rng.normal(0, sigma)
     return r
+
+
+def levy_garch(n: int, seed: int = 0, omega: float = 2e-6, alpha: float = 0.08, beta: float = 0.88, sigma: float = 0.9, theta: float = -0.4, nu: float = 0.8) -> np.ndarray:
+    """GARCH(1,1) returns whose standardised shocks follow a skewed, fat-tailed variance-gamma law: ``(sigma, theta, nu)`` are its parameters (the shock is the law's unit-time increment, centred and scaled)."""
+    from src.derivatives import levy
+
+    rng = np.random.default_rng(seed)
+    z = levy.VarianceGamma(sigma=sigma, theta=theta, nu=nu).sample(1.0, n + 300, rng)
+    z = (z - z.mean()) / z.std()
+    var = omega / (1 - alpha - beta)
+    out = np.empty(n + 300)
+    for t in range(n + 300):
+        out[t] = np.sqrt(var) * z[t]
+        var = omega + alpha * out[t] ** 2 + beta * var
+    return out[300:]
+
+
+def stochastic_volatility(n: int, seed: int = 0, mu: float = -9.0, phi: float = 0.97, s_eta: float = 0.15) -> tuple[np.ndarray, np.ndarray]:
+    """Returns ``r_t = exp(h_t / 2) z_t`` with the log variance ``h_t`` an AR(1) (mean ``mu``, persistence ``phi``, shock ``s_eta``). Returns ``(returns, log_variance)``."""
+    rng = np.random.default_rng(seed)
+    h = np.empty(n)
+    h[0] = mu
+    for t in range(1, n):
+        h[t] = mu + phi * (h[t - 1] - mu) + s_eta * rng.standard_normal()
+    return np.exp(h / 2.0) * rng.standard_normal(n), h
+
+
+def heston_returns(n: int, seed: int = 0, kappa: float = 4.0, theta: float = 0.04, xi: float = 0.5, rho: float = -0.7) -> tuple[np.ndarray, np.ndarray]:
+    """Daily log returns from a Heston model simulated with the quadratic-exponential scheme (annual units: ``theta`` the long-run variance). Returns ``(returns, variance)``."""
+    from src.probability import sde
+
+    S, V = sde.simulate_heston(100.0, theta, 0.0, 0.0, kappa, theta, xi, rho, (n + 300) / 252.0, n + 300, 1, "qe", seed)
+    return np.diff(np.log(S[0]))[300:], V[0][300:-1]

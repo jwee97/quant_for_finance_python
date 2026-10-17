@@ -470,11 +470,13 @@ def _loglik(model: Model, r: np.ndarray, dt: float, drift: float) -> float:
     return float(np.sum(np.log(np.maximum(d, 1e-300))))
 
 
-def fit_returns(returns, model: str | type[Model], dt: float = 1.0 / 252.0, starts: list[dict] | None = None, maxiter: int = 600) -> ReturnsFit:
+def fit_returns(returns, model: str | type[Model], dt: float = 1.0 / 252.0, starts: list[dict] | None = None, maxiter: int = 600, bounds: dict | None = None) -> ReturnsFit:
     """Maximum-likelihood fit of a Lévy model's shape and a drift to a series of returns observed every ``dt`` years.
 
     The parameters are annualised (``sigma = 0.2`` is a 20% volatility, ``lam = 5`` is five jumps a year). The likelihood is the product of the densities of the increments over
-    ``dt``, from the exact density of the model; each fit is started from a few moment-based points and the best is kept. ``returns`` are log returns.
+    ``dt``, from the exact density of the model; each fit is started from a few moment-based points and the best is kept. ``returns`` are log returns. ``bounds`` replaces the model's
+    default range of some parameters (``{"theta": (-10, 10)}``): the defaults suit the volatilities of option markets, and a series that is not scaled like a market (standardised
+    residuals) can need a wider one.
     """
     cls = MODELS[model] if isinstance(model, str) else model
     if not cls.is_levy:
@@ -485,8 +487,9 @@ def fit_returns(returns, model: str | type[Model], dt: float = 1.0 / 252.0, star
     if n < 100:
         raise ValueError("at least 100 returns are needed")
     names = cls.param_names
-    lo = np.array([cls.bounds[k][0] for k in names])
-    hi = np.array([cls.bounds[k][1] for k in names])
+    limits = {**cls.bounds, **(bounds or {})}
+    lo = np.array([limits[k][0] for k in names])
+    hi = np.array([limits[k][1] for k in names])
     var_rate = float(np.var(r) / dt)
     ex_kurt = float(stats.kurtosis(r))
     sd_rate = np.sqrt(var_rate)
@@ -495,13 +498,13 @@ def fit_returns(returns, model: str | type[Model], dt: float = 1.0 / 252.0, star
     for scale in (0.9, 0.7):
         s = dict(base)
         if "sigma" in s:
-            s["sigma"] = float(np.clip(sd_rate * np.sqrt(scale), *cls.bounds["sigma"]))
+            s["sigma"] = float(np.clip(sd_rate * np.sqrt(scale), *limits["sigma"]))
         if cls is VarianceGamma:
-            s["nu"] = float(np.clip(max(ex_kurt, 0.3) * dt / 3.0 * 0.8, *cls.bounds["nu"]))
+            s["nu"] = float(np.clip(max(ex_kurt, 0.3) * dt / 3.0 * 0.8, *limits["nu"]))
         if cls is NIG:
-            s["kappa"] = float(np.clip(max(ex_kurt, 0.3) * dt / 3.0 * 0.8, *cls.bounds["kappa"]))
+            s["kappa"] = float(np.clip(max(ex_kurt, 0.3) * dt / 3.0 * 0.8, *limits["kappa"]))
         if cls is Merton:
-            s["lam"], s["sigma_j"] = 5.0 + 20.0 * (scale < 0.8), float(np.clip(sd_rate * 0.15, *cls.bounds["sigma_j"]))
+            s["lam"], s["sigma_j"] = 5.0 + 20.0 * (scale < 0.8), float(np.clip(sd_rate * 0.15, *limits["sigma_j"]))
         if cls is Kou:
             s["lam"] = 5.0 + 20.0 * (scale < 0.8)
         proposals.append(s)

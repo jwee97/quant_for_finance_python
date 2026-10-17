@@ -40,10 +40,14 @@
     for (let v = Math.ceil(lo / step) * step; v <= hi + 1e-9; v += step) out.push(v);
     return out;
   }
-  function logTicks(lo, hi) {
-    const base = [1, 1.5, 2, 3, 4, 5, 7.5], out = [];
-    for (let e = Math.floor(Math.log10(lo)) - 1; e <= Math.ceil(Math.log10(hi)); e++) for (const b of base) { const v = b * Math.pow(10, e); if (v >= lo * 0.999 && v <= hi * 1.001) out.push(v); }
-    return out.length > 7 ? out.filter((_, i) => i % 2 === 0) : out;
+  function logTicks(lo, hi) {                                                        // the finest set of 1-1.5-2-3-4-5-7.5 steps that does not crowd the axis, then coarser ones, down to the decades
+    let out = [];
+    for (const base of [[1, 1.5, 2, 3, 4, 5, 7.5], [1, 2, 5], [1, 3], [1]]) {
+      out = [];
+      for (let e = Math.floor(Math.log10(lo)) - 1; e <= Math.ceil(Math.log10(hi)); e++) for (const b of base) { const v = b * Math.pow(10, e); if (v >= lo * 0.999 && v <= hi * 1.001) out.push(v); }
+      if (out.length <= 8) break;
+    }
+    return out;
   }
   function monthTicks(t0, t1, maxTicks) {                                            // a window of under two years: the first of a month, every 1, 2, 3 or 6 months
     const a = new Date(t0), b = new Date(t1), months = (b.getUTCFullYear() - a.getUTCFullYear()) * 12 + b.getUTCMonth() - a.getUTCMonth() + 1;

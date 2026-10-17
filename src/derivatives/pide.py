@@ -18,8 +18,13 @@ The drift ``b`` is not taken from the model's formulas but *solved from the mart
 ``A e^x = (r - q) e^x`` exactly, so the discounted price is a martingale for the scheme however coarse the grid, whatever the quadrature error in ``nu_j``. Prices far outside the grid
 (which the jump sum reaches) are the option's asymptotic value: ``S e^{-q tau} - K e^{-r tau}`` for a call far above the strike, zero far below, and the reverse for a put.
 
+Early exercise (``american``) adds the constraint ``V >= payoff`` to each step. The jump term is explicit, so the constraint touches only the tridiagonal local operator, and the step
+is a linear complementarity problem solved exactly by the Brennan-Schwartz sweep of ``numerics.linsolve`` (Jaillet, Lamberton and Lapeyre 1990), which needs the matrix to be an M-matrix:
+the grid is refined until the cell Peclet number ``b dx / sigma^2`` is at most one.
+
 Compared with the Fourier price of ``derivatives.fourier`` (the benchmark: it is exact to 1e-10), this solver is slower and less precise (1e-4 relative at the default grid). Its value is that
-it prices what Fourier methods cannot: it is the same machinery that handles early exercise and barriers, and it prices payoffs with no characteristic-function representation.
+it prices what Fourier methods cannot: early exercise (an American option under a jump model, the case listed options on ETFs are), and in principle barriers and payoffs with no
+characteristic-function representation.
 """
 
 from __future__ import annotations
@@ -31,7 +36,7 @@ from scipy.interpolate import CubicSpline
 
 from ..numerics import linsolve
 from . import levy
-from .pde import PDEResult, _aligned_grid, _cell_average, _check
+from .pde import PDEResult, _aligned_grid, _cell_average, _check, _free_boundary
 
 _GL_X, _GL_W = np.polynomial.legendre.leggauss(16)
 
@@ -84,21 +89,30 @@ def choose_small_cells(model: levy.Model, dx: float, dt: float, stiffness: float
     return max_cells
 
 
-def _asymptotics(call: bool, K: float, r: float, q: float):
-    """The option's value far from the strike as functions of ``(tau, x)``: the two ends of the log-price axis."""
+def _asymptotics(call: bool, K: float, r: float, q: float, american: bool = False):
+    """The option's value far from the strike as functions of ``(tau, x)``: the two ends of the log-price axis. An American option is worth at least its intrinsic value there."""
     if call:
         lo = (lambda tau, x: np.zeros_like(x))
-        hi = (lambda tau, x: np.exp(x) * np.exp(-q * tau) - K * np.exp(-r * tau))
+        if american:
+            hi = (lambda tau, x: np.maximum(np.exp(x) - K, np.exp(x) * np.exp(-q * tau) - K * np.exp(-r * tau)))
+        else:
+            hi = (lambda tau, x: np.exp(x) * np.exp(-q * tau) - K * np.exp(-r * tau))
     else:
-        lo = (lambda tau, x: K * np.exp(-r * tau) - np.exp(x) * np.exp(-q * tau))
+        if american:
+            lo = (lambda tau, x: np.maximum(K - np.exp(x), K * np.exp(-r * tau) - np.exp(x) * np.exp(-q * tau)))
+        else:
+            lo = (lambda tau, x: K * np.exp(-r * tau) - np.exp(x) * np.exp(-q * tau))
         hi = (lambda tau, x: np.zeros_like(x))
     return lo, hi
 
 
-def european(model: levy.Model, S: float, K: float, T: float, r: float, q: float, call: bool = True, n_space: int = 1000, n_time: int = 200, width: float = 6.0,
-             max_jump: float = 6.0, imex: str = "cnab", small_cells: int | None = None, match_variance: bool = True, stiffness: float = 0.03) -> PDEResult:
-    """A European call or put under a Levy ``model`` by the IMEX scheme described in the module docstring (``imex='cnab'`` second order in time, ``'euler'`` first order).
-    ``extras['neglected']`` of the result is the jump measure (weighted by ``1 + e^z``) beyond ``max_jump``, which should be far below the accuracy wanted."""
+def solve(model: levy.Model, S: float, K: float, T: float, r: float, q: float, call: bool = True, american: bool = False, n_space: int = 1000, n_time: int = 200, width: float = 6.0,
+          max_jump: float = 6.0, imex: str = "cnab", small_cells: int | None = None, match_variance: bool = True, stiffness: float = 0.03, boundary: bool = False) -> PDEResult:
+    """A call or put under a Levy ``model`` by the IMEX scheme described in the module docstring (``imex='cnab'`` second order in time, ``'euler'`` first order). ``american=True`` adds the
+    early-exercise constraint: each step's tridiagonal system becomes a linear complementarity problem (the jump term is explicit, so the constraint touches only the local operator),
+    solved exactly by the Brennan-Schwartz sweep, which needs the tridiagonal matrix to be an M-matrix, that is a cell Peclet number ``b dx / sigma^2`` of at most one: the grid is refined
+    until it is. ``boundary=True`` records the early-exercise boundary at every step. ``extras['neglected']`` of the result is the jump measure (weighted by ``1 + e^z``) beyond ``max_jump``,
+    which should be far below the accuracy wanted."""
     if not model.is_levy:
         raise ValueError("a PIDE needs a Levy model; the Heston model has a second state variable")
     if imex not in ("cnab", "euler"):
@@ -118,36 +132,56 @@ def european(model: levy.Model, S: float, K: float, T: float, r: float, q: float
     drift = abs((r - q - model.omega()) * T)
     x_lo = min(np.log(S), np.log(K)) - width * sd - drift
     x_hi = max(np.log(S), np.log(K)) + width * sd + drift
-    x = _aligned_grid(np.log(S), x_lo, x_hi, n_space)
-    dx = x[1] - x[0]
+    dt = T / n_time
+
+    def layout(cells: int) -> dict:
+        x = _aligned_grid(np.log(S), x_lo, x_hi, cells)
+        dx = x[1] - x[0]
+        m_small = choose_small_cells(model, dx, dt, stiffness) if small_cells is None else int(small_cells)
+        kern = jump_kernel(model, dx, max_jump, small_cells=m_small, match_variance=match_variance)
+        jmax, nu = kern["j_max"], kern["nu"]
+        sig2 = max(sigma_d ** 2 + kern["sigma_eps2"] + kern["variance_defect"], 0.0)
+        g2, g1 = 2.0 * (np.cosh(dx) - 1.0) / dx ** 2, np.sinh(dx) / dx
+        # the drift that makes exp(x) a martingale for the discrete operator: 1/2 sig2 g2 + b g1 + Sum nu_j (e^{z_j} - 1) = r - q
+        sum_exp = float((nu * (np.exp(kern["offsets"] * dx) - 1.0)).sum()) if jmax else 0.0
+        return {"x": x, "dx": dx, "m_small": m_small, "kern": kern, "jmax": jmax, "nu": nu, "lam": float(nu.sum()), "sig2": sig2, "b": ((r - q) - 0.5 * sig2 * g2 - sum_exp) / g1}
+
+    cells, grid = n_space, layout(n_space)
+    if american:                                              # the Brennan-Schwartz sweep is exact for an M-matrix: sigma^2 >= |b| dx
+        for _ in range(6):
+            if grid["sig2"] >= abs(grid["b"]) * grid["dx"]:
+                break
+            cells = int(np.ceil(cells * abs(grid["b"]) * grid["dx"] / max(grid["sig2"], 1e-12) * 1.1))
+            if cells > 16000:
+                raise ValueError("the grid would need more than 16,000 cells for the early-exercise problem to be well posed at these parameters: the drift dominates the diffusion")
+            grid = layout(cells)
+        else:
+            if grid["sig2"] < abs(grid["b"]) * grid["dx"]:
+                raise ValueError("the grid could not be refined enough for the early-exercise problem to be well posed at these parameters")
+    x, dx, m_small, kern, jmax, nu, lam, sig2, b = (grid[k] for k in ("x", "dx", "m_small", "kern", "jmax", "nu", "lam", "sig2", "b"))
     n = len(x) - 2
     edges = np.concatenate([[x[0] - 0.5 * dx], 0.5 * (x[1:] + x[:-1]), [x[-1] + 0.5 * dx]])
     v = _cell_average(payoff, edges, (float(np.log(K)),))
-    ext_lo, ext_hi = _asymptotics(call, K, r, q)
+    ext_lo, ext_hi = _asymptotics(call, K, r, q, american)
     lo_val, hi_val = (lambda tau: float(ext_lo(tau, x[:1])[0])), (lambda tau: float(ext_hi(tau, x[-1:])[0]))
+    obstacle = payoff(np.exp(x)) if american else None
+    exercise = "high" if call else "low"
+    if american:
+        v = np.maximum(v, obstacle)
     v[0], v[-1] = lo_val(0.0), hi_val(0.0)
 
-    dt = T / n_time
-    m_small = choose_small_cells(model, dx, dt, stiffness) if small_cells is None else int(small_cells)
-    kern = jump_kernel(model, dx, max_jump, small_cells=m_small, match_variance=match_variance)
-    jmax, nu = kern["j_max"], kern["nu"]
-    lam = float(nu.sum())
-    sig2 = max(sigma_d ** 2 + kern["sigma_eps2"] + kern["variance_defect"], 0.0)
-    g2, g1 = 2.0 * (np.cosh(dx) - 1.0) / dx ** 2, np.sinh(dx) / dx
-    # the drift that makes exp(x) a martingale for the discrete operator: 1/2 sig2 g2 + b g1 + Sum nu_j (e^{z_j} - 1) = r - q
-    sum_exp = float((nu * (np.exp(kern["offsets"] * dx) - 1.0)).sum()) if jmax else 0.0
-    b = ((r - q) - 0.5 * sig2 * g2 - sum_exp) / g1
     full_kernel = np.zeros(2 * jmax + 1)                      # the weight of each offset -jmax .. jmax (zero in the band that is treated as diffusion)
     if jmax:
         full_kernel[kern["offsets"] + jmax] = nu
     a_c, b_c = 0.5 * sig2 / dx ** 2, 0.5 * b / dx
     c_lo, c_di, c_up = a_c - b_c, -2.0 * a_c - r - lam, a_c + b_c
-    cache: dict[tuple[float, float], object] = {}
+    cache: dict[tuple[float, float], tuple] = {}
 
-    def factor(step: float, th: float):
+    def operator(step: float, th: float):
         key = (round(step, 15), th)
         if key not in cache:
-            cache[key] = linsolve.tridiagonal_factor(np.full(n - 1, -th * step * c_lo), np.full(n, 1.0 - th * step * c_di), np.full(n - 1, -th * step * c_up))
+            lo, di, up = np.full(n - 1, -th * step * c_lo), np.full(n, 1.0 - th * step * c_di), np.full(n - 1, -th * step * c_up)
+            cache[key] = (lo, di, up, None if american else linsolve.tridiagonal_factor(lo, di, up))
         return cache[key]
 
     def jumps(vals: np.ndarray, tau: float) -> np.ndarray:
@@ -169,10 +203,12 @@ def european(model: levy.Model, S: float, K: float, T: float, r: float, q: float
         rhs[-1] += h * c_up * th * hi_val(tau1)
         new = vals.copy()
         new[0], new[-1] = lo_val(tau1), hi_val(tau1)
-        new[1:-1] = factor(h, th).solve(rhs)
+        lo, di, up, fact = operator(h, th)
+        new[1:-1] = linsolve.brennan_schwartz(lo, di, up, rhs, obstacle[1:-1], exercise) if american else fact.solve(rhs)
         return new, jn
 
     tau = np.linspace(0.0, T, n_time + 1)
+    edge = np.full(n_time + 1, np.nan)
     prev = None
     for k in range(n_time):
         if k < 2 or imex == "euler":                       # implicit Euler for the first two steps (in four half steps) removes the oscillation a kink would start
@@ -184,6 +220,8 @@ def european(model: levy.Model, S: float, K: float, T: float, r: float, q: float
         else:
             v, jn = step(v, tau[k], dt, 0.5, prev)
             prev = jn
+        if boundary and american:
+            edge[k + 1] = _free_boundary(x, v, obstacle, exercise)
     spline = CubicSpline(x, v)
     x0 = np.log(S)
     price = float(spline(x0))
@@ -194,6 +232,16 @@ def european(model: levy.Model, S: float, K: float, T: float, r: float, q: float
     i0 = min(max(i0, 1), n)
     av = c_lo * v[i0 - 1] + (c_di + r + lam) * v[i0] + c_up * v[i0 + 1] - lam * v[i0] + float(jumps(v, T)[i0 - 1])
     theta = -(av - r * v[i0])
-    res = PDEResult(price, delta, gamma, theta, np.exp(x), v, len(x) - 1, n_time, time.perf_counter() - t0)
+    res = PDEResult(price, delta, gamma, theta, np.exp(x), v, len(x) - 1, n_time, time.perf_counter() - t0, tau if boundary and american else np.zeros(0), edge if boundary and american else np.zeros(0))
     res.extras.update(neglected=float(kern["neglected"]), kernel_cells=int(jmax), small_cells=int(m_small), drift=float(b), small_jump_variance=float(kern["sigma_eps2"]), variance_defect=float(kern["variance_defect"]))
     return res
+
+
+def european(model: levy.Model, S: float, K: float, T: float, r: float, q: float, call: bool = True, **kw) -> PDEResult:
+    """A European call or put under a Levy ``model``: ``solve`` without early exercise (see it for the options)."""
+    return solve(model, S, K, T, r, q, call, american=False, **kw)
+
+
+def american(model: levy.Model, S: float, K: float, T: float, r: float, q: float, call: bool = False, **kw) -> PDEResult:
+    """An American put (or call) under a Levy ``model``: ``solve`` with early exercise (see it for the options). Compare with ``european`` for the early-exercise premium."""
+    return solve(model, S, K, T, r, q, call, american=True, **kw)

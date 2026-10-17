@@ -1,12 +1,13 @@
 """The integro-differential solver for jump models: against the exact Fourier price for every model, second-order convergence where the theory promises it, the martingale property that the
-drift is solved for, the properties of the discretised jump measure, and the stiffness control that keeps the explicit jump term accurate."""
+drift is solved for, the properties of the discretised jump measure, and the stiffness control that keeps the explicit jump term accurate, and early exercise (an American option under each model against the Black-Scholes solver, a Longstaff-Schwartz simulation,
+refinement and the properties early exercise must have)."""
 
 from __future__ import annotations
 
 import numpy as np
 import pytest
 
-from src.derivatives import fourier, levy, pide
+from src.derivatives import fourier, levy, pde, pide
 
 S, K, T, R, Q = 100.0, 100.0, 0.75, 0.03, 0.01
 MODELS = {
@@ -123,3 +124,69 @@ def test_expired_options_and_unsuitable_models_and_schemes():
         pide.european(MODELS["merton"], S, K, T, R, Q, imex="rk4")
     res = pide.european(MODELS["kou"], S, K, T, R, Q, n_space=400, n_time=100)
     assert set(res.summary()) >= {"price", "delta", "gamma", "theta", "neglected", "kernel_cells", "small_cells", "drift"} and res.n_space >= 400
+
+
+# ------------------------------------------------------------------------------------------------------------------------ early exercise
+def _lsmc_put(model, strike, steps=50, n=60_000, seed=1, degree=4):
+    """A Longstaff-Schwartz estimate of a Bermudan put under ``model``: the independent check of the American PIDE (it is a lower bound that needs no grid)."""
+    paths = levy.simulate_paths(model, S, R, Q, T, steps, n, seed, True)
+    disc = np.exp(-R * T / steps)
+    cash = np.maximum(strike - paths[:, -1], 0.0)
+    for i in range(steps - 1, 0, -1):
+        cash = cash * disc
+        s = paths[:, i]
+        ex = np.maximum(strike - s, 0.0)
+        itm = ex > 0
+        if itm.sum() > 50:
+            basis = np.vander(s[itm] / strike, degree + 1)
+            cont = basis @ np.linalg.lstsq(basis, cash[itm], rcond=None)[0]
+            idx = np.flatnonzero(itm)[ex[itm] > cont]
+            cash[idx] = ex[idx]
+    pv = cash * disc
+    return float(pv.mean()), float(pv.std(ddof=1) / np.sqrt(n))
+
+
+@pytest.mark.parametrize("call", [False, True])
+def test_the_american_pide_without_jumps_is_the_black_scholes_american_price(call):
+    bs = MODELS["bs"]
+    ref = pde.vanilla(S, K, T, R, Q, 0.22, call, american=True, n_space=1600, n_time=800).price
+    assert pide.american(bs, S, K, T, R, Q, call).price == pytest.approx(ref, abs=1e-3)
+
+
+@pytest.mark.parametrize("name", ["merton", "kou", "vg", "nig"])
+def test_the_american_put_under_jump_models_agrees_with_simulation_and_refines(name):
+    m = MODELS[name]
+    coarse = pide.american(m, S, K, T, R, Q, False)
+    fine = pide.american(m, S, K, T, R, Q, False, n_space=2000, n_time=400)
+    assert abs(coarse.price - fine.price) < 2e-3, "the grid is fine enough to be converged to a fifth of a cent"
+    est, se = _lsmc_put(m, K)
+    assert abs(fine.price - est) < 4.0 * se + 0.02, (fine.price, est, se)       # the simulation's own bias (a Bermudan lower bound, a regression) is a couple of cents
+
+
+@pytest.mark.parametrize("name", ["bs", "merton", "kou", "vg", "nig"])
+def test_early_exercise_adds_value_to_a_put_and_none_to_a_call_without_dividends(name):
+    m = MODELS[name]
+    put_a, put_e = pide.american(m, S, K, T, R, Q, False).price, pide.european(m, S, K, T, R, Q, False).price
+    assert put_a > put_e + 0.05 and put_a >= max(K - S, 0.0), "a put is worth more when it can be exercised early"
+    call_a = pide.american(m, S, K, T, R, 0.0, True).price
+    call_e = pide.european(m, S, K, T, R, 0.0, True).price
+    assert call_a == pytest.approx(call_e, abs=2e-3), "with no dividend a call is never exercised early"
+    assert pide.american(m, S, K, T, R, Q, True).price >= pide.european(m, S, K, T, R, Q, True).price - 1e-9
+
+
+def test_the_early_exercise_boundary_of_a_put_lies_below_the_strike_and_falls_with_the_time_left():
+    res = pide.american(MODELS["merton"], S, K, T, R, Q, False, boundary=True)
+    edge = res.boundary[1:]
+    assert np.all(np.isfinite(edge)) and np.all(edge < K) and np.all(edge > 0.4 * K)
+    assert edge[-1] < edge[len(edge) // 4] < edge[2] <= K, "the more time is left, the lower the price at which exercising stops being optimal"
+    assert res.tau.shape == res.boundary.shape and res.tau[-1] == pytest.approx(T)
+
+
+def test_a_coarse_grid_is_refined_until_the_exercise_problem_is_well_posed():
+    bs = levy.BlackScholes(sigma=0.05)                  # little diffusion against a large drift: the cell Peclet number of 20 cells is above one
+    coarse = pide.american(bs, S, K, 1.0, 0.1, 0.0, False, n_space=20, n_time=100)
+    fine = pide.american(bs, S, K, 1.0, 0.1, 0.0, False, n_space=200, n_time=100)
+    assert coarse.n_space > 20 and fine.n_space < 300, "only the grid that was too coarse for the sweep to be exact is refined"
+    ref = pde.vanilla(S, K, 1.0, 0.1, 0.0, 0.05, False, american=True, n_space=1600, n_time=800).price
+    assert abs(fine.price - ref) < 0.01 and ref > pide.european(bs, S, K, 1.0, 0.1, 0.0, False, n_space=400).price + 0.3
+    assert coarse.price > pide.european(bs, S, K, 1.0, 0.1, 0.0, False, n_space=400).price, "even refined only to well-posedness it is a valid American value, not an oscillating one"

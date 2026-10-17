@@ -132,11 +132,12 @@ class GARCHResult:
         """Periods for a volatility shock to decay by half: ``ln 0.5 / ln persistence``."""
         return float(math.log(0.5) / math.log(self.persistence)) if 0 < self.persistence < 1 else float("inf")
 
-    def forecast_variance(self, steps: int = 1, n_sim: int = 5000, seed: int = 0) -> np.ndarray:
+    def forecast_variance(self, steps: int = 1, n_sim: int = 5000, seed: int = 0, returns=None) -> np.ndarray:
         """Forecast of ``sigma2_{T+1} .. sigma2_{T+steps}`` given returns up to ``T`` (in the units of the input). GARCH and GJR use the analytical recursion,
-        EGARCH simulation."""
+        EGARCH simulation. ``returns`` brings the state up to date with a later sample (the fitted numbers held fixed), as in ``simulate``; by default it is the sample the model was fitted on."""
         p = self.params
-        e = (self._r.to_numpy() - p["mu"]) / self.scale
+        r_all = self._r.to_numpy() if returns is None else np.asarray(returns, dtype=float)
+        e = (r_all[np.isfinite(r_all)] - p["mu"]) / self.scale
         pr = self._params_scaled()
         s2 = _variance_path(self.model, e, pr["omega"], pr["alpha"], pr.get("gamma", 0.0), pr["beta"], self._bc)
         last_e2, last_neg, last_s2 = e[-1] ** 2, float(e[-1] < 0), s2[-1]

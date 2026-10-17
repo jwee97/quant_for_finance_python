@@ -1,30 +1,43 @@
-/* The Options workspace: what a chain says (overview, chain, smile and skew, surface and term structure), what a book of options is exposed to (Greeks and stress), what a structure pays (payoff, break-evens,
-   probability of profit) and what a rolling strategy would have paid (a backtest on a simulated option market). It talks to /api/options/*; every payload says whether its numbers are a model, a file of yours or
-   platform data, and this page prints that beside them. */
+/* The Options workspace: what a chain says (overview, chain, smile and skew, surface and term structure), which pricing models reproduce it and what they imply for exotic and American options and for the cost of
+   hedging (model fit, model prices, hedging cost), what a book of options is exposed to (Greeks and stress), what a structure pays (payoff, break-evens, probability of profit) and what a rolling strategy would
+   have paid (a backtest on a simulated option market). It talks to /api/options/* and /api/models/*; every payload says whether its numbers are a model, a file of yours or platform data, and this page prints that
+   beside them. */
 (function () {
   "use strict";
   const Q = window.QL, W = window.WS, C = Q.C, h = Q.h, css = Q.css, num = Q.num, pct = Q.pct, money = Q.money, smoney = Q.smoney, tile = Q.tile, chartCard = Q.chartCard, table = Q.simpleTable;
   const GUIDE = "technique-option-chains-and-greeks";
+  const GUIDES = { fit: "technique-option-pricing-models-and-calibration", price: "technique-exotic-and-american-options", hedge: "technique-hedging-with-transaction-costs" };
   const ANALYTIC = new Set(["overview", "chain", "smile", "surface"]);
+  const MODEL_MODES = new Set(["fit", "price", "hedge"]);
+  const MODEL_SLOT = { market: 0, heston: 1, nig: 2, vg: 3, merton: 4, kou: 6 };                  // a colour for each model that does not change with what else is shown (the palette's own order, without its second green)
+  const modelColor = (id) => (id === "bs" || id === "bs_continuous" ? css("--muted") : Q.colorOf(MODEL_SLOT[id] === undefined ? 6 : MODEL_SLOT[id]));
+  const ALL_MODELS = ["merton", "kou", "vg", "nig", "heston"];
   const WINDOWS = [["5", "±5%"], ["10", "±10%"], ["15", "±15%"], ["25", "±25%"], ["40", "±40%"]];
 
   const O = {
     id: "options", root: "#options", view: "#view-options", title: "Options", api: 6, mode: "overview", busy: "", results: {}, errors: {}, cache: new Map(), guard: null, go: null, progress: null,
     about: "Read an option chain, see what a book of options is exposed to, draw what a structure pays and test a rolling strategy. The chain is a model quoted at the underlying's real price unless you download a real one (free, below) or bring your own file.",
-    modes: [["overview", "Overview"], ["chain", "Chain"], ["smile", "Smile and skew"], ["surface", "Surface and term"], ["risk", "Greeks and risk"], ["strategy", "Strategy builder"], ["backtest", "Backtest"]],
-    runLabel: { overview: "Refresh", chain: "Refresh", smile: "Refresh", surface: "Refresh", risk: "Revalue the book", strategy: "Draw the payoff", backtest: "Run the backtest" },
+    modes: [["overview", "Overview"], ["chain", "Chain"], ["smile", "Smile and skew"], ["surface", "Surface and term"], ["fit", "Model fit"], ["price", "Model prices"], ["hedge", "Hedging cost"], ["risk", "Greeks and risk"],
+      ["strategy", "Strategy builder"], ["backtest", "Backtest"]],
+    runLabel: { overview: "Refresh", chain: "Refresh", smile: "Refresh", surface: "Refresh", fit: "Fit the models", price: "Price the product", hedge: "Cost the hedge", risk: "Revalue the book", strategy: "Draw the payoff", backtest: "Run the backtest" },
     blurb: { overview: "Implied against realised volatility, where it ranks, the put-call balance, the term structure and the skew: the page to open first.",
       chain: "Calls and puts side by side for one expiry: bid, ask, implied volatility, delta, volume and open interest, with the at-the-money row marked and stale or wide quotes flagged.",
       smile: "How implied volatility changes with strike (the smile), across expiries, and what that says about the price of crash protection (risk reversal, butterfly).",
       surface: "The whole implied-volatility surface at once, the term structure and the checks that a surface admits no free lunch.",
+      fit: "Fit five pricing models (jumps, infinite-activity jumps, stochastic volatility) to the chain, see which reproduces the smile, and what each says about the odds of a fall.",
+      price: "Price a digital, barrier, average-price or American option under every fitted model. Models fitted to the same quotes differ on a vanilla by how well each fits; on an exotic by more. Set the spread beside the vanilla's: what is left is model risk.",
+      hedge: "What hedging an option costs when every trade costs money: Leland's price, the band in which not to trade, and a simulation of the rules.",
       risk: "Delta, gamma, vega and theta of a book of options and shares, by expiry, and what it would make or lose when the price and implied volatility move.",
       strategy: "Choose a structure and see its payoff at expiry, today and half way, its break-evens, maximum profit and loss, margin, Greeks, probability of profit and expected value.",
       backtest: "Sell or buy premium on a schedule on a simulated option market and see the equity curve, where the profit came from by Greek, the costs and the trades." },
     form: { underlying: "", expiry: "", window: "15", rate: "", dividend: "", premium: "15", hideStale: false, minOi: "",
       book: [], spotShocks: "-10, -5, -2, 0, 2, 5, 10", volShocks: "-5, 0, 5, 10", days: "0",
       strategy: "long_straddle", sDte: "30", sFar: "", offset: "5", width: "5", quantity: "1", fill: "mid", spread: "5", commission: "0.65", viewVol: "", viewDrift: "", horizon: "", legs: [],
-      bt: "short_put", btDays: "252", btSeed: "0", btCapital: "100000", btPremium: "25", btCommission: "0.65", btFill: "100", btParams: {} },
-    catalog: null, spot: null, expiries: [], used: null,
+      bt: "short_put", btDays: "252", btSeed: "0", btCapital: "100000", btPremium: "25", btCommission: "0.65", btFill: "100", btParams: {},
+      fitModels: new Set(ALL_MODELS), fitExpiries: "6", fitMinDte: "7", fitWindow: "30",
+      priceModels: new Set(ALL_MODELS), pProduct: "vanilla", pRight: "call", pStrike: "100", pBarrierKind: "down-out", pBarrier: "90", pFixings: "12", pPaths: "50000", pSeed: "0",
+      hRight: "call", hStrike: "100", hVol: "", hCost: "5", hSteps: "", hRisk: "1", hPaths: "10000", hSeed: "0" },
+    catalog: null, plan: null, fitSmile: null, spot: null, expiries: [], used: null,
   };
   const expiryColor = W.palette();
   const setCatalog = (c) => {                                                               // a download changed what exists: the menu follows, and a chain that was deleted is not left selected
@@ -81,13 +94,14 @@
 
   /* ---------- the data this page needs before it can draw ---------- */
   W.catalog().then((c) => { O.catalog = c; if (!O.form.underlying && c.underlyings.length) O.form.underlying = (c.underlyings.find((u) => u.id === "SPY") || c.underlyings[0]).id; if (!Q.$(O.view).hidden) Q.renderLab(O); }, () => {});
+  Q.api("/api/models/plan").then((p) => { O.plan = p; if (!Q.$(O.view).hidden && MODEL_MODES.has(O.mode)) Q.renderLab(O); }, () => {});            // an older app has no plan: the three model modes say so when they run
   const settings = () => ({ underlying: O.form.underlying, rate: O.form.rate === "" ? undefined : Number(O.form.rate) / 100, dividend: O.form.dividend === "" ? undefined : Number(O.form.dividend) / 100, premium: O.form.premium === "" ? undefined : Number(O.form.premium) / 100 });
   const chainQuery = () => ({ ...settings(), expiry: O.form.expiry || undefined, window: Number(O.form.window) / 100 });
   const key = (name, q) => name + ":" + JSON.stringify(q);
   const remember = (d) => { if (d && d.chain) { O.spot = d.chain.spot; O.expiries = d.chain.expiries; O.used = d.chain.expiry; syncExpiry(); } };
   function syncExpiry() {                                                                   // the expiry menu follows the chain that was last loaded
     const sel = Q.$(`${O.root} select[data-key=expiry]`); if (!sel) return;
-    sel.replaceChildren(); const first = h("option", "", sel, "Nearest"); first.value = "";
+    sel.replaceChildren(); const first = h("option", "", sel, O.mode === "price" || O.mode === "hedge" ? "About three months" : "Nearest"); first.value = "";
     for (const e of O.expiries) { const o = h("option", "", sel, `${e.expiry} · ${e.dte} days`); o.value = e.expiry; if (e.expiry === O.form.expiry) o.selected = true; }
   }
   /* The chain for the current settings, from the cache if it was fetched already. Other modes use its spot and expiries (to suggest strikes). */
@@ -154,6 +168,13 @@
   O.check = () => {
     if (!O.catalog) return "Loading the list of underlyings…";
     if (!O.form.underlying) return "There is no underlying to analyse.";
+    if (O.mode === "fit" && !O.form.fitModels.size) return "Choose at least one model to fit.";
+    if (O.mode === "price" && !O.form.priceModels.size) return "Choose at least one model to price under.";
+    if (O.mode === "price" && O.form.pProduct === "barrier") {
+      const level = Number(O.form.pBarrier), down = O.form.pBarrierKind.startsWith("down");
+      if (down && !(level < 100)) return "A down barrier must be below the price: under 100% of it.";
+      if (!down && !(level > 100)) return "An up barrier must be above the price: over 100% of it.";
+    }
     return "";
   };
   O.sections = (panel) => {
@@ -168,12 +189,15 @@
       if (m === "chain") Q.labField(b, { key: "window", label: "Strikes within", kind: "choice", options: WINDOWS }, f, rerun);
       if (m === "chain") { Q.labField(b, { key: "hideStale", label: "Hide strikes where both quotes are stale", kind: "bool" }, f, () => O.draw()); Q.labField(b, { key: "minOi", label: "Least open interest (calls + puts)", kind: "number", step: 1, min: 0 }, f, () => O.draw()); }
     }
-    if (ANALYTIC.has(m) || m === "risk" || m === "strategy") {
+    if (ANALYTIC.has(m) || MODEL_MODES.has(m) || m === "risk" || m === "strategy") {
       const b = sec("Assumptions", false);
       for (const s of [{ key: "rate", label: "Interest rate (% a year, blank = 4)", kind: "number", step: 0.25 }, { key: "dividend", label: "Dividend yield (% a year, blank = the ETF's)", kind: "number", step: 0.1, min: 0 },
         { key: "premium", label: "Implied over realised variance (%)", kind: "number", step: 1, help: "How much richer the model's implied volatility is than the recent realised volatility. The simulated chain only." }]) Q.labField(b, s, f, after);
       h("p", "hint", b, "Used to build and price the simulated chain. They change the numbers, so they are part of what you are looking at; a chain from your own file ignores them except for the rate and dividend it lacks, and a downloaded chain brings its own (the dividend of each expiry is read from the market's forward).");
     }
+    if (m === "fit") modelFitForm(sec);
+    if (m === "price") modelPriceForm(sec);
+    if (m === "hedge") modelHedgeForm(sec);
     if (m === "risk") {
       const b = sec("2. The book");
       h("p", "hint", b, "Contracts are 100 shares. Quantities: positive buys, negative sells. Strikes and expiries need not be listed: each is priced from the surface at its strike and nearest expiry.");
@@ -247,6 +271,20 @@
         return steps;
       }, "Reading the chain…").then(() => { const d = O.results[m] && O.results[m].data; if (d && m !== "surface") remember(d); if (m === "chain" || m === "smile") syncExpiry(); });
     }
+    if (m === "fit") return W.request(O, () => {
+      if (!f.fitModels.size) throw new Error("Choose at least one model to fit");
+      return [{ modes: ["fit"], job: true, path: "/api/models/fit", body: { ...settings(), models: [...f.fitModels], max_expiries: Number(f.fitExpiries), min_dte: Number(f.fitMinDte), window: Number(f.fitWindow) / 100 } }];
+    }, "Fitting the models…");
+    if (m === "price") return W.request(O, () => {
+      if (!f.priceModels.size) throw new Error("Choose at least one model to price under");
+      const body = { ...settings(), product: f.pProduct, call: f.pRight === "call", expiry: f.expiry || undefined, strike_pct: Number(f.pStrike), models: [...f.priceModels] };
+      if (f.pProduct === "barrier") Object.assign(body, { barrier_kind: f.pBarrierKind, barrier_pct: Number(f.pBarrier) });
+      if (f.pProduct === "asian") body.fixings = Number(f.pFixings);
+      if (f.pProduct === "barrier" || f.pProduct === "asian") Object.assign(body, { paths: Number(f.pPaths), seed: Number(f.pSeed) });
+      return [{ modes: ["price"], job: true, path: "/api/models/price", body }];
+    }, "Pricing under the models…");
+    if (m === "hedge") return W.request(O, () => [{ modes: ["hedge"], job: true, path: "/api/models/hedge", body: { ...settings(), call: f.hRight === "call", expiry: f.expiry || undefined, strike_pct: Number(f.hStrike),
+      vol: f.hVol === "" ? undefined : Number(f.hVol), cost_bp: Number(f.hCost), steps: f.hSteps === "" ? undefined : Number(f.hSteps), risk_aversion: Number(f.hRisk), paths: Number(f.hPaths), seed: Number(f.hSeed) } }], "Costing the hedge…");
     if (m === "risk") return W.request(O, () => {
       const spots = W.percentList(f.spotShocks, "Price moves"), vols = W.percentList(f.volShocks, "Implied volatility moves");
       return [{ modes: ["risk"], path: "/api/options/portfolio-risk", body: { ...settings(), positions: legsBody(f.book, "book"), spot_shocks: spots, vol_shocks: vols, days: Number(f.days) || 0 } }];
@@ -265,16 +303,19 @@
   };
   O.auto = () => { if (ANALYTIC.has(O.mode) && O.form.underlying) O.run(true); };
   O.empty = (root) => {
-    const text = { risk: ["Value a book of options", "Add the options and shares you hold (or load the example), choose the moves to test and revalue: Greeks by expiry and a stress grid of price against implied volatility."],
+    const text = { fit: ["Fit the pricing models to this chain", "Fit Merton, Kou, variance gamma, NIG and Heston to the out-of-the-money quotes and see which reproduces the smile, how much better it does than a flat volatility, and what each implies for the odds of a fall. About half a minute for all five."],
+      price: ["Price a product under every model", "Choose a digital, barrier, average-price or American option. Each model is fitted to the chain (once per session) and prices it. The spread between them, set beside their spread on the plain option at the same strike (which is only how well each fits), is the model risk of the product, which no vanilla quote can tell you."],
+      hedge: ["Cost the hedge of an option", "Hedging a sold option means trading the underlying, and every trade costs. See what that does to the price, where the no-trade band lies and which rule loses least on simulated paths."],
+      risk: ["Value a book of options", "Add the options and shares you hold (or load the example), choose the moves to test and revalue: Greeks by expiry and a stress grid of price against implied volatility."],
       strategy: ["Draw what a structure pays", "Pick a structure and press the button: payoff at expiry, today and half way, break-evens, the most it can make and lose, the margin it needs and the odds."],
       backtest: ["Backtest a rolling option strategy", "Sell or buy premium on a schedule on a simulated option market, with the costs and the hedging booked. The market pays the premium it was built with, so this checks the machinery."] }[O.mode] || ["Read the chain", "Choose an underlying."];
     Q.labEmpty(root, O, text[0], [text[1]], O.runLabel[O.mode]);
   };
   O.draw = () => Q.drawLab(O);
-  O.build = (root, d, body) => ({ overview: buildOverview, chain: buildChain, smile: buildSmile, surface: buildSurface, risk: buildRisk, strategy: buildStrategy, backtest: buildBacktest })[O.mode](root, d, body);
+  O.build = (root, d, body) => ({ overview: buildOverview, chain: buildChain, smile: buildSmile, surface: buildSurface, fit: buildFit, price: buildPrice, hedge: buildHedge, risk: buildRisk, strategy: buildStrategy, backtest: buildBacktest })[O.mode](root, d, body);
 
   /* ---------- overview ---------- */
-  const header = (root, title, sub) => Q.labHead(root, title, sub, GUIDE);
+  const header = (root, title, sub, guide) => Q.labHead(root, title, sub, guide || GUIDE);
   function buildOverview(root, d) {
     const ov = d.overview, ref = ov.reference_index, sk = ov.skew || {};
     remember(d);
@@ -496,6 +537,184 @@
     const trades = h("div", "card", ch); h("h3", "", trades, "Latest trades");
     table(trades, [{ label: "Date", get: (x) => x.date }, { label: "Instrument", get: (x) => (x.kind === "option" ? `${x.right === "C" ? "Call" : "Put"} ${num(x.strike, 2)} ${x.expiry}` : x.kind) }, { label: "Qty", num: true, get: (x) => num(x.quantity, 0) }, { label: "Price", num: true, get: (x) => num(x.price, 2) }, { label: "Cost ($)", num: true, get: (x) => num(x.cost, 2) }], d.recent_trades);
     W.hint(root, "The market pays the variance premium it was built with and has jumps, so a premium seller does well here by construction: the result checks that costs, hedges and settlement are booked correctly, not that the premium exists in your market.");
+  }
+
+  /* ---------- the model forms ---------- */
+  const modelItems = () => (O.plan ? O.plan.models.map((x) => [x.id, x.label, x.text]) : ALL_MODELS.map((id) => [id, id, ""]));
+  function modelFitForm(sec) {
+    const f = O.form, after = () => Q.syncLab(O), b = sec("2. Models to fit");
+    Q.checkList(b, "Fit these models", modelItems(), f.fitModels, after);
+    h("p", "hint", b, "Each is fitted by least squares to the out-of-the-money quotes (puts below the forward, calls above), every strike weighed by its vega so that the wings count. All five take about half a minute.");
+    const c = sec("3. Which quotes", false);
+    for (const x of [{ key: "fitExpiries", label: "Expiries to use (2 to 8)", kind: "number", step: 1, min: 2, max: 8 }, { key: "fitMinDte", label: "Shortest expiry (days)", kind: "number", step: 1, min: 1, max: 120, help: "Very short expiries are dominated by rounding and single jumps" },
+      { key: "fitWindow", label: "Strikes within (% of the forward)", kind: "number", step: 1, min: 5, max: 60 }]) Q.labField(c, x, f, after);
+  }
+  const productNote = (id) => { const p = O.plan && O.plan.products.find((x) => x.id === id); return p ? p.text : ""; };
+  const expiryField = (box, after) => Q.labField(box, { key: "expiry", label: "Expiry", kind: "choice", options: [["", "About three months"], ...O.expiries.map((e) => [e.expiry, `${e.expiry} · ${e.dte} days`])] }, O.form, after);
+  function modelPriceForm(sec) {
+    const f = O.form, after = () => Q.syncLab(O), b = sec("2. The product");
+    Q.labField(b, { key: "pProduct", label: "Product", kind: "choice", options: O.plan ? O.plan.products.map((p) => [p.id, p.label]) : [["vanilla", "European option"]] }, f, () => { if (f.pProduct === "american") f.pRight = "put"; Q.renderLab(O); });
+    h("p", "hint", b, productNote(f.pProduct));
+    Q.labField(b, { key: "pRight", label: "Call or put", kind: "choice", options: [["call", "Call"], ["put", "Put"]] }, f, after);
+    expiryField(b, after);
+    Q.labField(b, { key: "pStrike", label: "Strike (% of the price)", kind: "number", step: 0.5, min: 20, max: 300 }, f, after);
+    if (f.pProduct === "barrier") {
+      Q.labField(b, { key: "pBarrierKind", label: "Barrier", kind: "choice", options: (O.plan ? O.plan.barriers : ["down-out", "up-out", "down-in", "up-in"]).map((k) => [k, k.replace("-", " and ")]) }, f, () => { f.pBarrier = f.pBarrierKind.startsWith("down") ? "90" : "110"; Q.renderLab(O); });
+      Q.labField(b, { key: "pBarrier", label: "Barrier level (% of the price)", kind: "number", step: 0.5, min: 10, max: 400, help: "Below 100 for a down barrier, above 100 for an up barrier" }, f, after);
+    }
+    if (f.pProduct === "asian") Q.labField(b, { key: "pFixings", label: "Averaging dates", kind: "number", step: 1, min: 2, max: 252 }, f, after);
+    if (f.pProduct === "barrier" || f.pProduct === "asian") for (const x of [{ key: "pPaths", label: "Simulated paths", kind: "number", step: 5000, min: 5000, max: 200000 }, { key: "pSeed", label: "Random seed", kind: "number", step: 1, min: 0 }]) Q.labField(b, x, f, after);
+    const c = sec("3. Models");
+    Q.checkList(c, "Price under these models", modelItems(), f.priceModels, after);
+    h("p", "hint", c, "Each model is fitted to the chain first (about half a minute for all five, once in a session). Black-Scholes at the at-the-money volatility is always shown beside them.");
+    if (!O.expiries.length && O.form.underlying) context();
+  }
+  function modelHedgeForm(sec) {
+    const f = O.form, after = () => Q.syncLab(O), b = sec("2. The option");
+    Q.labField(b, { key: "hRight", label: "Call or put", kind: "choice", options: [["call", "Call"], ["put", "Put"]] }, f, after);
+    expiryField(b, after);
+    Q.labField(b, { key: "hStrike", label: "Strike (% of the price)", kind: "number", step: 0.5, min: 20, max: 300 }, f, after);
+    const c = sec("3. Costs and hedging");
+    for (const x of [{ key: "hVol", label: "Volatility (% a year, blank = the at-the-money volatility)", kind: "number", step: 0.5, min: 1, max: 300 },
+      { key: "hCost", label: "Cost of one trade (basis points of the value traded)", kind: "number", step: 0.5, min: 0, max: 500, help: "Half the relative bid-ask spread plus fees: a few basis points for a liquid ETF, tens for a thin stock" },
+      { key: "hSteps", label: "Rebalancing dates (blank = every trading day)", kind: "number", step: 1, min: 2, max: 504 },
+      { key: "hRisk", label: "Risk aversion (in units of the option's price)", kind: "number", step: 0.1, min: 0.01, max: 100, help: "A loss of the option's whole price is worth this many units of utility: 1 is moderate, 0.1 very tolerant, 10 timid" },
+      { key: "hPaths", label: "Simulated paths", kind: "number", step: 1000, min: 1000, max: 40000 }, { key: "hSeed", label: "Random seed", kind: "number", step: 1, min: 0 }]) Q.labField(c, x, f, after);
+    h("p", "hint", c, "The simulation sells the option at its Black-Scholes price and hedges it on paths of that model with the volatility above: nothing else is simulated.");
+    if (!O.expiries.length && O.form.underlying) context();
+  }
+
+  /* ---------- model fit ---------- */
+  const GREEK = { sigma: "σ", theta: "θ", nu: "ν", kappa: "κ", xi: "ξ", rho: "ρ", lam: "λ", mu_j: "μ_J", sigma_j: "σ_J", v0: "v₀", p: "p", eta1: "η₁", eta2: "η₂" };
+  const pnum = (v) => (Q.bad(v) ? "n/a" : Math.abs(v) >= 100 ? v.toFixed(0) : Math.abs(v) >= 1 ? v.toFixed(2) : v.toPrecision(3));
+  const paramText = (m) => Object.entries(m.params).map(([k, v]) => {
+    const se = m.std_errors[k], edge = m.at_bounds.includes(k), loose = !Q.bad(se) && Math.abs(se) > 5 * Math.abs(v);                 // a parameter on the edge of its range, or known to within many times its size, has no usable standard error
+    return `${GREEK[k] || k} ${pnum(v)}${edge ? " (at the edge of its range: not a measurement)" : loose ? " (not pinned down by the quotes)" : Q.bad(se) ? "" : ` ±${pnum(se)}`}`;
+  }).join(" · ");
+  function buildFit(root, d) {
+    const best = d.models[0], dens = d.density, tails = dens.tails, bs = tails.find((t) => t.id === "bs"), bt = tails.find((t) => t.id === d.best), dte = Math.round(dens.dte), days = d.quotes.expiries.map((e) => e.dte);
+    header(root, `${nameOf(d)}: option models fitted to the chain`, `${d.quotes.n} out-of-the-money quotes · ${d.quotes.expiries.length} expiries from ${Math.round(Math.min(...days))} to ${Math.round(Math.max(...days))} days · price ${money(d.spot, 2)}`, GUIDES.fit);
+    W.provenance(root, d);
+    const k = h("div", "earnrow", root);
+    tile(k, "Best model", best.label, { text: `${num(best.rmse * 100, 2)} pts error · ${pct(best.explained, 0)} of the smile explained` }, "", "Root-mean-square gap between the model's implied volatilities and the quotes, in volatility points. 'Explained' is one minus the squared ratio of that error to the flat-volatility error.");
+    tile(k, "Flat volatility", `${num(d.flat_rmse * 100, 2)} pts`, { text: "the error to beat" }, "", "The error of the best constant volatility for each expiry: what a model must beat to claim that it captured the smile.");
+    tile(k, `A 10% fall in ${dte} days`, bt ? pct(bt.p_down_10, 1) : "n/a", { text: `${best.label}; Black-Scholes ${pct(bs.p_down_10, 1)}` }, "", "The risk-neutral probability that the price ends at least a tenth lower at the expiry nearest 30 days, from the density the best model implies. It includes the market's price of crash risk: it is not a forecast.");
+    tile(k, "Skew of the implied returns", bt ? num(bt.skewness, 2) : "n/a", { text: bt ? `excess kurtosis ${num(bt.excess_kurtosis, 2)}` : "" }, "", "Skewness and excess kurtosis of the log return at that expiry, under the best model. A lognormal (Black-Scholes) has none.");
+    tile(k, "Time to fit", `${num(d.models.reduce((a, m) => a + m.seconds, 0), 0)} s`, { text: `${d.models.length} model${d.models.length === 1 ? "" : "s"}, ${d.models.reduce((a, m) => a + m.n_evals, 0)} evaluations` });
+    const ch = h("div", "charts", root);
+    const err = [...d.models.map((m) => ({ label: m.label, value: m.rmse * 100, color: modelColor(m.id), tip: [["Largest error", num(m.max_error * 100, 2) + " pts"], ["Parameters", String(m.n_params)]] })), { label: "Flat volatility", value: d.flat_rmse * 100, color: css("--muted"), tip: [["Note", "the best flat volatility for each expiry"]] }];
+    chartCard(ch, "How far each model is from the quotes", "Root-mean-square error in implied-volatility points (1 point is a volatility of 20% against 21%). The grey bar is the best flat volatility for each expiry: a model that does not beat it has learned nothing about the smile.", { wide: true,
+      draw: (b) => C.hbars(b, { rows: err, format: (v) => v.toFixed(2), tipFormat: (v) => v.toFixed(2) + " pts", name: "Error", label: "Fit error by model", labelWidth: 200, color: (v, row) => row.color }),
+      table: (b) => table(b, [{ label: "Model", get: (x) => x.label }, { label: "Error (pts)", num: true, get: (x) => num(x.value, 2) }], err) });
+    const nearest = d.smiles.reduce((best, x, i) => (Math.abs(x.dte - 30) < Math.abs(d.smiles[best].dte - 30) ? i : best), 0);       // the first view is the expiry nearest 30 days, where the density below is drawn
+    const si = O.fitSmile === null || O.fitSmile >= d.smiles.length ? nearest : O.fitSmile, sm = d.smiles[si];
+    const pickRow = h("div", "filters", root);
+    W.pills(pickRow, d.smiles.map((x, i) => [String(i), `${Math.round(x.dte)} days`, `${x.expiry}: ${Math.round(x.dte)} days`]), String(si), (v) => { O.fitSmile = Number(v); O.draw(); }, "Expiry of the smile");
+    const grid = h("div", "charts", root), ivs = [...sm.market, ...Object.values(sm.models).flat()];
+    chartCard(grid, `Smile at ${Math.round(sm.dte)} days: the quotes and each model`, "Implied volatility by strike. The dots are the market's out-of-the-money quotes; a line that follows them reproduces the smile, one that goes straight does not.", { wide: true,
+      draw: (b) => C.line(b, { xs: sm.strike, xLabel: "Strike", series: [{ name: "Quotes", color: modelColor("market"), values: sm.market, dots: true, dotSize: 3, width: 1 }, ...d.models.map((m) => ({ name: m.label, color: modelColor(m.id), values: sm.models[m.id], width: 2 }))],
+        yFormat: volFormat(ivs), tipFormat: (v) => pct(v, 1), xFormat: (v) => num(v, 0), tipTitle: (i) => `Strike ${num(sm.strike[i], 2)} (${((Math.exp(sm.log_moneyness[i]) - 1) * 100).toFixed(1)}% from the forward)`, height: 290, label: "Fitted smiles", vlines: [{ x: sm.forward, label: "Forward" }], endLabels: false }),
+      table: (b) => table(b, [{ label: "Strike", num: true, get: (n) => num(sm.strike[n], 2) }, { label: "Quotes", num: true, get: (n) => pct(sm.market[n], 2) }, ...d.models.map((m) => ({ label: m.label, num: true, get: (n) => (sm.models[m.id][n] === null ? "" : pct(sm.models[m.id][n], 2)) }))], sm.strike.map((_, n) => n)) });
+    const curves = [{ name: "Black-Scholes", color: modelColor("bs"), values: dens.bs, dash: "5 4", width: 1.5 }, ...d.models.filter((m) => dens.curves[m.id]).map((m) => ({ name: m.label, color: modelColor(m.id), values: dens.curves[m.id], width: 2 }))];
+    chartCard(grid, `What the quotes imply for the price in ${dte} days`, "The risk-neutral density of the log return: the chance, in percent, of ending in each one-percent slice. Compared with the dashed lognormal of Black-Scholes, a skewed market puts more weight on a big fall and less on a modest rise.", {
+      draw: (b) => C.line(b, { xs: dens.x, xLabel: "Return to expiry (log, %)", series: curves, yFormat: (v) => pct(v, 0), tipFormat: (v) => pct(v, 2), xFormat: (v) => v.toFixed(0) + "%", height: 260, label: "Implied density", endLabels: false, vlines: [{ x: 0, label: "Today" }] }),
+      table: (b) => table(b, [{ label: "Return (%)", num: true, get: (n) => num(dens.x[n], 1) }, ...curves.map((c) => ({ label: c.name, num: true, get: (n) => pct(c.values[n], 3) }))], dens.x.map((_, n) => n).filter((n) => n % 8 === 0)) });
+    const tiny = (arr) => arr.map((v) => (v < 1e-5 ? null : v));                                                          // a probability under 0.001% has no place on the log axis
+    const drops = [{ name: "Black-Scholes", color: modelColor("bs"), values: tiny(dens.bs_drop), dash: "5 4", width: 1.5 }, ...d.models.filter((m) => dens.drop_curves[m.id]).map((m) => ({ name: m.label, color: modelColor(m.id), values: tiny(dens.drop_curves[m.id]), width: 2 }))];
+    chartCard(grid, "The chance of a fall at least this big", `Risk-neutral probability that the price is down by at least this much in ${dte} days, on a log scale so that the tail can be seen. The gap to the grey line is what the market charges for crash protection beyond a lognormal's.`, {
+      draw: (b) => C.line(b, { xs: dens.drop_pct, xLabel: "Fall (% of the price)", xWhole: true, log: true, series: drops, yFormat: (v) => pct(v, v < 0.001 ? 3 : v < 0.01 ? 2 : v < 0.1 ? 1 : 0), tipFormat: (v) => pct(v, 3), xFormat: (v) => v.toFixed(0) + "%", height: 260, label: "Chance of a fall", endLabels: false }),
+      table: (b) => table(b, [{ label: "Fall", num: true, get: (n) => `${dens.drop_pct[n]}%` }, ...drops.map((c) => ({ label: c.name, num: true, get: (n) => (c.values[n] === null ? "under 0.001%" : pct(c.values[n], 3)) }))], dens.drop_pct.map((_, n) => n).filter((n) => [1, 2, 4, 5, 9, 14, 19, 29].includes(n + 1))) });
+    const fits = h("div", "card wide", grid); h("h3", "", fits, "The fitted parameters");
+    table(fits, [{ label: "Model", get: (m) => m.label }, { label: "Error (pts)", num: true, get: (m) => num(m.rmse * 100, 2) }, { label: "Largest (pts)", num: true, get: (m) => num(m.max_error * 100, 2) }, { label: "Explained", num: true, get: (m) => pct(m.explained, 0) },
+      { label: "Conditioning", num: true, get: (m) => (Q.bad(m.condition) ? "n/a" : m.condition.toExponential(0)) }, { label: "Parameters (± one standard error)", get: paramText }], d.models);
+    W.hint(fits, "Standard errors are the least-squares ones (they say how well the quotes pin each parameter down, not whether the model is right). A parameter at the edge of its range is not a measurement; a large conditioning number means some combination of parameters is not determined by the quotes.");
+    const tl = h("div", "card wide", grid); h("h3", "", tl, `What each model implies at ${dte} days`);
+    table(tl, [{ label: "Model", get: (t) => t.label }, { label: "Fall of 10%", num: true, get: (t) => pct(t.p_down_10, 1) }, { label: "Fall of 20%", num: true, get: (t) => pct(t.p_down_20, 2) }, { label: "Rise of 10%", num: true, get: (t) => pct(t.p_up_10, 1) },
+      { label: "Skewness", num: true, get: (t) => num(t.skewness, 2) }, { label: "Excess kurtosis", num: true, get: (t) => num(t.excess_kurtosis, 2) }], tails);
+    W.hint(root, "A calibration describes the risk-neutral measure: what the quotes imply, with the market's price of risk built in. It is the right input for pricing other products on the same underlying and the wrong one for forecasting.");
+  }
+
+  /* ---------- model prices ---------- */
+  const PRODUCT_NAME = { vanilla: "European option", digital: "Digital option", barrier: "Barrier option", asian: "Average-price option", american: "American option" };
+  function buildPrice(root, d) {
+    const sp = d.spec, sum = d.summary, names = { ...Object.fromEntries(d.models.map((m) => [m.id, m.label])) };
+    const bs = d.benchmarks.find((b) => b.id === "bs"), market = d.benchmarks.find((b) => b.id === "market"), best = sum && d.models.find((m) => m.id === sum.best);
+    const barrier = sp.product === "barrier" ? ` · ${sp.kind.replace("-", " and ")} at ${num(sp.H, 2)} (${pct(sp.H / sp.spot, 0)} of the price)` : sp.product === "asian" ? ` · averaged on ${sp.fixings} dates` : "";
+    header(root, `${PRODUCT_NAME[sp.product]} on ${nameOf(d)}`, `${sp.call ? "call" : "put"} · strike ${num(sp.K, 2)} (${pct(sp.K / sp.spot, 0)} of the price) · expiry ${sp.expiry} (${Math.round(sp.dte)} days)${barrier}`, GUIDES.price);
+    W.provenance(root, d);
+    const fmt = (v) => (Q.bad(v) ? "n/a" : sp.product === "digital" ? num(v, 4) : money(v, 3));
+    const k = h("div", "earnrow", root);
+    if (best) tile(k, "Best-fitting model", fmt(sum.best_price), { text: `${best.label} · fit error ${num(best.fit_error * 100, 2)} pts` }, "", "The price under the model that reproduces the chain's quotes most closely among those that can price this product.");
+    tile(k, "Black-Scholes", fmt(sum && sum.bs_price), { text: `at the at-the-money volatility ${pct(d.sigma_atm, 1)}` }, "", "One volatility for every strike: the price when the smile is ignored.");
+    if (market) tile(k, "The market's smile", fmt(market.price), { text: "Black-Scholes at this strike's own volatility" }, "", "A vanilla is worth what the quoted smile says. The models were fitted to reproduce it.");
+    if (sum) tile(k, "Range across models", `${fmt(sum.low)} to ${fmt(sum.high)}`, { text: sum.range_share === null ? "" : `${pct(sum.range_share, 1)} of the Black-Scholes price${sum.vanilla_range_share === null || sum.vanilla_range_share === undefined ? "" : `; the same models differ by ${pct(sum.vanilla_range_share, 1)} on the vanilla at this strike`}` }, "", "Lowest and highest price among the fitted models. On a vanilla the spread is only how well each model fits the quotes; on another product it is that plus what the quotes do not determine (model risk). Compare it with the same models' spread on the vanilla at this strike.");
+    if (sp.product === "american" && best && best.premium !== undefined) tile(k, "Early-exercise premium", fmt(best.premium), { text: `${best.label}: American ${fmt(best.price)} against European ${fmt(best.european)}` }, "", "What the right to exercise early adds to the European price under the same model.");
+    const ch = h("div", "charts", root), bsPrice = bs && bs.price, rel = Number.isFinite(bsPrice) && Math.abs(bsPrice) > 1e-9;
+    const dev = (r) => (rel ? ((r.price - bsPrice) / Math.abs(bsPrice)) * 100 : r.price - bsPrice), devText = (v) => `${W.signed(v, rel ? 1 : 3)}${rel ? "%" : ""}`;
+    const rows = [...d.benchmarks, ...d.models].filter((r) => r.price !== null && r.id !== "bs").map((r) => ({ label: r.id === "bs_continuous" ? "BS, continuous barrier" : r.id === "market" ? "Market smile" : r.label, value: dev(r), color: modelColor(r.id), id: r.id,
+      text: `${fmt(r.price)}${r.se ? ` ±${num(r.se, 3)}` : ""} · ${devText(dev(r))}`, tip: [["Price", fmt(r.price)]] }));
+    chartCard(ch, "How far each price is from Black-Scholes", `Each bar is a price against Black-Scholes at the at-the-money volatility (${fmt(bsPrice)}): to the right it is dearer, to the left cheaper (${rel ? "per cent" : "in the product's own units"}). Models fitted to the same quotes differ on a vanilla by how well each fits (the fit error is in the table below) and on another product also by what the quotes do not determine: compare the spread with the vanilla's.`, { wide: !(d.curve || d.boundary),
+      draw: (b) => C.hbars(b, { rows, format: (v) => (rel ? `${W.signed(v, 0)}%` : W.signed(v, 2)), tipFormat: devText, name: "Against Black-Scholes", label: "Price against Black-Scholes by model", labelWidth: 200, valueWidth: 190, color: (v, row) => row.color }),
+      table: (b) => table(b, [{ label: "Model", get: (x) => x.label }, { label: "Price", num: true, get: (x) => x.text }], rows) });
+    if (d.curve) {
+      const c = d.curve, base = c.curves.bs, series = Object.keys(c.curves).filter((m) => m !== "bs").map((m) => ({ name: names[m] || m, color: modelColor(m), values: c.curves[m].map((v, i) => v - base[i]), width: 2 }));
+      chartCard(ch, "How each model differs from Black-Scholes by strike", `Price under the model less the Black-Scholes price at the at-the-money volatility, for ${sp.product === "digital" ? "a digital" : "a vanilla"} ${sp.call ? "call" : "put"} at strikes from 80% to 120% of the price. The gap away from the money is the smile's effect.`, {
+        draw: (b) => C.line(b, { xs: c.strike_pct, xLabel: "Strike (% of the price)", series, baseline: 0, include: 0, yFormat: (v) => (sp.product === "digital" ? v.toFixed(2) : v.toFixed(1)), tipFormat: (v) => (v >= 0 ? "+" : "") + (sp.product === "digital" ? v.toFixed(4) : v.toFixed(3)), xFormat: (v) => v.toFixed(0) + "%",
+          height: 260, label: "Difference from Black-Scholes by strike", endLabels: false, vlines: [{ x: 100, label: "Price" }] }),
+        table: (b) => table(b, [{ label: "Strike", num: true, get: (n) => `${c.strike_pct[n].toFixed(0)}%` }, { label: "Black-Scholes", num: true, get: (n) => fmt(base[n]) }, ...Object.keys(c.curves).filter((m) => m !== "bs").map((m) => ({ label: names[m] || m, num: true, get: (n) => fmt(c.curves[m][n]) }))], c.strike_pct.map((_, n) => n).filter((n) => n % 2 === 0)) });
+    }
+    if (d.boundary) {
+      const lines = Object.entries(d.boundary), top = Math.max(...lines.flatMap(([, v]) => v.price));
+      chartCard(ch, "Where early exercise starts paying", `The price of the underlying at which exercising stops being optimal, by days left. Exercise below the line (a put). The line sits under the strike (${num(sp.K, 2)}) and falls as more time remains.`, {
+        draw: (b) => C.line(b, { xs: lines[0][1].dte, xLabel: "Days to expiry", xWhole: true, series: lines.map(([id, v]) => ({ name: id === "bs" ? "Black-Scholes" : v.label, color: modelColor(id), values: v.price, width: 2 })), include: sp.call ? top : sp.K, yFormat: (v) => num(v, 0), tipFormat: (v) => num(v, 2), xFormat: (v) => String(Math.round(v)),
+          height: 260, label: "Early-exercise boundary", endLabels: false }),
+        table: (b) => table(b, [{ label: "Days left", num: true, get: (n) => num(lines[0][1].dte[n], 0) }, ...lines.map(([id, v]) => ({ label: id === "bs" ? "Black-Scholes" : v.label, num: true, get: (n) => num(v.price[n], 2) }))], lines[0][1].dte.map((_, n) => n).filter((n) => n % 4 === 0)) });
+    }
+    const card = h("div", "card", root); h("h3", "", card, "Every price");
+    const diff = (r) => (r.price === null || !bs || !bs.price ? "" : `${W.signed(((r.price - bs.price) / Math.abs(bs.price)) * 100, 1)}%`);
+    const cols = [{ label: "Source", get: (r) => r.label }, { label: "Price", num: true, get: (r) => (r.price === null ? "not priced" : fmt(r.price)) }, { label: "± one s.e.", num: true, get: (r) => (r.se ? num(r.se, 3) : "") }, { label: "Against Black-Scholes", num: true, get: diff }];
+    if (sp.product === "american") cols.push({ label: "European", num: true, get: (r) => (r.european === undefined ? "" : fmt(r.european)) }, { label: "Early-exercise premium", num: true, get: (r) => (r.premium === undefined ? "" : fmt(r.premium)) });
+    cols.push({ label: "Fit error (pts)", num: true, get: (r) => (r.fit_error === null || r.fit_error === undefined ? "" : num(r.fit_error * 100, 2)) });
+    const hows = new Set([...d.benchmarks, ...d.models].map((r) => r.note || r.method).filter(Boolean));
+    if (hows.size > 1) cols.push({ label: "How", get: (r) => r.note || r.method });                          // the column appears only when the rows differ in method
+    table(card, cols, [...d.benchmarks, ...d.models]);
+    if (hows.size === 1) W.hint(card, [...hows][0] + ".");
+    W.hint(card, "A standard error is the Monte Carlo noise of that price (one sigma); the models are priced on the same random numbers, so their differences are less noisy than their levels. A model with a large fit error reproduces the vanillas poorly: weigh its exotic price less.");
+  }
+
+  /* ---------- hedging cost ---------- */
+  function buildHedge(root, d) {
+    const inp = d.inputs, last = d.leland.find((x) => x.steps === inp.steps) || d.leland[d.leland.length - 1], dpz = d.dpz, band = d.band, sims = Object.fromEntries(d.simulation.map((x) => [x.strategy, x]));
+    header(root, `Hedging a ${inp.call ? "call" : "put"} on ${nameOf(d)}`, `strike ${num(inp.strike, 2)} (${pct(inp.strike / inp.spot, 0)} of the price) · expiry ${inp.expiry} (${Math.round(inp.dte)} days) · volatility ${pct(inp.vol, 1)} · ${num(inp.cost_bp, 1)} bp a trade · ${inp.steps} rebalancing dates`, GUIDES.hedge);
+    W.provenance(root, d);
+    const k = h("div", "earnrow", root);
+    tile(k, "Black-Scholes price", money(d.premium, 3), { text: "with free trading" }, "", "The cost of replicating the option with a hedge that is rebalanced continuously and costs nothing.");
+    tile(k, "Seller's price with costs", money(last.seller_price, 3), { text: `Leland: rebalancing ${inp.steps} times, ${W.signed(((last.seller_price / d.premium) - 1) * 100, 1)}%` }, "", "Black-Scholes at Leland's higher volatility: what the seller of the option must charge to pay for hedging at this frequency and cost.");
+    tile(k, "Cost in volatility", W.points(last.seller_vol - inp.vol), { text: `Leland number ${num(last.le, 2)}` }, "", "The extra volatility Leland's price adds. Above a Leland number of one a buyer cannot replicate the option at a profit.");
+    tile(k, "Utility-based ask and bid", `${money(dpz.writer, 3)} / ${money(dpz.buyer, 3)}`, { text: `frictionless ${money(dpz.crr, 3)} · a binomial market` }, "", "The prices at which an investor with exponential utility is indifferent to writing (ask) or buying (bid) the option, hedging optimally with costs, in a 40-step binomial tree.");
+    tile(k, "No-trade band", `± ${num(band.half_width_at_spot, 3)} shares`, { text: "around the Black-Scholes delta, at today's price" }, "", "Whalley and Wilmott: trade only when the holding leaves this band, and then only to its edge.");
+    const ch = h("div", "charts", root), steps = d.leland.map((x) => x.steps), yours = steps.indexOf(inp.steps);
+    chartCard(ch, "What rebalancing more often costs", "Leland's price of the option against the number of rebalancing dates: the seller's price rises and the buyer's falls as trades multiply, because every trade pays the spread. The grey line is Black-Scholes with free trading; the buyer's line stops where the Leland number reaches one.", {
+      draw: (b) => C.line(b, { xs: steps.map((_, i) => i), xLabel: "Rebalancing dates", series: [{ name: "Seller", color: css("--s2"), values: d.leland.map((x) => x.seller_price), dots: true }, { name: "Black-Scholes", color: css("--muted"), values: d.leland.map(() => d.premium), dash: "5 4", width: 1.5 }, { name: "Buyer", color: css("--s1"), values: d.leland.map((x) => x.buyer_price), dots: true }],
+        yFormat: (v) => num(v, 2), tipFormat: (v) => money(v, 3), xFormat: (v) => (steps[Math.round(v)] === undefined ? "" : String(steps[Math.round(v)])), tipTitle: (i) => `${steps[i]} rebalancing dates`, xWhole: true, height: 260, label: "Leland price by rebalancing frequency", endLabels: false, vlines: yours >= 0 ? [{ x: yours, label: "Yours" }] : [] }),
+      table: (b) => table(b, [{ label: "Dates", num: true, get: (x) => x.steps }, { label: "Leland number", num: true, get: (x) => num(x.le, 3) }, { label: "Seller", num: true, get: (x) => money(x.seller_price, 3) }, { label: "Buyer", num: true, get: (x) => (x.buyer_price === null ? "cannot replicate" : money(x.buyer_price, 3)) }], d.leland) });
+    chartCard(ch, "The no-trade band around the delta", "The holding to keep, against the price of the underlying: the Black-Scholes delta (centre) and the edges of the Whalley-Wilmott band. Between the edges, do nothing; at an edge, trade back to it.", {
+      draw: (b) => C.line(b, { xs: band.spot, xLabel: "Price of the underlying", series: [{ name: "Upper edge", color: css("--s2"), values: band.high, width: 1.5 }, { name: "Delta", color: css("--s1"), values: band.delta, width: 2 }, { name: "Lower edge", color: css("--s2"), values: band.low, width: 1.5, dash: "5 4" }],
+        yFormat: (v) => v.toFixed(2), tipFormat: (v) => v.toFixed(3) + " shares", xFormat: (v) => num(v, 0), height: 260, label: "No-trade band", endLabels: false, vlines: [{ x: inp.spot, label: "Price" }] }),
+      table: (b) => table(b, [{ label: "Price", num: true, get: (n) => num(band.spot[n], 2) }, { label: "Lower edge", num: true, get: (n) => num(band.low[n], 3) }, { label: "Delta", num: true, get: (n) => num(band.delta[n], 3) }, { label: "Upper edge", num: true, get: (n) => num(band.high[n], 3) }], band.spot.map((_, n) => n).filter((n) => n % 6 === 0)) });
+    const hist = d.histogram, mids = hist.edges.slice(0, -1).map((e, i) => (e + hist.edges[i + 1]) / 2), labels = { delta: "Delta every date", leland: "Leland (sold dearer)", band: "Whalley-Wilmott band" }, colors = { delta: css("--s2"), leland: css("--s3"), band: css("--s1") };
+    const left = Math.max(...Object.values(hist.outside || {}), 0);
+    chartCard(ch, "Profit and loss of each hedging rule", `The result of selling the option and hedging it, on ${inp.paths.toLocaleString("en-US")} simulated paths, after every cost. A narrower hump nearer zero is a better hedge; the Leland rule is sold at a higher price, which moves its whole hump to the right.${left > 0.0005 ? ` The most extreme outcomes (at most ${pct(left, 1)} of the paths of a rule) are left off the picture.` : ""}`, { wide: true,
+      draw: (b) => C.histogram(b, { series: ["delta", "leland", "band"].map((id) => ({ name: labels[id], color: colors[id], edges: hist.edges, counts: hist.share[id] })), xFormat: (v) => W.signed(v, Number.isInteger(v) ? 0 : 1), markers: [{ x: 0, label: "Break-even" }], height: 240, label: "Profit and loss of the hedging rules" }),
+      table: (b) => table(b, [{ label: "P&L ($, bin centre)", num: true, get: (n) => W.signed(mids[n], 2) }, ...["delta", "leland", "band"].map((id) => ({ label: labels[id], num: true, get: (n) => pct(hist.share[id][n], 1) }))], mids.map((_, n) => n).filter((n) => n % 3 === 0)) });
+    const card = h("div", "card", root); h("h3", "", card, "The three rules on simulated paths");
+    table(card, [{ label: "Rule", get: (x) => labels[x.strategy] }, { label: "Premium received", num: true, get: (x) => money(x.premium, 3) }, { label: "Mean P&L ($)", num: true, get: (x) => W.signed(x.mean, 2) }, { label: "± s.e.", num: true, get: (x) => num(x.se, 3) }, { label: "Spread (std, $)", num: true, get: (x) => num(x.std, 2) },
+      { label: "5th percentile ($)", num: true, get: (x) => W.signed(x.q05, 2) }, { label: "95th percentile ($)", num: true, get: (x) => W.signed(x.q95, 2) }, { label: "Cost paid", num: true, get: (x) => money(x.cost, 3) }, { label: "Trades", num: true, get: (x) => num(x.trades, 1) }], d.simulation);
+    W.hint(card, `Selling at the Black-Scholes price and hedging at ${inp.steps} dates ${sims.delta.mean < 0 ? "loses" : "makes"} ${money(Math.abs(sims.delta.mean), 2)} on average, with ${money(sims.delta.cost, 2)} paid in costs. The band trades about ${num((sims.band.trades / Math.max(sims.delta.trades, 1)) * 100, 0)}% as often and pays ${num((sims.band.cost / Math.max(sims.delta.cost, 1e-9)) * 100, 0)}% of the cost, ${sims.band.std > sims.delta.std ? `at the price of a wider spread of outcomes (${num(sims.band.std, 2)} against ${num(sims.delta.std, 2)}): what is saved in costs is paid in risk` : `and here its spread of outcomes is no wider (${num(sims.band.std, 2)} against ${num(sims.delta.std, 2)})`}.`);
+    const dc = h("div", "card", root); h("h3", "", dc, "Utility-based prices in a binomial market");
+    table(dc, [{ label: "Measure", get: (x) => x[0] }, { label: "Value", num: true, get: (x) => x[1] }], [["Writer's (ask) price", money(dpz.writer, 3)], ["Buyer's (bid) price", money(dpz.buyer, 3)], ["Frictionless (Cox-Ross-Rubinstein) price", money(dpz.crr, 3)], ["Bid-ask spread of the option", money(dpz.spread, 3)],
+      ["Writer's no-trade band at the start (shares)", `${num(dpz.band[0], 3)} to ${num(dpz.band[1], 3)}`], ["Frictionless delta", num(dpz.crr_delta, 3)]]);
+    W.hint(dc, "Hodges-Neuberger / Davis-Panas-Zariphopoulou: between the buyer's and the writer's price the option cannot be hedged at a profit. The band shows the holdings at which the writer's best move is not to trade.");
   }
 
   Q.registerWorkspace("options", O);

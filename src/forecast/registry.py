@@ -8,10 +8,11 @@ from .gp import GPDrift, GPPrice, GPReturns
 from .markov import HiddenMarkov, MarkovReturns, MarkovVolatility
 from .montecarlo import FilteredHistorical, GarchMC, JumpDiffusion
 from .others import HAR, Analogues, ARMAReturns, KalmanTrend
+from .stochvol import GarchNIG, GarchVG, HestonMC, SVKalman
 
 BASELINE = "random_walk"
 BLEND = "blend"
-CLASSES = (RandomWalk, RiskMetrics, Historical, HullWhite, GBM, GarchMC, FilteredHistorical, JumpDiffusion, HAR, MarkovReturns, MarkovVolatility, HiddenMarkov, GPReturns, GPDrift, GPPrice, KalmanTrend, ARMAReturns, Analogues)
+CLASSES = (RandomWalk, RiskMetrics, Historical, HullWhite, GBM, GarchMC, FilteredHistorical, GarchVG, GarchNIG, HestonMC, JumpDiffusion, SVKalman, HAR, MarkovReturns, MarkovVolatility, HiddenMarkov, GPReturns, GPDrift, GPPrice, KalmanTrend, ARMAReturns, Analogues)
 METHODS: dict[str, Forecaster] = {c.name: c() for c in CLASSES}
 FAMILIES = ("baseline", "Monte Carlo", "Volatility", "Markov", "Gaussian process", "State space", "Time series", "Pattern matching", "Combination")
 DEFAULT = ("random_walk", "riskmetrics", "hull_white", "garch", "fhs", "har", "markov_volatility", "hmm", "gp_returns", "gp_drift", "kalman", "analog")

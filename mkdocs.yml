@@ -21,6 +21,7 @@ nav:
       - Free data for options, futures and crypto: free_data.md
       - Tuning a strategy's settings: tuning.md
       - Forecasting a stock's price, and how far to trust it: forecasting.md
+      - "Option models: what a chain implies, what an exotic is worth, what a hedge costs": option_models.md
       - Glossary: glossary.md
       - Chapter map: chapter_map.md
   - Technique guides: techniques/index.md

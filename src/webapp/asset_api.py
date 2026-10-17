@@ -205,13 +205,9 @@ class AssetApi:
         b = self._bundle()
         vol_frame = b.volume[underlying] if b.volume is not None and underlying in b.volume.columns else None
         try:
-            ctx = oa.underlying_context(underlying, b.prices[underlying], vol_frame)
+            chain, ctx, r, div = oa.simulated_chain(underlying, b.prices[underlying], vol_frame, rate, dividend, premium)
         except ValueError as exc:
             raise ApiError(str(exc)) from None
-        div = oa.DIVIDEND_YIELDS.get(underlying, 0.0) if dividend is None else dividend
-        r = oa.DEFAULT_RATE if rate is None else rate
-        scale = float(np.clip((ctx.dollar_volume if np.isfinite(ctx.dollar_volume) else 1e8) / 1e9, 0.05, 50.0)) * 600.0
-        chain = oa.prepare_chain(oa.build_model_chain(ctx.spot, ctx.as_of, ctx.rv_21, ctx.long_run_vol, r, div, premium, underlying, scale))
         notes = [f"The chain is a MODEL (an arbitrage-free SSVI surface) quoted at {underlying}'s real last close of {ctx.spot:,.2f} on {ctx.as_of.date()} and its real 21-day realised volatility {ctx.rv_21:.1%}.",
                  f"Rate {r:.2%} and dividend yield {div:.2%} are assumptions; the implied-over-realised variance premium is {premium:.0%}. Volume, open interest and quote ages are simulated."]
         return chain, ctx, "simulated", notes

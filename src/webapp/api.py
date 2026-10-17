@@ -74,10 +74,10 @@ SAFE_SLUG = re.compile(r"^[a-z0-9][a-z0-9_-]{0,80}$")
 # What the page needs from this server. 1 was the first catalogue; 2 added data sources (``sources``), the ticker-count check (``/api/requirements``), earnings and trades; 3 added the Execution and
 # Cash flows tabs (``/api/exec``, ``/api/cash``); 4 added the Options, Futures, Crypto and Machine learning workspaces (``asset_api``, ``ml_api``); 5 added the Free data downloads of the Options, Futures and
 # Crypto tabs (``data_api``) and the ``downloaded`` source kind those tabs now read; 6 added iTick data to the Futures, Crypto and Options cards; 7 added the Yahoo futures search and the Clear buttons
-# of the background runs (``/api/jobs/clear``); 8 added the Tune tab (``tune_api``); 9 added the Forecast tab (``forecast_api``). The page compares it with its own number and says so
+# of the background runs (``/api/jobs/clear``); 8 added the Tune tab (``tune_api``); 9 added the Forecast tab (``forecast_api``); 10 added the option-model modes of the Options tab (``models_api``). The page compares it with its own number and says so
 # when the server behind it is older (the files were updated while the app was running, so it still runs the old code): the whole page needs 2, and the newer tabs ask for 3 or more on their own, so an
 # older app still runs the Backtest tab.
-API_VERSION = 9
+API_VERSION = 10
 CODE_ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -191,11 +191,13 @@ class App:
         from .ml_api import MlApi
         from .tune_api import TuneApi
         from .forecast_api import ForecastApi
+        from .models_api import ModelsApi
 
         self.extra_get: dict = {"/api/jobs": lambda q=None: self.jobs_list()}   # path -> fn(query: dict) for GET /api/...?a=1&b=2
         self.extra_post: dict = {"/api/jobs/clear": self.jobs_clear}           # path -> fn(body: dict) for POST /api/...
         self.data = DataApi(self)                                  # the free-data downloads of the three asset tabs (their own worker, apart from the backtests)
-        for part in (AssetApi(self), MlApi(self), self.data, TuneApi(self), ForecastApi(self)):
+        assets = AssetApi(self)
+        for part in (assets, MlApi(self), self.data, TuneApi(self), ForecastApi(self), ModelsApi(self, assets)):
             self.extra_get.update(part.get_routes())
             self.extra_post.update(part.post_routes())
 

@@ -14,6 +14,7 @@
     quant docs build                      regenerate the strategy cards, chapter map and findings digest
     quant tune --model tsmom --space models.0.params.lookback=int:21:504 --trials 24   a hyperparameter search that counts its trials and deflates the winner
     quant forecast SPY --horizon 21       forecast a price as a distribution with Monte Carlo, Markov, Gaussian-process and other methods, and test each on the past (`--list` names them)
+    quant models fit SPY                  fit Merton, Kou, variance gamma, NIG and Heston to an option chain; also `price` (a digital, barrier, average-price or American option under every model) and `hedge` (what hedging costs when trades cost money)
     quant benchmark --models tsmom momentum   score time and peak memory of models on the default bundle
     quant registry list                   versioned models: stages, lineage, promotion
     quant algo list                       the execution algorithms and where each strategy of the taxonomy lives; `quant algo run --algos vwap aim+vwap is:risk_aversion=0.01` compares them on a simulated day
@@ -272,6 +273,76 @@ def cmd_forecast(args, config) -> int:
     print(format_report(ticker, asof, float(history.close[-1]), args.horizon, evaluation, now, verdict))
     if args.json:
         Path(args.json).write_text(json.dumps({"ticker": ticker, "asof": asof, "horizon": args.horizon, "evaluation": evaluation, "now": now, "verdict": verdict}, indent=1), encoding="utf-8")
+        print(f"\nwritten to {args.json}")
+    return 0
+
+
+def cmd_models(args, config) -> int:
+    """Option-pricing models on a chain: fit them, price a product under each, cost a hedge. The Options tab's three model views, in the terminal, from the same functions."""
+    import json
+    import sys as _sys
+
+    from .assets import option_models as om
+    from .assets import options_analytics as oa
+    from .webapp.payload import clean
+
+    if args.action == "list":
+        for m in om.plan()["models"]:
+            print(f"{m['id']:8s} {m['label']:32s} {', '.join(p['name'] for p in m['params'])}")
+        print("products: " + ", ".join(om.PRODUCTS) + "   barriers: " + ", ".join(om.BARRIERS))
+        return 0
+    try:
+        if args.chain:
+            from .derivatives.synthetic import load_option_csv
+
+            name, simulated = Path(args.chain).stem, False
+            try:
+                chain = oa.prepare_chain(load_option_csv(args.chain, underlying=name, default_rate=oa.DEFAULT_RATE if args.rate is None else args.rate, default_dividend=0.0 if args.dividend is None else args.dividend))
+            except (ValueError, OSError) as error:
+                raise ValueError(f"{args.chain}: {error}") from None
+        else:
+            bundle = _bundle(config, args.prices)
+            columns = {c.upper(): c for c in bundle.prices.columns}
+            if not args.underlying or args.underlying.upper() not in columns:
+                print(f"choose an underlying from {', '.join(bundle.prices.columns)}, or a chain file with --chain" + (f" ('{args.underlying}' is not in the data)" if args.underlying else ""), file=_sys.stderr)
+                return 2
+            name, simulated = columns[args.underlying.upper()], True
+            volume = bundle.volume[name] if bundle.volume is not None and name in bundle.volume.columns else None
+            chain = oa.simulated_chain(name, bundle.prices[name], volume, args.rate, args.dividend, args.premium)[0]
+        ids = om.check_models(args.models or None)
+        settings = {"max_expiries": int(om.check_range("max_expiries", args.max_expiries, *om.LIMITS["max_expiries"])), "min_dte": int(om.check_range("min_dte", args.min_dte, *om.LIMITS["min_dte"])),
+                    "window": float(om.check_range("window", args.window, *om.LIMITS["window"]))}
+
+        def progress(text: str) -> None:
+            print(text, file=_sys.stderr, flush=True)
+
+        if args.action == "hedge":
+            spec = om.product_spec(chain, "vanilla", expiry=args.expiry, dte=args.dte, strike_pct=args.strike, call=None if args.right is None else args.right == "call")
+            inputs = om.hedge_inputs(chain, spec, args.vol, args.cost_bp, args.steps, args.risk_aversion, args.paths or om.DEFAULTS["hedge_paths"], args.seed)
+            data, warnings, notes = om.hedge_report(name, spec, inputs, progress)
+            text = om.format_hedge(data, warnings)
+        else:
+            quotes = om.select_quotes(chain, **settings)
+            spec = (om.product_spec(chain, args.product, expiry=args.expiry, dte=args.dte, strike_pct=args.strike, call=None if args.right is None else args.right == "call", barrier_kind=args.barrier_kind,
+                                    barrier_pct=args.barrier, fixings=args.fixings, paths=args.paths or om.DEFAULTS["paths"], seed=args.seed) if args.action == "price" else None)
+            results, failed = om.FitCache().calibrate(quotes, ids, None, progress)
+            if not results:
+                print("no model could be fitted to this chain: " + "; ".join(f"{m}: {why}" for m, why in failed.items()), file=_sys.stderr)
+                return 2
+            if args.action == "fit":
+                data, warnings, notes = om.fit_report(name, quotes, results, failed, settings, simulated)
+                text = om.format_fit(data, warnings)
+            else:
+                data, warnings, notes = om.price_report(name, chain, spec, quotes, results, failed, simulated, progress)
+                text = om.format_price(data, warnings)
+    except (ValueError, OSError) as error:
+        print(error, file=_sys.stderr)
+        return 2
+    print(text)
+    if args.notes:
+        print("\nHow this was made:\n" + "\n".join(f"  - {n}" for n in notes))
+    if args.json:
+        Path(args.json).write_text(json.dumps(clean({"data": data, "warnings": warnings, "notes": notes}), indent=1), encoding="utf-8")
         print(f"\nwritten to {args.json}")
     return 0
 
@@ -624,6 +695,24 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--all", action="store_true", help="every method and their blend"); p.add_argument("--effort", choices=["quick", "standard", "thorough"], default="standard", help="how many past forecasts to test on (about 1, 3 and 10 minutes)")
     p.add_argument("--seed", type=int, default=0); p.add_argument("--prices", help="a CSV of prices (one date column and one column per asset) instead of the platform's ETFs"); p.add_argument("--json", help="also write the whole result to this file")
     p.set_defaults(func=cmd_forecast)
+    p = sub.add_parser("models", help="option-pricing models on a chain: fit Merton, Kou, variance gamma, NIG and Heston, price a digital, barrier, average-price or American option under each, and cost a hedge when trades cost money")
+    p.add_argument("action", choices=["fit", "price", "hedge", "list"], help="fit the models to the chain; price one product under every fitted model; cost the hedging of an option; list what exists")
+    p.add_argument("underlying", nargs="?", help="a column of the platform's ETFs (the chain is then a model at its real price: see the warning), or of --prices")
+    p.add_argument("--chain", help="a vendor option chain (CSV: date, expiry, strike, right, bid, ask, underlying, optionally rate and dividend) instead of an ETF"); p.add_argument("--prices", help="a CSV of prices instead of the platform's ETFs")
+    p.add_argument("--rate", type=float, help="interest rate as a fraction (default 0.04 for an ETF)"); p.add_argument("--dividend", type=float, help="dividend yield as a fraction (default the ETF's)")
+    p.add_argument("--premium", type=float, default=0.15, help="implied over realised variance premium of an ETF's model chain (default 0.15)")
+    p.add_argument("--models", nargs="*", help="fit or price under these (merton kou vg nig heston; default all five)")
+    p.add_argument("--max-expiries", type=int, default=6, help="expiries used in the fit (2 to 8)"); p.add_argument("--min-dte", type=int, default=7, help="shortest expiry in the fit, in days"); p.add_argument("--window", type=float, default=0.30, help="strikes within this log distance of the forward")
+    p.add_argument("--product", choices=["vanilla", "digital", "barrier", "asian", "american"], default="vanilla", help="what `price` prices")
+    p.add_argument("--right", choices=["call", "put"], help="call or put (default a call, a put for the American)"); p.add_argument("--strike", type=float, default=100.0, help="strike as a per cent of the price")
+    p.add_argument("--expiry", help="a listed expiry, 2026-12-18"); p.add_argument("--dte", type=float, default=90.0, help="or the listed expiry nearest this many days")
+    p.add_argument("--barrier-kind", default="down-out", choices=["down-out", "up-out", "down-in", "up-in"]); p.add_argument("--barrier", type=float, help="barrier as a per cent of the price (default 90 for a down barrier, 110 for an up barrier)")
+    p.add_argument("--fixings", type=int, default=12, help="averaging dates of an average-price option")
+    p.add_argument("--paths", type=int, help="simulated paths (default 50,000 to price, 10,000 to hedge)"); p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--vol", type=float, help="hedge: volatility in per cent (default the at-the-money volatility of the expiry)"); p.add_argument("--cost-bp", type=float, default=5.0, help="hedge: the cost of one trade in basis points of the value traded")
+    p.add_argument("--steps", type=int, help="hedge: rebalancing dates (default every trading day)"); p.add_argument("--risk-aversion", type=float, default=1.0, help="hedge: in units of the option's price")
+    p.add_argument("--notes", action="store_true", help="also print how the numbers were made"); p.add_argument("--json", help="also write the whole result to this file")
+    p.set_defaults(func=cmd_models)
     p = sub.add_parser("benchmark", help="score time and peak memory of registered models on the default bundle")
     p.add_argument("--models", nargs="*"); p.add_argument("--repeats", type=int, default=1); p.add_argument("--prices"); p.add_argument("--csv"); p.set_defaults(func=cmd_benchmark)
     p = sub.add_parser("algo", help="execution algorithms: where every strategy of the taxonomy lives, simulated orders (VWAP, TWAP, IS, AIM ...), the cost-risk frontier, baskets and high-frequency simulations")

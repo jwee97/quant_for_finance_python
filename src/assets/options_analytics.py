@@ -380,6 +380,17 @@ def underlying_context(symbol: str, prices: pd.Series, volume: pd.Series | None 
                              dollar_volume=dollar_volume)
 
 
+def simulated_chain(symbol: str, prices: pd.Series, volume: pd.Series | None = None, rate: float | None = None, dividend: float | None = None, premium: float = 0.15):
+    """``(chain, context, rate, dividend)``: the model chain of an ETF, an arbitrage-free SSVI surface quoted at its real last close and its real 21-day realised volatility (the platform holds no option quotes
+    for it), with the activity columns scaled to its dollar volume. ``rate`` defaults to ``DEFAULT_RATE``, ``dividend`` to the ETF's yield in ``DIVIDEND_YIELDS``, ``premium`` is the implied-over-realised variance premium."""
+    ctx = underlying_context(symbol, prices, volume)
+    div = DIVIDEND_YIELDS.get(symbol, 0.0) if dividend is None else dividend
+    r = DEFAULT_RATE if rate is None else rate
+    scale = float(np.clip((ctx.dollar_volume if np.isfinite(ctx.dollar_volume) else 1e8) / 1e9, 0.05, 50.0)) * 600.0
+    chain = prepare_chain(build_model_chain(ctx.spot, ctx.as_of, ctx.rv_21, ctx.long_run_vol, r, div, premium, symbol, scale))
+    return chain, ctx, r, div
+
+
 def reference_index_view(symbol: str, macro: pd.DataFrame | None, atm_at_tenor: float, as_of=None) -> dict | None:
     """The real implied-volatility index for the underlying, if the platform has one: its level, its one-year rank and percentile, and the chain's ATM volatility at the same tenor for comparison."""
     spec = REFERENCE_INDEX.get(symbol.upper())

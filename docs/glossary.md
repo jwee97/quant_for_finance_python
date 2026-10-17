@@ -52,7 +52,7 @@ See: [attribution](techniques/attribution.md)
 
 An option that can be exercised at any time up to its expiry, as stock and ETF options can; a European option only at expiry, as index options and Bitcoin options can. The right to exercise early has a value, so Black-Scholes, which prices a European option, understates an American one a little (mostly deep-in-the-money puts), and put-call parity holds for it only as an inequality.
 
-See: [option-chains-and-greeks](techniques/option-chains-and-greeks.md)
+See: [option-chains-and-greeks](techniques/option-chains-and-greeks.md), [exotic-and-american-options](techniques/exotic-and-american-options.md)
 
 ### Analogue forecast
 
@@ -96,6 +96,14 @@ The market price when an order was received. Implementation shortfall measures t
 
 See: [execution-algorithms](techniques/execution-algorithms.md)
 
+### Asian option
+
+*Also: average-price option*
+
+An option that pays on the average of the underlying's price on a set of dates instead of its price at expiry. Averaging damps the tails, so it is cheaper than the plain option and the models that disagree on a barrier disagree less on it. There is no closed form for the arithmetic average; the repository prices it by simulation with the geometric-average option, which does have one, as a control variate.
+
+See: [exotic-and-american-options](techniques/exotic-and-american-options.md)
+
 ### Attention
 
 A neural-network operation that lets each element of a sequence or graph take a learned weighted average of the others.
@@ -133,6 +141,12 @@ See: [backtest-engine-and-costs](techniques/backtest-engine-and-costs.md)
 A futures curve that slopes down: later contracts are cheaper than the front one. A long position earns the roll yield as its contract rolls up the curve.
 
 See: [futures-curves-carry-and-rolls](techniques/futures-curves-carry-and-rolls.md), [futures-and-commodity-curves](techniques/futures-and-commodity-curves.md)
+
+### Barrier option
+
+An option that is cancelled (knock-out) or only comes into being (knock-in) if the underlying touches a level before expiry. A knock-in plus the matching knock-out is the plain option. Watching the barrier on the daily close is a weaker condition than watching it continuously, which matters for the price.
+
+See: [exotic-and-american-options](techniques/exotic-and-american-options.md)
 
 ### Base rate
 
@@ -230,6 +244,12 @@ The number of independent bets per year; in the fundamental law, information rat
 
 See: [information-coefficient](techniques/information-coefficient.md)
 
+### Brennan-Schwartz algorithm
+
+A direct solution of the American option's step on a grid: eliminate as in Thomas's algorithm, then back-substitute from the end of the grid where the option is exercised, clipping each value at the payoff. It is exact when the exercise region is one interval at one end of the grid (a put, or a call on a dividend payer) and the matrix is an M-matrix.
+
+See: [finite-difference-solvers-and-linear-systems](techniques/finite-difference-solvers-and-linear-systems.md)
+
 ### Brier score
 
 The mean squared error between predicted probabilities and 0/1 outcomes; lower is better.
@@ -259,6 +279,14 @@ See: [performance-metrics](techniques/performance-metrics.md)
 The amount of money a strategy can run before its trading costs erase its edge; here, the assets at which net Sharpe halves.
 
 See: [execution-and-impact](techniques/execution-and-impact.md)
+
+### Carr-Madan FFT
+
+*Also: Lewis formula, Fourier pricing*
+
+Two ways to price a European option from the characteristic function of the log return. Lewis writes the price as one integral that the trapezoid rule evaluates to machine precision; Carr and Madan damp the call so that it has a Fourier transform and invert it with the fast Fourier transform for a whole grid of strikes at once.
+
+See: [option-pricing-models-and-calibration](techniques/option-pricing-models-and-calibration.md)
 
 ### Carry
 
@@ -300,11 +328,31 @@ The price of insurance against a borrower's default; an alternative-data indicat
 
 See: [macro-and-alternative-data](techniques/macro-and-alternative-data.md)
 
+### Cell Peclet number
+
+The ratio of the drift to the diffusion across one cell of a finite-difference grid, `|b| dx / sigma^2`. At more than one the central-difference matrix stops being an M-matrix, schemes oscillate and the Brennan-Schwartz algorithm is no longer exact; the grid is refined until the ratio is at most one.
+
+See: [finite-difference-solvers-and-linear-systems](techniques/finite-difference-solvers-and-linear-systems.md)
+
+### Characteristic function
+
+The expected value of `exp(i u X)` for a random variable `X`: the Fourier transform of its law. For the log return of a jump or stochastic-volatility model it is known in closed form when the density is not, and the price of a European option is an integral of it.
+
+See: [option-pricing-models-and-calibration](techniques/option-pricing-models-and-calibration.md)
+
 ### Christoffersen test
 
 A test that value-at-risk breaches are independent through time rather than clustered.
 
 See: [var-cvar-and-backtests](techniques/var-cvar-and-backtests.md)
+
+### CIR model
+
+*Also: Cox-Ingersoll-Ross*
+
+A model of a short interest rate (or of a variance) that is pulled back to a long-run level and whose noise shrinks as the rate approaches zero, so that it stays positive when `2 kappa theta >= sigma^2` (the Feller condition). Bond prices are closed forms; the variance of the Heston model follows the same equation.
+
+See: [short-rate-models-and-kalman-trackers](techniques/short-rate-models-and-kalman-trackers.md), [sde-simulation-and-estimation](techniques/sde-simulation-and-estimation.md)
 
 ### Clark-West test
 
@@ -376,6 +424,12 @@ The currency value of one price point of one contract: 50 dollars per index poin
 
 See: [unified-instrument-model](techniques/unified-instrument-model.md)
 
+### Control variate
+
+A quantity correlated with the one being estimated whose expected value is known, subtracted (with a fitted coefficient) from a Monte Carlo estimate to cut its variance without biasing it. The geometric-average option is the control for the arithmetic one.
+
+See: [exotic-and-american-options](techniques/exotic-and-american-options.md)
+
 ### Copula
 
 A function that joins separate return distributions into a joint one, so that the dependence can be modelled apart from the marginals. Tail dependence, how often assets crash together, depends on the copula family.
@@ -401,6 +455,14 @@ See: [fx-carry-and-momentum](techniques/fx-carry-and-momentum.md)
 Cross-validation that cuts the history into groups, tests every combination of a few of them, purges training observations whose labels overlap the test groups and embargoes the days after, and assembles the out-of-sample predictions into many complete paths. The spread over the paths shows how much a result depends on the order of events.
 
 See: [scenario-generation-and-backtesting](techniques/scenario-generation-and-backtesting.md)
+
+### Crank-Nicolson scheme
+
+*Also: theta method, Rannacher smoothing*
+
+A way to step a diffusion equation in time that averages the old and new values of the spatial operator: second order in time, but it rings on a payoff with a kink or a jump. Starting with a few implicit half-steps (Rannacher smoothing) and setting the initial condition to the payoff averaged over each cell removes the ringing.
+
+See: [finite-difference-solvers-and-linear-systems](techniques/finite-difference-solvers-and-linear-systems.md)
 
 ### Cross-exchange spread
 
@@ -464,7 +526,7 @@ See: [option-chains-and-greeks](techniques/option-chains-and-greeks.md)
 
 Trading the underlying so that the option position's delta is close to zero; the remaining profit comes from gamma and the difference between realised and implied volatility.
 
-See: [option-strategies-and-vol-premium](techniques/option-strategies-and-vol-premium.md)
+See: [option-strategies-and-vol-premium](techniques/option-strategies-and-vol-premium.md), [hedging-with-transaction-costs](techniques/hedging-with-transaction-costs.md)
 
 ### Desirability
 
@@ -501,6 +563,14 @@ See: [causal-inference](techniques/causal-inference.md)
 A generative model trained to reverse a gradual noising process, so it can turn noise into realistic samples.
 
 See: [diffusion-scenarios](techniques/diffusion-scenarios.md)
+
+### Digital option
+
+*Also: binary option*
+
+An option that pays a fixed amount (cash-or-nothing) or the asset itself (asset-or-nothing) if the price ends on one side of the strike. Its price is a risk-neutral probability, which is the slope of the smile in disguise, so a flat volatility prices it wrongly.
+
+See: [exotic-and-american-options](techniques/exotic-and-american-options.md)
 
 ### Dollar-cost averaging
 
@@ -660,6 +730,12 @@ Monte Carlo forecasting in which a volatility model such as GARCH supplies the s
 
 See: [monte-carlo-forecasting](techniques/monte-carlo-forecasting.md)
 
+### Flat-volatility benchmark
+
+The error of describing each expiry of an option chain by one constant volatility (its average). A pricing model that does not fit the chain better than this has not captured the smile.
+
+See: [option-pricing-models-and-calibration](techniques/option-pricing-models-and-calibration.md)
+
 ### Flight to quality
 
 *Also: flight to safety*
@@ -790,7 +866,7 @@ See: [regression-and-panel-statistics](techniques/regression-and-panel-statistic
 
 The age at which an observation's weight in an exponential average has fallen to one half.
 
-See: [volatility-forecasting](techniques/volatility-forecasting.md)
+See: [volatility-forecasting](techniques/volatility-forecasting.md), [sde-simulation-and-estimation](techniques/sde-simulation-and-estimation.md)
 
 ### Hamilton-Jacobi-Bellman equation
 
@@ -813,6 +889,12 @@ See: [har-kalman-and-analogue-forecasts](techniques/har-kalman-and-analogue-fore
 An online expert-aggregation rule that multiplicatively down-weights experts with recent losses.
 
 See: [online-learning](techniques/online-learning.md)
+
+### Heston model
+
+A model in which the variance of the price is itself random, pulled back to a long-run level, and moves against the price (a negative correlation gives the equity skew). It has a closed-form characteristic function, so options are priced by Fourier integrals, and it is simulated by the quadratic-exponential scheme.
+
+See: [option-pricing-models-and-calibration](techniques/option-pricing-models-and-calibration.md), [sde-simulation-and-estimation](techniques/sde-simulation-and-estimation.md)
 
 ### Hidden Markov model
 
@@ -942,19 +1024,25 @@ See: [event-driven-engine-and-ledger](techniques/event-driven-engine-and-ledger.
 
 A price model with ordinary small daily moves plus rare large jumps, whose rate and size are drawn at random: it gives the fat tails and sudden falls that a normal model lacks. Between jumps its volatility is constant, which is where it is too simple.
 
-See: [monte-carlo-forecasting](techniques/monte-carlo-forecasting.md)
+See: [monte-carlo-forecasting](techniques/monte-carlo-forecasting.md), [option-pricing-models-and-calibration](techniques/option-pricing-models-and-calibration.md)
 
 ### Kalman filter
 
 A recursive estimator of a hidden state that updates as each observation arrives; used here for time-varying hedge ratios and coefficients.
 
-See: [pairs-and-statistical-arbitrage](techniques/pairs-and-statistical-arbitrage.md), [online-learning](techniques/online-learning.md), [har-kalman-and-analogue-forecasts](techniques/har-kalman-and-analogue-forecasts.md)
+See: [pairs-and-statistical-arbitrage](techniques/pairs-and-statistical-arbitrage.md), [online-learning](techniques/online-learning.md), [har-kalman-and-analogue-forecasts](techniques/har-kalman-and-analogue-forecasts.md), [short-rate-models-and-kalman-trackers](techniques/short-rate-models-and-kalman-trackers.md)
 
 ### Kelly criterion
 
 The bet size that maximises long-run growth; fractional Kelly uses a safer fraction of it.
 
 See: [probabilistic-forecasting](techniques/probabilistic-forecasting.md)
+
+### Kou model
+
+A jump-diffusion model whose jump sizes are double-exponential: up jumps with one rate and down jumps with another, so the two tails can differ. It is Merton's model with a different law for the jumps.
+
+See: [option-pricing-models-and-calibration](techniques/option-pricing-models-and-calibration.md)
 
 ### Kupiec test
 
@@ -976,6 +1064,22 @@ A formula that blends the sample covariance matrix with a structured target to r
 
 See: [mean-variance-and-shrinkage](techniques/mean-variance-and-shrinkage.md)
 
+### Leland number
+
+*Also: Leland price*
+
+`Le = 2 sqrt(2/pi) cost / (sigma sqrt(dt))`: the cost of hedging an option by rebalancing every `dt`, with a proportional cost on each trade, as a fraction of its volatility term. The seller's price is Black-Scholes at the volatility `sigma sqrt(1 + Le)`, the buyer's at `sigma sqrt(1 - Le)`; at `Le >= 1` a buyer cannot replicate the option at a profit.
+
+See: [hedging-with-transaction-costs](techniques/hedging-with-transaction-costs.md)
+
+### Levy process
+
+*Also: exponential Lévy model*
+
+A process with independent, stationary increments, of which Brownian motion is the continuous case; jumps, of finite or infinite activity, make the others. Modelling the log price as a Lévy process (plus a drift that keeps the discounted price a martingale) gives the Merton, Kou, variance gamma and NIG models.
+
+See: [option-pricing-models-and-calibration](techniques/option-pricing-models-and-calibration.md)
+
 ### Liability-driven investing
 
 *Also: LDI*
@@ -989,6 +1093,12 @@ See: [cash-flow-strategies](techniques/cash-flow-strategies.md)
 The list of resting buy and sell orders at each price. Its depth and the arrival of market orders determine spread and price impact.
 
 See: [market-making-and-order-flow](techniques/market-making-and-order-flow.md)
+
+### Linear complementarity problem
+
+The condition that an American option's value satisfy the pricing equation where holding is better and equal the payoff where exercising is: find `x >= g` with `M x >= d` and `(M x - d)'(x - g) = 0`. It is solved by projected SOR or, in one pass for a tridiagonal matrix, by the Brennan-Schwartz algorithm.
+
+See: [finite-difference-solvers-and-linear-systems](techniques/finite-difference-solvers-and-linear-systems.md), [exotic-and-american-options](techniques/exotic-and-american-options.md)
 
 ### Linear opinion pool
 
@@ -1100,6 +1210,12 @@ A versioned record of trained models with their parameters, data, code version, 
 
 See: [research-operations](techniques/research-operations.md)
 
+### Model risk
+
+The part of a price or a risk number that comes from the choice of model rather than from the data. Models fitted to the same vanilla quotes differ on a vanilla only by how well each fits, and on an exotic by that and by what the quotes do not determine; the part of the range between their prices on an exotic that is not already there on the vanilla at the same strike is the model risk of the product.
+
+See: [exotic-and-american-options](techniques/exotic-and-american-options.md), [option-pricing-models-and-calibration](techniques/option-pricing-models-and-calibration.md)
+
 ### Momentum
 
 The tendency of recent winners to keep winning over the following weeks to months.
@@ -1148,11 +1264,19 @@ A standard-error estimator that is robust to autocorrelation and heteroskedastic
 
 See: [attribution](techniques/attribution.md)
 
+### NIG
+
+*Also: normal inverse Gaussian*
+
+A model of returns built by running a Brownian motion on an inverse-Gaussian clock: infinitely many small jumps, a free skew and kurtosis, and somewhat heavier tails than the variance gamma for the same variance. Used here to price options and to give a GARCH forecaster skewed, heavy-tailed shocks.
+
+See: [option-pricing-models-and-calibration](techniques/option-pricing-models-and-calibration.md), [stochastic-volatility-and-levy-forecasting](techniques/stochastic-volatility-and-levy-forecasting.md)
+
 ### No-trade band
 
 A rule not to trade unless a position is further than a set distance from its target, saving costs at the price of tracking error.
 
-See: [execution-and-impact](techniques/execution-and-impact.md)
+See: [execution-and-impact](techniques/execution-and-impact.md), [hedging-with-transaction-costs](techniques/hedging-with-transaction-costs.md)
 
 ### No-trade region
 
@@ -1174,6 +1298,12 @@ The number of contracts outstanding. In futures it moves from the expiring contr
 
 See: [futures-curves-carry-and-rolls](techniques/futures-curves-carry-and-rolls.md), [option-chains-and-greeks](techniques/option-chains-and-greeks.md)
 
+### Option model calibration
+
+Choosing a pricing model's parameters so that it reprices a chain of option quotes. The fit is judged by its error in volatility points, the standard errors and conditioning of the parameters, the parameters that sit on the edge of their allowed range, and its margin over the flat-volatility benchmark; it describes the risk-neutral measure and is not a forecast.
+
+See: [option-pricing-models-and-calibration](techniques/option-pricing-models-and-calibration.md)
+
 ### Order-flow imbalance
 
 *Also: OFI*
@@ -1181,6 +1311,12 @@ See: [futures-curves-carry-and-rolls](techniques/futures-curves-carry-and-rolls.
 The net change in resting buy and sell interest at the best quotes over an interval. It explains much of short-horizon mid-price change.
 
 See: [market-making-and-order-flow](techniques/market-making-and-order-flow.md)
+
+### Ornstein-Uhlenbeck process
+
+A process pulled back to a level `mu` at speed `theta` while noise of size `sigma` pushes it away; sampled every `dt` it is an AR(1) series with coefficient `e^{-theta dt}`. It is the standard model of a spread: its half-life is `ln 2 / theta`, the time to reach a level and the best levels to trade at have formulas, and it is simulated and fitted exactly.
+
+See: [pairs-and-statistical-arbitrage](techniques/pairs-and-statistical-arbitrage.md), [sde-simulation-and-estimation](techniques/sde-simulation-and-estimation.md)
 
 ### Out-of-sample R-squared
 
@@ -1277,6 +1413,14 @@ See: [crypto-carry](techniques/crypto-carry.md), [crypto-funding-basis-and-venue
 A network trained to make a differential equation's residual small at random points, plus its boundary conditions, instead of fitting data. Used here to price options without a grid.
 
 See: [deep-learning-generative-scenarios-and-pinns](techniques/deep-learning-generative-scenarios-and-pinns.md)
+
+### PIDE
+
+*Also: partial integro-differential equation*
+
+The pricing equation of a model with jumps: the diffusion equation plus a non-local term, an integral of the value over the jump sizes. Solved on a grid by treating small jumps as extra diffusion, summing large ones as a correlation with a fixed kernel and stepping that term explicitly.
+
+See: [finite-difference-solvers-and-linear-systems](techniques/finite-difference-solvers-and-linear-systems.md)
 
 ### Pinball loss
 
@@ -1416,6 +1560,14 @@ Learning the value of each action in each state by moving it toward the reward p
 
 See: [reinforcement-learning-from-tables-to-networks](techniques/reinforcement-learning-from-tables-to-networks.md)
 
+### QE scheme
+
+*Also: quadratic-exponential scheme*
+
+Andersen's method of simulating the variance of the Heston model: match the mean and variance of the exact step by a squared normal when the variance is high and by a point mass plus an exponential when it is low, with a log-price step corrected so the discounted price stays a martingale. It stays accurate with daily steps where Euler needs very many substeps.
+
+See: [sde-simulation-and-estimation](techniques/sde-simulation-and-estimation.md)
+
 ### QLIKE
 
 A loss function for comparing variance forecasts that is robust to noise in the realised-variance proxy; lower is better.
@@ -1487,6 +1639,12 @@ See: [machine-learning-for-returns](techniques/machine-learning-for-returns.md)
 Sizing assets so each contributes equally to portfolio risk.
 
 See: [risk-parity](techniques/risk-parity.md)
+
+### Risk-neutral density
+
+The probability distribution of the price at expiry that reproduces today's option prices when discounted expectations are taken. Inverting a fitted model's characteristic function gives it; its left tail is what the market charges for crash protection, and it is not a forecast of what will happen.
+
+See: [option-pricing-models-and-calibration](techniques/option-pricing-models-and-calibration.md)
 
 ### RLS
 
@@ -1622,6 +1780,20 @@ A series whose statistical properties do not change over time; required for a sp
 
 See: [pairs-and-statistical-arbitrage](techniques/pairs-and-statistical-arbitrage.md)
 
+### Strong and weak order
+
+How fast the error of a simulation scheme falls with the step. The strong error measures how close a simulated path is to the true one driven by the same noise (it matters for hedging and path-dependent payoffs); the weak error measures how close the distribution is (all a European price needs). Euler has strong order 1/2 and weak order 1, Milstein strong order 1.
+
+See: [sde-simulation-and-estimation](techniques/sde-simulation-and-estimation.md)
+
+### Successive over-relaxation
+
+*Also: SOR*
+
+An iteration for a linear system that moves each Gauss-Seidel update a factor omega further; with the best omega it converges in far fewer sweeps. Projected SOR, which clips each update at the payoff, solves the American option's complementarity problem.
+
+See: [finite-difference-solvers-and-linear-systems](techniques/finite-difference-solvers-and-linear-systems.md)
+
 ### Survivorship bias
 
 Testing only on assets that still exist, which overstates past performance.
@@ -1714,6 +1886,12 @@ A series that accumulates shocks forever (a random walk) instead of returning to
 
 See: [unit-roots-and-cointegration](techniques/unit-roots-and-cointegration.md)
 
+### Utility indifference price
+
+The price at which an investor with a given utility is indifferent between writing (or buying) an option, hedging it optimally, and doing nothing. With a cost on every trade there are two: the writer's, above the frictionless price, and the buyer's, below it; between them the option cannot be hedged at a profit.
+
+See: [hedging-with-transaction-costs](techniques/hedging-with-transaction-costs.md)
+
 ### Value at risk
 
 *Also: VaR*
@@ -1721,6 +1899,14 @@ See: [unit-roots-and-cointegration](techniques/unit-roots-and-cointegration.md)
 A quantile of the loss distribution: the loss exceeded only (1 - confidence) of the time.
 
 See: [var-cvar-and-backtests](techniques/var-cvar-and-backtests.md)
+
+### Variance gamma
+
+*Also: VG*
+
+A model of returns built by running a Brownian motion with drift on a gamma clock: infinitely many small jumps, a skew from the drift and kurtosis from the clock's variance. Priced by Fourier methods; fitted to returns by maximum likelihood.
+
+See: [option-pricing-models-and-calibration](techniques/option-pricing-models-and-calibration.md)
 
 ### Variance ratio
 
@@ -1741,6 +1927,12 @@ See: [option-strategies-and-vol-premium](techniques/option-strategies-and-vol-pr
 The daily cash settlement of a futures or perpetual position's gain or loss. A futures contract has no value on the balance sheet: it is a stream of daily cash payments.
 
 See: [unified-instrument-model](techniques/unified-instrument-model.md), [event-driven-engine-and-ledger](techniques/event-driven-engine-and-ledger.md)
+
+### Vasicek model
+
+A Gaussian model of the short interest rate that is pulled back to a long-run level; the rate can go negative. Zero-coupon bond prices, yields and durations to the short rate are closed forms.
+
+See: [short-rate-models-and-kalman-trackers](techniques/short-rate-models-and-kalman-trackers.md)
 
 ### Vector autoregression
 
@@ -1815,6 +2007,12 @@ See: [multi-asset-strategy-api](techniques/multi-asset-strategy-api.md)
 A generative adversarial network whose critic estimates the Wasserstein distance between real and generated data, with a penalty on its gradient (GP) to keep it well behaved. Steadier to train than the original GAN.
 
 See: [deep-learning-generative-scenarios-and-pinns](techniques/deep-learning-generative-scenarios-and-pinns.md)
+
+### Whalley-Wilmott band
+
+The no-trade band around the Black-Scholes delta that is optimal for hedging an option with a proportional cost per trade and exponential utility: trade only when the holding leaves the band, and then only to its edge. Its half-width is `(3 e^{-r tau} cost S Gamma^2 / (2 risk aversion))^(1/3)`, so the cost of hedging grows like `cost^(2/3)` and not like `cost / sqrt(dt)`.
+
+See: [hedging-with-transaction-costs](techniques/hedging-with-transaction-costs.md)
 
 ### Win rate
 

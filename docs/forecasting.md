@@ -1,6 +1,6 @@
 # Forecasting a stock's price, and how far to trust it
 
-Nobody knows what a stock will cost next month. What can be said is how far it is likely to move, and how that range changes with the market's mood. That is a *forecast as a distribution*: a set of possible futures, each with a probability. The **Forecast** tab makes one for a ticker with the methods a quant desk would name (Monte Carlo simulation, Markov chains and hidden Markov models, Gaussian processes, a Kalman filter, volatility models, analogues) and then does what most forecasting pages skip. It goes back in time, makes each method's forecast again at about two hundred past dates using only the prices before each date, and scores every one against what then happened. A method is only as good as that record.
+Nobody knows what a stock will cost next month. What can be said is how far it is likely to move, and how that range changes with the market's mood. That is a *forecast as a distribution*: a set of possible futures, each with a probability. The **Forecast** tab makes one for a ticker with the methods a quant desk would name (Monte Carlo simulation, Markov chains and hidden Markov models, Gaussian processes, a Kalman filter, volatility models of the GARCH, Lévy and Heston kinds, analogues) and then does what most forecasting pages skip. It goes back in time, makes each method's forecast again at about two hundred past dates using only the prices before each date, and scores every one against what then happened. A method is only as good as that record.
 
 The short version of what the record says on the platform's ETFs: the *spread* of returns can be forecast a little (on SPY by more than luck allows, on QQQ and EEM by amounts luck could explain, on bonds and gold not at all); the *average* return and the *direction* could not be forecast at all; and the most popular picture of a Gaussian-process forecast, a smooth curve drawn through recent prices and continued, was the worst method by a wide margin. The page says which of these holds for your ticker, with the numbers, every time.
 
@@ -39,7 +39,7 @@ Under the sentence are the reasons, in the order a careful reader would ask them
 
 ## The methods
 
-Eighteen methods (the random walk and seventeen others) and an equal-weight blend, in nine families. Each has a technique guide with the idea, what the repository found and how it goes wrong.
+Twenty-two methods (the random walk and twenty-one others) and an equal-weight blend, in nine families. Each has a technique guide with the idea, what the repository found and how it goes wrong.
 
 | Family | Method | The idea in one line | Forecasts the average? |
 |---|---|---|---|
@@ -51,6 +51,9 @@ Eighteen methods (the random walk and seventeen others) and an equal-weight blen
 | Monte Carlo | **Brownian motion** | Normal returns with the drift and volatility of the last year. | the last year's |
 | Monte Carlo | **GJR-GARCH** | Volatility that clusters, rises more after a fall, with Student-t shocks, simulated from today's volatility. | no |
 | Monte Carlo | **Filtered historical simulation** | The same volatility model with the stock's own past standardised shocks resampled. | no |
+| Monte Carlo | **GJR-GARCH, variance-gamma shocks** | The same volatility model with shocks from a variance-gamma law fitted to its own standardised residuals: a free skew and kurtosis and smooth tails. [Guide](techniques/stochastic-volatility-and-levy-forecasting.md) | no |
+| Monte Carlo | **GJR-GARCH, NIG shocks** | The same with a normal inverse Gaussian law, a little heavier in the tails. | no |
+| Monte Carlo | **Heston** | Variance that reverts to a long-run level and moves against the return, simulated with Andersen's quadratic-exponential scheme; its parameters from the autocorrelation of squared returns. | no |
 | Monte Carlo | **Jump diffusion** | Small ordinary days plus rare large ones with a fitted rate and size. | no |
 | Markov | **Markov chain, daily move** | Five states from a big fall to a big rise; transition probabilities counted from five years. [Guide](techniques/markov-forecasting.md) | the states' |
 | Markov | **Markov chain, volatility** | Calm, ordinary or stormy by the volatility of the last month; the chain says how long storms last. | the states' |
@@ -59,11 +62,12 @@ Eighteen methods (the random walk and seventeen others) and an equal-weight blen
 | Gaussian process | **On the drift** | The daily return as a slowly changing average plus noise, carried forward. | yes |
 | Gaussian process | **On the price path** | A smooth curve through the last 120 days of log price, continued. The control. | yes |
 | State space | **Kalman trend** | A level with a slowly changing slope, tracked day by day. | yes |
+| State space | **Stochastic-volatility Kalman filter** | Log variance as a hidden AR(1), tracked by a Kalman filter on the log of squared returns; the forecast simulates volatility forward from the filter's uncertain state. | no |
 | Time series | **ARMA(1,1)** | Whether yesterday's return and surprise predict today's. | yes |
 | Pattern matching | **Analogues** | What followed the 60 past days most like today. | yes |
 | Combination | **Equal-weight blend** | Draws equally from every other method you chose. [Guide](techniques/forecast-evaluation.md) | the members' |
 
-Three of the methods are there as *controls* rather than as candidates. The Gaussian process on the price path is what people try first, and the test says how far it is from working. Hull-White is the control of the methods that learn from returns in units of volatility (the Gaussian process on recent moves and the analogues): what they add to it is what they learn about the future, and the page asks that question in words. GJR-GARCH is the control of the filtered historical simulation and the hidden Markov model for the same reason.
+Three of the methods are there as *controls* rather than as candidates. The Gaussian process on the price path is what people try first, and the test says how far it is from working. Hull-White is the control of the methods that learn from returns in units of volatility (the Gaussian process on recent moves and the analogues): what they add to it is what they learn about the future, and the page asks that question in words. GJR-GARCH is the control of the filtered historical simulation and the hidden Markov model for the same reason, and the natural yardstick of the three methods that vary it (variance-gamma shocks, NIG shocks and Heston); the page's control tests do not cover those three, so read their skill against GJR-GARCH's in the tables below.
 
 ## How the test works
 
@@ -73,7 +77,7 @@ Every number on the page comes from one procedure, the same for every method.
 2. **Nothing from the future.** A method is only ever *given* history that ends at the origin, so there is no future in what it sees. The tests check that too, by replacing everything after an origin with noise and confirming that no forecast at that origin changes.
 3. **Proper scores.** CRPS (above) and the pinball loss of five quantiles. Both are *proper*: the forecaster's best strategy is to say what it believes.
 4. **Skill and the test of it.** Skill is one minus the method's average CRPS over the random walk's. Whether a difference in average CRPS is more than luck is a one-sided Diebold-Mariano test with a Newey-West (HAC) standard error: forecasts made ten days apart for a 21-day horizon share most of their outcome, so their losses are not independent, and the test is widened by the overlap (lag = the number of origins one horizon spans, less one). A Standard run of 21-day forecasts has about 200 forecasts and about 67 independent ones, and the page says so.
-5. **Many methods, one winner.** With eighteen methods one of them will look good by chance. The p-values are corrected by the Holm procedure (a step-down Bonferroni that controls the chance of *any* false winner among them), and the verdict names a method as better only if its adjusted p-value is under 5% *and* it is at least 1% better, so that a tiny but "significant" gain is not announced.
+5. **Many methods, one winner.** With twenty-two methods one of them will look good by chance. The p-values are corrected by the Holm procedure (a step-down Bonferroni that controls the chance of *any* false winner among them), and the verdict names a method as better only if its adjusted p-value is under 5% *and* it is at least 1% better, so that a tiny but "significant" gain is not announced.
 6. **Calibration.** The central 50% and 90% ranges should hold the outcome that often, the outcome should fall below the 5% quantile one time in twenty (the Kupiec check for value at risk), and the PIT values should be evenly spread. Binomial and Kolmogorov-Smirnov tests, on forecasts one horizon apart.
 7. **The average and the direction.** For the methods that forecast an average, the out-of-sample R-squared against the trailing five-year average with the Clark-West test, and the share of ups and downs called right against always saying up with a Diebold-Mariano test of the two 0-1 losses.
 8. **Controls and the blend.** A control comparison is a Diebold-Mariano test of a method against the simpler one it builds on. The blend pools the forecasts of the other chosen methods in equal shares (a *linear opinion pool*); because the CRPS is convex in the forecast, the pool scores no worse than the average of its members, and the tests check that.
@@ -151,6 +155,7 @@ A forecasting test that cannot tell a method that works from one that does not i
 - **A planted drift.** On a market whose average return swings slowly, the Kalman trend, the Gaussian process on the drift and the Gaussian process on recent moves have an out-of-sample R-squared above 10% against the five-year average with p below 1%, and call the direction better than always saying up; on independent returns the Gaussian process on the drift finds none.
 - **A planted reversal.** Where the past month's move predicts the next days' return the other way, the Gaussian process explains part of the variance and forecasts a lower return after a rise than after a fall, and the analogues beat Hull-White's rescaled history, which has no way to see it.
 - **Jumps and trends.** The jump diffusion finds the planted rate, size and calm volatility, and none where there were none; the Kalman filter finds the planted slope and a change of direction; the ARMA finds the planted serial dependence and none in independent returns; the Gaussian process on the price path continues a straight line and does worse than staying put on a random walk.
+- **Shock laws and stochastic volatility.** With variance-gamma shocks the fitted law reproduces the skew and the kurtosis of the residuals and the forecast has the longer left tail; with Gaussian shocks the fitted shocks have neither. The stochastic-volatility filter finds the planted persistence and volatility of log variance, and its 90% ranges hold the outcome about nine times in ten over many forecast dates; the method of moments recovers the Heston speed, level, volatility of variance and (roughly) correlation on average over simulated samples, and says the volatility of variance is small when the returns do not cluster (`tests/test_forecast_stochvol.py`).
 - **No look-ahead.** A spy method records every price it is shown; replacing everything after an origin with noise changes nothing it saw up to that origin.
 - **The scores themselves.** CRPS against the closed form for a Gaussian, the fair form against the small-sample bias of the plain one, the pinball loss against its definition, the Holm adjustment against the reference implementation, the PIT as uniform for a calibrated forecast, humped for one too wide and U-shaped for one too narrow.
 
@@ -171,8 +176,9 @@ quant forecast --list                                           # the methods
 quant forecast SPY                                              # the recommended methods, 21 days, Standard
 quant forecast QQQ --horizon 5 --methods garch hmm gp_drift --effort quick
 quant forecast SPY --all --json spy_forecast.json               # every method and the blend, with the whole result saved
+quant forecast SPY --methods garch garch_vg garch_nig heston sv_kalman --effort quick   # the volatility models side by side
 quant forecast MyTicker --prices my_prices.csv                  # a wide CSV: one date column, one column per asset
-python -m experiments.forecast_study --tickers SPY QQQ          # the tables of this page
+python -m experiments.forecast_study --tickers SPY QQQ          # the tables of this page (add --cache runs/ to keep each finished evaluation and resume after an interruption)
 ```
 
 ```python
@@ -190,4 +196,4 @@ now = ev.forecast_now(history, ["random_walk", "garch", "hmm", "blend"], horizon
 print({name: round(m["fan"]["0.5"][-1], 1) for name, m in now["methods"].items()})
 ```
 
-The code is `src/forecast` (`base` for the interface, `scoring`, `baselines`, `montecarlo`, `markov`, `gp`, `others`, `evaluate`, `verdict`, `report`); adding a method is writing a class with `fit` and `predict` and listing it in `registry.py`. The routes behind the tab are `GET /api/forecast/plan`, `POST /api/forecast/run` (a job) and `POST /api/forecast/stop`. The technique guides: [Monte Carlo forecasting](techniques/monte-carlo-forecasting.md), [Markov chains and hidden Markov models](techniques/markov-forecasting.md), [Gaussian processes](techniques/gaussian-process-forecasting.md), [HAR, Kalman, ARMA and analogues](techniques/har-kalman-and-analogue-forecasts.md) and [scoring forecasts honestly](techniques/forecast-evaluation.md).
+The code is `src/forecast` (`base` for the interface, `scoring`, `baselines`, `montecarlo`, `stochvol`, `markov`, `gp`, `others`, `evaluate`, `verdict`, `report`); adding a method is writing a class with `fit` and `predict` and listing it in `registry.py`. The routes behind the tab are `GET /api/forecast/plan`, `POST /api/forecast/run` (a job) and `POST /api/forecast/stop`. The technique guides: [Monte Carlo forecasting](techniques/monte-carlo-forecasting.md), [Markov chains and hidden Markov models](techniques/markov-forecasting.md), [Gaussian processes](techniques/gaussian-process-forecasting.md), [HAR, Kalman, ARMA and analogues](techniques/har-kalman-and-analogue-forecasts.md), [stochastic volatility and Lévy shocks](techniques/stochastic-volatility-and-levy-forecasting.md) and [scoring forecasts honestly](techniques/forecast-evaluation.md).

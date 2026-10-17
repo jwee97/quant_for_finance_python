@@ -56,7 +56,7 @@ jobs:
           pip install -e . --no-deps
           pip install pytest
       - name: Numerical packages
-        run: python -m pytest tests/test_stats.py tests/test_probability.py tests/test_econometrics.py tests/test_derivatives.py tests/test_assets.py tests/test_microstructure.py tests/test_ops.py tests/test_hpo_search.py tests/test_instruments.py tests/test_marketdata.py tests/test_ledger.py tests/test_engine.py tests/test_lifecycle.py tests/test_swaps.py tests/test_engine_risk.py tests/test_forecast_scoring.py tests/test_forecast_base.py tests/test_forecast_methods.py tests/test_forecast_evaluate.py tests/test_forecast_verdict.py tests/test_forecast_cli.py tests/test_numerics.py tests/test_sde.py tests/test_levy.py tests/test_fourier.py tests/test_calibration.py tests/test_pde.py tests/test_pide.py tests/test_exotics.py tests/test_costs.py tests/test_ou.py tests/test_short_rate.py tests/test_trackers.py tests/test_closed_form.py tests/test_ou_pairs.py
+        run: python -m pytest tests/test_stats.py tests/test_probability.py tests/test_econometrics.py tests/test_derivatives.py tests/test_assets.py tests/test_microstructure.py tests/test_ops.py tests/test_hpo_search.py tests/test_instruments.py tests/test_marketdata.py tests/test_ledger.py tests/test_engine.py tests/test_lifecycle.py tests/test_swaps.py tests/test_engine_risk.py tests/test_forecast_scoring.py tests/test_forecast_base.py tests/test_forecast_methods.py tests/test_forecast_evaluate.py tests/test_forecast_verdict.py tests/test_forecast_cli.py tests/test_forecast_stochvol.py tests/test_forecast_study.py tests/test_numerics.py tests/test_sde.py tests/test_levy.py tests/test_fourier.py tests/test_calibration.py tests/test_pde.py tests/test_pide.py tests/test_exotics.py tests/test_costs.py tests/test_ou.py tests/test_short_rate.py tests/test_trackers.py tests/test_closed_form.py tests/test_ou_pairs.py tests/test_option_models.py
 
   replit-python:
     # The dashboard, the iTick client, the tuner, the forecaster and the machine-learning tab on Python 3.10, which is what a Replit workspace runs (the Tests above use 3.11).
@@ -76,7 +76,7 @@ jobs:
           pip install -e . --no-deps
           pip install pytest
       - name: Dashboard, iTick, tuning, forecasting and machine learning
-        run: python -m pytest tests/test_webapp.py tests/test_webapp_data.py tests/test_webapp_data_itick.py tests/test_webapp_data_yahoo.py tests/test_webapp_assets_ml.py tests/test_webapp_labs.py tests/test_server_hardening.py tests/test_tuning.py tests/test_tune_api.py tests/test_tune_study.py tests/test_hpo_search.py tests/test_forecast_scoring.py tests/test_forecast_base.py tests/test_forecast_methods.py tests/test_forecast_evaluate.py tests/test_forecast_verdict.py tests/test_forecast_cli.py tests/test_forecast_api.py tests/test_itick_access.py tests/test_itick_catalog.py tests/test_itick_history.py tests/test_jobs.py tests/test_yahoo_futures.py tests/test_free_data_core.py tests/test_free_data_crypto.py tests/test_free_data_futures.py tests/test_free_data_options.py tests/test_ml_data.py tests/test_ml_search.py tests/test_ml_pipeline.py tests/test_ml_additions.py tests/test_ml_cli.py
+        run: python -m pytest tests/test_webapp.py tests/test_webapp_data.py tests/test_webapp_data_itick.py tests/test_webapp_data_yahoo.py tests/test_webapp_assets_ml.py tests/test_webapp_labs.py tests/test_server_hardening.py tests/test_tuning.py tests/test_tune_api.py tests/test_tune_study.py tests/test_hpo_search.py tests/test_forecast_scoring.py tests/test_forecast_base.py tests/test_forecast_methods.py tests/test_forecast_evaluate.py tests/test_forecast_verdict.py tests/test_forecast_cli.py tests/test_forecast_api.py tests/test_models_api.py tests/test_itick_access.py tests/test_itick_catalog.py tests/test_itick_history.py tests/test_jobs.py tests/test_yahoo_futures.py tests/test_free_data_core.py tests/test_free_data_crypto.py tests/test_free_data_futures.py tests/test_free_data_options.py tests/test_ml_data.py tests/test_ml_search.py tests/test_ml_pipeline.py tests/test_ml_additions.py tests/test_ml_cli.py
 
   browser:
     # The tests that drive the dashboard in a real Chromium (tabs, charts, keyboard, accessibility). Without Playwright they are skipped, which is how they went unrun in the Tests job.
@@ -97,7 +97,7 @@ jobs:
           pip install pytest playwright
           playwright install --with-deps chromium
       - name: Dashboard in a browser
-        run: python -m pytest tests/test_dashboard.py tests/test_webapp_browser.py tests/test_webapp_itick_browser.py tests/test_webapp_runs_browser.py tests/test_webapp_tune_browser.py tests/test_webapp_forecast_browser.py tests/test_webapp_workspaces_browser.py tests/test_webapp_accessibility.py
+        run: python -m pytest tests/test_dashboard.py tests/test_webapp_browser.py tests/test_webapp_itick_browser.py tests/test_webapp_runs_browser.py tests/test_webapp_tune_browser.py tests/test_webapp_forecast_browser.py tests/test_webapp_workspaces_browser.py tests/test_webapp_models_browser.py tests/test_webapp_accessibility.py
 
   docs:
     # The documentation site must build with no broken link or missing page.

@@ -504,6 +504,14 @@
     for (const c of cols) { const th = h("th", c.num ? "num" : "", hd, c.label); if (c.title) th.title = c.title; }
     const tb = h("tbody", "", t);
     for (const r of rows) { const tr = h("tr", "", tb); for (const c of cols) h("td", c.num ? "num" : "", tr, c.get ? c.get(r) : String(r[c.key])); }
+    const guard = () => {                                                                    // a table wider or taller than its card must be scrollable from the keyboard, and its region must have a name of its own
+      if (!wrap.isConnected) return;
+      if (wrap.scrollWidth > wrap.clientWidth + 1 || wrap.scrollHeight > wrap.clientHeight + 1) {
+        const head = wrap.closest(".card") && wrap.closest(".card").querySelector("h3");
+        wrap.tabIndex = 0; wrap.setAttribute("role", "region"); wrap.setAttribute("aria-label", `${head ? head.textContent : "Table"}: table, scrolls`);
+      } else { wrap.removeAttribute("tabindex"); wrap.removeAttribute("role"); wrap.removeAttribute("aria-label"); }
+    };
+    if (window.ResizeObserver) { const watch = new ResizeObserver(guard); watch.observe(wrap); watch.observe(t); } else requestAnimationFrame(guard);
   }
   function sampleRows(dates, cols, every) { const out = []; for (let i = 0; i < dates.length; i += every) out.push(i); if (out[out.length - 1] !== dates.length - 1) out.push(dates.length - 1); return out; }
 

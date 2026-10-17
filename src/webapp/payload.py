@@ -16,6 +16,8 @@ def clean(value):
         return {str(k): clean(v) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
         return [clean(v) for v in value]
+    if isinstance(value, np.ndarray):
+        return clean(value.tolist())
     if isinstance(value, (np.floating, float)):
         return None if not math.isfinite(float(value)) else float(value)
     if isinstance(value, (np.integer,)):
