@@ -128,7 +128,7 @@ class SVKalman(Forecaster):
                                           "half_life_days": float(np.log(0.5) / np.log(phi))})
 
 
-# ---------------------------------------------------------------------------------------------------------------------------------- Heston by the diffusion limit of GARCH
+# ---------------------------------------------------------------------------------------------------------------------------------- Heston by the method of moments
 def _acf(x: np.ndarray, lags: int) -> np.ndarray:
     x = x - x.mean()
     d = float(x @ x)
