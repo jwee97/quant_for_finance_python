@@ -177,7 +177,7 @@ class ResearchContext:
             self._cache[key] = pd.DataFrame(np.where(np.isfinite(values), values, np.nan), index=self.dates, columns=self.ids)
         return self._cache[key]
 
-    def _daily_returns(self) -> pd.DataFrame:
+    def daily_returns(self) -> pd.DataFrame:
         if "daily_returns" not in self._cache:
             self._cache["daily_returns"] = self.adj.pct_change(fill_method=None)
         return self._cache["daily_returns"]
@@ -186,20 +186,20 @@ class ResearchContext:
         """Annualised standard deviation of daily returns over the last ``window`` trading days, as known on each date."""
         key = ("vol", window)
         if key not in self._cache:
-            vol = self._daily_returns().rolling(window, min_periods=max(window // 2, 20)).std() * np.sqrt(252.0)
+            vol = self.daily_returns().rolling(window, min_periods=max(window // 2, 20)).std() * np.sqrt(252.0)
             self._cache[key] = vol.iloc[self.pos].set_axis(self.dates)
         return self._cache[key]
 
     def market_return(self) -> pd.Series:
         """The equal-weighted return of the universe each day, the market the betas are measured against."""
         if "market" not in self._cache:
-            self._cache["market"] = self._daily_returns().mean(axis=1)
+            self._cache["market"] = self.daily_returns().mean(axis=1)
         return self._cache["market"]
 
     def beta(self, window: int = 252) -> pd.DataFrame:
         key = ("beta", window)
         if key not in self._cache:
-            r, m = self._daily_returns(), self.market_return()
+            r, m = self.daily_returns(), self.market_return()
             minimum = max(window // 2, 40)
             cov = r.rolling(window, min_periods=minimum).cov(m)
             var = m.rolling(window, min_periods=minimum).var()
