@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 import time
 import urllib.request
+from pathlib import Path
 
 import pandas as pd
 import pytest
@@ -80,6 +81,7 @@ def test_the_routes_are_in_the_app_and_the_api_version_says_so(app):
     for path in ("/api/fund/sync", "/api/fund/simulate", "/api/fund/scan", "/api/fund/discover", "/api/fund/backtest", "/api/fund/stop", "/api/fund/ml"):
         assert path in app.extra_post
     assert api.API_VERSION == 11 and app.catalog()["api_version"] == 11
+    assert (Path(api.__file__).resolve().parents[2] / "docs" / api.DOC_ROOT_FILES["fundamentals"]).is_file()      # the guides viewer can open the chapter
 
 
 def test_the_two_databases_are_separate_files_and_the_demo_never_calls_a_provider(app):

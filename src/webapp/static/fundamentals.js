@@ -503,7 +503,7 @@
     const guide = h("div", "setup", parent); guide.dataset.role = "fund-key-guide";
     h("p", "tone-warn", guide, "OpenFilings is not set up yet. It takes about two minutes, and the key never goes through this page.");
     const steps = h("ol", "steps", guide);
-    h("li", "", steps, "Sign in at openfilings.org and copy your API key from the dashboard (it starts with of_).");
+    h("li", "", steps, "Sign in at openfilings.org and create an API key in the dashboard (their examples show keys that begin with of_).");
     const two = h("li", "", steps, "In Replit open Tools, then Secrets, then New Secret. Name it "); h("code", "", two, "OPENFILINGS_API_KEY_1"); two.appendChild(document.createTextNode(", paste the key as its value and click Add Secret. A second key goes in OPENFILINGS_API_KEY_2, and so on up to 5."));
     h("li", "", steps, "Press Stop and then Run: an app only sees the secrets that existed when it started. Then reload this page.");
     h("li", "", steps, "Come back here and press Test the connection (it spends one credit and tells the app which plan the account is on).");

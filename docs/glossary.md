@@ -8,6 +8,20 @@ The actual return minus the return a model expected for the same day, such as a 
 
 See: [event-studies](techniques/event-studies.md)
 
+### Accounting anomaly score
+
+*Also: Beneish score*
+
+A number built from eight changes in a company's accounts (receivables against sales, gross margin, asset quality, sales growth, depreciation, selling and administrative expense, leverage and accruals) that says how much they resemble the changes at companies later found to have manipulated their earnings (Beneish 1999). It is a screen that says where to look, it was fitted on United States manufacturers of the 1980s and early 1990s, and it is never evidence of fraud.
+
+See: [accounting-analytics-dupont-piotroski-accruals](techniques/accounting-analytics-dupont-piotroski-accruals.md)
+
+### Accruals
+
+The part of a company's profit that is not cash: net income less operating cash flow, usually over assets. High accruals are a warning that some of the profit may be paper.
+
+See: [accounting-analytics-dupont-piotroski-accruals](techniques/accounting-analytics-dupont-piotroski-accruals.md)
+
 ### ADV
 
 *Also: average daily volume*
@@ -47,6 +61,12 @@ See: [market-making-and-order-flow](techniques/market-making-and-order-flow.md),
 The part of a return that is not explained by exposure to known risks or factors; in practice, the return a strategy earns beyond what its benchmark or factor exposures predict.
 
 See: [attribution](techniques/attribution.md)
+
+### Alpha library
+
+The record of every formula a search kept, with its evidence and a status (Candidate, Validated, Production, Decaying, Retired or Rejected), beside the graveyard of every one that failed. A status moves only along a fixed table of allowed moves, each with a reason, and nothing is deleted.
+
+See: [automated-alpha-discovery](techniques/automated-alpha-discovery.md)
 
 ### American option
 
@@ -95,6 +115,12 @@ See: [time-series-econometrics](techniques/time-series-econometrics.md)
 The market price when an order was received. Implementation shortfall measures the cost of a trade against it.
 
 See: [execution-algorithms](techniques/execution-algorithms.md)
+
+### As-filed figure
+
+A figure as it appeared in the filing, not as it was later restated. A point-in-time study needs as-filed figures, because a restated figure is something an investor could not yet have seen.
+
+See: [point-in-time-fundamentals](techniques/point-in-time-fundamentals.md)
 
 ### Asian option
 
@@ -608,6 +634,12 @@ Randomly zeroing parts of a network during training to reduce overfitting; kept 
 
 See: [bayesian-deep-learning](techniques/bayesian-deep-learning.md)
 
+### DuPont decomposition
+
+Splitting a company's return on equity into five steps that multiply back to it exactly (tax burden, interest burden, operating margin, asset turnover and equity multiplier), and splitting a year's change in it between the steps by the logarithmic-mean Divisia method, so that the contributions add up exactly to the change.
+
+See: [accounting-analytics-dupont-piotroski-accruals](techniques/accounting-analytics-dupont-piotroski-accruals.md)
+
 ### Duration
 
 *Also: DV01, convexity*
@@ -621,6 +653,12 @@ See: [yield-curves-and-fixed-income](techniques/yield-curves-and-fixed-income.md
 The change in a bond's value for a one-basis-point move in yield; used to make bond trades neutral to parallel rate moves.
 
 See: [fixed-income-and-volatility-strategies](techniques/fixed-income-and-volatility-strategies.md)
+
+### Effective number of independent alphas
+
+How many separate ideas a set of alphas really holds: the squared sum of the eigenvalues of their correlation matrix over the sum of their squares, which is 1 when the alphas are identical and the number of alphas when they are unrelated.
+
+See: [combining-alphas-and-model-combination](techniques/combining-alphas-and-model-combination.md)
 
 ### Effective number of independent tries
 
@@ -647,6 +685,12 @@ See: [walk-forward-and-leakage](techniques/walk-forward-and-leakage.md)
 Several models trained separately whose predictions are averaged; disagreement between them estimates uncertainty.
 
 See: [bayesian-deep-learning](techniques/bayesian-deep-learning.md)
+
+### Entry lag
+
+The days between the date a signal is computed and the date it is traded, so that a signal is never traded at the very close it was computed from.
+
+See: [point-in-time-fundamentals](techniques/point-in-time-fundamentals.md)
 
 ### Epistemic uncertainty
 
@@ -722,6 +766,12 @@ Run one cross-sectional regression of returns on characteristics per date, then 
 
 See: [regression-and-panel-statistics](techniques/regression-and-panel-statistics.md)
 
+### Filing date
+
+The day a company's accounts became public. A figure may be used from this day plus a lag, never from the last day of the period it describes; when the day is not known the period is flagged as estimated.
+
+See: [point-in-time-fundamentals](techniques/point-in-time-fundamentals.md)
+
 ### Filtered historical simulation
 
 *Also: FHS*
@@ -775,6 +825,12 @@ See: [foundation-models](techniques/foundation-models.md)
 Information ratio is approximately the information coefficient times the square root of breadth.
 
 See: [information-coefficient](techniques/information-coefficient.md)
+
+### Fundamental momentum
+
+The change in a company's accounts from one year to the next (margins, returns, leverage) used as a signal, as distinct from price momentum, which uses the change in the share price.
+
+See: [accounting-analytics-dupont-piotroski-accruals](techniques/accounting-analytics-dupont-piotroski-accruals.md)
 
 ### Funding rate
 
@@ -839,6 +895,12 @@ See: [gradient-boosting-and-representation-learning](techniques/gradient-boostin
 A neural network that lets each node of a graph weight its neighbours' features by learned attention.
 
 See: [graph-neural-networks](techniques/graph-neural-networks.md)
+
+### Graveyard
+
+The permanent record of every idea a search tried and rejected, with the stage it failed at and why. It is what keeps the number of ideas tried known, and so what keeps the significance of the survivors honest.
+
+See: [automated-alpha-discovery](techniques/automated-alpha-discovery.md)
 
 ### Greeks
 
@@ -971,6 +1033,12 @@ See: [resampling-and-monte-carlo](techniques/resampling-and-monte-carlo.md)
 The rank correlation between a signal and subsequent returns.
 
 See: [information-coefficient](techniques/information-coefficient.md), [machine-learning-research-pipeline](techniques/machine-learning-research-pipeline.md)
+
+### Information lag
+
+The days a study waits after a filing before using its figures: one by default, because a filing may come after the close.
+
+See: [point-in-time-fundamentals](techniques/point-in-time-fundamentals.md)
 
 ### Information ratio
 
@@ -1120,11 +1188,23 @@ The instantaneous volatility, a function of price and time, that reproduces all 
 
 See: [volatility-surfaces](techniques/volatility-surfaces.md)
 
+### Locked test
+
+The one look at dates that nothing in a search used to choose or tune a formula. Each look is counted, because a second look that changes a decision has turned the locked dates into training data.
+
+See: [automated-alpha-discovery](techniques/automated-alpha-discovery.md)
+
 ### Log loss
 
 The negative average log probability assigned to what actually happened; a proper score for probability forecasts.
 
 See: [calibration](techniques/calibration.md)
+
+### Look-ahead audit
+
+A factor study run twice, once with each figure used from the day it was public and once as if it were known at the end of its period, to show how much a naive join of accounts to prices would have flattered the result.
+
+See: [point-in-time-fundamentals](techniques/point-in-time-fundamentals.md)
 
 ### Maintenance margin
 
@@ -1255,6 +1335,12 @@ See: [yield-curves-and-fixed-income](techniques/yield-curves-and-fixed-income.md
 Return after trading costs.
 
 See: [backtest-engine-and-costs](techniques/backtest-engine-and-costs.md)
+
+### Neutralisation
+
+Removing from a factor what it shares with something else (a sector, a country, size, beta, volatility) by a regression on each date, so that what is left asks whether the factor works within them.
+
+See: [factor-studies-ic-quantiles-and-decay](techniques/factor-studies-ic-quantiles-and-decay.md)
 
 ### Newey-West
 
@@ -1429,6 +1515,12 @@ See: [finite-difference-solvers-and-linear-systems](techniques/finite-difference
 The score of one quantile forecast: the miss is weighted by the quantile level when the outcome is above it and by one minus the level when it is below, so the 5% quantile is judged by how often and how far the outcome fell under it. Twice its average over all levels is the CRPS.
 
 See: [forecast-evaluation](techniques/forecast-evaluation.md)
+
+### Piotroski F-score
+
+The count of nine yes-or-no signs of improving financial health that hold for a company: profit positive, operating cash flow positive, return on assets up, cash flow above profit, leverage down, liquidity up, no new shares, gross margin up, asset turnover up (Piotroski 2000). A screen, not a verdict.
+
+See: [accounting-analytics-dupont-piotroski-accruals](techniques/accounting-analytics-dupont-piotroski-accruals.md)
 
 ### PIT
 
@@ -1708,6 +1800,12 @@ The danger that poor returns arrive early in the life of a portfolio that is bei
 
 See: [cash-flow-strategies](techniques/cash-flow-strategies.md)
 
+### Settled lag
+
+The least number of rebalance periods after which every forward return window has ended. Anything learned from realised returns (a combining weight, a model fit, the sign of a formula) is used on a date only if it was learned at least this far back.
+
+See: [combining-alphas-and-model-combination](techniques/combining-alphas-and-model-combination.md)
+
 ### Shapley value
 
 *Also: SHAP*
@@ -1727,6 +1825,12 @@ See: [performance-metrics](techniques/performance-metrics.md)
 Pulling an estimate toward a simpler target to reduce its variance at the price of some bias.
 
 See: [mean-variance-and-shrinkage](techniques/mean-variance-and-shrinkage.md)
+
+### Signal key
+
+The identity of an idea after ignoring a rank, a z-score or a sign on the outside of a formula, none of which changes which companies it prefers; two formulas with the same signal key are one idea tried twice.
+
+See: [automated-alpha-discovery](techniques/automated-alpha-discovery.md)
 
 ### Sinkhorn iteration
 
@@ -2019,6 +2123,12 @@ See: [hedging-with-transaction-costs](techniques/hedging-with-transaction-costs.
 The share of trades (or of days or months) that made money. It says nothing alone: a strategy can win 80% of the time and still lose money if the losses are much larger than the wins; read it with the payoff ratio.
 
 See: [performance-metrics](techniques/performance-metrics.md)
+
+### Winsorising
+
+Pulling the most extreme values of each date's cross-section in to a chosen percentile (1% at each end by default) so that a few outliers do not set the scale for the rest.
+
+See: [factor-studies-ic-quantiles-and-decay](techniques/factor-studies-ic-quantiles-and-decay.md)
 
 ### Yield curve
 

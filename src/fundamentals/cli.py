@@ -234,7 +234,7 @@ def _discover(wb, args) -> int:
             raise FundamentalsError("that run has finished: its locked test has been looked at, and looking again would spend it. Start a new run instead")
         spec, run_id = DiscoverySpec.from_dict(record["spec"]), args.resume
     else:
-        raw = {"universe": _universe(args), "freq": args.freq, "entry_lag": args.lag, "n_candidates": args.n, "seed": args.seed, "horizon": args.horizon, "max_nodes": args.max_nodes, "finalists": args.finalists,
+        raw = {"universe": _universe(args), "freq": args.freq, "entry_lag": args.lag, "n_candidates": args.n_formulas, "seed": args.seed, "horizon": args.horizon, "max_nodes": args.max_nodes, "finalists": args.finalists,
                "cost_bps": args.cost_bps, "borrow_bps": args.borrow_bps}
         if args.formulas is not None:
             raw["seeds"] = list(args.formulas)
@@ -296,7 +296,7 @@ def _backtest(wb, args) -> int:
     if args.percentile is not None:
         portfolio["percentile"] = args.percentile
     else:
-        portfolio["n"] = args.n
+        portfolio["n"] = args.leg_size
     for key in ("max_position", "max_sector", "max_industry", "max_country", "max_beta", "max_turnover"):
         value = getattr(args, key)
         if value is not None:
@@ -382,7 +382,7 @@ def _add_parser(sub) -> None:
     e.add_argument("--scale", choices=["zscore", "rank", "percentile", "raw"], default="zscore"); e.add_argument("--neutralize", nargs="*", choices=["sector", "industry", "country", "market"], help="remove what the factor shares with these groups")
     e.add_argument("--control", nargs="*", choices=["mcap", "beta", "volatility"], help="and with these measures"); e.add_argument("--lookahead", action="store_true", help="evaluate: also run the study as if every figure were known at its period end")
     f = p.add_argument_group("discover")
-    f.add_argument("--n", type=int, default=300, help="formulas to try"); f.add_argument("--finalists", type=int, default=15, help="formulas given the one look at the locked dates"); f.add_argument("--max-nodes", type=int, default=15)
+    f.add_argument("--n", type=int, default=300, dest="n_formulas", help="formulas to try"); f.add_argument("--finalists", type=int, default=15, help="formulas given the one look at the locked dates"); f.add_argument("--max-nodes", type=int, default=15)
     f.add_argument("--formulas", nargs="*", help="start from only these formulas, then random ones"); f.add_argument("--no-classics", action="store_true", help="random formulas only"); f.add_argument("--resume", help="carry on a stopped run")
     g = p.add_argument_group("library")
     g.add_argument("--status", choices=list(STATUSES)); g.add_argument("--order", default="fitness", choices=["fitness", "ic", "icir", "sharpe", "oos_ic", "oos_sharpe", "created_at", "turnover"])
@@ -391,7 +391,7 @@ def _add_parser(sub) -> None:
     g.add_argument("--force", action="store_true", help="a move the table does not allow, recorded as forced")
     b = p.add_argument_group("backtest")
     b.add_argument("--alpha", help="a library alpha"); b.add_argument("--factor", help="a library factor"); b.add_argument("--side", choices=["long_only", "long_short"], default="long_only")
-    b.add_argument("-n", type=int, default=30, help="companies in each leg"); b.add_argument("--percentile", type=float, help="instead of -n: the top per cent of the eligible companies in each leg")
+    b.add_argument("-n", "--legs", type=int, default=30, dest="leg_size", help="companies in each leg"); b.add_argument("--percentile", type=float, help="instead of -n: the top per cent of the eligible companies in each leg")
     b.add_argument("--weighting-book", choices=["equal", "signal", "inverse_vol"], default="equal"); b.add_argument("--capital", type=float, default=1_000_000.0, help="account size, US dollars")
     for name in ("max-position", "max-sector", "max-industry", "max-country", "max-beta", "max-turnover"):
         b.add_argument(f"--{name}", type=float, help="a limit, as a share of the account (blank: none)")

@@ -226,6 +226,10 @@ def test_the_monitor_judges_the_alphas_in_use_and_a_backtest_reads_in_words(home
     assert json.loads(saved.read_text())["experiment_id"].startswith("bt-")
     code, out, _ = run(capsys, "backtest", "--demo", "--formula", "div(fcf,market_cap)", "--side", "long_short", "--percentile", "20", "--cost-bps", "25")
     assert code == 0 and "long and short" in out and "top 20.0%" in out
+    code, out, _ = run(capsys, "backtest", "--demo", "--factor", "fcf_yield")
+    assert code == 0 and "long only, top 30, equal weights" in out                                 # the default size of a leg is its own, not the number of formulas a search tries
+    code, out, _ = run(capsys, "discover", "--demo", "--n", "6", "--seed", "2", "--finalists", "1")
+    assert code == 0 and "of 6 formulas" in out
 
 
 def test_an_alpha_is_validated_only_when_the_evidence_holds_after_the_number_of_ideas_tried(home, capsys):

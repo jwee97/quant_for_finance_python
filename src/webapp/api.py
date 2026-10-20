@@ -68,7 +68,7 @@ SLOW = {"multi_period": "plans the next few months as a quadratic programme ever
         "timesfm": "runs a 200M-parameter model on CPU: many minutes on a long history", "es_policy": "trains a policy: about 10 seconds", "q_learning_exposure": "refits a small Q-function every month: several seconds"}
 DOC_ROOT_FILES = {"dashboard": "dashboard.md", "how_to_add_a_strategy": "how_to_add_a_strategy.md", "start_here": "START_HERE.md", "glossary": "glossary.md", "tour_of_a_backtest_day": "tour_of_a_backtest_day.md",
                   "roadmap_coverage": "roadmap_coverage.md", "algorithmic_trading": "algorithmic_trading.md", "quant_books_coverage": "quant_books_coverage.md", "platform_integration": "platform_integration.md", "feature_audit": "feature_audit.md",
-                  "free_data": "free_data.md", "tuning": "tuning.md", "forecasting": "forecasting.md"}
+                  "free_data": "free_data.md", "tuning": "tuning.md", "forecasting": "forecasting.md", "fundamentals": "fundamentals.md"}
 SAFE_SLUG = re.compile(r"^[a-z0-9][a-z0-9_-]{0,80}$")
 
 # What the page needs from this server. 1 was the first catalogue; 2 added data sources (``sources``), the ticker-count check (``/api/requirements``), earnings and trades; 3 added the Execution and

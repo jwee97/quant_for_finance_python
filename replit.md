@@ -31,7 +31,7 @@ updated after it started* means some of its code changed on disk since it starte
 The Execution and Cash flows tabs need a newer app than the Backtest tab does, so with an
 older one the Backtest keeps working and those two tabs say that they need a restart; the
 Options, Futures and Crypto tabs, and the Free data cards on them, need newer ones still, and
-the Tune tab, the Forecast tab and the Machine learning tab the newest, and say so in the same way.
+the Tune tab, the Forecast tab, the Fundamentals tab and the Machine learning tab the newest, and say so in the same way.
 Your saved tickers and runs are kept across restarts.
 
 ## Free data for the Options, Futures and Crypto tabs
@@ -200,3 +200,17 @@ restarts in `data/user/itick_calls.json`, caches downloads for a day and tops th
 up with one call per ticker. See [docs/dashboard.md](docs/dashboard.md) for the
 settings (`ITICK_CALLS_PER_MINUTE`, `ITICK_BASE_URL`, `ITICK_DAILY_KTYPE`, ...) and
 for what is and is not verified about iTick's data.
+
+## Using the Fundamentals tab: OpenFilings keys
+
+The Fundamentals tab ([docs/fundamentals.md](docs/fundamentals.md)) works with no key on its **Demo (simulated)** data. Real company statements come from [OpenFilings](https://openfilings.org), which needs an API key.
+
+1. Sign in at openfilings.org and create an API key in the dashboard (the examples in their documentation show keys that begin `of_`; the app does not depend on that).
+2. In the Replit workspace open **Tools**, then **Secrets**, choose **New Secret**, name it `OPENFILINGS_API_KEY_1`, paste the key as the value and **Add Secret**. Stop the app and press **Run** again: an app only sees the secrets that existed when it started.
+3. In the Fundamentals tab open **Data manager** and press **Test the connection**. It spends one credit and tells the app which plan the account is on.
+
+Rules for the key are those for the iTick key above: it lives only in Secrets, the page never receives it (it learns only which slots are filled), it is sent in a header and never in an address, and it is never printed or logged; the database keeps only a salted one-way hash to tell keys apart in the usage counts. Nothing in the page or the command line accepts a key.
+
+**More than one key.** The page lists five slots, `OPENFILINGS_API_KEY_1` to `OPENFILINGS_API_KEY_5`; the app also reads a plain `OPENFILINGS_API_KEY`, a comma-separated list in `OPENFILINGS_API_KEYS` and numbers up to `_20`. Several keys of one account share one allowance, and OpenFilings' usage policy does not allow rotating accounts or keys to get past its quotas, so the app does not: the first working key does all the work, a later key is a standby that takes over only if the first is rejected as invalid, and when the allowance is spent the work stops until it resets (the Data manager says when). More credits come from a larger plan or prepaid top-ups.
+
+**What it costs.** A new company costs about 11 credits (a lookup and its annual statements); the free plan is 100 credits a day and 1,000 a month, about nine companies a day. The app keeps everything it downloads, asks again only for what is missing or new, and will not start a fetch without a budget you state (`quant fundamentals plan` and `quant fundamentals sync --budget 100` do the same from the Shell). The data live in `data/user/fundamentals.db` (real) and `data/user/fundamentals_demo.db` (simulated), which are not committed.
