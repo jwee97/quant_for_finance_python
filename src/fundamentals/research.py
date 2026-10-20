@@ -151,6 +151,19 @@ class ResearchContext:
             self._cache[key] = pd.DataFrame(np.where(np.isfinite(values), values, np.nan), index=self.dates, columns=self.ids)
         return self._cache[key]
 
+    def settled_lag(self, horizon="1m") -> int:
+        """How many grid periods must pass before a date's forward window has ended: the smallest ``L`` such that, from the day after any date over ``horizon`` trading days, the return is over by the
+        date ``L`` periods later. Whatever is learned from realised returns (an IC, a model fitted to them) may be used on date ``t`` only if it comes from dates at least ``L`` periods before ``t``."""
+        h = horizon_days(horizon)
+        key = ("settled", h)
+        if key not in self._cache:
+            ends = self.pos + self.entry_lag + h
+            first = np.searchsorted(self.pos, ends, side="left")
+            reached = first < len(self.pos)
+            gaps = (first - np.arange(len(self.pos)))[reached]
+            self._cache[key] = int(max(gaps.max(), 1)) if len(gaps) else len(self.pos)
+        return self._cache[key]
+
     def past(self, lookback: int = 252, skip: int = 21) -> pd.DataFrame:
         """The return from ``lookback`` to ``skip`` trading days before each date, known on the date (momentum: 252 and 21 give the classic twelve-minus-one-month)."""
         key = ("past", lookback, skip)
