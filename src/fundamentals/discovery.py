@@ -264,9 +264,10 @@ class Screen:
         if len(ic) < L.min_dates:
             return self._reject(1, f"only {len(ic)} training dates have an IC (needs {L.min_dates})", m)
         st = ic_stats(ic, self.h, self.step, self.ppy)
-        m.update(ic=st["mean_ic"], icir=st["icir"], t_train=st["t_stat"], p_train=st["p_value"], n_ic=st["n_dates"], positive_share_raw=st["positive_share"])
+        m.update(ic_raw=st["mean_ic"], icir_raw=st["icir"], t_train=st["t_stat"], p_train=st["p_value"], n_ic=st["n_dates"], positive_share_raw=st["positive_share"])
         direction = 1.0 if st["mean_ic"] >= 0 else -1.0
         m["direction"] = direction
+        m["ic"], m["icir"] = st["mean_ic"] * direction, st["icir"] * direction                  # in the direction chosen, the same way round as the validation and locked figures; the raw sign is ``direction``
         if not np.isfinite(st["t_stat"]) or abs(st["t_stat"]) < L.t_ic or abs(st["mean_ic"]) < L.min_abs_ic:
             return self._reject(1, f"IC {st['mean_ic']:+.3f} (t = {st['t_stat']:.1f}) is too weak on the training dates", m, direction)
         # stage 2: stability

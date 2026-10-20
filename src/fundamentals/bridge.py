@@ -179,7 +179,7 @@ def resolve(ctx: ResearchContext, spec, library: AlphaLibrary | None = None, dep
         info.update(label=rec["text"], n_trials=max(n_tested, 1), alphas=[{"alpha_id": rec["alpha_id"], "status": rec["status"], "n_tested": n_tested, "settings": rec["settings"],
                                                                          "text": rec["text"]}])
         if rec["status"] in ("Candidate", "Rejected", "Retired", "Decaying"):
-            info["warnings"].append(f"this alpha's status is {rec['status']}: " + {"Candidate": "found by a search and not yet validated, so a good backtest here is what a search is expected to produce",
+            info["warnings"].append(f"{rec['text']}: its status is {rec['status']}, " + {"Candidate": "found by a search and not yet validated, so a good backtest here is what a search is expected to produce",
                                                                                    "Rejected": "it failed its tests", "Retired": "it has been withdrawn",
                                                                                    "Decaying": "its recent evidence is weaker than its past"}[rec["status"]])
     elif kind == "expression":
@@ -219,7 +219,7 @@ def _only(spec: dict, keys: tuple) -> dict:
 
 def _merge(info: dict, infos: list[dict]) -> None:
     for sub in infos:
-        info["warnings"] += sub["warnings"]
+        info["warnings"] += [w for w in sub["warnings"] if w not in info["warnings"]]
         info["alphas"] += sub["alphas"]
         info["n_trials"] = max(info["n_trials"], sub["n_trials"])
 
@@ -524,7 +524,7 @@ def backtest(ctx: ResearchContext, signal: pd.DataFrame, spec: PortfolioSpec | d
               "average_names_long": float(diag["long_names"].mean()), "average_names_short": float(diag["short_names"].mean()),
               "max_net_beta": None if "beta" not in diag or diag["beta"].isna().all() else float(diag["beta"].abs().max()),
               "average_wanted_turnover": None if "wanted_turnover" not in diag else float(diag["wanted_turnover"].mean())}
-    warnings = list(info.get("warnings", [])) + list(book.notes)
+    warnings = list(dict.fromkeys(list(info.get("warnings", [])) + list(book.notes)))
     if limits["dates_in_cash"]:
         warnings.append(f"{limits['dates_in_cash']} of {limits['dates']} rebalance dates were held in cash (too few eligible companies, or the limits left no room)")
     surv = ctx.survivorship()

@@ -114,6 +114,18 @@ def test_a_library_alpha_brings_its_status_its_trial_count_and_its_dates(world):
     assert one_of_two["blocks"] == {}                                               # the dates belong to the alpha, not to a blend that has something else in it
     single = B.tear(ctx, [{"kind": "alpha", "alpha_id": alpha_id}], {"side": "long_only", "n": 20}, lib)
     assert set(single["blocks"]) == {"train", "validation", "oos"}
+    assert info["warnings"][0].startswith("div(fcf,market_cap): its status is Candidate")                  # the warning says which alpha it is about
+
+
+def test_a_blend_of_several_candidates_lists_each_warning_once(world):
+    svc, ctx, _, _ = world
+    lib = AlphaLibrary(FundamentalsStore(_copy(svc, ctx, "alpha_lib_many.db")))
+    settings = {"universe": {}, "freq": "M", "horizon": "1m", "steps": [{"op": "winsorize", "pct": 1.0}, {"op": "zscore"}], "direction": 1}
+    ids = [lib.add_candidate(X.parse(f), settings, {"ic": 0.05, "n_tested": 50}) for f in ("div(fcf,market_cap)", "div(net_income,market_cap)", "div(revenue,market_cap)")]
+    both = [{"kind": "alpha", "alpha_id": i} for i in ids] + [{"kind": "alpha", "alpha_id": ids[0]}]            # the same alpha twice must not repeat its line either
+    result = B.tear(ctx, both, {"side": "long_only", "n": 20}, lib)
+    status = [w for w in result["warnings"] if "its status is Candidate" in w]
+    assert len(status) == 3 and len(set(status)) == 3 and len(result["warnings"]) == len(set(result["warnings"]))
 
 
 def _copy(svc, ctx, name: str):

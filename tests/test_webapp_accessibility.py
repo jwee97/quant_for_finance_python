@@ -2,7 +2,8 @@
 control with a name, the arrow keys on the tabs, and text colours that reach the WCAG contrast of 4.5:1 in both themes. The browser tests need Playwright and Chromium and are skipped without them; the
 contrast test reads the stylesheet and always runs.
 
-An automated audit with axe-core found each of these once (22 views, light and dark); these tests keep them found."""
+An automated audit with axe-core found each of these once (22 views, light and dark); these tests keep them found. The Fundamentals tab was audited the same way when it was built (29 states of it, light and
+dark: the demo and the empty real database, every view and every sub-view with a result), and ``test_webapp_fundamentals_browser.py`` keeps what that audit found."""
 
 from __future__ import annotations
 
@@ -20,7 +21,7 @@ sync_api = pytest.importorskip("playwright.sync_api")
 
 CSS = (Path(server.__file__).parent / "static" / "style.css").read_text(encoding="utf-8")
 READY = {"backtest": ".chip", "compare": "#compare .card", "builder": "#builder .card", "tune": "#tune .panel", "forecast": "#forecast .panel", "options": "#options-results .tile", "futures": "#futures-results .tile",
-         "crypto": "#crypto-results .tile", "ml": "#ml-results .card", "exec": "#exec-results .card", "cash": "#cash-results .card", "guides": "#guides .toc"}
+         "crypto": "#crypto-results .tile", "ml": "#ml-results .card", "fundamentals": "#fundamentals .panel", "exec": "#exec-results .card", "cash": "#cash-results .card", "guides": "#guides .toc"}
 
 
 @pytest.fixture(scope="module")

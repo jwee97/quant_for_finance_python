@@ -216,20 +216,19 @@ class AlphaLibrary:
             return self._record_monitor(row, "Broken", {"error": str(error)[:200]}, None)
         h, step, ppy = horizon_days(s.get("horizon", "1m")), FREQ_DAYS[ctx.freq], PERIODS_PER_YEAR[ctx.freq]
         ic = rank_ic(signal, ctx.forward(s.get("horizon", "1m")).reindex(signal.index), int(s.get("min_assets", 20)))
-        sign = float(row["metrics"].get("direction", 1.0)) or 1.0
         usable_ends = ic.index[-1] if len(ic) else None
         n_recent = recent or (12 if ctx.freq == "M" else (52 if ctx.freq == "W" else 4))
         if len(ic) < 2 * n_recent:
             return self._record_monitor(row, "Weakening", {"note": f"only {len(ic)} dates of IC: too few to compare a recent window with the past"}, usable_ends)
         recent_ic, past_ic = ic.iloc[-n_recent:], ic.iloc[:-n_recent]
         recent_two_years = ic.iloc[-2 * n_recent:]
-        original = float(row["ic"] or row["metrics"].get("ic") or past_ic.mean()) * sign if row["ic"] is not None else float(past_ic.mean()) * sign
-        original = abs(original) if original else float(abs(past_ic.mean()))
-        r_stats = ic_stats(recent_ic * sign, h, step, ppy)
-        two = float((recent_two_years * sign).mean())
+        # the signal already carries the direction found in discovery, so these ICs are in the chosen direction: flipping them again would call a healthy alpha that is used upside down Broken
+        original = abs(float(row["ic"])) if row["ic"] else float(abs(past_ic.mean()))
+        r_stats = ic_stats(recent_ic, h, step, ppy)
+        two = float(recent_two_years.mean())
         coverage_now = float(signal.iloc[-n_recent:].where(ctx.investable().reindex_like(signal).iloc[-n_recent:]).notna().sum(axis=1).mean())
         coverage_then = float(signal.iloc[:-n_recent].where(ctx.investable().reindex_like(signal).iloc[:-n_recent]).notna().sum(axis=1).mean())
-        mean_recent = float((recent_ic * sign).mean())
+        mean_recent = float(recent_ic.mean())
         if (r_stats.get("t_stat") is not None and np.isfinite(r_stats["t_stat"]) and r_stats["t_stat"] <= -2.0) or (coverage_then > 0 and coverage_now < 0.3 * coverage_then):
             state = "Broken"
         elif mean_recent <= 0 or (original > 0 and two < 0.25 * original):

@@ -106,6 +106,9 @@ def test_each_formula_meets_the_stage_it_deserves(base):
     flipped = screen.run(X.parse("neg(div(fcf,market_cap))"))
     assert yield_["status"] == "survivor" and yield_["stage"] == 6 and yield_["direction"] == 1.0
     assert flipped["status"] == "survivor" and flipped["direction"] == -1.0 and flipped["metrics"]["t_train"] == pytest.approx(-yield_["metrics"]["t_train"])
+    fm, ym = flipped["metrics"], yield_["metrics"]
+    assert fm["ic_raw"] < 0 < fm["ic"] and fm["ic"] == pytest.approx(ym["ic"]) and fm["icir"] == pytest.approx(ym["icir"])      # the figures kept are in the direction chosen, like the validation and locked ones
+    assert fm["ic"] == pytest.approx(-fm["ic_raw"]) and ym["ic"] == pytest.approx(ym["ic_raw"])
     for noise in ("current_ratio", "debt_to_equity"):
         r = screen.run(X.parse(noise))
         assert r["status"] == "rejected" and r["stage"] >= 1, noise
@@ -268,6 +271,20 @@ def _tail(ctx: ResearchContext, mode: str, rows: int) -> ResearchContext:
         fwd.iloc[t] = -row if mode == "reverse" else row[rng.permutation(len(row))]
     out._cache[("forward", 21)] = fwd
     return out
+
+
+def test_the_monitor_judges_an_alpha_used_upside_down_by_how_well_it_works_that_way_round(base, tmp_path):
+    disc = fresh(base, tmp_path)
+    disc.run(disc.create(D.DiscoverySpec(n_candidates=2, seed=1, seeds=["neg(div(fcf,market_cap))"], finalists=3)))
+    lib, ctx = disc.library, base[1]
+    alpha = next(a for a in lib.list("Candidate") if a["text"] == "neg(div(fcf,market_cap))")
+    assert alpha["metrics"]["direction"] == -1.0 and alpha["ic"] > 0 > alpha["metrics"]["ic_raw"] and alpha["oos_ic"] > 0
+    lib.validate(alpha["alpha_id"], "the test's own approval")
+    healthy = lib.monitor(alpha["alpha_id"], ctx)
+    assert healthy["monitor"] == "Healthy" and healthy["status"] == "Validated"                              # the flip was once applied twice: this alpha was called Broken and moved to Decaying
+    assert healthy["detail"]["recent_ic"] > 0 and healthy["detail"]["original_ic"] == pytest.approx(alpha["ic"]) and healthy["detail"]["recent_t"] > 2.0
+    broken = lib.monitor(alpha["alpha_id"], _tail(ctx, "reverse", 14))
+    assert broken["monitor"] == "Broken" and broken["detail"]["recent_ic"] < 0 and broken["status"] == "Decaying"
 
 
 def test_the_monitor_calls_a_working_alpha_healthy_and_a_failing_one_decaying_or_broken(base, tmp_path):

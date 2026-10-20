@@ -210,7 +210,7 @@ class FundamentalsApi:
         rows = self._guard(wb.library.list, status, q.get("order", "fitness"), _number(q.get("limit", 200), "limit", 1, 1000, True))
         keep = ("alpha_id", "name", "text", "status", "status_reason", "created_at", "updated_at", "universe", "rebalance_frequency", "forward_horizon", "ic", "icir", "sharpe", "sortino", "max_drawdown",
                 "turnover", "oos_ic", "oos_sharpe", "complexity", "fitness", "q_value", "deflated_sharpe")
-        return {"alphas": [{k: r.get(k) for k in keep} for r in rows], "counts": wb.library.counts(), "statuses": list(STATUSES)}
+        return {"alphas": [{**{k: r.get(k) for k in keep}, "direction": (r.get("metrics") or {}).get("direction")} for r in rows], "counts": wb.library.counts(), "statuses": list(STATUSES)}
 
     def alpha(self, q: dict | None = None) -> dict:
         q = q or {}

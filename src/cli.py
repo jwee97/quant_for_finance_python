@@ -20,6 +20,7 @@
     quant algo list                       the execution algorithms and where each strategy of the taxonomy lives; `quant algo run --algos vwap aim+vwap is:risk_aversion=0.01` compares them on a simulated day
     quant algo limit | route              the mix of limit and market orders (dynamic programme) and smart order routing across venues that learns their liquidity from censored fills
     quant cashflow simulate --deposit 1000   what deposits, withdrawals and dividends do to a portfolio under each policy; also `spending`, `redeem` and `ldi`
+    quant fundamentals status | simulate | add | plan | sync | prices | factors | evaluate | discover | library | monitor | backtest   company fundamentals in a local database: factor studies, automated alpha discovery, the alpha library and the backtest of an alpha (see src/fundamentals/cli.py)
     quant ml-build-dataset | ml-train | ml-backtest | ml-report   the machine-learning platform: leak-free datasets, walk-forward training inside a costed backtest, re-backtests, reports (see src/ml/cli.py)
 """
 
@@ -750,6 +751,9 @@ def build_parser() -> argparse.ArgumentParser:
     from .ml.cli import register as register_ml
 
     register_ml(sub)                                                         # ml-build-dataset, ml-train, ml-backtest, ml-report
+    from .fundamentals.cli import register as register_fundamentals
+
+    register_fundamentals(sub)                                               # fundamentals status | simulate | add | plan | sync | prices | factors | evaluate | discover | library | monitor | backtest
     return parser
 
 

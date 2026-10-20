@@ -503,7 +503,7 @@
     const wrap = h("div", "scroll", parent), t = h("table", "data", wrap), hd = h("tr", "", h("thead", "", t));
     for (const c of cols) { const th = h("th", c.num ? "num" : "", hd, c.label); if (c.title) th.title = c.title; }
     const tb = h("tbody", "", t);
-    for (const r of rows) { const tr = h("tr", "", tb); for (const c of cols) h("td", c.num ? "num" : "", tr, c.get ? c.get(r) : String(r[c.key])); }
+    for (const r of rows) { const tr = h("tr", "", tb); for (const c of cols) h("td", [c.num && "num", c.cls].filter(Boolean).join(" "), tr, c.get ? c.get(r) : String(r[c.key])); }
     const guard = () => {                                                                    // a table wider or taller than its card must be scrollable from the keyboard, and its region must have a name of its own
       if (!wrap.isConnected) return;
       if (wrap.scrollWidth > wrap.clientWidth + 1 || wrap.scrollHeight > wrap.clientHeight + 1) {

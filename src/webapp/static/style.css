@@ -376,3 +376,16 @@ ul.plain { margin: 0 0 6px; padding-left: 20px; display: grid; gap: 2px; font-si
 .card.compare.honest { border-color: var(--axis); box-shadow: inset 3px 0 0 var(--accent); }
 .tunevary { display: grid; gap: 6px; }
 .tunelist { margin: 0; padding-left: 18px; font-size: 12px; color: var(--ink-2); display: grid; gap: 3px; }
+/* the Fundamentals tab: the switch between the real database and the simulated demo sits above the form's sections, so it takes their padding */
+.panel .dbswitch { padding: 12px 16px; border-bottom: 1px solid var(--border); display: grid; gap: 8px; }
+.dbswitch .grouplabel { font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
+.dbswitch .seg { justify-self: start; }
+.dbswitch .seg button { padding: 4px 12px; }
+#fundamentals .card.roomy .scroll { max-height: none; }
+#fundamentals .seg.wrap { flex-wrap: wrap; }
+#fundamentals td.formula { overflow-wrap: anywhere; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+#fundamentals .tone-warn { color: var(--warn); }
+#fundamentals .tone-good { color: var(--good-text); }
+#fundamentals .tone-crit { color: var(--crit); }
+#fundamentals .vh { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+#fundamentals .bgnote .row { align-items: center; }
