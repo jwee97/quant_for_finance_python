@@ -1,18 +1,19 @@
-"""Several API keys for one provider, used as one allowance.
+"""API keys for one provider: finding them, keeping them secret, counting what each has used, and choosing which one makes the next request.
 
-Keys live only in the environment (on Replit: **Tools > Secrets**) or in the git-ignored ``.env`` file, never in the database, a page or a log. For a provider called ``fmp`` the pool reads, in this order
+Keys live only in the environment (on Replit: **Tools > Secrets**) or in the git-ignored ``.env`` file, never in the database, a page or a log. For a provider called ``openfilings`` the pool reads, in
+this order
 
-* ``FMP_API_KEYS``: a list separated by commas, semicolons, spaces or line breaks;
-* ``FMP_API_KEY``: one key;
-* ``FMP_API_KEY_1`` ... ``FMP_API_KEY_20``: one key each (the easiest on Replit, whose Secrets are one name and one value apiece).
+* ``OPENFILINGS_API_KEYS``: a list separated by commas, semicolons, spaces or line breaks;
+* ``OPENFILINGS_API_KEY``: one key;
+* ``OPENFILINGS_API_KEY_1`` ... ``OPENFILINGS_API_KEY_20``: one key each (the easiest on Replit, whose Secrets are one name and one value apiece).
 
-The same key listed twice counts once. Each key is a *slot* ("key 1", "key 2", ...) and is identified in the usage log by a salted one-way hash, so its count follows it if the list is reordered and the
-log never holds anything from which the key could be read back.
+The same key listed twice counts once. Each key is a *slot* ("key 1", "key 2", ...) and is identified in the usage log by a salted one-way hash, so its count follows it if the list is reordered and
+the log never holds anything from which the key could be read back.
 
-:meth:`KeyPool.call` runs a request with the key that has the most of today's allowance left. A provider answer of "rate limited" ends that key's day and the request moves to the next key; "invalid
-key" disables that key; a plan error (the provider does not offer the endpoint) is raised at once, because every key on the same plan would say the same and trying them all would only spend requests.
-
-Using several free accounts to multiply a free allowance may be against a provider's terms of service. The pool does not check that; read the provider's terms before relying on it.
+**Which key makes a request.** The first key in the list that is not invalid. A later key is a *standby*: it takes over only if the earlier one is rejected as invalid or revoked (HTTP 401), which is
+what several keys are for in practice (replacing a key without downtime, a spare, a key per machine). When a key's allowance is spent the pool stops and says when it resets; it does **not** move on
+to the next key. OpenFilings' usage policy forbids "rotating accounts or API keys" to get past its quotas, and several keys of one account share one allowance anyway, so rotation would be
+against the rules where it works and pointless where it does not. More credits come from a bigger plan or from prepaid top-ups, not from more keys.
 """
 
 from __future__ import annotations
@@ -23,8 +24,8 @@ import threading
 from pathlib import Path
 
 from ..webapp.providers import read_secret, tidy_key
-from .errors import InvalidKey, MissingKey, PlanError, ProviderError, QuotaExhausted, RateLimited
-from .usage import UsageLog, daily_limit
+from .errors import CreditsExhausted, InvalidKey, MissingKey, PlanError, ProviderError, QuotaExhausted, RateLimited, SyncPending
+from .usage import Allowance, UsageLog, allowance
 
 _SEPARATORS = re.compile(r"[,;\s]+")
 MAX_NUMBERED = 20
@@ -56,11 +57,11 @@ def discover(provider: str, root: Path | None = None) -> tuple[list[tuple[str, s
 
 
 class KeyPool:
-    def __init__(self, provider: str, keys: list[tuple[str, str]], usage: UsageLog | None = None, salt: str = "", limit: int | None = None, notes: list[str] | None = None,
-                 keyless: bool = False):
-        self.provider, self.usage, self.notes, self.keyless = provider, usage, list(notes or []), keyless
-        self.limit = daily_limit(provider) if limit is None else (limit or None)
-        if keyless:                                                           # a provider that needs no key still has a daily budget, counted the same way
+    def __init__(self, provider: str, keys: list[tuple[str, str]], usage: UsageLog | None = None, salt: str = "", allow: Allowance | None = None, notes: list[str] | None = None,
+                 keyless: bool = False, plan: str | None = None):
+        self.provider, self.usage, self.notes, self.keyless, self.plan = provider, usage, list(notes or []), keyless, plan
+        self._fixed = allow
+        if keyless:                                                           # a provider that needs no key still has a budget, counted the same way
             keys = [("", "")]
         self._keys = [("(no key needed)" if keyless else f"key {i + 1}", variable, key, hashlib.sha256(f"{salt}:{provider}:{key}".encode()).hexdigest()[:16])
                       for i, (variable, key) in enumerate(keys)]
@@ -68,47 +69,84 @@ class KeyPool:
         self._invalid: set[str] = set()
 
     @classmethod
-    def from_environment(cls, provider: str, usage: UsageLog | None = None, salt: str = "", root: Path | None = None, limit: int | None = None) -> "KeyPool":
+    def from_environment(cls, provider: str, usage: UsageLog | None = None, salt: str = "", root: Path | None = None, allow: Allowance | None = None, plan: str | None = None) -> "KeyPool":
         keys, notes = discover(provider, root)
-        return cls(provider, keys, usage, salt, limit, notes)
+        return cls(provider, keys, usage, salt, allow, notes, plan=plan)
 
     @classmethod
-    def without_key(cls, provider: str, usage: UsageLog | None = None, limit: int | None = None) -> "KeyPool":
-        """The same accounting for a provider that needs no key (a local library, a regulator's public site, the simulator): one anonymous slot with the provider's daily budget."""
-        return cls(provider, [], usage, "", limit, keyless=True)
+    def without_key(cls, provider: str, usage: UsageLog | None = None, allow: Allowance | None = None) -> "KeyPool":
+        """The same accounting for a provider that needs no key (the simulator): one anonymous slot with the provider's budget."""
+        return cls(provider, [], usage, "", allow, keyless=True)
 
     # ------------------------------------------------------------------------------------------------------------ state
     def __len__(self) -> int:
         return len(self._keys)
 
+    @property
+    def allow(self) -> Allowance:
+        return self._fixed or allowance(self.provider, self.plan)
+
     def secrets(self) -> list[str]:
         """The keys themselves, for redacting them from messages. Nothing else should call this."""
         return [key for _, _, key, _ in self._keys]
 
+    def _block(self, key_id: str):
+        if key_id in self._invalid:
+            return None
+        return self.usage.blocked(self.provider, key_id) if self.usage is not None else None
+
+    def _used(self, key_id: str) -> tuple[int, int]:
+        if self.usage is None:
+            return 0, 0
+        return self.usage.used_today(self.provider, key_id), self.usage.used_month(self.provider, key_id)
+
     def _state(self, key_id: str) -> str:
+        """``ready``, ``spent_day``, ``spent_month``, ``no_credits`` (the provider says the prepaid balance cannot cover a call) or ``invalid``."""
         if key_id in self._invalid:
             return "invalid"
-        if self.usage is not None:
-            why = self.usage.blocked_today(self.provider, key_id)
-            if why:
-                return "invalid" if why.startswith("auth") else "exhausted"
-            if self.limit is not None and self.usage.used_today(self.provider, key_id) >= self.limit:
-                return "exhausted"
+        block = self._block(key_id)
+        if block is not None:
+            return {"day": "spent_day", "month": "spent_month", "balance": "no_credits", "auth": "invalid"}[block.kind]
+        daily = self.allow.daily
+        if daily is not None and self._used(key_id)[0] >= daily:
+            return "spent_day"
         return "ready"
 
+    def _active(self) -> tuple[str, str, str, str] | None:
+        for entry in self._keys:
+            if self._state(entry[3]) != "invalid":
+                return entry
+        return None
+
     def slots(self) -> list[dict]:
-        """One line per key for the Data Manager: its slot, the variable it came from, how many requests it has made today, and whether it can be used. No key material."""
+        """One line per key for the Data Manager: its slot, the variable it came from, what it has used today and this month, whether it can be used and whether it is the one in use. No key material."""
+        allow = self.allow
+        active = self._active()
         out = []
         for slot, variable, _, key_id in self._keys:
-            used = self.usage.used_today(self.provider, key_id) if self.usage is not None else 0
-            out.append({"slot": slot, "variable": variable, "key_id": key_id, "used": used, "limit": self.limit, "state": self._state(key_id)})
+            today, month = self._used(key_id)
+            state = self._state(key_id)
+            role = "unusable" if state == "invalid" else ("active" if active is not None and active[3] == key_id else "standby")
+            block = self._block(key_id)
+            out.append({"slot": slot, "variable": variable, "key_id": key_id, "used_today": today, "used_month": month, "daily_limit": allow.daily, "monthly_limit": allow.monthly,
+                        "unit": allow.unit, "state": state, "role": role, "resets": block.until if block else None})
         return out
 
     def remaining_today(self) -> int | None:
-        """Requests left today across every usable key (``None`` when there is no limit)."""
-        if self.limit is None:
+        """What the key in use can still spend today (``None`` when there is no limit, ``0`` when it cannot be used)."""
+        active = self._active()
+        daily = self.allow.daily
+        if active is None or self._state(active[3]) != "ready":
+            return 0
+        return None if daily is None else max(daily - self._used(active[3])[0], 0)
+
+    def remaining_month(self) -> int | None:
+        """What is left of the key in use's included monthly allowance (prepaid top-up credits come on top and are not counted here)."""
+        active = self._active()
+        monthly = self.allow.monthly
+        if active is None or monthly is None:
             return None
-        return sum(max(self.limit - s["used"], 0) for s in self.slots() if s["state"] == "ready")
+        return max(monthly - self._used(active[3])[1], 0)
 
     @property
     def configured(self) -> bool:
@@ -116,49 +154,80 @@ class KeyPool:
         return self.keyless or len(self._keys) > 0
 
     # ------------------------------------------------------------------------------------------------------------ use
-    def _acquire(self, exclude: set[str]) -> tuple[str, str, str]:
+    def _why(self, entry: tuple[str, str, str, str], cost: int) -> str:
+        slot, _, _, key_id = entry
+        allow, name = self.allow, self.provider.upper()
+        used_day, used_month = self._used(key_id)
+        state = self._state(key_id)
+        standby = len(self._keys) > 1
+        tail = ("; the other keys are standbys, used only if this one is rejected as invalid (the pool does not rotate keys to get past a quota, which the provider's usage policy forbids)"
+                if standby else "")
+        if state == "no_credits":
+            return f"{name} says its included credits and your prepaid balance cannot cover this call ({slot}; {used_month} {allow.unit} used this month): top up credits, or wait for the monthly allowance to reset" + tail
+        if state == "spent_month":
+            return f"{name} monthly allowance is spent for {slot} ({used_month} {allow.unit} this month); it resets on {self.usage.next_month() if self.usage else 'the 1st'}" + tail
+        if state == "spent_day" or (allow.daily is not None and used_day + cost > allow.daily):
+            left = max((allow.daily or 0) - used_day, 0)
+            need = f" (this call needs {cost}, {left} left)" if state == "ready" else ""
+            return f"{name} daily allowance is spent for {slot} ({used_day} of {allow.daily} {allow.unit} today){need}; it resets at 00:00 UTC" + tail
+        return f"{name} {slot} cannot be used right now"
+
+    def _acquire(self, cost: int, force: bool = False) -> tuple[str, str, str]:
         if not self.keyless and not self._keys:
-            raise MissingKey(f"no {self.provider.upper()} API key is set: add {self.provider.upper()}_API_KEY (or {self.provider.upper()}_API_KEY_1, _2, ... one per account) "
+            raise MissingKey(f"no {self.provider.upper()} API key is set: add {self.provider.upper()}_API_KEY (or {self.provider.upper()}_API_KEY_1, _2, ... for spares) "
                              "as a secret (on Replit: Tools > Secrets) and restart the app")
         with self._lock:
-            best, room = None, -1.0
-            for slot, _, key, key_id in self._keys:
-                if key_id in exclude or self._state(key_id) != "ready":
-                    continue
-                used = self.usage.used_today(self.provider, key_id) if self.usage is not None else 0
-                left = float("inf") if self.limit is None else self.limit - used
-                if left > room:
-                    best, room = (slot, key, key_id), left
-        if best is None:
-            states = ", ".join(f"{s['slot']} {s['state']}" for s in self.slots())
-            raise QuotaExhausted(f"every {self.provider.upper()} key is out for today ({states}); the allowance resets at 00:00 UTC")
-        return best
+            entry = self._active()
+            if entry is None:
+                raise InvalidKey(f"every {self.provider.upper()} key was rejected as invalid or revoked; create a new key in the provider's dashboard and replace it")
+            slot, _, key, key_id = entry
+            daily = self.allow.daily
+            if not force and (self._state(key_id) != "ready" or (daily is not None and self._used(key_id)[0] + cost > daily)):
+                raise QuotaExhausted(self._why(entry, cost))
+        return slot, key, key_id
 
-    def call(self, fn, endpoint: str = "", symbol: str = "", market: str = ""):
-        """``fn(key)`` with the best available key, logging the request. ``fn`` returns the answer or raises one of the provider errors (never with the key in its message)."""
-        tried: set[str] = set()
+    def ensure(self, cost: int) -> None:
+        """Raise :class:`QuotaExhausted` unless the key in use can still spend ``cost`` today: a company's lookup and statements are started together or not at all."""
+        self._acquire(cost)
+
+    def call(self, fn, endpoint: str = "", symbol: str = "", market: str = "", credits: int = 1, force: bool = False):
+        """``fn(key)`` with the key in use, logging the call and what it cost. ``fn`` returns the answer or raises one of the provider errors (never with the key in its message).
+
+        An invalid key is set aside and the next one takes over; an exhausted allowance stops the pool (:class:`QuotaExhausted`) and is remembered, so nothing more is sent until it resets.
+        ``force`` makes the call even though the key is remembered as spent: the user pressed Test after topping up, and the provider's answer decides.
+        """
         while True:
-            slot, key, key_id = self._acquire(tried)
-            tried.add(key_id)
+            slot, key, key_id = self._acquire(credits, force)
+            entry = next(e for e in self._keys if e[3] == key_id)
             try:
                 result = fn(key)
             except RateLimited as error:
-                self._log(endpoint, symbol, market, slot, key_id, False, f"limit: {error}")
-                continue
+                if error.dimension == "burst":
+                    self._log(endpoint, symbol, market, slot, key_id, False, "burst: too many requests at once", 0)
+                    raise
+                kind = "day" if error.dimension == "daily" else "month"
+                self._log(endpoint, symbol, market, slot, key_id, False, f"limit:{kind} {error}", 0)
+                raise QuotaExhausted(self._why(entry, credits)) from None
+            except CreditsExhausted as error:
+                self._log(endpoint, symbol, market, slot, key_id, False, f"balance: {error}", 0)
+                raise QuotaExhausted(self._why(entry, credits)) from None
             except InvalidKey as error:
-                self._log(endpoint, symbol, market, slot, key_id, False, f"auth: {error}")
+                self._log(endpoint, symbol, market, slot, key_id, False, f"auth: {error}", 0)
                 with self._lock:
                     self._invalid.add(key_id)
                 continue
             except PlanError as error:
-                self._log(endpoint, symbol, market, slot, key_id, False, f"plan: {error}")
+                self._log(endpoint, symbol, market, slot, key_id, False, f"plan: {error}", 0)
+                raise
+            except SyncPending as error:
+                self._log(endpoint, symbol, market, slot, key_id, False, f"pending: {error}", 0)
                 raise
             except ProviderError as error:
-                self._log(endpoint, symbol, market, slot, key_id, False, str(error))
+                self._log(endpoint, symbol, market, slot, key_id, False, str(error), 0)
                 raise
-            self._log(endpoint, symbol, market, slot, key_id, True, "")
+            self._log(endpoint, symbol, market, slot, key_id, True, "", credits)
             return result
 
-    def _log(self, endpoint, symbol, market, slot, key_id, success, error) -> None:
+    def _log(self, endpoint, symbol, market, slot, key_id, success, error, credits) -> None:
         if self.usage is not None:
-            self.usage.record(self.provider, endpoint, success, symbol, market, slot, key_id, error=error)
+            self.usage.record(self.provider, endpoint, success, symbol, market, slot, key_id, credits=credits, error=error)

@@ -84,53 +84,42 @@ FLOW_KINDS = ("flow", "per_share")
 
 
 # ------------------------------------------------------------------------------------------------------------------ source mappings
-# canonical code -> list of (source field, transform). A transform is "as_is", "abs" (the statements show an outflow as a negative number) or "outflow" (an outflow only: a positive source value
-# is something else, such as proceeds from a disposal, and is dropped).
-FMP_MAP: dict[str, list[tuple[str, str]]] = {
-    # income statement
-    "revenue": [("income:revenue", "as_is")], "cost_of_revenue": [("income:costOfRevenue", "as_is")], "gross_profit": [("income:grossProfit", "as_is")],
-    "research_and_development": [("income:researchAndDevelopmentExpenses", "as_is")], "selling_general_admin": [("income:sellingGeneralAndAdministrativeExpenses", "as_is")],
-    "operating_income": [("income:operatingIncome", "as_is")], "ebit": [("income:ebit", "as_is")], "ebitda": [("income:ebitda", "as_is")], "interest_expense": [("income:interestExpense", "abs")],
-    "income_before_tax": [("income:incomeBeforeTax", "as_is")], "income_tax": [("income:incomeTaxExpense", "as_is")], "net_income": [("income:netIncome", "as_is")],
-    "eps_basic": [("income:eps", "as_is")], "eps_diluted": [("income:epsDiluted", "as_is"), ("income:epsdiluted", "as_is")],
-    "weighted_avg_shares_diluted": [("income:weightedAverageShsOutDil", "as_is")],
-    # balance sheet
-    "cash": [("balance:cashAndShortTermInvestments", "as_is")], "cash_and_equivalents": [("balance:cashAndCashEquivalents", "as_is")],
-    "accounts_receivable": [("balance:netReceivables", "as_is"), ("balance:accountsReceivables", "as_is")], "inventory": [("balance:inventory", "as_is")],
-    "current_assets": [("balance:totalCurrentAssets", "as_is")], "total_assets": [("balance:totalAssets", "as_is")], "ppe": [("balance:propertyPlantEquipmentNet", "as_is")],
-    "goodwill": [("balance:goodwill", "as_is")], "intangible_assets": [("balance:intangibleAssets", "as_is")],
-    "accounts_payable": [("balance:accountPayables", "as_is"), ("balance:totalPayables", "as_is")], "current_liabilities": [("balance:totalCurrentLiabilities", "as_is")],
-    "short_term_debt": [("balance:shortTermDebt", "as_is")], "long_term_debt": [("balance:longTermDebt", "as_is")], "total_debt": [("balance:totalDebt", "as_is")],
-    "total_liabilities": [("balance:totalLiabilities", "as_is")], "shareholders_equity": [("balance:totalStockholdersEquity", "as_is"), ("balance:totalEquity", "as_is")],
-    "minority_interest": [("balance:minorityInterest", "as_is")], "preferred_equity": [("balance:preferredStock", "as_is")],
-    # cash flow statement
-    "operating_cash_flow": [("cashflow:netCashProvidedByOperatingActivities", "as_is"), ("cashflow:operatingCashFlow", "as_is")], "capital_expenditure": [("cashflow:capitalExpenditure", "abs")],
-    "free_cash_flow": [("cashflow:freeCashFlow", "as_is")], "depreciation_amortization": [("cashflow:depreciationAndAmortization", "as_is"), ("income:depreciationAndAmortization", "as_is")],
-    "stock_based_compensation": [("cashflow:stockBasedCompensation", "as_is")], "acquisitions": [("cashflow:acquisitionsNet", "outflow")],
-    "share_repurchases": [("cashflow:commonStockRepurchased", "outflow")], "dividends_paid": [("cashflow:commonDividendsPaid", "abs"), ("cashflow:netDividendsPaid", "abs")],
-    "investing_cash_flow": [("cashflow:netCashProvidedByInvestingActivities", "as_is")], "financing_cash_flow": [("cashflow:netCashProvidedByFinancingActivities", "as_is")],
-}
-
-# OpenFilings normalises to a small set of line-item codes (income statement, balance sheet, cash flow). It gives no debt split, no depreciation, no SG&A or R&D and no share counts, so the
-# factors that need those are simply missing for a company only OpenFilings covers; the coverage table in the Data Manager shows it.
+# canonical code -> list of (source field, transform), first match wins. A transform is "as_is", "abs" (a cash outflow or a cost whose sign differs between companies and markets: the application
+# stores the amount spent as a positive number) or "outflow" (an outflow only: a positive source value is something else, such as proceeds from a disposal, and is dropped).
+#
+# OpenFilings (https://openfilings.org) returns its own canonical line-item keys, as filed, in the reporting currency's units (the documentation says "reporting currency units"; it does not say
+# whether cash outflows are negative, so the outflow lines are read as magnitudes). Its taxonomy has 191 keys; these are the ones the research uses. Keys not listed here are never requested.
 OPENFILINGS_MAP: dict[str, list[tuple[str, str]]] = {
-    "revenue": [("revenue", "as_is")], "cost_of_revenue": [("cost_of_revenue", "as_is")], "gross_profit": [("gross_profit", "as_is")],
-    "operating_income": [("operating_income_loss", "as_is")], "interest_expense": [("finance_costs", "abs")], "income_before_tax": [("profit_before_tax", "as_is")],
-    "income_tax": [("income_tax", "as_is")], "net_income": [("net_income_loss", "as_is")], "eps_basic": [("basic_eps", "as_is")], "eps_diluted": [("diluted_eps", "as_is")],
-    "cash_and_equivalents": [("cash_and_cash_equivalents", "as_is")], "accounts_receivable": [("trade_receivables", "as_is")], "inventory": [("inventory", "as_is")],
-    "ppe": [("property_plant_equipment", "as_is")], "goodwill": [("goodwill", "as_is")], "intangible_assets": [("intangible_assets", "as_is")],
-    "current_assets": [("current_assets", "as_is")], "total_assets": [("total_assets", "as_is")], "current_liabilities": [("current_liabilities", "as_is")],
-    "total_liabilities": [("total_liabilities", "as_is")], "shareholders_equity": [("total_equity", "as_is")],
-    "operating_cash_flow": [("operating_cash_flow", "as_is")], "capital_expenditure": [("capital_expenditure", "abs")], "dividends_paid": [("dividends_paid", "abs")],
-    "investing_cash_flow": [("investing_cash_flow", "as_is")], "financing_cash_flow": [("financing_cash_flow", "as_is")],
+    # income statement
+    "revenue": [("revenue", "as_is")], "cost_of_revenue": [("cost_of_revenue", "as_is"), ("cost_of_goods_sold", "as_is")], "gross_profit": [("gross_profit", "as_is")],
+    "research_and_development": [("rnd", "as_is")], "selling_general_admin": [("sga_expense", "as_is")], "operating_income": [("operating_income", "as_is")], "ebit": [("ebit", "as_is")],
+    "ebitda": [("ebitda", "as_is")], "interest_expense": [("interest_expense", "abs")], "income_before_tax": [("pretax_income", "as_is")], "income_tax": [("income_tax", "as_is")],
+    "net_income": [("net_income", "as_is"), ("net_income_attributable", "as_is")], "eps_basic": [("eps_basic", "as_is")], "eps_diluted": [("eps_diluted", "as_is")],
+    # balance sheet
+    "cash": [("total_cash_st_investments", "as_is")], "cash_and_equivalents": [("cash", "as_is")],
+    "accounts_receivable": [("accounts_receivable", "as_is"), ("trade_receivables", "as_is"), ("total_receivables", "as_is")], "inventory": [("inventory", "as_is")],
+    "current_assets": [("current_assets", "as_is")], "total_assets": [("total_assets", "as_is")], "ppe": [("net_ppe", "as_is")], "goodwill": [("goodwill", "as_is")],
+    "intangible_assets": [("other_intangibles", "as_is")], "accounts_payable": [("accounts_payable", "as_is"), ("trade_payables", "as_is")],
+    "current_liabilities": [("current_liabilities", "as_is")], "short_term_debt": [("short_term_debt", "as_is"), ("ibd_current", "as_is")],
+    "long_term_debt": [("long_term_debt", "as_is"), ("ibd_noncurrent", "as_is")], "total_debt": [("total_debt", "as_is")], "total_liabilities": [("total_liabilities", "as_is")],
+    "shareholders_equity": [("equity", "as_is")], "minority_interest": [("noncontrolling_interest", "as_is")], "preferred_equity": [("preferred_stock", "as_is")],
+    # cash flow statement
+    "operating_cash_flow": [("operating_cash_flow", "as_is")], "capital_expenditure": [("capex", "abs")], "free_cash_flow": [("free_cash_flow", "as_is")],
+    "depreciation_amortization": [("depreciation_amortization", "as_is"), ("da_supplemental", "as_is")], "stock_based_compensation": [("stock_based_comp", "as_is")],
+    "acquisitions": [("cash_acquisitions", "abs")], "share_repurchases": [("repurchase_of_common_stock", "abs")],
+    "dividends_paid": [("cash_dividends_paid", "abs"), ("common_dividends_paid", "abs")], "investing_cash_flow": [("investing_cash_flow", "as_is")],
+    "financing_cash_flow": [("financing_cash_flow", "as_is")],
+    # share counts
+    "weighted_avg_shares_diluted": [("shares_diluted", "as_is")], "shares_outstanding": [("shares_basic", "as_is")],
 }
-# an approximation worth saying so: OpenFilings' finance costs include more than interest on debt
-OPENFILINGS_APPROXIMATE = {"interest_expense"}
+# a source field that is only an approximation of the canonical metric is said to be: OpenFilings gives a basic share count for the year, not the count in issue at the period end
+OPENFILINGS_APPROXIMATE = {"shares_outstanding"}
+OPENFILINGS_KEYS: tuple[str, ...] = tuple(dict.fromkeys(source for options in OPENFILINGS_MAP.values() for source, _ in options))
 
 # the simulated provider speaks canonical codes already
 IDENTITY_MAP: dict[str, list[tuple[str, str]]] = {code: [(code, "as_is")] for code in METRICS}
 
-SOURCE_MAPS = {"fmp": FMP_MAP, "openfilings": OPENFILINGS_MAP, "simulated": IDENTITY_MAP}
+SOURCE_MAPS = {"openfilings": OPENFILINGS_MAP, "simulated": IDENTITY_MAP}
 APPROXIMATE = {"openfilings": OPENFILINGS_APPROXIMATE}
 
 

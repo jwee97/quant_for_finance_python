@@ -395,6 +395,9 @@ class SimulatedProvider(FundamentalDataProvider):
     def get_company(self, symbol: str, market: str | None = None) -> CompanyProfile:
         return self._profile(self._index(symbol))
 
+    def offline_profile(self, symbol: str, market: str | None = None) -> CompanyProfile:
+        return self._profile(self._index(symbol))                                  # the world is in memory: a complete profile for nothing
+
     def restate(self, symbol: str, fiscal_year: int, factor: float = 1.05) -> None:
         """Make the next answer for ``symbol`` report that fiscal year's revenue and net income ``factor`` times as large (a restatement)."""
         self._restated[(symbol.upper(), int(fiscal_year))] = float(factor)

@@ -136,6 +136,18 @@ class FundamentalsStore:
                     conn.execute("INSERT OR IGNORE INTO security_identifiers (security_id, provider, id_type, provider_id) VALUES (?,?,?,?)", (security_id, profile.provider, id_type, str(value)))
         return security_id
 
+    def enrich_security(self, security_id: int, profile: CompanyProfile) -> None:
+        """Fill what is still blank on an existing security from what a provider has just said about it. Nothing already known is overwritten and ``(ticker, exchange)`` never changes, so an answer
+        that spells the ticker differently cannot create a second copy of the company."""
+        fields = {"company_name": profile.name or None, "country": profile.country, "currency": profile.currency, "sector": profile.sector, "industry": profile.industry,
+                  "isin": profile.isin, "figi": profile.figi, "lei": profile.lei}
+        with self.db.transaction() as conn:
+            sets = ", ".join(f"{k} = COALESCE({k}, ?)" for k in fields)
+            conn.execute(f"UPDATE securities SET {sets}, last_seen = ? WHERE security_id = ?", [*fields.values(), datetime.now(timezone.utc).strftime("%Y-%m-%d"), int(security_id)])
+            for id_type, value in (("isin", profile.isin), ("lei", profile.lei), ("figi", profile.figi)):
+                if value:
+                    conn.execute("INSERT OR IGNORE INTO security_identifiers (security_id, provider, id_type, provider_id) VALUES (?,?,?,?)", (int(security_id), profile.provider, id_type, str(value)))
+
     def set_active(self, security_id: int, active: bool, delisted_date: str | None = None) -> None:
         with self.db.transaction() as conn:
             conn.execute("UPDATE securities SET active = ?, delisted_date = ? WHERE security_id = ?", (1 if active else 0, None if active else _date(delisted_date), int(security_id)))

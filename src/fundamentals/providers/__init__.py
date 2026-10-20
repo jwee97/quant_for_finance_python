@@ -6,14 +6,11 @@ from .base import FinancialsResult, FundamentalDataProvider
 
 __all__ = ["FundamentalDataProvider", "FinancialsResult", "make_provider", "PROVIDER_NAMES"]
 
-PROVIDER_NAMES = ("openfilings", "fmp", "simulated")
+PROVIDER_NAMES = ("openfilings", "simulated")
 
 
 def make_provider(name: str, **kwargs):
-    """The provider called ``name`` (``openfilings``, ``fmp`` or ``simulated``); keyword arguments go to its constructor."""
-    if name == "fmp":
-        from .fmp import FMPProvider
-        return FMPProvider(**kwargs)
+    """The provider called ``name`` (``openfilings`` or ``simulated``); keyword arguments go to its constructor."""
     if name == "openfilings":
         from .openfilings import OpenFilingsProvider
         return OpenFilingsProvider(**kwargs)
