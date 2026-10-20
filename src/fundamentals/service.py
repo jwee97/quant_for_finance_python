@@ -346,11 +346,14 @@ class FundamentalsService:
                 "database_bytes": self.store.db.size_bytes(), "quality": self.store.quality_counts()}
 
     # ------------------------------------------------------------------------------------------------------------ the demonstration world
-    def load_simulated(self, n_companies: int = 120, start_year: int = 2009, end_year: int = 2022, seed: int = 7, progress=None) -> dict:
-        """Fill the database from the simulated world through the same path a real provider takes: security master, raw payloads, statements, quality, daily prices and exchange rates."""
-        from .providers.simulated import SimulatedProvider
+    def load_simulated(self, n_companies: int = 120, start_year: int = 2009, end_year: int = 2022, seed: int = 7, progress=None, planted: dict | None = None) -> dict:
+        """Fill the database from the simulated world through the same path a real provider takes: security master, raw payloads, statements, quality, daily prices and exchange rates.
+
+        ``planted`` overrides the strength of the alphas hidden in the world (see :data:`providers.simulated.PLANTED`); a small test world needs stronger ones to be conclusive."""
+        from .providers.simulated import PLANTED, SimulatedProvider
         say = progress or (lambda text: None)
-        prov = SimulatedProvider(n_companies=n_companies, start_year=start_year, end_year=end_year, seed=seed)
+        extra = {"planted": {**PLANTED, **planted}} if planted else {}
+        prov = SimulatedProvider(n_companies=n_companies, start_year=start_year, end_year=end_year, seed=seed, **extra)
         self.register("simulated", prov)
         self._pools.pop("simulated", None)
         say("building the simulated companies")

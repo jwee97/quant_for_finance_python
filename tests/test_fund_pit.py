@@ -161,3 +161,19 @@ def test_observations_with_a_serious_quality_flag_are_treated_as_missing(tmp_pat
     assert np.isnan(PeriodTables(store, [sid]).fy.iloc[0]["revenue"]) and PeriodTables(store, [sid]).fy.iloc[0]["net_income"] == 1.0
     assert PeriodTables(store, [sid], PitSettings(exclude_flags=())).fy.iloc[0]["revenue"] == 5.0
     assert pit.PitSettings().describe()["info_lag_days"] == 1
+
+
+def test_a_database_with_annual_statements_only_still_builds_every_table(tmp_path):
+    """OpenFilings gives annual statements only: every table, the year-before lookup and the derived metrics must work with no quarter at all."""
+    from src.fundamentals import metrics
+    store = FundamentalsStore(tmp_path / "annual.db")
+    sid = store.upsert_security(CompanyProfile("openfilings", "us:AAA", "AAA", "A", exchange="US"))
+    store.store_financials(sid, "openfilings", [PeriodStatement("FY", f"{y}-12-31", {"revenue": 100.0 + 10 * i, "total_assets": 500.0, "net_income": 5.0 + i}, fiscal_year=y, filing_date=f"{y + 1}-02-25")
+                                                for i, y in enumerate((2018, 2019, 2020))])
+    tables = PeriodTables(store, [sid])
+    assert len(tables.ttm) == 3 and tables.ttm["period_end"].dtype.kind == "M" and set(tables.ttm["fiscal_period"]) == {"TTM"}
+    assert np.isnan(tables.prior_col("ttm", "revenue").iloc[0]) and list(tables.prior_col("ttm", "revenue").iloc[1:]) == [100.0, 110.0]
+    values = metrics.compute(tables, "ttm")
+    assert values["revenue_growth"].round(6).tolist()[1:] == [0.1, round(120 / 110 - 1, 6)] and np.isnan(values["revenue_growth"].iloc[0])
+    panel = tables.panel("revenue", pd.date_range("2019-01-31", "2021-12-31", freq="ME"), "ttm", [sid])
+    assert panel[sid].loc["2019-03-31"] == 100.0 and panel[sid].loc["2020-03-31"] == 110.0 and panel[sid].loc["2021-03-31"] == 120.0

@@ -37,8 +37,9 @@ class PitSettings:
     estimated_lag_days: tuple = (("FY", 120), ("H1", 90), ("H2", 90), ("Q1", 60), ("Q2", 60), ("Q3", 60), ("Q4", 60))
     use_estimated: bool = True                  # False: periods without a real filing date are left out altogether
     exclude_flags: tuple = DEFAULT_EXCLUDE      # observations carrying these quality flags are treated as missing
-    max_age_days: tuple = (("fy", 600), ("ttm", 420))
+    max_age_days: tuple = (("fy", 640), ("ttm", 540))        # a year, the slowest usual filing lag, and a margin: later than that the company has stopped reporting
     provider_priority: tuple = ("openfilings", "simulated")
+    naive_availability: bool = False            # a diagnostic only: treat every figure as known on its period end, to measure how much look-ahead would flatter a result
 
     def lag_for(self, fiscal_period: str) -> int:
         return dict(self.estimated_lag_days).get(fiscal_period, 120)
@@ -52,11 +53,13 @@ class PitSettings:
 
     def describe(self) -> dict:
         return {"info_lag_days": self.info_lag_days, "estimated_lag_days": dict(self.estimated_lag_days), "use_estimated": self.use_estimated, "exclude_flags": list(self.exclude_flags),
-                "max_age_days": dict(self.max_age_days), "provider_priority": list(self.provider_priority)}
+                "max_age_days": dict(self.max_age_days), "provider_priority": list(self.provider_priority), "naive_availability": self.naive_availability}
 
 
 def availability(periods: pd.DataFrame, settings: PitSettings) -> tuple[pd.Series, pd.Series]:
     """``(available_date, estimated)`` for each row of a periods frame (see the module docstring for the rule)."""
+    if settings.naive_availability:
+        return periods["period_end"] + pd.Timedelta(days=settings.info_lag_days), pd.Series(False, index=periods.index)
     known = periods[["filing_date", "accepted_date", "publication_date"]].min(axis=1)
     restated = periods["pit_quality"].eq("restated")
     first = known.where(~restated, periods["publication_date"])
@@ -181,13 +184,15 @@ class PeriodTables:
                 out = out[pos >= window - 1]
                 out["fiscal_period"] = "TTM"
                 parts.append(out.drop(columns=["step", "run"]))
-        quarter_based = pd.concat(parts, ignore_index=True) if parts else pd.DataFrame(columns=rows.columns)
-        quarter_based = self._drop_inconsistent(quarter_based, rows)
+        quarter_based = self._drop_inconsistent(pd.concat(parts, ignore_index=True), rows) if parts else None
         fy = rows[rows["fiscal_period"] == "FY"].copy()
         fy["fiscal_period"] = "TTM"
-        have = set(zip(quarter_based["security_id"], quarter_based["period_end"])) if len(quarter_based) else set()
-        fy = fy[[(s, e) not in have for s, e in zip(fy["security_id"], fy["period_end"])]]
-        both = pd.concat([quarter_based, fy], ignore_index=True)
+        if quarter_based is not None and len(quarter_based):
+            have = set(zip(quarter_based["security_id"], quarter_based["period_end"]))
+            fy = fy[[(s, e) not in have for s, e in zip(fy["security_id"], fy["period_end"])]]
+            both = pd.concat([quarter_based, fy], ignore_index=True) if len(fy) else quarter_based.reset_index(drop=True)      # (an empty frame would turn the dates into plain objects)
+        else:
+            both = fy.reset_index(drop=True)                                      # annual statements only: each year stands in for the trailing twelve months at its end
         for c in stocks:
             if c not in both.columns:
                 both[c] = np.nan
