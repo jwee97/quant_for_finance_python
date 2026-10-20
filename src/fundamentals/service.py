@@ -352,6 +352,10 @@ class FundamentalsService:
         ``planted`` overrides the strength of the alphas hidden in the world (see :data:`providers.simulated.PLANTED`); a small test world needs stronger ones to be conclusive."""
         from .providers.simulated import PLANTED, SimulatedProvider
         say = progress or (lambda text: None)
+        with self.store.db.transaction() as conn:
+            real = int(conn.execute("SELECT COUNT(*) FROM securities WHERE source IS NOT NULL AND source <> 'simulated'").fetchone()[0])
+        if real:
+            raise FundamentalsError(f"this database holds {real} real companies: a simulated world would be mixed into studies of them. Make it in a separate database (the Fundamentals tab keeps one for the demo)")
         extra = {"planted": {**PLANTED, **planted}} if planted else {}
         prov = SimulatedProvider(n_companies=n_companies, start_year=start_year, end_year=end_year, seed=seed, **extra)
         self.register("simulated", prov)

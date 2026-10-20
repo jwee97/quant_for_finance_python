@@ -141,23 +141,32 @@ class Workbench:
         c = self.store.counts()
         return (c["companies"], c["observations"], c["price_rows"], c["annual_periods"], c["quarterly_periods"], c["restated_vintages"])
 
-    def context(self, universe: dict | None = None, freq: str = "M", entry_lag: int = 1, start: str | None = None, end: str | None = None, pit: dict | None = None) -> ResearchContext:
-        """The research context for a universe, from a cache that forgets the least recently used and everything when the database changes."""
+    def _context_key(self, universe, freq, entry_lag, start, end, pit) -> tuple:
         if freq not in FREQ_DAYS:
             raise FundamentalsError("freq must be W (weekly), M (monthly) or Q (quarterly)")
         spec, settings = universe_spec(universe), pit_settings(pit)
         lag = _number(entry_lag, "the entry lag", 0, 10, True)
-        key = (spec.key(), freq, lag, _date(start, "start"), _date(end, "end"), repr(settings), self._signature())
+        return (spec.key(), freq, lag, _date(start, "start"), _date(end, "end"), repr(settings), self._signature()), spec, settings
+
+    def context(self, universe: dict | None = None, freq: str = "M", entry_lag: int = 1, start: str | None = None, end: str | None = None, pit: dict | None = None) -> ResearchContext:
+        """The research context for a universe, from a cache that forgets the least recently used and everything when the database changes."""
+        key, spec, settings = self._context_key(universe, freq, entry_lag, start, end, pit)
         with self._lock:
             hit = self._contexts.get(key)
             if hit is not None:
                 self._contexts.move_to_end(key)
                 return hit
-            ctx = ResearchContext(self.store, spec, start=key[3], end=key[4], freq=freq, entry_lag=lag, settings=settings)
+            ctx = ResearchContext(self.store, spec, start=key[3], end=key[4], freq=freq, entry_lag=key[2], settings=settings)
             self._contexts[key] = ctx
             while len(self._contexts) > KEEP_CONTEXTS:
                 self._contexts.popitem(last=False)
             return ctx
+
+    def peek(self, universe: dict | None = None, freq: str = "M", entry_lag: int = 1, start: str | None = None, end: str | None = None, pit: dict | None = None) -> ResearchContext | None:
+        """The context for these choices if it has already been built, else ``None`` (never builds one: a quick check can use the data when it is at hand and do without when it is not)."""
+        key = self._context_key(universe, freq, entry_lag, start, end, pit)[0]
+        with self._lock:
+            return self._contexts.get(key)
 
     def forget(self) -> None:
         with self._lock:
