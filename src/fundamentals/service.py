@@ -13,6 +13,7 @@ the rest (a lookup for sector and identifiers, then the statements).
 
 from __future__ import annotations
 
+import json
 import math
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -24,13 +25,45 @@ from .errors import FundamentalsError, InvalidKey, MissingKey, NotFound, PlanErr
 from .keys import KeyPool
 from .providers import PROVIDER_NAMES, make_provider
 from .providers.base import FundamentalDataProvider
-from .store import DEFAULT_PATH, FundamentalsStore
+from .store import DEFAULT_PATH, CompanyProfile, FundamentalsStore
 from .usage import UsageLog
 
 CADENCE = {"annual": 365, "quarter": 91}          # days between periods
 FILING_LAG = {"annual": 150, "quarter": 75}       # a generous typical lag, so "stale" means a filing really is overdue
 RECHECK_DAYS = 7                                   # never look again sooner than this
 NOT_FOUND_RETRY_DAYS = 60
+SEARCH_KEEP_DAYS = 30                              # a saved search answer is used again for this long (a company's listing hardly ever changes) ...
+SEARCH_EMPTY_KEEP_DAYS = 1                         # ... and one that found nothing for a day, so a second press does not spend another credit
+KIND_WORDS = {"name": "a company name", "symbol": "a ticker", "isin": "an ISIN", "lei": "a LEI"}
+_PROFILE_TEXT = ("provider_symbol", "ticker", "name", "exchange", "market", "country", "currency", "sector", "industry", "isin", "lei")
+_PROFILE_EXTRA = ("also_listed", "score", "registry", "hint", "primary", "has_financials")
+
+
+def _freeze(profile: CompanyProfile) -> dict:
+    """A search hit as plain JSON, for the saved answer."""
+    out = {k: getattr(profile, k) for k in _PROFILE_TEXT}
+    out["extra"] = {k: v for k, v in (profile.extra or {}).items() if k in _PROFILE_EXTRA}
+    return out
+
+
+def _thaw(provider: str, raw) -> CompanyProfile | None:
+    """A saved hit as a profile again. What was saved is data from the outside: only known fields of the expected type come back, cut to a sensible length."""
+    if not isinstance(raw, dict):
+        return None
+
+    def text(key: str) -> str | None:
+        value = raw.get(key)
+        return value.strip()[:200] if isinstance(value, str) and value.strip() else None
+    symbol, ticker = text("provider_symbol"), text("ticker")
+    if not symbol or not ticker:
+        return None
+    extra = raw.get("extra") if isinstance(raw.get("extra"), dict) else {}
+    score = extra.get("score")
+    return CompanyProfile(provider, symbol, ticker, text("name") or "", exchange=text("exchange") or "", market=text("market"), country=text("country"), currency=text("currency"),
+                          sector=text("sector"), industry=text("industry"), isin=text("isin"), lei=text("lei"),
+                          extra={"also_listed": [a.strip()[:30] for a in (extra.get("also_listed") or []) if isinstance(a, str)][:6], "score": score if isinstance(score, (int, float)) else None,
+                                 "registry": str(extra.get("registry") or "")[:40], "hint": str(extra.get("hint") or "")[:200], "primary": bool(extra.get("primary")),
+                                 "has_financials": bool(extra.get("has_financials", True))})
 
 
 @dataclass
@@ -205,6 +238,9 @@ class FundamentalsService:
                 ids.append(existing)
                 continue
             profile = prov.offline_profile(normal, market)
+            hit = self._hit(provider, normal)                                           # a search has already paid for the name and the identifiers: keep them
+            if hit is not None:
+                profile.name, profile.isin, profile.lei = hit.name or profile.name, hit.isin or profile.isin, hit.lei or profile.lei
             ids.append(self.store.upsert_security(profile))
         if progress:
             progress(f"{len(ids)} companies registered")
@@ -214,6 +250,85 @@ class FundamentalsService:
         with self.store.db.transaction() as conn:
             row = conn.execute("SELECT security_id FROM security_identifiers WHERE provider = ? AND id_type = 'symbol' AND provider_id = ?", (provider, symbol)).fetchone()
         return int(row[0]) if row else None
+
+    # ------------------------------------------------------------------------------------------------------------ finding a company
+    def _hit(self, provider: str, symbol: str) -> CompanyProfile | None:
+        try:
+            return _thaw(provider, json.loads(self.store.get_meta(f"hit:{provider}:{symbol}") or "null"))
+        except ValueError:
+            return None
+
+    def _saved_search(self, key: str, provider: str, today: pd.Timestamp) -> dict | None:
+        """The saved answer to this search if there is one and it is recent enough to trust."""
+        try:
+            saved = json.loads(self.store.get_meta(key) or "null")
+        except ValueError:
+            return None
+        if not isinstance(saved, dict) or not isinstance(saved.get("profiles"), list):
+            return None
+        try:
+            age = (today - pd.Timestamp(str(saved.get("at"))[:10])).days
+        except (ValueError, TypeError):
+            return None
+        profiles = [p for p in (_thaw(provider, raw) for raw in saved["profiles"]) if p is not None]
+        keep = SEARCH_KEEP_DAYS if profiles else SEARCH_EMPTY_KEEP_DAYS
+        return {**saved, "profiles": profiles} if 0 <= age < keep else None
+
+    def allowed_markets(self, provider: str) -> tuple[set[str], bool] | None:
+        """``(markets, all)`` the account's plan includes, as the last connection test reported them; ``None`` before there has been one."""
+        try:
+            saved = json.loads(self.store.get_meta(f"markets:{provider}") or "null")
+        except ValueError:
+            return None
+        if not isinstance(saved, dict) or not isinstance(saved.get("allowed"), list):
+            return None
+        return {str(m).lower() for m in saved["allowed"]}, bool(saved.get("all"))
+
+    def search_companies(self, provider: str, query: str, kind: str = "auto", market: str | None = None, limit: int = 10, refresh: bool = False) -> dict:
+        """Look a company up in the provider's directory, by name, ticker or ISIN. Costs one credit (OpenFilings); the same search again is answered from the saved answer for nothing.
+
+        Nothing is registered: adding a company is a separate, free step, and fetching its statements another, so a search never spends more than it says. What comes back says, for each hit,
+        whether the company is already in the database and how many annual periods it has.
+        """
+        prov = self.provider(provider)
+        ok, why = prov.available()
+        if not ok:
+            raise MissingKey(why)
+        text = " ".join(str(query or "").split())
+        if len(text) < 2:
+            raise FundamentalsError("type at least two characters of a name, a ticker or an ISIN to search for")
+        if len(text) > 120:
+            raise FundamentalsError("a search is at most 120 characters")
+        try:
+            plan = prov.search_plan(text, kind, market)
+        except ProviderError as error:
+            raise FundamentalsError(str(error)) from None
+        key = f"search:{provider}:{plan['kind']}:{plan['market'] or ''}:{plan['value'].lower()}"
+        today = self._today()
+        saved = None if refresh else self._saved_search(key, provider, today)
+        if saved is not None:
+            profiles, message, ambiguous, credits, at = saved["profiles"], str(saved.get("message") or ""), bool(saved.get("ambiguous")), 0, str(saved.get("at"))[:10]
+            skipped = [str(m)[:12] for m in (saved.get("skipped") or []) if isinstance(m, str)][:20]
+        else:
+            detail = self._call(provider, lambda: prov.search_detail(text, limit, plan["kind"], plan["market"]), "search", text)
+            profiles, message, ambiguous, credits, at = detail["profiles"], str(detail.get("message") or ""), bool(detail.get("ambiguous")), int(detail.get("credits", 0)), today.strftime("%Y-%m-%d")
+            skipped = [str(m)[:12] for m in (detail.get("markets_skipped") or []) if isinstance(m, str)][:20]
+            self.store.set_meta(key, json.dumps({"at": at, "message": message, "ambiguous": ambiguous, "skipped": skipped, "profiles": [_freeze(p) for p in profiles]}, separators=(",", ":")))
+            for p in profiles:
+                self.store.set_meta(f"hit:{provider}:{p.provider_symbol}", json.dumps(_freeze(p), separators=(",", ":")))
+        allowed = self.allowed_markets(provider)
+        rows = []
+        for p in profiles:
+            sid = self._lookup(provider, p.provider_symbol)
+            market_id = p.provider_symbol.partition(":")[0]
+            rows.append({"symbol": p.provider_symbol, "ticker": p.ticker, "market": market_id, "name": p.name, "country": p.country, "isin": p.isin, "lei": p.lei,
+                         "primary": bool(p.extra.get("primary")), "also_listed": list(p.extra.get("also_listed") or []), "score": p.extra.get("score"), "hint": p.extra.get("hint") or "",
+                         "has_financials": bool(p.extra.get("has_financials", True)), "plan_allows": None if allowed is None else (allowed[1] or market_id in allowed[0]),
+                         "in_database": sid is not None, "security_id": sid, "periods": int(self.store.period_summary(sid, provider).get("n") or 0) if sid is not None else 0})
+        pool = self.pool(provider)
+        return {"query": text, "kind": plan["kind"], "kind_word": KIND_WORDS.get(plan["kind"], plan["kind"]), "market": plan["market"] or "", "alternatives": list(plan["alternatives"]),
+                "results": rows, "count": len(rows), "cached": saved is not None, "credits": credits, "message": message, "ambiguous": ambiguous, "markets_skipped": skipped, "searched_at": at,
+                "remaining_today": pool.remaining_today(), "unit": pool.allow.unit, "cost_to_fetch": prov.cost("financials") + (prov.cost("profile") if prov.has_lookup else 0)}
 
     def sync(self, provider: str, symbols: list[str] | None = None, security_ids: list[int] | None = None, periods: tuple = ("annual",), start_year: int | None = None,
              budget: int | None = None, progress=None, stop=None, market: str | None = None) -> dict:
@@ -317,6 +432,8 @@ class FundamentalsService:
         if result.get("plan"):
             self.store.set_meta(f"plan:{name}", result["plan"])
             self.pool(name).plan = result["plan"]
+        if result.get("allowed_markets") is not None:
+            self.store.set_meta(f"markets:{name}", json.dumps({"allowed": [str(m).lower() for m in result["allowed_markets"]], "all": bool(result.get("all_markets"))}))
         return {**info, "ok": True, **result}
 
     def data_status(self) -> dict:

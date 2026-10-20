@@ -2,6 +2,7 @@
 
     quant fundamentals status                  what the database holds, the allowance of each provider and every key slot (never a key)
     quant fundamentals simulate                make the demo database: a simulated world with a few alphas planted in it (add --demo to the commands below to work in it)
+    quant fundamentals search nvidia           look a company up in OpenFilings' directory by name, ticker or ISIN (1 credit; the same search again is free)
     quant fundamentals add us:AAPL jp:7203     register companies (free); `plan` says what fetching them would cost, `sync --budget 100` fetches within that many credits
     quant fundamentals prices                  daily prices and exchange rates for the companies, from Yahoo Finance
     quant fundamentals factors [--scan]        the factor library; with --scan every factor studied under one set of conditions
@@ -32,8 +33,8 @@ from .library import STATUSES
 from .service import FundamentalsService
 from .workbench import Workbench, eval_spec
 
-ACTIONS = ("status", "simulate", "add", "plan", "sync", "prices", "factors", "evaluate", "discover", "library", "monitor", "backtest")
-REAL_ONLY = {"add": "adding companies", "plan": "planning a sync", "sync": "fetching statements", "prices": "loading prices"}
+ACTIONS = ("status", "simulate", "search", "add", "plan", "sync", "prices", "factors", "evaluate", "discover", "library", "monitor", "backtest")
+REAL_ONLY = {"search": "searching OpenFilings", "add": "adding companies", "plan": "planning a sync", "sync": "fetching statements", "prices": "loading prices"}
 DEMO_FILE, REAL_FILE = "fundamentals_demo.db", "fundamentals.db"
 
 
@@ -158,6 +159,14 @@ def _simulate(wb, args) -> int:
     planted = {"delta_roic": 0.011, "fcf_yield": 0.0068, "asset_growth": 0.0045} if args.strong else None
     report = wb.service.load_simulated(args.companies, args.from_year, args.to_year, args.seed, _progress(), planted)
     return _out(args, f"Made {report['companies']} simulated companies with {report.get('price_rows', 0):,} daily prices, {args.from_year} to {args.to_year}. They are for trying the tool: what is found in them says nothing about real markets.", report)
+
+
+def _search(wb, args) -> int:
+    text = " ".join(args.items)
+    if len(text.strip()) < 2:
+        raise FundamentalsError("say what to look for: quant fundamentals search nvidia (a name, a ticker such as NVDA or us:NVDA, or an ISIN)")
+    found = wb.service.search_companies("openfilings", text, args.kind, args.market, 10, args.refresh)
+    return _out(args, R.format_search(found), found)
 
 
 def _add(wb, args) -> int:
@@ -306,7 +315,7 @@ def _backtest(wb, args) -> int:
     return _out(args, R.format_backtest(result), result)
 
 
-HANDLERS = {"status": _status, "simulate": _simulate, "add": _add, "plan": _plan, "sync": _sync, "prices": _prices, "factors": _factors, "evaluate": _evaluate, "discover": _discover, "library": _library,
+HANDLERS = {"status": _status, "simulate": _simulate, "search": _search, "add": _add, "plan": _plan, "sync": _sync, "prices": _prices, "factors": _factors, "evaluate": _evaluate, "discover": _discover, "library": _library,
             "monitor": _monitor, "backtest": _backtest}
 
 
@@ -357,7 +366,7 @@ def _add_parser(sub) -> None:
     p = sub.add_parser("fundamentals", help="company fundamentals in a local database: factor studies, automated alpha discovery, the alpha library, its monitor and the backtest of an alpha (the Fundamentals tab, in the terminal)",
                        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("action", choices=ACTIONS, help="what to do (see above)")
-    p.add_argument("items", nargs="*", help="add: tickers (us:AAPL jp:7203); sync: limit the fetch to these; evaluate: the factor; factors --scan: limit the scan to these")
+    p.add_argument("items", nargs="*", help="search: the name, ticker or ISIN to look for; add: tickers (us:AAPL jp:7203); sync: limit the fetch to these; evaluate: the factor; factors --scan: limit the scan to these")
     p.add_argument("--demo", action="store_true", help="work in the demo database (a simulated world) instead of the real one")
     p.add_argument("--json", help="also write the whole result to this file")
     p.add_argument("--top", type=int, default=25, help="rows to show of a long table, and how many alphas `library` lists")
@@ -370,10 +379,11 @@ def _add_parser(sub) -> None:
     d = p.add_argument_group("simulate")
     d.add_argument("--companies", type=int, default=120); d.add_argument("--from-year", type=int, default=2009); d.add_argument("--to-year", type=int, default=2022); d.add_argument("--seed", type=int, default=7)
     d.add_argument("--reset", action="store_true", help="start the demo file again"); d.add_argument("--strong", action="store_true", help="plant stronger alphas (easier to find in a small world)")
-    s = p.add_argument_group("add, plan, sync, prices")
-    s.add_argument("--market", help="the market of tickers typed without one (us, jp, uk, ...)"); s.add_argument("--start-year", type=int, help="first fiscal year to fetch")
+    s = p.add_argument_group("search, add, plan, sync, prices")
+    s.add_argument("--market", help="search: only this market; add, sync: the market of tickers typed without one (us, jp, uk, ...)"); s.add_argument("--start-year", type=int, help="first fiscal year to fetch")
+    s.add_argument("--kind", choices=["auto", "name", "symbol", "isin", "lei"], default="auto", help="search: what the text is (auto reads it from its shape: us:NVDA and NVDA are tickers, Nvidia is a name)")
     s.add_argument("--periods", nargs="*", choices=["annual", "quarter"], default=["annual"]); s.add_argument("--budget", type=int, help="sync: the most credits this run may spend (required: statements use the account's allowance)")
-    s.add_argument("--price-start", default="2010-01-01", help="prices: the first date"); s.add_argument("--refresh", action="store_true", help="prices: fetch the whole history again")
+    s.add_argument("--price-start", default="2010-01-01", help="prices: the first date"); s.add_argument("--refresh", action="store_true", help="prices: fetch the whole history again; search: ask OpenFilings again instead of using the saved answer")
     e = p.add_argument_group("evaluate, factors --scan")
     e.add_argument("--formula", help="evaluate or backtest a formula such as div(fcf,market_cap)"); e.add_argument("--scan", action="store_true", help="factors: study every factor and set them side by side")
     e.add_argument("--horizon", default="1m", help="the return measured over the next 1w, 2w, 1m, 2m, 3m, 6m or 12m"); e.add_argument("--direction", default="theory", help="theory (the factor's own), auto (counts as a second trial), 1 or -1")

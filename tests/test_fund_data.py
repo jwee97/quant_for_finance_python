@@ -16,7 +16,7 @@ import pandas as pd
 import pytest
 
 from src.fundamentals import canonical, quality
-from src.fundamentals.errors import CreditsExhausted, InvalidKey, MissingKey, NotFound, PlanError, ProviderError, QuotaExhausted, RateLimited, SyncPending
+from src.fundamentals.errors import CreditsExhausted, FundamentalsError, InvalidKey, MissingKey, NotFound, PlanError, ProviderError, QuotaExhausted, RateLimited, SyncPending
 from src.fundamentals.keys import KeyPool, discover
 from src.fundamentals.providers import openfilings as of
 from src.fundamentals.providers.openfilings import OpenFilingsProvider, parse_financials, split_symbol
@@ -313,6 +313,18 @@ def _values(year: int, scale: float = 1.0) -> dict:
             "rnd": None, "ebit": None}
 
 
+DIRECTORY = [                                                                                # what the stand-in's search knows (the shapes follow the OpenAPI description of /entities/search)
+    {"display_names": ["Apple Inc."], "isin": "US0378331005", "lei": "H" * 20,
+     "listings": [{"market_id": "us", "ticker": "AAPL", "registry": "sec", "primary": True, "company_name": "Apple Inc."}]},
+    {"display_names": ["NVIDIA Corp"], "isin": "US67066G1040", "lei": "N" * 20,
+     "listings": [{"market_id": "mx", "ticker": "NVDA", "registry": "bmv", "primary": False}, {"market_id": "us", "ticker": "NVDA", "registry": "sec", "primary": True, "company_name": "NVIDIA Corp"}]},
+    {"display_names": ["Toyota Motor Corp"], "isin": "JP3633400001",
+     "listings": [{"market_id": "jp", "ticker": "7203", "registry": "edinet", "primary": True, "company_name": "Toyota Motor Corporation"}, {"market_id": "us", "ticker": "TM", "registry": "sec", "primary": False}]},
+    {"display_names": ["Toyota Tsusho Corp"], "isin": "JP3635000007", "listings": [{"market_id": "jp", "ticker": "8015", "registry": "edinet", "primary": True}]},
+    {"display_names": ["Deutsche Bank AG"], "isin": "DE0005140008", "listings": [{"market_id": "de", "ticker": "DBK", "registry": "bafin", "primary": True}]},      # a market without financials
+]
+
+
 class FakeOpenFilings:
     """A stand-in for the REST API with the behaviour its documentation describes: keys belong to accounts, credits are charged per call against a daily and a monthly allowance, a call that
     fails is not charged, and the error answers have the documented shape."""
@@ -330,6 +342,9 @@ class FakeOpenFilings:
         self.broken = 0
         self.reject_line_items_once = False
         self.entity_ticker = None
+        self.directory = [dict(e) for e in DIRECTORY]
+        self.empty_search_as_200 = False
+        self.skipped: list = []
 
     def __call__(self, url, headers, timeout):
         parts = parse.urlparse(url)
@@ -370,8 +385,11 @@ class FakeOpenFilings:
             return 200, {}, json.dumps({"display_name": f"{ticker} Corp", "identifiers": {"isin": f"US{abs(hash(ticker)) % 10**9:09d}0", "lei": "L" * 20, "yahoo_symbol": ticker},
                                         "industry": {"group": "Technology", "sic": "3571", "damodaran": "Computers"}, "listing": f"{market}:{ticker}"}).encode()
         if parts.path.endswith("/entities/search"):
-            return 200, {}, json.dumps({"entity": {"display_names": ["Apple Inc."], "isin": "US0378331005", "lei": "L" * 20,
-                                                   "listings": [{"market_id": "us", "ticker": "AAPL", "registry": "sec", "primary": True}]}, "entities": []}).encode()
+            status, headers, body = self._search(q)
+            if status != 200:                                                                     # a call that fails is refunded
+                self.used_day[(account, self.day)] = used_today
+                self.used_month[account] = max(0, self.used_month.get(account, 0) - cost)
+            return status, headers, body
         if parts.path.endswith("/companies/financials"):
             if q.get("line_items") not in (None, "ALL") and self.reject_line_items_once:
                 self.reject_line_items_once = False
@@ -384,6 +402,24 @@ class FakeOpenFilings:
             return 200, {}, json.dumps({"entity": {"name": f"{ticker} Corp", "market_id": market, "ticker": self.entity_ticker or ticker, "lei": "L" * 20, "isin": "US0000000000"},
                                         "query": {"fiscal_year_from": first, "fiscal_year_to": last, "fiscal_period": "fy"}, "currency_latest": "USD", "periods": periods}).encode()
         return 404, {}, b'{"detail": "no such endpoint"}'
+
+
+    def _search(self, q):
+        """``GET /api/v1/entities/search``: ``query`` matches names, ``ticker`` (with an optional ``market_id``) a listing, ``isin`` and ``lei`` the identifiers. The best match is ``entity``, the rest ``entities``."""
+        def matches(entity):
+            if q.get("query"):
+                return q["query"].lower() in " ".join(entity["display_names"]).lower()
+            if q.get("ticker"):
+                return any(x["ticker"].upper() == q["ticker"].upper() and (not q.get("market_id") or x["market_id"] == q["market_id"]) for x in entity["listings"])
+            if q.get("isin"):
+                return entity.get("isin") == q["isin"]
+            return bool(q.get("lei")) and entity.get("lei") == q["lei"]
+        found = [e for e in self.directory if matches(e)]
+        if not found:
+            if self.empty_search_as_200:
+                return 200, {}, json.dumps({"entity": {"display_names": [], "listings": []}, "entities": [], "message": "No issuer matched"}).encode()
+            return 404, {}, json.dumps({"detail": "no issuer matches"}).encode()
+        return 200, {}, json.dumps({"entity": found[0], "entities": found[1:], "ambiguous": len(found) > 1, "markets_skipped": self.skipped, "message": None}).encode()
 
 
 def _provider(tmp_path, fake=None, keys=(KEY_1,), clock=None, daily=100, monthly=1000, sleep=lambda s: None):
@@ -434,6 +470,59 @@ def test_a_lookup_gives_the_sector_the_industry_and_the_identifiers_for_one_cred
     found = prov.search("Apple")
     assert [(c.provider_symbol, c.name, c.isin) for c in found] == [("us:AAPL", "Apple Inc.", "US0378331005")]
     assert split_symbol("7203.T", "jp") == ("jp", "7203.T") and split_symbol("hk:0700") == ("hk", "0700")
+
+
+@pytest.mark.parametrize("text, kind, params, other", [
+    ("Nvidia", "name", {"query": "Nvidia"}, ["symbol"]),                                       # a name: the other reading is offered, never tried unasked
+    ("  Toyota   Motor ", "name", {"query": "Toyota Motor"}, []),
+    ("NVDA", "symbol", {"ticker": "NVDA"}, ["name"]),
+    ("nvda", "name", {"query": "nvda"}, ["symbol"]),                                           # lower case is a name unless told otherwise: ``--kind symbol`` or us:nvda
+    ("7203", "symbol", {"ticker": "7203"}, []),
+    ("BRK.B", "symbol", {"ticker": "BRK.B"}, ["name"]),
+    ("us:NVDA", "symbol", {"ticker": "NVDA", "market_id": "us"}, ["name"]),
+    ("jp: 7203", "symbol", {"ticker": "7203", "market_id": "jp"}, []),
+    ("US67066G1040", "isin", {"isin": "US67066G1040"}, []),
+    ("5493001KJTIIGC8Y1R12", "lei", {"lei": "5493001KJTIIGC8Y1R12"}, []),
+    ("NVIDIA", "name", {"query": "NVIDIA"}, ["symbol"]),                                       # six capitals: a name typed in capitals, not a ticker
+])
+def test_the_text_decides_how_a_search_is_asked_only_when_its_shape_is_plain(text, kind, params, other):
+    plan = of.search_plan(text)
+    assert plan["kind"] == kind and {k: v for k, v in plan["params"].items() if v is not None} == params and plan["alternatives"] == other
+    forced = of.search_plan("nvda", "symbol", "US")
+    assert forced["kind"] == "symbol" and forced["params"] == {"ticker": "NVDA", "market_id": "us"}
+    with pytest.raises(ProviderError, match="kind must be one of"):
+        of.search_plan("nvda", "isbn")
+    with pytest.raises(ProviderError, match="short code"):
+        of.search_plan("nvda", "symbol", "united states")
+
+
+def test_a_search_asks_the_directory_for_one_credit_and_reads_the_best_match_and_the_others(tmp_path):
+    prov, fake, usage, _ = _provider(tmp_path)
+    found = prov.search("Nvidia")
+    assert [(c.provider_symbol, c.name, c.isin, c.country) for c in found] == [("us:NVDA", "NVIDIA Corp", "US67066G1040", "US")]
+    assert found[0].extra["primary"] is True and found[0].extra["also_listed"] == ["mx:NVDA"] and found[0].extra["has_financials"] is True      # one company, shown under its primary listing
+    sent = fake.requests[-1]
+    assert sent["path"] == "/api/v1/entities/search" and sent["query"] == {"query": "Nvidia"} and usage.used_today("openfilings") == 1
+    assert prov.search("NVDA")[0].provider_symbol == "us:NVDA" and fake.requests[-1]["query"] == {"ticker": "NVDA"}
+    assert prov.search("jp:7203")[0].provider_symbol == "jp:7203" and fake.requests[-1]["query"] == {"ticker": "7203", "market_id": "jp"}
+    assert prov.search("US67066G1040")[0].name == "NVIDIA Corp" and fake.requests[-1]["query"] == {"isin": "US67066G1040"}
+    assert usage.used_today("openfilings") == 4 and all(KEY_1 not in r["url"] for r in fake.requests)
+    toyota = prov.search_detail("Toyota")                                                       # a name can match several issuers: the best one first, the rest after it
+    assert toyota["ambiguous"] is True and [c.provider_symbol for c in toyota["profiles"]] == ["jp:7203", "jp:8015"]
+    assert toyota["profiles"][0].name == "Toyota Motor Corporation" and toyota["profiles"][0].extra["also_listed"] == ["us:TM"]
+    assert [c.provider_symbol for c in prov.search("Toyota", market="us")][:1] == ["us:TM"]       # the listing on the market asked for stands for the company
+    assert prov.search("Deutsche Bank")[0].extra["has_financials"] is False                    # the directory lists markets that have no statements: the page says so before a credit is spent on them
+    fake.skipped = ["jp", {"market_id": "HK"}, 7, ""]                                           # markets the directory did not search are passed on, whatever shape their entries have
+    assert prov.search_detail("Nvidia")["markets_skipped"] == ["jp", "hk"]
+
+
+def test_a_company_the_directory_does_not_know_is_an_empty_answer_and_costs_nothing(tmp_path):
+    prov, fake, usage, _ = _provider(tmp_path)
+    nothing = prov.search_detail("Zzyzx Holdings")
+    assert nothing["profiles"] == [] and nothing["credits"] == 0 and usage.used_today("openfilings") == 0 and "no issuer" in nothing["message"]
+    fake.empty_search_as_200 = True                                                             # an answer with no company in it is not charged differently from any other that was sent
+    quiet = prov.search_detail("Zzyzx Holdings")
+    assert quiet["profiles"] == [] and quiet["message"] == "No issuer matched" and quiet["credits"] == 1 and usage.used_today("openfilings") == 1
     with pytest.raises(ProviderError, match="say which market"):
         split_symbol("AAPL", None, None)
 
@@ -589,6 +678,71 @@ def test_registering_costs_nothing_and_a_first_sync_costs_eleven_credits_a_compa
     assert (periods["pit_quality"] == "filed").all() and periods["filing_date"].notna().all() and (periods["filing_date"] > periods["period_end"]).all()
     second = svc.sync("openfilings", security_ids=ids, periods=("annual",), start_year=2015)
     assert second["fetched"] == 0 and second["fresh"] == 2 and second["cost"] == 0 and svc.usage.used_today("openfilings") == 22
+
+
+def test_a_search_costs_a_credit_is_kept_and_a_company_added_from_it_keeps_the_name_it_paid_for(tmp_path):
+    clock = Clock()
+    svc, fake = _service(tmp_path, clock=clock)
+    fake.skipped = ["jp"]
+    first = svc.search_companies("openfilings", "Nvidia")
+    hit = first["results"][0]
+    assert first["markets_skipped"] == ["jp"]
+    assert (first["kind"], first["kind_word"], first["count"], first["credits"], first["cached"]) == ("name", "a company name", 1, 1, False)
+    assert (hit["symbol"], hit["name"], hit["market"], hit["country"], hit["in_database"], hit["has_financials"], hit["plan_allows"]) == ("us:NVDA", "NVIDIA Corp", "us", "US", False, True, None)
+    assert (first["remaining_today"], first["cost_to_fetch"], first["unit"], svc.usage.used_today("openfilings"), len(fake.requests)) == (99, 11, "credits", 1, 1)
+    again = svc.search_companies("openfilings", "  nvidia ")                                    # the same words: answered from what was saved, for nothing
+    assert again["cached"] and again["credits"] == 0 and len(fake.requests) == 1 and svc.usage.used_today("openfilings") == 1 and again["markets_skipped"] == ["jp"]
+    assert svc.search_companies("openfilings", "Nvidia", refresh=True)["credits"] == 1 and len(fake.requests) == 2
+    ids = svc.add_companies("openfilings", ["us:NVDA"])                                         # adding is free and keeps the name, the ISIN and the LEI the search paid for
+    row = svc.store.get_security(ids[0])
+    with svc.store.db.transaction() as conn:
+        lei = conn.execute("SELECT lei FROM securities WHERE security_id = ?", (ids[0],)).fetchone()[0]
+    assert (row["company_name"], row["isin"], lei, row["country"], row["sector"]) == ("NVIDIA Corp", "US67066G1040", "N" * 20, "US", None) and len(fake.requests) == 2
+    after = svc.search_companies("openfilings", "Nvidia")
+    assert after["results"][0]["in_database"] and after["results"][0]["security_id"] == ids[0] and after["results"][0]["periods"] == 0
+    svc.sync("openfilings", security_ids=ids, periods=("annual",))
+    assert svc.search_companies("openfilings", "Nvidia")["results"][0]["periods"] >= 8
+    clock.advance(days=31)                                                                      # a saved answer is trusted for a month, then asked again
+    spent = svc.usage.used_today("openfilings")
+    assert svc.search_companies("openfilings", "Nvidia")["cached"] is False and svc.usage.used_today("openfilings") == spent + 1
+
+
+def test_a_search_that_finds_nothing_is_free_and_is_not_asked_again_the_same_day(tmp_path):
+    clock = Clock()
+    svc, fake = _service(tmp_path, clock=clock)
+    none = svc.search_companies("openfilings", "Zzyzx")
+    assert none["count"] == 0 and none["credits"] == 0 and svc.usage.used_today("openfilings") == 0 and none["alternatives"] == ["symbol"] and len(fake.requests) == 1 and "no issuer" in none["message"]
+    assert svc.search_companies("openfilings", "Zzyzx")["cached"] is True and len(fake.requests) == 1
+    clock.advance(days=2)
+    assert svc.search_companies("openfilings", "Zzyzx")["cached"] is False and len(fake.requests) == 2
+
+
+def test_a_search_is_refused_without_a_key_or_with_nothing_to_look_for_and_never_leaves_the_allowance(tmp_path, monkeypatch):
+    for name in [n for n in list(os.environ) if n.startswith("OPENFILINGS_")]:
+        monkeypatch.delenv(name, raising=False)
+    bare = FundamentalsService(tmp_path / "nokey2")
+    with pytest.raises(MissingKey, match="no OPENFILINGS_API_KEY"):
+        bare.search_companies("openfilings", "Nvidia")
+    svc, fake = _service(tmp_path, daily=1)
+    for bad, why in (("", "at least two characters"), ("a", "at least two characters"), ("x" * 121, "at most 120")):
+        with pytest.raises(FundamentalsError, match=why):
+            svc.search_companies("openfilings", bad)
+    with pytest.raises(FundamentalsError, match="kind must be one of"):
+        svc.search_companies("openfilings", "Nvidia", kind="isbn")
+    assert fake.requests == []
+    svc.search_companies("openfilings", "Nvidia")                                               # the one credit of the day
+    with pytest.raises(QuotaExhausted, match="daily allowance is spent"):
+        svc.search_companies("openfilings", "Apple")
+    assert len(fake.requests) == 1
+
+
+def test_the_plan_a_connection_test_reports_marks_the_markets_a_search_may_not_use(tmp_path):
+    svc, _ = _service(tmp_path)
+    assert svc.search_companies("openfilings", "Toyota")["results"][0]["plan_allows"] is None   # nothing is known about the plan before it is tested
+    assert svc.test_provider("openfilings")["ok"] is True and svc.allowed_markets("openfilings") == ({"us", "jp"}, False)
+    by_symbol = {r["symbol"]: r for r in svc.search_companies("openfilings", "Toyota")["results"]}
+    assert by_symbol["jp:7203"]["plan_allows"] is True
+    assert svc.search_companies("openfilings", "Deutsche Bank")["results"][0]["plan_allows"] is False
 
 
 def test_a_company_whose_sector_is_known_skips_the_lookup(tmp_path):

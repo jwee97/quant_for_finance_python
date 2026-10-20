@@ -77,6 +77,37 @@ def format_status(s: dict, db: str) -> str:
     return "\n".join(out)
 
 
+def format_search(found: dict) -> str:
+    """What a search of the provider's directory found, how it read the text, what it cost and what to do next (the same answer the Company explorer draws)."""
+    spent = ("answered from the saved answer of " + str(found["searched_at"]) + ", for nothing") if found["cached"] else (f"{found['credits']} {found['unit'][:-1] if found['credits'] == 1 else found['unit']} spent"
+                                                                                                                       if found["credits"] else "nothing spent")
+    left = "" if found["remaining_today"] is None else f"; {found['remaining_today']} left today"
+    out = [f"OpenFilings, \u201c{found['query']}\u201d read as {found['kind_word']}" + (f" on the {found['market']} market" if found["market"] else "") + f": {found['count']} "
+           f"{'match' if found['count'] == 1 else 'matches'} ({spent}{left})"]
+    if found["message"]:
+        out.append(f"  {found['message']}")
+    if found.get("markets_skipped"):
+        out.append("  OpenFilings did not search these markets this time: " + ", ".join(m.upper() for m in found["markets_skipped"]) + ". A company listed only there will not appear.")
+    if not found["results"]:
+        for kind in found["alternatives"]:
+            out.append(f"  It could also be {'a ticker' if kind == 'symbol' else 'a company name'}: quant fundamentals search --kind {kind} \"{found['query']}\" (one more credit)")
+        return "\n".join(out)
+    rows = []
+    for r in found["results"]:
+        status = ("in the database" + (f", {r['periods']} annual periods" if r["periods"] else ", no statements yet")) if r["in_database"] else \
+            "no statements in this market" if not r["has_financials"] else "not on your plan" if r["plan_allows"] is False else "not added"
+        rows.append([r["name"] or "(no name)", r["symbol"], r["country"] or "", r["isin"] or "", status])
+    out += ["", grid(["company", "symbol", "country", "ISIN", "status"], rows)]
+    also = [f"{r['symbol']} is also listed as {', '.join(r['also_listed'])}" for r in found["results"] if r["also_listed"]]
+    if also:
+        out += ["", "Other listings of the same company (add one only if you want its filings in that market): " + "; ".join(also)]
+    todo = [r for r in found["results"] if not r["in_database"] and r["has_financials"] and r["plan_allows"] is not False]
+    if todo:
+        out += ["", f"Add one for nothing with `quant fundamentals add {todo[0]['symbol']}`; `quant fundamentals sync {todo[0]['symbol']} --budget {found['cost_to_fetch']}` then fetches its statements "
+                    f"(about {found['cost_to_fetch']} {found['unit']})."]
+    return "\n".join(out)
+
+
 def format_plan(plan: dict) -> str:
     p, a = plan["plan"], plan["affordability"]
     out = [f"To fetch: {p['to_fetch']} ({p['fresh']} already fresh), costing {p['cost']} {p['unit']}" + (" (" + ", ".join(f"{n} {r}" for r, n in p["reasons"].items()) + ")" if p["reasons"] else ""),

@@ -10,6 +10,9 @@ import re
 import pytest
 
 from src.fundamentals import expr as X
+from src.fundamentals.keys import KeyPool
+from src.fundamentals.providers.openfilings import OpenFilingsProvider
+from src.fundamentals.usage import Allowance
 from src.fundamentals.workbench import KEY_NAMES
 from src.utils.config import load_config
 from src.webapp import server
@@ -18,6 +21,7 @@ from src.webapp.universe import TickerStore, UniverseBuilder
 from tests.app_roots import isolated_root
 from tests.ml_helpers import make_bundle
 from tests.test_fund_api import run
+from tests.test_fund_data import KEY_1, FakeOpenFilings
 from tests.test_webapp import _fetch
 from tests.test_webapp_browser import _page_with, browser  # noqa: F401  (the module's Chromium fixture)
 from tests.test_webapp_workspaces_browser import _wait_until
@@ -51,6 +55,24 @@ def live_fund(tmp_path_factory):
     app.fundamentals.bench("demo").library.add_candidate(X.parse("div(fcf,enterprise_value)"), thin, {"ic": 0.08, "direction": 1.0, "n_tested": 40, "oos_t": 0.2})      # evidence too thin to validate
     running = server.start(app, "127.0.0.1", 0)
     running.app = app
+    yield running
+    running.stop()
+    saved.undo()
+
+
+@pytest.fixture()
+def live_real(tmp_path_factory):
+    """An app whose real database is empty and whose OpenFilings is a stand-in that answers as its documentation says (a free plan: 100 credits a day, 1 for a search, 10 for statements, 1 for a lookup)."""
+    saved = pytest.MonkeyPatch()
+    for name in KEY_NAMES:
+        saved.delenv(name, raising=False)
+    app = _app(tmp_path_factory, "real")
+    wb = app.fundamentals.bench("real")
+    fake = FakeOpenFilings({KEY_1: "a"})
+    pool = KeyPool("openfilings", [("OPENFILINGS_API_KEY_1", KEY_1)], wb.service.usage, wb.store.salt(), Allowance("credits", 100, 1000, "test"))
+    wb.service.register("openfilings", OpenFilingsProvider(pool, transport=fake, sleep=lambda s: None))
+    running = server.start(app, "127.0.0.1", 0)
+    running.app, running.fake = app, fake
     yield running
     running.stop()
     saved.undo()
@@ -210,6 +232,74 @@ def test_a_company_page_prints_the_day_each_figure_became_public_and_every_chart
             assert cards.nth(i).locator("table tbody tr").count() >= 2, i
         page.click("[data-action=back-to-list]")
         page.wait_for_selector("[data-role=fund-companies]")
+        assert page.problems == []
+    finally:
+        page.close()
+
+
+def test_a_company_is_found_by_name_in_openfilings_added_for_nothing_and_fetched_for_the_cost_the_button_states(browser, live_real):  # noqa: F811
+    page = _page(browser, live_real)
+    fake = live_real.fake
+    fake.skipped = ["jp"]
+    try:
+        _open(page, "companies", demo=False)
+        page.wait_for_selector("[data-role=fund-companies]")
+        assert "There are no companies in your database yet" in page.inner_text("[data-role=fund-companies]")
+        assert page.locator("select[data-key=country], select[data-key=sector]").count() == 0                    # a list with only "All" in it is not a choice, so it is not shown
+        assert "fill in as companies are added" in page.inner_text("#fundamentals .panel")
+        page.fill("input[data-key=q]", "Nvidia")
+        page.press("input[data-key=q]", "Enter")                                            # Enter searches the database
+        _wait_until(page, "document.querySelector('[data-role=fund-companies] h3') && document.querySelector('[data-role=fund-companies] h3').innerText.includes('no companies in your database yet')", 30)
+        assert "No company matches" not in page.inner_text("#fundamentals-results") and fake.requests == []     # an empty database is not "no match", and looking at the database never asks the provider
+        page.click("[data-role=fund-remote] [data-action=search-provider]")
+        page.wait_for_selector("[data-role=fund-remote] tr[data-symbol='us:NVDA']")
+        remote = page.inner_text("[data-role=fund-remote]")
+        assert "read as a company name" in remote and "1 credit spent" in remote and "99 credits left today" in remote and "NVIDIA Corp" in remote and "also listed as mx:NVDA" in remote
+        assert [r["query"] for r in fake.requests] == [{"query": "Nvidia"}] and page.locator("[data-role=fund-remote] tr[data-symbol='us:NVDA'] [data-action=add-found]").count() == 1
+        assert "did not search these markets this time: JP" in page.inner_text("[data-role=fund-skipped]")     # a market the directory left out is said, not hidden
+        assert "about 11 credits" in page.inner_text("[data-role=fund-remote] [data-action=add-fetch-found]")
+        page.click("[data-role=fund-remote] [data-action=add-found]")                       # adding is free and keeps the name the search paid for
+        _wait_until(page, "document.querySelector(\"[data-role=fund-remote] tr[data-symbol='us:NVDA']\").innerText.includes('Yes, no statements yet')", 30)
+        assert len(fake.requests) == 1 and page.locator("[data-role=fund-companies] tbody tr").count() == 1 and "NVIDIA Corp" in page.inner_text("[data-role=fund-companies]")
+        page.click("[data-role=fund-remote] [data-action=fetch-statements]")
+        page.wait_for_selector("[data-role=fund-fetch-report]", timeout=LONG)
+        said = re.search(r"Fetched (\d+) annual periods for us:NVDA and spent 11 credits", page.inner_text("[data-role=fund-fetch-report]"))
+        assert said and int(said.group(1)) >= 8 and "88 credits left today" in page.inner_text("[data-role=fund-remote]")
+        assert int(page.locator("[data-role=fund-companies] tbody tr td").nth(4).inner_text()) >= 8
+        assert "saved answer, free" in page.inner_text("[data-role=fund-remote]") and len(fake.requests) == 3        # the search, the lookup and the statements: the page read the saved search again for nothing
+        assert _tables_have_names(page) == [] and page.locator("[data-role=fund-remote] button:not([aria-label])").count() == 0
+        page.fill("input[data-key=q]", "Zzyzx")                                             # a company the directory does not know
+        page.press("input[data-key=q]", "Enter")
+        page.click("[data-role=fund-remote] [data-action=search-provider]")
+        page.wait_for_selector("[data-role=fund-remote-none]")
+        assert "no company that matches" in page.inner_text("[data-role=fund-remote]") and page.locator("[data-role=fund-remote] [data-action=search-as-symbol]").count() == 1
+        page.click("[data-role=fund-remote] [data-action=search-as-symbol]")                # the other reading is a second, explicit credit
+        page.wait_for_selector("[data-role=fund-remote] [data-action=search-as-name]")
+        assert fake.requests[-1]["query"] == {"ticker": "ZZYZX"}
+        page.fill("input[data-key=q]", "x")                                                 # too short: the page says so and asks nothing
+        before = len(fake.requests)
+        page.click("#fundamentals .panel [data-action=search-provider]")                   # the button in the panel is always there
+        page.wait_for_selector(".toast")
+        assert len(fake.requests) == before
+        blob = page.content() + page.inner_text("body")
+        assert KEY_1 not in blob and page.problems == []
+    finally:
+        page.close()
+
+
+def test_without_a_key_the_search_of_openfilings_says_it_is_not_set_up_and_where_to_look(browser, live_fund):  # noqa: F811
+    page = _page(browser, live_fund)
+    try:
+        _open(page, "companies", demo=False)
+        page.wait_for_selector("[data-role=fund-remote]")
+        assert "not set up yet" in page.inner_text("[data-role=fund-remote]") and page.locator("[data-role=fund-remote] [data-action=search-provider]").count() == 0
+        assert page.locator("#fundamentals .panel [data-action=search-provider]").is_disabled() and "Data manager shows how to add a key" in page.inner_text("#fundamentals .panel")
+        page.click("[data-role=fund-remote] button:has-text('Open the Data manager')")
+        page.wait_for_selector("[data-role=fund-key-guide]")
+        _open(page, "companies", demo=True)                                                 # the demo is a simulated world: nothing in it can be asked of a provider
+        page.wait_for_selector("[data-role=fund-companies] tbody tr")
+        assert page.locator("[data-role=fund-remote]").count() == 0 and page.locator("[data-action=search-provider]").count() == 0
+        assert "40 matches" in page.inner_text("#fundamentals-results .head")
         assert page.problems == []
     finally:
         page.close()

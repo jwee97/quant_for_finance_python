@@ -23,6 +23,7 @@ shape; it has not been run against a live key.
 from __future__ import annotations
 
 import json
+import re
 import time
 from datetime import datetime, timezone
 from urllib import error as urlerror
@@ -40,6 +41,11 @@ USER_AGENT = "QuantLab/1.0 (fundamentals client)"
 CREDITS = {"markets": 1, "search": 1, "lookup": 1, "financials": 10}
 MARKETS_WITH_FILINGS = ("us", "jp", "hk", "tw", "kr", "cn", "eu", "fr", "uk", "br", "mx", "au", "in", "sg", "ae", "sa", "il", "ca", "th", "my", "id", "ph", "vn", "tr", "ch")
 COUNTRY = {"uk": "GB", "eu": None}                                             # market ids that are not ISO country codes (the issuer's country then comes from its ISIN)
+SEARCH_KINDS = ("auto", "name", "symbol", "isin", "lei")
+_ISIN = re.compile(r"^[A-Za-z]{2}[A-Za-z0-9]{9}[0-9]$")
+_LEI = re.compile(r"^[A-Za-z0-9]{18}[0-9]{2}$")
+_MARKET_PREFIX = re.compile(r"^([A-Za-z]{2,4}):\s*(\S+)$")
+_TICKER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.\-]{0,9}$")
 BURST_RETRIES = 2
 MAX_BURST_WAIT = 5.0
 DEFAULT_HISTORY_YEARS = 25
@@ -82,6 +88,76 @@ def split_symbol(symbol: str, market: str | None = None, default_market: str | N
     if not chosen:
         raise ProviderError(f"say which market {text!r} trades in (for example us:{text} or jp:{text})")
     return chosen, text
+
+
+def search_plan(text: str, kind: str = "auto", market: str | None = None) -> dict:
+    """What a search for ``text`` asks OpenFilings, and what else the text could have meant.
+
+    The directory is searched by ``query`` (a company name), ``ticker`` (an exchange symbol, with ``market_id`` to say which exchange), ``isin`` or ``lei``. With ``kind`` left at ``auto`` the text
+    decides, and only when its shape is plain: ``us:NVDA`` is a ticker on a market; two letters, nine letters or digits and a digit are an ISIN; eighteen letters or digits and two digits a LEI; one
+    short word typed in capitals (NVDA) or holding a digit or a dot (7203, BRK.B) is a ticker; anything else (Nvidia, Toyota Motor) is a name. A short single word could be either, so the other
+    reading is listed in ``alternatives`` and is never tried unasked: every try uses a credit.
+    """
+    text = " ".join(str(text or "").split())
+    if kind not in SEARCH_KINDS:
+        raise ProviderError(f"kind must be one of {', '.join(SEARCH_KINDS)}")
+    mkt = str(market).strip().lower() if market else None
+    if mkt is not None and not re.match(r"^[a-z]{2,4}$", mkt):
+        raise ProviderError("market is a short code such as us, jp or uk")
+    value = text
+    prefixed = _MARKET_PREFIX.match(text)
+    if kind == "auto":
+        if prefixed:
+            kind, mkt, value = "symbol", prefixed.group(1).lower(), prefixed.group(2)
+        elif _ISIN.match(text):
+            kind = "isin"
+        elif _LEI.match(text):
+            kind = "lei"
+        elif _TICKER.match(text) and (any(c.isdigit() for c in text) or "." in text or (text.isalpha() and text.isupper() and len(text) <= 5)):
+            kind = "symbol"
+        else:
+            kind = "name"
+    elif kind == "symbol" and prefixed:
+        mkt, value = prefixed.group(1).lower(), prefixed.group(2)
+    if kind in ("isin", "lei", "symbol"):
+        value = value.upper()
+    params = {"query": value, "market_id": mkt} if kind == "name" else {"ticker": value, "market_id": mkt} if kind == "symbol" else {kind: value}
+    single_word = " " not in text and bool(_TICKER.match(value))
+    alternatives = ["symbol"] if kind == "name" and single_word and len(text) <= 8 else ["name"] if kind == "symbol" and not value.replace(".", "").isdigit() else []
+    return {"kind": kind, "value": value, "market": mkt, "params": params, "alternatives": alternatives}
+
+
+def _search_profiles(data: dict, market: str | None = None) -> list[CompanyProfile]:
+    """The companies in a search answer: ``entity`` (the best match) and ``entities`` (the others when the answer is ambiguous), each with its listings. One company is one row, shown under
+    its primary listing (or the one on the market asked for); the other listings are kept in ``also_listed`` so the same company is not added twice by accident."""
+    out: list[CompanyProfile] = []
+    seen: set[str] = set()
+    for item in [data.get("entity")] + list(data.get("entities") or []):
+        if isinstance(item, dict) and "listings" not in item and isinstance(item.get("entity"), dict):
+            item = item["entity"]
+        if not isinstance(item, dict):
+            continue
+        listings = [x for x in (item.get("listings") or []) if isinstance(x, dict) and x.get("market_id") and x.get("ticker")]
+        if not listings and isinstance(item.get("listing"), str) and ":" in item["listing"]:
+            head, _, tail = item["listing"].partition(":")
+            listings = [{"market_id": head, "ticker": tail, "primary": True}] if head and tail else []
+        if not listings:
+            continue
+        listings.sort(key=lambda x: (not (market and str(x["market_id"]).lower() == market), not x.get("primary")))
+        chosen = listings[0]
+        market_id, ticker = str(chosen["market_id"]).lower(), str(chosen["ticker"]).strip().upper()
+        symbol = f"{market_id}:{ticker}"
+        if symbol in seen:
+            continue
+        seen.add(symbol)
+        names = [n for n in (item.get("display_names") or []) if isinstance(n, str) and n.strip()]
+        name = str(chosen.get("company_name") or (names[0] if names else "")).strip()[:200]
+        also = [f"{str(x['market_id']).lower()}:{str(x['ticker']).strip().upper()}" for x in listings[1:7]]
+        score = chosen.get("score")
+        extra = {"also_listed": [a for a in also if a != symbol], "score": score if isinstance(score, (int, float)) else None, "registry": str(chosen.get("registry") or "")[:40],
+                 "hint": str(chosen.get("hint") or "")[:200], "primary": bool(chosen.get("primary")), "has_financials": market_id in MARKETS_WITH_FILINGS}
+        out.append(_profile(market_id, ticker, name, chosen.get("isin") or item.get("isin"), chosen.get("lei") or item.get("lei"), extra=extra))
+    return out
 
 
 def _country(market_id: str, isin: str | None) -> str | None:
@@ -231,22 +307,30 @@ class OpenFilingsProvider(FundamentalDataProvider):
         market_id, ticker = split_symbol(symbol, market, self.default_market)
         return _profile(market_id, ticker.upper())
 
-    def search(self, query: str, limit: int = 10) -> list[CompanyProfile]:
-        data = self._get("/api/v1/entities/search", {"query": query}, "search", query)
-        entities = [e for e in ([data.get("entity")] + list(data.get("entities") or [])) if isinstance(e, dict)]
-        out: list[CompanyProfile] = []
-        seen: set[str] = set()
-        for entity in entities:
-            listings = [x for x in entity.get("listings", []) if isinstance(x, dict) and x.get("market_id") and x.get("ticker")]
-            listings.sort(key=lambda x: not x.get("primary"))
-            for listing in listings[:1] or []:
-                symbol = f"{str(listing['market_id']).lower()}:{listing['ticker']}"
-                if symbol in seen:
-                    continue
-                seen.add(symbol)
-                names = entity.get("display_names") or []
-                out.append(_profile(str(listing["market_id"]).lower(), str(listing["ticker"]), str(listing.get("company_name") or (names[0] if names else "")), entity.get("isin"), entity.get("lei")))
-        return out[:limit]
+    search_plan = staticmethod(search_plan)
+
+    def search_detail(self, query: str, limit: int = 10, kind: str = "auto", market: str | None = None) -> dict:
+        """One search (one credit): ``{"profiles", "kind", "value", "market", "alternatives", "message", "ambiguous", "credits"}``. A company the directory does not know is an empty list, not an error,
+        and costs nothing (a failed call is refunded)."""
+        plan = search_plan(query, kind, market)
+        secrets = self.pool.secrets() if self.pool else []
+        try:
+            data = self._get("/api/v1/entities/search", plan["params"], "search", plan["value"], plan["market"] or "")
+        except NotFound as err:
+            return {**{k: plan[k] for k in ("kind", "value", "market", "alternatives")}, "profiles": [], "message": redact(str(err), *secrets)[:200], "ambiguous": False, "markets_skipped": [], "credits": 0}
+        data = data if isinstance(data, dict) else {}
+        profiles = _search_profiles(data, plan["market"])[:limit]
+        message = redact(str(data.get("message") or ""), *secrets).strip()[:300]
+        skipped = []                                                                                  # markets the directory did not search (the answer's own list; its items are not described)
+        for item in (data.get("markets_skipped") or [])[:20]:
+            name = item if isinstance(item, str) else (item.get("market_id") or item.get("id") or item.get("market")) if isinstance(item, dict) else None
+            if isinstance(name, str) and name.strip():
+                skipped.append(name.strip().lower()[:12])
+        return {**{k: plan[k] for k in ("kind", "value", "market", "alternatives")}, "profiles": profiles, "message": message, "ambiguous": bool(data.get("ambiguous")), "markets_skipped": skipped,
+                "credits": CREDITS["search"]}
+
+    def search(self, query: str, limit: int = 10, kind: str = "auto", market: str | None = None) -> list[CompanyProfile]:
+        return self.search_detail(query, limit, kind, market)["profiles"]
 
     def get_company(self, symbol: str, market: str | None = None) -> CompanyProfile:
         market_id, ticker = split_symbol(symbol, market, self.default_market)

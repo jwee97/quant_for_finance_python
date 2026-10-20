@@ -5,6 +5,7 @@ monitor), stopping a long job, and the answers going out as plain JSON over HTTP
 from __future__ import annotations
 
 import json
+import os
 import time
 import urllib.request
 from pathlib import Path
@@ -164,6 +165,44 @@ def test_statements_are_fetched_within_a_budget_that_the_request_must_state(tmp_
     for bad, why in (({"symbols": []}, "name at least one company"), ({"symbols": ["bad symbol!"]}, "not a valid ticker"), ({"symbols": ["A"] * 300}, "at most 200"), ({"symbols": "AAPL", "market": "united states"}, "short code")):
         with pytest.raises(ApiError, match=why):
             post(local, "/api/fund/companies/add", **bad)
+
+
+def test_a_company_is_found_in_the_directory_by_name_then_added_for_nothing_and_fetched(tmp_path, monkeypatch, app):
+    for name in [n for n in list(os.environ) if n.startswith("OPENFILINGS_")]:
+        monkeypatch.delenv(name, raising=False)
+    local = make_app(tmp_path)
+    empty = get(local, "/api/fund/companies", q="Nvidia")                                      # the database is empty, so the list is: the page must not call that "no match"
+    assert (empty["total"], empty["countries"], empty["sectors"]) == (0, [], []) and empty["lookup"]["available"] is False and "OPENFILINGS_API_KEY" in empty["lookup"]["reason"]
+    with pytest.raises(ApiError, match="no OPENFILINGS_API_KEY"):
+        post(local, "/api/fund/companies/search", q="Nvidia")
+    wb = local.fundamentals.bench("real")
+    fake = FakeOpenFilings({KEY_1: "a"})
+    pool = KeyPool("openfilings", [("OPENFILINGS_API_KEY_1", KEY_1)], wb.service.usage, wb.store.salt(), Allowance("credits", 100, 1000, "test"))
+    wb.service.register("openfilings", OpenFilingsProvider(pool, transport=fake, sleep=lambda s: None))
+    assert get(local, "/api/fund/companies", q="Nvidia")["lookup"] == {"available": True, "reason": "", "cost": 1, "fetch_cost": 11, "unit": "credits", "remaining_today": 100}
+    assert fake.requests == []                                                                  # looking at the list never asks the provider
+    found = post(local, "/api/fund/companies/search", q="Nvidia")
+    json.dumps(found, allow_nan=False)                                                          # plain JSON
+    hit = found["results"][0]
+    assert (found["count"], found["credits"], found["cached"], found["remaining_today"]) == (1, 1, False, 99) and (hit["symbol"], hit["name"], hit["in_database"]) == ("us:NVDA", "NVIDIA Corp", False)
+    assert len(fake.requests) == 1 and KEY_1 not in json.dumps(found)
+    added = post(local, "/api/fund/companies/add", symbols=["us:NVDA"])
+    assert added["added"] == 1 and added["companies"] == [{"security_id": added["security_ids"][0], "ticker": "NVDA", "name": "NVIDIA Corp"}] and len(fake.requests) == 1
+    page = get(local, "/api/fund/companies", q="nvidia")                                       # now the name finds it, and the filters have something to offer
+    assert page["total"] == 1 and page["companies"][0]["company_name"] == "NVIDIA Corp" and page["countries"] == ["US"] and page["lookup"]["remaining_today"] == 99
+    assert post(local, "/api/fund/companies/search", q="nvidia")["cached"] is True and len(fake.requests) == 1
+    report = run(local, "/api/fund/sync", symbols=["us:NVDA"], budget=11)
+    assert report["fetched"] == 1 and report["cost"] == 11 and not report["failed"]
+    row = get(local, "/api/fund/companies", q="NVDA")["companies"][0]
+    assert row["annual"] >= 8 and row["sector"] == "Technology"
+    assert post(local, "/api/fund/companies/search", q="Nvidia")["results"][0]["periods"] >= 8
+    for bad, why in (({"q": ""}, "at least two characters"), ({"q": "x" * 121}, "at least two characters"), ({"q": 7}, "at least two characters"), ({"q": "Nvidia", "kind": "isbn"}, "kind must be one of"),
+                     ({"q": "Nvidia", "market": "united states"}, "short code")):
+        with pytest.raises(ApiError, match=why):
+            post(local, "/api/fund/companies/search", **bad)
+    with pytest.raises(ApiError, match="real data"):
+        post(local, "/api/fund/companies/search", db="demo", q="Nvidia")                      # the demo is a simulated world and never calls a provider
+    assert "lookup" not in get(app, "/api/fund/companies", db="demo", limit="1")
 
 
 def test_prices_are_loaded_by_a_job_and_a_symbol_can_be_set_by_hand(tmp_path):

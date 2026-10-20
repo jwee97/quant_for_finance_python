@@ -142,6 +142,31 @@ def test_prices_are_loaded_from_the_market_data_source(home, monkeypatch, capsys
     assert code == 0 and re.search(r"Prices for \d+ of \d+ companies", out) and asked and "7203.T" in asked[0]
 
 
+def test_a_company_is_looked_up_by_name_and_the_command_says_what_it_cost_and_what_to_do_next(home, fake_provider, capsys, tmp_path):
+    saved = tmp_path / "found.json"
+    fake_provider.skipped = ["jp"]
+    code, out, _ = run(capsys, "search", "Nvidia", "--json", str(saved))
+    assert "did not search these markets this time: JP" in out
+    assert code == 0 and re.search(r"read as a company name: 1 match \(1 credit spent; \d+ left today\)", out)             # what is left depends on what the earlier tests of this module spent
+    assert re.search(r"NVIDIA Corp\s+us:NVDA\s+US\s+US67066G1040\s+not added", out) and "us:NVDA is also listed as mx:NVDA" in out
+    assert "quant fundamentals add us:NVDA" in out and "--budget 11" in out and json.loads(saved.read_text())["results"][0]["symbol"] == "us:NVDA"
+    code, out, _ = run(capsys, "search", "nvidia")                                              # the same words again: the saved answer, for nothing
+    assert code == 0 and "saved answer" in out and "for nothing" in out and len(fake_provider.requests) == 1
+    assert run(capsys, "add", "us:NVDA")[0] == 0
+    code, out, _ = run(capsys, "search", "Nvidia")
+    assert "in the database, no statements yet" in out and "quant fundamentals add" not in out
+    code, out, _ = run(capsys, "search", "Zzyzx")
+    assert code == 0 and "0 matches" in out and "no issuer" in out and re.search(r"could also be a ticker: quant fundamentals search --kind symbol \"Zzyzx\"", out)
+    code, out, _ = run(capsys, "search", "--kind", "symbol", "nvda", "--market", "us", "--refresh")
+    assert code == 0 and "read as a ticker on the us market" in out and "us:NVDA" in out
+    code, out, _ = run(capsys, "search", "Deutsche", "Bank")
+    assert code == 0 and "no statements in this market" in out and "quant fundamentals add" not in out
+    for argv, message in ((["search"], "say what to look for"), (["search", "x"], "say what to look for"), (["search", "Nvidia", "--demo"], "is for real data")):
+        code, out, err = run(capsys, *argv)
+        assert code == 2 and message in err and out == "", argv
+    assert all(KEY_1 not in r["url"] for r in fake_provider.requests)
+
+
 # ------------------------------------------------------------------------------------------------------------ the research
 def test_the_factor_library_is_listed_and_a_scan_sets_factors_side_by_side(home, capsys):
     code, out, _ = run(capsys, "factors", "--demo")

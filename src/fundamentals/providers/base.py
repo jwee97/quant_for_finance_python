@@ -61,6 +61,16 @@ class FundamentalDataProvider:
     def search(self, query: str, limit: int = 10) -> list[CompanyProfile]:
         raise NotImplementedError
 
+    def search_plan(self, text: str, kind: str = "auto", market: str | None = None) -> dict:
+        """What a search for ``text`` would ask, and what else it could have meant; a provider with only one way to search answers with that one."""
+        return {"kind": "name", "value": " ".join(str(text).split()), "market": market, "params": {}, "alternatives": []}
+
+    def search_detail(self, query: str, limit: int = 10, kind: str = "auto", market: str | None = None) -> dict:
+        """``search`` with the details a page needs: how the text was read, a message from the provider, whether the answer is ambiguous and what it cost."""
+        plan = self.search_plan(query, kind, market)
+        profiles = self.search(query, limit)
+        return {**{k: plan[k] for k in ("kind", "value", "market", "alternatives")}, "profiles": profiles, "message": "", "ambiguous": len(profiles) > 1, "markets_skipped": [], "credits": self.cost("search")}
+
     def get_company(self, symbol: str, market: str | None = None) -> CompanyProfile:
         raise NotImplementedError
 

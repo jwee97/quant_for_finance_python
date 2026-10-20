@@ -208,6 +208,7 @@ The Fundamentals tab ([docs/fundamentals.md](docs/fundamentals.md)) works with n
 1. Sign in at openfilings.org and create an API key in the dashboard (the examples in their documentation show keys that begin `of_`; the app does not depend on that).
 2. In the Replit workspace open **Tools**, then **Secrets**, choose **New Secret**, name it `OPENFILINGS_API_KEY_1`, paste the key as the value and **Add Secret**. Stop the app and press **Run** again: an app only sees the secrets that existed when it started.
 3. In the Fundamentals tab open **Data manager** and press **Test the connection**. It spends one credit and tells the app which plan the account is on.
+4. Open the **Company explorer**, type a name such as `Nvidia`, press **Search OpenFilings (1 credit)**, then **Add** on the company you meant (free) and **Fetch statements** (about 11 credits). The explorer lists only companies you have added, so it is empty until you do; the Data manager's *Add companies* box takes tickers such as `us:NVDA` if you already know them.
 
 Rules for the key are those for the iTick key above: it lives only in Secrets, the page never receives it (it learns only which slots are filled), it is sent in a header and never in an address, and it is never printed or logged; the database keeps only a salted one-way hash to tell keys apart in the usage counts. Nothing in the page or the command line accepts a key.
 

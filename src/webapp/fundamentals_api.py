@@ -24,6 +24,7 @@ from ..fundamentals.discovery import Discovery, DiscoverySpec
 from ..fundamentals.errors import FundamentalsError
 from ..fundamentals.jsonutil import clean
 from ..fundamentals.library import STATUSES
+from ..fundamentals.providers.openfilings import SEARCH_KINDS
 from ..fundamentals.providers.simulated import PLANTED
 from ..fundamentals.service import FundamentalsService
 from ..fundamentals.workbench import MAX_SYMBOLS, Workbench, eval_spec
@@ -95,7 +96,7 @@ class FundamentalsApi:
                             "/api/fund/graveyard": self.graveyard, "/api/fund/runs": self.runs, "/api/fund/run": self.run_summary, "/api/fund/experiments": self.experiments})
 
     def post_routes(self) -> dict:
-        return self._clean({"/api/fund/companies/add": self.add_companies, "/api/fund/sync/plan": self.sync_plan, "/api/fund/provider/test": self.provider_test,
+        return self._clean({"/api/fund/companies/add": self.add_companies, "/api/fund/companies/search": self.search_companies, "/api/fund/sync/plan": self.sync_plan, "/api/fund/provider/test": self.provider_test,
                             "/api/fund/price-symbol": self.price_symbol, "/api/fund/formula/check": self.formula_check, "/api/fund/library/status": self.library_status,
                             "/api/fund/library/validate": self.library_validate, "/api/fund/sync": self.sync, "/api/fund/simulate": self.simulate, "/api/fund/prices": self.load_prices,
                             "/api/fund/scan": self.scan, "/api/fund/evaluate": self.evaluate, "/api/fund/evaluate/formula": self.evaluate_formula, "/api/fund/lookahead": self.lookahead,
@@ -181,9 +182,22 @@ class FundamentalsApi:
         return self._guard(self.bench("real").catalogue)
 
     def companies(self, q: dict | None = None) -> dict:
+        """``GET /api/fund/companies?db=&q=&country=&sector=&limit=&offset=``: the companies in this database. On the real one it also says whether the provider's directory can be searched now
+        (``lookup``: a key is set, what a search and a first fetch cost, what is left today), so the page can offer the search only when it can work."""
         q = q or {}
         db = _db(q)
-        return self._guard(self.bench(db, create=db == "real").companies, q.get("q", ""), q.get("country", ""), q.get("sector", ""), q.get("limit", 50), q.get("offset", 0))
+        out = self._guard(self.bench(db, create=db == "real").companies, q.get("q", ""), q.get("country", ""), q.get("sector", ""), q.get("limit", 50), q.get("offset", 0))
+        if db == "real":
+            out["lookup"] = self._lookup_state(self.bench(db))
+        return out
+
+    @staticmethod
+    def _lookup_state(wb: Workbench) -> dict:
+        svc = wb.service
+        prov, pool = svc.provider("openfilings"), svc.pool("openfilings")
+        ok, why = prov.available()
+        return {"available": ok, "reason": why, "cost": prov.cost("search"), "fetch_cost": prov.cost("financials") + (prov.cost("profile") if prov.has_lookup else 0), "unit": pool.allow.unit,
+                "remaining_today": pool.remaining_today() if ok else None}
 
     def company(self, q: dict | None = None) -> dict:
         q = q or {}
@@ -255,7 +269,25 @@ class FundamentalsApi:
         if market is not None and not re.match(r"^[A-Za-z]{2,4}$", str(market)):
             raise ApiError("market is a short code such as us, jp or uk")
         ids = self._guard(wb.service.add_companies, "openfilings", symbols, None, market)
-        return {"added": len(ids), "security_ids": ids, "symbols": symbols}
+        rows = [wb.store.get_security(i) or {} for i in ids]
+        return {"added": len(ids), "security_ids": ids, "symbols": symbols, "companies": [{"security_id": i, "ticker": r.get("ticker"), "name": r.get("company_name")} for i, r in zip(ids, rows)]}
+
+    def search_companies(self, body: dict) -> dict:
+        """``POST /api/fund/companies/search {q, kind?, market?, refresh?}``: look a company up in OpenFilings' directory by name, ticker or ISIN. It spends one credit of the day's allowance (the same
+        search again is answered from what was saved, for nothing; ``refresh`` asks again) and registers nothing: adding a company and fetching its statements are separate steps."""
+        db = _db(body)
+        self._real_only(db, "searching OpenFilings")
+        wb = self.bench(db)
+        q = body.get("q")
+        if not isinstance(q, str) or len(q.strip()) < 2 or len(q) > 120:
+            raise ApiError("type at least two characters (up to 120) of a name, a ticker or an ISIN to search for")
+        kind = str(body.get("kind") or "auto")
+        if kind not in SEARCH_KINDS:
+            raise ApiError(f"kind must be one of {', '.join(SEARCH_KINDS)}")
+        market = body.get("market") or None
+        if market is not None and not re.match(r"^[A-Za-z]{2,4}$", str(market)):
+            raise ApiError("market is a short code such as us, jp or uk")
+        return self._guard(wb.service.search_companies, "openfilings", q, kind, str(market) if market else None, 10, bool(body.get("refresh")))
 
     def sync_plan(self, body: dict) -> dict:
         """``POST /api/fund/sync/plan``: what a sync would fetch and what it would cost against the allowance. Nothing is spent."""
