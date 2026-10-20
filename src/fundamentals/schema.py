@@ -102,6 +102,10 @@ CREATE TABLE IF NOT EXISTS alpha_graveyard (
     id INTEGER PRIMARY KEY, expression_hash TEXT NOT NULL, settings_hash TEXT NOT NULL, expression TEXT NOT NULL, settings TEXT, reason_rejected TEXT NOT NULL, stage TEXT,
     ic REAL, oos_ic REAL, sharpe REAL, date_tested TEXT NOT NULL, run_id TEXT, UNIQUE (expression_hash, settings_hash));
 
+CREATE TABLE IF NOT EXISTS alpha_status_log (
+    id INTEGER PRIMARY KEY, alpha_id TEXT NOT NULL REFERENCES alpha_library(alpha_id) ON DELETE CASCADE, at TEXT NOT NULL, from_status TEXT, to_status TEXT NOT NULL, reason TEXT, forced INTEGER NOT NULL DEFAULT 0);
+CREATE INDEX IF NOT EXISTS ix_status_log_alpha ON alpha_status_log(alpha_id, at);
+
 CREATE TABLE IF NOT EXISTS alpha_monitor (
     id INTEGER PRIMARY KEY, alpha_id TEXT NOT NULL REFERENCES alpha_library(alpha_id) ON DELETE CASCADE, checked_at TEXT NOT NULL, as_of TEXT, status TEXT NOT NULL,
     recent_ic REAL, historical_ic REAL, recent_sharpe REAL, recent_spread REAL, coverage REAL, turnover REAL, detail TEXT);

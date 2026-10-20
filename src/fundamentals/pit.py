@@ -70,14 +70,15 @@ def availability(periods: pd.DataFrame, settings: PitSettings) -> tuple[pd.Serie
 
 
 def step_panel(events: pd.DataFrame, dates: pd.DatetimeIndex, columns: list[int], value: str = "value", max_age_days: int | None = None) -> pd.DataFrame:
-    """Dates by securities: the latest period's ``value`` that was public on each date.
+    """Dates by securities: the ``value`` of the latest period that was public on each date.
 
     ``events`` has ``security_id``, ``available_date``, ``period_end`` and ``value``. On a date, the value is that of the event with the latest period end among those already public (so a late
-    restatement of an old year never replaces a newer year), the newest vintage of a period winning; it is kept until the next event and dropped when the period is older than ``max_age_days``.
+    restatement of an old year never replaces a newer year); it is kept until the next event and dropped when that period is older than ``max_age_days``. An event whose value is missing **stays
+    missing**: the figure of an earlier period is never carried over it, so two figures read on the same date always describe the same period and a ratio of them is a ratio of one set of accounts.
     """
     dates = pd.DatetimeIndex(dates)
     out = pd.DataFrame(np.nan, index=dates, columns=columns)
-    ev = events.dropna(subset=[value]).sort_values(["security_id", "available_date", "period_end"])
+    ev = events.sort_values(["security_id", "available_date", "period_end"])
     if ev.empty:
         return out
     ev = ev[ev["period_end"] >= ev.groupby("security_id")["period_end"].cummax()]
@@ -88,17 +89,20 @@ def step_panel(events: pd.DataFrame, dates: pd.DatetimeIndex, columns: list[int]
     pos = np.searchsorted(grid_days, np.asarray(ev["available_date"], dtype="datetime64[ns]").astype("int64") / day_ns, side="left")
     keep = pos < len(dates)
     ev, pos = ev[keep], pos[keep]
+    if ev.empty:
+        return out
     cols = ev["security_id"].map(col_of).to_numpy()
-    vals = np.full((len(dates), len(columns)), np.nan)
-    ends = np.full((len(dates), len(columns)), np.nan)
-    vals[pos, cols] = ev[value].to_numpy(float)                                  # later events overwrite earlier ones on the same date: they are sorted
-    ends[pos, cols] = np.asarray(ev["period_end"], dtype="datetime64[ns]").astype("int64") / day_ns
-    grid = pd.DataFrame(vals, index=dates, columns=columns).ffill()
+    latest = np.full((len(dates), len(columns)), -1, dtype=np.int64)
+    latest[pos, cols] = np.arange(len(ev))                                         # later events overwrite earlier ones on the same date: they are sorted
+    latest = np.maximum.accumulate(latest, axis=0)                                   # the latest event so far, carried forward (a missing value is an event too)
+    seen = latest >= 0
+    pick = np.where(seen, latest, 0)
+    values = np.where(seen, ev[value].to_numpy(float)[pick], np.nan)
     if max_age_days is not None:
-        e = pd.DataFrame(ends, index=dates, columns=columns).ffill()
-        age = pd.DataFrame(grid_days[:, None] - e.to_numpy(), index=dates, columns=columns)
-        grid = grid.where(age <= max_age_days)
-    return grid
+        ends = np.asarray(ev["period_end"], dtype="datetime64[ns]").astype("int64") / day_ns
+        age = grid_days[:, None] - ends[pick]
+        values = np.where(age <= max_age_days, values, np.nan)
+    return pd.DataFrame(values, index=dates, columns=columns)
 
 
 @dataclass(eq=False, repr=False)

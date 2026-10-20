@@ -177,3 +177,13 @@ def test_a_database_with_annual_statements_only_still_builds_every_table(tmp_pat
     assert values["revenue_growth"].round(6).tolist()[1:] == [0.1, round(120 / 110 - 1, 6)] and np.isnan(values["revenue_growth"].iloc[0])
     panel = tables.panel("revenue", pd.date_range("2019-01-31", "2021-12-31", freq="ME"), "ttm", [sid])
     assert panel[sid].loc["2019-03-31"] == 100.0 and panel[sid].loc["2020-03-31"] == 110.0 and panel[sid].loc["2021-03-31"] == 120.0
+
+
+def test_a_figure_missing_from_the_latest_period_stays_missing_instead_of_borrowing_an_older_one():
+    dates = pd.date_range("2021-01-31", "2022-12-31", freq="ME")
+    ev = _events([(1, "2021-03-01", "2020-12-31", 10.0), (1, "2022-03-01", "2021-12-31", np.nan), (2, "2021-03-01", "2020-12-31", 5.0), (2, "2022-03-01", "2021-12-31", 6.0)])
+    panel = step_panel(ev, dates, [1, 2], max_age_days=None)
+    assert panel[1].loc["2021-06-30"] == 10.0 and np.isnan(panel[1].loc["2022-06-30"])               # the 2021 accounts did not give this figure: it is not 2020's
+    assert panel[2].loc["2022-06-30"] == 6.0
+    aged = step_panel(ev, dates, [1, 2], max_age_days=300)
+    assert np.isnan(aged[1].loc["2021-12-31"]) and aged[1].loc["2021-09-30"] == 10.0                 # expiry still applies to the period the event describes
