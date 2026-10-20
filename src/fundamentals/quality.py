@@ -4,7 +4,7 @@ Flags (``fundamental_observations.quality_flag``), most serious first. Research 
 
 ``identity_error``       assets differ from liabilities plus equity by more than a few per cent in that period (a mapping error, a missing line, or a company that consolidates in an unusual way)
 ``negative_value``       a quantity that cannot be negative (revenue, assets, debt) is negative
-``suspicious_jump``      a level that jumps by a large factor and falls back, or by an enormous factor at once (the signature of a unit error: thousands against units)
+``suspicious_jump``      a level more than eight times above or below the median of the periods around it (the signature of a unit error: thousands against units)
 ``provider_disagreement``  two providers report the same figure for the same period and differ by more than the tolerance
 ``restated``             a later vintage replaced the figure (set when the restatement is stored)
 ``derived``              computed by the application from other figures of the same period (gross profit = revenue - cost of revenue)
@@ -27,9 +27,27 @@ INFORMATIVE = ("restated", "derived", "estimated")
 DEFAULT_EXCLUDE = SEVERE
 IDENTITY_TOLERANCE = 0.03
 JUMP_FACTOR = 8.0
-EXTREME_JUMP = 30.0
+JUMP_WINDOW_YEARS, JUMP_WINDOW_QUARTERS, JUMP_WINDOW_HALVES = 3, 6, 3      # periods either side that count as the neighbours
+MIN_POINTS = 5
 DISAGREEMENT = 0.05
 JUMP_METRICS = ("revenue", "total_assets", "shareholders_equity", "shares_outstanding", "operating_cash_flow", "net_income")
+
+
+def _level_outliers(values: np.ndarray, window: int, factor: float = JUMP_FACTOR) -> np.ndarray:
+    """Which points of a series lie more than ``factor`` times above or below the median of the (up to ``2 * window``) points around them, excluding themselves. At least three neighbours with a
+    non-zero median are needed to judge a point."""
+    n = len(values)
+    out = np.zeros(n, dtype=bool)
+    mag = np.abs(values)
+    for i in range(n):
+        lo, hi = max(0, i - window), min(n, i + window + 1)
+        around = np.concatenate([mag[lo:i], mag[i + 1:hi]])
+        around = around[np.isfinite(around) & (around > 0)]
+        if len(around) < 3 or not np.isfinite(mag[i]) or mag[i] <= 0:
+            continue
+        ratio = mag[i] / float(np.median(around))
+        out[i] = ratio > factor or ratio < 1.0 / factor
+    return out
 
 
 def check_security(store: FundamentalsStore, security_id: int) -> dict:
@@ -61,27 +79,17 @@ def check_security(store: FundamentalsStore, security_id: int) -> dict:
                 if code in wide.columns and np.isfinite(wide.at[period_id, code]):
                     flag(int(period_id), code, "identity_error")
 
-    # a level that jumps and comes back (a unit error), or jumps by an absurd factor
-    annual = data[(data["fiscal_period"] == "FY") & (data["vintage"] == 0)]
-    for code in JUMP_METRICS:
-        series = annual[annual["metric_code"] == code].sort_values("period_end")
-        if len(series) < 3:
-            continue
-        v = series["value"].to_numpy(float)
-        ids = series["period_id"].to_numpy()
-        with np.errstate(divide="ignore", invalid="ignore"):
-            ratio = np.abs(v[1:] / v[:-1])
-        spikes: set[int] = set()
-        for k in range(1, len(v)):
-            up = ratio[k - 1]
-            if not np.isfinite(up) or v[k - 1] == 0:
+    # a level that sits an order of magnitude away from its neighbours (a unit error: thousands against units). Compared with the median of the periods around it, so a block of bad quarters
+    # is found as a block and a company that simply grows fast is not: the same series is read separately for years, quarters and half-years, which have different scales
+    first_vintage = data[data["vintage"] == 0]
+    for kinds, window in ((("FY",), JUMP_WINDOW_YEARS), (("Q1", "Q2", "Q3", "Q4"), JUMP_WINDOW_QUARTERS), (("H1", "H2"), JUMP_WINDOW_HALVES)):
+        group = first_vintage[first_vintage["fiscal_period"].isin(kinds)]
+        for code in JUMP_METRICS:
+            series = group[group["metric_code"] == code].sort_values("period_end")
+            if len(series) < MIN_POINTS:
                 continue
-            returns = k + 1 < len(v) and np.isfinite(ratio[k]) and ratio[k] < 1.0 / JUMP_FACTOR
-            if up > JUMP_FACTOR and returns:                                       # up and back down: the middle point is the error
-                spikes.add(k)
-                flag(int(ids[k]), code, "suspicious_jump")
-            elif (k - 1) not in spikes and (up > EXTREME_JUMP or up < 1.0 / EXTREME_JUMP):      # one absurd step (the recovery after a spike is not a second error)
-                flag(int(ids[k]), code, "suspicious_jump")
+            for k in np.flatnonzero(_level_outliers(series["value"].to_numpy(float), window)):
+                flag(int(series["period_id"].iloc[k]), code, "suspicious_jump")
 
     # two providers, one period, one figure
     multi = data[data.groupby(["fiscal_period", "period_end", "metric_code"])["provider"].transform("nunique") > 1]

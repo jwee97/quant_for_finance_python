@@ -227,13 +227,18 @@ class PeriodTables:
                 self._prior_cache[key] = match["pos"].fillna(-1).to_numpy(int)
         return self._prior_cache[key]
 
+    def prior_of(self, basis: str, series: pd.Series, years: int = 1) -> pd.Series:
+        """``series`` (index-aligned with the table) as it was ``years`` years earlier for each row; NaN where the company has no row about a year back."""
+        pos = self.prior_positions(basis, years)
+        values = np.asarray(series, dtype=float)
+        out = np.full(len(values), np.nan)
+        ok = pos >= 0
+        out[ok] = values[pos[ok]]
+        return pd.Series(out, index=series.index)
+
     def prior_col(self, basis: str, name: str, years: int = 1) -> pd.Series:
         """The column ``name`` as it was ``years`` years earlier for each row (NaN when there is no such period), index-aligned with the table."""
-        table = self.table(basis)
-        pos = self.prior_positions(basis, years)
-        values = table[name].to_numpy(float)
-        out = np.where(pos >= 0, values[np.clip(pos, 0, max(len(values) - 1, 0))] if len(values) else np.nan, np.nan)
-        return pd.Series(out, index=table.index, name=f"{name}_{years}y_ago")
+        return self.prior_of(basis, self.table(basis)[name], years).rename(f"{name}_{years}y_ago")
 
     def prior(self, basis: str, years: int = 1) -> pd.DataFrame:
         """Every canonical figure of the row ``years`` years earlier, index-aligned with the table."""
