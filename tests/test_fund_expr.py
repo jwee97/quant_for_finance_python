@@ -77,6 +77,15 @@ def test_a_rank_a_zscore_or_a_sign_on_the_outside_is_the_same_signal_but_inside_
 
 
 # ------------------------------------------------------------------------------------------------------------------------ the type rules
+def test_a_logarithm_is_taken_of_an_amount_a_count_or_a_ratio_and_of_nothing_else():
+    kinds = {"a": "amount_rep", "t": "amount_trade", "c": "count", "r": "ratio", "o": "other"}
+    for name in "atcr":
+        assert X.well_typed(X.op("log", X.field(name)), kinds) == (True, "")
+    ok, why = X.well_typed(X.op("log", X.field("o")), kinds)
+    assert not ok and why == "log of an undefined quantity"
+    assert X.well_typed(X.op("log", X.op("div", X.field("a"), X.field("a"))), kinds) == (True, "")                # the rule is about the kind that comes out: an amount over an amount is a ratio
+
+
 def test_only_formulas_that_mean_something_are_well_typed(ctx):
     kinds = {k: v.kind for k, v in X.catalogue(ctx).items()}
     assert kinds["operating_income"] == "amount_rep" and kinds["market_cap"] == "amount_trade" and kinds["roic"] == "ratio" and kinds["shares_outstanding"] == "count" and kinds["mom_12_1"] == "ratio"

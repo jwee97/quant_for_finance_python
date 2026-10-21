@@ -6,7 +6,8 @@ lags of an error that allows for overlap, a ratio of an information coefficient 
 from __future__ import annotations
 
 import math
-from dataclasses import asdict
+from dataclasses import FrozenInstanceError, asdict
+from datetime import datetime, timezone
 
 import numpy as np
 import pandas as pd
@@ -20,6 +21,7 @@ from src.fundamentals import metrics, transforms
 from src.fundamentals.errors import FundamentalsError
 from src.fundamentals.pit import PeriodTables, PitSettings, availability, step_panel
 from src.fundamentals.store import CompanyProfile, FundamentalsStore, PeriodStatement
+from src.fundamentals.usage import UsageLog, allowance
 from tests.test_fund_metrics import Y19, Y20, _company, _row
 
 
@@ -364,3 +366,116 @@ def test_a_candidate_is_validated_at_its_bars_and_not_below_them_and_the_alphas_
     fresh = alpha()
     assert re.fullmatch(r"A[0-9a-f]{8}-[0-9a-f]{4}", fresh)                                                                         # eight characters of the formula, four of the conditions
     assert len(lib.set_status(fresh, "Rejected", "x" * 400)["status_reason"]) == 300                                                # a reason is kept to 300 characters
+
+
+def test_the_library_finds_the_same_idea_in_another_spelling_under_any_or_the_given_conditions_and_remembers_a_failure_once(tmp_path):
+    lib = L.AlphaLibrary(FundamentalsStore(tmp_path / "lib.db"))
+    monthly, quarterly = {"freq": "M", "horizon": "1m"}, {"freq": "M", "horizon": "3m"}
+    kept = lib.add_candidate(X.parse("div(fcf,market_cap)"), monthly, {"oos_t": 1.5})
+    assert lib.add_graveyard(X.parse("rank(div(net_income,market_cap))"), quarterly, "too weak", "fast_ic") is True
+    assert lib.add_graveyard(X.parse("rank(div(net_income,market_cap))"), quarterly, "a second reason", "stability") is False        # nothing is overwritten
+    twin = X.parse("neg(rank(div(fcf,market_cap)))")                                                                                  # a sign and a rank on the outside change nothing
+    assert [(r["where"], r["alpha_id"]) for r in lib.same_idea(twin)] == [("library", kept)]
+    assert len(lib.same_idea(twin, L.settings_hash(monthly))) == 1 and lib.same_idea(twin, L.settings_hash(quarterly)) == []        # under these conditions only, when they are given
+    gone = lib.same_idea(X.parse("div(net_income,market_cap)"))
+    assert [(r["where"], r["stage"], r["reason"]) for r in gone] == [("graveyard", "fast_ic", "too weak")]
+    assert lib.same_idea(X.parse("div(net_income,market_cap)"), L.settings_hash(monthly)) == [] and lib.same_idea(X.parse("div(revenue,market_cap)")) == []
+    assert lib.seen(X.expression_hash(X.parse("div(fcf,market_cap)")), L.settings_hash(monthly)) == {"where": "library", "alpha_id": kept, "status": "Candidate"}
+    assert lib.seen(X.expression_hash(X.parse("div(fcf,market_cap)")), L.settings_hash(quarterly)) is None
+    failed = lib.seen(X.expression_hash(X.parse("rank(div(net_income,market_cap))")), L.settings_hash(quarterly))
+    assert failed["where"] == "graveyard" and failed["reason"] == "too weak" and failed["stage"] == "fast_ic"
+
+
+# ------------------------------------------------------------------------------------------------------------------------ the credit quota
+def test_the_allowance_comes_from_the_environment_then_the_plan_then_the_free_plan_and_is_not_changed_afterwards(monkeypatch):
+    for name in ("OPENFILINGS_DAILY_LIMIT", "OPENFILINGS_MONTHLY_LIMIT", "OPENFILINGS_PLAN", "SIMULATED_DAILY_LIMIT", "SIMULATED_MONTHLY_LIMIT", "YAHOO_DAILY_LIMIT", "YAHOO_MONTHLY_LIMIT"):
+        monkeypatch.delenv(name, raising=False)
+    free = allowance("openfilings")
+    assert (free.unit, free.daily, free.monthly) == ("credits", 100, 1000) and "assumed" in free.source
+    pro = allowance("openfilings", "PRO")
+    assert (pro.daily, pro.monthly) == (2500, 25000) and "reported by the account" in pro.source
+    assert allowance("openfilings", "no such plan").daily == 100
+    monkeypatch.setenv("OPENFILINGS_PLAN", "business")
+    business = allowance("openfilings", "free")
+    assert (business.daily, business.monthly) == (10000, 100000) and "set by OPENFILINGS_PLAN" in business.source                     # what the owner says beats what the account reported
+    monkeypatch.setenv("OPENFILINGS_DAILY_LIMIT", "7")
+    own = allowance("openfilings")
+    assert (own.daily, own.monthly, own.source) == (7, 100000, "environment limits")
+    monkeypatch.setenv("OPENFILINGS_MONTHLY_LIMIT", "0")
+    assert allowance("openfilings").monthly is None                                                                                    # zero says there is no limit
+    simulated = allowance("simulated")
+    assert (simulated.unit, simulated.daily, simulated.monthly, simulated.source) == ("requests", 1_000_000, None, "none")
+    monkeypatch.setenv("SIMULATED_DAILY_LIMIT", "5")
+    assert (allowance("simulated").daily, allowance("simulated").source) == (5, "environment limits")
+    other = allowance("yahoo")
+    assert (other.unit, other.daily, other.monthly, other.source) == ("requests", None, None, "none")
+    monkeypatch.setenv("YAHOO_MONTHLY_LIMIT", "40")
+    assert (allowance("yahoo").daily, allowance("yahoo").monthly, allowance("yahoo").source) == (None, 40, "environment limits")
+    with pytest.raises(FrozenInstanceError):
+        free.daily = 1
+
+
+def test_the_quota_counts_by_the_utc_day_and_month_and_a_refusal_ends_when_its_day_or_month_does(tmp_path):
+    clock = {"now": datetime(2026, 10, 3, 9, 30, tzinfo=timezone.utc)}
+    usage = UsageLog(FundamentalsStore(tmp_path / "u.db").db, lambda: clock["now"])
+    assert (usage.today(), usage.month_start(), usage.next_day(), usage.next_month()) == ("2026-10-03", "2026-10-01", "2026-10-04 00:00 UTC", "2026-11-01 00:00 UTC")
+    for now, tomorrow, next_month in ((datetime(2026, 12, 31, 23, 59, tzinfo=timezone.utc), "2027-01-01 00:00 UTC", "2027-01-01 00:00 UTC"),
+                                      (datetime(2028, 2, 29, 12, 0, tzinfo=timezone.utc), "2028-03-01 00:00 UTC", "2028-03-01 00:00 UTC"),
+                                      (datetime(2026, 1, 31, 0, 0, tzinfo=timezone.utc), "2026-02-01 00:00 UTC", "2026-02-01 00:00 UTC")):
+        clock["now"] = now
+        assert (usage.next_day(), usage.next_month()) == (tomorrow, next_month)
+    clock["now"] = datetime(2026, 10, 3, 9, 30, tzinfo=timezone.utc)
+    usage.record("openfilings", "financials", True, key_id="k1", credits=10)
+    usage.record("openfilings", "search", False, key_id="k1", error="limit:month the monthly allowance is spent")
+    usage.record("openfilings", "financials", True, key_id="k2", credits=4, requests=2)
+    assert (usage.used_today("openfilings"), usage.used_month("openfilings"), usage.requests_today("openfilings")) == (14, 14, 4)         # a failed call costs nothing, a request counts as one unless it says more
+    assert usage.used_today("openfilings", "k1") == 10 and usage.used_today("openfilings", "k2") == 4 and usage.used_today("itick") == 0
+    clock["now"] = datetime(2026, 10, 21, 9, 30, tzinfo=timezone.utc)                                                                    # later in the month: the day's count starts again, the month's goes on
+    assert (usage.used_today("openfilings"), usage.used_month("openfilings"), usage.requests_today("openfilings")) == (0, 14, 0)
+    month = usage.blocked("openfilings", "k1")
+    assert month.kind == "month" and month.until == "2026-11-01 00:00 UTC" and month.message.startswith("limit:month")                   # the refusal of the third still stands on the twenty-first
+    assert usage.blocked("openfilings", "k2") is None and usage.blocked("openfilings", "nobody") is None
+    clock["now"] = datetime(2026, 11, 1, 0, 5, tzinfo=timezone.utc)
+    assert usage.blocked("openfilings", "k1") is None and usage.used_month("openfilings") == 0
+    usage.record("openfilings", "search", False, key_id="k3", error="limit:day the daily allowance is spent")
+    assert usage.blocked("openfilings", "k3").kind == "day" and usage.blocked("openfilings", "k3").until == "2026-11-02 00:00 UTC"
+    clock["now"] = datetime(2026, 11, 1, 23, 59, tzinfo=timezone.utc)
+    assert usage.blocked("openfilings", "k3").kind == "day"
+    clock["now"] = datetime(2026, 11, 2, 0, 0, tzinfo=timezone.utc)
+    assert usage.blocked("openfilings", "k3") is None                                                                                    # the day rolled over
+    usage.record("openfilings", "search", False, key_id="k4", error="balance no credits left")
+    usage.record("openfilings", "search", False, key_id="k5", error="auth invalid key")
+    usage.record("openfilings", "search", False, key_id="k6", error="a timeout")
+    assert (usage.blocked("openfilings", "k4").kind, usage.blocked("openfilings", "k4").until) == ("balance", None) and usage.blocked("openfilings", "k5").kind == "auth" and usage.blocked("openfilings", "k6") is None
+    usage.record("openfilings", "search", True, key_id="k4", credits=1)
+    assert usage.blocked("openfilings", "k4") is None                                                                                    # one call that works lifts it at once
+    clock["now"] = datetime(2026, 11, 3, 0, 0, tzinfo=timezone.utc)
+    assert usage.blocked("openfilings", "k5") is None                                                                                    # a bad key is a problem of the day it was found
+
+
+def test_the_usage_summary_the_history_and_the_activity_log_say_what_was_spent_and_when(tmp_path):
+    clock = {"now": datetime(2026, 10, 21, 9, 0, tzinfo=timezone.utc)}
+    usage = UsageLog(FundamentalsStore(tmp_path / "u.db").db, lambda: clock["now"])
+    for day in (19, 20, 21):
+        clock["now"] = datetime(2026, 10, day, 9, 0, tzinfo=timezone.utc)
+        usage.record("openfilings", "financials", True, key_id="k1", key_slot="key 1", credits=10, symbol=f"us:A{day}")
+    usage.record("openfilings", "search", False, key_id="k1", key_slot="key 1", error="a timeout", symbol="us:ZZZ")
+    summary = usage.summary("openfilings", [{"slot": "key 1", "key_id": "k1", "state": "ready", "role": "active"}], "pro")
+    assert (summary.requests, summary.successful, summary.failed, summary.used_today, summary.used_month) == (2, 1, 1, 10, 30)
+    assert (summary.daily_limit, summary.monthly_limit, summary.unit) == (2500, 25000, "credits")
+    assert summary.keys == ({"slot": "key 1", "used_today": 10, "used_month": 30, "state": "ready", "role": "active"},)
+    assert [(h["date"], h["requests"], h["ok"], h["credits"]) for h in usage.history("openfilings")] == [("2026-10-19", 1, 1, 10), ("2026-10-20", 1, 1, 10), ("2026-10-21", 2, 1, 10)]
+    assert [h["date"] for h in usage.history("openfilings", days=2)] == ["2026-10-20", "2026-10-21"]
+    assert usage.last_update("openfilings") is not None and usage.last_update("itick") is None
+    usage.record("simulated")                                                                                                     # a call with nothing said about it is one successful request
+    assert usage.used_today("simulated") == 1 and usage.requests_today("simulated") == 1 and usage.summary("simulated").successful == 1
+    for field, value in (("daily_limit", 1), ("used_today", 1)):
+        with pytest.raises(FrozenInstanceError):
+            setattr(summary, field, value)
+    usage.record("openfilings", "x", False, key_id="kb", error="balance none left")
+    block = usage.blocked("openfilings", "kb")
+    with pytest.raises(FrozenInstanceError):
+        block.kind = "day"
+    for i in range(39):
+        usage.record("simulated", "x", True, symbol=f"S{i}")
+    assert len(usage.recent("simulated")) == 30 and usage.recent("simulated")[0]["symbol"] == "S38" and len(usage.recent("simulated", 5)) == 5      # newest first, thirty by default
