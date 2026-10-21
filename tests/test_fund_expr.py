@@ -203,3 +203,17 @@ def test_a_generated_ratio_never_divides_a_figure_by_itself(ctx):
     bases = [g.base() for _ in range(1500)]
     divisions = [b for b in bases if b.get("op") == "div"]
     assert len(divisions) > 500 and all(d["args"][0] != d["args"][1] for d in divisions)                  # a figure over itself is always 1 and says nothing
+
+
+def test_a_mutation_changes_one_place_of_its_parent_and_keeps_the_rest(ctx):
+    g = X.Generator(ctx, np.random.default_rng(21))
+    parent = X.parse("delta(roic,4)")                                                                          # only two places can change: the lag, or the figure for another of the same kind
+    seen = set()
+    for _ in range(200):
+        child = g.mutate(parent)
+        assert child["op"] == "delta" and "f" in child["args"][0], X.to_string(child)
+        lag_changed, figure_changed = child["k"] != 4, child["args"][0]["f"] != "roic"
+        assert lag_changed != figure_changed, X.to_string(child)                                               # one of the two changed, never both and never neither
+        assert not lag_changed or child["k"] in X.LAGS["M"]                                                    # a new lag is one the search may choose
+        seen.add((lag_changed, figure_changed))
+    assert seen == {(True, False), (False, True)}                                                              # both kinds of change happen
