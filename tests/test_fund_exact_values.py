@@ -18,7 +18,7 @@ from src.fundamentals import discovery as D
 from src.fundamentals import evaluate as E
 from src.fundamentals import expr as X
 from src.fundamentals import library as L
-from src.fundamentals import metrics, transforms
+from src.fundamentals import analytics, metrics, transforms
 from src.fundamentals.errors import CreditsExhausted, FundamentalsError, InvalidKey, MissingKey, NotFound, PlanError, ProviderError, QuotaExhausted, RateLimited, SyncPending
 from src.fundamentals.keys import MAX_NUMBERED, KeyPool, discover
 from src.fundamentals.providers import openfilings as of
@@ -873,3 +873,20 @@ def test_a_universe_cannot_be_changed_once_it_is_made_and_equal_universes_share_
     same = UniverseSpec(name="us", countries=("US",))
     assert {spec: 1}[same] == 1 and hash(spec) == hash(same)                                                  # a study is filed under its universe, so the universe must be hashable
     assert spec.key() == same.key() and spec.key() != UniverseSpec(name="us", countries=("JP",)).key() and len(spec.key()) == 12
+
+
+def test_the_accounting_anomaly_screen_flags_a_score_only_above_the_threshold_and_not_at_it():
+    bar = analytics.BENEISH_THRESHOLD
+
+    class Scores:                                                                                           # the figures of a table with only the score in them
+        def __init__(self, values):
+            self.t = pd.DataFrame(index=range(len(values)))
+            self._scores = pd.Series(values, dtype=float)
+
+        def __getitem__(self, name):
+            return self._scores
+
+    flags = analytics._anomaly_flag(Scores([bar, bar + 0.01, bar - 0.01, np.nan]))
+    assert flags.iloc[:3].tolist() == [0.0, 1.0, 0.0] and np.isnan(flags.iloc[3])                          # a missing score is not a clean one
+    assert analytics.interpret_anomaly(bar).startswith("within the range") and analytics.interpret_anomaly(bar + 1e-9).startswith("unusual accounting changes")
+    assert analytics.interpret_anomaly(float("nan")).startswith("not available") and analytics.interpret_anomaly(None).startswith("not available")

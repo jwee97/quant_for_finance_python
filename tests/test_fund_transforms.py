@@ -87,6 +87,22 @@ def test_neutralising_removes_what_the_groups_and_controls_explain(ctx):
         T.neutralize(window, ctx, (), ("luck",))
 
 
+def test_a_date_needs_the_minimum_number_of_complete_companies_and_five_more_than_the_columns_of_its_regression(ctx):
+    window = _noise(ctx, 6, rows=3)
+
+    def kept(frame, min_obs):
+        return int(T.neutralize(frame, ctx, ("sector",), ("mcap",), min_obs=min_obs).iloc[-1].notna().sum())
+
+    n = kept(window, 1)
+    complete = list(T.neutralize(window, ctx, ("sector",), ("mcap",), min_obs=1).iloc[-1].dropna().index)
+    assert n > 30 and kept(window, n) == n and kept(window, n + 1) == 0                                  # exactly the minimum is enough, one short is not
+    columns = T._dummies(ctx, ("sector",)).shape[1] + 1                                                  # the sector columns and the size control
+    for count, expected in ((columns + 5, columns + 5), (columns + 4, 0)):                                # with a small minimum, five more companies than columns are needed
+        thin = window.copy()
+        thin.iloc[-1] = np.where(thin.columns.isin(complete[:count]), thin.iloc[-1], np.nan)
+        assert kept(thin, 1) == expected, count
+
+
 def test_changes_percentage_changes_and_historical_z_scores_look_only_backwards(ctx):
     x = pd.DataFrame({1: [1.0, 2.0, 4.0, -1.0, 2.0, 3.0], 2: [np.nan, 1.0, 1.0, 1.0, 2.0, 1.0]}, index=pd.date_range("2020-01-31", periods=6, freq="ME"))
     assert T.delta(x, 2)[1].tolist()[2:] == [3.0, -3.0, -2.0, 4.0]

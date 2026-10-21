@@ -196,3 +196,10 @@ def test_mutation_and_crossover_stay_valid_and_change_the_formula(ctx):
     assert {f for _ in range(50) for f in X.fields_used(restricted.random())} <= {"operating_income", "total_assets", "revenue", "roic"}
     with pytest.raises(X.ExprError, match="too few fields"):
         X.Generator(ctx, np.random.default_rng(1), only_fields=["revenue"])
+
+
+def test_a_generated_ratio_never_divides_a_figure_by_itself(ctx):
+    g = X.Generator(ctx, np.random.default_rng(11))
+    bases = [g.base() for _ in range(1500)]
+    divisions = [b for b in bases if b.get("op") == "div"]
+    assert len(divisions) > 500 and all(d["args"][0] != d["args"][1] for d in divisions)                  # a figure over itself is always 1 and says nothing
