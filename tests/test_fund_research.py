@@ -145,12 +145,14 @@ def test_the_survivorship_report_does_not_claim_more_than_the_data_support(loade
     keeping = ResearchContext(svc.store, UniverseSpec(include_inactive=True))
     s = keeping.survivorship()
     assert s["inactive"] > 0 and s["unbiased"] is False and "not a complete history" in s["verdict"]
+    assert s["declared"] == "not declared" and s["companies"] == keeping.n and s["inactive_share"] == s["inactive"] / keeping.n
     dropping = ResearchContext(svc.store, UniverseSpec(include_inactive=False))
     d = dropping.survivorship()
     assert d["inactive"] == 0 and "survivorship bias" in d["verdict"] and d["unbiased"] is False and dropping.n < keeping.n
     svc.store.set_meta("universe_kind", "point_in_time")
     try:
-        assert ResearchContext(svc.store, UniverseSpec()).survivorship()["unbiased"] is True
+        declared = ResearchContext(svc.store, UniverseSpec()).survivorship()
+        assert declared["unbiased"] is True and declared["declared"] == "point_in_time" and "historical constituents" in declared["verdict"]
     finally:
         svc.store.set_meta("universe_kind", "")
 

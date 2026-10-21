@@ -23,6 +23,7 @@ from src.fundamentals.errors import CreditsExhausted, FundamentalsError, Invalid
 from src.fundamentals.keys import MAX_NUMBERED, KeyPool, discover
 from src.fundamentals.providers import openfilings as of
 from src.fundamentals.pit import PeriodTables, PitSettings, availability, step_panel
+from src.fundamentals.research import UniverseSpec
 from src.fundamentals.store import CompanyProfile, FundamentalsStore, PeriodStatement
 from src.fundamentals.usage import Allowance, UsageLog, allowance
 from tests.test_fund_metrics import Y19, Y20, _company, _row
@@ -863,3 +864,12 @@ def test_a_company_profile_is_made_only_when_both_the_market_and_the_ticker_are_
     assert profile.provider_symbol == "us:AAA" and profile.currency == "USD" and profile.country == "US"
     named = of.parse_financials({"entity": {"market_id": "JP", "ticker": "7203", "name": "Toyota"}, "periods": [], "isin": "JP3633400001"}, "", "")[1]
     assert (named.provider_symbol, named.name, named.isin, named.country) == ("jp:7203", "Toyota", "JP3633400001", "JP")
+
+
+def test_a_universe_cannot_be_changed_once_it_is_made_and_equal_universes_share_a_key():
+    spec = UniverseSpec(name="us", countries=("US",))
+    with pytest.raises(FrozenInstanceError):
+        spec.name = "other"
+    same = UniverseSpec(name="us", countries=("US",))
+    assert {spec: 1}[same] == 1 and hash(spec) == hash(same)                                                  # a study is filed under its universe, so the universe must be hashable
+    assert spec.key() == same.key() and spec.key() != UniverseSpec(name="us", countries=("JP",)).key() and len(spec.key()) == 12
