@@ -542,6 +542,103 @@ def test_an_alpha_is_validated_from_the_page_only_when_the_evidence_holds(browse
 
 
 # ------------------------------------------------------------------------------------------------------ for everyone
+def _open_first_company(page, demo):
+    _open(page, "companies", demo=demo)
+    page.wait_for_selector("[data-role=fund-companies] tbody tr")
+    page.locator("[data-role=fund-companies] tbody tr").first.locator("[data-action=open-company]").click()
+    page.wait_for_selector("[data-role=fund-coverage] .years")
+
+
+def test_the_years_a_company_holds_are_shown_picked_priced_and_asked_for_without_asking_for_a_year_already_held(browser, live_real):  # noqa: F811
+    app, fake = live_real.app, live_real.fake
+    fake.first_year = 2019                                                                     # the first request, from 2018, brings back only five years
+    app.extra_post["/api/fund/companies/add"]({"symbols": ["AAPL"]})
+    run(app, "/api/fund/sync", budget=11, start_year=2018)
+    fake.first_year = 2012                                                                     # asking for older years finds more than the first request did
+    page = _page(browser, live_real)
+    try:
+        _open_first_company(page, demo=False)
+        card = "[data-role=fund-coverage]"
+        assert "Annual statements held: 5 years, FY2019 to FY2023" in page.inner_text("[data-role=fund-years-summary]")
+        reading = page.inner_text("[data-role=fund-years-reading]")
+        assert "the request to OpenFilings for FY2018 onwards brought back 5 annual statements (FY2019 to FY2023) and cost 10 credits" in reading and "It sent nothing for FY2018:" in reading
+        assert "Credits pay for the request, not for the years" in page.inner_text(card) and page.locator(f"{card} button.y.empty[data-year='2018']").count() == 1
+        held = page.locator(f"{card} button.y.held")
+        assert held.count() == 5 and all(held.nth(i).is_disabled() for i in range(5)) and held.first.get_attribute("aria-label") == "2019, held, filed 2020-02-19"
+        assert page.locator(f"{card} button.y.missing").count() > 5 and page.locator(f"{card} button.y.missing").first.get_attribute("aria-pressed") == "false"
+        sent = len(fake.requests)
+        page.click(f"{card} button.y[data-year='2014']")
+        page.wait_for_selector("[data-role=fund-years-plan-text]")
+        assert page.get_attribute(f"{card} button.y[data-year='2014']", "aria-pressed") == "true"
+        assert page.inner_text("[data-role=fund-years-plan-text]").startswith("One request for FY2014: 10 credits (89 left today).")
+        page.click(f"{card} button.y[data-year='2016']", modifiers=["Shift"])                  # a run of years in one click
+        _wait_until(page, "document.querySelector('[data-role=fund-years-plan-text]') && document.querySelector('[data-role=fund-years-plan-text]').innerText.includes('FY2014 to FY2016')", 30)
+        assert [b for b in page.eval_on_selector_all(f"{card} button.y[aria-pressed=true]", "(els) => els.map((e) => e.dataset.year)")] == ["2014", "2015", "2016"]
+        assert page.inner_text(f"{card} [data-action=cov-fetch]") == "Ask for 3 years (10 credits)" and len(fake.requests) == sent       # planning spends nothing and asks the provider nothing
+        page.click(f"{card} [data-action=cov-clear]")
+        assert page.locator(f"{card} button.y[aria-pressed=true]").count() == 0 and "Click the years you want" in page.inner_text("[data-role=fund-years-plan]")
+        page.click(f"{card} [data-action=cov-pick-missing]")
+        _wait_until(page, "document.querySelector('[data-action=cov-fetch]') !== null", 30)
+        every = page.locator(f"{card} button.y[aria-pressed=true]").count()
+        assert every == page.locator(f"{card} button.y.missing").count() and re.search(r"One request for FY\d{4} to FY2017: 10 credits", page.inner_text("[data-role=fund-years-plan-text]"))
+        page.click(f"{card} [data-action=cov-clear]")
+        page.focus(f"{card} button.y[data-year='2013']")                                       # the keyboard: arrows move between the years that can be picked, space picks
+        page.keyboard.press("ArrowRight")
+        assert page.evaluate("document.activeElement.dataset.year") == "2014"
+        page.keyboard.press("Space")
+        assert page.get_attribute(f"{card} button.y[data-year='2014']", "aria-pressed") == "true"
+        page.keyboard.press("ArrowRight")
+        page.keyboard.press("Space")
+        _wait_until(page, "document.querySelector('[data-role=fund-years-plan-text]') && document.querySelector('[data-role=fund-years-plan-text]').innerText.includes('FY2014 to FY2015')", 30)
+        page.click(f"{card} button.y[data-year='2016']")
+        _wait_until(page, "document.querySelector('[data-action=cov-fetch]') && document.querySelector('[data-action=cov-fetch]').innerText.startsWith('Ask for 3 years')", 30)
+        page.click(f"{card} [data-action=cov-fetch]")
+        page.wait_for_selector("[data-role=fund-years-report]", timeout=LONG)
+        assert page.inner_text("[data-role=fund-years-report]") == "Added FY2014 to FY2016 (3 annual statements). 10 credits spent."
+        sent_query = fake.requests[-1]["query"]
+        assert len(fake.requests) == sent + 1 and (sent_query["fiscal_year_from"], sent_query["fiscal_year_to"]) == ("2014", "2016")        # one request, for the years picked and no more
+        assert page.locator(f"{card} button.y.held").count() == 8 and page.locator(f"{card} button.y[data-year='2015'].held").count() == 1
+        assert "Annual statements held: 8 years, FY2014 to FY2023" in page.inner_text("[data-role=fund-years-summary]")
+        assert "the request to OpenFilings for FY2014 to FY2016 brought back 3 annual statements" in page.inner_text("[data-role=fund-years-reading]")
+        page.click(f"{card} button.y[data-year='2013']")                                       # a year already held cannot be picked at all; one that is not can
+        _wait_until(page, "document.querySelector('[data-role=fund-years-plan-text]') && document.querySelector('[data-role=fund-years-plan-text]').innerText.includes('FY2013')", 30)
+        assert page.locator(f"{card} button.y[data-year='2014']").is_disabled()
+        page.locator(f"{card} details:has(summary:has-text('Requests made for this company'))").locator("summary").click()
+        log = page.inner_text(f"{card} details:has(summary:has-text('Requests made')) table")
+        assert "years you chose" in log and "FY2014 to FY2016" in log and "first fetch" in log and "FY2018 onwards" in log
+        assert _tables_have_names(page) == [] and KEY_1 not in page.content() and page.problems == []
+    finally:
+        page.close()
+
+
+def test_the_year_calendar_fits_a_phone_and_the_demo_shows_its_years_read_only(browser, live_real, live_fund):  # noqa: F811
+    live_real.app.extra_post["/api/fund/companies/add"]({"symbols": ["AAPL"]})
+    run(live_real.app, "/api/fund/sync", budget=11, start_year=2018)
+    page = _page(browser, live_real, width=390)
+    try:
+        _open_first_company(page, demo=False)
+        columns = page.eval_on_selector("[data-role=fund-coverage] .years .row", "(e) => getComputedStyle(e).gridTemplateColumns.split(' ').length")
+        assert columns == 5
+        assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1")
+        box = page.locator("[data-role=fund-coverage] button.y").first.bounding_box()
+        assert box["height"] >= 44 and box["width"] >= 36                                      # a thumb can hit a year
+        assert page.problems == []
+    finally:
+        page.close()
+    page = _page(browser, live_fund)
+    try:
+        _open_first_company(page, demo=True)
+        card = "[data-role=fund-coverage]"
+        assert page.locator(f"{card} button.y.held").count() >= 5 and page.locator(f"{card} button.y:not(:disabled)").count() == 0         # nothing can be picked: the demo never asks a provider
+        assert "simulated world" in page.inner_text("[data-role=fund-years-plan]") and page.locator(f"{card} [data-action=cov-fetch]").count() == 0
+        assert page.locator(f"{card} [data-action=cov-pick-missing]").is_disabled()
+        page.locator(f"{card} details:has(summary:has-text('Quarterly and half-year'))").locator("summary").click()
+        assert page.locator(f"{card} details table tbody tr").count() >= 5 and "✓" in page.inner_text(f"{card} details table")
+        assert _tables_have_names(page) == [] and page.problems == []
+    finally:
+        page.close()
+
+
 def test_every_view_names_its_table_headers_and_meters_and_colours_text_with_classes(browser, live_fund):  # noqa: F811
     """An automated audit with axe-core found these once in 29 states of this tab (the demo and the empty real database, every view and every sub-view with a result, light and dark): headers that held
     only a button, meters without a name, and text coloured from a variable read at draw time (so it kept the light colour on the dark page). These checks keep them found."""

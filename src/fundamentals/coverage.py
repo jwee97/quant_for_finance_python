@@ -255,6 +255,10 @@ def reading(row: dict | None, provider: str, unit: str) -> str:
     first, last = row.get("first_year"), row.get("last_year")
     span = f"FY{first}" if first == last else f"FY{first} to FY{last}"
     text = f"{start} {kept} annual {'statement' if kept == 1 else 'statements'} ({span}){price}. Credits pay for the request, not for the years: the same price would have brought back a longer or a shorter series."
+    unused = entries - kept
+    if unused > 0 and not row.get("derived"):
+        other = ", ".join(f"{n} {k}" for k, n in sorted(((row.get("detail") or {}).get("labels") or {}).items()) if k != "FY")
+        text += (f" It sent {entries} entries in all; {unused} {'was' if unused == 1 else 'were'} not used because {'it was' if unused == 1 else 'they were'} not a full year with figures" + (f" ({other})" if other else "") + ".")
     if row.get("asked_from") and first and first > row["asked_from"]:
         gap = f"FY{row['asked_from']}" + (f" to FY{first - 1}" if first - 1 > row["asked_from"] else "")
         text += (f" It sent nothing for {gap}: either it holds no statements that early for this company or it limits how long a series it returns (its documentation says neither). "

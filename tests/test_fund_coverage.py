@@ -209,6 +209,11 @@ def test_the_last_request_is_told_in_words_and_says_what_the_missing_years_could
     assert C.reading({**row, "entries": 0, "kept": 0, "first_year": None, "last_year": None}, "OpenFilings", "credits") == "On 2026-10-20 the request to OpenFilings for FY2000 onwards brought back no periods at all and cost 10 credits."
     odd = C.reading({**row, "entries": 3, "kept": 0, "first_year": None, "last_year": None, "detail": {"labels": {"Q1": 2, "TTM": 1}}}, "OpenFilings", "credits")
     assert odd == "On 2026-10-20 the request to OpenFilings for FY2000 onwards brought back 3 entries (2 Q1, 1 TTM), none of them an annual statement this application reads and cost 10 credits."
+    mixed = C.reading({**row, "entries": 9, "kept": 6, "detail": {"labels": {"FY": 7, "Q4": 2}}}, "OpenFilings", "credits")
+    assert " It sent 9 entries in all; 3 were not used because they were not a full year with figures (2 Q4)." in mixed and mixed.index("entries in all") < mixed.index("It sent nothing for FY2000")
+    bare = C.reading({**row, "entries": 7, "kept": 6, "detail": {"labels": {"FY": 7}}}, "OpenFilings", "credits")
+    assert " It sent 7 entries in all; 1 was not used because it was not a full year with figures." in bare
+    assert "entries in all" not in C.reading({**row, "entries": 9, "derived": True}, "OpenFilings", "credits")                      # an old answer carries no count of what was readable
     assert C.reading(None, "OpenFilings", "credits") == ""
 
 
@@ -258,7 +263,7 @@ def test_a_company_says_what_it_holds_and_why_the_series_stopped_where_it_did(tm
     assert (a["earliest_held"], a["latest_held"], a["counts"]["held"]) == (2012, 2023, 12) and states(a["cells"], 2000, 2012)[2011] == "empty" and states(a["cells"], 2024, 2026) == {2024: "empty", 2025: "empty", 2026: "notyet"}
     assert cov["reading"].startswith("On 2026-10-20 the request to OpenFilings for FY2000 onwards brought back 12 annual statements (FY2012 to FY2023) and cost 10 credits.")
     assert "It sent nothing for FY2000 to FY2011" in cov["reading"] and cov["remaining_today"] == 89 and cov["sync"]["history_exhausted"] == 1
-    assert cov["last_request"]["reason"] == "missing" and cov["last_request"]["kept"] == 12 and cov["last_request"]["new"] == 12 and len(cov["log"]) == 1
+    assert cov["last_request"]["reason"] == "missing" and cov["last_request"]["kept"] == 12 and cov["last_request"]["new"] == 12 and len(cov["log"]) == 1 and cov["log"][0]["asked"] == "FY2000 onwards"
     assert cov["quarterly"] == {"supported": False, "held": 0, "rows": [], "note": "OpenFilings quarterly and half-year figures cannot be requested yet: its documentation does not say how to ask for them, and a guess would cost 10 credits a try."}
     assert svc.usage.used_today("openfilings") == 11 and len(fake.requests) == 2                         # a lookup and a series; looking at the years spent nothing
 

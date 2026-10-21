@@ -225,6 +225,27 @@ h4.subhead, h3.subhead { margin: 18px 0 6px; }
 .checklist .body b { color: var(--ink); }
 .checklist .body .meta { color: var(--muted); font-size: 11.5px; overflow-wrap: anywhere; }
 .checklist li button { flex: 0 0 auto; }
+/* the fiscal years of a company: a calendar of buttons, a mark and a border beside the colour so that no state rests on colour alone */
+.years { display: grid; gap: 10px; margin: 6px 0 2px; }
+.years .decade { display: grid; gap: 4px; min-width: 0; }
+.years .decade h4.subhead { margin: 0; }
+.years .row { display: grid; grid-template-columns: repeat(10, minmax(0, 1fr)); gap: 4px; }
+.years .gap { display: block; }
+.years button.y { display: grid; justify-items: center; align-content: center; gap: 1px; min-width: 0; min-height: 44px; padding: 3px 2px; border: 1px solid var(--axis); border-radius: 8px; background: var(--surface); color: var(--ink); cursor: pointer; font-size: 12.5px; line-height: 1.2; }
+.years button.y .mk, .years-legend .mk { font-weight: 700; font-size: 12px; color: var(--ink-2); }
+.years button.y.held { border-color: var(--good-text); }
+.years button.y.held .mk { color: var(--good-text); }
+.years button.y.missing { border-style: dashed; }
+.years button.y.empty { border-style: dashed; border-color: var(--warn); }
+.years button.y.empty .mk { color: var(--warn); }
+.years button.y.due { border-color: var(--warn); box-shadow: inset 0 0 0 1px var(--warn); }
+.years button.y.due .mk { color: var(--warn); }
+.years button.y.notyet { border-style: dotted; color: var(--muted); }
+.years button.y:disabled { cursor: default; }
+.years button.y:not(:disabled):not([aria-pressed="true"]):hover { background: var(--ghost); }
+.years button.y[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); border-style: solid; box-shadow: none; color: var(--accent-ink); }
+.years button.y[aria-pressed="true"] .mk { color: var(--accent-ink); }
+@media (max-width: 640px) { .years .row { grid-template-columns: repeat(5, minmax(0, 1fr)); } }
 .setup { border: 1px solid var(--border); border-left: 3px solid var(--warn); border-radius: 8px; padding: 10px 12px; margin: 8px 0; background: var(--surface); font-size: 12.5px; display: grid; gap: 8px; }
 .setup p { margin: 0; }
 .setup ol.steps { margin: 0; padding-left: 18px; display: grid; gap: 4px; }

@@ -471,7 +471,8 @@ class FundamentalsService:
         return {"security_id": int(security_id), "ticker": info["ticker"], "name": info.get("company_name"), "provider": name, "provider_word": word, "symbol": self._symbols(name).get(sid),
                 "annual": annual, "quarterly": {"supported": "quarter" in prov.periods_available, "held": sum(len(v) for v in quarters.values()),
                                                 "rows": [{"year": y, "periods": quarters[y]} for y in sorted(quarters)], "note": "" if "quarter" in prov.periods_available else NO_QUARTERS.get(name, f"{word} has no quarterly figures here.")},
-                "last_request": log[0] if log else None, "reading": coverage.reading(log[0] if log else None, word, pool.allow.unit), "log": log[:8], "derived": derived,
+                "last_request": log[0] if log else None, "reading": coverage.reading(log[0] if log else None, word, pool.allow.unit), "derived": derived,
+                "log": [{**r, "asked": coverage.describe_window({"from": r.get("asked_from"), "to": r.get("asked_to")})} for r in log[:8]],
                 "unit": pool.allow.unit, "request_cost": prov.cost("financials"), "remaining_today": pool.remaining_today() if ok else None, "can_fetch": ok and "annual" in prov.periods_available,
                 "why_not": "" if ok else why, "sync": self.store.get_sync(sid, name, request_type), "today": day.isoformat()}
 

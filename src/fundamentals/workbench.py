@@ -256,6 +256,7 @@ class Workbench:
                 "SELECT s.security_id, s.ticker, s.exchange, s.company_name, s.country, s.currency, s.sector, s.industry, s.active, s.delisted_date, s.source, "
                 "(SELECT COUNT(*) FROM financial_periods p WHERE p.security_id = s.security_id AND p.fiscal_period = 'FY' AND p.vintage = 0) AS annual, "
                 "(SELECT COUNT(*) FROM financial_periods p WHERE p.security_id = s.security_id AND p.fiscal_period <> 'FY' AND p.vintage = 0) AS quarterly, "
+                "(SELECT MIN(p.period_end) FROM financial_periods p WHERE p.security_id = s.security_id) AS first_period_end, "
                 "(SELECT MAX(p.period_end) FROM financial_periods p WHERE p.security_id = s.security_id) AS last_period_end, "
                 "(SELECT COUNT(*) FROM prices_daily d WHERE d.security_id = s.security_id) AS price_days "
                 f"{sql} ORDER BY s.ticker, s.exchange LIMIT ? OFFSET ?", args + [limit, offset]).fetchall()

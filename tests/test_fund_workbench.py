@@ -71,7 +71,7 @@ def test_companies_are_listed_searched_filtered_and_paged(world):
     page = world.companies(limit=10)
     assert page["total"] == 100 and len(page["companies"]) == 10 and "US" in page["countries"] and "Energy" in page["sectors"]
     first = page["companies"][0]
-    assert first["annual"] >= 10 and first["price_days"] > 2000 and first["last_period_end"] and first["quarterly"] > 0
+    assert first["annual"] >= 10 and first["price_days"] > 2000 and first["last_period_end"] and first["quarterly"] > 0 and first["first_period_end"] < first["last_period_end"]
     ticker = first["ticker"]
     hit = world.companies(query=ticker[:4])
     assert any(c["ticker"] == ticker for c in hit["companies"]) and hit["total"] <= 100

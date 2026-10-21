@@ -772,6 +772,14 @@ The day a company's accounts became public. A figure may be used from this day p
 
 See: [point-in-time-fundamentals](techniques/point-in-time-fundamentals.md)
 
+### Fiscal-year coverage
+
+*Also: held years*
+
+Which fiscal years of a company the database holds and which it lacks: each year is held, missing, asked for and found empty, due (a filing that should exist by now) or not yet due. A held year is never asked for again; a request is priced per request, not per year, so the years picked are asked for together, once.
+
+See: [point-in-time-fundamentals](techniques/point-in-time-fundamentals.md)
+
 ### Filtered historical simulation
 
 *Also: FHS*

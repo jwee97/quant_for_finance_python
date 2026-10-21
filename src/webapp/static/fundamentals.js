@@ -29,7 +29,10 @@
     dm: { symbols: "", market: "us", start_year: "2000", budget: "", plan: null, report: null, prices: null, price_start: "2010-01-01", price_refresh: false, price_note: "", companies: "120", from: "2009", to: "2022", seed: "7",
           strong: false, tested: null },
     uni: { countries: new Set(), sectors: new Set(), min_cap: "", min_vol: "", developed: false, delisted: true, freq: "M", lag: "1", start: "", end: "", info_lag: "1" },
+    cov: null,                                                                               // the years of the company on show: what is held, which are picked, the plan for them
   };
+  const freshCov = (id) => ({ id: id === undefined ? null : id, data: null, picked: new Set(), plan: null, report: null, seq: 0, timer: null, last: null });
+  FD.cov = freshCov();
   /* The lab frame asks ``busy`` of the view on screen. Each view has its own: a long search in Alpha discovery does not stop the Company explorer, the library or the Data manager from being read. */
   Object.defineProperty(FD, "busy", { get: () => FD.busyBy[FD.mode] || "", enumerable: true });
   window.FD = FD;
@@ -120,7 +123,7 @@
     catch (e) { if (epoch === FD.epoch && !FD.facets[db]) FD.facets[db] = { countries: [], sectors: [], total: 0, error: e.message }; }
     return FD.facets[db] || { countries: [], sectors: [], total: 0 };
   };
-  FD.resetData = () => { FD.epoch++; FD.busyBy = {}; FD.jobs = {}; FD.results = {}; FD.errors = {}; FD.cache = new Map(); FD.facets = {}; FD.co.id = null; FD.co.found = null; FD.co.report = null; FD.dm.plan = null; FD.dm.report = null; if (FD.views.reset) FD.views.reset(); };
+  FD.resetData = () => { FD.epoch++; FD.busyBy = {}; FD.jobs = {}; FD.results = {}; FD.errors = {}; FD.cache = new Map(); FD.facets = {}; FD.co.id = null; FD.co.found = null; FD.co.report = null; FD.dm.plan = null; FD.dm.report = null; clearTimeout(FD.cov.timer); FD.cov = freshCov(); if (FD.views.reset) FD.views.reset(); };
 
   /* ---------- the parts of a form every view uses ---------- */
   FD.sec = (panel, title, open) => { const d = h("details", "", panel); d.open = open !== false; h("summary", "", d, title); return h("div", "body", d); };
@@ -481,12 +484,12 @@
     if (!d.companies.length) CO.none(card, dbTotal);
     else {
       const wrap = FD.guardScroll(h("div", "scroll", card)), t = h("table", "data", wrap), hd = h("tr", "", h("thead", "", t));
-      for (const [label, numeric] of [["Ticker", 0], ["Company", 0], ["Country", 0], ["Sector", 0], ["Annual", 1], ["Last period", 0], ["Price days", 1], ["Open", 2]]) { const th = h("th", numeric === 1 ? "num" : "", hd); if (numeric === 2) h("span", "vh", th, label); else th.textContent = label; }
+      for (const [label, numeric] of [["Ticker", 0], ["Company", 0], ["Country", 0], ["Sector", 0], ["Annual", 1], ["First period", 0], ["Last period", 0], ["Price days", 1], ["Open", 2]]) { const th = h("th", numeric === 1 ? "num" : "", hd); if (numeric === 2) h("span", "vh", th, label); else th.textContent = label; }
       const tb = h("tbody", "", t);
       for (const r of d.companies) {
         const tr = h("tr", "", tb); tr.dataset.id = r.security_id;
         h("td", "", tr, r.ticker + (r.exchange ? " · " + r.exchange : "")); h("td", "", tr, r.company_name || ""); h("td", "", tr, r.country || ""); h("td", "", tr, r.sector || "");
-        h("td", "num", tr, String(r.annual)); h("td", "", tr, day(r.last_period_end)); h("td", "num", tr, String(r.price_days));
+        h("td", "num", tr, String(r.annual)); h("td", "", tr, day(r.first_period_end)); h("td", "", tr, day(r.last_period_end)); h("td", "num", tr, String(r.price_days));
         const open = h("button", "btn small", h("td", "", tr), "Open"); open.type = "button"; open.dataset.action = "open-company"; open.setAttribute("aria-label", "open " + r.ticker);
         open.addEventListener("click", () => { FD.co.id = r.security_id; FD.draw(); window.scrollTo({ top: 0 }); });
       }
@@ -506,6 +509,117 @@
     FD.read("/api/fund/company", { id }).then((d) => { FD.cache.set(key, { data: d }); if (isOpen() && FD.co.id === id) show(d); })
       .catch((e) => { holder.replaceChildren(); Q.labBanner(holder, "That did not load. ", e.message, true); });
   };
+  /* ---------- the years a company holds ---------- */
+  const YEAR_MARK = { held: "✓", missing: "+", empty: "∅", due: "!", notyet: "…" };
+  const PICKED_MARK = "●";
+  const YEAR_WORD = { held: "held", missing: "missing", empty: "asked for, nothing sent", due: "due: a filing should exist", notyet: "not due yet" };
+  const plural = (n, one, many) => `${n} ${n === 1 ? one : many || one + "s"}`;
+  /* The card is made at once and filled when the years arrive. It is made again only when the company or the data changes, so that picking a year keeps the focus where it is. */
+  CO.coverage = (root, p) => {
+    const card = h("div", "card roomy", root); card.dataset.role = "fund-coverage";
+    h("h3", "", card, "Which fiscal years do you hold?");
+    const body = h("div", "stack", card);
+    if (FD.cov.id !== p.security_id) { clearTimeout(FD.cov.timer); FD.cov = freshCov(p.security_id); }
+    if (FD.cov.data) { CO.coverageBody(body); return card; }
+    h("p", "hint", body, "Reading which years are held…");
+    const id = p.security_id, db = FD.db;
+    FD.read("/api/fund/coverage", { id }).then((d) => { if (FD.db !== db || FD.cov.id !== id || !body.isConnected) return; FD.cov.data = d; body.replaceChildren(); CO.coverageBody(body); })
+      .catch((e) => { if (!body.isConnected) return; body.replaceChildren(); Q.labBanner(body, "That did not load. ", e.message, true); });
+    return card;
+  };
+  CO.coverageBody = (body) => {
+    const c = FD.cov.data, a = c.annual, cells = new Map(a.cells.map((x) => [x.year, x])), live = !!c.can_fetch, k = a.counts;
+    if (FD.cov.report) h("p", "note " + (FD.cov.report.added.length ? "tone-good" : "tone-warn"), body, FD.cov.report.text).dataset.role = "fund-years-report";
+    const held = a.earliest_held === null ? "none yet" : `${plural(k.held, "year")}, FY${a.earliest_held} to FY${a.latest_held}`;
+    h("p", "", body, `Annual statements held: ${held}. Missing: ${k.missing}. Asked for, nothing sent: ${k.empty}. Due now: ${k.due}. Quarterly and half-year statements held: ${c.quarterly.held}.`).dataset.role = "fund-years-summary";
+    if (c.reading) { h("h4", "subhead", body, "What the last request brought back"); h("p", "note", body, c.reading).dataset.role = "fund-years-reading"; }
+    const legend = h("div", "legend years-legend", body);
+    for (const state of ["held", "missing", "empty", "due", "notyet"]) { const item = h("span", "", legend); h("b", "mk", item, YEAR_MARK[state]).setAttribute("aria-hidden", "true"); item.appendChild(document.createTextNode(` ${YEAR_WORD[state]} (${k[state]})`)); }
+    if (live) { const item = h("span", "", legend); h("b", "mk", item, PICKED_MARK).setAttribute("aria-hidden", "true"); item.appendChild(document.createTextNode(" picked")); }
+    const grid = h("div", "years", body); grid.setAttribute("role", "group"); grid.setAttribute("aria-label", `Fiscal years of ${c.name || c.ticker}`);
+    const toggle = (year, range) => {
+      const picked = FD.cov.picked, was = picked.has(year);
+      if (range && FD.cov.last !== null) {                                                  // shift-click: every pickable year between this one and the last one clicked
+        const [lo, hi] = [Math.min(year, FD.cov.last), Math.max(year, FD.cov.last)];
+        for (let y = lo; y <= hi; y++) if (pickable(cells.get(y))) { if (was) picked.delete(y); else picked.add(y); }
+      } else if (was) picked.delete(year); else picked.add(year);
+      FD.cov.last = year; syncPicks();
+    };
+    const pickable = (cell) => !!cell && live && cell.state !== "held" && cell.state !== "notyet";
+    const mark = (cell) => cell.state === "held" ? `held, filed ${cell.filed || "(date unknown)"}` : cell.state === "empty" ? `asked for on ${cell.asked_on}, nothing sent` : cell.state === "due" ? `due: filing expected from ${cell.expected_filing}` : cell.state === "notyet" ? `not due until ${cell.expected_filing}` : "missing";
+    for (let decade = Math.floor(a.first / 10) * 10; decade <= a.last; decade += 10) {
+      const group = h("div", "decade", grid); h("h4", "subhead", group, `${decade}s`);
+      const row = h("div", "row", group);
+      for (let year = decade; year < decade + 10; year++) {
+        const cell = cells.get(year);
+        if (!cell) { h("span", "gap", row).setAttribute("aria-hidden", "true"); continue; }
+        const b = h("button", `y ${cell.state}`, row); b.type = "button"; b.dataset.year = String(year); b.dataset.state = cell.state;
+        h("span", "n", b, String(year)); h("span", "mk", b, YEAR_MARK[cell.state]).setAttribute("aria-hidden", "true");
+        b.setAttribute("aria-label", `${year}, ${mark(cell)}`); b.title = mark(cell);
+        if (pickable(cell)) { b.setAttribute("aria-pressed", "false"); b.addEventListener("click", (e) => toggle(year, e.shiftKey)); } else b.disabled = true;
+      }
+    }
+    grid.addEventListener("keydown", (e) => {                                               // the arrow keys move between the years that can be picked
+      const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[e.key]; if (!step || !e.target.matches || !e.target.matches("button.y")) return;
+      const all = [...grid.querySelectorAll("button.y:not(:disabled)")], at = all.indexOf(e.target), next = all[at + step];
+      if (next) { e.preventDefault(); next.focus(); }
+    });
+    const tools = h("div", "row tight", body);
+    const tool = (label, action, years, off) => { const b = h("button", "btn small", tools, label); b.type = "button"; b.dataset.action = action; b.disabled = !live || off; b.addEventListener("click", years); return b; };
+    tool(`Pick every missing year (${k.missing})`, "cov-pick-missing", () => { for (const x of a.cells) if (x.state === "missing") FD.cov.picked.add(x.year); syncPicks(); }, k.missing === 0);
+    tool(`Pick what is due (${k.due})`, "cov-pick-due", () => { for (const x of a.cells) if (x.state === "due") FD.cov.picked.add(x.year); syncPicks(); }, k.due === 0);
+    tool("Clear", "cov-clear", () => { FD.cov.picked.clear(); FD.cov.last = null; syncPicks(); }, false);
+    const planBox = h("div", "stack", body); planBox.dataset.role = "fund-years-plan"; planBox.setAttribute("role", "status"); planBox.setAttribute("aria-live", "polite");
+    h("p", "hint", body, `Credits pay for a request, not for years: one request costs ${c.request_cost} ${c.unit} whether it brings back three years or thirty, and a year you already hold is never asked for again. So pick all the years you want at once; they are asked for in one request.`);
+    const quarters = c.quarterly, qd = h("details", "how", body); h("summary", "", qd, `Quarterly and half-year statements (${quarters.held} held)`);
+    const labels = ["Q1", "Q2", "Q3", "Q4", "H1", "H2"].filter((l) => quarters.rows.some((r) => r.periods[l]));
+    if (quarters.rows.length) table(qd, [{ label: "Year", get: (r) => String(r.year) }].concat(labels.map((l) => ({ label: l, get: (r) => (r.periods[l] ? "✓ " + r.periods[l] : "") }))), quarters.rows.slice().reverse());
+    if (quarters.note) h("p", "hint", qd, quarters.note);
+    if (!quarters.rows.length && !quarters.note) h("p", "hint", qd, "None are held for this company.");
+    if (c.log.length) {
+      const ld = h("details", "how", body); h("summary", "", ld, `Requests made for this company (${c.log.length})`);
+      table(ld, [{ label: "Day", get: (r) => day(r.at) }, { label: "Asked for", get: (r) => r.asked }, { label: "Entries sent", num: true, get: (r) => String(r.entries) }, { label: "Annual read", num: true, get: (r) => String(r.kept) },
+        { label: "New", num: true, get: (r) => (r.new === null || r.new === undefined ? "" : String(r.new)) }, { label: "Cost", num: true, get: (r) => (r.cost === null || r.cost === undefined ? "not recorded" : `${r.cost} ${c.unit}`) },
+        { label: "Why", get: (r) => ({ missing: "first fetch", history: "older years", stale: "a newer filing was due", chosen: "years you chose" })[r.reason] || r.reason || "" }], c.log);
+    }
+    const paintPlan = () => {
+      planBox.replaceChildren();
+      if (!live) { h("p", "hint tone-warn", planBox, c.why_not || "Years cannot be asked for now."); return; }
+      const years = [...FD.cov.picked].sort((x, y) => x - y), plan = FD.cov.plan;
+      if (!years.length) { h("p", "hint", planBox, "Click the years you want (Shift-click to pick a run of them), then ask for them. The cost is shown before anything is spent."); return; }
+      if (!plan) { h("p", "hint", planBox, `Working out what ${plural(years.length, "year")} would cost…`); return; }
+      if (plan.error) { h("p", "hint tone-crit", planBox, plan.error); return; }
+      h("p", "", planBox, plan.text).dataset.role = "fund-years-plan-text";
+      if (plan.to_fetch.length && !plan.fits_today) h("p", "hint tone-warn", planBox, `That does not fit in what is left of today's allowance (${plan.remaining_today} ${plan.unit}). Pick fewer years, or wait for it to reset.`);
+      const go = h("button", "btn primary", planBox, plan.to_fetch.length ? `Ask for ${plural(plan.to_fetch.length, "year")} (${plan.cost} ${plan.unit})` : "Nothing to ask for"); go.type = "button"; go.dataset.action = "cov-fetch";
+      go.disabled = !plan.to_fetch.length || !plan.fits_today; go.addEventListener("click", () => fetchYears(plan, years));
+    };
+    function showPicks() {
+      for (const b of grid.querySelectorAll("button.y[aria-pressed]")) {
+        const on = FD.cov.picked.has(Number(b.dataset.year));
+        b.setAttribute("aria-pressed", on ? "true" : "false"); b.querySelector(".mk").textContent = on ? PICKED_MARK : YEAR_MARK[b.dataset.state];
+      }
+    }
+    const asksAgain = (years) => years.some((y) => (cells.get(y) || {}).state === "empty");
+    function syncPicks() {
+      showPicks();
+      const years = [...FD.cov.picked].sort((x, y) => x - y), seq = ++FD.cov.seq; FD.cov.plan = null; paintPlan();
+      clearTimeout(FD.cov.timer);
+      if (!years.length) return;
+      FD.cov.timer = setTimeout(() => FD.send("/api/fund/coverage/plan", { security_id: c.security_id, years, ask_again: asksAgain(years) })
+        .then((r) => { if (seq === FD.cov.seq && planBox.isConnected) { FD.cov.plan = r; paintPlan(); } })
+        .catch((e) => { if (seq === FD.cov.seq && planBox.isConnected) { FD.cov.plan = { error: e.message }; paintPlan(); } }), 120);
+    }
+    const fetchYears = (plan, years) => FD.act("companies", "Asking OpenFilings for the chosen years…", async (run) => {
+      const { result } = await run.job("/api/fund/coverage/fetch", { security_id: c.security_id, years, budget: plan.cost, ask_again: asksAgain(years) }, "Asking for the chosen years");
+      FD.cov = Object.assign(freshCov(c.security_id), { report: result });
+      FD.cache.delete("company:" + FD.db + ":" + c.security_id); FD.resetCaches(); CO.refreshFacets();                    // the figures, the list and the overview are out of date now
+      return FD.read("/api/fund/companies", CO.local());
+    });
+    showPicks();
+    paintPlan();
+    if (FD.cov.picked.size && !FD.cov.plan) syncPicks();
+  };
   CO.view = (root, d) => {
     const p = d.profile;
     Q.labHead(root, `${p.company_name || p.ticker} (${p.ticker}${p.exchange ? ", " + p.exchange : ""})`, [p.country, p.sector, p.industry, p.currency].filter(Boolean).join(" · "), GUIDE);
@@ -516,6 +630,7 @@
     tile(k, "Prices", d.prices ? d.prices.days.toLocaleString("en-US") + " days" : "none", { text: d.prices ? `${d.prices.first} to ${d.prices.last}` : "load them in the Data manager" });
     tile(k, "Last close", d.prices && !Q.bad(d.prices.last_close) ? num(d.prices.last_close) : "n/a", { text: p.currency || "" });
     if (d.anomaly_reading) tile(k, "Accounting-anomaly screen", d.annual.length && !Q.bad(d.annual[d.annual.length - 1].accounting_anomaly_score) ? num(d.annual[d.annual.length - 1].accounting_anomaly_score, 2) : "n/a", { text: d.anomaly_reading }, "", "A screen to look closer, never evidence of fraud");
+    CO.coverage(root, p);
     const rows = d.annual;
     const series = (names) => names.filter((n) => d.series[n]).map((n, i) => ({ name: human(n), color: Q.colorOf(i), values: d.series[n] }));
     const ch = h("div", "charts", root);
@@ -588,7 +703,7 @@
       const row = h("div", "row tight", b);
       const plan = h("button", "btn", row, "Show the plan"); plan.type = "button"; plan.dataset.action = "plan-sync"; plan.addEventListener("click", () => DM.plan());
       const go = h("button", "btn primary", row, "Fetch within the budget"); go.type = "button"; go.dataset.action = "start-sync"; go.addEventListener("click", () => DM.sync());
-      h("p", "hint", b, "A new company costs about 11 credits (a lookup and its annual statements), however many years are asked for, so the default is a long history. The plan says what is missing, what is already fresh and how many fit in today's allowance. The run stops by itself when the budget or the allowance is reached.");
+      h("p", "hint", b, "A new company costs about 11 credits (a lookup and its annual statements), however many years are asked for, so the default is a long history. The years that come back are the ones OpenFilings holds for that company, which can be fewer than asked: open the company to see which years you hold and to ask for the ones that are missing. The plan says what is missing, what is already fresh and how many fit in today's allowance. The run stops by itself when the budget or the allowance is reached.");
       const c = FD.sec(panel, "3. Prices and exchange rates");
       Q.labField(c, { key: "price_start", label: "Prices from", kind: "text", placeholder: "2010-01-01" }, s, after);
       Q.labField(c, { key: "price_refresh", label: "Fetch the whole history again", kind: "bool" }, s, after);
