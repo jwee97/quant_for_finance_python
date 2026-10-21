@@ -209,6 +209,18 @@
     const card = W.card(root, title); const ul = h("ul", "", card); for (const t of list) h("li", "", ul, t);
     return card;
   };
+  /* A table built by hand in a scrolling wrapper: when it is wider or taller than its card it must be reachable from the keyboard, and its region needs a name (what ``simpleTable`` does for its own). */
+  FD.guardScroll = (wrap) => {
+    const guard = () => {
+      if (!wrap.isConnected) return;
+      if (wrap.scrollWidth > wrap.clientWidth + 1 || wrap.scrollHeight > wrap.clientHeight + 1) {
+        const head = wrap.closest(".card") && wrap.closest(".card").querySelector("h3");
+        wrap.tabIndex = 0; wrap.setAttribute("role", "region"); wrap.setAttribute("aria-label", `${head ? head.textContent : "Table"}: table, scrolls`);
+      } else { wrap.removeAttribute("tabindex"); wrap.removeAttribute("role"); wrap.removeAttribute("aria-label"); }
+    };
+    if (window.ResizeObserver) { const watch = new ResizeObserver(guard); watch.observe(wrap); const t = wrap.querySelector("table"); if (t) watch.observe(t); } else requestAnimationFrame(guard);
+    return wrap;
+  };
   FD.explain = (root, title, text) => { const d = h("details", "how", root); h("summary", "", d, title); h("p", "", d, text); return d; };
   FD.emptyCard = (root, title, paragraphs, button) => {
     const c = h("div", "card empty", root); h("h2", "", c, title); for (const t of [].concat(paragraphs)) h("p", "", c, t);
@@ -218,24 +230,50 @@
   FD.goto = (mode) => { FD.mode = mode; Q.renderLab(FD); };
   FD.fmt = { spct, sgn, compact, human, day };
 
+  /* What to do next, in order: each step says whether it is done, the first one that is not is marked, and every step has the button that does it. ``o`` is what the database and the account hold. */
+  FD.setupSteps = (o) => {
+    const n = (x) => Number(x || 0).toLocaleString("en-US"), c = o.counts, steps = [];
+    if (!o.real) {
+      steps.push({ done: c.companies > 0, title: "Make the simulated world", detail: c.companies > 0 ? `${n(c.companies)} simulated companies.` : "A world of companies with statements, prices and a few alphas hidden in them, made on this computer in about a minute.", action: { key: "make-demo", label: "Make it", mode: "data" } });
+    } else {
+      steps.push({ done: !!o.keyOk, title: "Set up your OpenFilings key", detail: o.keyOk ? "A key is set." : "Statements come from OpenFilings. The key goes in Replit's Secrets and never through this page.", action: { key: "set-up-key", label: "Show me how", mode: "data" } });
+      steps.push({ done: c.companies > 0, title: "Add companies", detail: c.companies > 0 ? `${n(c.companies)} in the database.` : "Find a company by name (a search costs 1 credit) or type tickers such as us:AAPL (free).", action: { key: "find-company", label: "Find a company", mode: "companies" } });
+      steps.push({ done: c.with_financials > 0, title: "Fetch their statements", detail: c.with_financials > 0 ? `${n(c.with_financials)} of ${n(c.companies)} have annual statements.` : `About ${o.fetchCost || 11} credits a company${o.remaining === null || o.remaining === undefined ? "" : `, ${n(o.remaining)} credits left today`}.`, action: { key: "fetch-statements", label: "Fetch statements", mode: "data" } });
+      steps.push({ done: c.price_rows > 0, title: "Load their prices", detail: c.price_rows > 0 ? `${n(c.price_rows)} daily prices.` : "Free, from Yahoo Finance. A study measures what a factor earned, so it needs prices.", action: { key: "load-prices", label: "Load prices", mode: "data" } });
+      if (o.studySize && c.companies > 0 && c.with_financials > 0 && c.price_rows > 0) {
+        const z = o.studySize;
+        steps.push({ done: !!(z.available && z.adequate), title: "Enough companies to see a real signal", detail: z.available ? `${n(Math.round(z.companies))} companies on ${n(z.dates)} dates can see a mean IC of ${z.mde_ic.toFixed(3)} or more; useful signals are 0.02 to 0.05.` : z.reading, action: { key: "more-companies", label: "Add more companies", mode: "companies" } });
+      }
+    }
+    if (o.runs !== null && o.runs !== undefined && c.companies > 0 && (c.with_financials > 0 || !o.real)) steps.push({ done: o.runs > 0, title: "Study a factor, then search for alphas", detail: o.runs > 0 ? `${o.runs} search${o.runs === 1 ? "" : "es"} run.` : "Start with the Factor lab: does one idea predict what happened next? Then let Alpha discovery try many.", action: { key: "open-factor-lab", label: "Open the Factor lab", mode: "factors" } });
+    return steps;
+  };
+  FD.checklist = (root, o) => {
+    const steps = FD.setupSteps(o); if (!steps.length || steps.every((x) => x.done)) return null;
+    const ready = o.ready, card = h("div", "card checklist", root); card.dataset.role = ready ? "fund-checklist" : "fund-not-ready";
+    h("h2", "", card, ready ? "What to do next" : "Not ready to study yet");
+    const list = h("ol", "", card); let next = true, i = 0;
+    for (const step of steps) {
+      i += 1;
+      const li = h("li", step.done ? "done" : next ? "next" : "todo", list); li.dataset.step = step.action.key;
+      h("span", "mark", li, step.done ? "✓" : String(i)).setAttribute("aria-hidden", "true");
+      const body = h("div", "body", li); h("b", "", body, step.title); h("span", "vh", body, step.done ? " (done)" : next ? " (next)" : " (to do)"); h("span", "meta", body, step.detail);
+      if (!step.done) { const b = h("button", "btn small" + (next ? " primary" : ""), li, step.action.label); b.type = "button"; b.dataset.action = step.action.key; b.addEventListener("click", () => FD.goto(step.action.mode)); }
+      if (!step.done) next = false;
+    }
+    return card;
+  };
+
   /* =========================================================== Overview */
   const OV = FD.views.overview = {};
   OV.run = () => FD.act("overview", "Reading the database…", () => FD.read("/api/fund/overview"));
   OV.auto = () => OV.run();
   OV.empty = (root) => FD.emptyCard(root, "Reading the database…", "");
-  OV.sections = (panel) => {
-    const b = FD.sec(panel, "What this shows");
-    h("p", "hint", b, "The state of the local database: how many companies, how much history, how clean, what the library holds. Nothing here calls a provider.");
-    const go = h("button", "btn", b, "Open the Data manager"); go.type = "button"; go.addEventListener("click", () => FD.goto("data"));
-  };
+  OV.sections = () => {};                                                                    // the page says what it shows: nothing to set here, only the data to choose above
   OV.build = (root, d) => {
     Q.labHead(root, "Overview", `${d.counts.companies.toLocaleString("en-US")} companies · ${d.counts.with_financials.toLocaleString("en-US")} with statements · ${d.counts.price_rows.toLocaleString("en-US")} daily prices`, GUIDE);
-    const ready = d.readiness;
-    if (!ready.ready) {
-      const c = h("div", "card empty", root); c.dataset.role = "fund-not-ready"; h("h2", "", c, "Not ready to study yet");
-      for (const p of ready.problems) h("p", "", c, p);
-      const go = h("button", "btn primary", c, "Open the Data manager"); go.type = "button"; go.addEventListener("click", () => FD.goto("data"));
-    }
+    const setup = d.setup || {};
+    FD.checklist(root, { real: FD.db === "real", ready: d.readiness.ready, counts: d.counts, keyOk: !!setup.available, fetchCost: setup.fetch_cost, remaining: setup.remaining_today, studySize: d.study_size, runs: d.runs.length });
     const k = h("div", "earnrow", root);
     tile(k, "Companies", d.counts.companies.toLocaleString("en-US"), { text: `${d.counts.countries} countries · ${d.counts.markets} markets` });
     tile(k, "With statements", d.counts.with_financials.toLocaleString("en-US"), { text: `${d.counts.annual_periods.toLocaleString("en-US")} annual · ${d.counts.quarterly_periods.toLocaleString("en-US")} quarterly periods` });
@@ -243,6 +281,11 @@
     tile(k, "Restated filings", d.counts.restated_vintages.toLocaleString("en-US"), { text: "kept beside the original, never overwriting it" });
     tile(k, "Alphas in the library", String(Object.values(d.library.library || {}).reduce((a, b) => a + b, 0)), { text: `${d.library.graveyard} failed ideas kept in the graveyard` });
     tile(k, "Ideas tried in all", String(d.library.tried || 0), { text: "every one counts against a result" });
+    const sz = d.study_size;
+    if (sz && d.counts.companies > 0) {
+      const card = W.card(root, "What this much data can tell you", sz.reading); card.dataset.role = "fund-study-size";
+      if (sz.available) table(card, [{ label: "A true mean IC of", num: true, get: (r) => num(r.ic, 2) }, { label: "would show a t of about", num: true, get: (r) => num(r.expected_t, 1) }, { label: "chance of |t| above 2", num: true, get: (r) => pct(r.power_t2, 0) }, { label: "chance of |t| above 3", num: true, get: (r) => pct(r.power_t3, 0) }], sz.table);
+    }
     const ch = h("div", "charts", root);
     if (d.by_country.length) chartCard(ch, "Where the companies are", "Companies by country, and the share of them that have annual statements.", {
       draw: (b) => C.hbars(b, { rows: d.by_country.map((r) => ({ label: r.country, value: r.companies, text: `${r.companies}`, tip: [["With annual statements", pct(r.annual_coverage, 0)], ["Median history", num(r.median_history_years, 1) + " years"]] })), format: (v) => String(Math.round(v)), name: "Companies", label: "Companies by country", labelWidth: 54, valueWidth: 50, color: () => css("--s1") }),
@@ -307,7 +350,11 @@
     const go = h("button", "btn", b, "Search OpenFilings (1 credit)"); go.type = "button"; go.dataset.action = "search-provider";
     go.addEventListener("click", () => CO.remote("auto"));
     if (info && !info.available) { go.disabled = true; h("p", "hint tone-warn", b, "OpenFilings is not set up yet, so it cannot be searched: the Data manager shows how to add a key."); }
-    else if (info && info.remaining_today !== null && info.remaining_today !== undefined) h("p", "hint", b, `${info.remaining_today.toLocaleString("en-US")} credits left today.`);
+    else if (info && info.remaining_today !== null && info.remaining_today !== undefined) {
+      if (info.daily_limit) meterRow(b, "Today", info.daily_limit - info.remaining_today, info.daily_limit, "credits");
+      if (info.monthly_limit && info.remaining_month !== null && info.remaining_month !== undefined) meterRow(b, "This month", info.monthly_limit - info.remaining_month, info.monthly_limit, "credits");
+      h("p", "hint", b, `${info.remaining_today.toLocaleString("en-US")} credits left today.`);
+    }
   };
   /* Ask OpenFilings (one credit). Nothing is added: that is the next, free step. */
   CO.remote = (kind) => {
@@ -324,18 +371,29 @@
     if (fetch) {
       const { result } = await run.job("/api/fund/sync", { symbols: [row.symbol], budget: found.cost_to_fetch || 11 }, "Fetching statements");
       FD.co.report = Object.assign({ symbol: row.symbol }, result);
+      if (result.fetched) {                                                                  // a study needs prices as well: they are free, so they come with the statements
+        const added = ((await FD.send("/api/fund/companies/search", { q: found.query, kind: found.kind, market: found.market || undefined })).results || []).find((x) => x.symbol === row.symbol);
+        if (added && added.security_id !== undefined && added.security_id !== null) {
+          try { FD.co.report.prices = (await run.job("/api/fund/prices", { security_ids: [added.security_id] }, "Loading its prices")).result; } catch (e) { FD.co.report.prices_error = e.message; }
+        }
+      }
     } else {
       await FD.send("/api/fund/companies/add", { symbols: [row.symbol] }); Q.toast(`${row.name || row.symbol} added`);
     }
     FD.co.found = await FD.send("/api/fund/companies/search", { q: found.query, kind: found.kind, market: found.market || undefined });
-    FD.cache = new Map(); CO.refreshFacets();
+    FD.resetCaches(); CO.refreshFacets();                                                    // what the other views showed (the overview, its list of what to do next) is out of date now
     return FD.read("/api/fund/companies", CO.local());
   });
   CO.reportLine = (r) => {
     if (r.not_found && r.not_found.length) return [`OpenFilings has no annual statements for ${r.symbol} (a request that fails is refunded).`, "tone-warn"];
     if (r.pending && r.pending.length) return [`OpenFilings is still collecting the filings of ${r.symbol} (some filings are gathered on demand). Ask again in a few minutes.`, "tone-warn"];
     if (r.failed && r.failed.length) return [`${r.symbol}: ${r.failed[0].error}`, "tone-crit"];
-    if (r.fetched) return [`Fetched ${r.periods} annual periods for ${r.symbol} and spent ${r.cost} credits.` + (r.stopped ? " " + r.stopped : ""), "tone-good"];
+    if (r.fetched) {
+      const px = r.prices, spent = `Fetched ${r.periods} annual periods for ${r.symbol} and spent ${r.cost} credits.` + (r.stopped ? " " + r.stopped : "");
+      if (px && px.loaded) return [`${spent} Loaded ${px.rows.toLocaleString("en-US")} daily prices (free), so it can be studied now.`, "tone-good"];
+      if (px) return [`${spent} No prices were found for it at Yahoo Finance${px.failed && px.failed[0] ? ` (${px.failed[0].reason})` : ""}: open the company and set its price symbol, or it will be left out of studies.`, "tone-warn"];
+      return [spent + (r.prices_error ? ` Its prices could not be loaded (${r.prices_error}): load them in the Data manager.` : " Load its prices in the Data manager to study it."), r.prices_error ? "tone-warn" : "tone-good"];
+    }
     return [r.stopped || `Nothing was fetched for ${r.symbol}: it is already up to date.`, "hint"];
   };
   CO.none = (card, dbTotal) => {
@@ -378,7 +436,7 @@
       return;
     }
     if (found.ambiguous) h("p", "hint", card, "More than one company matches. The best match is first.");
-    const wrap = h("div", "scroll", card), t = h("table", "data", wrap), hd = h("tr", "", h("thead", "", t));
+    const wrap = FD.guardScroll(h("div", "scroll", card)), t = h("table", "data", wrap), hd = h("tr", "", h("thead", "", t));
     for (const [label, hidden] of [["Company", 0], ["Symbol", 0], ["Country", 0], ["ISIN", 0], ["In your database", 0], ["Actions", 1]]) { const th = h("th", "", hd); if (hidden) h("span", "vh", th, label); else th.textContent = label; }
     const tb = h("tbody", "", t);
     for (const r of found.results) {
@@ -406,7 +464,7 @@
     const card = h("div", "card roomy", root); card.dataset.role = "fund-companies";
     if (!d.companies.length) CO.none(card, dbTotal);
     else {
-      const wrap = h("div", "scroll", card), t = h("table", "data", wrap), hd = h("tr", "", h("thead", "", t));
+      const wrap = FD.guardScroll(h("div", "scroll", card)), t = h("table", "data", wrap), hd = h("tr", "", h("thead", "", t));
       for (const [label, numeric] of [["Ticker", 0], ["Company", 0], ["Country", 0], ["Sector", 0], ["Annual", 1], ["Last period", 0], ["Price days", 1], ["Open", 2]]) { const th = h("th", numeric === 1 ? "num" : "", hd); if (numeric === 2) h("span", "vh", th, label); else th.textContent = label; }
       const tb = h("tbody", "", t);
       for (const r of d.companies) {
@@ -535,18 +593,18 @@
   DM.add = () => FD.act("data", "Adding the companies…", async () => {
     const symbols = FD.dm.symbols.split(/[\s,;]+/).filter(Boolean); if (!symbols.length) throw new Error("Type at least one ticker");
     const r = await FD.send("/api/fund/companies/add", { symbols, market: FD.dm.market });
-    Q.toast(`${r.added} companies registered`); FD.dm.plan = null; FD.dm.symbols = ""; return FD.read("/api/fund/status");
+    Q.toast(`${r.added} companies registered`); FD.dm.plan = null; FD.dm.symbols = ""; FD.resetCaches(); return FD.read("/api/fund/status");
   });
   DM.planBody = () => { const s = FD.dm, b = { periods: ["annual"] }; if (s.start_year !== "") b.start_year = Number(s.start_year); return b; };
   DM.plan = () => FD.act("data", "Planning…", async () => { FD.dm.plan = await FD.send("/api/fund/sync/plan", DM.planBody()); if (FD.dm.budget === "") FD.dm.budget = String(Math.min(FD.dm.plan.plan.cost, FD.dm.plan.affordability.remaining_today === null ? FD.dm.plan.plan.cost : FD.dm.plan.affordability.remaining_today)); return FD.read("/api/fund/status"); });
   DM.sync = () => FD.act("data", "Fetching statements…", async (run) => {
     const budget = Number(FD.dm.budget); if (!isFinite(budget) || budget < 1) throw new Error("Say how many credits this run may spend (the plan suggests a number)");
     const { result } = await run.job("/api/fund/sync", Object.assign(DM.planBody(), { budget }), "Fetching statements");
-    FD.dm.report = result; FD.dm.plan = null; FD.cache = new Map(); return FD.read("/api/fund/status");
+    FD.dm.report = result; FD.dm.plan = null; FD.resetCaches(); return FD.read("/api/fund/status");
   });
   DM.prices = () => FD.act("data", "Loading prices…", async (run) => {
     const { result } = await run.job("/api/fund/prices", { start: FD.dm.price_start || undefined, refresh: !!FD.dm.price_refresh }, "Loading prices");
-    FD.dm.prices = result; FD.cache = new Map(); return FD.read("/api/fund/status");
+    FD.dm.prices = result; FD.resetCaches(); return FD.read("/api/fund/status");
   });
   DM.simulate = (reset) => FD.act("data", "Making the simulated world…", async (run) => {
     const s = FD.dm, body = { companies: Number(s.companies), start_year: Number(s.from), end_year: Number(s.to), seed: Number(s.seed), reset: !!reset };
@@ -561,7 +619,8 @@
   };
   DM.build = (root, d) => {
     Q.labHead(root, "Data manager", `${d.counts.companies.toLocaleString("en-US")} companies · database ${(d.database_bytes / 1e6).toFixed(1)} MB · last update ${d.last_update ? day(d.last_update) : "never"}`, GUIDE);
-    if (!d.readiness.ready) { const c = h("div", "card", root); c.dataset.role = "fund-not-ready"; h("h3", "", c, "Next steps"); const ul = h("ul", "", c); for (const p of d.readiness.problems) h("li", "", ul, p.replace("in the Data Manager", "with the form on the left")); }
+    const prov = (d.providers || []).find((x) => x.name === "openfilings");
+    FD.checklist(root, { real: FD.db === "real", ready: d.readiness.ready, counts: d.counts, keyOk: !!(prov && prov.available), fetchCost: prov && prov.cost_per_company, remaining: prov ? (prov.daily_limit === null || prov.daily_limit === undefined ? null : Math.max(prov.daily_limit - prov.used_today, 0)) : null, studySize: null, runs: null });
     const k = h("div", "earnrow", root);
     tile(k, "Companies", d.counts.companies.toLocaleString("en-US"), { text: `${d.counts.countries} countries` });
     tile(k, "With statements", d.counts.with_financials.toLocaleString("en-US"), { text: `${d.companies_stale} due a fetch (missing or stale)` });

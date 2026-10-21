@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import re
 
+import pandas as pd
 import pytest
 
 from src.fundamentals import expr as X
@@ -71,8 +72,16 @@ def live_real(tmp_path_factory):
     fake = FakeOpenFilings({KEY_1: "a"})
     pool = KeyPool("openfilings", [("OPENFILINGS_API_KEY_1", KEY_1)], wb.service.usage, wb.store.salt(), Allowance("credits", 100, 1000, "test"))
     wb.service.register("openfilings", OpenFilingsProvider(pool, transport=fake, sleep=lambda s: None))
+    asked = []
+
+    def prices(symbols, start):                                                             # the market-data source answers with ten days for whatever is asked: nothing here goes to the network
+        asked.append(list(symbols))
+        idx = pd.bdate_range("2020-01-01", periods=10)
+        return {sym: pd.DataFrame({"close": 10.0, "adj_close": 9.5, "volume": 100.0}, index=idx) for sym in symbols}
+
+    app.fundamentals.fetch = prices
     running = server.start(app, "127.0.0.1", 0)
-    running.app, running.fake = app, fake
+    running.app, running.fake, running.asked = app, fake, asked
     yield running
     running.stop()
     saved.undo()
@@ -265,6 +274,8 @@ def test_a_company_is_found_by_name_in_openfilings_added_for_nothing_and_fetched
         page.wait_for_selector("[data-role=fund-fetch-report]", timeout=LONG)
         said = re.search(r"Fetched (\d+) annual periods for us:NVDA and spent 11 credits", page.inner_text("[data-role=fund-fetch-report]"))
         assert said and int(said.group(1)) >= 8 and "88 credits left today" in page.inner_text("[data-role=fund-remote]")
+        assert "Loaded 10 daily prices (free), so it can be studied now" in page.inner_text("[data-role=fund-fetch-report]") and live_real.asked == [["NVDA"]]     # a study needs prices as well: they came with the statements
+        assert page.locator("#fundamentals .panel [role=img][aria-label='Today: 12 of 100 credits used']").count() == 1                                     # the allowance, as a meter, where the search is
         assert int(page.locator("[data-role=fund-companies] tbody tr td").nth(4).inner_text()) >= 8
         assert "saved answer, free" in page.inner_text("[data-role=fund-remote]") and len(fake.requests) == 3        # the search, the lookup and the statements: the page read the saved search again for nothing
         assert _tables_have_names(page) == [] and page.locator("[data-role=fund-remote] button:not([aria-label])").count() == 0
@@ -351,7 +362,7 @@ def test_a_scan_an_audit_and_a_formula_of_your_own(browser, live_fund):  # noqa:
         assert page.locator("[data-role=fund-scan] tbody tr[data-factor=fcf_yield]").count() == 1 and _tables_have_names(page) == []
         page.click("[data-action=audit-factor]")
         page.wait_for_selector("[data-role=fund-audit]", timeout=LONG)
-        assert page.locator("[data-role=fund-audit] tbody tr").count() == 2 and "from the day it was public" in page.inner_text("[data-role=fund-audit]")
+        assert page.locator("[data-role=fund-audit] table").first.locator("tbody tr").count() == 2 and "from the day it was public" in page.inner_text("[data-role=fund-audit]")
         page.click("[data-role=fund-source] button:has-text('My own formula')")
         page.fill("#fundamentals .panel [data-key=formula]", "div(fcf,market_cap")
         page.click("[data-action=check-formula]")
@@ -573,5 +584,173 @@ def test_an_app_older_than_the_tab_says_so(browser, live_fund):  # noqa: F811
         text = page.inner_text("#fundamentals")
         assert "needs a newer app" in text and "reports version 10; this tab needs 11" in text and "Stop the app" in text
         assert page.locator("#fundamentals .labtop [role=tab]").count() == 0
+    finally:
+        page.close()
+
+
+# ------------------------------------------------------------------------------------------------------ how well an alpha is tested
+def test_the_overview_says_what_this_much_data_can_tell_you_and_an_empty_database_says_nothing(browser, live_fund):  # noqa: F811
+    page = _page(browser, live_fund)
+    try:
+        _open(page, "overview")
+        page.wait_for_selector("[data-role=fund-study-size]")
+        card = page.locator("[data-role=fund-study-size]")
+        assert re.search(r"With about \d+ companies on each of \d+ dates this study can", card.inner_text()) and card.locator("tbody tr").count() == 5
+        assert _tables_have_names(page) == []
+        _open(page, "overview", demo=False)
+        page.wait_for_selector("[data-role=fund-not-ready]")
+        assert page.locator("[data-role=fund-study-size]").count() == 0
+        assert page.problems == []
+    finally:
+        page.close()
+
+
+def test_a_study_shows_what_it_could_have_seen_the_premium_with_the_controls_chosen_the_intervals_and_what_waiting_does(browser, live_fund):  # noqa: F811
+    page = _page(browser, live_fund)
+    try:
+        _open(page, "factors")
+        page.wait_for_selector("select[data-role=fund-factor]")
+        fixed = page.locator("#fundamentals .panel .checks", has_text="The premium regression holds these fixed")
+        assert [fixed.locator("input").nth(i).get_attribute("data-value") for i in range(4)] == ["size", "beta", "volatility", "momentum"] and fixed.locator("input:checked").count() == 4
+        fixed.locator("input[data-value=momentum]").uncheck()
+        page.fill("#fundamentals .panel [data-key=extra_fixed]", "roic")
+        _go(page)
+        page.wait_for_selector("[data-role=fund-power]", timeout=LONG)
+        power = page.locator("[data-role=fund-power]")
+        assert "Could this study have seen a real effect?" in power.inner_text() and power.locator("tbody tr").count() == 5
+        premium = page.locator("[data-role=fund-premium]")
+        text = premium.inner_text()
+        assert "holding size, beta, volatility and roic fixed" in text and "What holding them fixed took away" in text and premium.locator("tbody tr").count() == 3
+        ic_tile = page.locator("#fundamentals-results .tile", has=page.locator("text=/^Mean rank IC$/")).first.inner_text()
+        sharpe_tile = page.locator("#fundamentals-results .tile", has=page.locator("text=/^Long-short Sharpe, net$/")).first.inner_text()
+        assert "95% interval" in ic_tile and "95% interval" in sharpe_tile
+        assert page.locator("#fundamentals-results .chartcard", has=page.locator("h3", has_text="The premium on each date")).count() == 1 and _tables_have_names(page) == []
+        page.click("button[data-action=audit-factor]")
+        page.wait_for_selector("[data-role=fund-audit]", timeout=LONG)
+        audit = page.locator("[data-role=fund-audit]")
+        assert "what is left if a figure is used only some days after its filing" in audit.inner_text().lower() and audit.locator("tbody tr").count() == 6        # the two versions, then 1, 30, 60 and 90 days
+        assert [r.locator("td").first.inner_text() for r in audit.locator("tbody tr").all()][2:] == ["1", "30", "60", "90"] and _tables_have_names(page) == []
+        assert page.problems == []
+    finally:
+        page.close()
+
+
+def test_a_search_names_its_bars_could_be_checked_before_and_after_and_a_wrong_setting_is_refused(browser, live_fund):  # noqa: F811
+    page = _page(browser, live_fund)
+    try:
+        _open(page, "discovery")
+        strict = page.locator("#fundamentals .panel select[data-key=strictness]")
+        assert strict.input_value() == "standard" and strict.locator("option").all_inner_texts()[0].startswith("Exploratory") and strict.locator("option").count() == 3
+        page.fill("#fundamentals .panel [data-key=n]", "30")
+        page.fill("#fundamentals .panel [data-key=repeats]", "1")
+        page.fill("#fundamentals .panel [data-key=seed]", "21")
+        page.select_option("#fundamentals .panel [data-key=strictness]", "strict")
+        page.click("button[data-action=preflight]")
+        page.wait_for_selector("[data-role=fund-preflight]", timeout=LONG)
+        pre = page.locator("[data-role=fund-preflight]")
+        assert "strict bars" in page.inner_text("#fundamentals-results") and "Underpowered for the alphas worth having" in pre.inner_text() and _tile(page, "Luck at the first screen") == "0"      # forty companies cannot find an alpha of the usual size
+        table = page.locator("#fundamentals-results .chartcard", has=page.locator("h3", has_text="The chance that a real alpha gets through"))
+        table.locator(".seg button:has-text('Table')").click()
+        found = [float(t.rstrip("%")) for t in table.locator("tbody tr td:nth-child(5)").all_inner_texts()]
+        assert len(found) == 5 and found == sorted(found) and _tables_have_names(page) == []
+        page.select_option("#fundamentals .panel [data-key=strictness]", "exploratory")
+        page.click("button[data-action=placebo]")
+        page.wait_for_selector("[data-role=fund-placebo]", timeout=LONG)
+        placebo = page.locator("[data-role=fund-placebo]")
+        assert "exploratory bars" in page.inner_text("#fundamentals-results") and "On shuffled returns, where nothing can be found" in placebo.inner_text()
+        assert _tile(page, "Luck lets through") and page.locator("[data-role=fund-placebo-tails] tbody tr").count() == 3 and _tables_have_names(page) == []
+        assert page.locator("#fundamentals-results .tile", has=page.locator("text=/^Share of the real run that is luck$/")).count() == 0       # a search that has not been run has nothing to set beside
+        _go(page)
+        page.wait_for_selector("[data-role=fund-leaderboard]", timeout=LONG)
+        assert "exploratory bars" in page.inner_text("#fundamentals-results") and re.search(r"\d+ ideas counted against the result, from \d+ runs? on this question", page.inner_text("#fundamentals-results"))
+        page.click("button[data-action=placebo-run]")
+        page.wait_for_selector("[data-role=fund-placebo]", timeout=LONG)
+        assert page.locator("[data-role=fund-leaderboard]").count() == 1 and page.locator("#fundamentals-results .tile", has=page.locator("text=/^Share of the real run that is luck$/")).count() == 1
+        assert "expected to be luck" in page.inner_text("[data-role=fund-placebo]") and _tables_have_names(page) == []
+        assert page.problems == []
+    finally:
+        page.close()
+
+
+def test_the_overview_says_what_to_do_next_ticks_what_is_done_and_each_step_has_its_button(browser, live_real, live_fund):  # noqa: F811
+    page = _page(browser, live_real)
+    try:
+        _open(page, "overview", demo=False)
+        page.wait_for_selector("[data-role=fund-not-ready]")
+        card = page.locator("[data-role=fund-not-ready]")
+        assert "Not ready to study yet" in card.inner_text()
+        titles = [t.strip() for t in card.locator("li .body b").all_inner_texts()]
+        assert titles == ["Set up your OpenFilings key", "Add companies", "Fetch their statements", "Load their prices"]
+        assert card.locator("li.done").count() == 1 and "Set up your OpenFilings key" in card.locator("li.done").inner_text()                # the stand-in has a key
+        assert card.locator("li.next").count() == 1 and "Add companies" in card.locator("li.next").inner_text() and card.locator("li.next button.primary").count() == 1
+        assert card.locator("li.done .vh").inner_text().strip() == "(done)" and card.locator("li.next .vh").inner_text().strip() == "(next)"           # a state is words, not only colour
+        assert "About 11 credits a company, 100 credits left today" in card.locator("li").nth(2).inner_text() and _tables_have_names(page) == []     # what the statements will cost is said before they are asked for
+        card.locator("li.next button").click()
+        page.wait_for_selector("[data-role=fund-companies]")                                                              # the step's button goes where the work is done
+        page.click("#fundamentals .labtop button[data-mode=data]")                                                          # a company added in the Data manager...
+        page.fill("[data-role=fund-symbols]", "us:AAA")
+        page.click("[data-action=add-companies]")
+        _wait_until(page, "document.querySelector('[data-role=fund-not-ready] li.done') && document.querySelectorAll('[data-role=fund-not-ready] li.done').length === 2", 30)
+        page.click("#fundamentals .labtop button[data-mode=overview]")                                                      # ...is in the list of what is done when the overview is opened again, not the list it showed before
+        _wait_until(page, "document.querySelectorAll('[data-role=fund-not-ready] li.done').length === 2", 30)
+        card = page.locator("[data-role=fund-not-ready]")
+        assert card.locator("li.done").count() == 2 and "Fetch their statements" in card.locator("li.next").inner_text() and "About 11 credits a company, 100 credits left today" in card.locator("li.next").inner_text()
+        card.locator("li.next button").click()
+        page.wait_for_selector("[data-role=fund-provider]")                                                               # the Data manager, where statements are fetched
+        assert page.locator("[data-role=fund-not-ready] li.next").count() == 1 and page.locator("[data-role=fund-key-guide]").count() == 0
+        assert page.problems == []
+    finally:
+        page.close()
+    page = _page(browser, live_fund)                                                                                      # no key set: the first step is the key, and it leads to the guide
+    try:
+        _open(page, "overview", demo=False)
+        page.wait_for_selector("[data-role=fund-not-ready]")
+        card = page.locator("[data-role=fund-not-ready]")
+        assert card.locator("li.done").count() == 0 and "Set up your OpenFilings key" in card.locator("li.next").inner_text()
+        card.locator("li.next button").click()
+        page.wait_for_selector("[data-role=fund-key-guide]")
+        assert "Secrets" in page.inner_text("[data-role=fund-key-guide]") and page.problems == []
+        _open(page, "overview", demo=True)                                                                               # the demo asks for no key, and a ready one asks only to study
+        page.wait_for_selector("#fundamentals-results .tile")
+        assert page.locator("[data-role=fund-not-ready]").count() == 0 and "Set up your OpenFilings key" not in page.inner_text("#fundamentals-results")
+    finally:
+        page.close()
+
+
+def test_the_tables_of_the_research_views_can_be_downloaded_for_a_spreadsheet_with_numbers_as_numbers(browser, live_fund):  # noqa: F811
+    import csv
+    from pathlib import Path
+
+    def rows_of(page, button):
+        with page.expect_download() as got:
+            page.click(button)
+        return got.value.suggested_filename, list(csv.reader(Path(got.value.path()).read_text(encoding="utf-8").splitlines()))
+
+    page = _page(browser, live_fund)
+    try:
+        _open(page, "library")
+        page.wait_for_selector("[data-role=fund-alphas] tbody tr")
+        name, rows = rows_of(page, "[data-role=fund-alphas] [data-action=download-csv]")
+        shown = page.locator("[data-role=fund-alphas] tbody tr").count()
+        assert name == "alpha_library.csv" and rows[0] == ["alpha_id", "formula", "used_as", "status", "ic", "oos_ic", "sharpe", "turnover", "fitness", "q_value", "deflated_sharpe"]
+        assert len(rows) == shown + 1 and all(len(r) == 11 for r in rows) and any("," in r[1] for r in rows[1:])             # a formula holds commas: it is quoted, and still one cell
+        assert all(0 <= float(r[4]) < 1 for r in rows[1:]) and all(r[3] in ("Candidate", "Validated", "Production", "Decaying", "Retired", "Rejected") for r in rows[1:])      # the IC as a number, not as "+0.081"
+        page.click("[data-role=fund-lib-view] button:has-text('Graveyard')")
+        page.wait_for_selector("[data-role=fund-graveyard] tbody tr")
+        name, rows = rows_of(page, "[data-role=fund-graveyard] [data-action=download-csv]")
+        assert name == "graveyard.csv" and rows[0][:3] == ["formula", "failed_at", "reason"] and len(rows) == page.locator("[data-role=fund-graveyard] tbody tr").count() + 1 and all(r[2] for r in rows[1:])
+        _open(page, "factors")
+        page.wait_for_selector("select[data-role=fund-factor]")
+        page.click("[data-action=scan-factors]")
+        page.wait_for_selector("[data-role=fund-scan]", timeout=LONG)
+        name, rows = rows_of(page, "[data-role=fund-scan] [data-action=download-csv]")
+        assert name == "factor_scan.csv" and rows[0][:2] == ["factor", "family"] and any(r[0] == "fcf_yield" for r in rows[1:]) and len(rows) >= 21
+        _open(page, "discovery")
+        page.wait_for_selector("[data-role=fund-runs] [data-action=open-run]")
+        page.locator("[data-role=fund-runs] [data-action=open-run]").first.click()
+        page.wait_for_selector("[data-role=fund-leaderboard]")
+        name, rows = rows_of(page, "[data-role=fund-leaderboard] [data-action=download-csv]")
+        assert re.fullmatch(r"discovery_R[0-9a-f]+\.csv", name) and rows[0][:3] == ["formula", "used_as", "status"] and len(rows) == page.locator("[data-role=fund-leaderboard] tbody tr").count() + 1
+        assert page.problems == []
     finally:
         page.close()

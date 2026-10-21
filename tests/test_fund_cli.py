@@ -219,6 +219,42 @@ def test_a_search_counts_every_formula_keeps_the_survivors_as_candidates_and_doe
     assert code == 2 and "no discovery run called" in err
 
 
+def test_a_study_prints_its_power_its_intervals_its_premium_and_what_waiting_does_to_the_signal(home, capsys, tmp_path):
+    saved = tmp_path / "study2.json"
+    code, out, _ = run(capsys, "evaluate", "fcf_yield", "--demo", "--premium", "--premium-controls", "size", "roic", "--lookahead", "--json", str(saved))
+    assert code == 0 and "95% interval" in out and "Could this study have seen a real effect?" in out and "chance of |t| above 2" in out
+    assert "(Fama-MacBeth)" in out and "holding size, roic fixed" in out and "What is left if a figure is used only some days after its filing" in out and "days after the filing" in out
+    data = json.loads(saved.read_text())
+    assert data["study"]["premium"]["controls"] == ["size", "roic"] and data["study"]["power"]["available"] and [r["lag_days"] for r in data["lookahead"]["by_lag"]] == [1, 30, 60, 90]
+    code, _, err = run(capsys, "evaluate", "fcf_yield", "--demo", "--premium-controls", "vibes")
+    assert code == 2 and "unknown control" in err and "Traceback" not in err
+
+
+def test_a_search_is_checked_before_and_after_it_is_run_and_the_bars_are_named(home, capsys, tmp_path):
+    code, out, _ = run(capsys, "preflight", "--demo", "--n", "50", "--strictness", "strict")
+    assert code == 0 and "What a strict search of 50 formulas could find" in out and "true mean IC" in out and "first screen" in out and "locked test" in out and "underpowered" in out
+    code, out, err = run(capsys, "discover", "--demo", "--n", "12", "--seed", "11", "--finalists", "2", "--strictness", "exploratory", "--formulas", "div(fcf,market_cap)")
+    assert code == 0 and "Bars: exploratory (first screen |t| of 1.65, false-discovery q-value of 0.25)" in out and "ideas, from" in out
+    wb = Workbench(service=FundamentalsService(home, db_path=home / "data" / "user" / "fundamentals_demo.db"))
+    run_id = next(r["run_id"] for r in wb.discovery().runs(20) if r["status"] == "finished")
+    saved = tmp_path / "placebo.json"
+    code, out, err = run(capsys, "placebo", "--demo", "--run", run_id, "--repeats", "1", "--json", str(saved))
+    assert code == 0 and "Calibration of a" in out and "shuffled returns" in out and "Shuffled formulas whose |t| reached each level" in out and "The real search let" in out
+    result = json.loads(saved.read_text())
+    assert result["complete"] and result["real"]["tested"] > 0 and result["experiment_id"].startswith("P") and result["summary"]["runs"] == 1
+    code, out, _ = run(capsys, "placebo", "--demo", "--n", "15", "--seed", "3", "--repeats", "1", "--formulas", "div(fcf,market_cap)")
+    assert code == 0 and "Calibration of a standard search" in out and "The real search" not in out                  # a search that has not been run has nothing to set beside
+    for argv, message in ((["placebo", "--demo", "--run", "Rnothere"], "no discovery run called"), (["placebo", "--demo", "--repeats", "9", "--n", "10"], "between 1 and 5"),
+                          (["discover", "--demo", "--n", "10", "--strictness", "wild"], None)):
+        if message is None:
+            with pytest.raises(SystemExit):
+                run(capsys, *argv)                                                                                  # argparse names the three settings
+            capsys.readouterr()
+        else:
+            code, out, err = run(capsys, *argv)
+            assert code == 2 and message in err and "Traceback" not in err
+
+
 def test_the_library_keeps_the_failures_and_a_status_is_never_changed_without_a_reason(home, capsys):
     code, out, _ = run(capsys, "library", "--demo")
     ids = alpha_ids(capsys)

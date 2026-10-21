@@ -364,3 +364,60 @@ def test_what_goes_out_over_http_is_plain_json(app):
         assert call("/api/fund/formula/check", {"db": "demo", "formula": "roic"})["ok"]
     finally:
         running.stop()
+
+
+# ------------------------------------------------------------------------------------------------------------------------------ how well an alpha is tested
+def test_a_search_can_be_checked_before_it_is_run_and_calibrated_on_shuffled_returns(app):
+    from src.fundamentals.discovery import Discovery, DiscoverySpec
+    for bad, why in (({"strictness": "wild"}, "strictness must be one of"), ({"thresholds": {"t_ic": "high"}}, "must be a number"), ({"n_candidates": 0}, "between")):
+        with pytest.raises(ApiError, match=why):
+            post(app, "/api/fund/discover/preflight", db="demo", spec=bad)
+        with pytest.raises(ApiError, match=why):
+            post(app, "/api/fund/placebo", db="demo", spec=bad)
+    with pytest.raises(ApiError, match="between 1 and 5"):
+        post(app, "/api/fund/placebo", db="demo", spec={}, repeats=9)
+    with pytest.raises(ApiError, match="no discovery run called"):
+        post(app, "/api/fund/placebo", db="demo", run_id="Rnothere")
+    pre = run(app, "/api/fund/discover/preflight", db="demo", spec={"n_candidates": 60, "strictness": "strict"})
+    assert pre["strictness"] == "strict" and pre["limits"]["t_ic"] == 3.0 and len(pre["table"]) == 5 and pre["adequate"] is False and "underpowered" in pre["reading"]      # forty companies cannot find an alpha of the usual size
+    found = [r["found"] for r in pre["table"]]
+    assert found == sorted(found) and pre["power"]["train"]["companies"] > 30 and pre["luck_first_screen"] == pytest.approx(60 * 2 * 0.0013499, rel=0.01)
+    default = run(app, "/api/fund/discover/preflight", db="demo", spec={"n_candidates": 60})
+    assert default["strictness"] == "standard"                                                                  # a request that does not say starts from the standard bars
+
+    shuffled = run(app, "/api/fund/placebo", db="demo", spec={"n_candidates": 40, "seed": 4, "evolve": 0.0}, repeats=1)
+    assert shuffled["complete"] and shuffled["summary"]["runs"] == 1 and shuffled["strictness"] == "standard" and shuffled["experiment_id"].startswith("P") and shuffled["real"] is None
+    assert any(e["experiment_id"] == shuffled["experiment_id"] for e in get(app, "/api/fund/experiments", db="demo", kind="placebo")["experiments"])
+    finished = run(app, "/api/fund/discover", db="demo", spec={"n_candidates": 30, "seed": 14, "seeds": ["div(fcf,market_cap)", "delta(roic,12)"], "finalists": 3, "strictness": "exploratory"})
+    checked = run(app, "/api/fund/placebo", db="demo", run_id=finished["run_id"], repeats=1)
+    assert checked["real"]["tested"] == finished["counts"]["tested"] and checked["spec"]["n_candidates"] == 30 and checked["strictness"] == "exploratory"       # the settings of the run it checks, not today's defaults
+    assert checked["real"]["survivors"] == finished["counts"]["survivors"] and checked["summary"]["runs"] == 1 and (finished["counts"]["survivors"] == 0 or "luck_share" in checked["summary"])
+    wb = app.fundamentals.bench("demo")
+    created = Discovery(wb.store).create(DiscoverySpec(n_candidates=5))
+    with pytest.raises(ApiError, match="check a finished run"):
+        post(app, "/api/fund/placebo", db="demo", run_id=created)
+
+
+def test_a_calibration_can_be_stopped_and_keeps_nothing(app):
+    started = post(app, "/api/fund/placebo", db="demo", spec={"n_candidates": 200, "seed": 6, "evolve": 0.0}, repeats=5)
+    deadline = time.time() + 120
+    while time.time() < deadline and "shuffled returns 1 of 5" not in app.job(started["job"])["message"]:
+        time.sleep(0.02)
+    assert post(app, "/api/fund/stop", job=started["job"]) == {"ok": True}
+    done = wait(app, started["job"])
+    assert done["status"] == "done" and done["result"]["complete"] is False and "experiment_id" not in done["result"] and done["result"]["summary"]["runs"] < 5
+
+
+def test_the_overview_and_the_catalogue_carry_what_the_new_checks_need(app):
+    demo = get(app, "/api/fund/overview", db="demo")["study_size"]
+    assert demo["available"] and demo["companies"] > 30 and demo["dates"] > 80 and demo["mde_ic"] > 0 and len(demo["table"]) == 5
+    empty = get(app, "/api/fund/overview")["study_size"]
+    assert empty["available"] is False and "at least 20 companies" in empty["reading"]
+    cat = get(app, "/api/fund/catalogue")["discovery"]
+    assert cat["defaults"]["strictness"] == "standard" and cat["strictness"] == ["exploratory", "standard", "strict"] and cat["presets"]["standard"]["t_ic"] == 2.0 and cat["placebo_repeats"] == 5
+    study = run(app, "/api/fund/evaluate", db="demo", spec={"factor": "fcf_yield", "breakdowns": [], "controls": ["size", "roic"]})
+    assert study["premium"]["controls"] == ["size", "roic"] and study["power"]["available"] and study["ic"]["ci95"][0] < study["ic"]["mean_ic"] < study["ic"]["ci95"][1]
+    with pytest.raises(ApiError, match="unknown control"):
+        post(app, "/api/fund/evaluate", db="demo", spec={"factor": "fcf_yield", "controls": ["vibes"]})
+    audit = run(app, "/api/fund/lookahead", db="demo", spec={"factor": "fcf_yield"})
+    assert [r["lag_days"] for r in audit["by_lag"]] == [1, 30, 60, 90] and "lag_verdict" in audit

@@ -256,6 +256,7 @@ class SimulatedWorld:
         filing_eff = np.where(np.isnat(filing), self.period_end[:, :, 3] + np.timedelta64(120, "D"), filing)    # the date the market learned the figures, whatever the data say
         shares_t = lambda t: shares0 * np.exp(share_growth * (j0 + t / 12.0))                                      # noqa: E731
         logret = np.full((m, n), np.nan)
+        idio_z = np.full((m, n), np.nan)
         logprice = np.full((m, n), np.nan)
         mcap = np.full((m, n), np.nan)
         logprice[0] = logp
@@ -293,19 +294,25 @@ class SimulatedWorld:
             drift = np.where(have, np.log(revenue[fye_idx, np.clip(ky, 0, None)] / revenue[fye_idx, np.clip(ky - 1, 0, None)]) / 12.0, 0.0)
             ctry = np.array([cshock[k][t + 1] for k in self.country])
             sect = np.array([sshock[k][t + 1] for k in self.sector])
-            r = self.beta * f[t + 1] + ctry + sect + alpha + reversion + 0.3 * drift + self.idio_vol * rng.standard_normal(n)
+            z_idio = rng.standard_normal(n)
+            idio_z[t + 1] = z_idio
+            r = self.beta * f[t + 1] + ctry + sect + alpha + reversion + 0.3 * drift + self.idio_vol * z_idio
             # a company about to delist loses money over its last quarter
             fading = (last_month - t <= 3) & (last_month < m)
             r = np.where(fading, r - 0.10, r)
             logret[t + 1] = np.where(live, r, np.nan)
             logprice[t + 1] = np.where(live, logprice[t] + r - c.dividend_yield / 12.0, np.nan)
         self.logret, self.logprice, self.mcap, self.kyear = logret, logprice, mcap, kyear_all
+        self.shocks = {"market": f - 0.006, "country": cshock, "sector": sshock, "idio": idio_z, "market_sd": 0.04, "country_sd": 0.02, "sector_sd": 0.015}       # what moves a month's return at random
         self.filing_effective = filing_eff
 
     # ------------------------------------------------------------------------------------------------------------ outputs
     def daily_prices(self) -> pd.DataFrame:
-        """Long frame ``ticker, date, close, adj_close, volume`` of business days: each month's return is spread over its days and ends exactly on the month's last business day. ``close`` is the
-        price a market capitalisation is built from (after dividends), ``adj_close`` the total-return series returns are computed from."""
+        """Long frame ``ticker, date, close, adj_close, volume`` of business days. Each month ends exactly on its return, and inside the month the return is made of what moved it: the part that was
+        expected (the alphas, the drift, the market's average) is spread evenly over the days, and each *shock* (the market, the company's country, its sector, the company itself) is a random walk
+        that is held to the month's total, which is how a path with a known end behaves (a Brownian bridge). The daily moves therefore add up to the monthly variance, so a statistic computed on daily
+        returns (a volatility, a Sharpe ratio, a beta) agrees with the one computed on month ends. ``close`` is the price a market capitalisation is built from (after dividends), ``adj_close``
+        the total-return series returns are computed from."""
         c = self.cfg
         rng = np.random.default_rng(c.seed + 1)
         days = pd.bdate_range(self.months[0] + pd.Timedelta(days=1), self.months[-1])
@@ -313,10 +320,27 @@ class SimulatedWorld:
         mi = month_pos.reindex(days.to_period("M")).to_numpy().astype(int)
         starts = np.flatnonzero(np.r_[True, mi[1:] != mi[:-1]])
         counts = np.diff(np.r_[starts, len(days)])
-        per_day = np.repeat(counts, counts)[:, None]
-        eps = rng.standard_normal((len(days), c.n_companies)) * (self.idio_vol / np.sqrt(21.0))
-        eps = eps - np.repeat(np.add.reduceat(eps, starts, axis=0) / counts[:, None], counts, axis=0)      # the wiggles inside a month cancel: it still ends on its return
-        r_total = np.nan_to_num(self.logret)[mi] / per_day + eps
+        in_month = np.repeat(counts, counts).astype(float)                                     # business days in each day's month
+
+        def walk(shock, sd, shape):
+            """Daily increments of a random walk whose month total is ``shock`` (one value a month, or one a month for each company) and whose daily size is ``sd`` over the root of the days."""
+            z = rng.standard_normal(shape)
+            extra = (1,) * (z.ndim - 1)
+            z = z - np.repeat(np.add.reduceat(z, starts, axis=0) / counts.reshape((-1,) + extra), counts, axis=0)
+            n_days = in_month.reshape((-1,) + extra)
+            return np.nan_to_num(shock[mi]) / n_days + sd * z / np.sqrt(n_days)
+
+        sh, n_days_total = self.shocks, len(days)
+        market = walk(sh["market"], sh["market_sd"], (n_days_total,))
+        country = {k: walk(v, sh["country_sd"], (n_days_total,)) for k, v in sh["country"].items()}
+        sector = {k: walk(v, sh["sector_sd"], (n_days_total,)) for k, v in sh["sector"].items()}
+        idio = walk(self.idio_vol * np.nan_to_num(sh["idio"]), self.idio_vol, (n_days_total, c.n_companies))
+        # what each month's return was made of, by company; the rest of it was expected
+        ctry_m = np.column_stack([sh["country"][k] for k in self.country])
+        sect_m = np.column_stack([sh["sector"][k] for k in self.sector])
+        shock_m = self.beta * sh["market"][:, None] + ctry_m + sect_m + self.idio_vol * np.nan_to_num(sh["idio"])
+        expected = np.nan_to_num(self.logret) - shock_m * np.isfinite(self.logret)
+        r_total = expected[mi] / in_month[:, None] + self.beta * market[:, None] + np.column_stack([country[k] for k in self.country]) + np.column_stack([sector[k] for k in self.sector]) + idio
         r_price = r_total - c.dividend_yield / 252.0
         close = np.exp(self.logprice[0] + np.cumsum(r_price, axis=0))
         adj = np.exp(np.log(100.0) + np.cumsum(r_total, axis=0))

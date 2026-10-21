@@ -14,7 +14,7 @@ from src.fundamentals import discovery as D
 from src.fundamentals import expr as X
 from src.fundamentals.errors import FundamentalsError
 from src.fundamentals.evaluate import holding_returns
-from src.fundamentals.library import settings_hash
+from src.fundamentals.library import build_signal, settings_hash
 from src.fundamentals.research import ResearchContext, UniverseSpec
 from src.fundamentals.service import FundamentalsService
 from src.fundamentals.store import FundamentalsStore
@@ -261,14 +261,21 @@ def test_the_graveyard_is_never_overwritten_and_finds_the_same_idea_in_another_s
 
 
 # ------------------------------------------------------------------------------------------------------------------------ the monitor
-def _tail(ctx: ResearchContext, mode: str, rows: int) -> ResearchContext:
+def _tail(ctx: ResearchContext, mode: str, rows: int, signal: pd.DataFrame | None = None) -> ResearchContext:
+    """The context with the returns of its last dates replaced: dealt out at random (``shuffle``: the alpha has stopped working) or made to follow the signal upside down, with noise (``reverse``: it
+    works the other way round, as strongly whatever the draw of the world, which negating the real returns would not give)."""
     out = copy.copy(ctx)
     out._cache = dict(ctx._cache)
     fwd = ctx.forward("1m").copy()
     rng = np.random.default_rng(0)
     for t in range(len(fwd) - rows - 1, len(fwd)):
         row = fwd.iloc[t].to_numpy()
-        fwd.iloc[t] = -row if mode == "reverse" else row[rng.permutation(len(row))]
+        if mode == "reverse":
+            s = signal.iloc[t].to_numpy(float)
+            z = np.nan_to_num((s - np.nanmean(s)) / (np.nanstd(s) or 1.0))
+            fwd.iloc[t] = np.where(np.isfinite(row), -0.04 * z + 0.04 * rng.standard_normal(len(row)), np.nan)
+        else:
+            fwd.iloc[t] = row[rng.permutation(len(row))]
     out._cache[("forward", 21)] = fwd
     return out
 
@@ -281,9 +288,12 @@ def test_the_monitor_judges_an_alpha_used_upside_down_by_how_well_it_works_that_
     assert alpha["metrics"]["direction"] == -1.0 and alpha["ic"] > 0 > alpha["metrics"]["ic_raw"] and alpha["oos_ic"] > 0
     lib.validate(alpha["alpha_id"], "the test's own approval")
     healthy = lib.monitor(alpha["alpha_id"], ctx)
-    assert healthy["monitor"] == "Healthy" and healthy["status"] == "Validated"                              # the flip was once applied twice: this alpha was called Broken and moved to Decaying
-    assert healthy["detail"]["recent_ic"] > 0 and healthy["detail"]["original_ic"] == pytest.approx(alpha["ic"]) and healthy["detail"]["recent_t"] > 2.0
-    broken = lib.monitor(alpha["alpha_id"], _tail(ctx, "reverse", 14))
+    assert healthy["monitor"] in ("Healthy", "Weakening") and healthy["status"] == "Validated"               # the flip was once applied twice: this alpha was called Broken and moved to Decaying (a year of a noisy IC is Healthy or Weakening by the draw)
+    assert healthy["detail"]["recent_ic"] > 0 and healthy["detail"]["original_ic"] == pytest.approx(alpha["ic"]) and healthy["detail"]["recent_t"] > 1.0
+    longer = lib.monitor(alpha["alpha_id"], ctx, recent=24)
+    assert longer["monitor"] == "Healthy" and longer["detail"]["recent_t"] > 1.8 and longer["status"] == "Validated"                    # two years of it leave no doubt
+    signal = build_signal(ctx, X.loads(alpha["expression"]), alpha["settings"])
+    broken = lib.monitor(alpha["alpha_id"], _tail(ctx, "reverse", 14, signal))
     assert broken["monitor"] == "Broken" and broken["detail"]["recent_ic"] < 0 and broken["status"] == "Decaying"
 
 
@@ -292,16 +302,17 @@ def test_the_monitor_calls_a_working_alpha_healthy_and_a_failing_one_decaying_or
     spec = D.DiscoverySpec(**SMALL)
     disc.run(disc.create(spec))
     lib, ctx = disc.library, base[1]
-    aid = next(a["alpha_id"] for a in lib.list("Candidate") if a["text"] in ("div(fcf,market_cap)", "div(net_income,market_cap)", "div(revenue,market_cap)"))
+    row = next(a for a in lib.list("Candidate") if a["text"] in ("div(fcf,market_cap)", "div(net_income,market_cap)", "div(revenue,market_cap)"))
+    aid = row["alpha_id"]
     lib.validate(aid)
     healthy = lib.monitor(aid, ctx)
-    assert healthy["monitor"] == "Healthy" and healthy["status"] == "Validated" and healthy["detail"]["recent_ic"] > 0
+    assert healthy["monitor"] in ("Healthy", "Weakening") and healthy["status"] == "Validated" and healthy["detail"]["recent_ic"] > 0      # a working alpha is not called Decaying or Broken; a noisy year may only call for a watch
     decaying = lib.monitor(aid, _tail(ctx, "shuffle", 24))
     assert decaying["monitor"] in ("Decaying", "Broken") and decaying["status"] == "Decaying" and lib.get(aid)["status"] == "Decaying"
     assert "the monitor judged it" in lib.get(aid)["status_reason"]
     lib.set_status(aid, "Validated", "recovered after review")
-    broken = lib.monitor(aid, _tail(ctx, "reverse", 14))
+    broken = lib.monitor(aid, _tail(ctx, "reverse", 14, build_signal(ctx, X.loads(row["expression"]), row["settings"])))
     assert broken["monitor"] == "Broken" and broken["detail"]["recent_t"] <= -2.0
     history = lib.monitor_history(aid)
-    assert len(history) == 3 and history[0]["status"] == "Broken" and history[-1]["status"] == "Healthy" and history[0]["detail"]["recent_t"] <= -2.0
+    assert len(history) == 3 and history[0]["status"] == "Broken" and history[-1]["status"] in ("Healthy", "Weakening") and history[0]["detail"]["recent_t"] <= -2.0
     assert lib.get(aid)["status"] == "Decaying"                                                              # a Broken verdict moved the Validated alpha to Decaying

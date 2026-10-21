@@ -36,6 +36,12 @@
   const W_sample = (dates, every) => Q.sampleRows(dates, [], every);
   const pointsToSeries = (pts) => ({ dates: pts.map((p) => p[0]), values: pts.map((p) => p[1]) });
   const align = (dates, pts) => { const m = new Map(pts.map((p) => [p[0], p[1]])); return dates.map((d) => (m.has(d) ? m.get(d) : null)); };
+  /* The table behind a view, for a spreadsheet: numbers go out as numbers (not as the rounded text on the page). */
+  const csvButton = (parent, label, filename, header, rows) => {
+    const row = h("div", "row tight", parent), b = h("button", "btn small", row, label); b.type = "button"; b.dataset.action = "download-csv";
+    b.addEventListener("click", () => W.csvDownload(filename, [header].concat(rows)));
+    return b;
+  };
 
   /* The tear sheet of a study: the verdict in words, the numbers, the charts and the breakdowns. Used by the Factor lab, by combinations and by models. */
   FD.tearSheet = (root, d, opts) => {
@@ -45,13 +51,31 @@
     h("p", "", v, d.verdict);
     for (const w of d.warnings) h("p", "hint", v, w);
     const k = h("div", "earnrow", root);
-    tile(k, "Mean rank IC", sgn(ic.mean_ic), { text: `t = ${num(ic.t_stat, 1)} (allowing for overlap)`, dir: Math.abs(ic.t_stat) >= 2 ? "up" : "" }, "", "The average over dates of the rank correlation between the factor and the next period's return across companies");
+    const span = (ci, f) => (ci && ci.length === 2 && !Q.bad(ci[0]) && !Q.bad(ci[1]) ? `${f(ci[0])} to ${f(ci[1])}` : "");
+    const icSpan = span(ic.ci95, sgn), shSpan = span(net.sharpe_ci95, (x) => num(x, 2));
+    tile(k, "Mean rank IC", sgn(ic.mean_ic), { text: `t = ${num(ic.t_stat, 1)} (allowing for overlap)${icSpan ? ` · 95% interval ${icSpan}` : ""}`, dir: Math.abs(ic.t_stat) >= 2 ? "up" : "" }, "", "The average over dates of the rank correlation between the factor and the next period's return across companies. The interval is the range of true averages the data cannot rule out.");
     tile(k, "IC information ratio", num(ic.icir_annualised, 2), { text: `${pct(ic.positive_share, 0)} of dates positive` }, "", "Mean IC over its standard deviation, scaled to a year");
     tile(k, "Top minus bottom bucket", spct(q.spread_top_minus_bottom, 2), { text: `monotonic ${num((q.monotonicity || {}).spearman, 2)} · ${q.buckets} buckets` }, "", "Average forward return of the top bucket less the bottom bucket per period");
-    tile(k, "Long-short Sharpe, net", num(net.sharpe, 2), { text: `gross ${num(gross.sharpe, 2)} · ${pct(net.cagr, 1)} a year`, dir: net.sharpe > 0.5 ? "up" : "" }, "", "Top bucket long, bottom short, after trading costs and borrowing");
+    tile(k, "Long-short Sharpe, net", num(net.sharpe, 2), { text: `gross ${num(gross.sharpe, 2)} · ${pct(net.cagr, 1)} a year${shSpan ? ` · 95% interval ${shSpan}` : ""}`, dir: net.sharpe > 0.5 ? "up" : "" }, "", "Top bucket long, bottom short, after trading costs and borrowing. The interval allows for skew and fat tails (Mertens).");
     tile(k, "Turnover a rebalance", pct(pf.avg_turnover, 0), { text: `cost drag ${num(pf.cost_drag_sharpe, 2)} Sharpe` }, "", "Share of the long book replaced at each rebalance");
     tile(k, "Dates and coverage", String(d.n_dates), { text: `${num(d.average_companies, 0)} companies a date` });
+    const pw = d.power;
+    if (pw && pw.available) {
+      const card = W.card(root, "Could this study have seen a real effect?", pw.reading); card.dataset.role = "fund-power";
+      table(card, [{ label: "A true mean IC of", num: true, get: (r) => num(r.ic, 2) }, { label: "would show a t of about", num: true, get: (r) => num(r.expected_t, 1) }, { label: "chance of |t| above 2", num: true, get: (r) => pct(r.power_t2, 0) }, { label: "chance of |t| above 3", num: true, get: (r) => pct(r.power_t3, 0) }], pw.table);
+    }
+    const fm = d.premium;
+    if (fm) {
+      const card = W.card(root, "The premium, holding other things fixed", fm.reading); card.dataset.role = "fund-premium";
+      const a = fm.with_controls || {}, b = fm.without_controls || {}, g = fm.explained_by_controls || {}, rows = [];
+      if (!Q.bad(a.premium) && !Q.bad(b.premium)) {
+        rows.push([fm.controls.length ? `Holding ${fm.controls.join(", ")} fixed` : "On its own", a]);
+        if (fm.controls.length) { rows.push(["On its own", b]); if (!Q.bad(g.premium)) rows.push(["What holding them fixed took away", g]); }
+        table(card, [{ label: "Version", get: (r) => r[0] }, { label: "Premium over the window", num: true, get: (r) => spct(r[1].premium, 2) }, { label: "95% interval", num: true, get: (r) => span(r[1].ci95, (x) => spct(x, 2)) }, { label: "t", num: true, get: (r) => num(r[1].t_stat, 1) }, { label: "Dates", num: true, get: (r) => String(r[1].n_dates ?? "") }], rows);
+      }
+    }
     const ch = h("div", "charts", root), cs = d.charts, dates = cs.ic.map((p) => p[0]);
+    if (fm && fm.series && fm.series.length) lineCard(ch, "The premium on each date", "The return, over the window, of one standard deviation more of the factor with the other things held fixed, from a regression across the companies on each date. A real premium is positive on most dates, not on a few.", fm.series.map((p) => p[0]), [{ name: "Premium", color: css("--s1"), values: fm.series.map((p) => p[1]) }], (x) => (x * 100).toFixed(1) + "%", { include: 0, baseline: 0 });
     lineCard(ch, "Information coefficient over time", "Each month's rank correlation between the factor and the next period's return. The line is the 12-period average: a factor that works earns a positive IC most of the time, not on a few dates.", dates,
       [{ name: "IC", color: css("--s1"), values: cs.ic.map((p) => p[1]) }, { name: "12-period average", color: css("--s2"), values: align(dates, cs.ic_rolling) }], (x) => x.toFixed(2), { wide: true, include: 0 });
     chartCard(ch, "How the IC is spread", "The distribution of the per-date IC. A factor with real information has the whole distribution shifted to the right of zero, not a few big positive dates.", {
@@ -93,6 +117,7 @@
     h("li", "", ul, `Survivorship: ${d.universe.survivorship.verdict}.`);
     h("li", "", ul, `Point in time: a figure is used from ${d.universe.pit.info_lag_days} day(s) after the day it was public; ${d.universe.pit_estimated_share === null ? "all" : pct(d.universe.pit_estimated_share, 1)} of the periods needed an estimated filing date.`);
     h("li", "", ul, `Steps: ${(d.spec.steps || []).map((s) => s.op + (s.pct ? ` ${s.pct}%` : "") + (s.by ? ` (${[].concat(s.by, s.continuous || []).join(", ")})` : "")).join(" → ") || "raw values"}; direction ${d.spec.direction}; horizon ${d.spec.horizon}; ${d.spec.quantiles} buckets; costs ${d.spec.cost_bps} bps one way, borrow ${d.spec.borrow_bps} bps a year.`);
+    if (fm) h("li", "", ul, `Premium: on each date the returns (cut at the 1st and 99th percentile of the date) are regressed on the normal score of the rank of the factor${fm.controls.length ? ` and of ${fm.controls.join(", ")}` : ""}; the mean of the coefficients has a Newey-West error that allows for overlapping windows (Fama and MacBeth, 1973).`);
     h("li", "", ul, "Interesting is not validated: a result in a sample that was looked at is a lead. Test it on dates it was not chosen on, count how many ideas were tried, and check it after costs.");
     if (o.actions) o.actions(root, d);
   };
@@ -100,7 +125,7 @@
   /* =========================================================== Factor lab */
   const FL = FD.views.factors = {};
   FL.s = { source: "factor", factor: "fcf_yield", formula: "div(fcf,market_cap)", scale: "zscore", winsor: "1", neutral: new Set(), controls: new Set(), horizon: "1m", direction: "theory", quantiles: "5", top: "", weighting: "equal",
-           cost: "10", borrow: "50", min_assets: "20" };
+           cost: "10", borrow: "50", min_assets: "20", fixed: new Set(["size", "beta", "volatility", "momentum"]), extra_fixed: "" };
   FL.steps = () => {
     const s = FL.s, steps = [];
     if (s.scale === "raw") return steps;
@@ -114,6 +139,8 @@
     if (s.source === "factor") spec.factor = s.factor;
     if (s.top !== "") spec.top_fraction = Number(s.top) / 100;
     for (const k of ["quantiles", "cost_bps", "borrow_bps", "min_assets"]) if (!isFinite(spec[k])) throw new Error("The test settings must be numbers");
+    spec.premium = true;
+    spec.controls = [...s.fixed].concat(s.extra_fixed.split(/[\s,;]+/).map((x) => x.trim()).filter(Boolean));
     return spec;
   };
   FL.check = () => {
@@ -167,6 +194,8 @@
     Q.labField(e, { key: "cost", label: "Trading cost, one way (bps)", kind: "number", min: 0, max: 500 }, s, after);
     Q.labField(e, { key: "borrow", label: "Cost of borrowing the short side (bps a year)", kind: "number", min: 0, max: 2000 }, s, after);
     Q.labField(e, { key: "min_assets", label: "Fewest companies on a date", kind: "number", step: 1, min: 5, max: 2000 }, s, after);
+    Q.checkList(e, "The premium regression holds these fixed:", [["size", "size (market value)"], ["beta", "market beta"], ["volatility", "volatility"], ["momentum", "momentum (twelve months less the last)"]], s.fixed, after);
+    Q.labField(e, { key: "extra_fixed", label: "...and these library factors (names, separated by commas)", kind: "text", placeholder: "roic, gross_margin", help: "A premium that vanishes once something it is known to resemble is held fixed was that thing in disguise." }, s, after);
     const more = h("div", "row tight", panel); more.style.padding = "0 16px";
     const scan = h("button", "btn", more, "Scan every factor"); scan.type = "button"; scan.dataset.action = "scan-factors"; scan.addEventListener("click", () => FL.scan());
     const audit = h("button", "btn", more, "Look-ahead audit"); audit.type = "button"; audit.dataset.action = "audit-factor"; audit.addEventListener("click", () => FL.audit());
@@ -216,6 +245,11 @@
     h("p", "", card, a.verdict);
     table(card, [{ label: "Version", get: (r) => r[0] }, { label: "Mean IC", num: true, get: (r) => sgn(r[1].mean_ic) }, { label: "t", num: true, get: (r) => num(r[1].t_stat, 1) }, { label: "Dates", num: true, get: (r) => String(r[1].n_dates) }],
       [["Honest: each figure from the day it was public", a.honest], ["Naive: each figure from its period end", a.naive]]);
+    if (a.by_lag && a.by_lag.length) {
+      h("h3", "subhead", card, "What is left if a figure is used only some days after its filing");
+      h("p", "", card, a.lag_verdict);
+      table(card, [{ label: "Days after the filing", num: true, get: (r) => String(r.lag_days) }, { label: "Mean IC", num: true, get: (r) => sgn(r.mean_ic) }, { label: "t", num: true, get: (r) => num(r.t_stat, 1) }, { label: "Dates", num: true, get: (r) => String(r.n_dates) }], a.by_lag);
+    }
   }
   FL.scanView = (root, sc) => {
     Q.labHead(root, "Every factor, side by side", `${sc.tested} factors under one set of conditions · ${sc.universe.companies} companies · ${sc.universe.dates} dates`, GUIDE);
@@ -226,7 +260,9 @@
       draw: (b) => C.hbars(b, { rows: rows.slice(0, 24).map((r) => ({ label: r.label, value: r.t_stat, text: `t ${num(r.t_stat, 1)}`, tip: [["Mean IC", sgn(r.mean_ic)], ["Net Sharpe", num(r.net_sharpe, 2)], ["Coverage", pct(r.coverage, 0)]] })), format: (v) => v.toFixed(0), name: "t-statistic", label: "t-statistics of the factors", labelWidth: 200, valueWidth: 60 }),
       table: (b) => table(b, [{ label: "Factor", get: (r) => r.label }, { label: "t", num: true, get: (r) => num(r.t_stat, 1) }], rows) });
     const card = W.card(root, "The table", "Click a factor to study it in full."); card.dataset.role = "fund-scan";
-    const wrap = h("div", "scroll tall", card), t = h("table", "data", wrap), hd = h("tr", "", h("thead", "", t));
+    csvButton(card, "Download the table (CSV)", "factor_scan.csv", ["factor", "family", "coverage", "mean_ic", "t_stat", "icir", "positive_share", "top_minus_bottom", "monotonicity", "net_sharpe", "turnover"],
+      sc.rows.filter((r) => !r.error).map((r) => [r.name, r.family, r.coverage, r.mean_ic, r.t_stat, r.icir, r.positive_share, r.spread, r.monotonicity, r.net_sharpe, r.turnover]));
+    const wrap = FD.guardScroll(h("div", "scroll tall", card)), t = h("table", "data", wrap), hd = h("tr", "", h("thead", "", t));
     for (const [label, numeric] of [["Factor", 0], ["Family", 0], ["Coverage", 1], ["Mean IC", 1], ["t", 1], ["ICIR", 1], ["Dates positive", 1], ["Top minus bottom", 1], ["Monotonic", 1], ["Net Sharpe", 1], ["Turnover", 1], ["Study", 2]]) { const th = h("th", numeric === 1 ? "num" : "", hd); if (numeric === 2) h("span", "vh", th, label); else th.textContent = label; }
     const tb = h("tbody", "", t);
     for (const r of sc.rows) {
@@ -242,11 +278,11 @@
 
   /* =========================================================== Alpha discovery */
   const DS = FD.views.discovery = {};
-  DS.s = { n: "300", seed: "7", horizon: "1m", max_nodes: "15", finalists: "15", train: "0.55", val: "0.20", cost: "10", borrow: "50", min_assets: "20", quantiles: "5", seed_mode: "classics", seeds: "", thr: {} };
+  DS.s = { n: "300", seed: "7", horizon: "1m", max_nodes: "15", finalists: "15", train: "0.55", val: "0.20", cost: "10", borrow: "50", min_assets: "20", quantiles: "5", seed_mode: "classics", seeds: "", thr: {}, strictness: "standard", repeats: "3" };
   DS.runs = null; DS.runId = null;
   DS.spec = () => {
     const s = DS.s, u = FD.universeBody(), spec = { universe: u.universe, freq: u.freq, entry_lag: u.entry_lag, n_candidates: Number(s.n), seed: Number(s.seed), horizon: s.horizon, max_nodes: Number(s.max_nodes), finalists: Number(s.finalists),
-      train_fraction: Number(s.train), validation_fraction: Number(s.val), cost_bps: Number(s.cost), borrow_bps: Number(s.borrow), min_assets: Number(s.min_assets), quantiles: Number(s.quantiles) };
+      train_fraction: Number(s.train), validation_fraction: Number(s.val), cost_bps: Number(s.cost), borrow_bps: Number(s.borrow), min_assets: Number(s.min_assets), quantiles: Number(s.quantiles), strictness: s.strictness };
     for (const k of ["n_candidates", "seed", "max_nodes", "finalists", "train_fraction", "validation_fraction", "cost_bps", "borrow_bps", "min_assets", "quantiles"]) if (!isFinite(spec[k])) throw new Error("The search settings must be numbers");
     const list = s.seeds.split(/\n+/).map((x) => x.trim()).filter(Boolean);
     if (s.seed_mode === "mine") { if (!list.length) throw new Error("Write at least one formula to start from, or choose another starting point"); spec.seeds = list; }
@@ -270,7 +306,10 @@
     Q.labField(b, { key: "train", label: "Training share of the dates", kind: "number", step: 0.05, min: 0.3, max: 0.8 }, s, after);
     Q.labField(b, { key: "val", label: "Validation share", kind: "number", step: 0.05, min: 0.1, max: 0.4 }, s, after);
     h("p", "hint", b, "The rest is locked: the best formulas are tested on it once, and the number of looks is recorded. A gap as wide as the forecast horizon separates the blocks so no return window sits in two of them. The sign of a formula is learned on the training dates only.");
-    const c = FD.sec(panel, "4. Costs and bars", false);
+    const c = FD.sec(panel, "4. How strict, and costs", true);
+    Q.labField(c, { key: "strictness", label: "How strict", kind: "choice", options: [["exploratory", "Exploratory: lets more through to be looked at"], ["standard", "Standard: |t| of 2, false-discovery rate 10%"], ["strict", "Strict: |t| of 3, false-discovery rate 5%"]],
+      help: "The bars a formula must clear at every stage. A stricter search finds less of what is real and lets less luck through; the preflight says how much, and the calibration on shuffled returns measures what luck gets through on this data." }, s, () => Q.renderLab(FD));
+    Q.labField(c, { key: "repeats", label: "Shuffles for the calibration (1 to 5)", kind: "number", step: 1, min: 1, max: 5 }, s, after);
     Q.labField(c, { key: "cost", label: "Trading cost, one way (bps)", kind: "number", min: 0, max: 500 }, s, after);
     Q.labField(c, { key: "borrow", label: "Borrowing cost (bps a year)", kind: "number", min: 0, max: 2000 }, s, after);
     Q.labField(c, { key: "quantiles", label: "Buckets", kind: "number", step: 1, min: 2, max: 10 }, s, after);
@@ -278,13 +317,30 @@
     FD.catalogue().then((cat) => {
       if (!c.isConnected) return;
       const d = h("details", "how", c); h("summary", "", d, "Thresholds each stage asks for");
-      for (const [k, v] of Object.entries(cat.discovery.thresholds)) { const spec = { key: k, label: human(k), kind: "number", step: "any", placeholder: String(v) }; Q.labField(d, spec, s.thr, after); if (s.thr[k] === undefined) s.thr[k] = ""; }
+      const preset = (cat.discovery.presets || {})[s.strictness] || cat.discovery.thresholds;
+      h("p", "hint", d, `Blank means the ${s.strictness} setting's own bar (shown in grey). A bar typed here replaces it.`);
+      for (const [k, v] of Object.entries(cat.discovery.thresholds)) { const spec = { key: k, label: human(k), kind: "number", step: "any", placeholder: String(preset[k] ?? v) }; Q.labField(d, spec, s.thr, after); if (s.thr[k] === undefined) s.thr[k] = ""; }
     }).catch(() => {});
+    const more = h("div", "row tight", panel); more.style.padding = "0 16px";
+    const pre = h("button", "btn", more, "What could this search find?"); pre.type = "button"; pre.dataset.action = "preflight"; pre.addEventListener("click", () => DS.preflight());
+    pre.title = "Before spending the afternoon: the smallest effect this many companies and dates can tell from luck, and the chance that a real alpha of each strength would get through. Nothing is run or written.";
+    const cal = h("button", "btn", more, "Calibrate on shuffled returns"); cal.type = "button"; cal.dataset.action = "placebo"; cal.addEventListener("click", () => DS.placebo());
+    cal.title = "Run this search again where the companies' returns are dealt out at random, so nothing can be found, and see what it finds anyway. Takes a few times as long as the search itself. Nothing is written to the library.";
   };
   DS.check = () => FD.needsData();
   DS.run = () => FD.act("discovery", "Searching…", async (run) => {
     const { result, started } = await run.job("/api/fund/discover", { spec: DS.spec() }, "Searching");
     DS.runId = started.run_id; await DS.refreshRuns(); LB.stale(); return { summary: result };
+  });
+  DS.preflight = () => FD.act("discovery", "Working out what the search could find…", async (run) => {
+    const { result } = await run.job("/api/fund/discover/preflight", { spec: DS.spec() }, "Working out what the search could find");
+    return { pre: result };
+  });
+  DS.placebo = (runId) => FD.act("discovery", "Searching shuffled returns…", async (run) => {
+    const repeats = Number(DS.s.repeats); if (!isFinite(repeats)) throw new Error("The number of shuffles must be a number");
+    const was = FD.results.discovery && FD.results.discovery.data ? FD.results.discovery.data : null;
+    const { result } = await run.job("/api/fund/placebo", runId ? { run_id: runId, repeats } : { spec: DS.spec(), repeats }, "Searching shuffled returns");
+    return runId && was && was.summary ? { summary: was.summary, placebo: result } : { placebo: result };
   });
   DS.resume = (id) => FD.act("discovery", "Resuming…", async (run) => { const { result } = await run.job("/api/fund/discover", { run_id: id }, "Resuming"); DS.runId = id; await DS.refreshRuns(); LB.stale(); return { summary: result }; });
   DS.open = (id) => FD.act("discovery", "Opening the run…", async () => { DS.runId = id; return { summary: await FD.read("/api/fund/run", { id, limit: 200 }) }; });
@@ -320,11 +376,17 @@
     const card = runsCard(); if (card) root.appendChild(card);
   };
   DS.build = (root, data) => {
-    const d = data.summary, c = d.counts || {};
-    Q.labHead(root, `Discovery run ${d.run_id}`, `${d.status} · ${d.progress.done} of ${d.progress.total} formulas`, GUIDE);
+    if (data.pre) DS.preflightView(root, data.pre);
+    if (data.summary) { DS.summaryView(root, data.summary, data.placebo ? (r) => DS.placeboView(r, data.placebo, false) : null); return; }
+    if (data.placebo) DS.placeboView(root, data.placebo, true);
+    if (data.pre || data.placebo) { const runs = runsCard(); if (runs) root.appendChild(runs); }
+  };
+  DS.summaryView = (root, d, after) => {
+    const c = d.counts || {};
+    Q.labHead(root, `Discovery run ${d.run_id}`, `${d.status} · ${d.progress.done} of ${d.progress.total} formulas · ${d.strictness || "exploratory"} bars`, GUIDE);
     const k = h("div", "earnrow", root);
     tile(k, "Formulas tried", String(c.generated ?? d.progress.done), { text: `${c.skipped_seen || 0} already known · ${c.duplicate_idea || 0} the same idea twice` });
-    tile(k, "Tested in full", String(c.tested || 0), { text: "every one counts against the result" });
+    tile(k, "Tested in full", String(c.tested || 0), { text: c.n_tested_family ? `${c.n_tested_family} ideas counted against the result, from ${c.runs_in_family} run${c.runs_in_family === 1 ? "" : "s"} on this question` : "every one counts against the result" }, "", "The correction for the number tried covers every idea tried on the same question, in this run and in earlier ones: the more the same data is searched, the better the best result looks by luck alone.");
     tile(k, "Survived the stages", String(c.survivors ?? 0), { text: `${c.finalists ?? 0} finalists` });
     tile(k, "Candidates", String(c.candidates ?? 0), { text: `${c.failed_locked_test ?? 0} failed the locked test` }, "", "Passed every stage, including the locked dates. Candidates are not validated.");
     tile(k, "Chance of overfitting", c.pbo === null || c.pbo === undefined ? "n/a" : pct(c.pbo, 0), { text: "probability of backtest overfitting among the survivors" }, "", "The share of splits of the history on which the best formula in half the data was below average in the other half");
@@ -335,7 +397,7 @@
     const board = W.card(root, "The best so far", "Ranked by fitness (information coefficient, stability, Sharpe, monotonicity and decorrelation, less turnover and complexity). q is the false-discovery rate over everything tried; DSR is the deflated Sharpe probability. Nothing here is validated.");
     board.dataset.role = "fund-leaderboard";
     if (!d.leaderboard.length) h("p", "hint", board, "No formula has survived the stages yet."); else {
-      const wrap = h("div", "scroll tall", board), t = h("table", "data", wrap), hd = h("tr", "", h("thead", "", t));
+      const wrap = FD.guardScroll(h("div", "scroll tall", board)), t = h("table", "data", wrap), hd = h("tr", "", h("thead", "", t));
       for (const [label, numeric, title] of [["Formula", 0, ""], ["Used as", 0, "Which way the formula is used: the sign was learned on the training dates only. The IC figures are in this direction."], ["Status", 0, ""], ["IC", 1, "Mean rank IC on the training dates, in the direction the formula is used"], ["Validation IC", 1, ""], ["Locked IC", 1, "Mean IC on the locked dates (only for finalists)"], ["t (locked)", 1, ""], ["Sharpe", 1, "Net long-short Sharpe on training and validation"],
         ["Turnover", 1, ""], ["q", 1, "False-discovery rate over every formula tried"], ["DSR", 1, "Deflated Sharpe: probability the Sharpe exceeds what the best of this many tries would show by luck"], ["Parts", 1, ""]]) { const th = h("th", numeric ? "num" : "", hd, label); if (title) th.title = title; }
       const tb = h("tbody", "", t);
@@ -344,13 +406,65 @@
         h("td", "num", tr, num(r.sharpe, 2)); h("td", "num", tr, pct(r.turnover, 0)); h("td", "num", tr, num(r.q_value, 2)); h("td", "num", tr, num(r.deflated_sharpe, 2)); h("td", "num", tr, String(r.nodes ?? ""));
       }
     }
+    if (d.leaderboard.length) csvButton(board, "Download the list (CSV)", `discovery_${d.run_id}.csv`, ["formula", "used_as", "status", "ic", "val_ic", "oos_ic", "oos_t", "sharpe", "turnover", "q_value", "deflated_sharpe", "nodes"],
+      d.leaderboard.map((r) => [r.expression, WAY(r.direction), r.status, r.ic, r.val_ic, r.oos_ic, r.oos_t, r.sharpe, r.turnover, r.q_value, r.deflated_sharpe, r.nodes]));
     const act = h("div", "row tight", root);
     const lib = h("button", "btn primary", act, "Open the library"); lib.type = "button"; lib.addEventListener("click", () => { FD.views.libraryView = "alphas"; FD.goto("library"); });
     if (d.status !== "finished") { const res = h("button", "btn", act, "Resume this run"); res.type = "button"; res.dataset.action = "resume-run"; res.addEventListener("click", () => DS.resume(d.run_id)); }
+    else { const chk = h("button", "btn", act, "How much of this is luck?"); chk.type = "button"; chk.dataset.action = "placebo-run"; chk.addEventListener("click", () => DS.placebo(d.run_id));
+      chk.title = "Run the same search on returns dealt out at random among the companies, where nothing can be found, and set what it finds beside what this run found."; }
     const done = (d.candidates || []).length ? W.card(root, "Every formula in this run", "Those that were rejected are in the graveyard with the reason: nothing is deleted.") : null;
     if (done) table(done, [{ label: "Formula", cls: "formula", get: (r) => r.text }, { label: "Status", get: (r) => human(r.status) }, { label: "Stage reached", get: (r) => stageWord(Q.bad(r.stage_reached) ? "" : (FD.stageNames || [])[r.stage_reached] || String(r.stage_reached)) }, { label: "Why", get: (r) => r.reason || "" }], d.candidates.slice(0, 120));
+    if (after) after(root);
     FD.notes(root, "Read before relying on it", [d.note]);
     const card = runsCard(); if (card) root.appendChild(card);
+  };
+  /* What a search could find, before it is run. */
+  DS.preflightView = (root, pf) => {
+    Q.labHead(root, "What this search could find", `${pf.strictness} bars · ${pf.formulas} formulas · ${pf.blocks.dates.train} training, ${pf.blocks.dates.validation} validation, ${pf.blocks.dates.oos} locked dates`, GUIDE);
+    const level = pf.adequate ? "good" : "mixed", v = h("div", "card verdict-card " + level, root); v.dataset.level = level; v.dataset.role = "fund-preflight";
+    const head = h("div", "vhead", v); h("span", "vicon", head, ICON[level]); h("h2", "", head, pf.adequate ? "Able to find a real alpha of the usual size" : "Underpowered for the alphas worth having");
+    h("p", "", v, pf.reading);
+    const k = h("div", "earnrow", root), p = pf.power;
+    tile(k, "Companies on a date", num(p.train.companies, 0), { text: "with a return to learn from, typical date" });
+    tile(k, "First screen sees", sgn((pf.limits.t_ic + 0.8416) * p.train.se_of_mean_ic), { text: `a real mean IC, four times in five (|t| of ${num(pf.limits.t_ic, 2)})` }, "", "The smallest average rank IC that clears the first screen on the training dates with 80% probability");
+    tile(k, "Locked test sees", sgn((pf.limits.oos_t + 0.8416) * p.oos.se_of_mean_ic), { text: `on ${pf.blocks.dates.oos} dates (t of ${num(pf.limits.oos_t, 2)})` }, "", "The same for the locked dates, which are the fewest");
+    tile(k, "Luck at the first screen", num(pf.luck_first_screen, 0), { text: `of ${pf.formulas} formulas pass by chance alone` }, "", "The number of formulas expected to reach the bar with no real effect at all. The later stages and the correction for the number tried remove most of them.");
+    chartCard(root, "The chance that a real alpha gets through", "For each strength of true mean IC (a useful signal is usually 0.02 to 0.05): the chance of passing the first screen, the validation block and the locked test. The screens in between only lower it.", {
+      draw: (b) => C.columns(b, { labels: pf.table.map((r) => num(r.ic, 2)), values: pf.table.map((r) => r.found), yFormat: (x) => (x * 100).toFixed(0) + "%", name: "Chance of becoming a Candidate", label: "Chance that a real alpha gets through, by its true IC", height: 220, colors: () => css("--s1") }),
+      table: (b) => table(b, [{ label: "True mean IC", num: true, get: (r) => num(r.ic, 2) }, { label: "First screen", num: true, get: (r) => pct(r.first_screen, 0) }, { label: "Validation", num: true, get: (r) => pct(r.validation, 0) }, { label: "Locked test", num: true, get: (r) => pct(r.locked_test, 0) }, { label: "All three", num: true, get: (r) => pct(r.found, 0) }], pf.table) });
+  };
+
+  /* The search on shuffled returns: what luck alone gets through. */
+  DS.placeboView = (root, r, first) => {
+    const s = r.summary;
+    if (first) Q.labHead(root, "The search on shuffled returns", `${r.strictness} bars · ${s.runs} shuffle${s.runs === 1 ? "" : "s"} · ${s.tested} formulas tested`, GUIDE);
+    const real = r.real, share = s.luck_share;
+    const upper = real && real.survivors && s.luck_share_interval ? s.luck_share_interval[1] : 0;
+    const level = !s.runs ? "bad" : s.t_calibration === "generous" || (real && real.survivors && share >= 0.5) ? "bad" : (real && real.survivors && (share > 0.2 || upper >= 0.5)) || s.candidates_max > 0 ? "mixed" : "good";
+    const v = h("div", "card verdict-card " + level, root); v.dataset.level = level; v.dataset.role = "fund-placebo";
+    const head = h("div", "vhead", v); h("span", "vicon", head, ICON[level]);
+    h("h2", "", head, !s.runs ? "No shuffled search finished" : real && real.survivors ? (share >= 0.5 ? "Most of what this run found is what luck gives" : `Luck is expected to account for about ${pct(share, 0)} of what this run let through, and could be as much as ${pct(upper, 0)}`) : "What luck alone gets through");
+    h("p", "", v, r.reading);
+    if (!s.runs) return;
+    const k = h("div", "earnrow", root);
+    tile(k, "Luck lets through", num(s.survivors_mean, 1), { text: `of ${num(s.tested_per_run, 0)} formulas a search · ${num(s.survivors_interval[0], 1)} to ${num(s.survivors_interval[1], 1)}` }, "", "Formulas that clear every screen before the locked test on shuffled returns, where none can be real");
+    if (real && real.survivors) tile(k, "Share of the real run that is luck", pct(share, 0), { text: `${pct(s.luck_share_interval[0], 0)} to ${pct(s.luck_share_interval[1], 0)} · the real run let ${real.survivors} through` }, "", "What luck lets through, divided by what the real search let through");
+    tile(k, "Spread of the t-statistics", num(s.t_sd, 2), { text: Q.bad(s.t_sd_error) ? "1.00 is correct" : `1.00 is correct · give or take ${num(s.t_sd_error, 2)}`, dir: s.t_calibration === "generous" ? "down" : "" }, "", "On shuffled returns the t-statistics of the formulas should have a spread of 1. More than that and the standard errors are too small for this data.");
+    tile(k, "5% bar on this data", Q.bad(s.t_bar_5pct) ? "n/a" : num(s.t_bar_5pct, 1), { text: "the |t| that luck exceeds one time in twenty" }, "", "1.96 if the t-statistic is correct");
+    tile(k, "Candidates from luck", `${s.runs_with_a_candidate} of ${s.runs}`, { text: `${num(s.finalists_mean, 1)} reached the locked test on average` });
+    const ch = h("div", "charts", root), hist = r.t_histogram || { edges: [], counts: [] };
+    if (hist.counts.length) chartCard(ch, "The t-statistics of the shuffled formulas", "One value per formula tried on shuffled returns. A correct t-statistic puts about one formula in ten beyond ±1.65, one in twenty beyond ±1.96, and almost none beyond ±3.", {
+      draw: (b) => C.histogram(b, { series: [{ name: "Shuffled formulas", edges: hist.edges, counts: hist.counts, color: css("--s1") }], markers: [{ x: -1.96, label: "-1.96" }, { x: 1.96, label: "1.96" }], xFormat: (x) => x.toFixed(1), label: "t-statistics of the formulas on shuffled returns", height: 220 }),
+      table: (b) => table(b, [{ label: "From", num: true, get: (i) => num(hist.edges[i], 2) }, { label: "To", num: true, get: (i) => num(hist.edges[i + 1], 2) }, { label: "Formulas", num: true, get: (i) => String(hist.counts[i]) }], hist.counts.map((_, i) => i)) });
+    const stages = Object.entries(s.funnel_mean);
+    chartCard(ch, "Where the shuffled formulas fell", "Formulas passing each stage, on average per search. On real data most of the later stages should hold on to more than this.", {
+      draw: (b) => C.hbars(b, { rows: stages.map(([stage, v]) => ({ label: stageWord(stage), value: v })), format: (x) => x.toFixed(1), name: "Passed", label: "Shuffled formulas passing each stage", labelWidth: 230, valueWidth: 50, color: () => css("--s3") }),
+      table: (b) => table(b, [{ label: "Stage", get: (x) => stageWord(x[0]) }, { label: "Passed (average)", num: true, get: (x) => num(x[1], 1) }], stages) });
+    const tails = W.card(root, "Does the t-statistic mean what it says here?", "The share of shuffled formulas whose |t| reached each level, beside the share a correct t-statistic gives.");
+    tails.dataset.role = "fund-placebo-tails";
+    table(tails, [{ label: "|t| of at least", num: true, get: (x) => x[0] }, { label: "Found", num: true, get: (x) => pct(x[1].share, 1) }, { label: "Expected", num: true, get: (x) => pct(x[1].expected, 1) }], Object.entries(s.tail));
+    FD.explain(root, "What this does and does not show", "The companies' returns are dealt out at random on every date, the same way for every window that starts on that date, so no formula can predict anything; everything known on a date is untouched. What the search finds anyway is luck, and how much of a real run that makes is the share above. A shuffle also breaks up the tendency of companies in one country or sector to move together, so it cannot show the extra overconfidence this causes for a formula that is the same across a whole sector or country: the premium regression and the neutralised studies in the Factor lab are the checks for that. Nothing is written to the library or the graveyard, and the real locked dates are not looked at.");
   };
   FD.catalogue().then((cat) => { FD.stageNames = cat.discovery.stages; }).catch(() => {});
 
@@ -572,7 +686,7 @@
     const card = W.card(root, "Alphas", "Tick alphas to correlate, combine, model or backtest them. Click a formula for its evidence, history and status.");
     card.dataset.role = "fund-alphas";
     if (!d.alphas.length) { h("p", "hint", card, "The library is empty. Start a search in Alpha discovery: what survives the stages is added here as a Candidate."); return; }
-    const wrap = h("div", "scroll tall", card), t = h("table", "data", wrap), hd = h("tr", "", h("thead", "", t));
+    const wrap = FD.guardScroll(h("div", "scroll tall", card)), t = h("table", "data", wrap), hd = h("tr", "", h("thead", "", t));
     h("span", "vh", h("th", "", hd), "Tick");
     for (const [label, numeric] of [["Formula", 0], ["Used as", 0], ["Status", 0], ["IC", 1], ["Locked IC", 1], ["Sharpe", 1], ["Turnover", 1], ["Fitness", 1], ["q", 1], ["DSR", 1], ["Found", 0]]) h("th", numeric ? "num" : "", hd, label);
     const tb = h("tbody", "", t);
@@ -584,6 +698,8 @@
       const st = h("td", "", tr); badge(st, a.status);
       h("td", "num", tr, sgn(a.ic)); h("td", "num", tr, sgn(a.oos_ic)); h("td", "num", tr, num(a.sharpe, 2)); h("td", "num", tr, pct(a.turnover, 0)); h("td", "num", tr, num(a.fitness, 2)); h("td", "num", tr, num(a.q_value, 2)); h("td", "num", tr, num(a.deflated_sharpe, 2)); h("td", "", tr, day(a.created_at));
     }
+    csvButton(card, "Download the list (CSV)", "alpha_library.csv", ["alpha_id", "formula", "used_as", "status", "ic", "oos_ic", "sharpe", "turnover", "fitness", "q_value", "deflated_sharpe"],
+      d.alphas.map((a) => [a.alpha_id, a.text, WAY(a.direction), a.status, a.ic, a.oos_ic, a.sharpe, a.turnover, a.fitness, a.q_value, a.deflated_sharpe]));
     const holder = h("div", "stack", root); holder.id = "fund-alpha-detail";
     if (LB.detail) paintDetail(holder, LB.detail);
   }
@@ -636,6 +752,7 @@
     const card = W.card(root, "The failures", "Newest first. The reason says which test the idea failed and by how much. Nothing here is deleted.");
     card.dataset.role = "fund-graveyard";
     if (!d.rows.length) { h("p", "hint", card, "Nothing has failed yet, because nothing has been tried."); return; }
+    csvButton(card, "Download the list (CSV)", "graveyard.csv", ["formula", "failed_at", "reason", "ic", "oos_ic", "sharpe", "date_tested", "run_id"], d.rows.map((r) => [r.text, r.stage, r.reason_rejected, r.ic, r.oos_ic, r.sharpe, r.date_tested, r.run_id]));
     table(card, [{ label: "Formula", cls: "formula", get: (r) => r.text }, { label: "Failed at", get: (r) => stageWord(r.stage) }, { label: "Why", get: (r) => r.reason_rejected }, { label: "IC", num: true, get: (r) => sgn(r.ic) }, { label: "Locked IC", num: true, get: (r) => sgn(r.oos_ic) }, { label: "Tested", get: (r) => day(r.date_tested) }], d.rows);
   }
   const numberOf = (name) => String(name).split(":")[0];                                          // each signal is named "<its place in the list>:<what it is>": the columns carry the same number as their rows

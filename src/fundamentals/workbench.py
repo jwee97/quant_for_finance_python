@@ -12,17 +12,19 @@ from __future__ import annotations
 
 import threading
 from collections import OrderedDict
+from dataclasses import asdict
 from dataclasses import fields as dataclass_fields
 
 import numpy as np
 import pandas as pd
+from scipy import stats
 
-from . import analytics, bridge, combine, metrics, prices, transforms
+from . import analytics, bridge, calibration, combine, metrics, prices, transforms
 from . import expr as X
 from . import factors as factor_library
-from .discovery import FITNESS, STAGES, Discovery, DiscoverySpec, Thresholds, default_seeds, splits
+from .discovery import DEFAULT_STRICTNESS, FITNESS, PRESETS, STAGES, STRICTNESS, Discovery, DiscoverySpec, Thresholds, default_seeds, splits
 from .errors import FundamentalsError
-from .evaluate import PERIODS_PER_YEAR, EvalSpec, evaluate, evaluate_factor, ic_stats, look_ahead_audit, rank_ic
+from .evaluate import CONTROLS, PERIODS_PER_YEAR, TYPICAL_IC, EvalSpec, detectable_effect, evaluate, evaluate_factor, ic_stats, look_ahead_audit, rank_ic
 from .jsonutil import clean, series_points
 from .library import MONITOR_STATES, STATUSES, TRANSITIONS, AlphaLibrary
 from .library import build_signal as build_alpha_signal
@@ -125,6 +127,14 @@ def eval_spec(raw: dict | None) -> EvalSpec:
     bad = [b for b in spec.breakdowns if b not in ("country", "sector", "region", "regime")]
     if bad:
         raise FundamentalsError("breakdowns are country, sector, region and regime")
+    spec.premium = bool(spec.premium)
+    if not isinstance(spec.controls, (list, tuple)) or len(spec.controls) > 8 or not all(isinstance(c, str) for c in spec.controls):
+        raise FundamentalsError("controls are a list of at most 8 names")
+    allowed = set(CONTROLS) | set(factor_library.names())
+    unknown = [c for c in spec.controls if c not in allowed]
+    if unknown:
+        raise FundamentalsError(f"unknown control(s) {unknown}: size, beta, volatility, momentum or the name of a library factor")
+    spec.controls = tuple(dict.fromkeys(spec.controls))
     return spec
 
 
@@ -134,6 +144,7 @@ class Workbench:
         self.store = self.service.store
         self.library = AlphaLibrary(self.store)
         self._contexts: OrderedDict = OrderedDict()
+        self._size: tuple | None = None
         self._lock = threading.RLock()
 
     # ------------------------------------------------------------------------------------------------------------ contexts
@@ -204,7 +215,7 @@ class Workbench:
         top = [{"alpha_id": a["alpha_id"], "text": a["text"], "status": a["status"], "ic": a["ic"], "oos_ic": a["oos_ic"], "sharpe": a["sharpe"], "fitness": a["fitness"]} for a in self.library.list(limit=5)]
         runs = Discovery(self.store).runs(5)
         backtests = self.experiments("backtest", 5)
-        return clean({"readiness": self.readiness(), "counts": counts, "by_country": coverage.to_dict("records"), "by_sector": [{"sector": k, "companies": int(v)} for k, v in by_sector.items()],
+        return clean({"readiness": self.readiness(), "study_size": self.study_size(), "counts": counts, "by_country": coverage.to_dict("records"), "by_sector": [{"sector": k, "companies": int(v)} for k, v in by_sector.items()],
                       "by_market": [{"market": k, "companies": int(v)} for k, v in by_market.items()], "metric_coverage": metric_cov.head(30).to_dict("records"), "quality": self.store.quality_counts(),
                       "library": {**lib, "top": top}, "runs": runs, "backtests": backtests, "simulated": self.store.get_meta("simulated_world"),
                       "pipeline": ["providers", "database", "point-in-time", "metrics", "factors", "tests", "discovery", "library", "combination", "backtest"]})
@@ -322,7 +333,8 @@ class Workbench:
             "weightings": ["equal", "signal", "inv_vol"], "directions": ["theory", "auto", 1, -1], "breakdowns": ["country", "sector", "region", "regime"],
             "metrics": metrics.catalogue(), "operators": {"binary": list(X.BINARY), "unary": list(X.UNARY), "time_series": list(X.TIME_SERIES), "cross_sectional": list(X.CROSS_SECTIONAL)},
             "formula": {"max_nodes": X.MAX_NODES, "max_depth": X.MAX_DEPTH, "examples": ["div(fcf,market_cap)", "delta(roic,12)", "neg(growth(total_assets,12))", "sector_rank(div(operating_income,total_assets))"]},
-            "discovery": {"defaults": DiscoverySpec().describe(), "stages": list(STAGES), "thresholds": Thresholds().__dict__, "fitness": FITNESS},
+            "discovery": {"defaults": {**DiscoverySpec().describe(), "strictness": DEFAULT_STRICTNESS}, "stages": list(STAGES), "thresholds": Thresholds().__dict__, "fitness": FITNESS,
+                          "strictness": list(STRICTNESS), "presets": {name: {**Thresholds().__dict__, **PRESETS[name]} for name in STRICTNESS}, "placebo_repeats": calibration.MAX_REPEATS},
             "combination": {"methods": list(combine.METHODS), "models": list(combine.MODELS), "grids": combine.GRIDS, "limits": combine.PARAM_LIMITS},
             "portfolio": {"defaults": bridge.PortfolioSpec().describe(), "sides": list(bridge.SIDES), "selections": list(bridge.SELECTIONS), "weightings": list(bridge.WEIGHTINGS), "technical": bridge.technical_names()},
             "library": {"statuses": list(STATUSES), "transitions": {k: list(v) for k, v in TRANSITIONS.items()}, "monitor": list(MONITOR_STATES)}, "providers": list(PROVIDER_NAMES),
@@ -341,7 +353,7 @@ class Workbench:
             raise FundamentalsError(f"scan between 1 and {MAX_SCAN} factors at a time")
         for n in names:
             factor_library.get(n)
-        short = EvalSpec.from_dict({**spec.describe(), "breakdowns": ()})
+        short = EvalSpec.from_dict({**spec.describe(), "breakdowns": (), "premium": False})
         rows = []
         for i, name in enumerate(names):
             if stop is not None and stop():
@@ -432,7 +444,7 @@ class Workbench:
         opts = {k: v for k, v in (options or {}).items() if k in ("window", "min_obs", "shrink", "orthogonalize", "nonnegative", "cut")}
         result = combine.combine(ctx, signals, method, horizon, **opts)
         spec = spec or EvalSpec(horizon=horizon)
-        spec = EvalSpec.from_dict({**spec.describe(), "horizon": horizon, "breakdowns": ()})
+        spec = EvalSpec.from_dict({**spec.describe(), "horizon": horizon, "breakdowns": (), "premium": False})
         fwd, h = ctx.forward(horizon), horizon_days(horizon)
         stats_ = {}
         for name, panel in {**signals, "combined": result.signal}.items():
@@ -453,7 +465,7 @@ class Workbench:
         signals, infos = self.signals(ctx, parts)
         opts = {k: v for k, v in (options or {}).items() if k in ("min_train", "retrain_every", "window", "embargo", "tune", "seed", "permutation_repeats", "params")}
         result = combine.ml_combine(ctx, signals, model, horizon, **opts)
-        spec = EvalSpec.from_dict({**(spec or EvalSpec()).describe(), "horizon": horizon, "breakdowns": ()})
+        spec = EvalSpec.from_dict({**(spec or EvalSpec()).describe(), "horizon": horizon, "breakdowns": (), "premium": False})
         comparison = combine.compare_with_rules(ctx, result, signals, horizon)
         return clean({"model": model, "notes": result.notes, "folds": result.folds, "importance": result.importance, "comparison": comparison,
                       "parts": [i["label"] for i in infos], "evaluation": evaluate(ctx, result.signal, spec, label=f"{model} model"),
@@ -490,7 +502,10 @@ class Workbench:
     # ------------------------------------------------------------------------------------------------------------ discovery
     def discovery_spec(self, raw: dict | None) -> DiscoverySpec:
         raw = _strict(DiscoverySpec, raw, "discovery")
+        raw.setdefault("strictness", DEFAULT_STRICTNESS)                          # a request that does not say starts from the standard bars, not from the first-look ones
         spec = DiscoverySpec.from_dict(raw)
+        if spec.strictness not in STRICTNESS:
+            raise FundamentalsError(f"strictness must be one of {list(STRICTNESS)}")
         universe_spec(spec.universe)
         if spec.freq not in FREQ_DAYS:
             raise FundamentalsError("freq must be W, M or Q")
@@ -508,9 +523,12 @@ class Workbench:
                 raise FundamentalsError("seeds is a list of formulas (at most 200)")
             for text in spec.seeds:
                 X.parse(str(text))
+        if not isinstance(spec.thresholds, dict):
+            raise FundamentalsError("thresholds is a dictionary of bars")
         unknown = sorted(set(spec.thresholds) - {f.name for f in dataclass_fields(Thresholds)})
         if unknown:
             raise FundamentalsError(f"unknown threshold(s) {unknown}")
+        spec.thresholds = {k: _number(v, f"the bar {k}", -1e6, 1e6) for k, v in spec.thresholds.items()}
         return spec
 
     def discovery(self) -> Discovery:
@@ -521,6 +539,86 @@ class Workbench:
 
     def splits_for(self, ctx: ResearchContext, spec: DiscoverySpec) -> dict:
         return splits(ctx, spec)
+
+    def preflight(self, ctx: ResearchContext, spec: DiscoverySpec) -> dict:
+        """What a search could find, before it is run: for each of the three blocks of dates the smallest average IC that block can tell from luck, how many formulas luck alone is expected to push
+        through the first screen, and the chance that a real alpha of each typical strength would get through the first screen, the validation block and the locked test (the screens before and
+        between those only lower it). A search that could not find a real alpha of the strength it hopes for is not worth the afternoon, and says so here."""
+        blocks, limits = splits(ctx, spec), spec.limits()
+        h, step = horizon_days(spec.horizon), FREQ_DAYS[ctx.freq]
+        forward = ctx.forward(spec.horizon)
+        power = {}
+        for name in ("train", "validation", "oos"):
+            first, last = blocks[name]
+            companies = float(np.median(forward.loc[first:last].notna().sum(axis=1)))
+            power[name] = detectable_effect(companies, blocks["dates"][name], h, step)
+        if not all(p.get("available") for p in power.values()):
+            raise FundamentalsError("too few companies or dates in one of the blocks to say what a search could find")
+        se = {name: p["se_of_mean_ic"] for name, p in power.items()}
+        norm = stats.norm
+        table = []
+        for ic in TYPICAL_IC:
+            first = float(norm.cdf(ic / se["train"] - limits.t_ic) + norm.cdf(-ic / se["train"] - limits.t_ic))
+            validated = float(norm.cdf(ic / se["validation"] - limits.val_t))
+            locked = float(norm.cdf(ic / se["oos"] - limits.oos_t))
+            table.append({"ic": ic, "first_screen": first, "validation": validated, "locked_test": locked, "found": first * validated * locked})
+        luck = float(spec.n_candidates * 2.0 * norm.sf(limits.t_ic))
+        found_at = {row["ic"]: row["found"] for row in table}
+        adequate = bool(found_at[0.05] >= 0.5)
+        z80 = float(norm.ppf(0.8))
+        reading = (f"With about {power['train']['companies']:.0f} companies on {blocks['dates']['train']} training dates, the first screen (|t| of {limits.t_ic:g}) catches a real mean IC of "
+                   f"{(limits.t_ic + z80) * se['train']:.3f} or more four times in five, and the locked test, on {blocks['dates']['oos']} dates, one of {(limits.oos_t + z80) * se['oos']:.3f} or more. "
+                   f"A real alpha with an IC of 0.03 would get through the first screen, the validation block and the locked test about {found_at[0.03]:.0%} of the time, and one of 0.05 about "
+                   f"{found_at[0.05]:.0%} (before the screens in between, which lower it). Luck alone is expected to pass the first screen with about {luck:.0f} of the {spec.n_candidates} formulas.")
+        if not adequate:
+            reading += (" This search is underpowered for the alphas that are worth having: add companies or history, or lower the bars (exploratory), knowing that lower bars let more luck through.")
+        return clean({"strictness": spec.strictness, "limits": asdict(limits), "blocks": blocks, "formulas": spec.n_candidates, "power": power, "table": table, "luck_first_screen": luck,
+                      "adequate": adequate, "reading": reading})
+
+    def placebo(self, spec: DiscoverySpec, repeats: int = 3, real: dict | None = None, progress=None, stop=None) -> dict:
+        """Run a search ``repeats`` times on returns shuffled among the companies (so nothing can be found) and report what it finds anyway, how much of ``real`` (the counts of a real run) that
+        makes luck, and whether the t-statistics can be believed. Nothing is written to the library or the graveyard; the result is kept with the experiments."""
+        ctx = self.context(spec.universe, spec.freq, spec.entry_lag)
+        repeats = _number(repeats, "the number of shuffles", 1, calibration.MAX_REPEATS, True)
+        result = calibration.calibrate_search(ctx, spec, repeats, progress=progress, stop=stop, real=real)
+        if result["complete"]:
+            result["experiment_id"] = calibration.save(self.store, result)
+        return clean(result)
+
+    def study_size(self, horizon: str = "1m", min_assets: int = 20) -> dict:
+        """What a factor study on the database as it stands could tell apart from luck: roughly how many companies have both a statement and prices at the same time, on how many month-ends, and the
+        smallest average IC that many companies and dates can see. It reads two columns from the database and builds nothing, so the Overview can show it; a study that follows may differ a
+        little (it also drops companies that are not investable)."""
+        h, step = horizon_days(horizon), FREQ_DAYS["M"]
+        key = (self._signature(), h, min_assets)
+        with self._lock:
+            if self._size and self._size[0] == key:
+                return self._size[1]
+        result = self._study_size(h, step, min_assets)
+        with self._lock:
+            self._size = (key, result)
+        return result
+
+    def _study_size(self, h: int, step: int, min_assets: int) -> dict:
+        with self.store.db.transaction() as conn:
+            span = {r[0]: (r[1], r[2]) for r in conn.execute("SELECT security_id, MIN(date), MAX(date) FROM prices_daily GROUP BY security_id")}
+            filed = {r[0]: r[1] for r in conn.execute("SELECT security_id, MIN(COALESCE(filing_date, publication_date, accepted_date, period_end)) FROM financial_periods "
+                                                       "WHERE fiscal_period = 'FY' AND vintage = 0 GROUP BY security_id")}
+        both = [sid for sid in span if sid in filed and filed[sid]]
+        base = {"companies_with_both": len(both), "min_assets": min_assets}
+        if len(both) < min_assets:
+            return {**base, "available": False, "reading": f"A factor study needs at least {min_assets} companies that have statements and prices at the same time; the database has {len(both)}."}
+        start = np.array([max(pd.Timestamp(span[s][0]), pd.Timestamp(filed[s]) + pd.Timedelta(days=45)).value for s in both])
+        end = np.array([(pd.Timestamp(span[s][1]) - pd.Timedelta(days=h * 7 // 5)).value for s in both])
+        months = pd.period_range(pd.Timestamp(int(start.min())), pd.Timestamp(int(end.max())), freq="M").to_timestamp(how="end")
+        counts = np.array([int(((start <= m.value) & (m.value <= end)).sum()) for m in months])
+        usable = counts >= min_assets
+        if usable.sum() < 12:
+            return {**base, "available": False, "dates": int(usable.sum()), "reading": f"There are {int(usable.sum())} month-ends with at least {min_assets} companies that have statements and prices at "
+                                                                                      "once; a study needs at least a year of them, and three or more to say anything."}
+        n, t = float(np.median(counts[usable])), int(usable.sum())
+        out = detectable_effect(n, t, h, step)
+        return clean({**base, **out, "companies": n, "dates": t})
 
     # ------------------------------------------------------------------------------------------------------------ prices
     def load_prices(self, security_ids: list[int] | None = None, start: str = prices.DEFAULT_START, fetch=None, progress=None, stop=None, refresh: bool = False, fx: bool = True) -> dict:

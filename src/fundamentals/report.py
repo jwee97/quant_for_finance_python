@@ -43,6 +43,19 @@ def grid(headers: list[str], rows: list[list], right: tuple[int, ...] = ()) -> s
     return "\n".join(lines)
 
 
+def _span(ci, fmt) -> str:
+    """``a to b`` for a two-number interval, or nothing when it is not known."""
+    if not ci or len(ci) != 2 or _bad(ci[0]) or _bad(ci[1]):
+        return ""
+    return f"{fmt(ci[0])} to {fmt(ci[1])}"
+
+
+def _interval(ci, fmt) -> str:
+    """``, 95% interval a to b`` after a figure, or nothing when the interval is not known."""
+    span = _span(ci, fmt)
+    return f", 95% interval {span}" if span else ""
+
+
 def headline(study: dict) -> str:
     """The one-line reading the page puts on a study, from the same two numbers: the t-statistic of the IC and the net Sharpe of the long-short portfolio."""
     t, net = abs(study["ic"].get("t_stat") or float("nan")), (study["portfolio"].get("net") or {}).get("sharpe")
@@ -168,10 +181,10 @@ def format_study(d: dict) -> str:
     out.extend(d.get("warnings") or [])
     out += ["", f"Universe: {u['companies']} companies, {d['n_dates']} {'monthly' if u['freq'] == 'M' else 'weekly' if u['freq'] == 'W' else 'quarterly'} dates from {u['first']} to {u['last']}, "
                 f"traded {u['entry_lag_days']} day(s) after the signal; each figure is used {u['pit']['info_lag_days']} day(s) after the day it became public",
-            f"Mean rank IC {sgn(ic['mean_ic'])} (t = {num(ic['t_stat'], 1)}, allowing for overlapping returns), IC information ratio {num(ic['icir_annualised'])}, positive on {pct(ic['positive_share'], 0)} of dates",
+            f"Mean rank IC {sgn(ic['mean_ic'])}{_interval(ic.get('ci95'), sgn)} (t = {num(ic['t_stat'], 1)}, allowing for overlapping returns), IC information ratio {num(ic['icir_annualised'])}, positive on {pct(ic['positive_share'], 0)} of dates",
             "Average next-period return by bucket (1 = lowest): " + ", ".join(f"{k}: {spct(v)}" for k, v in q["mean_forward_return"].items()) + f"; top minus bottom {spct(q['spread_top_minus_bottom'])}, "
             f"monotonic {num((q.get('monotonicity') or {}).get('spearman'))}",
-            f"Long-short, net of costs and borrowing: Sharpe {num(net.get('sharpe'))} (gross {num(gross.get('sharpe'))}), {pct(net.get('cagr'))} a year, worst fall {pct(net.get('max_drawdown'))}, turnover {pct(pf.get('avg_turnover'), 0)} a rebalance",
+            f"Long-short, net of costs and borrowing: Sharpe {num(net.get('sharpe'))}{_interval(net.get('sharpe_ci95'), num)} (gross {num(gross.get('sharpe'))}), {pct(net.get('cagr'))} a year, worst fall {pct(net.get('max_drawdown'))}, turnover {pct(pf.get('avg_turnover'), 0)} a rebalance",
             "", "How fast the signal fades (mean IC against longer returns):", grid(["horizon", "mean IC", "t", "dates"], [[r["horizon"], sgn(r["mean_ic"]), num(r["t_stat"], 1), r["n_dates"]] for r in d["decay"]], right=(1, 2, 3))]
     st = d["stability"]
     years = list(st["by_year"].items())
@@ -181,13 +194,29 @@ def format_study(d: dict) -> str:
         rows = list((d.get("breakdown") or {}).get(key, {}).items())
         if rows:
             out += ["", title + ":", grid([key, "companies", "mean IC", "t"], [[k, v.get("companies", ""), sgn(v["mean_ic"]), num(v["t_stat"], 1)] for k, v in rows], right=(1, 2, 3))]
+    power = d.get("power") or {}
+    if power.get("available"):
+        out += ["", "Could this study have seen a real effect? " + power["reading"],
+                grid(["a true mean IC of", "would show t of about", "chance of |t| above 2", "chance of |t| above 3"], [[num(r["ic"], 2), num(r["expected_t"], 1), pct(r["power_t2"], 0), pct(r["power_t3"], 0)] for r in power["table"]], right=(0, 1, 2, 3))]
+    fm = d.get("premium")
+    if fm:
+        a, b = fm["with_controls"], fm["without_controls"]
+        out += ["", "The premium, from a regression on every date (Fama-MacBeth): " + fm["reading"]]
+        if "premium" in a and "premium" in b:
+            out.append(grid(["", "premium over the window", "95% interval", "t", "dates"],
+                            [["holding " + (", ".join(fm["controls"]) or "nothing") + " fixed", spct(a["premium"]), _span(a.get("ci95"), spct), num(a["t_stat"], 1), a["n_dates"]],
+                             ["on its own", spct(b["premium"]), _span(b.get("ci95"), spct), num(b["t_stat"], 1), b["n_dates"]]], right=(1, 3, 4)))
     out += ["", "Interesting is not validated. A study measured on the sample it was chosen on is a lead; `quant fundamentals discover` counts every idea tried and tests the best on dates it never saw."]
     return "\n".join(out)
 
 
 def format_lookahead(a: dict) -> str:
     rows = [["each figure from the day it was public", sgn(a["honest"]["mean_ic"]), num(a["honest"]["t_stat"], 1), a["honest"]["n_dates"]], ["each figure from its period end (naive)", sgn(a["naive"]["mean_ic"]), num(a["naive"]["t_stat"], 1), a["naive"]["n_dates"]]]
-    return ("Knowing figures early flatters this factor. " if a["flattered"] else "The result does not lean on early knowledge. ") + a["verdict"] + "\n" + grid(["version", "mean IC", "t", "dates"], rows, right=(1, 2, 3))
+    text = a["verdict"] + "\n" + grid(["version", "mean IC", "t", "dates"], rows, right=(1, 2, 3))
+    if a.get("by_lag"):
+        text += ("\n\nWhat is left if a figure is used only some days after its filing: " + a["lag_verdict"] + "\n"
+                 + grid(["days after the filing", "mean IC", "t", "dates"], [[r["lag_days"], sgn(r["mean_ic"]), num(r["t_stat"], 1), r["n_dates"]] for r in a["by_lag"]], right=(0, 1, 2, 3)))
+    return text
 
 
 def format_discovery(d: dict, top: int = 15) -> str:
@@ -196,6 +225,8 @@ def format_discovery(d: dict, top: int = 15) -> str:
            f"Tried {c.get('generated', d['progress']['done'])} ({c.get('skipped_seen', 0)} already known, {c.get('duplicate_idea', 0)} the same idea twice); tested in full {c.get('tested', 0)}; survived the stages {c.get('survivors', 0)}; "
            f"candidates {c.get('candidates', 0)} ({c.get('failed_locked_test', 0)} failed the locked test); looks at the locked dates {c.get('oos_looks', 0)}"
            + (f"; chance of overfitting among the survivors {pct(c['pbo'], 0)}" if not _bad(c.get("pbo")) else ""),
+           f"Bars: {d.get('strictness', 'exploratory')} (first screen |t| of {(d.get('limits') or {}).get('t_ic', 1.65):g}, false-discovery q-value of {(d.get('limits') or {}).get('max_q', 0.25):g})"
+           + (f". The correction for the number tried counts {c['n_tested_family']} ideas, from {c['runs_in_family']} run{'s' if c['runs_in_family'] != 1 else ''} on this question" if c.get("n_tested_family") else ""),
            "", "Where the formulas fell:", grid(["stage", "passed"], [[r["stage"], r["passed"]] for r in d["funnel"]], right=(1,)), "", "The best so far (nothing here is validated):"]
     if d["leaderboard"]:
         out.append(grid(["formula", "used as", "status", "IC", "val IC", "locked IC", "t", "Sharpe", "turn", "q", "DSR"],
@@ -255,3 +286,22 @@ def format_backtest(r: dict) -> str:
 
 __all__ = ["format_status", "format_plan", "format_sync", "format_prices", "format_factors", "format_scan", "format_study", "format_lookahead", "format_discovery", "format_library", "format_graveyard",
            "format_monitor", "format_backtest", "headline", "grid"]
+
+
+def format_preflight(pf: dict) -> str:
+    rows = [[num(r["ic"], 2), pct(r["first_screen"], 0), pct(r["validation"], 0), pct(r["locked_test"], 0), pct(r["found"], 0)] for r in pf["table"]]
+    b = pf["blocks"]
+    return "\n".join([f"What a {pf['strictness']} search of {pf['formulas']} formulas could find", pf["reading"], "",
+                      f"Training dates {b['train'][0]} to {b['train'][1]} ({b['dates']['train']}), validation {b['validation'][0]} to {b['validation'][1]} ({b['dates']['validation']}), "
+                      f"locked test {b['oos'][0]} to {b['oos'][1]} ({b['dates']['oos']}); {b['embargo']} date(s) left out between blocks",
+                      "", "The chance that a real alpha of each strength gets through (before the screens in between):",
+                      grid(["true mean IC", "first screen", "validation", "locked test", "all three"], rows, right=(0, 1, 2, 3, 4))])
+
+
+def format_placebo(r: dict) -> str:
+    s = r["summary"]
+    rows = [[k, pct(v["share"], 1), pct(v["expected"], 1)] for k, v in s["tail"].items()]
+    out = [f"Calibration of a {r['strictness']} search on shuffled returns ({s['runs']} shuffle{'s' if s['runs'] != 1 else ''}, {s['tested']} formulas tested)", r["reading"], "",
+           "Where the formulas fell, on average per shuffled run:", grid(["stage", "passed"], [[k, num(v, 1)] for k, v in s["funnel_mean"].items()], right=(1,)), "",
+           "Shuffled formulas whose |t| reached each level (a correct t-statistic gives the second column):", grid(["|t| of at least", "found", "expected"], rows, right=(0, 1, 2))]
+    return "\n".join(out)

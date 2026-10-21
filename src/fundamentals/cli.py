@@ -7,7 +7,9 @@
     quant fundamentals prices                  daily prices and exchange rates for the companies, from Yahoo Finance
     quant fundamentals factors [--scan]        the factor library; with --scan every factor studied under one set of conditions
     quant fundamentals evaluate fcf_yield      one factor (or --formula "div(fcf,market_cap)") against what happened next: IC, buckets, long-short, decay, years, countries
+    quant fundamentals preflight               before a search: what it could find with this many companies and dates, and the chance a real alpha of each strength gets through
     quant fundamentals discover --n 300        search for alphas: every formula tried is counted, the best tested once on dates they never saw; --resume RUN_ID carries on
+    quant fundamentals placebo [--run ID]      the same search on returns shuffled among the companies: what it finds when there is nothing to find, and how much of a real run that makes luck
     quant fundamentals library [--graveyard]   the alphas found so far, or the ideas that failed (nothing is ever deleted)
     quant fundamentals monitor                 is each alpha still working on the data now in the database
     quant fundamentals backtest --alpha ID     an alpha as a book under limits, through the platform's backtest engine, net of costs
@@ -26,14 +28,14 @@ import time
 from pathlib import Path
 
 from . import report as R
-from .discovery import Discovery, DiscoverySpec
+from .discovery import STRICTNESS, Discovery, DiscoverySpec
 from .errors import FundamentalsError
 from .jsonutil import clean
 from .library import STATUSES
 from .service import FundamentalsService
 from .workbench import Workbench, eval_spec
 
-ACTIONS = ("status", "simulate", "search", "add", "plan", "sync", "prices", "factors", "evaluate", "discover", "library", "monitor", "backtest")
+ACTIONS = ("status", "simulate", "search", "add", "plan", "sync", "prices", "factors", "evaluate", "preflight", "discover", "placebo", "library", "monitor", "backtest")
 REAL_ONLY = {"search": "searching OpenFilings", "add": "adding companies", "plan": "planning a sync", "sync": "fetching statements", "prices": "loading prices"}
 DEMO_FILE, REAL_FILE = "fundamentals_demo.db", "fundamentals.db"
 
@@ -136,6 +138,10 @@ def _eval_raw(args, factor: str | None) -> dict:
            "cost_bps": args.cost_bps, "borrow_bps": args.borrow_bps, "steps": _steps(args)}
     if factor:
         raw["factor"] = factor
+    if args.premium or args.premium_controls:
+        raw["premium"] = True
+        if args.premium_controls:
+            raw["controls"] = list(args.premium_controls)
     return raw
 
 
@@ -234,6 +240,26 @@ def _evaluate(wb, args) -> int:
     return _out(args, text, data)
 
 
+def _search_spec(wb, args) -> DiscoverySpec:
+    """The settings of a search from the command line (the same checks as the page's form)."""
+    raw = {"universe": _universe(args), "freq": args.freq, "entry_lag": args.lag, "n_candidates": args.n_formulas, "seed": args.seed, "horizon": args.horizon, "max_nodes": args.max_nodes, "finalists": args.finalists,
+           "cost_bps": args.cost_bps, "borrow_bps": args.borrow_bps}
+    if args.strictness:
+        raw["strictness"] = args.strictness
+    if args.formulas is not None:
+        raw["seeds"] = list(args.formulas)
+    elif args.no_classics:
+        raw["seeds"] = []
+    return wb.discovery_spec(raw)
+
+
+def _preflight(wb, args) -> int:
+    _ready(wb)
+    spec = _search_spec(wb, args)
+    pf = wb.preflight(wb.context(spec.universe, spec.freq, spec.entry_lag), spec)
+    return _out(args, R.format_preflight(pf), pf)
+
+
 def _discover(wb, args) -> int:
     _ready(wb)
     d = Discovery(wb.store)
@@ -243,13 +269,7 @@ def _discover(wb, args) -> int:
             raise FundamentalsError("that run has finished: its locked test has been looked at, and looking again would spend it. Start a new run instead")
         spec, run_id = DiscoverySpec.from_dict(record["spec"]), args.resume
     else:
-        raw = {"universe": _universe(args), "freq": args.freq, "entry_lag": args.lag, "n_candidates": args.n_formulas, "seed": args.seed, "horizon": args.horizon, "max_nodes": args.max_nodes, "finalists": args.finalists,
-               "cost_bps": args.cost_bps, "borrow_bps": args.borrow_bps}
-        if args.formulas is not None:
-            raw["seeds"] = list(args.formulas)
-        elif args.no_classics:
-            raw["seeds"] = []
-        spec = wb.discovery_spec(raw)
+        spec = _search_spec(wb, args)
         run_id = d.create(spec)
         _say(f"run {run_id}")
     ctx = wb.context(spec.universe, spec.freq, spec.entry_lag)
@@ -260,6 +280,25 @@ def _discover(wb, args) -> int:
     if summary["status"] != "finished":
         text += f"\n\nStopped. Carry on exactly where it left off with: quant fundamentals discover {'--demo ' if args.demo else ''}--resume {run_id}"
     return _out(args, text, summary)
+
+
+def _placebo(wb, args) -> int:
+    _ready(wb)
+    real = None
+    if args.run:
+        record = Discovery(wb.store).get_run(args.run)
+        counts = record["stage_counts"]
+        if record["status"] != "finished":
+            raise FundamentalsError("that run has not finished: check a finished run, or leave --run out to check a search that has not been run")
+        spec, real = DiscoverySpec.from_dict(record["spec"]), {"tested": counts.get("tested"), "survivors": counts.get("survivors"), "candidates": counts.get("candidates")}
+    else:
+        spec = _search_spec(wb, args)
+    with _Stop() as stop:
+        result = wb.placebo(spec, args.repeats, real, _progress(), stop)
+    text = R.format_placebo(result)
+    if not result["complete"]:
+        text += "\n\nStopped before every shuffle finished: nothing was kept."
+    return _out(args, text, result)
 
 
 def _library(wb, args) -> int:
@@ -315,8 +354,8 @@ def _backtest(wb, args) -> int:
     return _out(args, R.format_backtest(result), result)
 
 
-HANDLERS = {"status": _status, "simulate": _simulate, "search": _search, "add": _add, "plan": _plan, "sync": _sync, "prices": _prices, "factors": _factors, "evaluate": _evaluate, "discover": _discover, "library": _library,
-            "monitor": _monitor, "backtest": _backtest}
+HANDLERS = {"status": _status, "simulate": _simulate, "search": _search, "add": _add, "plan": _plan, "sync": _sync, "prices": _prices, "factors": _factors, "evaluate": _evaluate, "preflight": _preflight,
+            "discover": _discover, "placebo": _placebo, "library": _library, "monitor": _monitor, "backtest": _backtest}
 
 
 def cmd_fundamentals(args, config) -> int:
@@ -390,8 +429,12 @@ def _add_parser(sub) -> None:
     e.add_argument("--quantiles", type=int, default=5); e.add_argument("--weighting", choices=["equal", "signal", "inv_vol"], default="equal"); e.add_argument("--cost-bps", type=float, default=10.0)
     e.add_argument("--borrow-bps", type=float, default=50.0); e.add_argument("--winsor", type=float, default=1.0, help="cut this per cent of each tail of each date (0: none)")
     e.add_argument("--scale", choices=["zscore", "rank", "percentile", "raw"], default="zscore"); e.add_argument("--neutralize", nargs="*", choices=["sector", "industry", "country", "market"], help="remove what the factor shares with these groups")
-    e.add_argument("--control", nargs="*", choices=["mcap", "beta", "volatility"], help="and with these measures"); e.add_argument("--lookahead", action="store_true", help="evaluate: also run the study as if every figure were known at its period end")
-    f = p.add_argument_group("discover")
+    e.add_argument("--control", nargs="*", choices=["mcap", "beta", "volatility"], help="and with these measures"); e.add_argument("--lookahead", action="store_true", help="evaluate: also run the study as if every figure were known at its period end, and after waiting 30, 60 and 90 days")
+    e.add_argument("--premium", action="store_true", help="evaluate: also the premium from a regression on every date holding size, beta, volatility and momentum fixed (Fama-MacBeth)")
+    e.add_argument("--premium-controls", nargs="*", metavar="NAME", help="evaluate: hold these fixed instead (size beta volatility momentum, or the name of a library factor such as roic)")
+    f = p.add_argument_group("preflight, discover, placebo")
+    f.add_argument("--strictness", choices=list(STRICTNESS), help="the bars a formula must clear: exploratory (a first look), standard (the default: |t| of 2, q-value 0.10) or strict (|t| of 3, q-value 0.05)")
+    f.add_argument("--repeats", type=int, default=3, help="placebo: how many times to shuffle the returns and search again (1 to 5)"); f.add_argument("--run", help="placebo: check this finished run (its search, set beside what it found)")
     f.add_argument("--n", type=int, default=300, dest="n_formulas", help="formulas to try"); f.add_argument("--finalists", type=int, default=15, help="formulas given the one look at the locked dates"); f.add_argument("--max-nodes", type=int, default=15)
     f.add_argument("--formulas", nargs="*", help="start from only these formulas, then random ones"); f.add_argument("--no-classics", action="store_true", help="random formulas only"); f.add_argument("--resume", help="carry on a stopped run")
     g = p.add_argument_group("library")

@@ -20,6 +20,7 @@ import threading
 from pathlib import Path
 
 from ..fundamentals import prices as price_module
+from ..fundamentals.calibration import MAX_REPEATS
 from ..fundamentals.discovery import Discovery, DiscoverySpec
 from ..fundamentals.errors import FundamentalsError
 from ..fundamentals.jsonutil import clean
@@ -100,7 +101,7 @@ class FundamentalsApi:
                             "/api/fund/price-symbol": self.price_symbol, "/api/fund/formula/check": self.formula_check, "/api/fund/library/status": self.library_status,
                             "/api/fund/library/validate": self.library_validate, "/api/fund/sync": self.sync, "/api/fund/simulate": self.simulate, "/api/fund/prices": self.load_prices,
                             "/api/fund/scan": self.scan, "/api/fund/evaluate": self.evaluate, "/api/fund/evaluate/formula": self.evaluate_formula, "/api/fund/lookahead": self.lookahead,
-                            "/api/fund/discover": self.discover, "/api/fund/monitor": self.monitor, "/api/fund/correlation": self.correlation, "/api/fund/combine": self.combine,
+                            "/api/fund/discover": self.discover, "/api/fund/discover/preflight": self.preflight, "/api/fund/placebo": self.placebo, "/api/fund/monitor": self.monitor, "/api/fund/correlation": self.correlation, "/api/fund/combine": self.combine,
                             "/api/fund/ml": self.ml, "/api/fund/backtest": self.backtest, "/api/fund/stop": self.stop})
 
     @staticmethod
@@ -174,9 +175,14 @@ class FundamentalsApi:
         return {"exists": True, "companies": counts["companies"], "price_rows": counts["price_rows"], "alphas": counts["alphas"]}
 
     def overview(self, q: dict | None = None) -> dict:
+        """``GET /api/fund/overview?db=``: the state of the database. On the real one it also says whether OpenFilings is set up and what is left of today's allowance (``setup``), so the page can show what to do next."""
         q = q or {}
         db = _db(q)
-        return self._guard(self.bench(db, create=db == "real").overview)
+        wb = self.bench(db, create=db == "real")
+        out = self._guard(wb.overview)
+        if db == "real":
+            out["setup"] = self._lookup_state(wb)
+        return out
 
     def catalogue(self, q: dict | None = None) -> dict:
         return self._guard(self.bench("real").catalogue)
@@ -197,7 +203,7 @@ class FundamentalsApi:
         prov, pool = svc.provider("openfilings"), svc.pool("openfilings")
         ok, why = prov.available()
         return {"available": ok, "reason": why, "cost": prov.cost("search"), "fetch_cost": prov.cost("financials") + (prov.cost("profile") if prov.has_lookup else 0), "unit": pool.allow.unit,
-                "remaining_today": pool.remaining_today() if ok else None}
+                "remaining_today": pool.remaining_today() if ok else None, "daily_limit": pool.allow.daily, "monthly_limit": pool.allow.monthly, "remaining_month": pool.remaining_month() if ok else None}
 
     def company(self, q: dict | None = None) -> dict:
         q = q or {}
@@ -494,6 +500,43 @@ class FundamentalsApi:
             return runner.run(run_id, lambda done, total, text: progress(f"{done} of {total} formulas: {text}"), stop.is_set)
         started = self._job(f"fundamentals: discovery run {run_id}", work, True)
         return {**started, "run_id": run_id}
+
+    def preflight(self, body: dict) -> dict:
+        """``POST /api/fund/discover/preflight (a job)``: before a search, what it could find with this many companies and dates: the smallest effect each block of dates can tell from luck, the
+        number of formulas luck alone is expected to push through the first screen, and the chance that a real alpha of each typical strength gets through. Nothing is spent or written."""
+        db = _db(body)
+        wb = self.bench(db, create=db == "real")
+        self._ready(wb)
+        spec = self._guard(wb.discovery_spec, body.get("spec"))
+
+        def work(progress, stop):
+            progress("building the research context")
+            ctx = wb.context(spec.universe, spec.freq, spec.entry_lag)
+            return wb.preflight(ctx, spec)
+        return self._job("fundamentals: what a search could find", work)
+
+    def placebo(self, body: dict) -> dict:
+        """``POST /api/fund/placebo (a job)``: the calibration of a search. ``{"spec": {...}}`` (or ``{"run_id": ...}``, a finished run, whose own settings are used and whose result is set beside the
+        outcome) runs the search again ``repeats`` times (1 to 5) on returns shuffled among the companies, where nothing can be found, and reports what it finds anyway and whether the t-statistics
+        can be believed. Nothing is written to the library or the graveyard, and the locked dates of the real data are not looked at."""
+        db = _db(body)
+        wb = self.bench(db, create=db == "real")
+        self._ready(wb)
+        repeats = _number(body.get("repeats", 3), "the number of shuffles", 1, MAX_REPEATS, True)
+        real = None
+        if body.get("run_id"):
+            record = self._guard(Discovery(wb.store).get_run, str(body["run_id"]))
+            if record["status"] != "finished":
+                raise ApiError("check a finished run (one that is still going, or was stopped, has no outcome yet); or pass the settings of a search that has not been run")
+            counts = record["stage_counts"]
+            spec, real = DiscoverySpec.from_dict(record["spec"]), {"tested": counts.get("tested"), "survivors": counts.get("survivors"), "candidates": counts.get("candidates")}
+        else:
+            spec = self._guard(wb.discovery_spec, body.get("spec"))
+
+        def work(progress, stop):
+            progress("building the research context")
+            return wb.placebo(spec, repeats, real, progress, stop.is_set)
+        return self._job(f"fundamentals: calibrate a {spec.strictness} search on shuffled returns", work, True)
 
     def monitor(self, body: dict) -> dict:
         """``POST /api/fund/monitor (a job)``: recompute alphas on the data now in the database and judge each Healthy, Weakening, Decaying or Broken."""

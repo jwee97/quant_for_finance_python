@@ -72,8 +72,22 @@ class Thresholds:
     max_turnover: float = 0.7
     val_t: float = 1.0                  # stage 6
     oos_t: float = 1.0                  # stage 7
-    max_q: float = 0.25                 # to be a finalist: the false-discovery q-value over everything tried in the run
+    max_q: float = 0.25                 # to be a finalist: the false-discovery q-value over everything tried on the question
     max_correlation: float = 0.9        # to a formula already accepted in the run: the same idea
+
+
+# How strict a search is. The defaults of :class:`Thresholds` are the ``exploratory`` bars (a first look that lets ideas through to be looked at); ``standard`` asks for a t-statistic of about 2 and a
+# q-value of 0.10; ``strict`` asks for the t of 3 that Harvey, Liu and Zhu (2016) argue a new factor needs after the hundreds that have been tried, and a q-value of 0.05. A bar named in
+# ``DiscoverySpec.thresholds`` always wins over the preset.
+STRICTNESS = ("exploratory", "standard", "strict")
+DEFAULT_STRICTNESS = "standard"          # what the application, its API and its command line start from; the library's own default is the first look
+PRESETS: dict[str, dict] = {
+    "exploratory": {},
+    "standard": {"min_coverage": 0.50, "t_ic": 2.0, "min_abs_ic": 0.010, "positive_share": 0.58, "min_icir": 0.15, "best_year_t": 1.3, "monotonicity": 0.6, "ls_t": 1.8, "ls_sharpe": 0.4,
+                 "net_sharpe": 0.25, "max_turnover": 0.6, "val_t": 1.3, "oos_t": 1.3, "max_q": 0.10, "max_correlation": 0.85},
+    "strict": {"min_coverage": 0.60, "min_dates": 48, "t_ic": 3.0, "min_abs_ic": 0.015, "positive_share": 0.60, "min_icir": 0.20, "best_year_t": 1.65, "monotonicity": 0.7, "ls_t": 2.2, "ls_sharpe": 0.5,
+               "net_sharpe": 0.35, "max_turnover": 0.5, "val_t": 1.65, "oos_t": 1.65, "max_q": 0.05, "max_correlation": 0.8},
+}
 
 
 @dataclass
@@ -99,6 +113,7 @@ class DiscoverySpec:
     finalists: int = 15
     only_fields: list | None = None
     fitness_weights: dict = field(default_factory=dict)
+    strictness: str = "exploratory"      # one of STRICTNESS: the bars every formula has to clear (see PRESETS)
 
     def describe(self) -> dict:
         return asdict(self)
@@ -109,12 +124,27 @@ class DiscoverySpec:
         return DiscoverySpec(**{k: v for k, v in d.items() if k in DiscoverySpec.__dataclass_fields__})
 
     def limits(self) -> Thresholds:
-        return Thresholds(**{k: v for k, v in self.thresholds.items() if k in Thresholds.__dataclass_fields__})
+        """The bars in force: the preset named by ``strictness``, with any bar named in ``thresholds`` taking its place."""
+        if self.strictness not in PRESETS:
+            raise FundamentalsError(f"strictness must be one of {list(STRICTNESS)}")
+        named = {k: v for k, v in self.thresholds.items() if k in Thresholds.__dataclass_fields__}
+        return Thresholds(**{**PRESETS[self.strictness], **named})
 
-    def conditions(self) -> dict:
-        """The conditions a result depends on: what makes two results about the same question."""
+    def question(self) -> dict:
+        """What is being asked of the data, apart from how high the bars are: the universe, the grid and horizon, the transformations, the costs and the shares of dates. Two runs with the same
+        question test the same formulas on the same numbers, so the formulas tried in both count once toward the correction for the number tried."""
         return {"universe": self.universe, "freq": self.freq, "horizon": self.horizon, "entry_lag": self.entry_lag, "steps": self.steps, "quantiles": self.quantiles, "cost_bps": self.cost_bps,
                 "borrow_bps": self.borrow_bps, "weighting": self.weighting, "min_assets": self.min_assets, "train_fraction": self.train_fraction, "validation_fraction": self.validation_fraction}
+
+    def conditions(self) -> dict:
+        """The conditions a verdict depends on: the question and the bars. A formula that fell short of a strict bar is tried again when the bar is lower, so the bars are part of the identity of a
+        result, but only when they are not the exploratory ones (a database from before the bars were named keeps its identities)."""
+        out = self.question()
+        if self.strictness != "exploratory":
+            out["strictness"] = self.strictness
+        if self.thresholds:
+            out["thresholds"] = {k: self.thresholds[k] for k in sorted(self.thresholds)}
+        return out
 
 
 FITNESS = {"ic": 0.30, "stability": 0.20, "sharpe": 0.25, "monotonic": 0.10, "decorrelation": 0.15, "turnover": -0.15, "complexity": -0.10}
@@ -400,6 +430,7 @@ class Discovery:
         blocks = splits(ctx, spec)
         conditions = spec.conditions()
         digest = settings_hash({**conditions, "blocks": {k: blocks[k] for k in ("train", "validation", "oos")}})
+        family = settings_hash({**spec.question(), "blocks": {k: blocks[k] for k in ("train", "validation", "oos")}})
         cache = BoundedCache()
         screen = Screen(ctx, spec, blocks, cache)
         seeds = [X.parse(t) for t in (default_seeds(ctx) if spec.seeds is None else spec.seeds)]
@@ -412,6 +443,7 @@ class Discovery:
         counts.setdefault("duplicate_idea", 0)
         counts.setdefault("tested", 0)
         counts.setdefault("next_index", 0)
+        counts["family"] = family                                                       # the question, apart from the bars: runs with the same one share a count of ideas tried
         accepted_signals: list[tuple[str, pd.DataFrame]] = []
         for c in known.values():
             if c.get("status") == "survivor" and c["metrics"].get("direction"):
@@ -499,15 +531,37 @@ class Discovery:
                          (run_id, ehash, X.dumps(expression), int(stage), status, str(reason)[:300], json.dumps(clean(metrics))))
 
     # ------------------------------------------------------------------------------------------------------------ the end of a run
+    def _earlier_tests(self, family: str | None, run_id: str) -> tuple[dict, int]:
+        """``({idea: p-value on the training dates}, runs)`` for every idea tried in the *other* runs on the same question. An idea tried in two runs, or spelled two ways, counts once."""
+        out: dict = {}
+        if not family:
+            return out, 0
+        with self.store.db.transaction() as conn:
+            mine = [r[0] for r in conn.execute("SELECT run_id, stage_counts FROM discovery_runs WHERE run_id != ?", (run_id,)).fetchall() if json.loads(r[1] or "{}").get("family") == family]
+            for other in mine:
+                for ehash, metrics in conn.execute("SELECT expression_hash, metrics FROM discovery_candidates WHERE run_id = ?", (other,)).fetchall():
+                    m = json.loads(metrics or "{}")
+                    if m.get("p_train") is not None:
+                        out[m.get("signal_key") or ehash] = float(m["p_train"]) if np.isfinite(m["p_train"]) else 1.0
+        return out, len(mine)
+
     def _conclude(self, run_id, spec, ctx, screen: Screen, blocks, conditions, digest, counts, accepted_signals) -> None:
         survivors = [c for c in self.candidates(run_id, "survivor", 1_000_000)]
         tested = [c for c in self.candidates(run_id, limit=1_000_000) if c["metrics"].get("p_train") is not None]
         n_tested = len(tested)
-        p = np.array([c["metrics"]["p_train"] for c in tested if np.isfinite(c["metrics"]["p_train"])])
-        q_of = {}
-        if len(p):
-            q = bh_qvalues(np.array([c["metrics"]["p_train"] if np.isfinite(c["metrics"]["p_train"]) else 1.0 for c in tested]))
-            q_of = {c["expression_hash"]: float(q[i]) for i, c in enumerate(tested)}
+        # The correction is for every idea tried on this question, in this run and in the earlier runs on it: the more a person searches the same data, the better the best result looks by luck alone
+        idea = lambda c: c["metrics"].get("signal_key") or c["expression_hash"]            # noqa: E731
+        pool, earlier_runs = self._earlier_tests(counts.get("family"), run_id)
+        for c in tested:
+            pool[idea(c)] = float(c["metrics"]["p_train"]) if np.isfinite(c["metrics"]["p_train"]) else 1.0
+        n_family = len(pool)
+        q_of, q_run = {}, {}
+        if len(pool):
+            q_pool = dict(zip(pool, bh_qvalues(np.array(list(pool.values())))))
+            q_of = {c["expression_hash"]: float(q_pool[idea(c)]) for c in tested}
+        if tested:
+            q_this = bh_qvalues(np.array([c["metrics"]["p_train"] if np.isfinite(c["metrics"]["p_train"]) else 1.0 for c in tested]))
+            q_run = {c["expression_hash"]: float(q_this[i]) for i, c in enumerate(tested)}
         # rank survivors by fitness from training and validation evidence only, with a bonus for being unlike the others
         signals = {c["expression_hash"]: screen.signal(X.loads(c["expression"]), c["metrics"]["direction"]) for c in survivors}
         library_signals = []
@@ -531,7 +585,7 @@ class Discovery:
             if q_of.get(c["expression_hash"], 1.0) > limit_q:
                 c["metrics"]["q_value"] = q_of.get(c["expression_hash"])
                 self._update_candidate(run_id, c["expression_hash"], "survivor", f"passed stages 1-6, but its false-discovery q-value of {q_of.get(c['expression_hash'], 1.0):.2f} over the "
-                                                                               f"{n_tested} formulas tried is above {limit_q}: not tested on the locked dates", c["metrics"])
+                                                                               f"{n_family} ideas tried is above {limit_q}: not tested on the locked dates", c["metrics"])
         finalists = eligible[:spec.finalists]
         # the locked test: once, on the finalists only
         oos_key = f"oos_looks:{spec.freq}:{spec.horizon}:{json.dumps(spec.universe, sort_keys=True)}:{blocks['oos'][0]}"
@@ -562,8 +616,9 @@ class Discovery:
             net_tv = long_short(signals[c["expression_hash"]], ctx, screen.eval_spec)["net"].loc[train_val[0]:train_val[1]].dropna()
             sr = _sharpe(net_tv, screen.ppy)
             m.update(lock)
-            m.update(fitness=score, fitness_parts=parts, max_correlation=worst, q_value=q_of.get(c["expression_hash"]), n_tested=n_tested, run_id=run_id, oos_looks=looks,
-                     deflated_sharpe=deflated_sharpe_ratio(sr, max(n_tested, 1), len(net_tv), float(stats.skew(net_tv, bias=False)) if len(net_tv) > 3 else 0.0,
+            m.update(fitness=score, fitness_parts=parts, max_correlation=worst, q_value=q_of.get(c["expression_hash"]), q_value_run=q_run.get(c["expression_hash"]), n_tested=n_family,
+                     n_tested_run=n_tested, runs_on_question=earlier_runs + 1, strictness=spec.strictness, run_id=run_id, oos_looks=looks,
+                     deflated_sharpe=deflated_sharpe_ratio(sr, max(n_family, 1), len(net_tv), float(stats.skew(net_tv, bias=False)) if len(net_tv) > 3 else 0.0,
                                                            float(stats.kurtosis(net_tv, bias=False, fisher=False)) if len(net_tv) > 3 else 3.0, periods_per_year=screen.ppy) if np.isfinite(sr) else None,
                      complexity=X.size(X.loads(c["expression"])), sharpe_train_val=sr, pbo=(pbo or {}).get("pbo") if pbo else None, blocks=blocks, direction=c["metrics"]["direction"])
             expression = X.loads(c["expression"])
@@ -582,7 +637,8 @@ class Discovery:
         for _, _, c, _ in eligible[spec.finalists:]:
             self._update_candidate(run_id, c["expression_hash"], "survivor", "passed stages 1-6 but was not among the finalists given the one look at the locked dates", c["metrics"])
         counts[STAGES[7]] = len(added)
-        counts.update(n_tested=n_tested, survivors=len(survivors), finalists=len(finalists), candidates=len(added), failed_locked_test=len(failed), pbo=(pbo or {}).get("pbo") if pbo else None, oos_looks=looks)
+        counts.update(n_tested=n_tested, n_tested_family=n_family, runs_in_family=earlier_runs + 1, survivors=len(survivors), finalists=len(finalists), candidates=len(added),
+                      failed_locked_test=len(failed), pbo=(pbo or {}).get("pbo") if pbo else None, oos_looks=looks)
         self._save(run_id, "finished", counts, finished=True)
         self._experiment(run_id, spec, counts)
 
@@ -608,7 +664,7 @@ class Discovery:
         board.sort(key=lambda c: (-(c["metrics"].get("fitness") if c["metrics"].get("fitness") is not None else -1.0), -abs(c["metrics"].get("t_train") or 0.0)))
         funnel = [{"stage": s, "passed": counts.get(s, 0)} for s in STAGES]
         return {"run_id": run_id, "status": run["status"], "created_at": run["created_at"], "finished_at": run["finished_at"], "error": run["error"], "progress": {"done": counts.get("next_index", 0), "total": spec.n_candidates},
-                "counts": counts, "funnel": funnel, "spec": run["spec"],
+                "counts": counts, "funnel": funnel, "spec": run["spec"], "strictness": spec.strictness, "limits": asdict(spec.limits()),
                 "leaderboard": [{"expression": c["text"], "status": c["status"], "stage": c["stage_reached"], "reason": c["reason"], "ic": c["metrics"].get("ic"), "icir": c["metrics"].get("icir"),
                                  "val_ic": c["metrics"].get("val_ic"), "oos_ic": c["metrics"].get("oos_ic"), "oos_t": c["metrics"].get("oos_t"), "sharpe": c["metrics"].get("sharpe"),
                                  "oos_sharpe": c["metrics"].get("oos_sharpe"), "turnover": c["metrics"].get("turnover"), "q_value": c["metrics"].get("q_value"),

@@ -8,7 +8,9 @@ Everything here takes a **signal panel** (dates by securities, higher meaning "e
 * a **long-short portfolio** (top bucket against bottom bucket, held one rebalance period) with its return, volatility, Sharpe, Sortino, drawdown, Calmar, hit rate and turnover, gross and after costs;
 * **decay**: the IC at one week, one, three, six and twelve months;
 * **breakdowns** by country, sector, region and market regime (bull or bear, high or low volatility, each known at the start of the period it describes);
-* **stability** by calendar year and in halves.
+* **stability** by calendar year and in halves;
+* how far the result can be trusted: a 95% interval for the mean IC and for the Sharpe ratio, what the study could have detected at all (:func:`detectable_effect`), and the premium the signal
+  earns after controlling for size, beta, volatility and momentum, with a Newey-West error (:func:`fama_macbeth`).
 
 The verdict never says "validated". A factor that looks good here is "interesting": whether it survives out-of-sample data, the number of ideas tried, and costs is for :mod:`discovery`.
 """
@@ -32,6 +34,7 @@ from .research import FREQ_DAYS, HORIZONS, ResearchContext, horizon_days
 
 PERIODS_PER_YEAR = {"W": 52, "M": 12, "Q": 4}
 DECAY_HORIZONS = ("1w", "1m", "3m", "6m", "12m")
+CONTROLS = ("size", "beta", "volatility", "momentum")          # what a premium is measured after controlling for, unless asked otherwise
 MIN_DATES = 24
 
 
@@ -52,6 +55,8 @@ class EvalSpec:
     end: str | None = None
     min_assets: int = 20
     breakdowns: tuple = ("country", "sector", "region", "regime")
+    premium: bool = True                               # also run the Fama-MacBeth regression (a scan of many factors turns it off)
+    controls: tuple = CONTROLS                         # what the premium is measured after controlling for; library factors may be added
 
     def describe(self) -> dict:
         return {k: (list(v) if isinstance(v, tuple) else v) for k, v in self.__dict__.items()}
@@ -60,8 +65,9 @@ class EvalSpec:
     def from_dict(d: dict | None) -> "EvalSpec":
         d = dict(d or {})
         known = {k: v for k, v in d.items() if k in EvalSpec.__dataclass_fields__}
-        if "breakdowns" in known:
-            known["breakdowns"] = tuple(known["breakdowns"])
+        for key in ("breakdowns", "controls"):
+            if key in known:
+                known[key] = tuple(known[key])
         return EvalSpec(**known)
 
 
@@ -97,7 +103,8 @@ def ic_stats(ic: pd.Series, horizon: int, step: int, periods_per_year: int) -> d
     sd = float(ic.std(ddof=1)) if len(ic) > 1 else float("nan")
     return {"n_dates": int(len(ic)), "mean_ic": float(ic.mean()), "median_ic": float(ic.median()), "std_ic": sd, "positive_share": float((ic > 0).mean()),
             "icir": float(ic.mean() / sd) if sd and sd > 0 else float("nan"), "icir_annualised": float(ic.mean() / sd * math.sqrt(periods_per_year)) if sd and sd > 0 else float("nan"),
-            "t_stat": nw["t"], "p_value": nw["p"], "hac_lags": nw["lags"], "skew": float(stats.skew(ic, bias=False)) if len(ic) > 3 else float("nan")}
+            "t_stat": nw["t"], "p_value": nw["p"], "hac_lags": nw["lags"], "skew": float(stats.skew(ic, bias=False)) if len(ic) > 3 else float("nan"),
+            "se": nw["se"], "ci95": [float(ic.mean() - 1.96 * nw["se"]), float(ic.mean() + 1.96 * nw["se"])] if np.isfinite(nw["se"]) else [float("nan"), float("nan")]}
 
 
 def rank_ic(signal: pd.DataFrame, forward: pd.DataFrame, min_assets: int = 20) -> pd.Series:
@@ -203,7 +210,23 @@ def portfolio_stats(returns: pd.Series, periods_per_year: int) -> dict:
     keep = ("n_obs", "cagr", "ann_return_arith", "ann_vol", "sharpe", "sortino", "calmar", "max_drawdown", "max_drawdown_date", "hit_rate", "total_return", "skew", "excess_kurtosis")
     out = {k: summary.get(k) for k in keep}
     out["t_stat"] = float(clean_returns.mean() / (clean_returns.std(ddof=1) / math.sqrt(len(clean_returns)))) if clean_returns.std(ddof=1) > 0 else float("nan")
+    out["sharpe_ci95"] = sharpe_interval(clean_returns, periods_per_year)
     return out
+
+
+def sharpe_interval(returns: pd.Series, periods_per_year: int, z: float = 1.96) -> list[float]:
+    """A 95% interval for the annualised Sharpe ratio, from its large-sample standard error allowing for skew and fat tails (Mertens): ``se = sqrt((1 - skew * sr + (kurt - 1) / 4 * sr^2) / (n - 1))``
+    for the per-period ratio ``sr`` and the raw kurtosis ``kurt`` (3 for a normal distribution)."""
+    r = pd.Series(returns).dropna()
+    n = len(r)
+    if n < 8 or not r.std(ddof=1) > 1e-12:                                           # a flat series has no ratio (and its moments are all rounding)
+        return [float("nan"), float("nan")]
+    sr = float(r.mean() / r.std(ddof=1))
+    skew, kurt = float(stats.skew(r, bias=False)), float(stats.kurtosis(r, bias=False, fisher=False))
+    var = (1.0 - skew * sr + (kurt - 1.0) / 4.0 * sr * sr) / (n - 1)
+    se = math.sqrt(var) if var > 0 else float("nan")
+    scale = math.sqrt(periods_per_year)
+    return [float((sr - z * se) * scale), float((sr + z * se) * scale)] if np.isfinite(se) else [float("nan"), float("nan")]
 
 
 # ------------------------------------------------------------------------------------------------------------------ regimes and groups
@@ -249,6 +272,164 @@ def _regime_ic(ic: pd.Series, labels: pd.Series, horizon: int, step: int, ppy: i
     return out
 
 
+# ------------------------------------------------------------------------------------------------------------------ power
+TYPICAL_IC = (0.01, 0.02, 0.03, 0.05, 0.08)
+
+
+def detectable_effect(n_companies: float, n_dates: int, horizon: int, step: int, ic_sd: float | None = None, alpha: float = 0.05, power: float = 0.80) -> dict:
+    """What a study of this size could tell apart from luck.
+
+    On one date the rank correlation of a signal that predicts nothing has a standard deviation of about ``1 / sqrt(N - 1)`` across ``N`` companies (or the measured spread of the IC, ``ic_sd``, when
+    it is known). The mean over ``T`` dates has that spread over ``sqrt(T_eff)``, where ``T_eff`` is the number of dates whose forward windows do not overlap (a horizon of ``h`` days sampled every
+    ``step`` days shares its window with the ``ceil(h / step) - 1`` dates around it). The smallest mean IC that reaches ``|t| > z(1 - alpha/2)`` with probability ``power`` is
+    ``(z(1 - alpha/2) + z(power)) * se``; and a true mean IC of ``ic`` is expected to show a t-statistic of ``ic / se``.
+    """
+    n, t = float(n_companies), int(n_dates)
+    if not (n > 3 and t >= 2):
+        return {"available": False, "reason": "too few companies or dates to say what could be detected"}
+    overlap = max(int(math.ceil(horizon / max(step, 1))), 1)
+    effective = max(t / overlap, 1.0)
+    sd = float(ic_sd) if ic_sd is not None and np.isfinite(ic_sd) and ic_sd > 0 else 1.0 / math.sqrt(n - 1.0)
+    se = sd / math.sqrt(effective)
+    z_a, z_b = float(stats.norm.ppf(1.0 - alpha / 2.0)), float(stats.norm.ppf(power))
+    mde = (z_a + z_b) * se
+    table = []
+    for ic in TYPICAL_IC:
+        expected = ic / se
+        table.append({"ic": ic, "expected_t": float(expected), "power_t2": float(stats.norm.cdf(expected - z_a) + stats.norm.cdf(-expected - z_a)),
+                      "power_t3": float(stats.norm.cdf(expected - 3.0) + stats.norm.cdf(-expected - 3.0))})
+    if mde <= 0.025:
+        reading = f"With about {n:.0f} companies on each of {t} dates this study can tell a mean IC of {mde:.3f} or more from luck, which covers the effects practitioners treat as useful (about 0.02 to 0.05)."
+    elif mde <= 0.05:
+        reading = (f"With about {n:.0f} companies on each of {t} dates this study can reliably see a mean IC of {mde:.3f} or more. A signal with a true IC of 0.02 would show a t-statistic of about "
+                   f"{0.02 / se:.1f} on average, so a real effect of that size could easily be missed here, and a result near the threshold is as likely to be luck.")
+    else:
+        reading = (f"With about {n:.0f} companies on each of {t} dates this study can only see a mean IC of {mde:.3f} or more. Practitioners treat 0.02 to 0.05 as a useful signal, so it cannot "
+                   "confirm one: a result this small would be luck, and a real effect of that size would not show. Add companies (each one helps) or history before trusting any result.")
+    return {"available": True, "companies": n, "dates": t, "effective_dates": float(effective), "null_sd_per_date": sd, "se_of_mean_ic": float(se), "mde_ic": float(mde), "alpha": alpha, "power": power,
+            "table": table, "reading": reading, "adequate": bool(mde <= 0.05)}
+
+
+def control_panels(ctx: ResearchContext, names) -> dict:
+    """The controls of a premium regression as dates-by-companies panels known on each date: ``size`` (the log of market capitalisation in US dollars), ``beta``, ``volatility`` (three months of
+    daily returns), ``momentum`` (twelve months less the last one), or any factor of the library by name (known as of the date like every other panel)."""
+    out = {}
+    for name in names:
+        if name == "size":
+            cap = ctx.market_cap_usd()
+            out[name] = np.log(cap.where(cap > 0))
+        elif name == "beta":
+            out[name] = ctx.beta(252)
+        elif name == "volatility":
+            out[name] = ctx.volatility(63)
+        elif name == "momentum":
+            out[name] = ctx.past(252, 21)
+        elif name in factor_library.names():
+            out[name] = factor_library.compute(ctx, name)
+        else:
+            raise FundamentalsError(f"unknown control {name!r}: size, beta, volatility, momentum or the name of a library factor")
+    return out
+
+
+def _z(x: np.ndarray) -> np.ndarray:
+    """Each column on a common scale: the normal score of its ranks (the standard-normal value at the rank's place), so that a few extreme values of a skewed ratio cannot decide a slope. A column
+    that takes one value everywhere has no scale and comes out as NaN."""
+    n = x.shape[0]
+    ranks = np.column_stack([stats.rankdata(x[:, j]) for j in range(x.shape[1])])
+    scores = stats.norm.ppf((ranks - 0.5) / n)
+    flat = np.ptp(x, axis=0) <= 0
+    scores[:, flat] = np.nan
+    return scores
+
+
+def fama_macbeth(ctx: ResearchContext, signal: pd.DataFrame, forward: pd.DataFrame, controls: dict, horizon: int, step: int, min_assets: int = 20) -> dict:
+    """The premium a signal earns, from a cross-sectional regression on every date (Fama and MacBeth, 1973).
+
+    On each date the forward returns (cut at the 1st and 99th percentile of the date) are regressed on the signal and the controls, each put on a common scale across the companies of that date
+    (the normal score of its rank, which is the scale the rank IC measures on and which a few extreme values of a skewed ratio cannot distort). The coefficient of the signal is the return, over
+    the forward window, of one standard deviation more of the signal *holding the controls fixed*. Its mean over
+    the dates is the premium and its Newey-West error allows for the overlap of the windows. It is also run without the controls, so the two can be compared: a premium that vanishes once size,
+    beta, volatility and momentum are held fixed was one of those in disguise.
+    """
+    mask = ctx.investable().reindex_like(signal).fillna(False).to_numpy(bool)
+    sig, fwd = signal.to_numpy(float), forward.reindex_like(signal).to_numpy(float)
+    ctl = {k: v.reindex_like(signal).to_numpy(float) for k, v in controls.items()}
+    k = len(ctl)
+    plain, full, r2s, counts = [], [], [], []
+    for i in range(len(signal)):
+        ok = mask[i] & np.isfinite(sig[i]) & np.isfinite(fwd[i])
+        for panel in ctl.values():
+            ok &= np.isfinite(panel[i])
+        if ok.sum() < max(min_assets, k + 12):
+            plain.append(np.nan)
+            full.append(np.nan)
+            continue
+        y = fwd[i][ok]
+        lo, hi = np.percentile(y, [1, 99])
+        y = np.clip(y, lo, hi)
+        columns = [sig[i][ok]] + [panel[i][ok] for panel in ctl.values()]
+        z = _z(np.column_stack(columns))
+        if not np.isfinite(z).all():
+            plain.append(np.nan)
+            full.append(np.nan)
+            continue
+        ones = np.ones(len(y))
+        b1 = np.linalg.lstsq(np.column_stack([ones, z[:, 0]]), y, rcond=None)[0]
+        design = np.column_stack([ones, z])
+        b2, *_ = np.linalg.lstsq(design, y, rcond=None)
+        resid = y - design @ b2
+        plain.append(float(b1[1]))
+        full.append(float(b2[1]))
+        r2s.append(1.0 - float(resid @ resid) / float(((y - y.mean()) ** 2).sum()) if ((y - y.mean()) ** 2).sum() > 0 else float("nan"))
+        counts.append(int(ok.sum()))
+    index = signal.index
+
+    def summary(values) -> dict:
+        s = pd.Series(values, index=index).dropna()
+        if len(s) < 12:
+            return {"n_dates": int(len(s))}
+        lags = max(overlap_lags(horizon, step), int(np.floor(4.0 * (len(s) / 100.0) ** (2.0 / 9.0))))
+        nw = newey_west(s, lags)
+        return {"premium": nw["mean"], "se": nw["se"], "t_stat": nw["t"], "n_dates": int(len(s)), "positive_share": float((s > 0).mean()),
+                "ci95": [nw["mean"] - 1.96 * nw["se"], nw["mean"] + 1.96 * nw["se"]] if np.isfinite(nw["se"]) else [float("nan"), float("nan")]}
+    with_controls, without = summary(full), summary(plain)
+    explained = summary([a - b for a, b in zip(plain, full)])                       # per date, what holding the controls fixed took away: its own error says whether the two versions really differ
+    out = {"controls": list(controls), "with_controls": with_controls, "without_controls": without, "explained_by_controls": explained, "average_r2": float(np.nanmean(r2s)) if r2s else float("nan"),
+           "average_companies": float(np.mean(counts)) if counts else float("nan"), "series": series_points(pd.Series(full, index=index).dropna())}
+    out["reading"] = premium_reading(out)
+    return out
+
+
+def premium_reading(fm: dict) -> str:
+    """What the premium regression says, in words. The two versions (with and without the controls) are compared through their per-date difference and its error, never by whether each one is
+    "significant": a premium that is clear on its own and not clear with the controls may differ from it by no more than noise."""
+    a, b, gap = fm.get("with_controls", {}), fm.get("without_controls", {}), fm.get("explained_by_controls", {})
+    if "premium" not in a or "premium" not in b:
+        return "Too few dates to run the regression."
+    controls = list(fm["controls"])
+    names = ", ".join(controls[:-1]) + (" and " + controls[-1] if len(controls) > 1 else (controls[0] if controls else ""))
+    held = f" holding {names} fixed" if controls else ""
+    text = f"One standard deviation more of the signal earned {a['premium'] * 100:+.2f}% over the forward window{held} (t = {a['t_stat']:.1f})"
+    if not controls:
+        return text + "."
+    text += f"; on its own, {b['premium'] * 100:+.2f}% (t = {b['t_stat']:.1f})."
+    ta, tb, td = a.get("t_stat"), b.get("t_stat"), gap.get("t_stat")
+    if ta is None or tb is None or not (np.isfinite(ta) and np.isfinite(tb)):
+        return text
+    share = gap["premium"] / b["premium"] if gap.get("premium") is not None and b["premium"] else float("nan")
+    different = td is not None and np.isfinite(td) and abs(td) >= 2.0
+    if abs(ta) >= 2.0:
+        if different and np.isfinite(share) and share > 0.25:
+            return text + f" The premium is still there with the controls held fixed, but they account for about {share:.0%} of it (the difference has t = {td:.1f})."
+        return text + " The premium survives the controls."
+    if abs(tb) >= 2.0:
+        if different:
+            return text + f" The premium does not survive the controls: they account for about {share:.0%} of it (the difference has t = {td:.1f})."
+        return text + (f" With the controls the premium can no longer be told from luck, but the two versions differ by no more than noise (t = {td:.1f}), so the data cannot say whether the controls "
+                       "explain it.") if td is not None and np.isfinite(td) else " With the controls the premium can no longer be told from luck."
+    return text + " Neither version can be told from luck."
+
+
 # ------------------------------------------------------------------------------------------------------------------ the study
 def evaluate(ctx: ResearchContext, signal: pd.DataFrame, spec: EvalSpec | None = None, label: str = "signal") -> dict:
     """Evaluate a ready signal panel. See the module docstring for what is measured; the result is plain JSON (numbers, strings, lists)."""
@@ -270,6 +451,11 @@ def evaluate(ctx: ResearchContext, signal: pd.DataFrame, spec: EvalSpec | None =
     ic_pearson = pearson_ic(signal, fwd, spec.min_assets)
     stats_ic = ic_stats(ic, h, step, ppy)
     stats_ic["pearson_mean_ic"] = float(ic_pearson.mean()) if len(ic_pearson) else float("nan")
+    both = (signal.notna() & fwd.reindex_like(signal).notna()).sum(axis=1)
+    usable = both[both >= spec.min_assets]
+    power = detectable_effect(float(usable.median()) if len(usable) else 0.0, len(ic), h, step, stats_ic.get("std_ic"))
+    if power.get("available") and not power["adequate"]:
+        warnings.append(f"this study is small: it can only tell a mean IC of {power['mde_ic']:.3f} or more from luck, so it cannot confirm a signal of the usual size (0.02 to 0.05)")
     q = int(spec.quantiles)
     qret = quantile_returns(signal, fwd, q)
     qmean = qret.mean()
@@ -326,8 +512,15 @@ def evaluate(ctx: ResearchContext, signal: pd.DataFrame, spec: EvalSpec | None =
         "ls_cumulative_gross": series_points((1.0 + ls["gross"].fillna(0.0)).cumprod()), "ls_cumulative_net": series_points((1.0 + ls["net"].fillna(0.0)).cumprod()),
         "ls_drawdown": series_points(_drawdown(ls["net"])), "turnover": series_points(ls["turnover"]), "decay": decay, "coverage": series_points(cover_share),
     }
+    premium = None
+    if spec.premium:
+        try:
+            premium = fama_macbeth(ctx, signal, fwd, control_panels(ctx, [c for c in spec.controls if c != spec.factor]), h, step, spec.min_assets)
+        except (FundamentalsError, ValueError, np.linalg.LinAlgError, KeyError) as error:
+            warnings.append(f"the premium regression could not be run: {error}")
     result = {"label": label, "spec": spec.describe(), "universe": ctx.describe(), "ic": stats_ic, "quantiles": quant, "portfolio": portfolio, "decay": decay, "breakdown": breakdown,
-              "stability": stability, "warnings": warnings, "charts": charts, "n_dates": int(len(signal)), "average_companies": float(coverage.mean()) if len(coverage) else 0.0}
+              "stability": stability, "warnings": warnings, "charts": charts, "n_dates": int(len(signal)), "average_companies": float(coverage.mean()) if len(coverage) else 0.0,
+              "power": power, "premium": premium}
     result["verdict"] = verdict(result)
     return clean(result)
 
@@ -398,23 +591,45 @@ def evaluate_factor(ctx: ResearchContext, spec: EvalSpec) -> dict:
 
 
 # ------------------------------------------------------------------------------------------------------------------ the look-ahead audit
-def look_ahead_audit(store, spec: EvalSpec, universe=None, freq: str = "M", settings=None) -> dict:
+LAG_SWEEP = (1, 30, 60, 90)
+
+
+def look_ahead_audit(store, spec: EvalSpec, universe=None, freq: str = "M", settings=None, lags: tuple = LAG_SWEEP) -> dict:
     """The same study twice: with every figure available from the day it was public (the honest way) and with every figure treated as known on its period end. If the second is much better
-    than the first, the result leans on knowing figures before anyone could have, and the honest number is the one to believe."""
+    than the first, the result leans on knowing figures before anyone could have, and the honest number is the one to believe.
+
+    It also waits: the study is repeated with each figure used only ``lags`` days after its filing (``by_lag``). A signal whose information has gone within a month of the filing was never
+    for a slow investor, and one that is still there after three months is not about being first to read the filing. Where filing dates are estimated and not known, a long wait is also the safe
+    reading of how stale a figure may be."""
     from dataclasses import replace
 
     from .pit import PitSettings
     base = settings or PitSettings()
-    out = {}
+    out, panels = {}, {}
     for name, s in (("honest", base), ("naive", replace(base, naive_availability=True))):
         ctx = ResearchContext(store, universe, freq=freq, settings=s)
         signal = build_signal(ctx, spec)
         h = horizon_days(spec.horizon)
         ic = rank_ic(signal, ctx.forward(spec.horizon).reindex(signal.index), spec.min_assets)
         out[name] = ic_stats(ic, h, FREQ_DAYS[freq], PERIODS_PER_YEAR[freq])
+        panels[name] = ic
+    by_lag = []
+    for lag in sorted({int(x) for x in lags}):
+        if lag == base.info_lag_days:
+            stats_lag = out["honest"]
+        else:
+            ctx = ResearchContext(store, universe, freq=freq, settings=replace(base, info_lag_days=lag))
+            signal = build_signal(ctx, spec)
+            stats_lag = ic_stats(rank_ic(signal, ctx.forward(spec.horizon).reindex(signal.index), spec.min_assets), horizon_days(spec.horizon), FREQ_DAYS[freq], PERIODS_PER_YEAR[freq])
+        by_lag.append({"lag_days": lag, "mean_ic": stats_lag.get("mean_ic"), "t_stat": stats_lag.get("t_stat"), "n_dates": stats_lag.get("n_dates", 0)})
     gap = (out["naive"].get("mean_ic") or 0.0) - (out["honest"].get("mean_ic") or 0.0)
     honest_ic = out["honest"].get("mean_ic") or 0.0
     flattered = abs(honest_ic) > 1e-12 and gap * np.sign(honest_ic) > 0.5 * abs(honest_ic) or (abs(honest_ic) < 0.01 and abs(out["naive"].get("mean_ic") or 0.0) > 0.03)
-    return clean({"factor": spec.factor, "honest": out["honest"], "naive": out["naive"], "naive_minus_honest_ic": gap, "flattered": bool(flattered),
+    waits = [r for r in by_lag if r["lag_days"] >= 30 and r["mean_ic"] is not None and np.isfinite(r["mean_ic"])]
+    first = next((r for r in by_lag if r["lag_days"] == base.info_lag_days and r["mean_ic"] is not None), None) or (by_lag[0] if by_lag else None)
+    fades = bool(waits and first and first["mean_ic"] and np.isfinite(first["mean_ic"]) and abs(first["mean_ic"]) > 0.01 and waits[0]["mean_ic"] * np.sign(first["mean_ic"]) < 0.5 * abs(first["mean_ic"]))
+    return clean({"factor": spec.factor, "honest": out["honest"], "naive": out["naive"], "naive_minus_honest_ic": gap, "flattered": bool(flattered), "by_lag": by_lag, "fades_when_waiting": fades,
                   "verdict": ("Treating figures as known on their period end flatters this factor a great deal: the honest result is the one to believe." if flattered else
-                              "Treating figures as known earlier changes little: the result does not lean on early knowledge.")})
+                              "Treating figures as known earlier changes little: the result does not lean on early knowledge."),
+                  "lag_verdict": ("The IC falls to less than half within a month of waiting: the signal lives in the days right after a filing, so it is only as good as how fast it can be acted on." if fades
+                                  else "Waiting a month or more after the filing leaves most of the IC in place: the signal is not about being first to read a filing.") if by_lag else ""})
