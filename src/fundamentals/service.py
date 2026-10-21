@@ -480,7 +480,10 @@ class FundamentalsService:
         """What asking for ``years`` would do and cost, without asking: which are held already (never asked for), which are left out (found empty before, not yet due) and the one request that covers the rest."""
         if period != "annual":
             raise FundamentalsError("years are picked for the annual statements; quarterly figures are not requested one year at a time")
-        picked = sorted({int(y) for y in years})
+        try:
+            picked = sorted({int(y) for y in years})
+        except (TypeError, ValueError):
+            raise FundamentalsError("years must be whole numbers such as 2014") from None
         if len(picked) > coverage.MAX_PICK:
             raise FundamentalsError(f"pick at most {coverage.MAX_PICK} years at a time")
         cov = self.coverage(security_id, provider, today)
@@ -499,13 +502,13 @@ class FundamentalsService:
         if not p["can_fetch"]:
             raise MissingKey(p["why_not"] or f"{p['provider']} cannot be asked now")
         if p["cost"] > budget:
-            raise FundamentalsError(f"this asks for {p['cost']} {p['unit']} but the budget is {budget}")
+            raise FundamentalsError(f"this asks for {coverage.amount(p['cost'], p['unit'])} but the budget is {budget}")
         name, sid, window = p["provider"], int(security_id), p["window"]
-        prov = self.provider(name)
+        prov, word = self.provider(name), PROVIDER_WORDS.get(name, name)
         if not p["symbol"]:
-            raise FundamentalsError(f"{PROVIDER_WORDS.get(name, name)} does not know this company yet: fetch its statements first")
+            raise FundamentalsError(f"{word} does not know this company yet: fetch its statements first")
         self.pool(name).ensure(p["cost"])
-        say(f"{p['symbol']}: asking for {coverage.describe_window(window)}, up to {p['cost']} {p['unit']}")
+        say(f"{p['symbol']}: asking for {coverage.describe_window(window)}, up to {coverage.amount(p['cost'], p['unit'])}")
         before = {(r["fiscal_period"], str(r["period_end"])[:10]) for r in self.store.held_periods(sid, name)}
         label, request_type, day = "annual", "financials:annual", self.usage.today()
         try:
@@ -518,13 +521,13 @@ class FundamentalsService:
             self.store.set_sync(sid, name, request_type, last_checked=day, **({"history_exhausted": 1} if held_years and window["from"] < min(held_years) else {}))      # nothing from before the earliest year held
             report = {"security_id": sid, "symbol": p["symbol"], "provider": name, "window": window, "cost": int(error.charged or 0), "unit": p["unit"], "added": [], "left_alone": 0, "outside": 0,
                       "nothing_for": p["to_fetch"], "entries": coverage.summarise_answer(error.raw)["entries"]}
-            return {**report, "text": coverage.report_text(report, PROVIDER_WORDS.get(name, name))}
+            return {**report, "text": coverage.report_text(report, word)}
         inside = [q for q in result.periods if _year_of(q) >= window["from"] and (window["to"] is None or _year_of(q) <= window["to"])]
         fresh = [q for q in inside if (q.fiscal_period, q.period_end[:10]) not in before]
-        counts = self.store.store_financials(sid, name, fresh)
-        self.store.save_raw(name, sid, request_type, result.request, result.raw)
+        self.store.save_raw(name, sid, request_type, result.request, result.raw)                        # what was paid for is kept before anything is made of it
         if result.profile is not None:
             self.store.enrich_security(sid, result.profile)
+        counts = self.store.store_financials(sid, name, fresh)
         quality.check_security(self.store, sid)
         held = self.store.held_periods(sid, name)
         added = sorted({(int(r["fiscal_year"]), str(r["period_end"])[:10]) for r in held if r["fiscal_period"] == "FY" and (r["fiscal_period"], str(r["period_end"])[:10]) not in before})
@@ -535,12 +538,12 @@ class FundamentalsService:
         asked_from, asked_to = coverage.asked_years(result.request)
         self.store.log_fetch(sid, name, request_type, asked_from, asked_to, coverage.summarise_answer(result.raw), len(result.periods), counts["periods"], result.cost, "chosen", day)
         self.store.set_sync(sid, name, request_type, last_checked=day, last_success=day, last_period_end=summary.get("last_end"), earliest_period_end=earliest,
-                            history_exhausted=1 if (old.get("history_exhausted") or result.exhausted or (first_held is not None and window["from"] < first_held)) else 0,
+                            history_exhausted=1 if (old.get("history_exhausted") or (first_held is not None and window["from"] < first_held)) else 0,        # asked from before anything held
                             n_periods=int(summary.get("n") or 0), status="ok", error=None)
         report = {"security_id": sid, "symbol": p["symbol"], "provider": name, "window": window, "cost": result.cost, "unit": p["unit"], "added": [{"year": y, "period_end": e} for y, e in added],
                   "left_alone": len(inside) - len(fresh), "outside": len(result.periods) - len(inside), "nothing_for": [y for y in p["to_fetch"] if y not in {y for y, _ in added}],
                   "entries": coverage.summarise_answer(result.raw)["entries"]}
-        return {**report, "text": coverage.report_text(report, PROVIDER_WORDS.get(name, name))}
+        return {**report, "text": coverage.report_text(report, word)}
 
     # ------------------------------------------------------------------------------------------------------------ status for the Data Manager
     def test_provider(self, name: str) -> dict:

@@ -51,9 +51,15 @@ def _year(entry: dict) -> int | None:
     return int(end) if end.isdigit() else None
 
 
+def _echo(raw) -> dict:
+    """The window a provider says it ran: OpenFilings answers with a ``query`` object that holds the ``fiscal_year_from`` and ``fiscal_year_to`` it understood."""
+    query = raw.get("query") if isinstance(raw, dict) and isinstance(raw.get("query"), dict) else {}
+    return {k: query[f"fiscal_year_{k}"] for k in ("from", "to") if isinstance(query.get(f"fiscal_year_{k}"), int) and not isinstance(query.get(f"fiscal_year_{k}"), bool)}
+
+
 def summarise_answer(raw) -> dict:
-    """What a provider's answer held, whatever this application made of it: ``entries`` (all the periods in it), ``labels`` (how many of each kind), ``annual`` (full years), and the first and last
-    fiscal year among those."""
+    """What a provider's answer held, whatever this application made of it: ``entries`` (all the periods in it), ``labels`` (how many of each kind), ``annual`` (full years), the first and last
+    fiscal year among those, and ``echoed``, the window the provider says it ran (when it says)."""
     labels: dict[str, int] = {}
     years = []
     for entry in entries_of(raw):
@@ -62,7 +68,7 @@ def summarise_answer(raw) -> dict:
         year = _year(entry) if label == "FY" else None
         if year is not None:
             years.append(year)
-    return {"entries": sum(labels.values()), "labels": labels, "annual": labels.get("FY", 0), "first_year": min(years) if years else None, "last_year": max(years) if years else None}
+    return {"entries": sum(labels.values()), "labels": labels, "annual": labels.get("FY", 0), "first_year": min(years) if years else None, "last_year": max(years) if years else None, "echoed": _echo(raw)}
 
 
 def asked_years(request: dict | None) -> tuple[int | None, int | None]:
@@ -86,7 +92,8 @@ def derive_log(answers: list[dict]) -> list[dict]:
         summary = summarise_answer(a.get("payload"))
         asked_from, asked_to = asked_years(a.get("parameters"))
         out.append({"at": str(a.get("retrieved_at") or "")[:10], "asked_from": asked_from, "asked_to": asked_to, "entries": summary["entries"], "kept": summary["annual"], "new": None,
-                    "first_year": summary["first_year"], "last_year": summary["last_year"], "cost": None, "reason": "", "derived": True, "detail": {"labels": summary["labels"]}})
+                    "first_year": summary["first_year"], "last_year": summary["last_year"], "cost": None, "reason": "", "derived": True,
+                    "detail": {"labels": summary["labels"], "echoed": summary["echoed"]}})
     return out
 
 
@@ -121,7 +128,7 @@ def grid(held: list[dict], log: list[dict], today: date, lag_days: int, depth: i
 
     def asked_on(y: int) -> str | None:
         hits = [str(r["at"])[:10] for r in asked if (r.get("asked_from") is None or y >= int(r["asked_from"])) and (r.get("asked_to") is None or y <= int(r["asked_to"]))
-                and ((latest is not None and y < latest) or due_on(y, date.fromisoformat(str(r["at"])[:10])))]
+                and due_on(y, date.fromisoformat(str(r["at"])[:10]))]                    # a request made before the year's filing was due says nothing about it
         if not hits:
             return None
         newest = max(hits)
@@ -150,6 +157,11 @@ def grid(held: list[dict], log: list[dict], today: date, lag_days: int, depth: i
     for c in cells:
         counts[c["state"]] += 1
     return {"first": lo, "last": hi, "cells": cells, "counts": counts, "earliest_held": earliest, "latest_held": latest}
+
+
+def amount(n: int, unit: str) -> str:
+    """``10 credits`` and ``1 credit``: a unit written in the plural loses its s for one."""
+    return f"{n} {unit[:-1] if n == 1 and unit.endswith('s') else unit}"
 
 
 def describe_window(window: dict | None) -> str:
@@ -226,7 +238,7 @@ def plan_text(p: dict, unit: str, remaining: int | None) -> str:
     if not p["to_fetch"]:
         return nothing_to_fetch(p)
     left = "" if remaining is None else f" ({remaining:,} left today)"
-    text = f"One request for {describe_window(p['window'])}: {p['cost']} {unit}{left}. Any year in that window not held yet is stored; years you hold are left alone."
+    text = f"One request for {describe_window(p['window'])}: {amount(p['cost'], unit)}{left}. Any year in that window not held yet is stored; years you hold are left alone."
     if p["already_held"]:
         text += f" {years_text(p['already_held'])} {'is' if len(p['already_held']) == 1 else 'are'} held and not asked for."
     if p["asking_again"]:
@@ -244,7 +256,7 @@ def reading(row: dict | None, provider: str, unit: str) -> str:
         return ""
     asked = describe_window({"from": row.get("asked_from"), "to": row.get("asked_to")})
     cost = row.get("cost")
-    price = "" if cost is None else f" and cost {cost} {unit}"
+    price = "" if cost is None else f" and cost {amount(cost, unit)}"
     start = f"On {str(row.get('at') or '')[:10]} the request to {provider} for {asked} brought back"
     entries, kept = int(row.get("entries") or 0), int(row.get("kept") or 0)
     if entries == 0:
@@ -259,6 +271,9 @@ def reading(row: dict | None, provider: str, unit: str) -> str:
     if unused > 0 and not row.get("derived"):
         other = ", ".join(f"{n} {k}" for k, n in sorted(((row.get("detail") or {}).get("labels") or {}).items()) if k != "FY")
         text += (f" It sent {entries} entries in all; {unused} {'was' if unused == 1 else 'were'} not used because {'it was' if unused == 1 else 'they were'} not a full year with figures" + (f" ({other})" if other else "") + ".")
+    echo = (row.get("detail") or {}).get("echoed") or {}
+    if (echo.get("from") is not None and row.get("asked_from") is not None and echo["from"] != row["asked_from"]) or (echo.get("to") is not None and row.get("asked_to") is not None and echo["to"] != row["asked_to"]):
+        text += f" {provider} recorded the request it ran as {describe_window({'from': echo.get('from'), 'to': echo.get('to')})}, not {asked}: it changed the window before answering."
     if row.get("asked_from") and first and first > row["asked_from"]:
         gap = f"FY{row['asked_from']}" + (f" to FY{first - 1}" if first - 1 > row["asked_from"] else "")
         text += (f" It sent nothing for {gap}: either it holds no statements that early for this company or it limits how long a series it returns (its documentation says neither). "
@@ -269,7 +284,7 @@ def reading(row: dict | None, provider: str, unit: str) -> str:
 def report_text(report: dict, provider: str) -> str:
     """What a request for chosen years did, in words: what was added, what the provider sent nothing for, and what it cost."""
     added = [a["year"] for a in report.get("added", [])]
-    price = f" {report['cost']} {report['unit']} spent."
+    price = f" {amount(report['cost'], report['unit'])} spent."
     if not added:
         return (f"{provider} brought back nothing new for {describe_window(report.get('window'))}." + (f" It sent {report['entries']} {'entry' if report['entries'] == 1 else 'entries'}, none of them an annual statement not already held."
                                                                                                           if report.get("entries") else " Its answer held no periods.") + price)

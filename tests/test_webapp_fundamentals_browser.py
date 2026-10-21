@@ -611,6 +611,61 @@ def test_the_years_a_company_holds_are_shown_picked_priced_and_asked_for_without
         page.close()
 
 
+def test_the_older_years_a_request_found_empty_can_be_tried_in_one_click_and_a_narrower_request_may_find_them(browser, live_real):  # noqa: F811
+    app, fake = live_real.app, live_real.fake
+    fake.first_year = 2019                                                                     # the first request, from 2010, brings back 2019 onwards
+    app.extra_post["/api/fund/companies/add"]({"symbols": ["AAPL"]})
+    run(app, "/api/fund/sync", budget=11, start_year=2010)
+    fake.first_year = 2012                                                                     # the provider has more than that first answer showed
+    page = _page(browser, live_real)
+    try:
+        _open_first_company(page, demo=False)
+        card = "[data-role=fund-coverage]"
+        assert page.locator(f"{card} button.y.empty").count() >= 11 and page.locator(f"{card} button.y.empty[data-year='2014']").count() == 1      # 2010 to 2018, and the years after the latest that were asked for too
+        assert "Try the older years found empty (9)" in page.inner_text(f"{card} [data-action=cov-pick-empty]")
+        page.click(f"{card} [data-action=cov-pick-empty]")
+        _wait_until(page, "document.querySelector('[data-role=fund-years-plan-text]') && document.querySelector('[data-role=fund-years-plan-text]').innerText.includes('FY2010 to FY2018')", 30)
+        plan = page.inner_text("[data-role=fund-years-plan-text]")
+        assert plan.startswith("One request for FY2010 to FY2018: 10 credits") and "It includes FY2010 to FY2018, which the provider sent nothing for last time" in plan
+        page.click(f"{card} [data-action=cov-fetch]")
+        page.wait_for_selector("[data-role=fund-years-report]", timeout=LONG)
+        said = page.inner_text("[data-role=fund-years-report]")
+        assert said.startswith("Added FY2012 to FY2018 (7 annual statements). 10 credits spent.") and "sent nothing for FY2010 to FY2011" in said
+        assert page.locator(f"{card} button.y.held").count() == 12 and "Try the older years found empty (2)" in page.inner_text(f"{card} [data-action=cov-pick-empty]")
+        assert fake.requests[-1]["query"]["fiscal_year_from"] == "2010" and fake.requests[-1]["query"]["fiscal_year_to"] == "2018" and page.problems == []
+    finally:
+        page.close()
+
+
+def test_years_picked_for_one_company_are_not_carried_to_another_and_a_failed_plan_says_so(browser, live_real):  # noqa: F811
+    app = live_real.app
+    app.extra_post["/api/fund/companies/add"]({"symbols": ["AAPL", "MSFT"]})
+    run(app, "/api/fund/sync", budget=22, start_year=2018)
+    page = _page(browser, live_real)
+    try:
+        _open(page, "companies", demo=False)
+        page.wait_for_selector("[data-role=fund-companies] tbody tr")
+        page.locator("[data-role=fund-companies] tbody tr").nth(0).locator("[data-action=open-company]").click()
+        page.wait_for_selector("[data-role=fund-coverage] .years")
+        first = page.get_attribute("[data-role=fund-coverage] .years", "aria-label")
+        page.click("[data-role=fund-coverage] button.y[data-year='2014']")
+        page.wait_for_selector("[data-role=fund-years-plan-text]")
+        page.click("[data-action=back-to-list]")
+        page.wait_for_selector("[data-role=fund-companies] tbody tr")
+        page.locator("[data-role=fund-companies] tbody tr").nth(1).locator("[data-action=open-company]").click()
+        page.wait_for_selector("[data-role=fund-coverage] .years")
+        second = page.get_attribute("[data-role=fund-coverage] .years", "aria-label")
+        assert first != second and page.locator("[data-role=fund-coverage] button.y[aria-pressed=true]").count() == 0
+        assert "Click the years you want" in page.inner_text("[data-role=fund-years-plan]")
+        page.route("**/api/fund/coverage/plan", lambda route: route.fulfill(status=400, content_type="application/json", body='{"error": "the plan could not be made"}'))
+        page.click("[data-role=fund-coverage] button.y[data-year='2013']")
+        _wait_until(page, "document.querySelector('[data-role=fund-years-plan]').innerText.includes('the plan could not be made')", 30)
+        assert page.locator("[data-role=fund-coverage] [data-action=cov-fetch]").count() == 0           # no plan, no way to ask
+        assert page.problems == [] or all("400" in p for p in page.problems)
+    finally:
+        page.close()
+
+
 def test_the_year_calendar_fits_a_phone_and_the_demo_shows_its_years_read_only(browser, live_real, live_fund):  # noqa: F811
     live_real.app.extra_post["/api/fund/companies/add"]({"symbols": ["AAPL"]})
     run(live_real.app, "/api/fund/sync", budget=11, start_year=2018)

@@ -139,7 +139,7 @@ def format_plan(plan: dict) -> str:
 
 def format_coverage(c: dict) -> str:
     """The fiscal years of one company: what is held, what is missing, what a provider was asked for and sent nothing, what is due, and what the last request was."""
-    from .coverage import years_text
+    from .coverage import amount, years_text
     a = c["annual"]
     by_state: dict[str, list[int]] = {}
     for cell in a["cells"]:
@@ -153,7 +153,7 @@ def format_coverage(c: dict) -> str:
     q = c["quarterly"]
     out.append("")
     out.append(f"Quarterly and half-year statements held: {q['held']}." + (f" {q['note']}" if q["note"] else ""))
-    out.append(f"One request costs {c['request_cost']} {c['unit']}" + ("" if c["remaining_today"] is None else f" ({c['remaining_today']:,} left today)") + ", however many years it brings back." +
+    out.append(f"One request costs {amount(c['request_cost'], c['unit'])}" + ("" if c["remaining_today"] is None else f" ({c['remaining_today']:,} left today)") + ", however many years it brings back." +
                ("" if c["can_fetch"] else f" It cannot be asked now: {c['why_not']}"))
     return "\n".join(out)
 

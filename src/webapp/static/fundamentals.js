@@ -514,6 +514,7 @@
   const PICKED_MARK = "●";
   const YEAR_WORD = { held: "held", missing: "missing", empty: "asked for, nothing sent", due: "due: a filing should exist", notyet: "not due yet" };
   const plural = (n, one, many) => `${n} ${n === 1 ? one : many || one + "s"}`;
+  const amount = (n, unit) => `${n} ${n === 1 && unit.endsWith("s") ? unit.slice(0, -1) : unit}`;
   /* The card is made at once and filled when the years arrive. It is made again only when the company or the data changes, so that picking a year keeps the focus where it is. */
   CO.coverage = (root, p) => {
     const card = h("div", "card roomy", root); card.dataset.role = "fund-coverage";
@@ -568,9 +569,11 @@
     const tool = (label, action, years, off) => { const b = h("button", "btn small", tools, label); b.type = "button"; b.dataset.action = action; b.disabled = !live || off; b.addEventListener("click", years); return b; };
     tool(`Pick every missing year (${k.missing})`, "cov-pick-missing", () => { for (const x of a.cells) if (x.state === "missing") FD.cov.picked.add(x.year); syncPicks(); }, k.missing === 0);
     tool(`Pick what is due (${k.due})`, "cov-pick-due", () => { for (const x of a.cells) if (x.state === "due") FD.cov.picked.add(x.year); syncPicks(); }, k.due === 0);
+    const older = (x) => x.state === "empty" && a.earliest_held !== null && x.year < a.earliest_held;
+    tool(`Try the older years found empty (${a.cells.filter(older).length})`, "cov-pick-empty", () => { for (const x of a.cells) if (older(x)) FD.cov.picked.add(x.year); syncPicks(); }, !a.cells.some(older));
     tool("Clear", "cov-clear", () => { FD.cov.picked.clear(); FD.cov.last = null; syncPicks(); }, false);
     const planBox = h("div", "stack", body); planBox.dataset.role = "fund-years-plan"; planBox.setAttribute("role", "status"); planBox.setAttribute("aria-live", "polite");
-    h("p", "hint", body, `Credits pay for a request, not for years: one request costs ${c.request_cost} ${c.unit} whether it brings back three years or thirty, and a year you already hold is never asked for again. So pick all the years you want at once; they are asked for in one request.`);
+    h("p", "hint", body, `Credits pay for a request, not for years: one request costs ${amount(c.request_cost, c.unit)} whether it brings back three years or thirty, and a year you already hold is never asked for again. So pick all the years you want at once; they are asked for in one request.`);
     const quarters = c.quarterly, qd = h("details", "how", body); h("summary", "", qd, `Quarterly and half-year statements (${quarters.held} held)`);
     const labels = ["Q1", "Q2", "Q3", "Q4", "H1", "H2"].filter((l) => quarters.rows.some((r) => r.periods[l]));
     if (quarters.rows.length) table(qd, [{ label: "Year", get: (r) => String(r.year) }].concat(labels.map((l) => ({ label: l, get: (r) => (r.periods[l] ? "✓ " + r.periods[l] : "") }))), quarters.rows.slice().reverse());
@@ -591,7 +594,7 @@
       if (plan.error) { h("p", "hint tone-crit", planBox, plan.error); return; }
       h("p", "", planBox, plan.text).dataset.role = "fund-years-plan-text";
       if (plan.to_fetch.length && !plan.fits_today) h("p", "hint tone-warn", planBox, `That does not fit in what is left of today's allowance (${plan.remaining_today} ${plan.unit}). Pick fewer years, or wait for it to reset.`);
-      const go = h("button", "btn primary", planBox, plan.to_fetch.length ? `Ask for ${plural(plan.to_fetch.length, "year")} (${plan.cost} ${plan.unit})` : "Nothing to ask for"); go.type = "button"; go.dataset.action = "cov-fetch";
+      const go = h("button", "btn primary", planBox, plan.to_fetch.length ? `Ask for ${plural(plan.to_fetch.length, "year")} (${amount(plan.cost, plan.unit)})` : "Nothing to ask for"); go.type = "button"; go.dataset.action = "cov-fetch";
       go.disabled = !plan.to_fetch.length || !plan.fits_today; go.addEventListener("click", () => fetchYears(plan, years));
     };
     function showPicks() {

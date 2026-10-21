@@ -309,7 +309,7 @@ class FundamentalsStore:
                   reason: str = "", at: str | None = None) -> None:
         """Remember one request: the fiscal years it asked for (``None`` is open), what the answer held (``answer`` is :func:`coverage.summarise_answer` of it), how many annual statements this
         application read from it and how many of those were new, and what it cost. A year inside the window that came back empty is not asked for again unless the user says so."""
-        detail = {"labels": answer.get("labels") or {}}
+        detail = {"labels": answer.get("labels") or {}, "echoed": answer.get("echoed") or {}}
         with self.db.transaction() as conn:
             conn.execute("INSERT INTO fetch_log (security_id, provider, request_type, asked_from, asked_to, at, entries, kept, new, first_year, last_year, cost, reason, detail) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                          (int(security_id), provider, request_type, asked_from, asked_to, at or datetime.now(timezone.utc).strftime("%Y-%m-%d"), int(answer.get("entries") or 0), int(kept), int(new),

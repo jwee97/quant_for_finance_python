@@ -67,6 +67,15 @@ def test_the_first_statement_of_a_year_stands_for_it_and_a_restatement_does_not_
     assert cell[2022]["state"] == "held" and cell[2022]["filed"] == "2023-02-15" and cell[2021]["filed"] is None
 
 
+def test_dates_that_carry_a_time_are_read_as_dates():
+    rows = [{"fiscal_year": 2022, "period_end": "2022-12-31 00:00:00", "filing_date": "2023-02-15T09:30:00"}, {"fiscal_year": 2023, "period_end": "2023-12-31T00:00:00", "filing_date": None}]
+    g = C.grid(rows, [{"at": "2026-10-20T09:30:00+00:00", "asked_from": 2010, "asked_to": 2012}], TODAY, LAG, depth=16)
+    cell = {c["year"]: c for c in g["cells"]}
+    assert (cell[2022]["period_end"], cell[2022]["filed"], cell[2023]["period_end"], cell[2023]["filed"]) == ("2022-12-31", "2023-02-15", "2023-12-31", None)
+    assert cell[2011]["state"] == "empty" and cell[2011]["asked_on"] == "2026-10-20" and cell[2024]["expected_filing"] == "2025-05-30"      # the year end of the latest statement is read as a date, and so is the day asked
+    assert "On 2026-10-20 the request" in C.reading({"at": "2026-10-20T09:30:00+00:00", "asked_from": None, "asked_to": None, "entries": 1, "kept": 1, "first_year": 2020, "last_year": 2020, "cost": 10}, "OpenFilings", "credits")
+
+
 def test_the_grid_reaches_back_to_the_earliest_year_held_or_asked_for_and_never_before_1990():
     assert C.grid(held(1995, 2020), [], TODAY, LAG)["first"] == 1995
     assert C.grid(held(2020), [{"at": "2026-01-02", "asked_from": 1998, "asked_to": None}], TODAY, LAG)["first"] == 1998
@@ -101,6 +110,15 @@ def test_a_year_newer_than_anything_held_is_empty_only_if_it_was_already_due_whe
         assert states(C.grid(rows, [asked(day, 2019, None)], TODAY, LAG)["cells"], 2025, 2025)[2025] == state
     old = C.grid(rows, [asked("2026-09-01", 2005, 2012)], TODAY, LAG)
     assert states(old["cells"], 2005, 2012)[2008] == "empty"                                              # a year before the latest held one stays empty however long ago
+
+
+def test_a_request_made_before_a_years_filing_was_due_says_nothing_about_it_even_when_later_years_are_held():
+    rows = held(2017, *range(2019, 2025))
+    early = C.grid(rows, [asked("2019-03-01", 2000, None)], TODAY, LAG)                                  # FY2018 could not be filed before 2019-05-30: a request on 2019-03-01 found nothing because there was nothing yet
+    assert states(early["cells"], 2016, 2018) == {2016: "empty", 2017: "held", 2018: "missing"}
+    later = C.grid(rows, [asked("2019-05-30", 2000, None)], TODAY, LAG)
+    assert states(later["cells"], 2018, 2018) == {2018: "empty"}                                         # from the day its filing was expected, a request that found nothing counts
+    assert states(C.grid(rows, [asked("2019-05-29", 2000, None)], TODAY, LAG)["cells"], 2018, 2018) == {2018: "missing"}
 
 
 def test_a_year_that_is_now_held_is_held_whatever_was_asked_before():
@@ -170,12 +188,18 @@ def test_the_plan_is_told_in_one_sentence_with_what_is_left_alone_and_what_is_le
 
 
 # ------------------------------------------------------------------------------------------------------------------------ words
+def test_an_amount_is_written_in_the_singular_for_one():
+    assert [C.amount(n, u) for n, u in ((10, "credits"), (1, "credits"), (0, "credits"), (1, "requests"), (2, "requests"), (1, "credit"))] == ["10 credits", "1 credit", "0 credits", "1 request", "2 requests", "1 credit"]
+    assert C.plan_text({"to_fetch": [2014], "window": {"from": 2014, "to": 2014}, "cost": 1, "already_held": [], "asking_again": [], "left_out_empty": [], "left_out_notyet": []}, "requests", 5).startswith("One request for FY2014: 1 request (5 left today).")
+
+
 def test_years_are_written_as_runs_and_read_the_way_a_person_types_them():
     assert [C.years_text(x) for x in ([2019], [2019, 2021], [2018, 2017, 2016, 2020, 2022, 2015], [2005, 2006], [2005, 2005])] == [
         "FY2019", "FY2019 and FY2021", "FY2015 to FY2018, FY2020 and FY2022", "FY2005 to FY2006", "FY2005"]
     assert C.parse_years("2005-2007,2010") == [2005, 2006, 2007, 2010] and C.parse_years(" 2012 ") == [2012] and C.parse_years("2012, 2010-2011 2012") == [2010, 2011, 2012]
+    assert len(C.parse_years("2000-2059")) == 60                                                         # sixty is the most
     for bad, why in (("", "pick at least one year"), ("abc", "'abc' is not a year"), ("2012-2010", "not a range of years"), ("1980", "not a range of years"), ("2101", "not a range of years"),
-                     ("1990-2100", "pick at most 60")):
+                     ("1990-2100", "pick at most 60"), ("2000-2060", "pick at most 60")):
         with pytest.raises(ValueError, match=why):
             C.parse_years(bad)
     assert [C.describe_window(w) for w in ({"from": 2005, "to": 2012}, {"from": 2020, "to": None}, {"from": 2020, "to": 2020}, None, {"from": None, "to": None})] == [
@@ -186,9 +210,13 @@ def test_the_labels_of_an_answer_are_counted_and_only_full_years_give_its_first_
     answer = {"periods": [{"fiscal_year": 2019, "fiscal_period": "FY", "period_end": "2019-12-31"}, {"fiscal_year": 2020, "fiscal_period": "annual", "period_end": "2020-12-31"},
                           {"fiscal_year": 2018, "fiscal_period": "Q4", "period_end": "2018-12-31"}, {"period_end": "2021-12-31"}, {"fiscal_period": "FY", "period_end": "2017-12-31"}, "junk"]}
     s = C.summarise_answer(answer)
-    assert s == {"entries": 5, "labels": {"FY": 4, "Q4": 1}, "annual": 4, "first_year": 2017, "last_year": 2021}
-    assert C.summarise_answer([{"fiscal_period": "FY", "period_end": "2012-12-31"}]) == {"entries": 1, "labels": {"FY": 1}, "annual": 1, "first_year": 2012, "last_year": 2012}
-    assert C.summarise_answer({"periods": []}) == {"entries": 0, "labels": {}, "annual": 0, "first_year": None, "last_year": None} and C.summarise_answer(None)["entries"] == 0
+    assert s == {"entries": 5, "labels": {"FY": 4, "Q4": 1}, "annual": 4, "first_year": 2017, "last_year": 2021, "echoed": {}}
+    assert C.summarise_answer([{"fiscal_period": "FY", "period_end": "2012-12-31"}]) == {"entries": 1, "labels": {"FY": 1}, "annual": 1, "first_year": 2012, "last_year": 2012, "echoed": {}}
+    assert C.summarise_answer({"periods": []}) == {"entries": 0, "labels": {}, "annual": 0, "first_year": None, "last_year": None, "echoed": {}} and C.summarise_answer(None)["entries"] == 0
+    assert C.summarise_answer({"periods": [], "query": {"fiscal_year_from": 2019, "fiscal_year_to": None}})["echoed"] == {"from": 2019}                # the window the provider says it ran
+    assert C.summarise_answer({"periods": [], "query": {"fiscal_year_from": "2019", "fiscal_year_to": True}})["echoed"] == {} and C.summarise_answer({"query": "x"})["echoed"] == {}
+    odd = C.summarise_answer([{"fiscal_year": 2020, "fiscal_period": "FY", "period_end": "2021-01-31"}, {"fiscal_year": True, "fiscal_period": "FY", "period_end": "2018-12-31"}])
+    assert (odd["first_year"], odd["last_year"]) == (2018, 2020)                                         # the provider's own year, and the year of the period end when it gives none (a bool is not a year)
     assert [C.label_of(x) for x in ("fy", " Full Year ", "h-1", "ttm", None, "", "a" * 30)] == ["FY", "FY", "H1", "TTM", "FY", "FY", "A" * 12]
     assert C.asked_years({"fiscal_year_from": 2000, "fiscal_year_to": 2010}) == (2000, 2010) and C.asked_years({"start_year": 2009, "end_year": None}) == (2009, None)
     assert C.asked_years({"fiscal_year_from": True}) == (None, None) and C.asked_years(None) == (None, None) and C.asked_years({"fiscal_year_from": "2000"}) == (None, None)
@@ -201,7 +229,7 @@ def test_the_last_request_is_told_in_words_and_says_what_the_missing_years_could
     assert text.endswith("It sent nothing for FY2000 to FY2018: either it holds no statements that early for this company or it limits how long a series it returns (its documentation says neither). "
                          "Asking for just those years tells which, for the same price.")
     complete = C.reading({**row, "asked_from": 2019}, "OpenFilings", "credits")
-    assert "It sent nothing" not in complete
+    assert "It sent nothing" not in complete and "entries in all" not in complete and "entries in all" not in text
     one_year_short = C.reading({**row, "asked_from": 2018}, "OpenFilings", "credits")
     assert "It sent nothing for FY2018:" in one_year_short and "FY2018 to" not in one_year_short.split("It sent nothing")[1]
     assert "brought back 1 annual statement (FY2020)" in C.reading({**row, "kept": 1, "first_year": 2020, "last_year": 2020, "asked_from": 2020}, "OpenFilings", "credits")
@@ -214,6 +242,13 @@ def test_the_last_request_is_told_in_words_and_says_what_the_missing_years_could
     bare = C.reading({**row, "entries": 7, "kept": 6, "detail": {"labels": {"FY": 7}}}, "OpenFilings", "credits")
     assert " It sent 7 entries in all; 1 was not used because it was not a full year with figures." in bare
     assert "entries in all" not in C.reading({**row, "entries": 9, "derived": True}, "OpenFilings", "credits")                      # an old answer carries no count of what was readable
+    changed = C.reading({**row, "detail": {"echoed": {"from": 2019, "to": 2024}}}, "OpenFilings", "credits")
+    assert " OpenFilings recorded the request it ran as FY2019 to FY2024, not FY2000 onwards: it changed the window before answering. " in changed
+    assert changed.index("recorded the request") < changed.index("It sent nothing for FY2000")
+    for echo in ({"from": 2000, "to": 2024}, {"from": 2000}, {"to": 2024}, {}, None):                                                         # the same start, an end it was not asked for, or nothing said: no change to report
+        assert "recorded the request" not in C.reading({**row, "detail": {"echoed": echo}}, "OpenFilings", "credits"), echo
+    bounded = C.reading({**row, "asked_from": 2005, "asked_to": 2012, "first_year": 2005, "last_year": 2012, "detail": {"echoed": {"from": 2005, "to": 2010}}}, "OpenFilings", "credits")
+    assert "recorded the request it ran as FY2005 to FY2010, not FY2005 to FY2012" in bounded
     assert C.reading(None, "OpenFilings", "credits") == ""
 
 
@@ -236,7 +271,7 @@ def test_answers_kept_before_the_log_existed_give_log_rows_with_the_cost_unknown
                {"id": 1, "parameters": {"start_year": 2015, "end_year": 2016}, "retrieved_at": "2026-01-02 00:00:00", "payload": [{"fiscal_period": "FY", "period_end": "2015-12-31"}]}]
     rows = C.derive_log(answers)
     assert rows[0] == {"at": "2026-10-20", "asked_from": 2000, "asked_to": None, "entries": 3, "kept": 3, "new": None, "first_year": 2021, "last_year": 2023, "cost": None, "reason": "",
-                       "derived": True, "detail": {"labels": {"FY": 3}}}
+                       "derived": True, "detail": {"labels": {"FY": 3}, "echoed": {}}}
     assert (rows[1]["at"], rows[1]["asked_from"], rows[1]["asked_to"], rows[1]["entries"]) == ("2026-01-02", 2015, 2016, 1)
     assert C.derive_log([{"parameters": None, "payload": None, "retrieved_at": None}])[0]["at"] == ""
     grid = C.grid(held(2021, 2022, 2023), rows[:1], TODAY, LAG)
@@ -263,6 +298,7 @@ def test_a_company_says_what_it_holds_and_why_the_series_stopped_where_it_did(tm
     assert (a["earliest_held"], a["latest_held"], a["counts"]["held"]) == (2012, 2023, 12) and states(a["cells"], 2000, 2012)[2011] == "empty" and states(a["cells"], 2024, 2026) == {2024: "empty", 2025: "empty", 2026: "notyet"}
     assert cov["reading"].startswith("On 2026-10-20 the request to OpenFilings for FY2000 onwards brought back 12 annual statements (FY2012 to FY2023) and cost 10 credits.")
     assert "It sent nothing for FY2000 to FY2011" in cov["reading"] and cov["remaining_today"] == 89 and cov["sync"]["history_exhausted"] == 1
+    assert "OpenFilings recorded the request it ran as FY2012 to FY2023, not FY2000 onwards: it changed the window before answering." in cov["reading"]      # the stand-in answers with the window it ran
     assert cov["last_request"]["reason"] == "missing" and cov["last_request"]["kept"] == 12 and cov["last_request"]["new"] == 12 and len(cov["log"]) == 1 and cov["log"][0]["asked"] == "FY2000 onwards"
     assert cov["quarterly"] == {"supported": False, "held": 0, "rows": [], "note": "OpenFilings quarterly and half-year figures cannot be requested yet: its documentation does not say how to ask for them, and a guess would cost 10 credits a try."}
     assert svc.usage.used_today("openfilings") == 11 and len(fake.requests) == 2                         # a lookup and a series; looking at the years spent nothing
@@ -347,6 +383,8 @@ def test_the_budget_must_cover_the_request_and_the_days_allowance_must_have_it_a
         svc.plan_years(sid, [2014], period="quarter")
     with pytest.raises(FundamentalsError, match="pick at most 60 years"):
         svc.plan_years(sid, list(range(1990, 2051)))
+    with pytest.raises(FundamentalsError, match="years must be whole numbers"):
+        svc.plan_years(sid, ["abc"])
 
 
 def test_years_the_provider_sent_nothing_for_are_remembered_not_offered_again_and_can_be_asked_for_again(tmp_path):
@@ -367,6 +405,21 @@ def test_years_the_provider_sent_nothing_for_are_remembered_not_offered_again_an
     assert again["nothing_for"] == [2005] and svc.usage.used_today("openfilings") == 31
 
 
+def test_the_history_counts_as_exhausted_only_when_a_request_was_made_from_before_anything_held_and_found_nothing(tmp_path):
+    svc, fake, sid = _one_company(tmp_path, start=2018)
+    state = lambda: svc.store.get_sync(sid, "openfilings", "financials:annual")["history_exhausted"]  # noqa: E731
+    assert state() == 0                                                                                    # held 2018 to 2023, asked from 2018: nothing older was asked for
+    svc.fetch_years(sid, [2012, 2013], budget=10)
+    assert state() == 0
+    fake.first_year = 2015                                                                                 # the provider starts later than the window: 2015 and 2016 come back for 2014 to 2016
+    report = svc.fetch_years(sid, [2014, 2015, 2016], budget=10)
+    assert [a["year"] for a in report["added"]] == [2015, 2016] and report["nothing_for"] == [2014]
+    assert state() == 0                                                                                    # 2012 is held, so the provider has older years than the one found missing
+    fake.first_year = 2012
+    svc.fetch_years(sid, [2005], budget=10)                                                                # asked from before anything held: nothing older exists
+    assert state() == 1
+
+
 def test_an_answer_whose_periods_are_not_annual_is_kept_and_explained_not_taken_for_an_empty_company(tmp_path):
     svc, fake, sid = _one_company(tmp_path, start=2018)
     fake.period_label = "Q4"
@@ -374,7 +427,7 @@ def test_an_answer_whose_periods_are_not_annual_is_kept_and_explained_not_taken_
     assert report["added"] == [] and report["entries"] == 2 and report["cost"] == 10
     assert report["text"] == "OpenFilings brought back nothing new for FY2014 to FY2015. It sent 2 entries, none of them an annual statement not already held. 10 credits spent."
     log = svc.store.fetch_log(sid, "openfilings")[0]
-    assert (log["entries"], log["kept"], log["detail"]) == (2, 0, {"labels": {"Q4": 2}})
+    assert (log["entries"], log["kept"], log["detail"]) == (2, 0, {"labels": {"Q4": 2}, "echoed": {"from": 2014, "to": 2015}})
     assert svc.coverage(sid)["reading"] == ("On 2026-10-20 the request to OpenFilings for FY2014 to FY2015 brought back 2 entries (2 Q4), none of them an annual statement this application reads and cost 10 credits.")
     stored = svc.store.raw_answers(sid, "openfilings", "financials:annual", 1)[0]
     assert [e["fiscal_period"] for e in stored["payload"]["periods"]] == ["Q4", "Q4"]                       # what the provider really sent is kept, so the cause can be read
@@ -425,7 +478,7 @@ def test_the_log_of_requests_is_returned_newest_first_and_a_request_is_logged_by
     svc.fetch_years(sid, [2014], budget=10)
     rows = svc.store.fetch_log(sid, "openfilings")
     assert [(r["reason"], r["asked_from"], r["asked_to"]) for r in rows] == [("chosen", 2014, 2014), ("missing", 2018, None)]
-    assert json.loads(json.dumps(rows[0]["detail"])) == {"labels": {"FY": 1}} and svc.store.fetch_log(sid, "openfilings", limit=1)[0]["reason"] == "chosen"
+    assert json.loads(json.dumps(rows[0]["detail"])) == {"labels": {"FY": 1}, "echoed": {"from": 2014, "to": 2014}} and svc.store.fetch_log(sid, "openfilings", limit=1)[0]["reason"] == "chosen"
     assert svc.store.fetch_log(sid, "simulated") == [] and svc.store.fetch_log(sid, "openfilings", "financials:quarter") == []
 
 
