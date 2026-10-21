@@ -93,8 +93,13 @@ def derive_log(answers: list[dict]) -> list[dict]:
         asked_from, asked_to = asked_years(a.get("parameters"))
         out.append({"at": str(a.get("retrieved_at") or "")[:10], "asked_from": asked_from, "asked_to": asked_to, "entries": summary["entries"], "kept": summary["annual"], "new": None,
                     "first_year": summary["first_year"], "last_year": summary["last_year"], "cost": None, "reason": "", "derived": True,
-                    "detail": {"labels": summary["labels"], "echoed": summary["echoed"], "message": str((a.get("payload") or {}).get("message") or "")[:300] if isinstance(a.get("payload"), dict) else ""}})
+                    "detail": {"labels": summary["labels"], "echoed": summary["echoed"], "message": _note(a.get("payload"))}})
     return out
+
+
+def _note(raw) -> str:
+    """The free-text note a provider puts in an answer (OpenFilings' ``message``), cut to length."""
+    return str(raw.get("message") or "")[:300] if isinstance(raw, dict) else ""
 
 
 def _shift(day: date, years: int) -> date:
