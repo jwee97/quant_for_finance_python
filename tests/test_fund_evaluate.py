@@ -316,6 +316,15 @@ def test_the_automatic_direction_flips_the_signal_only_when_the_mean_ic_is_below
         assert result["signal"].equals(-signal if flipped else signal) and ("was flipped" in result["warnings"][0]) is flipped    # a mean of exactly zero keeps the factor's own sign
 
 
+def test_dates_with_no_signal_at_all_are_not_counted_when_judging_how_many_distinct_values_a_signal_takes(ctx):
+    spec = E.EvalSpec(factor="fcf_yield", breakdowns=(), premium=False)
+    signal = E.build_signal(ctx, spec).copy()
+    signal.iloc[:70] = np.nan                                                                           # most dates have no signal: the first years, before any filing is known
+    assert (signal.nunique(axis=1) == 0).sum() == 70
+    result = E.evaluate(ctx, signal, spec, label="late")
+    assert not any("distinct values" in w for w in result["warnings"]) and result["n_dates"] == len(signal)
+
+
 def test_the_histogram_of_the_ic_has_twenty_bins_edges_rounded_to_five_places_and_needs_five_values():
     values = pd.Series(np.linspace(-0.0123456789, 0.0987654321, 37))
     h = E._hist(values)
