@@ -18,10 +18,11 @@ from src.fundamentals import evaluate as E
 from src.fundamentals import expr as X
 from src.fundamentals import library as L
 from src.fundamentals import metrics, transforms
-from src.fundamentals.errors import FundamentalsError
+from src.fundamentals.errors import FundamentalsError, InvalidKey, PlanError, QuotaExhausted, RateLimited
+from src.fundamentals.keys import MAX_NUMBERED, KeyPool, discover
 from src.fundamentals.pit import PeriodTables, PitSettings, availability, step_panel
 from src.fundamentals.store import CompanyProfile, FundamentalsStore, PeriodStatement
-from src.fundamentals.usage import UsageLog, allowance
+from src.fundamentals.usage import Allowance, UsageLog, allowance
 from tests.test_fund_metrics import Y19, Y20, _company, _row
 
 
@@ -479,3 +480,93 @@ def test_the_usage_summary_the_history_and_the_activity_log_say_what_was_spent_a
     for i in range(39):
         usage.record("simulated", "x", True, symbol=f"S{i}")
     assert len(usage.recent("simulated")) == 30 and usage.recent("simulated")[0]["symbol"] == "S38" and len(usage.recent("simulated", 5)) == 5      # newest first, thirty by default
+
+
+def _keys(tmp_path, keys=("of_first_key_aaaa",), daily=100, monthly=1000, name="k.db"):
+    usage = UsageLog(FundamentalsStore(tmp_path / name).db, lambda: datetime(2026, 10, 21, 9, 0, tzinfo=timezone.utc))
+    return KeyPool("openfilings", [(f"OPENFILINGS_API_KEY_{i + 1}", k) for i, k in enumerate(keys)], usage, "salt", Allowance("credits", daily, monthly, "test")), usage
+
+
+def test_a_pool_can_make_a_request_if_it_holds_a_key_or_needs_none_and_says_how_much_a_call_may_still_spend(tmp_path):
+    assert not KeyPool("openfilings", []).configured and KeyPool("openfilings", [("OPENFILINGS_API_KEY", "of_x")]).configured and KeyPool.without_key("simulated").configured
+    pool, usage = _keys(tmp_path, daily=100)
+    usage.record("openfilings", "financials", True, key_id=pool.slots()[0]["key_id"], credits=90)
+    pool.ensure(10)                                                                                       # 90 spent and 10 asked is exactly the 100 there is: allowed
+    assert pool.remaining_today() == 10 and pool.remaining_month() == 910
+    with pytest.raises(QuotaExhausted) as short:
+        pool.ensure(11)
+    assert "this call needs 11, 10 left" in str(short.value) and "standbys" not in str(short.value)           # one key has no standbys to speak of
+    usage.record("openfilings", "financials", True, key_id=pool.slots()[0]["key_id"], credits=10)
+    with pytest.raises(QuotaExhausted) as spent:
+        pool.ensure(1)
+    assert "100 of 100 credits today" in str(spent.value) and pool.remaining_today() == 0
+    two, _ = _keys(tmp_path, keys=("of_first_key_aaaa", "of_second_key_bbbb"), daily=5, name="two.db")
+    with pytest.raises(QuotaExhausted) as several:
+        two.ensure(10)
+    assert "standbys" in str(several.value) and "does not rotate keys" in str(several.value)               # with spares the message says why they are not used
+
+
+def test_a_burst_a_bad_key_and_a_spent_allowance_are_each_logged_as_what_they_were_and_only_the_last_two_stop_the_key(tmp_path):
+    pool, usage = _keys(tmp_path, keys=("of_first_key_aaaa", "of_second_key_bbbb"))
+
+    def refuse(error):
+        def fn(key):
+            raise error
+        return fn
+
+    with pytest.raises(RateLimited):
+        pool.call(refuse(RateLimited("too many at once", dimension="burst")), "search", "us:AAA", credits=1)
+    last = usage.recent("openfilings", 1)[0]
+    assert last["success"] == 0 and last["credits_used"] == 0 and last["error"].startswith("burst:")                    # a failed call, free, and no reason to set the key aside
+    assert [s["state"] for s in pool.slots()] == ["ready", "ready"] and pool.slots()[0]["role"] == "active"
+    used = []
+    pool.call(lambda key: used.append(key) or 1, "search", "us:AAA", credits=1)
+    assert used == ["of_first_key_aaaa"]
+    calls = []
+
+    def bad_then_good(key):
+        calls.append(key)
+        if key == "of_first_key_aaaa":
+            raise InvalidKey("revoked")
+        return 7
+
+    assert pool.call(bad_then_good, "search", "us:BBB", credits=1) == 7 and calls == ["of_first_key_aaaa", "of_second_key_bbbb"]
+    rows = usage.recent("openfilings", 3)
+    assert rows[1]["success"] == 0 and rows[1]["error"].startswith("auth:") and rows[1]["credits_used"] == 0 and rows[0]["success"] == 1 and rows[0]["credits_used"] == 1
+    assert [(s["state"], s["role"]) for s in pool.slots()] == [("invalid", "unusable"), ("ready", "active")]
+    with pytest.raises(QuotaExhausted):
+        pool.call(refuse(RateLimited("daily allowance", dimension="daily")), "financials", "us:CCC", credits=10)
+    assert usage.recent("openfilings", 1)[0]["error"].startswith("limit:day") and pool.slots()[1]["state"] == "spent_day"
+
+
+def test_a_pool_whose_every_key_was_rejected_says_so_and_has_nothing_left_to_spend(tmp_path):
+    pool, usage = _keys(tmp_path, keys=("of_only_key_cccc",), name="last.db")
+
+    def revoked(key):
+        raise InvalidKey("revoked")
+
+    with pytest.raises(InvalidKey, match="every OPENFILINGS key was rejected"):
+        pool.call(revoked, "search", "us:AAA", credits=1)
+    assert pool.remaining_today() == 0 and pool.remaining_month() is None and [s["role"] for s in pool.slots()] == ["unusable"]
+    with pytest.raises(InvalidKey):
+        pool.ensure(1)
+    assert usage.recent("openfilings", 1)[0]["error"].startswith("auth:")
+
+
+def test_numbered_key_slots_are_read_up_to_the_twentieth_and_a_plan_error_is_logged_without_setting_the_key_aside(tmp_path, monkeypatch):
+    for name in [f"OPENFILINGS_API_KEY_{i}" for i in range(1, MAX_NUMBERED + 3)] + ["OPENFILINGS_API_KEY", "OPENFILINGS_API_KEYS"]:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv(f"OPENFILINGS_API_KEY_{MAX_NUMBERED}", "of_twentieth_key_1234")
+    monkeypatch.setenv(f"OPENFILINGS_API_KEY_{MAX_NUMBERED + 1}", "of_twenty_first_key_5678")
+    found, _ = discover("openfilings", tmp_path)
+    assert MAX_NUMBERED == 20 and found == [(f"OPENFILINGS_API_KEY_{MAX_NUMBERED}", "of_twentieth_key_1234")]            # the twenty-first slot is not looked at
+    pool, usage = _keys(tmp_path, name="plan.db")
+
+    def not_on_the_plan(key):
+        raise PlanError("this needs the pro plan", feature="screener", min_plan="pro")
+
+    with pytest.raises(PlanError):
+        pool.call(not_on_the_plan, "screen", "us:AAA", credits=10)
+    last = usage.recent("openfilings", 1)[0]
+    assert last["success"] == 0 and last["credits_used"] == 0 and last["error"].startswith("plan:")                       # a refusal of the plan is free and says what it was
+    assert pool.slots()[0]["state"] == "ready" and pool.remaining_today() == 100                                        # and every key on the plan would say the same, so none is set aside
