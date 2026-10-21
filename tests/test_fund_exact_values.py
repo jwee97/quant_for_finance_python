@@ -50,6 +50,38 @@ def test_a_free_cash_flow_the_provider_gives_is_used_and_otherwise_it_is_cash_fr
     assert at(tmp_path / "b", "absent", {2019: Y19, 2020: absent}, 2020)["fcf"] == 190.0 - 70.0
 
 
+def test_a_free_cash_flow_falls_back_on_cash_from_operations_less_capital_spending_row_by_row():
+    class Table(metrics.Ctx):                                                                              # the table of figures, without a database behind it
+        def __init__(self, **columns):
+            self.t = pd.DataFrame(columns)
+
+    got = metrics._fcf(Table(free_cash_flow=[np.nan, 5.0, np.nan], operating_cash_flow=[190.0, 1.0, np.nan], capital_expenditure=[70.0, 1.0, 3.0]))
+    assert got.iloc[0] == 120.0 and got.iloc[1] == 5.0 and np.isnan(got.iloc[2])                           # the provider's figure where there is one, else the difference, else nothing
+
+
+def test_no_infinity_leaves_the_derived_metrics_and_the_definitions_cannot_be_changed(tmp_path):
+    import dataclasses
+
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        metrics.DEFINITIONS[0].name = "changed"
+    store, sid = _company(tmp_path, {2019: Y19, 2020: Y20})
+    tables = PeriodTables(store, [sid])
+
+    @metrics.metric("zz_plus_infinity", "A test", "quality", "ratio", "An infinite figure.", stage=9)
+    def _plus(c):
+        return pd.Series(np.inf, index=c.t.index)
+
+    @metrics.metric("zz_minus_infinity", "A test", "quality", "ratio", "A figure that falls to minus infinity.", stage=9)
+    def _minus(c):
+        return pd.Series(-np.inf, index=c.t.index)
+
+    try:
+        values = metrics.compute(tables, "fy")
+        assert values["zz_plus_infinity"].isna().all() and values["zz_minus_infinity"].isna().all()
+    finally:
+        del metrics.DEFINITIONS[-2:]
+
+
 def test_the_tax_rate_behind_the_return_on_capital_is_the_firms_own_from_zero_to_45_percent_and_the_default_otherwise(tmp_path):
     invested = 480.0 + 1300.0 - 260.0
     for case, (tax, pretax, rate) in enumerate(((0.0, 200.0, 0.0), (90.0, 200.0, 0.45), (100.0, 200.0, metrics.DEFAULT_TAX_RATE), (-10.0, 200.0, metrics.DEFAULT_TAX_RATE), (50.0, 200.0, 0.25))):
@@ -99,6 +131,14 @@ def test_the_error_that_allows_for_overlap_uses_the_lags_the_rule_of_thumb_gives
     assert E.newey_west(x[:5], lags=10)["lags"] == 3 and E.newey_west(x[:5], lags=-3)["lags"] == 0                          # at most n - 2, at least 0
     ic = pd.Series(np.random.default_rng(1).normal(0.03, 0.08, 120))
     assert E.ic_stats(ic, 21, 21, 12)["hac_lags"] == 4 and E.ic_stats(ic, 63, 21, 12)["hac_lags"] == 4 and E.ic_stats(ic, 252, 21, 12)["hac_lags"] == 11    # the larger of the overlap and the rule
+
+
+def test_the_buckets_are_judged_from_three_populated_ones_and_an_empty_one_is_not_counted():
+    three = E.monotonicity(pd.Series([1.0, 2.0, 3.0]))
+    assert three["spearman"] == pytest.approx(1.0) and three["rising_pairs"] == 1.0 and three["buckets"] == 3                    # three are enough
+    gap = E.monotonicity(pd.Series([1.0, np.nan, 3.0, 2.0]))
+    assert gap["buckets"] == 3 and gap["spearman"] == pytest.approx(0.5) and gap["rising_pairs"] == 0.5                            # an empty bucket is left out, not read as a fall
+    assert np.isnan(E.monotonicity(pd.Series([1.0, np.nan, 3.0]))["spearman"])                                                     # two populated ones are not
 
 
 def test_a_series_that_never_moves_has_no_information_ratio():

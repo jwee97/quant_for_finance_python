@@ -520,6 +520,9 @@ def test_a_signal_that_takes_few_values_is_warned_about_at_the_edges_the_study_s
     assert any("only 2 of 5 buckets are ever populated" in w for w in two)
     five = E.evaluate(ctx, _bucketed(ctx, 5), spec, "five levels")["warnings"]
     assert not any("buckets are ever populated" in w for w in five)                                              # five values fill five buckets exactly
+    half_empty = _bucketed(ctx, 20)
+    half_empty.iloc[: int(len(half_empty) * 0.6)] = np.nan                                                         # no figure at all on most dates: they do not count as dates with no values
+    assert not any("distinct values" in w for w in E.evaluate(ctx, half_empty, spec, "half empty")["warnings"])
 
 
 def test_a_direction_chosen_on_the_data_flips_a_factor_that_works_the_wrong_way_round_and_says_so(world):

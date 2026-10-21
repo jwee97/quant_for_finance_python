@@ -1820,7 +1820,7 @@ See: [automated-alpha-discovery](techniques/automated-alpha-discovery.md)
 
 ### Search ledger
 
-The count of every idea tried on one question (the same universe, dates, horizon, frequency, entry lag, pipeline and costs) across all runs. The false-discovery q-values and the deflated Sharpe ratio of a new run are computed from the pooled count, so ten runs of ten ideas are a hundred ideas to correct for, not ten; an idea tried twice counts once.
+The count of every idea tried on one question (the same universe, rebalance grid, horizon, entry lag, pipeline, costs and shares of dates for training and validation) across all runs. The false-discovery q-values and the deflated Sharpe ratio of a new run are computed from the pooled count, so ten runs of ten ideas are a hundred ideas to correct for, not ten; an idea tried twice counts once.
 
 See: [automated-alpha-discovery](techniques/automated-alpha-discovery.md)
 
