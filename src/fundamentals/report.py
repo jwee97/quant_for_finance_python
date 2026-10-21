@@ -137,6 +137,34 @@ def format_plan(plan: dict) -> str:
     return "\n".join(out)
 
 
+def format_coverage(c: dict) -> str:
+    """The fiscal years of one company: what is held, what is missing, what a provider was asked for and sent nothing, what is due, and what the last request was."""
+    from .coverage import years_text
+    a = c["annual"]
+    by_state: dict[str, list[int]] = {}
+    for cell in a["cells"]:
+        by_state.setdefault(cell["state"], []).append(cell["year"])
+    out = [f"{c['name'] or c['ticker']} ({c['symbol'] or c['ticker']}) from {c['provider_word']}"]
+    for state, label in (("held", "held"), ("missing", "missing"), ("empty", "asked for, nothing sent"), ("due", "due (a filing should exist)"), ("notyet", "not due yet")):
+        if by_state.get(state):
+            out.append(f"  {label:<28}{years_text(by_state[state])}  ({len(by_state[state])})")
+    if c["reading"]:
+        out.extend(["", c["reading"]])
+    q = c["quarterly"]
+    out.append("")
+    out.append(f"Quarterly and half-year statements held: {q['held']}." + (f" {q['note']}" if q["note"] else ""))
+    out.append(f"One request costs {c['request_cost']} {c['unit']}" + ("" if c["remaining_today"] is None else f" ({c['remaining_today']:,} left today)") + ", however many years it brings back." +
+               ("" if c["can_fetch"] else f" It cannot be asked now: {c['why_not']}"))
+    return "\n".join(out)
+
+
+def format_year_plan(p: dict) -> str:
+    out = [p["text"]]
+    if p["to_fetch"] and not p["fits_today"]:
+        out.append(f"It does not fit in what is left of today's allowance ({p['remaining_today']} {p['unit']}).")
+    return "\n".join(out)
+
+
 def format_sync(r: dict) -> str:
     out = [f"Fetched {r['fetched']} companies ({r['periods']} periods stored), spent {r['cost']} {r['unit']}; {len(r['failed'])} failed, {len(r['not_found'])} not found, {len(r['pending'])} still being collected"]
     if r.get("stopped"):
@@ -288,7 +316,7 @@ def format_backtest(r: dict) -> str:
     return "\n".join(out)
 
 
-__all__ = ["format_status", "format_plan", "format_sync", "format_prices", "format_factors", "format_scan", "format_study", "format_lookahead", "format_discovery", "format_library", "format_graveyard",
+__all__ = ["format_status", "format_plan", "format_coverage", "format_year_plan", "format_sync", "format_prices", "format_factors", "format_scan", "format_study", "format_lookahead", "format_discovery", "format_library", "format_graveyard",
            "format_monitor", "format_backtest", "headline", "grid"]
 
 

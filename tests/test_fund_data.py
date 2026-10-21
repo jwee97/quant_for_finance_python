@@ -345,6 +345,7 @@ class FakeOpenFilings:
         self.directory = [dict(e) for e in DIRECTORY]
         self.empty_search_as_200 = False
         self.skipped: list = []
+        self.first_year, self.last_year, self.period_label = 2012, 2023, "FY"                  # the years it holds for any company, and how it labels them
 
     def __call__(self, url, headers, timeout):
         parts = parse.urlparse(url)
@@ -395,9 +396,8 @@ class FakeOpenFilings:
                 self.reject_line_items_once = False
                 self.used_day[(account, self.day)] = used_today                                 # a rejected call is refunded
                 return 422, {}, json.dumps({"detail": [{"loc": ["query", "line_items"], "msg": "unknown line item"}]}).encode()
-            first, last = int(q.get("fiscal_year_from", 2015)), int(q.get("fiscal_year_to", 2023))
-            first = max(first, 2012)
-            periods = [{"fiscal_year": y, "fiscal_period": "FY", "period_end": f"{y}-12-31", "filing_id": f"{market}:{ticker}:annual:{y}", "filing_date": f"{y + 1}-02-{10 + y % 10:02d}",
+            first, last = max(int(q.get("fiscal_year_from", 2015)), self.first_year), min(int(q.get("fiscal_year_to", self.last_year)), self.last_year)
+            periods = [{"fiscal_year": y, "fiscal_period": self.period_label, "period_end": f"{y}-12-31", "filing_id": f"{market}:{ticker}:annual:{y}", "filing_date": f"{y + 1}-02-{10 + y % 10:02d}",
                         "form_type": "10-K", "currency": "USD", "values": _values(y, 1.0 + 0.05 * (y - 2012))} for y in range(first, last + 1)]
             return 200, {}, json.dumps({"entity": {"name": f"{ticker} Corp", "market_id": market, "ticker": self.entity_ticker or ticker, "lei": "L" * 20, "isin": "US0000000000"},
                                         "query": {"fiscal_year_from": first, "fiscal_year_to": last, "fiscal_period": "fy"}, "currency_latest": "USD", "periods": periods}).encode()

@@ -8,7 +8,8 @@ The design rules are the ones the research depends on:
   real date, ``estimated`` when only the period end is known and a conservative lag is assumed. A restated figure is a new ``vintage`` of the same period, public from the day we first saw it.
 * **Observations are long and canonical**: one row per period and canonical metric code, with the source field it came from and a quality flag. Derived ratios that many studies reuse are kept in
   ``fundamental_metrics`` with the version of the formula; experimental factor matrices are never stored.
-* **Every external request is counted** (``api_usage``), every raw response kept once (``raw_fundamental_payloads``, deduplicated by hash), and every tested alpha remembered
+* **Every external request is counted** (``api_usage``), what each one asked for and what came back is kept (``fetch_log``: so that a year already asked for and not found is not paid for again),
+  every raw response kept once (``raw_fundamental_payloads``, deduplicated by hash), and every tested alpha remembered
   (``alpha_library`` for survivors, ``alpha_graveyard`` for the rest) so the same idea is not paid for twice.
 """
 
@@ -84,6 +85,12 @@ CREATE TABLE IF NOT EXISTS sync_state (
     last_checked TEXT, last_success TEXT, last_period_end TEXT, earliest_period_end TEXT, history_exhausted INTEGER NOT NULL DEFAULT 0,
     n_periods INTEGER NOT NULL DEFAULT 0, status TEXT, error TEXT,
     PRIMARY KEY (security_id, provider, request_type));
+
+CREATE TABLE IF NOT EXISTS fetch_log (
+    id INTEGER PRIMARY KEY, security_id INTEGER NOT NULL REFERENCES securities(security_id) ON DELETE CASCADE, provider TEXT NOT NULL, request_type TEXT NOT NULL,
+    asked_from INTEGER, asked_to INTEGER, at TEXT NOT NULL, entries INTEGER NOT NULL DEFAULT 0, kept INTEGER NOT NULL DEFAULT 0, new INTEGER NOT NULL DEFAULT 0,
+    first_year INTEGER, last_year INTEGER, cost INTEGER NOT NULL DEFAULT 0, reason TEXT, detail TEXT);
+CREATE INDEX IF NOT EXISTS ix_fetch_log ON fetch_log(security_id, provider, request_type);
 
 CREATE TABLE IF NOT EXISTS fx_rates (date TEXT NOT NULL, base TEXT NOT NULL, quote TEXT NOT NULL, rate REAL NOT NULL, source TEXT, PRIMARY KEY (date, base, quote));
 

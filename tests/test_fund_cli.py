@@ -128,6 +128,33 @@ def test_companies_are_registered_for_free_planned_and_fetched_only_within_a_sta
     assert code == 0 and "Fetched 1 companies" in out and "spent 11 credits" in out
 
 
+def test_the_years_a_company_holds_are_shown_and_chosen_years_are_asked_for_only_within_a_stated_budget(home, fake_provider, capsys, tmp_path):
+    assert run(capsys, "add", "us:AMZN")[0] == 0
+    assert run(capsys, "sync", "--start-year", "2018", "--budget", "11", "us:AMZN")[0] == 0
+    sent = len(fake_provider.requests)
+    saved = tmp_path / "coverage.json"
+    code, out, _ = run(capsys, "coverage", "us:AMZN", "--json", str(saved))
+    assert code == 0 and re.search(r"held\s+FY2018 to FY2023\s+\(6\)", out) and re.search(r"missing\s+FY\d{4} to FY2017", out)
+    assert "brought back 6 annual statements (FY2018 to FY2023) and cost 10 credits" in out and "Quarterly and half-year statements held: 0. OpenFilings quarterly" in out
+    assert "One request costs 10 credits" in out and "however many years it brings back" in out and len(fake_provider.requests) == sent
+    assert json.loads(saved.read_text())["annual"]["counts"]["held"] == 6
+    code, out, _ = run(capsys, "years", "us:AMZN", "--pick", "2014-2016,2019")
+    assert code == 0 and "One request for FY2014 to FY2016: 10 credits" in out and "FY2019 is held and not asked for" in out and "Nothing was asked" in out and len(fake_provider.requests) == sent
+    code, out, err = run(capsys, "years", "us:AMZN", "--pick", "2014-2016", "--budget", "9")
+    assert code == 2 and "this asks for 10 credits but the budget is 9" in err and len(fake_provider.requests) == sent
+    code, out, _ = run(capsys, "years", "us:AMZN", "--pick", "2014-2016", "--budget", "10")
+    assert code == 0 and "Added FY2014 to FY2016 (3 annual statements). 10 credits spent." in out and len(fake_provider.requests) == sent + 1
+    code, out, err = run(capsys, "years", "us:AMZN", "--pick", "2014-2016", "--budget", "10")
+    assert code == 2 and "nothing to ask for: you already hold FY2014 to FY2016" in err and len(fake_provider.requests) == sent + 1
+    code, out, _ = run(capsys, "coverage", "us:AMZN")
+    assert re.search(r"held\s+FY2014 to FY2016 and FY2018 to FY2023\s+\(9\)", out)
+    for argv, message in ((["years", "us:AMZN"], "say which years"), (["years", "us:AMZN", "--pick", "abc"], "is not a year"), (["years", "--pick", "2014"], "name one company"),
+                          (["years", "us:NOPE", "--pick", "2014"], "is not in the database"), (["coverage", "us:AMZN", "us:AAPL"], "name one company"), (["years", "us:AMZN", "--pick", "2014", "--demo"], "is for real data")):
+        code, out, err = run(capsys, *argv)
+        assert code == 2 and message in err and out == "", argv
+    assert KEY_1 not in saved.read_text()
+
+
 def test_prices_are_loaded_from_the_market_data_source(home, monkeypatch, capsys):
     asked = []
 

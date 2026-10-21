@@ -16,11 +16,12 @@ from __future__ import annotations
 import json
 import math
 from dataclasses import dataclass, field
+from datetime import date
 from pathlib import Path
 
 import pandas as pd
 
-from . import quality
+from . import coverage, quality
 from .errors import FundamentalsError, InvalidKey, MissingKey, NotFound, PlanError, ProviderError, QuotaExhausted, SyncPending
 from .keys import KeyPool
 from .providers import PROVIDER_NAMES, make_provider
@@ -35,8 +36,15 @@ NOT_FOUND_RETRY_DAYS = 60
 SEARCH_KEEP_DAYS = 30                              # a saved search answer is used again for this long (a company's listing hardly ever changes) ...
 SEARCH_EMPTY_KEEP_DAYS = 1                         # ... and one that found nothing for a day, so a second press does not spend another credit
 KIND_WORDS = {"name": "a company name", "symbol": "a ticker", "isin": "an ISIN", "lei": "a LEI"}
+PROVIDER_WORDS = {"openfilings": "OpenFilings", "simulated": "the simulated world"}
+NO_QUARTERS = {"openfilings": "OpenFilings quarterly and half-year figures cannot be requested yet: its documentation does not say how to ask for them, and a guess would cost 10 credits a try."}
 _PROFILE_TEXT = ("provider_symbol", "ticker", "name", "exchange", "market", "country", "currency", "sector", "industry", "isin", "lei")
 _PROFILE_EXTRA = ("also_listed", "score", "registry", "hint", "primary", "has_financials")
+
+
+def _year_of(statement) -> int:
+    """The fiscal year a statement belongs to: the provider's own label, else the year its period ended."""
+    return statement.fiscal_year if statement.fiscal_year is not None else int(statement.period_end[:4])
 
 
 def _freeze(profile: CompanyProfile) -> dict:
@@ -399,13 +407,20 @@ class FundamentalsService:
             profile = self._call(task.provider, lambda: prov.get_company(task.symbol), "lookup", task.symbol)
             cost += prov.cost("profile")
             self.store.enrich_security(task.security_id, profile)
-        result = self._call(task.provider, lambda: prov.get_financials(task.symbol, start_year=None if incremental else start_year, period=label, limit=newest),
-                            f"financials:{label}", task.symbol)
+        try:
+            result = self._call(task.provider, lambda: prov.get_financials(task.symbol, start_year=None if incremental else start_year, period=label, limit=newest),
+                                f"financials:{label}", task.symbol)
+        except NotFound as error:
+            self._remember_empty(task.security_id, task.provider, label, error, task.reason)
+            raise
         cost += result.cost
         self.store.save_raw(task.provider, task.security_id, f"financials:{label}", result.request, result.raw)
         if result.profile is not None:
             self.store.enrich_security(task.security_id, result.profile)
         counts = self.store.store_financials(task.security_id, task.provider, result.periods)
+        asked_from, asked_to = coverage.asked_years(result.request)
+        self.store.log_fetch(task.security_id, task.provider, f"financials:{label}", asked_from, asked_to, coverage.summarise_answer(result.raw), len(result.periods), counts["periods"], result.cost,
+                             task.reason, self.usage.today())
         quality.check_security(self.store, task.security_id)
         summary = self.store.period_summary(task.security_id, task.provider)
         old = self.store.get_sync(task.security_id, task.provider, self._state_key(task.period)) or {}
@@ -414,6 +429,117 @@ class FundamentalsService:
                             last_period_end=summary.get("last_end"), earliest_period_end=earliest, history_exhausted=1 if (result.exhausted or old.get("history_exhausted")) else 0,
                             n_periods=int(summary.get("n") or 0), status="ok", error=None)
         return {"cost": cost, "requests": result.requests, "periods": counts["periods"], "vintages": counts["vintages"], "unmapped": counts["unmapped"]}
+
+    def _remember_empty(self, security_id: int, provider: str, label: str, error: NotFound, reason: str) -> None:
+        """A series that came back without one annual statement in it was paid for: keep the answer, and which years the request covered, so that those years are not paid for again unasked."""
+        if error.raw is None:
+            return                                                       # the provider does not know the company: nothing was charged and nothing is learnt about any year
+        request = error.request or {}
+        asked_from, asked_to = coverage.asked_years(request)
+        self.store.save_raw(provider, security_id, f"financials:{label}", request, error.raw)
+        self.store.log_fetch(security_id, provider, f"financials:{label}", asked_from, asked_to, coverage.summarise_answer(error.raw), 0, 0, int(error.charged or 0), reason, self.usage.today())
+
+    # ------------------------------------------------------------------------------------------------------------ which years are held
+    def _known(self, security_id: int, provider: str | None) -> tuple[dict, str, FundamentalDataProvider]:
+        info = self.store.get_security(int(security_id))
+        if info is None:
+            raise FundamentalsError(f"no company with id {security_id}")
+        name = provider or info.get("source") or "openfilings"
+        return info, name, self.provider(name)
+
+    def coverage(self, security_id: int, provider: str | None = None, today: date | str | None = None) -> dict:
+        """The fiscal years of one company: each held, missing, found empty when asked for, due (a filing that should exist by now) or not yet due; the quarterly statements held; the last request in words
+        (why the company has the years it has); and whether and at what price more can be asked for. Nothing is spent and no provider is contacted."""
+        info, name, prov = self._known(security_id, provider)
+        sid = int(security_id)
+        day = date.fromisoformat(str(today or self.usage.today())[:10])
+        held = self.store.held_periods(sid, name)
+        request_type = "financials:annual"
+        log = self.store.fetch_log(sid, name, request_type)
+        derived = False
+        if not log:
+            log = coverage.derive_log(self.store.raw_answers(sid, name, request_type))
+            derived = bool(log)
+        annual = coverage.grid([r for r in held if r["fiscal_period"] == "FY"], log, day, FILING_LAG["annual"])
+        pool = self.pool(name)
+        ok, why = prov.available()
+        word = PROVIDER_WORDS.get(name, name)
+        quarters: dict[int, dict] = {}
+        for r in held:
+            if r["fiscal_period"] != "FY":
+                quarters.setdefault(int(r["fiscal_year"]), {})[r["fiscal_period"]] = str(r["period_end"])[:10]
+        return {"security_id": int(security_id), "ticker": info["ticker"], "name": info.get("company_name"), "provider": name, "provider_word": word, "symbol": self._symbols(name).get(sid),
+                "annual": annual, "quarterly": {"supported": "quarter" in prov.periods_available, "held": sum(len(v) for v in quarters.values()),
+                                                "rows": [{"year": y, "periods": quarters[y]} for y in sorted(quarters)], "note": "" if "quarter" in prov.periods_available else NO_QUARTERS.get(name, f"{word} has no quarterly figures here.")},
+                "last_request": log[0] if log else None, "reading": coverage.reading(log[0] if log else None, word, pool.allow.unit), "log": log[:8], "derived": derived,
+                "unit": pool.allow.unit, "request_cost": prov.cost("financials"), "remaining_today": pool.remaining_today() if ok else None, "can_fetch": ok and "annual" in prov.periods_available,
+                "why_not": "" if ok else why, "sync": self.store.get_sync(sid, name, request_type), "today": day.isoformat()}
+
+    def plan_years(self, security_id: int, years, provider: str | None = None, period: str = "annual", ask_again: bool = False, today: date | str | None = None) -> dict:
+        """What asking for ``years`` would do and cost, without asking: which are held already (never asked for), which are left out (found empty before, not yet due) and the one request that covers the rest."""
+        if period != "annual":
+            raise FundamentalsError("years are picked for the annual statements; quarterly figures are not requested one year at a time")
+        picked = sorted({int(y) for y in years})
+        if len(picked) > coverage.MAX_PICK:
+            raise FundamentalsError(f"pick at most {coverage.MAX_PICK} years at a time")
+        cov = self.coverage(security_id, provider, today)
+        p = coverage.plan(cov["annual"]["cells"], picked, ask_again, cov["annual"]["latest_held"], cov["request_cost"])
+        p.update({"security_id": cov["security_id"], "provider": cov["provider"], "symbol": cov["symbol"], "unit": cov["unit"], "remaining_today": cov["remaining_today"], "can_fetch": cov["can_fetch"],
+                  "why_not": cov["why_not"], "fits_today": cov["remaining_today"] is None or p["cost"] <= cov["remaining_today"], "text": coverage.plan_text(p, cov["unit"], cov["remaining_today"])})
+        return p
+
+    def fetch_years(self, security_id: int, years, budget: int, provider: str | None = None, period: str = "annual", ask_again: bool = False, progress=None,
+                    today: date | str | None = None) -> dict:
+        """Ask the provider once for the picked years that are not held, store what is new and leave what is held alone. ``budget`` is the most this may spend (the plan's cost is what the user was shown)."""
+        say = progress or (lambda text: None)
+        p = self.plan_years(security_id, years, provider, period, ask_again, today)
+        if not p["to_fetch"]:
+            raise FundamentalsError(coverage.nothing_to_fetch(p))
+        if not p["can_fetch"]:
+            raise MissingKey(p["why_not"] or f"{p['provider']} cannot be asked now")
+        if p["cost"] > budget:
+            raise FundamentalsError(f"this asks for {p['cost']} {p['unit']} but the budget is {budget}")
+        name, sid, window = p["provider"], int(security_id), p["window"]
+        prov = self.provider(name)
+        if not p["symbol"]:
+            raise FundamentalsError(f"{PROVIDER_WORDS.get(name, name)} does not know this company yet: fetch its statements first")
+        self.pool(name).ensure(p["cost"])
+        say(f"{p['symbol']}: asking for {coverage.describe_window(window)}, up to {p['cost']} {p['unit']}")
+        before = {(r["fiscal_period"], str(r["period_end"])[:10]) for r in self.store.held_periods(sid, name)}
+        label, request_type, day = "annual", "financials:annual", self.usage.today()
+        try:
+            result = self._call(name, lambda: prov.get_financials(p["symbol"], start_year=window["from"], end_year=window["to"], period=label), request_type, p["symbol"])
+        except NotFound as error:
+            if error.raw is None:
+                raise
+            self._remember_empty(sid, name, label, error, "chosen")
+            held_years = [int(r["fiscal_year"]) for r in self.store.held_periods(sid, name) if r["fiscal_period"] == "FY"]
+            self.store.set_sync(sid, name, request_type, last_checked=day, **({"history_exhausted": 1} if held_years and window["from"] < min(held_years) else {}))      # nothing from before the earliest year held
+            report = {"security_id": sid, "symbol": p["symbol"], "provider": name, "window": window, "cost": int(error.charged or 0), "unit": p["unit"], "added": [], "left_alone": 0, "outside": 0,
+                      "nothing_for": p["to_fetch"], "entries": coverage.summarise_answer(error.raw)["entries"]}
+            return {**report, "text": coverage.report_text(report, PROVIDER_WORDS.get(name, name))}
+        inside = [q for q in result.periods if _year_of(q) >= window["from"] and (window["to"] is None or _year_of(q) <= window["to"])]
+        fresh = [q for q in inside if (q.fiscal_period, q.period_end[:10]) not in before]
+        counts = self.store.store_financials(sid, name, fresh)
+        self.store.save_raw(name, sid, request_type, result.request, result.raw)
+        if result.profile is not None:
+            self.store.enrich_security(sid, result.profile)
+        quality.check_security(self.store, sid)
+        held = self.store.held_periods(sid, name)
+        added = sorted({(int(r["fiscal_year"]), str(r["period_end"])[:10]) for r in held if r["fiscal_period"] == "FY" and (r["fiscal_period"], str(r["period_end"])[:10]) not in before})
+        first_held = min((int(r["fiscal_year"]) for r in held if r["fiscal_period"] == "FY"), default=None)
+        summary = self.store.period_summary(sid, name)
+        old = self.store.get_sync(sid, name, request_type) or {}
+        earliest = min([d for d in (summary.get("first_end"), old.get("earliest_period_end")) if d], default=None)
+        asked_from, asked_to = coverage.asked_years(result.request)
+        self.store.log_fetch(sid, name, request_type, asked_from, asked_to, coverage.summarise_answer(result.raw), len(result.periods), counts["periods"], result.cost, "chosen", day)
+        self.store.set_sync(sid, name, request_type, last_checked=day, last_success=day, last_period_end=summary.get("last_end"), earliest_period_end=earliest,
+                            history_exhausted=1 if (old.get("history_exhausted") or result.exhausted or (first_held is not None and window["from"] < first_held)) else 0,
+                            n_periods=int(summary.get("n") or 0), status="ok", error=None)
+        report = {"security_id": sid, "symbol": p["symbol"], "provider": name, "window": window, "cost": result.cost, "unit": p["unit"], "added": [{"year": y, "period_end": e} for y, e in added],
+                  "left_alone": len(inside) - len(fresh), "outside": len(result.periods) - len(inside), "nothing_for": [y for y in p["to_fetch"] if y not in {y for y, _ in added}],
+                  "entries": coverage.summarise_answer(result.raw)["entries"]}
+        return {**report, "text": coverage.report_text(report, PROVIDER_WORDS.get(name, name))}
 
     # ------------------------------------------------------------------------------------------------------------ status for the Data Manager
     def test_provider(self, name: str) -> dict:

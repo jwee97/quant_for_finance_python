@@ -77,9 +77,9 @@ def app(tmp_path_factory):
 
 # ------------------------------------------------------------------------------------------------------------------------------ the routes
 def test_the_routes_are_in_the_app_and_the_api_version_says_so(app):
-    for path in ("/api/fund/status", "/api/fund/overview", "/api/fund/catalogue", "/api/fund/companies", "/api/fund/company", "/api/fund/library", "/api/fund/run"):
+    for path in ("/api/fund/status", "/api/fund/overview", "/api/fund/catalogue", "/api/fund/companies", "/api/fund/company", "/api/fund/coverage", "/api/fund/library", "/api/fund/run"):
         assert path in app.extra_get
-    for path in ("/api/fund/sync", "/api/fund/simulate", "/api/fund/scan", "/api/fund/discover", "/api/fund/backtest", "/api/fund/stop", "/api/fund/ml"):
+    for path in ("/api/fund/sync", "/api/fund/coverage/plan", "/api/fund/coverage/fetch", "/api/fund/simulate", "/api/fund/scan", "/api/fund/discover", "/api/fund/backtest", "/api/fund/stop", "/api/fund/ml"):
         assert path in app.extra_post
     assert api.API_VERSION == 11 and app.catalog()["api_version"] == 11
     assert (Path(api.__file__).resolve().parents[2] / "docs" / api.DOC_ROOT_FILES["fundamentals"]).is_file()      # the guides viewer can open the chapter
@@ -165,6 +165,59 @@ def test_statements_are_fetched_within_a_budget_that_the_request_must_state(tmp_
     for bad, why in (({"symbols": []}, "name at least one company"), ({"symbols": ["bad symbol!"]}, "not a valid ticker"), ({"symbols": ["A"] * 300}, "at most 200"), ({"symbols": "AAPL", "market": "united states"}, "short code")):
         with pytest.raises(ApiError, match=why):
             post(local, "/api/fund/companies/add", **bad)
+
+
+def _real_with_fake(tmp_path):
+    local = make_app(tmp_path)
+    wb = local.fundamentals.bench("real")
+    fake = FakeOpenFilings({KEY_1: "a"})
+    pool = KeyPool("openfilings", [("OPENFILINGS_API_KEY_1", KEY_1)], wb.service.usage, wb.store.salt(), Allowance("credits", 100, 1000, "test"))
+    wb.service.register("openfilings", OpenFilingsProvider(pool, transport=fake, sleep=lambda s: None))
+    return local, fake
+
+
+def test_the_years_a_company_holds_are_listed_and_chosen_years_are_asked_for_within_the_budget_the_plan_showed(tmp_path):
+    local, fake = _real_with_fake(tmp_path)
+    sid = post(local, "/api/fund/companies/add", symbols="AAPL")["security_ids"][0]
+    assert run(local, "/api/fund/sync", budget=11, start_year=2018)["fetched"] == 1
+    sent = len(fake.requests)
+    cov = get(local, "/api/fund/coverage", id=str(sid))
+    json.dumps(cov, allow_nan=False)                                                                      # plain JSON
+    assert [c["year"] for c in cov["annual"]["cells"] if c["state"] == "held"] == [2018, 2019, 2020, 2021, 2022, 2023]
+    assert (cov["provider"], cov["symbol"], cov["unit"], cov["request_cost"], cov["can_fetch"], cov["remaining_today"]) == ("openfilings", "us:AAPL", "credits", 10, True, 89)
+    assert "for FY2018 onwards brought back 6 annual statements (FY2018 to FY2023) and cost 10 credits" in cov["reading"] and KEY_1 not in json.dumps(cov)
+    plan = post(local, "/api/fund/coverage/plan", security_id=sid, years=[2014, 2015, 2019])
+    assert (plan["to_fetch"], plan["already_held"], plan["cost"], plan["window"], plan["fits_today"], plan["can_fetch"]) == ([2014, 2015], [2019], 10, {"from": 2014, "to": 2015}, True, True)
+    assert plan["text"].startswith("One request for FY2014 to FY2015: 10 credits (89 left today).") and len(fake.requests) == sent              # a plan spends nothing
+    for bad, why in (({"years": []}, "pick at least one year"), ({"years": "2014"}, "pick at least one year"), ({"years": [1980]}, "between"), ({"years": ["abc"]}, "must be a number"),
+                     ({"years": list(range(1990, 2051))}, "at most 60"), ({"years": [2014], "security_id": "x"}, "say which company"), ({"years": [2014], "security_id": 999}, "no company with id 999")):
+        with pytest.raises(ApiError, match=why):
+            post(local, "/api/fund/coverage/plan", **{"security_id": sid, **bad})
+    with pytest.raises(ApiError, match="how many credits"):
+        post(local, "/api/fund/coverage/fetch", security_id=sid, years=[2014])
+    with pytest.raises(ApiError, match="from OpenFilings"):
+        post(local, "/api/fund/coverage/fetch", security_id=sid, years=[2014], budget=10, provider="simulated")
+    with pytest.raises(ApiError, match="between"):
+        post(local, "/api/fund/coverage/fetch", security_id=sid, years=[2014], budget=0)
+    assert "this asks for 10 credits but the budget is 9" in failed(local, "/api/fund/coverage/fetch", security_id=sid, years=[2014], budget=9)
+    assert "nothing to ask for: you already hold FY2019" in failed(local, "/api/fund/coverage/fetch", security_id=sid, years=[2019], budget=10) and len(fake.requests) == sent
+    report = run(local, "/api/fund/coverage/fetch", security_id=sid, years=[2014, 2015, 2019], budget=10)
+    assert report["cost"] == 10 and [a["year"] for a in report["added"]] == [2014, 2015] and report["text"] == "Added FY2014 to FY2015 (2 annual statements). 10 credits spent." and len(fake.requests) == sent + 1
+    after = get(local, "/api/fund/coverage", id=str(sid))
+    assert [c["year"] for c in after["annual"]["cells"] if c["state"] == "held"] == [2014, 2015, 2018, 2019, 2020, 2021, 2022, 2023] and after["remaining_today"] == 79
+    assert get(local, "/api/fund/company", id=str(sid))["summary"]["annual"] == 8                          # the explorer sees the new years at once
+
+
+def test_the_demo_shows_which_years_it_holds_but_never_offers_to_ask_a_provider_for_more(app):
+    first = int(get(app, "/api/fund/companies", db="demo", limit="1")["companies"][0]["security_id"])
+    cov = get(app, "/api/fund/coverage", db="demo", id=str(first))
+    assert cov["provider"] == "simulated" and cov["annual"]["counts"]["held"] >= 5 and cov["can_fetch"] is False and "simulated world" in cov["why_not"] and cov["quarterly"]["supported"] is True
+    plan = post(app, "/api/fund/coverage/plan", db="demo", security_id=first, years=[2000])
+    assert plan["can_fetch"] is False
+    with pytest.raises(ApiError, match="real data"):
+        post(app, "/api/fund/coverage/fetch", db="demo", security_id=first, years=[2000], budget=10)
+    with pytest.raises(ApiError, match="say which company"):
+        get(app, "/api/fund/coverage", db="demo")
 
 
 def test_a_company_is_found_in_the_directory_by_name_then_added_for_nothing_and_fetched(tmp_path, monkeypatch, app):

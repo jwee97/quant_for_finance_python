@@ -52,7 +52,11 @@ class PlanError(ProviderError):
 
 
 class NotFound(ProviderError):
-    """The provider has nothing for this symbol."""
+    """The provider has nothing for this symbol. When there was an answer (a series with no annual statement in it) ``raw`` holds it and ``charged`` what it cost: it was paid for, so it is kept."""
+
+    raw = None
+    charged = 0
+    request = None                  # what was asked, when there was an answer
 
 
 class SyncPending(ProviderError):

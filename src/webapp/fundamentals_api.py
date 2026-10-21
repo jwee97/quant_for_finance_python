@@ -10,7 +10,8 @@ it is a separate file, so a simulated company can never be mixed into a study of
 database, and the simulated world is refused on the real one.
 
 **Keys.** A provider key is read from the environment (on Replit: Secrets) and never passes through the page: nothing here accepts a key, and nothing that leaves contains one. Fetching statements
-spends the provider's credits, so ``/api/fund/sync`` will not start without a ``budget`` (the most credits this run may spend); the plan endpoint says what a run would cost first.
+spends the provider's credits, so ``/api/fund/sync`` will not start without a ``budget`` (the most credits this run may spend); the plan endpoint says what a run would cost first. So does asking for
+chosen years (``/api/fund/coverage/fetch``): ``/api/fund/coverage`` says which fiscal years of a company are held, and a year that is held is never asked for again.
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ import re
 import threading
 from pathlib import Path
 
+from ..fundamentals import coverage as coverage_module
 from ..fundamentals import prices as price_module
 from ..fundamentals.calibration import MAX_REPEATS
 from ..fundamentals.discovery import Discovery, DiscoverySpec
@@ -82,6 +84,21 @@ def _ids(raw, label: str = "security_ids") -> list[int] | None:
         raise ApiError(f"{label} must be a list of company ids") from None
 
 
+def _years(raw) -> list[int]:
+    if not isinstance(raw, list) or not raw:
+        raise ApiError("pick at least one year (years: a list of fiscal years)")
+    if len(raw) > coverage_module.MAX_PICK:
+        raise ApiError(f"pick at most {coverage_module.MAX_PICK} years at a time")
+    return sorted({_number(y, "a year", coverage_module.FIRST_YEAR, 2100, True) for y in raw})
+
+
+def _company_id(source: dict) -> int:
+    try:
+        return int(source.get("security_id", source.get("id")))
+    except (TypeError, ValueError):
+        raise ApiError("say which company (security_id)") from None
+
+
 class FundamentalsApi:
     def __init__(self, app):
         self.app = app
@@ -93,11 +110,12 @@ class FundamentalsApi:
     # ------------------------------------------------------------------------------------------------------------ routes
     def get_routes(self) -> dict:
         return self._clean({"/api/fund/status": self.status, "/api/fund/overview": self.overview, "/api/fund/catalogue": self.catalogue, "/api/fund/companies": self.companies,
-                            "/api/fund/company": self.company, "/api/fund/quality": self.quality, "/api/fund/library": self.library, "/api/fund/alpha": self.alpha,
+                            "/api/fund/company": self.company, "/api/fund/coverage": self.coverage, "/api/fund/quality": self.quality, "/api/fund/library": self.library, "/api/fund/alpha": self.alpha,
                             "/api/fund/graveyard": self.graveyard, "/api/fund/runs": self.runs, "/api/fund/run": self.run_summary, "/api/fund/experiments": self.experiments})
 
     def post_routes(self) -> dict:
-        return self._clean({"/api/fund/companies/add": self.add_companies, "/api/fund/companies/search": self.search_companies, "/api/fund/sync/plan": self.sync_plan, "/api/fund/provider/test": self.provider_test,
+        return self._clean({"/api/fund/companies/add": self.add_companies, "/api/fund/companies/search": self.search_companies, "/api/fund/sync/plan": self.sync_plan, "/api/fund/coverage/plan": self.coverage_plan, "/api/fund/coverage/fetch": self.coverage_fetch,
+                            "/api/fund/provider/test": self.provider_test,
                             "/api/fund/price-symbol": self.price_symbol, "/api/fund/formula/check": self.formula_check, "/api/fund/library/status": self.library_status,
                             "/api/fund/library/validate": self.library_validate, "/api/fund/sync": self.sync, "/api/fund/simulate": self.simulate, "/api/fund/prices": self.load_prices,
                             "/api/fund/scan": self.scan, "/api/fund/evaluate": self.evaluate, "/api/fund/evaluate/formula": self.evaluate_formula, "/api/fund/lookahead": self.lookahead,
@@ -214,6 +232,20 @@ class FundamentalsApi:
             raise ApiError("say which company: ?id=<security id>") from None
         return self._guard(self.bench(db, create=db == "real").company, sid)
 
+    def coverage(self, q: dict | None = None) -> dict:
+        """``GET /api/fund/coverage?db=&id=``: the fiscal years of one company, each held, missing, found empty when asked for, due or not yet due; the quarterly statements held; the last request in words
+        (why the company has the years it has); and what asking for more costs. Nothing is spent. On the demo database fetching is switched off (``can_fetch`` is false)."""
+        q = q or {}
+        db = _db(q)
+        out = self._guard(self.bench(db, create=db == "real").service.coverage, _company_id(q), q.get("provider") or None)
+        return self._fetchable(db, out)
+
+    @staticmethod
+    def _fetchable(db: str, out: dict) -> dict:
+        if db != "real":
+            out["can_fetch"], out["why_not"] = False, "the demo is a simulated world: fetching from a provider is switched off there"
+        return out
+
     def quality(self, q: dict | None = None) -> dict:
         q = q or {}
         db = _db(q)
@@ -310,6 +342,13 @@ class FundamentalsApi:
         plan = self._guard(svc.plan, provider, ids, periods, start_year)
         return {"plan": plan.summary(), "affordability": svc.affordability(provider, plan), "tasks": [{"security_id": t.security_id, "symbol": t.symbol, "reason": t.reason, "cost": t.cost} for t in plan.tasks[:200]]}
 
+    def coverage_plan(self, body: dict) -> dict:
+        """``POST /api/fund/coverage/plan {security_id, years, ask_again?}``: what asking for these fiscal years would do and cost. Years already held are never asked for; one request covers the rest.
+        Nothing is spent."""
+        db = _db(body)
+        out = self._guard(self.bench(db, create=db == "real").service.plan_years, _company_id(body), _years(body.get("years")), body.get("provider") or None, "annual", bool(body.get("ask_again")))
+        return self._fetchable(db, out)
+
     def provider_test(self, body: dict) -> dict:
         """``POST /api/fund/provider/test {provider}``: one cheap call (one credit) to prove the key works and learn the plan, which sets the allowance the quota manager enforces."""
         db = _db(body)
@@ -373,6 +412,25 @@ class FundamentalsApi:
             wb.forget()
             return report
         return self._job(f"fundamentals: fetch statements (up to {budget} credits)", work, True)
+
+    def coverage_fetch(self, body: dict) -> dict:
+        """``POST /api/fund/coverage/fetch (a job)``: ask the provider once for the chosen fiscal years of one company that are not held, and store what is new. ``budget`` (required) is the most
+        credits this may spend: the cost the plan showed. Years that are held are not asked for and not stored again."""
+        db = _db(body)
+        self._real_only(db, "fetching statements")
+        wb = self.bench(db)
+        if str(body.get("provider") or "openfilings") != "openfilings":
+            raise ApiError("the real database is filled from OpenFilings (provider: openfilings)")
+        if body.get("budget") in (None, ""):
+            raise ApiError("say how many credits this may spend (budget): asking for years uses the account's allowance")
+        budget = _number(body["budget"], "the budget", 1, MAX_BUDGET, True)
+        sid, years, ask_again = _company_id(body), _years(body.get("years")), bool(body.get("ask_again"))
+
+        def work(progress, stop):
+            report = wb.service.fetch_years(sid, years, budget, "openfilings", "annual", ask_again, progress)
+            wb.forget()
+            return report
+        return self._job(f"fundamentals: fetch chosen years (up to {budget} credits)", work)
 
     def simulate(self, body: dict) -> dict:
         """``POST /api/fund/simulate (a job)``: make the demo database, a simulated world of companies with a few alphas planted in it. ``reset`` starts the file again."""

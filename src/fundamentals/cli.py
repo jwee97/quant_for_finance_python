@@ -4,6 +4,8 @@
     quant fundamentals simulate                make the demo database: a simulated world with a few alphas planted in it (add --demo to the commands below to work in it)
     quant fundamentals search nvidia           look a company up in OpenFilings' directory by name, ticker or ISIN (1 credit; the same search again is free)
     quant fundamentals add us:AAPL jp:7203     register companies (free); `plan` says what fetching them would cost, `sync --budget 100` fetches within that many credits
+    quant fundamentals coverage us:AAPL        which fiscal years of a company the database holds, which are missing, and what the last request to the provider brought back (free)
+    quant fundamentals years us:AAPL --pick 2005-2012 [--budget 10]   ask for chosen years that are not held (without --budget it only says what that would cost; held years are never asked for)
     quant fundamentals prices                  daily prices and exchange rates for the companies, from Yahoo Finance
     quant fundamentals factors [--scan]        the factor library; with --scan every factor studied under one set of conditions
     quant fundamentals evaluate fcf_yield      one factor (or --formula "div(fcf,market_cap)") against what happened next: IC, buckets, long-short, decay, years, countries
@@ -27,6 +29,7 @@ import threading
 import time
 from pathlib import Path
 
+from . import coverage as coverage_module
 from . import report as R
 from .discovery import STRICTNESS, Discovery, DiscoverySpec
 from .errors import FundamentalsError
@@ -35,8 +38,8 @@ from .library import STATUSES
 from .service import FundamentalsService
 from .workbench import Workbench, eval_spec
 
-ACTIONS = ("status", "simulate", "search", "add", "plan", "sync", "prices", "factors", "evaluate", "preflight", "discover", "placebo", "library", "monitor", "backtest")
-REAL_ONLY = {"search": "searching OpenFilings", "add": "adding companies", "plan": "planning a sync", "sync": "fetching statements", "prices": "loading prices"}
+ACTIONS = ("status", "simulate", "search", "add", "plan", "sync", "coverage", "years", "prices", "factors", "evaluate", "preflight", "discover", "placebo", "library", "monitor", "backtest")
+REAL_ONLY = {"search": "searching OpenFilings", "add": "adding companies", "plan": "planning a sync", "sync": "fetching statements", "years": "asking for years", "prices": "loading prices"}
 DEMO_FILE, REAL_FILE = "fundamentals_demo.db", "fundamentals.db"
 
 
@@ -204,6 +207,44 @@ def _sync(wb, args) -> int:
     return _out(args, R.format_sync(report), report)
 
 
+def _one_company(wb, items) -> int:
+    """The id of the one company named (``us:AAPL`` or ``AAPL``) among those in the database."""
+    if len(items) != 1:
+        raise FundamentalsError("name one company that is in the database, such as us:AAPL or jp:7203")
+    market, _, ticker = items[0].strip().rpartition(":")
+    found = wb.store.search(ticker, 20)
+    same = found[found["ticker"].str.upper() == ticker.upper()]
+    if market:
+        same = same[same["exchange"].str.upper() == market.upper()]
+    if len(same) == 0:
+        raise FundamentalsError(f"{items[0]} is not in the database: `quant fundamentals add {items[0]}` registers it (free)")
+    if len(same) > 1:
+        raise FundamentalsError(f"{ticker} is on more than one market ({', '.join(sorted(same['exchange']))}): write it as market:ticker, such as us:{ticker}")
+    return int(same.iloc[0]["security_id"])
+
+
+def _coverage(wb, args) -> int:
+    c = wb.service.coverage(_one_company(wb, args.items))
+    return _out(args, R.format_coverage(c), c)
+
+
+def _years(wb, args) -> int:
+    sid = _one_company(wb, args.items)
+    if not args.pick:
+        raise FundamentalsError("say which years: --pick 2005-2012,2015 (`quant fundamentals coverage` shows what is held and what is missing)")
+    try:
+        years = coverage_module.parse_years(args.pick)
+    except ValueError as error:
+        raise FundamentalsError(str(error)) from None
+    plan = wb.service.plan_years(sid, years, None, "annual", args.ask_again)
+    if args.budget is None:
+        return _out(args, R.format_year_plan(plan) + "\nNothing was asked. Add --budget N (the plan's cost or more) to ask.", plan)
+    with _Stop():
+        report = wb.service.fetch_years(sid, years, args.budget, None, "annual", args.ask_again, _progress())
+    wb.forget()
+    return _out(args, report["text"], report)
+
+
 def _prices(wb, args) -> int:
     with _Stop() as stop:
         report = wb.load_prices(None, args.price_start, None, _progress(), stop, args.refresh)
@@ -354,7 +395,7 @@ def _backtest(wb, args) -> int:
     return _out(args, R.format_backtest(result), result)
 
 
-HANDLERS = {"status": _status, "simulate": _simulate, "search": _search, "add": _add, "plan": _plan, "sync": _sync, "prices": _prices, "factors": _factors, "evaluate": _evaluate, "preflight": _preflight,
+HANDLERS = {"status": _status, "simulate": _simulate, "search": _search, "add": _add, "plan": _plan, "sync": _sync, "coverage": _coverage, "years": _years, "prices": _prices, "factors": _factors, "evaluate": _evaluate, "preflight": _preflight,
             "discover": _discover, "placebo": _placebo, "library": _library, "monitor": _monitor, "backtest": _backtest}
 
 
@@ -418,10 +459,11 @@ def _add_parser(sub) -> None:
     d = p.add_argument_group("simulate")
     d.add_argument("--companies", type=int, default=120); d.add_argument("--from-year", type=int, default=2009); d.add_argument("--to-year", type=int, default=2022); d.add_argument("--seed", type=int, default=7)
     d.add_argument("--reset", action="store_true", help="start the demo file again"); d.add_argument("--strong", action="store_true", help="plant stronger alphas (easier to find in a small world)")
-    s = p.add_argument_group("search, add, plan, sync, prices")
+    s = p.add_argument_group("search, add, plan, sync, coverage, years, prices")
     s.add_argument("--market", help="search: only this market; add, sync: the market of tickers typed without one (us, jp, uk, ...)"); s.add_argument("--start-year", type=int, help="first fiscal year to fetch")
     s.add_argument("--kind", choices=["auto", "name", "symbol", "isin", "lei"], default="auto", help="search: what the text is (auto reads it from its shape: us:NVDA and NVDA are tickers, Nvidia is a name)")
     s.add_argument("--periods", nargs="*", choices=["annual", "quarter"], default=["annual"]); s.add_argument("--budget", type=int, help="sync: the most credits this run may spend (required: statements use the account's allowance)")
+    s.add_argument("--pick", help="years: the fiscal years to ask for, such as 2005-2012,2015 (held years are never asked for)"); s.add_argument("--ask-again", action="store_true", help="years: include years the provider was asked for before and sent nothing")
     s.add_argument("--price-start", default="2010-01-01", help="prices: the first date"); s.add_argument("--refresh", action="store_true", help="prices: fetch the whole history again; search: ask OpenFilings again instead of using the saved answer")
     e = p.add_argument_group("evaluate, factors --scan")
     e.add_argument("--formula", help="evaluate or backtest a formula such as div(fcf,market_cap)"); e.add_argument("--scan", action="store_true", help="factors: study every factor and set them side by side")

@@ -31,6 +31,7 @@ from urllib import parse, request
 
 from ...webapp.providers import redact
 from .. import canonical
+from ..coverage import ANNUAL_WORDS, QUARTER_LABELS, summarise_answer
 from ..errors import CreditsExhausted, InvalidKey, MissingKey, NotFound, PlanError, ProviderError, RateLimited, SyncPending
 from ..keys import KeyPool
 from ..store import CompanyProfile, PeriodStatement
@@ -363,7 +364,13 @@ class OpenFilingsProvider(FundamentalDataProvider):
         periods, profile, skipped = parse_financials(data, market_id, ticker)
         if not periods:
             message = str(data.get("message") or "").strip()
-            raise NotFound(f"OpenFilings returned no annual statements for {market_id}:{ticker}" + (f" ({redact(message, *(self.pool.secrets() if self.pool else []))[:160]})" if message else ""))
+            answer = summarise_answer(data)
+            came = ", ".join(f"{n} {k}" for k, n in sorted(answer["labels"].items()))
+            error = NotFound(f"OpenFilings returned no annual statements for {market_id}:{ticker}" + (f" ({redact(message, *(self.pool.secrets() if self.pool else []))[:160]})" if message else "")
+                             + (f"; {answer['entries']} {'entry' if answer['entries'] == 1 else 'entries'} came back but none was an annual statement with figures ({came})" if answer["entries"] else ""))
+            error.raw, error.charged = data, CREDITS["financials"]                      # the answer was paid for: the caller keeps it and remembers which years it covered
+            error.request = {"ticker": ticker, "market_id": market_id, "fiscal_year_from": params["fiscal_year_from"], "fiscal_year_to": params["fiscal_year_to"], "fiscal_period": "fy"}
+            raise error
         earliest = min(p.fiscal_year for p in periods if p.fiscal_year is not None) if any(p.fiscal_year is not None for p in periods) else None
         request_info = {"ticker": ticker, "market_id": market_id, "fiscal_year_from": params["fiscal_year_from"], "fiscal_year_to": params["fiscal_year_to"], "fiscal_period": "fy",
                         "line_items": "ALL" if params["line_items"] == "ALL" else f"{len(canonical.OPENFILINGS_KEYS)} mapped keys", "skipped": skipped}
@@ -373,9 +380,9 @@ class OpenFilingsProvider(FundamentalDataProvider):
 def _label(raw) -> str | None:
     """OpenFilings' period label as the application's: ``FY``, ``Q1``..``Q4``, ``H1`` or ``H2``; ``None`` for anything else (year-to-date and trailing figures are not stored as periods)."""
     text = str(raw or "").strip().upper().replace(" ", "").replace("-", "").replace("_", "")
-    if text in ("FY", "ANNUAL", "A", "YEAR", "FULLYEAR", "FISCALYEAR"):
+    if text in ANNUAL_WORDS:
         return "FY"
-    if text in ("Q1", "Q2", "Q3", "Q4", "H1", "H2"):
+    if text in QUARTER_LABELS:
         return text
     return None
 

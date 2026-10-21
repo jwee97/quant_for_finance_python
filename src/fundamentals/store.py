@@ -292,6 +292,55 @@ class FundamentalsStore:
             if fields:
                 conn.execute(f"UPDATE sync_state SET {', '.join(k + ' = ?' for k in fields)} WHERE security_id = ? AND provider = ? AND request_type = ?", [*fields.values(), int(security_id), provider, request_type])
 
+    # ------------------------------------------------------------------------------------------------------------ what is held, and what was asked
+    def held_periods(self, security_id: int, provider: str | None = None) -> list[dict]:
+        """Every statement held for a company, oldest first: ``fiscal_year``, ``fiscal_period``, ``period_end``, ``filing_date``, ``provider``, ``vintage``. A restatement is a later vintage of a period."""
+        sql = ("SELECT COALESCE(fiscal_year, CAST(substr(period_end, 1, 4) AS INTEGER)) AS fiscal_year, fiscal_period, period_end, filing_date, provider, vintage FROM financial_periods "
+               "WHERE security_id = ?")
+        args: list = [int(security_id)]
+        if provider:
+            sql += " AND provider = ?"
+            args.append(provider)
+        with self.db.transaction() as conn:
+            rows = conn.execute(sql + " ORDER BY period_end, vintage", args).fetchall()
+        return [dict(r) for r in rows]
+
+    def log_fetch(self, security_id: int, provider: str, request_type: str, asked_from: int | None, asked_to: int | None, answer: dict, kept: int, new: int, cost: int,
+                  reason: str = "", at: str | None = None) -> None:
+        """Remember one request: the fiscal years it asked for (``None`` is open), what the answer held (``answer`` is :func:`coverage.summarise_answer` of it), how many annual statements this
+        application read from it and how many of those were new, and what it cost. A year inside the window that came back empty is not asked for again unless the user says so."""
+        detail = {"labels": answer.get("labels") or {}}
+        with self.db.transaction() as conn:
+            conn.execute("INSERT INTO fetch_log (security_id, provider, request_type, asked_from, asked_to, at, entries, kept, new, first_year, last_year, cost, reason, detail) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                         (int(security_id), provider, request_type, asked_from, asked_to, at or datetime.now(timezone.utc).strftime("%Y-%m-%d"), int(answer.get("entries") or 0), int(kept), int(new),
+                          answer.get("first_year"), answer.get("last_year"), int(cost), reason, json.dumps(detail, sort_keys=True)))
+
+    def fetch_log(self, security_id: int, provider: str, request_type: str = "financials:annual", limit: int = 20) -> list[dict]:
+        """The requests made for a company, newest first."""
+        with self.db.transaction() as conn:
+            rows = conn.execute("SELECT * FROM fetch_log WHERE security_id = ? AND provider = ? AND request_type = ? ORDER BY id DESC LIMIT ?", (int(security_id), provider, request_type, int(limit))).fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            d["detail"] = json.loads(d["detail"]) if d.get("detail") else {}
+            out.append(d)
+        return out
+
+    def raw_answers(self, security_id: int, provider: str, request_type: str, limit: int = 20) -> list[dict]:
+        """The answers kept for a company, newest first, each with the parameters of the request that brought it and the day it was kept."""
+        with self.db.transaction() as conn:
+            rows = conn.execute("SELECT id, request_parameters, response_payload, retrieved_at FROM raw_fundamental_payloads WHERE security_id = ? AND provider = ? AND request_type = ? "
+                                "ORDER BY id DESC LIMIT ?", (int(security_id), provider, request_type, int(limit))).fetchall()
+        out = []
+        for r in rows:
+            try:
+                payload = json.loads(zlib.decompress(r[2]).decode())
+                parameters = json.loads(r[1]) if r[1] else {}
+            except (ValueError, zlib.error):
+                continue
+            out.append({"id": int(r[0]), "parameters": parameters, "payload": payload, "retrieved_at": r[3]})
+        return out
+
     def period_summary(self, security_id: int, provider: str | None = None) -> dict:
         """What is stored for a company: how many periods, the earliest and latest period end, the latest filing date."""
         sql = ("SELECT COUNT(*) AS n, MIN(period_end) AS first_end, MAX(period_end) AS last_end, MAX(COALESCE(publication_date, accepted_date, filing_date)) AS last_filed, "
