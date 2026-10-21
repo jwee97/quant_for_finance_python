@@ -10,10 +10,12 @@ this order
 The same key listed twice counts once. Each key is a *slot* ("key 1", "key 2", ...) and is identified in the usage log by a salted one-way hash, so its count follows it if the list is reordered and
 the log never holds anything from which the key could be read back.
 
-**Which key makes a request.** The first key in the list that is not invalid. A later key is a *standby*: it takes over only if the earlier one is rejected as invalid or revoked (HTTP 401), which is
-what several keys are for in practice (replacing a key without downtime, a spare, a key per machine). When a key's allowance is spent the pool stops and says when it resets; it does **not** move on
-to the next key. OpenFilings' usage policy forbids "rotating accounts or API keys" to get past its quotas, and several keys of one account share one allowance anyway, so rotation would be
-against the rules where it works and pointless where it does not. More credits come from a bigger plan or from prepaid top-ups, not from more keys.
+**Which key makes a request.** The key the user chose, if it is still usable, and otherwise the first key in the list that is not invalid. A later key is a *standby*: it takes over by itself only if
+the earlier one is rejected as invalid or revoked (HTTP 401), which is what several keys are for in practice (replacing a key without downtime, a spare, a key per machine). The user can also *choose*
+the key in use (:meth:`KeyPool.choose`, the *Use this key* button): the choice is kept, and nothing but another choice changes it. When a key's allowance is spent the pool stops and says when it
+resets; it does **not** move on to the next key, and a choice is refused while the key in use has spent its allowance. OpenFilings' usage policy forbids "rotating accounts or API keys" to get past its
+quotas, and several keys of one account share one allowance anyway, so rotation would be against the rules where it works and pointless where it does not. More credits come from a bigger plan or from
+prepaid top-ups, not from more keys.
 """
 
 from __future__ import annotations
@@ -24,7 +26,7 @@ import threading
 from pathlib import Path
 
 from ..webapp.providers import read_secret, tidy_key
-from .errors import CreditsExhausted, InvalidKey, MissingKey, PlanError, ProviderError, QuotaExhausted, RateLimited, SyncPending
+from .errors import CreditsExhausted, FundamentalsError, InvalidKey, MissingKey, PlanError, ProviderError, QuotaExhausted, RateLimited, SyncPending
 from .usage import Allowance, UsageLog, allowance
 
 _SEPARATORS = re.compile(r"[,;\s]+")
@@ -67,6 +69,7 @@ class KeyPool:
                       for i, (variable, key) in enumerate(keys)]
         self._lock = threading.Lock()
         self._invalid: set[str] = set()
+        self._chosen: str | None = None                                       # the key the user chose to be the one in use (its salted hash), if any
 
     @classmethod
     def from_environment(cls, provider: str, usage: UsageLog | None = None, salt: str = "", root: Path | None = None, allow: Allowance | None = None, plan: str | None = None) -> "KeyPool":
@@ -113,23 +116,85 @@ class KeyPool:
         return "ready"
 
     def _active(self) -> tuple[str, str, str, str] | None:
+        """The key in use: the one the user chose while it is not invalid, otherwise the first key that is not invalid."""
+        if self._chosen is not None:
+            for entry in self._keys:
+                if entry[3] == self._chosen and self._state(entry[3]) != "invalid":
+                    return entry
         for entry in self._keys:
             if self._state(entry[3]) != "invalid":
                 return entry
         return None
 
+    # ------------------------------------------------------------------------------------------------------------ choosing the key in use
+    def prefer(self, key_id: str | None) -> None:
+        """Take up a choice that was saved earlier (the service reads it from the database when the pool is made). A key id that matches no key is ignored: the key was replaced or removed."""
+        self._chosen = key_id if any(e[3] == key_id for e in self._keys) else None
+
+    def _out_of_credits(self, key_id: str) -> str:
+        """In words, why ``key_id`` cannot make a request now for want of credits, or an empty string. Both allowances count: the daily one and the monthly one."""
+        state, allow = self._state(key_id), self.allow
+        if state == "spent_day":
+            return "its daily allowance is spent (it resets at 00:00 UTC)"
+        if state == "spent_month" or (allow.monthly is not None and self._used(key_id)[1] >= allow.monthly):
+            return f"its monthly allowance is spent (it resets on {self.usage.next_month() if self.usage else 'the 1st'})"
+        if state == "no_credits":
+            return "its included credits and prepaid balance cannot cover a call (top up credits to carry on)"
+        return ""
+
+    def _choice_problem(self, key_id: str) -> str:
+        """Why ``key_id`` cannot be made the key in use now, in words, or an empty string when it can. A choice is refused while the key in use has spent its allowance: moving to another key then would be
+        rotating keys to get past a quota, which OpenFilings' usage policy forbids."""
+        slot = next(e[0] for e in self._keys if e[3] == key_id)
+        active = self._active()
+        if active is not None and active[3] == key_id:
+            return ""
+        if self._state(key_id) == "invalid":
+            return f"{slot} was rejected as invalid or revoked"
+        spent = self._out_of_credits(key_id)
+        if spent:
+            return f"{slot} cannot be used now: {spent}"
+        held = self._out_of_credits(active[3]) if active is not None else ""
+        if held:
+            return (f"{active[0]} is in use and {held}. Another key is not chosen to get past an allowance: OpenFilings' usage policy forbids rotating accounts or API keys to get past its quotas")
+        return ""
+
+    @property
+    def chosen_id(self) -> str | None:
+        """The salted hash of the key the user chose (what the service keeps between runs), or ``None`` when nothing was chosen."""
+        return self._chosen
+
+    def choose(self, slot) -> str:
+        """Make the key in ``slot`` (``key 2``, or just ``2``) the key in use, because the user asked, and return the slot. Nothing else ever changes the choice, it is kept until the user chooses again, and
+        no request is made. It is refused when there is only one key, when there is no such slot, when the key is rejected as invalid or out of credits itself, and while the key in use has spent its
+        allowance."""
+        with self._lock:
+            if self.keyless or len(self._keys) < 2:
+                raise FundamentalsError("there is only one key, so there is nothing to choose")
+            text = str(slot).strip().lower()
+            text = f"key {int(text)}" if text.isdecimal() and len(text) < 4 else text
+            entry = next((e for e in self._keys if e[0] == text), None)
+            problem = "there is no such key" if entry is None else self._choice_problem(entry[3])
+            if problem:
+                raise FundamentalsError(problem[0].upper() + problem[1:] + ".")
+            self._chosen = entry[3]
+            return entry[0]
+
     def slots(self) -> list[dict]:
         """One line per key for the Data Manager: its slot, the variable it came from, what it has used today and this month, whether it can be used and whether it is the one in use. No key material."""
         allow = self.allow
         active = self._active()
+        several = len(self._keys) > 1 and not self.keyless
         out = []
         for slot, variable, _, key_id in self._keys:
             today, month = self._used(key_id)
             state = self._state(key_id)
             role = "unusable" if state == "invalid" else ("active" if active is not None and active[3] == key_id else "standby")
             block = self._block(key_id)
+            problem = self._choice_problem(key_id) if several and role != "active" else ""
             out.append({"slot": slot, "variable": variable, "key_id": key_id, "used_today": today, "used_month": month, "daily_limit": allow.daily, "monthly_limit": allow.monthly,
-                        "unit": allow.unit, "state": state, "role": role, "resets": block.until if block else None})
+                        "unit": allow.unit, "state": state, "role": role, "resets": block.until if block else None, "chosen": key_id == self._chosen and role == "active",
+                        "can_use": several and role != "active" and not problem, "why_not": (problem[0].upper() + problem[1:] + ".") if problem else ""})
         return out
 
     def remaining_today(self) -> int | None:

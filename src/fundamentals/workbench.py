@@ -37,8 +37,9 @@ KEEP_CONTEXTS = 2
 MAX_SYMBOLS = 200
 MAX_SCAN = 120
 DIRECTIONS = ("theory", "auto", 1, -1)
-POLICY = ("OpenFilings' usage policy does not allow rotating accounts or API keys to get past its quotas, and several keys of one account share one allowance. The first working key is used; a later "
-          "key takes over only if the first is rejected as invalid. When the allowance is spent the work stops until it resets. More credits come from a larger plan or from prepaid top-ups.")
+POLICY = ("OpenFilings' usage policy does not allow rotating accounts or API keys to get past its quotas, and several keys of one account share one allowance. The first working key is used unless you "
+          "choose another (a choice, never a rotation: it is refused while the key in use has spent its allowance); a later key also takes over if the key in use is rejected as invalid. When the allowance is spent "
+          "the work stops until it resets. More credits come from a larger plan or from prepaid top-ups.")
 KEY_NAMES = ["OPENFILINGS_API_KEY"] + [f"OPENFILINGS_API_KEY_{i}" for i in range(1, 6)]
 
 

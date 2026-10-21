@@ -126,9 +126,25 @@ class FundamentalsService:
         if name not in self._pools:
             if name == "openfilings":
                 self._pools[name] = KeyPool.from_environment(name, self.usage, self.store.salt(), self.root, plan=self.plan_of(name))
+                self._take_up_choice(name)
             else:
                 self._pools[name] = KeyPool.without_key(name, self.usage)
         return self._pools[name]
+
+    def _take_up_choice(self, name: str) -> None:
+        """The key the user chose to be in use is kept in the database as the key's salted hash (never the key) and applied whenever the pool is made, so a restart does not undo it."""
+        saved = self.store.get_meta(f"key_choice:{name}")
+        if saved:
+            self._pools[name].prefer(saved)
+
+    def use_key(self, name: str, slot) -> dict:
+        """The user's choice of which key makes the requests (the *Use this key* button), named by its slot (``key 2``). Nothing is spent and nothing switches by itself: the choice is kept, as the key's
+        salted hash and never the key, until another is made. It is refused while the key in use has spent its allowance, because OpenFilings' usage policy forbids rotating keys to get past a quota
+        (:meth:`KeyPool.choose`)."""
+        pool = self.pool(name)
+        chosen = pool.choose(slot)
+        self.store.set_meta(f"key_choice:{name}", pool.chosen_id or "")
+        return {"provider": name, "active": chosen, "keys": pool.slots()}
 
     def provider(self, name: str) -> FundamentalDataProvider:
         if name not in self._providers:
@@ -146,6 +162,7 @@ class FundamentalsService:
         pool = getattr(provider, "pool", None)
         if pool is not None:
             self._pools[name] = pool
+            self._take_up_choice(name)
 
     def _today(self) -> pd.Timestamp:
         return pd.Timestamp(self.usage.today())

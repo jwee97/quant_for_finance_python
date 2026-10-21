@@ -190,6 +190,48 @@ def test_the_data_manager_explains_the_key_and_never_asks_for_one(browser, live_
         page.close()
 
 
+def test_the_key_in_use_is_chosen_with_a_button_the_choice_is_kept_and_refused_while_the_key_in_use_has_spent_its_allowance(browser, tmp_path_factory, monkeypatch):  # noqa: F811
+    monkeypatch.setenv("OPENFILINGS_API_KEY_1", SECRETS[0])
+    monkeypatch.setenv("OPENFILINGS_API_KEY_2", SECRETS[1])
+    app = _app(tmp_path_factory, "choose")
+    running = server.start(app, "127.0.0.1", 0)
+    page = _page(browser, running)
+
+    def roles():
+        return [r.locator("td").nth(2).inner_text() for r in page.locator("[data-role=fund-provider] table >> nth=0").locator("tbody tr").all()][:2]
+
+    try:
+        _open(page, "data", demo=False)
+        page.wait_for_selector("[data-role=fund-provider] table tbody tr")
+        assert roles() == ["active", "standby"] and page.locator("[data-role=fund-key-chosen]").count() == 0
+        assert _tables_have_names(page) == []                                                                                              # the column of buttons has a name for a screen reader
+        buttons = page.locator("[data-action=use-key]")
+        assert buttons.count() == 1 and buttons.first.get_attribute("aria-label") == "use key 2" and buttons.first.is_enabled()            # only a key that is not in use has one
+        assert page.locator("[data-role=fund-provider] table >> nth=0").locator("thead th").all_inner_texts()[-1].strip() == "Choose"
+        buttons.first.click()
+        page.wait_for_selector("[data-role=fund-key-choice]")
+        assert roles() == ["standby", "active"] and "Key 2 is the key in use now" in page.inner_text("[data-role=fund-key-choice]")
+        assert page.inner_text("[data-role=fund-key-chosen]").startswith("Key 2 is in use because you chose it") and page.locator("[data-action=use-key]").get_attribute("aria-label") == "use key 1"
+        assert page.locator("[data-role=fund-key-refused]").count() == 0
+        for blob in (page.content(), page.inner_text("body"), page.evaluate("window.QL.api('/api/fund/status?db=real').then((r) => JSON.stringify(r))")):
+            assert not any(secret in blob or secret[:12] in blob or secret[-10:] in blob for secret in SECRETS) and "key_id" not in blob          # no key, no hash of one
+        wb = app.fundamentals.bench("real")
+        wb.service.usage.record("openfilings", "financials", True, key_id=wb.service.pool("openfilings").slots()[1]["key_id"], credits=100)     # key 2, in use, has spent today's allowance
+        page.reload()
+        page.wait_for_selector("body[data-ready]")
+        _open(page, "data", demo=False)
+        page.wait_for_selector("[data-role=fund-provider] table tbody tr")
+        assert roles() == ["standby", "active"]                                                                                             # the choice survived a reload
+        button = page.locator("[data-action=use-key]")
+        assert button.count() == 1 and button.first.is_disabled()
+        refusal = page.inner_text("[data-role=fund-key-refused]")
+        assert refusal.startswith("Key 2 is in use and its daily allowance is spent") and "usage policy forbids rotating accounts or API keys" in refusal
+        assert page.problems == []
+    finally:
+        page.close()
+        running.stop()
+
+
 def test_a_key_in_the_environment_shows_as_a_slot_and_never_as_a_value(browser, tmp_path_factory, monkeypatch):  # noqa: F811
     monkeypatch.setenv("OPENFILINGS_API_KEY_1", SECRETS[0])
     monkeypatch.setenv("OPENFILINGS_API_KEY_2", SECRETS[1])

@@ -10,7 +10,7 @@ plan is 100 credits a day and 1,000 a month, so about nine companies a day (a lo
 missing or new. A failed call is refunded. Daily allowances reset at 00:00 UTC, monthly ones on the 1st; prepaid top-up credits never reset. When the allowance is spent the API answers HTTP 429
 (``quota_exceeded``, with the dimension and, in the body, the day's and month's counts) or, once the included credits are gone and the balance cannot cover a call, HTTP 402 (``credits_exhausted``).
 
-Several keys. See :mod:`keys`: the first valid key is used, the others are standbys for a revoked key, and the pool never rotates keys to get past a quota (OpenFilings' usage policy forbids it).
+Several keys. See :mod:`keys`: the key the user chose is used, or else the first valid key; the others are standbys for a revoked key, and the pool never rotates keys to get past a quota (OpenFilings' usage policy forbids it).
 
 What is not supported yet, and why. Annual statements only: the documentation does not list the ``fiscal_period`` values for quarterly or half-year figures, and a guess would spend 10 credits per try.
 The sign of cash outflows is not documented either, so the outflow lines (capital expenditure, dividends, buybacks, acquisitions, interest) are read as magnitudes. Some filings in Japan and Korea are

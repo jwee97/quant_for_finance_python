@@ -117,6 +117,39 @@ def test_the_status_shows_the_slots_the_allowance_and_the_policy_but_never_a_key
     assert not any("key" in str(route).lower() and "set" in str(route).lower() for route in fresh.post_routes())                 # nothing accepts a key
 
 
+def test_the_key_in_use_is_chosen_by_its_slot_and_the_choice_is_kept_but_refused_while_the_key_in_use_is_spent(tmp_path, monkeypatch):
+    one, two = "of_zzzzSECRETzzzz_one_0123456789", "of_zzzzSECRETzzzz_two_9876543210"
+    monkeypatch.setenv("OPENFILINGS_API_KEY_1", one)
+    monkeypatch.setenv("OPENFILINGS_API_KEY_2", two)
+    own = make_app(tmp_path)
+
+    def slots(a):
+        return next(p for p in get(a, "/api/fund/status")["providers"] if p["name"] == "openfilings")["keys"]
+
+    keys = slots(own)
+    assert "/api/fund/keys/use" in own.extra_post and [k["can_use"] for k in keys] == [False, True] and keys[1]["why_not"] == "" and not any("key_id" in k for k in keys)
+    answer = post(own, "/api/fund/keys/use", slot="key 2")
+    assert answer["provider"] == "openfilings" and answer["active"] == "key 2" and [k["role"] for k in answer["keys"]] == ["standby", "active"]
+    assert [k["role"] for k in slots(own)] == ["standby", "active"] and slots(own)[1]["chosen"] is True
+    assert post(own, "/api/fund/keys/use", slot="1")["active"] == "key 1" and post(own, "/api/fund/keys/use", slot=2)["active"] == "key 2"          # a number will do
+    text = json.dumps([answer, get(own, "/api/fund/status")], allow_nan=False)
+    assert "SECRET" not in text and "of_zzzz" not in text and "0123456789" not in text and "9876543210" not in text                                    # what leaves is never a key
+    restarted = make_app(tmp_path)                                                                                                                  # a new app on the same files
+    assert [k["role"] for k in slots(restarted)] == ["standby", "active"]                                                                           # the choice was kept
+    for body, why in (({}, "say which key"), ({"slot": two}, "say which key"), ({"slot": "\u00b2"}, "say which key"), ({"slot": "9" * 5000}, "say which key"), ({"slot": "key 9"}, "There is no such key"), ({"slot": "key 1", "provider": "simulated"}, "provider with keys"),
+                      ({"slot": "key 1", "db": "demo"}, "Switch to Real data|switch to Real data")):
+        with pytest.raises(ApiError, match=why) as refused:
+            post(restarted, "/api/fund/keys/use", **body)
+        assert two not in str(refused.value) and "SECRET" not in str(refused.value)                                                                  # a key typed in is refused, not repeated
+    service = restarted.fundamentals.bench("real").service
+    service.usage.record("openfilings", "financials", True, key_id=service.pool("openfilings").slots()[1]["key_id"], credits=100)                  # key 2, in use, has spent today's allowance
+    with pytest.raises(ApiError, match="usage policy forbids rotating accounts or API keys") as spent:
+        post(restarted, "/api/fund/keys/use", slot="key 1")
+    assert str(spent.value).startswith("Key 2 is in use and its daily allowance is spent")
+    after = slots(restarted)
+    assert [k["role"] for k in after] == ["standby", "active"] and after[0]["can_use"] is False and after[0]["why_not"] == str(spent.value)
+
+
 def test_readers_answer_from_the_demo_database(app):
     over = get(app, "/api/fund/overview", db="demo")
     assert over["counts"]["companies"] == 40 and over["library"]["tried"] == 0 and over["readiness"]["ready"]

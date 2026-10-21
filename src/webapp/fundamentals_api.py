@@ -9,7 +9,8 @@ anything that can take more than a moment (fetching statements, loading prices, 
 it is a separate file, so a simulated company can never be mixed into a study of real ones, and an alpha found in it never reaches the real library. Fetching from a provider is refused on the demo
 database, and the simulated world is refused on the real one.
 
-**Keys.** A provider key is read from the environment (on Replit: Secrets) and never passes through the page: nothing here accepts a key, and nothing that leaves contains one. Fetching statements
+**Keys.** A provider key is read from the environment (on Replit: Secrets) and never passes through the page: nothing here accepts a key, and nothing that leaves contains one. The one thing the page
+does with keys is choose which of the configured ones is in use (``/api/fund/keys/use``), by its slot (``key 2``); the choice is refused while the key in use has spent its allowance. Fetching statements
 spends the provider's credits, so ``/api/fund/sync`` will not start without a ``budget`` (the most credits this run may spend); the plan endpoint says what a run would cost first. So does asking for
 chosen years (``/api/fund/coverage/fetch``): ``/api/fund/coverage`` says which fiscal years of a company are held, and a year that is held is never asked for again.
 """
@@ -115,7 +116,7 @@ class FundamentalsApi:
 
     def post_routes(self) -> dict:
         return self._clean({"/api/fund/companies/add": self.add_companies, "/api/fund/companies/search": self.search_companies, "/api/fund/sync/plan": self.sync_plan, "/api/fund/coverage/plan": self.coverage_plan, "/api/fund/coverage/fetch": self.coverage_fetch,
-                            "/api/fund/provider/test": self.provider_test,
+                            "/api/fund/provider/test": self.provider_test, "/api/fund/keys/use": self.use_key,
                             "/api/fund/price-symbol": self.price_symbol, "/api/fund/formula/check": self.formula_check, "/api/fund/library/status": self.library_status,
                             "/api/fund/library/validate": self.library_validate, "/api/fund/sync": self.sync, "/api/fund/simulate": self.simulate, "/api/fund/prices": self.load_prices,
                             "/api/fund/scan": self.scan, "/api/fund/evaluate": self.evaluate, "/api/fund/evaluate/formula": self.evaluate_formula, "/api/fund/lookahead": self.lookahead,
@@ -348,6 +349,19 @@ class FundamentalsApi:
         db = _db(body)
         out = self._guard(self.bench(db, create=db == "real").service.plan_years, _company_id(body), _years(body.get("years")), body.get("provider") or None, "annual", bool(body.get("ask_again")))
         return self._fetchable(db, out)
+
+    def use_key(self, body: dict) -> dict:
+        """``POST /api/fund/keys/use {slot}``: choose which of the provider's keys makes the requests, by the slot the status lists (``key 2``, or ``2``): no key goes through the page. Nothing is spent and
+        nothing switches by itself; the choice is kept until another is made. It is refused when there is one key only, when the key is rejected or out of credits, and while the key in use has spent
+        its allowance: OpenFilings' usage policy forbids rotating keys to get past a quota."""
+        db = _db(body)
+        self._real_only(db, "choosing a key")
+        if str(body.get("provider") or "openfilings") != "openfilings":
+            raise ApiError("OpenFilings is the provider with keys (provider: openfilings)")
+        slot = str(body.get("slot") or "").strip()
+        if not re.fullmatch(r"(?i)(key\s*)?\d{1,2}", slot):
+            raise ApiError("say which key: slot is the number or name the status lists for a key slot, such as key 2")
+        return self._guard(self.bench(db).service.use_key, "openfilings", slot)
 
     def provider_test(self, body: dict) -> dict:
         """``POST /api/fund/provider/test {provider}``: one cheap call (one credit) to prove the key works and learn the plan, which sets the allowance the quota manager enforces."""

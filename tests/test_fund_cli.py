@@ -96,6 +96,30 @@ def test_the_status_shows_the_slots_and_the_allowance_and_never_a_key(home, monk
     assert not [o for o in option_strings if re.search(r"key|secret|token|password", o, re.I)]            # nothing on the command line takes a key
 
 
+def test_a_key_slot_is_chosen_by_its_number_and_refused_while_the_key_in_use_has_spent_its_allowance(tmp_path, monkeypatch, capsys):
+    config = dataclasses.replace(load_config(), root=tmp_path)                              # a project folder of its own: nothing here is spent in the one the other tests share
+    monkeypatch.setattr(cli, "load_config", lambda *a, **k: config)
+    for name in KEY_NAMES:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("OPENFILINGS_API_KEY_1", SECRETS[0])
+    monkeypatch.setenv("OPENFILINGS_API_KEY_2", SECRETS[1])
+    saved = tmp_path / "use.json"
+    code, out, err = run(capsys, "use-key", "2", "--json", str(saved))
+    assert code == 0 and "key 2 is the key in use now" in out and "Nothing was spent" in out
+    code, status, _ = run(capsys, "status")
+    assert re.search(r"OPENFILINGS_API_KEY_1\s+standby", status) and re.search(r"OPENFILINGS_API_KEY_2\s+active", status)
+    assert not any(secret in blob or secret[:12] in blob or secret[-10:] in blob for secret in SECRETS for blob in (out, err, status, saved.read_text()))
+    for argv, why in ((["use-key"], "say which key slot"), (["use-key", "two"], "say which key slot"), (["use-key", "\u00b2"], "say which key slot"), (["use-key", "9" * 5000], "say which key slot"), (["use-key", "1", "2"], "say which key slot"), (["use-key", "7"], "there is no key 7: key 1, key 2 are set"),
+                      (["use-key", "1", "--demo"], "choosing a key is for real data")):
+        code, _, err = run(capsys, *argv)
+        assert code == 2 and why in err, (argv, err)
+    svc = FundamentalsService(tmp_path, db_path=tmp_path / "data" / "user" / "fundamentals.db")
+    svc.usage.record("openfilings", "financials", True, key_id=svc.pool("openfilings").slots()[1]["key_id"], credits=100)       # key 2, in use, spends today's allowance
+    code, _, err = run(capsys, "use-key", "1")
+    assert code == 2 and "Key 2 is in use and its daily allowance is spent" in err and "usage policy forbids rotating accounts or API keys" in err
+    assert re.search(r"OPENFILINGS_API_KEY_2\s+active", run(capsys, "status")[1])                                                  # the refusal moved nothing
+
+
 # ------------------------------------------------------------------------------------------------------------ statements and prices
 @pytest.fixture()
 def fake_provider(monkeypatch):

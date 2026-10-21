@@ -1,6 +1,7 @@
 """``quant fundamentals``: the Fundamentals tab in the terminal, over the same workbench the page uses (so a number here is the number there).
 
     quant fundamentals status                  what the database holds, the allowance of each provider and every key slot (never a key)
+    quant fundamentals use-key 2               choose which key slot makes the requests (the numbers are in `status`; nothing is spent, nothing switches by itself, and it is refused while the key in use has spent its allowance)
     quant fundamentals simulate                make the demo database: a simulated world with a few alphas planted in it (add --demo to the commands below to work in it)
     quant fundamentals search nvidia           look a company up in OpenFilings' directory by name, ticker or ISIN (1 credit; the same search again is free)
     quant fundamentals add us:AAPL jp:7203     register companies (free); `plan` says what fetching them would cost, `sync --budget 100` fetches within that many credits
@@ -23,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import signal
 import sys
 import threading
@@ -38,8 +40,8 @@ from .library import STATUSES
 from .service import FundamentalsService
 from .workbench import Workbench, eval_spec
 
-ACTIONS = ("status", "simulate", "search", "add", "plan", "sync", "coverage", "years", "prices", "factors", "evaluate", "preflight", "discover", "placebo", "library", "monitor", "backtest")
-REAL_ONLY = {"search": "searching OpenFilings", "add": "adding companies", "plan": "planning a sync", "sync": "fetching statements", "years": "asking for years", "prices": "loading prices"}
+ACTIONS = ("status", "use-key", "simulate", "search", "add", "plan", "sync", "coverage", "years", "prices", "factors", "evaluate", "preflight", "discover", "placebo", "library", "monitor", "backtest")
+REAL_ONLY = {"use-key": "choosing a key", "search": "searching OpenFilings", "add": "adding companies", "plan": "planning a sync", "sync": "fetching statements", "years": "asking for years", "prices": "loading prices"}
 DEMO_FILE, REAL_FILE = "fundamentals_demo.db", "fundamentals.db"
 
 
@@ -160,6 +162,18 @@ def _out(args, text: str, data=None) -> int:
 def _status(wb, args) -> int:
     s = wb.status()
     return _out(args, R.format_status(s, "demo" if args.demo else "real"), s)
+
+
+def _use_key(wb, args) -> int:
+    wanted = re.fullmatch(r"(?i)(?:key\s*)?(\d{1,3})", args.items[0].strip()) if len(args.items) == 1 else None
+    if wanted is None:
+        raise FundamentalsError("say which key slot: quant fundamentals use-key 2 (the slot numbers are in `quant fundamentals status`)")
+    slot = f"key {int(wanted.group(1))}"
+    keys = wb.service.pool("openfilings").slots()
+    if not any(k["slot"] == slot for k in keys):
+        raise FundamentalsError(f"there is no {slot}: " + (", ".join(k["slot"] for k in keys) + " are set." if keys else "no key is set."))
+    result = wb.service.use_key("openfilings", slot)
+    return _out(args, f"{result['active']} is the key in use now. Nothing was spent and nothing will switch by itself; `quant fundamentals status` lists the slots.", result)
 
 
 def _simulate(wb, args) -> int:
@@ -395,7 +409,7 @@ def _backtest(wb, args) -> int:
     return _out(args, R.format_backtest(result), result)
 
 
-HANDLERS = {"status": _status, "simulate": _simulate, "search": _search, "add": _add, "plan": _plan, "sync": _sync, "coverage": _coverage, "years": _years, "prices": _prices, "factors": _factors, "evaluate": _evaluate, "preflight": _preflight,
+HANDLERS = {"status": _status, "use-key": _use_key, "simulate": _simulate, "search": _search, "add": _add, "plan": _plan, "sync": _sync, "coverage": _coverage, "years": _years, "prices": _prices, "factors": _factors, "evaluate": _evaluate, "preflight": _preflight,
             "discover": _discover, "placebo": _placebo, "library": _library, "monitor": _monitor, "backtest": _backtest}
 
 

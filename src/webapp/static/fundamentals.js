@@ -687,7 +687,7 @@
 
   /* =========================================================== Data manager */
   const DM = FD.views.data = {};
-  DM.run = () => FD.act("data", "Reading the status…", async () => { const s = await FD.read("/api/fund/status"); FD.dm.tested = null; return s; });
+  DM.run = () => FD.act("data", "Reading the status…", async () => { const s = await FD.read("/api/fund/status"); FD.dm.tested = null; FD.dm.chose = null; return s; });
   DM.auto = () => DM.run();
   DM.empty = (root) => FD.emptyCard(root, "Reading the status…", "");
   DM.refresh = async () => { try { FD.results.data = { data: await FD.read("/api/fund/status"), body: {} }; } catch (e) { FD.errors.data = e.message; } if (isOpen() && FD.mode === "data") FD.draw(); };
@@ -751,6 +751,11 @@
     button.disabled = true;
     FD.act("data", "Testing the connection (one credit)…", async () => { const r = await FD.send("/api/fund/provider/test", {}); FD.dm.tested = r; return FD.read("/api/fund/status"); });
   };
+  DM.useKey = (row) => FD.act("data", `Switching to ${row.slot}…`, async () => {
+    const r = await FD.send("/api/fund/keys/use", { slot: row.slot });
+    FD.dm.tested = null; FD.dm.chose = r.active;                                              // what was tested was the other key
+    return FD.read("/api/fund/status");
+  });
   DM.build = (root, d) => {
     Q.labHead(root, "Data manager", `${d.counts.companies.toLocaleString("en-US")} companies · database ${(d.database_bytes / 1e6).toFixed(1)} MB · last update ${d.last_update ? day(d.last_update) : "never"}`, GUIDE);
     const prov = (d.providers || []).find((x) => x.name === "openfilings");
@@ -767,7 +772,7 @@
     const q = h("div", "card", root); h("h3", "", q, "Quality of what is stored");
     const obs = Object.entries(d.quality.observations || {});
     if (obs.length) table(q, [{ label: "Figures by flag", get: (r) => r[0].replace(/_/g, " ") }, { label: "Count", num: true, get: (r) => r[1].toLocaleString("en-US") }], obs); else h("p", "hint", q, "Nothing is stored yet, so there is nothing to check.");
-    FD.explain(root, "What 'credits' are and why the first working key is the only one used", d.policy);
+    FD.explain(root, "What 'credits' are and which key is used", d.policy);
   };
   function providerCard(root, d, p) {
     const card = h("div", "card", root); card.dataset.role = "fund-provider"; card.dataset.provider = p.name;
@@ -787,10 +792,9 @@
       h("p", "hint", card, `${p.allowance_source}. A new company costs about ${p.cost_per_company} ${unit}. ${p.requests_today} requests today (${p.successful} ok, ${p.failed} failed).`);
       h("h4", "subhead", card, "Key slots");
       const named = new Set((p.keys || []).map((r) => r.variable)), rows = (p.keys || []).concat(p.name === "openfilings" ? KEY_SLOTS.filter((v) => !named.has(v)).map((v) => ({ slot: "", variable: v, role: "", state: "not set" })) : []);
-      table(card, [{ label: "Slot", get: (r) => String(r.slot) }, { label: "Variable", get: (r) => r.variable || "—" }, { label: "Role", get: (r) => r.role, title: "The first working key is active; later ones are standbys that take over only if the active key is rejected as invalid" },
-        { label: "State", get: (r) => human(r.state) }, { label: "Used today", num: true, get: (r) => (r.used_today === undefined ? "" : `${r.used_today} / ${r.daily_limit}`) }, { label: "Used this month", num: true, get: (r) => (r.used_month === undefined ? "" : r.monthly_limit ? `${r.used_month} / ${r.monthly_limit}` : String(r.used_month)) }, { label: "Resets", get: (r) => r.resets || "" }], rows);
+      keyTable(card, p, rows);
       for (const n of p.key_notes || []) h("p", "hint", card, n);
-      if (p.name === "openfilings") h("p", "hint", card, "Several keys do not add up: keys of one account share one allowance, and the provider's usage policy does not allow rotating keys or accounts to get past its quotas. Extra keys are standbys. More credits come from a larger plan or prepaid top-ups.").dataset.role = "fund-policy";
+      if (p.name === "openfilings") h("p", "hint", card, "Several keys do not add up: keys of one account share one allowance, and the provider's usage policy does not allow rotating keys or accounts to get past its quotas. The first working key is used unless you choose another with Use this key; nothing switches by itself, and a choice is refused while the key in use has spent its allowance. A key rejected as invalid is replaced by the next one. More credits come from a larger plan or prepaid top-ups.").dataset.role = "fund-policy";
       if (p.available && p.name === "openfilings") {
         const row = h("div", "row tight", card), test = h("button", "btn", row, "Test the connection (one credit)"); test.type = "button"; test.dataset.action = "test-provider"; test.addEventListener("click", () => DM.test(test));
         if (FD.dm.tested) { const t = FD.dm.tested, out = h("span", "hint " + (t.ok ? "tone-good" : "tone-crit"), row, t.ok ? `Works. Plan: ${t.plan || "unknown"}; markets: ${(t.allowed_markets || []).join(", ") || "n/a"}.` : (t.error || t.reason || "It did not work.")); out.dataset.role = "fund-test-result"; }
@@ -800,6 +804,34 @@
         table(det, [{ label: "When", get: (r) => String(r.at || r.ts || "").replace("T", " ").slice(0, 19) }, { label: "Endpoint", get: (r) => r.endpoint || "" }, { label: "Company", get: (r) => r.symbol || "" }, { label: "Result", get: (r) => (r.ok === 0 || r.success === 0 ? "failed" : "ok") }, { label: "Cost", num: true, get: (r) => String(r.credits ?? r.cost ?? "") }], p.recent);
       }
     }
+  }
+  /* The key slots. Where there are several keys, a key that is not in use has a button to make it the one in use: a choice, never a rotation, and refused (with its reason shown) while the key in use has spent its allowance. */
+  function keyTable(card, p, rows) {
+    const several = p.name === "openfilings" && (p.keys || []).length > 1, wrap = FD.guardScroll(h("div", "scroll", card)), t = h("table", "data", wrap), hd = h("tr", "", h("thead", "", t));
+    const cols = [["Slot", 0], ["Variable", 0], ["Role", 0], ["State", 0], ["Used today", 1], ["Used this month", 1], ["Resets", 0]].concat(several ? [["Choose", 2]] : []);
+    for (const [label, numeric] of cols) {
+      const th = h("th", numeric === 1 ? "num" : "", hd); if (numeric === 2) h("span", "vh", th, label); else th.textContent = label;
+      if (label === "Role") th.title = "The key in use is the one you chose, or else the first working key. Standbys take over by themselves only if the key in use is rejected as invalid";
+    }
+    const tb = h("tbody", "", t), blocked = new Set();
+    for (const r of rows) {
+      const tr = h("tr", "", tb);
+      h("td", "", tr, String(r.slot)); h("td", "", tr, r.variable || "—"); h("td", "", tr, r.role); h("td", "", tr, human(r.state));
+      h("td", "num", tr, r.used_today === undefined ? "" : `${r.used_today} / ${r.daily_limit}`);
+      h("td", "num", tr, r.used_month === undefined ? "" : r.monthly_limit ? `${r.used_month} / ${r.monthly_limit}` : String(r.used_month));
+      h("td", "", tr, r.resets || "");
+      if (!several) continue;
+      const cell = h("td", "", tr);
+      if (r.slot && r.role === "standby") {
+        const b = h("button", "btn small", cell, "Use this key"); b.type = "button"; b.dataset.action = "use-key"; b.dataset.slot = r.slot; b.setAttribute("aria-label", "use " + r.slot);
+        if (r.can_use) b.addEventListener("click", () => DM.useKey(r)); else { b.disabled = true; if (r.why_not) blocked.add(r.why_not); }
+      }
+    }
+    for (const why of blocked) h("p", "hint tone-warn", card, why).dataset.role = "fund-key-refused";
+    const mine = rows.find((r) => r.chosen);
+    const cap = (text) => text.charAt(0).toUpperCase() + text.slice(1);
+    if (mine) h("p", "hint", card, `${cap(mine.slot)} is in use because you chose it; the order of the slots no longer decides.`).dataset.role = "fund-key-chosen";
+    if (FD.dm.chose) h("p", "note tone-good", card, `${cap(FD.dm.chose)} is the key in use now. Press Test the connection to check it (one credit).`).dataset.role = "fund-key-choice";
   }
   function meterRow(parent, label, used, limit, unit) {
     const row = h("div", "", parent);
