@@ -434,7 +434,7 @@ def _add_parser(sub) -> None:
     e.add_argument("--premium-controls", nargs="*", metavar="NAME", help="evaluate: hold these fixed instead (size beta volatility momentum, or the name of a library factor such as roic)")
     f = p.add_argument_group("preflight, discover, placebo")
     f.add_argument("--strictness", choices=list(STRICTNESS), help="the bars a formula must clear: exploratory (a first look), standard (the default: |t| of 2, q-value 0.10) or strict (|t| of 3, q-value 0.05)")
-    f.add_argument("--repeats", type=int, default=3, help="placebo: how many times to shuffle the returns and search again (1 to 5)"); f.add_argument("--run", help="placebo: check this finished run (its search, set beside what it found)")
+    f.add_argument("--repeats", type=int, default=5, help="placebo: how many times to shuffle the returns and search again (1 to 5; the spread of the t-statistics needs at least three)"); f.add_argument("--run", help="placebo: check this finished run (its search, set beside what it found)")
     f.add_argument("--n", type=int, default=300, dest="n_formulas", help="formulas to try"); f.add_argument("--finalists", type=int, default=15, help="formulas given the one look at the locked dates"); f.add_argument("--max-nodes", type=int, default=15)
     f.add_argument("--formulas", nargs="*", help="start from only these formulas, then random ones"); f.add_argument("--no-classics", action="store_true", help="random formulas only"); f.add_argument("--resume", help="carry on a stopped run")
     g = p.add_argument_group("library")

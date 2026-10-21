@@ -575,7 +575,7 @@ class Workbench:
         return clean({"strictness": spec.strictness, "limits": asdict(limits), "blocks": blocks, "formulas": spec.n_candidates, "power": power, "table": table, "luck_first_screen": luck,
                       "adequate": adequate, "reading": reading})
 
-    def placebo(self, spec: DiscoverySpec, repeats: int = 3, real: dict | None = None, progress=None, stop=None) -> dict:
+    def placebo(self, spec: DiscoverySpec, repeats: int = 5, real: dict | None = None, progress=None, stop=None) -> dict:
         """Run a search ``repeats`` times on returns shuffled among the companies (so nothing can be found) and report what it finds anyway, how much of ``real`` (the counts of a real run) that
         makes luck, and whether the t-statistics can be believed. Nothing is written to the library or the graveyard; the result is kept with the experiments."""
         ctx = self.context(spec.universe, spec.freq, spec.entry_lag)

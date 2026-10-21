@@ -39,6 +39,8 @@ from .schema import now_iso
 from .store import FundamentalsStore
 
 MAX_REPEATS = 5
+GENEROUS_FROM = 1.15                    # the t-statistics are called too generous when even the low end of their spread is this much over 1
+CAREFUL_UP_TO = 0.9                     # and careful when even the high end is under this
 MIN_FORMULAS_FOR_T = 150                                            # shuffled formulas needed before the spread of their t-statistics is read (fewer, and it is mostly noise)
 TAILS = (1.65, 2.0, 3.0)                                            # |t| levels the shuffled t-statistics are counted at
 EXPECTED_TAIL = {t: float(2.0 * stats.norm.sf(t)) for t in TAILS}    # what a correct t-statistic gives on shuffled returns: 9.9%, 4.6%, 0.27%
@@ -91,7 +93,7 @@ def _one_run(ctx: ResearchContext, spec: DiscoverySpec, seed: int, say, stop) ->
             "failed_locked_test": int(counts.get("failed_locked_test", 0) or 0), "min_q": float(bh_qvalues(p).min()) if len(p) else None, "t": t.tolist()}
 
 
-def calibrate_search(ctx: ResearchContext, spec: DiscoverySpec, repeats: int = 3, seed: int = 101, progress=None, stop=None, real: dict | None = None) -> dict:
+def calibrate_search(ctx: ResearchContext, spec: DiscoverySpec, repeats: int = 5, seed: int = 101, progress=None, stop=None, real: dict | None = None) -> dict:
     """Run ``spec`` ``repeats`` times in placebo worlds and report what it found. ``real`` (the counts of the run being checked: ``tested``, ``survivors`` and ``candidates``) is set beside the result."""
     repeats = max(1, min(int(repeats), MAX_REPEATS))
     say = progress or (lambda text: None)
@@ -117,6 +119,28 @@ def poisson_interval(count: float, exposure: float = 1.0, level: float = 0.95) -
     return [low / exposure, high / exposure]
 
 
+def _spread(runs: list[dict]) -> dict:
+    """The spread of the t-statistics about zero, with an error that is honest about how alike the formulas of a search are. The formulas tried under one shuffle share the returns that were dealt
+    out, so their t-statistics move together and the number of independent draws is nearer the number of shuffles than the number of formulas. The error therefore comes from how much the
+    mean square of the t-statistics differs from one shuffle to the next (a cluster of formulas is one observation), and the interval uses Student's t with one fewer degrees of freedom than
+    there are shuffles. Fewer than three shuffles cannot say."""
+    per_run = [np.array(run["t"], dtype=float) for run in runs]
+    per_run = [x[np.isfinite(x)] for x in per_run]
+    per_run = [x for x in per_run if len(x) > 5]
+    nan = float("nan")
+    if not per_run:
+        return {"sd": nan, "error": nan, "interval": [nan, nan], "range": [nan, nan]}
+    m2 = np.array([float(np.mean(x * x)) for x in per_run])
+    sd = float(np.sqrt(m2.mean()))
+    k = len(m2)
+    out = {"sd": sd, "error": nan, "interval": [nan, nan], "range": [float(np.sqrt(m2.min())), float(np.sqrt(m2.max()))]}
+    if k >= 3:
+        error = float(m2.std(ddof=1) / np.sqrt(k) / (2.0 * sd)) if sd > 0 else 0.0                              # the error of a mean square, carried to its square root
+        half = float(stats.t.ppf(0.975, k - 1)) * error
+        out.update(error=error, interval=[sd - half, sd + half])
+    return out
+
+
 def summarise(runs: list[dict], spec: DiscoverySpec, real: dict | None = None) -> dict:
     n = len(runs)
     t = np.concatenate([np.array(run["t"], dtype=float) for run in runs]) if runs else np.array([])
@@ -124,13 +148,14 @@ def summarise(runs: list[dict], spec: DiscoverySpec, real: dict | None = None) -
     survivors = sum(run["survivors"] for run in runs)
     candidates = [run["candidates"] for run in runs]
     abs_t = np.abs(t)
-    t_sd = float(t.std()) if len(t) > 5 else float("nan")
-    t_sd_error = float(t_sd / np.sqrt(2.0 * max(len(t) / 3.0, 2.0))) if len(t) > 5 else float("nan")        # the formulas of a search are alike: about a third as many are independent
+    spread = _spread(runs)
+    t_sd, t_sd_error = spread["sd"], spread["error"]
     shape = "unknown"
-    if len(t) >= MIN_FORMULAS_FOR_T and np.isfinite(t_sd):
-        shape = "generous" if t_sd >= 1.25 else ("careful" if t_sd <= 0.8 else "close")
+    if len(t) >= MIN_FORMULAS_FOR_T and np.isfinite(t_sd_error):
+        lo, hi = spread["interval"]
+        shape = "generous" if lo >= GENEROUS_FROM else ("careful" if hi <= CAREFUL_UP_TO else "close")
     luck = survivors / n if n else float("nan")                                           # formulas let through every screen before the locked test, per run
-    summary = {"runs": n, "tested": tested, "tested_per_run": tested / n if n else float("nan"), "t_sd": t_sd, "t_sd_error": t_sd_error, "t_mean": float(t.mean()) if len(t) else float("nan"), "t_calibration": shape,
+    summary = {"runs": n, "tested": tested, "tested_per_run": tested / n if n else float("nan"), "t_sd": t_sd, "t_sd_error": t_sd_error, "t_sd_interval": spread["interval"], "t_sd_range": spread["range"], "t_mean": float(t.mean()) if len(t) else float("nan"), "t_calibration": shape,
                "tail": {f"{level}": {"share": float((abs_t >= level).mean()) if len(t) else float("nan"), "expected": EXPECTED_TAIL[level]} for level in TAILS},
                "t_bar_5pct": float(np.percentile(abs_t, 95)) if len(t) >= MIN_FORMULAS_FOR_T else float("nan"),
                "survivors_mean": float(luck), "survivors_interval": [x / n for x in poisson_interval(survivors)] if n else [float("nan")] * 2,
@@ -172,23 +197,33 @@ def reading(s: dict, real: dict | None = None) -> str:
                          else f"The real search let {got} through, which is no more than luck lets through on this data: there is no sign of anything real in it.")
         elif not got:
             parts.append("The real search let nothing through.")
-    sd, bar, err = s["t_sd"], s["t_bar_5pct"], s["t_sd_error"]
+    sd, bar = s["t_sd"], s["t_bar_5pct"]
+    lo, hi = s["t_sd_interval"]
+    lo_run, hi_run = s["t_sd_range"]
+    by_shuffle = f"; shuffle by shuffle it ran from {lo_run:.2f} to {hi_run:.2f}" if np.isfinite(lo_run) and n > 1 else ""
+    inside = f"95% range {lo:.2f} to {hi:.2f}{by_shuffle}; 1.00 is correct" if np.isfinite(lo) else ""
     if s["t_calibration"] == "unknown":
-        if np.isfinite(sd):
-            parts.append(f"Too few formulas were tried to judge the t-statistics ({s['tested']} where {MIN_FORMULAS_FOR_T} or more are needed; their spread was {sd:.2f}, give or take {err:.2f}, where 1.00 is "
-                         "correct): search more formulas, or shuffle more times.")
+        if s["tested"] < MIN_FORMULAS_FOR_T and np.isfinite(sd):
+            parts.append(f"Too few formulas were tried to judge the t-statistics ({s['tested']} where {MIN_FORMULAS_FOR_T} or more are needed; their spread was {sd:.2f} where 1.00 is correct): "
+                         "search more formulas, or shuffle more times.")
+        elif np.isfinite(sd):
+            parts.append(f"The spread of the t-statistics on shuffled returns was {sd:.2f}, where 1.00 is correct, but fewer than three shuffles cannot say how far that can be trusted: "
+                         "shuffle more times.")
     elif s["t_calibration"] == "generous":
-        parts.append(f"The t-statistics are too generous on this data: on shuffled returns their spread is {sd:.2f} (give or take {err:.2f}) where it should be 1.00, so the standard errors are about "
-                     f"{sd - 1:.0%} too small and a t of {bar:.1f}, not 1.96, is the 5% bar here. Use the strict setting, or add companies or history.")
+        parts.append(f"The t-statistics are too generous on this data: on shuffled returns their spread is {sd:.2f} ({inside}), so the standard errors are about {sd - 1:.0%} too small and a t of "
+                     f"{bar:.1f}, not 1.96, is the 5% bar here. Use the strict setting, or add companies or history.")
     elif s["t_calibration"] == "careful":
-        parts.append(f"The t-statistics are careful on this data: on shuffled returns their spread is {sd:.2f} (give or take {err:.2f}) where it should be 1.00, so the first screen is stricter than it looks.")
-    elif sd - 2.0 * err > 1.0:
-        parts.append(f"The t-statistics are a little generous on this data: their spread on shuffled returns is {sd:.2f} (give or take {err:.2f}; 1.00 is correct), so a t of {bar:.1f} is the 5% bar here, "
-                     "not 1.96.")
+        parts.append(f"The t-statistics are careful on this data: on shuffled returns their spread is {sd:.2f} ({inside}), so the first screen is stricter than it looks.")
+    elif lo > 1.0:
+        parts.append(f"The t-statistics are a little generous on this data: their spread on shuffled returns is {sd:.2f} ({inside}), so a t of about {bar:.1f} is the 5% bar here, not 1.96.")
+    elif hi - lo > 0.5:
+        parts.append(f"The spread of the t-statistics on shuffled returns was {sd:.2f}, but it differed so much from one shuffle to the next ({inside}) that it cannot be told from 1.00, which is correct, "
+                     "or from a clearly generous 1.3: shuffle more times to say.")
+    elif hi < GENEROUS_FROM:
+        parts.append(f"The t-statistics are about right on this data: their spread on shuffled returns is {sd:.2f} ({inside}).")
     else:
-        parts.append(f"The t-statistics are about right on this data: their spread on shuffled returns is {sd:.2f} (give or take {err:.2f}; 1.00 is correct).")
-    if n < 3:
-        parts.append("With fewer than three shuffles these figures are rough.")
+        parts.append(f"The t-statistics could not be told from correct on this data, though they may be generous: their spread on shuffled returns is {sd:.2f} ({inside}), and a t of about {bar:.1f} is the 5% "
+                     "bar here if they are.")
     return " ".join(parts)
 
 

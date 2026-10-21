@@ -522,7 +522,7 @@ class FundamentalsApi:
         db = _db(body)
         wb = self.bench(db, create=db == "real")
         self._ready(wb)
-        repeats = _number(body.get("repeats", 3), "the number of shuffles", 1, MAX_REPEATS, True)
+        repeats = _number(body.get("repeats", 5), "the number of shuffles", 1, MAX_REPEATS, True)
         real = None
         if body.get("run_id"):
             record = self._guard(Discovery(wb.store).get_run, str(body["run_id"]))

@@ -279,7 +279,7 @@
 
   /* =========================================================== Alpha discovery */
   const DS = FD.views.discovery = {};
-  DS.s = { n: "300", seed: "7", horizon: "1m", max_nodes: "15", finalists: "15", train: "0.55", val: "0.20", cost: "10", borrow: "50", min_assets: "20", quantiles: "5", seed_mode: "classics", seeds: "", thr: {}, strictness: "standard", repeats: "3" };
+  DS.s = { n: "300", seed: "7", horizon: "1m", max_nodes: "15", finalists: "15", train: "0.55", val: "0.20", cost: "10", borrow: "50", min_assets: "20", quantiles: "5", seed_mode: "classics", seeds: "", thr: {}, strictness: "standard", repeats: "5" };
   DS.runs = null; DS.runId = null;
   DS.spec = () => {
     const s = DS.s, u = FD.universeBody(), spec = { universe: u.universe, freq: u.freq, entry_lag: u.entry_lag, n_candidates: Number(s.n), seed: Number(s.seed), horizon: s.horizon, max_nodes: Number(s.max_nodes), finalists: Number(s.finalists),
@@ -451,7 +451,7 @@
     const k = h("div", "earnrow", root);
     tile(k, "Luck lets through", num(s.survivors_mean, 1), { text: `of ${num(s.tested_per_run, 0)} formulas a search · ${num(s.survivors_interval[0], 1)} to ${num(s.survivors_interval[1], 1)}` }, "", "Formulas that clear every screen before the locked test on shuffled returns, where none can be real");
     if (real && real.survivors) tile(k, "Share of the real run that is luck", pct(share, 0), { text: `${pct(s.luck_share_interval[0], 0)} to ${pct(s.luck_share_interval[1], 0)} · the real run let ${real.survivors} through` }, "", "What luck lets through, divided by what the real search let through");
-    tile(k, "Spread of the t-statistics", num(s.t_sd, 2), { text: Q.bad(s.t_sd_error) ? "1.00 is correct" : `1.00 is correct · give or take ${num(s.t_sd_error, 2)}`, dir: s.t_calibration === "generous" ? "down" : "" }, "", "On shuffled returns the t-statistics of the formulas should have a spread of 1. More than that and the standard errors are too small for this data.");
+    tile(k, "Spread of the t-statistics", num(s.t_sd, 2), { text: Q.bad(s.t_sd_error) ? "1.00 is correct · needs three shuffles to judge" : `1.00 is correct · 95% range ${num(s.t_sd_interval[0], 2)} to ${num(s.t_sd_interval[1], 2)}`, dir: s.t_calibration === "generous" ? "down" : "" }, "", "On shuffled returns the t-statistics of the formulas should have a spread of 1. More than that and the standard errors are too small for this data.");
     tile(k, "5% bar on this data", Q.bad(s.t_bar_5pct) ? "n/a" : num(s.t_bar_5pct, 1), { text: "the |t| that luck exceeds one time in twenty" }, "", "1.96 if the t-statistic is correct");
     tile(k, "Candidates from luck", `${s.runs_with_a_candidate} of ${s.runs}`, { text: `${num(s.finalists_mean, 1)} reached the locked test on average` });
     const ch = h("div", "charts", root), hist = r.t_histogram || { edges: [], counts: [] };

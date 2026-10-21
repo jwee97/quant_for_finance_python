@@ -14,6 +14,8 @@ import pytest
 
 from src.fundamentals import discovery as D
 from src.fundamentals import evaluate as E
+from src.fundamentals import expr as X
+from src.fundamentals import library as L
 from src.fundamentals import metrics, transforms
 from src.fundamentals.errors import FundamentalsError
 from src.fundamentals.pit import PeriodTables, PitSettings, availability, step_panel
@@ -198,6 +200,16 @@ def test_a_figure_is_kept_until_the_day_its_period_is_the_limit_old_and_dropped_
     assert np.isnan(panel.iloc[0]) and panel.iloc[1] == 5.0 and panel.iloc[2] == 5.0 and panel.iloc[3] == 5.0 and np.isnan(panel.iloc[4])     # known from the 60th day, expired after the 600th
 
 
+def test_a_table_lists_its_figures_without_the_bookkeeping_and_gives_the_figures_of_the_year_before(tmp_path):
+    store, sid = _company(tmp_path, {2019: Y19, 2020: Y20})
+    tables = PeriodTables(store, [sid])
+    figures = tables.columns("fy")
+    assert {"revenue", "net_income", "total_assets"} <= set(figures) and not {"period_id", "security_id", "period_end", "filing_date", "available_date", "provider", "basis", "pit_estimated"} & set(figures)
+    assert "index" not in tables.fy.columns and list(tables.fy.index) == [0, 1]                                      # the rows are numbered afresh, the old numbers do not become a column
+    prior = tables.prior("fy", 1)
+    assert list(prior.index) == [0, 1] and prior.loc[1, "revenue"] == Y19["revenue"] and prior.loc[1, "net_income"] == Y19["net_income"] and np.isnan(prior.loc[0, "revenue"])
+
+
 def _quarters(store, name, rows, filing_after=40):
     """A company whose statements are given as ``(fiscal period, period end, revenue, net income, total assets)``."""
     sid = store.upsert_security(CompanyProfile("simulated", name, name, name, exchange="NYSE"))
@@ -307,3 +319,48 @@ def test_the_reports_put_the_right_article_before_the_name_of_the_bars():
     placebo = {"strictness": "strict", "reading": "x", "summary": {"runs": 1, "tested": 5, "tail": {}, "funnel_mean": {}}}
     assert report.format_placebo(placebo).startswith("Calibration of a strict search on shuffled returns (1 shuffle, 5 formulas tested)")
     assert report.format_placebo(dict(placebo, strictness="exploratory")).startswith("Calibration of an exploratory search")
+
+
+# ------------------------------------------------------------------------------------------------------------------------ the library and its monitor
+def test_the_monitor_calls_an_alpha_broken_decaying_weakening_or_healthy_exactly_at_the_bars():
+    ok = dict(original=0.04, recent=0.03, two_years=0.03, recent_t=1.5, coverage_now=100.0, coverage_then=100.0)
+
+    def judged(**changes):
+        return L.judge(**{**ok, **changes})
+
+    assert judged() == "Healthy"
+    assert judged(recent_t=-2.0) == "Broken" and judged(recent_t=-1.99) == "Healthy" and judged(recent_t=None) == "Healthy" and judged(recent_t=float("nan")) == "Healthy"      # -2 is already reversed with evidence
+    assert judged(coverage_now=29.99) == "Broken" and judged(coverage_now=30.0) == "Healthy"                                      # under 30% of the companies it once covered, not 30% itself
+    assert judged(coverage_then=0.0, coverage_now=0.0) == "Healthy"                                                                  # there was nothing to lose
+    assert judged(recent=0.0) == "Decaying" and judged(recent=-0.01) == "Decaying" and judged(recent=0.001) == "Weakening"          # zero is already no information
+    assert judged(two_years=0.01) == "Healthy" and judged(two_years=0.0099) == "Decaying"                                           # a quarter of the original is not yet decaying
+    assert judged(recent=0.02) == "Healthy" and judged(recent=0.0199) == "Weakening"                                               # nor is half of it weakening
+    assert judged(original=0.0, recent=0.001, two_years=0.001) == "Healthy" and judged(original=0.0, recent=0.0, two_years=0.0) == "Decaying"       # with nothing to compare with, only a recent IC of zero or less is bad
+    assert judged(recent=-0.01, recent_t=-3.0) == "Broken" and judged(recent=-0.01, coverage_now=1.0) == "Broken"                  # the worse verdict wins
+
+
+def test_a_candidate_is_validated_at_its_bars_and_not_below_them_and_the_alphas_and_their_reasons_are_what_they_say(tmp_path):
+    import re
+
+    lib = L.AlphaLibrary(FundamentalsStore(tmp_path / "lib.db"))
+    count = iter(range(1000))
+
+    def alpha(**metrics_):
+        settings = {"freq": "M", "horizon": "1m", "tag": next(count)}                                         # different conditions make a different alpha of the same formula
+        return lib.add_candidate(X.parse("div(fcf,market_cap)"), settings, {"oos_t": 1.5, "q_value": 0.05, "deflated_sharpe": 0.5, **metrics_})
+
+    assert (L.VALIDATE_MIN_OOS_T, L.VALIDATE_MAX_Q, L.VALIDATE_MIN_DSR) == (1.0, 0.10, 0.90)
+    assert lib.validate(alpha())["status"] == "Validated" and lib.validate(alpha(oos_t=1.0))["status"] == "Validated"                  # a locked-dates t of exactly 1.0 will do
+    for weak in (0.99, None):
+        with pytest.raises(FundamentalsError, match="out-of-sample t-statistic"):
+            lib.validate(alpha(oos_t=weak))
+    assert lib.validate(alpha(q_value=0.10, deflated_sharpe=0.1))["status"] == "Validated"                                           # a q-value of exactly 0.10 will do, with a poor deflated Sharpe
+    assert lib.validate(alpha(q_value=None, deflated_sharpe=0.90))["status"] == "Validated"                                          # and so will a probability of exactly 0.90 with no q-value
+    for q, dsr in ((0.11, 0.89), (None, 0.89), (0.11, None), (None, None)):
+        with pytest.raises(FundamentalsError, match="neither the false-discovery q-value"):
+            lib.validate(alpha(q_value=q, deflated_sharpe=dsr))
+    forced = lib.validate(alpha(q_value=0.5, deflated_sharpe=0.1), force_reason="a person looked at it")
+    assert forced["status"] == "Validated" and forced["status_reason"].startswith("approved by a person despite") and "a person looked at it" in forced["status_reason"]
+    fresh = alpha()
+    assert re.fullmatch(r"A[0-9a-f]{8}-[0-9a-f]{4}", fresh)                                                                         # eight characters of the formula, four of the conditions
+    assert len(lib.set_status(fresh, "Rejected", "x" * 400)["status_reason"]) == 300                                                # a reason is kept to 300 characters

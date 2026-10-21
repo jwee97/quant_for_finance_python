@@ -162,6 +162,30 @@ def test_coverage_and_the_description_say_what_is_in_the_sample(ctx):
     assert d["companies"] == 36 and d["freq"] == "M" and d["entry_lag_days"] == 1 and d["survivorship"]["inactive"] > 0 and 0.0 <= d["pit_estimated_share"] < 0.2
 
 
+def test_the_horizons_are_the_documented_trading_days_and_the_settled_lag_is_the_longest_wait_for_a_window_to_end(ctx):
+    assert HORIZONS == {"1d": 1, "1w": 5, "2w": 10, "1m": 21, "2m": 42, "3m": 63, "6m": 126, "9m": 189, "12m": 252}
+    pos = list(ctx.pos)
+    for horizon, h in (("1m", 21), ("3m", 63), ("12m", 252)):
+        waits = []
+        for i in range(len(pos)):
+            end = pos[i] + ctx.entry_lag + h                                                                    # the last day of the window that starts the day after the date
+            later = [j for j in range(i, len(pos)) if pos[j] >= end]
+            if later:
+                waits.append(later[0] - i)
+        assert ctx.settled_lag(horizon) == max(max(waits), 1), horizon
+    assert ctx.settled_lag("12m") > ctx.settled_lag("3m") >= 3 > 1
+
+
+def test_the_coverage_the_volatility_and_the_traded_value_are_what_their_definitions_say(ctx):
+    mask, panel = ctx.investable(), ctx.panel("revenue", "ttm")
+    assert ctx.coverage(["revenue"]).loc["revenue", "coverage"] == pytest.approx(float(panel.where(mask).notna().to_numpy().sum() / mask.to_numpy().sum()))
+    assert np.array_equal(mask.to_numpy(), ctx.price().notna().to_numpy())                                      # with no limit set, everyone with a price on the date is investable
+    vol = ctx.daily_returns().rolling(63, min_periods=31).std() * np.sqrt(252.0)
+    assert np.allclose(ctx.volatility(63).to_numpy(float), vol.iloc[ctx.pos].to_numpy(float), equal_nan=True)  # a quarter of trading days, at least half of them present, annualised
+    traded = (ctx.close * ctx.volume).rolling(63, min_periods=31).mean().iloc[ctx.pos].set_axis(ctx.dates) / ctx.trading_per_usd()
+    assert np.allclose(ctx.dollar_volume_usd().to_numpy(float), traded.to_numpy(float), equal_nan=True)
+
+
 def test_a_database_without_prices_says_what_to_do(tmp_path):
     svc = FundamentalsService(tmp_path)
     from src.fundamentals.store import CompanyProfile

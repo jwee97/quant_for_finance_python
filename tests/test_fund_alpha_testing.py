@@ -388,26 +388,49 @@ def test_the_exact_interval_for_a_count_of_rare_events():
     assert C.poisson_interval(10, exposure=2.0) == pytest.approx([2.3975, 9.195], abs=0.002)
 
 
-def _runs(t_values, **each):
-    base = {"seed": 1, "status": "finished", "formulas": 200, "tested": len(t_values), "funnel": dict.fromkeys(D.STAGES, 0), "survivors": 0, "finalists": 0, "candidates": 0, "failed_locked_test": 0,
-            "min_q": 0.4, "t": list(map(float, t_values))}
-    return [{**base, **each}]
+def _runs(t_values, shuffles=1, **each):
+    """The record of ``shuffles`` placebo runs that share out the given t-statistics."""
+    out = []
+    for part in np.array_split(np.asarray(t_values, dtype=float), shuffles):
+        base = {"seed": 1, "status": "finished", "formulas": 200, "tested": len(part), "funnel": dict.fromkeys(D.STAGES, 0), "survivors": 0, "finalists": 0, "candidates": 0, "failed_locked_test": 0,
+                "min_q": 0.4, "t": list(map(float, part))}
+        out.append({**base, **each})
+    return out
 
 
 def test_the_spread_of_the_shuffled_t_statistics_says_whether_the_standard_errors_can_be_believed():
     rng = np.random.default_rng(0)
     spec = D.DiscoverySpec(strictness="standard")
-    right = C.summarise(_runs(rng.standard_normal(600)), spec)
+    right = C.summarise(_runs(rng.standard_normal(1000), 5), spec)
     assert right["summary"]["t_calibration"] == "close" and 0.9 < right["summary"]["t_sd"] < 1.1 and "about right" in right["reading"]
+    assert right["summary"]["t_sd_interval"][0] < 1.0 < right["summary"]["t_sd_interval"][1] and "shuffle by shuffle" in right["reading"]
     assert right["summary"]["tail"]["1.65"]["share"] == pytest.approx(C.EXPECTED_TAIL[1.65], abs=0.03) and C.EXPECTED_TAIL[1.65] == pytest.approx(0.0989, abs=0.0005)
-    generous = C.summarise(_runs(1.5 * rng.standard_normal(600)), spec)
+    generous = C.summarise(_runs(1.5 * rng.standard_normal(1000), 5), spec)
     assert generous["summary"]["t_calibration"] == "generous" and "too generous" in generous["reading"] and generous["summary"]["t_bar_5pct"] == pytest.approx(1.5 * Z95, rel=0.15)
-    careful = C.summarise(_runs(0.6 * rng.standard_normal(600)), spec)
+    careful = C.summarise(_runs(0.6 * rng.standard_normal(1000), 5), spec)
     assert careful["summary"]["t_calibration"] == "careful" and "careful" in careful["reading"]
-    few = C.summarise(_runs(1.4 * rng.standard_normal(80)), spec)
+    few = C.summarise(_runs(1.4 * rng.standard_normal(80), 5), spec)
     assert few["summary"]["t_calibration"] == "unknown" and "Too few formulas" in few["reading"]                      # eighty formulas cannot say how wide a spread is
-    mild = C.summarise(_runs(1.18 * rng.standard_normal(900)), spec)
-    assert "a little generous" in mild["reading"] and C.summarise([], spec)["reading"] == "No placebo run finished."
+    mild = C.summarise(_runs(1.2 * rng.standard_normal(2000), 5), spec)
+    assert mild["summary"]["t_calibration"] == "close" and "a little generous" in mild["reading"] and mild["summary"]["t_sd_interval"][0] > 1.0
+    unsure = C.summarise(_runs(np.concatenate([1.05 * rng.standard_normal(100), 1.3 * rng.standard_normal(100), 1.0 * rng.standard_normal(100), 1.25 * rng.standard_normal(100), 1.1 * rng.standard_normal(100)]), 5), spec)
+    lo, hi = unsure["summary"]["t_sd_interval"]
+    assert unsure["summary"]["t_calibration"] == "close" and lo <= 1.0 < C.GENEROUS_FROM <= hi and hi - lo <= 0.5 and "could not be told from correct" in unsure["reading"]      # the range reaches a generous spread: not "about right"
+    assert C.summarise([], spec)["reading"] == "No placebo run finished."
+
+
+def test_formulas_that_share_a_shuffle_move_together_so_a_spread_from_few_shuffles_is_not_called_precise():
+    rng = np.random.default_rng(3)
+    spec = D.DiscoverySpec(strictness="standard")
+    common = np.repeat(rng.standard_normal(5), 100)                                                           # in each shuffle every formula has nearly the same t: five draws, not five hundred
+    together = common + 0.05 * rng.standard_normal(500)
+    out = C.summarise(_runs(together, 5), spec)["summary"]
+    lo, hi = out["t_sd_interval"]
+    assert hi - lo > 0.8 and out["t_calibration"] == "close"                                                  # wide, because five numbers were seen; the old error (a third of 500 independent) would have said +-0.05
+    assert "cannot be told" in C.summarise(_runs(together, 5), spec)["reading"] or lo > 1.0
+    assert out["t_sd_range"][0] < out["t_sd"] < out["t_sd_range"][1]                                           # shuffle by shuffle the spread differs, and the reading says so
+    two = C.summarise(_runs(rng.standard_normal(600), 2), spec)                                              # two shuffles cannot say how much to trust a spread
+    assert two["summary"]["t_calibration"] == "unknown" and two["summary"]["t_sd_error"] is None and "fewer than three shuffles" in two["reading"]
 
 
 def test_what_luck_lets_through_is_set_beside_what_a_real_run_let_through():

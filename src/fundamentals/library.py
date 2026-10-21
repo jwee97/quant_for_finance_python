@@ -229,14 +229,7 @@ class AlphaLibrary:
         coverage_now = float(signal.iloc[-n_recent:].where(ctx.investable().reindex_like(signal).iloc[-n_recent:]).notna().sum(axis=1).mean())
         coverage_then = float(signal.iloc[:-n_recent].where(ctx.investable().reindex_like(signal).iloc[:-n_recent]).notna().sum(axis=1).mean())
         mean_recent = float(recent_ic.mean())
-        if (r_stats.get("t_stat") is not None and np.isfinite(r_stats["t_stat"]) and r_stats["t_stat"] <= -2.0) or (coverage_then > 0 and coverage_now < 0.3 * coverage_then):
-            state = "Broken"
-        elif mean_recent <= 0 or (original > 0 and two < 0.25 * original):
-            state = "Decaying"
-        elif original > 0 and mean_recent < 0.5 * original:
-            state = "Weakening"
-        else:
-            state = "Healthy"
+        state = judge(original, mean_recent, two, r_stats.get("t_stat"), coverage_now, coverage_then)
         detail = {"recent_ic": mean_recent, "recent_t": r_stats.get("t_stat"), "original_ic": original, "two_year_ic": two, "recent_window": n_recent, "coverage_now": coverage_now,
                   "coverage_before": coverage_then, "ratio": (mean_recent / original) if original else None}
         return self._record_monitor(row, state, detail, usable_ends, recent_ic=mean_recent, historical=original, coverage=coverage_now)
@@ -253,6 +246,19 @@ class AlphaLibrary:
 
 
 # ------------------------------------------------------------------------------------------------------------------ helpers
+def judge(original: float, recent: float, two_years: float, recent_t, coverage_now: float, coverage_then: float) -> str:
+    """The monitor's verdict from its numbers (information coefficients in the direction the alpha is used). *Broken*: the recent IC has reversed with evidence (a t-statistic of -2 or less), or the
+    alpha now covers under 30% of the companies it once did. *Decaying*: the recent IC is zero or negative, or the last two years earned under a quarter of the original. *Weakening*: the recent IC is
+    under half of the original. Otherwise *Healthy*. Each bar is met exactly at its edge and not before (a quarter of the original is not yet decaying, and -2.0 is already broken)."""
+    if (recent_t is not None and np.isfinite(recent_t) and recent_t <= -2.0) or (coverage_then > 0 and coverage_now < 0.3 * coverage_then):
+        return "Broken"
+    if recent <= 0 or (original > 0 and two_years < 0.25 * original):
+        return "Decaying"
+    if original > 0 and recent < 0.5 * original:
+        return "Weakening"
+    return "Healthy"
+
+
 def build_signal(ctx: ResearchContext, expression: dict, settings: dict) -> pd.DataFrame:
     """The signal panel an expression and its stored conditions describe: the formula, the pipeline of transformations, then the sign found in the discovery sample."""
     raw = X.evaluate_panel(expression, ctx)
