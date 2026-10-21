@@ -718,6 +718,38 @@ def test_the_overview_says_what_to_do_next_ticks_what_is_done_and_each_step_has_
         page.close()
 
 
+def test_a_button_that_starts_work_is_off_while_its_view_is_still_reading_and_on_again_after(browser, live_real, monkeypatch):  # noqa: F811
+    import threading
+
+    from src.fundamentals.service import FundamentalsService
+    release = threading.Event()
+    real = FundamentalsService.data_status
+
+    def held(self):                                                                                           # a slow database: the status is not ready until the test says so
+        release.wait(30)
+        return real(self)
+
+    monkeypatch.setattr(FundamentalsService, "data_status", held)
+    page = _page(browser, live_real)
+    try:
+        _open(page, "data", demo=False)
+        page.wait_for_selector("[data-action=add-companies]")
+        work = ["add-companies", "plan-sync", "start-sync", "load-prices"]
+        assert [page.locator(f"#fundamentals .panel [data-action={a}]").is_disabled() for a in work] == [True] * 4                       # pressed now they would only be refused, and look broken
+        assert "Reading the status" in page.evaluate("() => window.FD.busy")
+        release.set()
+        page.wait_for_selector("[data-role=fund-provider]")
+        _wait_until(page, "document.querySelectorAll('#fundamentals .panel button[data-busy-lock]').length === 0", 30)
+        assert [page.locator(f"#fundamentals .panel [data-action={a}]").is_disabled() for a in work] == [False] * 4
+        page.fill("[data-role=fund-symbols]", "us:AAA")
+        page.click("#fundamentals .panel [data-action=add-companies]")
+        _wait_until(page, "document.querySelectorAll('[data-role=fund-not-ready] li.done').length === 2", 30)         # and a press now does the work
+        assert page.problems == []
+    finally:
+        release.set()
+        page.close()
+
+
 def test_the_tables_of_the_research_views_can_be_downloaded_for_a_spreadsheet_with_numbers_as_numbers(browser, live_fund):  # noqa: F811
     import csv
     from pathlib import Path

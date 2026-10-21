@@ -127,6 +127,7 @@ def test_planted_alphas_are_found_and_noise_is_not(ctx):
     for noise in ("current_ratio", "debt_to_equity", "operating_margin"):
         assert abs(found[noise]["ic"]["t_stat"]) < 2.5, noise
     assert "not validated" in found["d_roic"]["verdict"] or "validated" not in found["d_roic"]["verdict"].replace("not validated", "")
+    assert found["fcf_yield"]["evidence_level"] == "good" and all(found[n]["evidence_level"] == "bad" for n in ("current_ratio", "debt_to_equity", "operating_margin"))
     assert found["fcf_yield"]["verdict"].startswith("Strong in-sample evidence") and "validated" in found["fcf_yield"]["verdict"]
 
 
@@ -195,12 +196,34 @@ def test_the_verdict_has_five_levels_and_never_calls_anything_validated():
     def fake(t, mean, sharpe, mono, n=60):
         return {"ic": {"n_dates": n, "t_stat": t, "mean_ic": mean}, "portfolio": {"net": {"sharpe": sharpe}}, "quantiles": {"monotonicity": {"spearman": mono}}}
 
-    assert E.verdict(fake(0.5, 0.01, 0.1, 0.5)).startswith("No evidence")
+    assert E.verdict(fake(0.5, 0.01, 0.1, 0.5)).startswith("No clear evidence")
     assert "weak" in E.verdict(fake(2.2, 0.02, 0.5, 0.9)) and "not validated" in E.verdict(fake(2.2, 0.02, 0.5, 0.9))
     strong = E.verdict(fake(4.0, 0.04, 1.2, 0.95))
     assert strong.startswith("Strong in-sample evidence") and "Interesting is not validated" in strong and "buckets rise in order" in strong
     assert "loses money after costs" in E.verdict(fake(4.0, 0.04, -0.3, 0.95)) and "do not rise cleanly" in E.verdict(fake(4.0, 0.04, 1.0, 0.2))
     assert "AGAINST" in E.verdict(fake(-3.5, -0.03, -1.0, -0.9)) and E.verdict(fake(4.0, 0.04, 1.0, 0.9, n=10)).startswith("Too little data")
+
+
+def test_the_headline_the_sentence_under_it_and_the_terminal_agree_and_change_at_a_t_of_2_and_3_and_a_net_sharpe_of_one_half():
+    from src.fundamentals import report
+
+    def fake(t, sharpe, n=60):
+        return {"ic": {"n_dates": n, "t_stat": t, "mean_ic": 0.03 if (t or 0) >= 0 else -0.03}, "portfolio": {"net": {"sharpe": sharpe}}, "quantiles": {"monotonicity": {"spearman": 0.9}}}
+
+    lead = {"good": "Strong in-sample evidence", "mixed": "Some evidence", "bad": "No clear evidence"}
+    for t in (None, float("nan"), 0.0, 1.64, 1.66, 1.99, 2.0, 2.99, 3.0, 3.01, -2.5, -3.5, 5.0):
+        for sharpe in (None, float("nan"), -0.3, 0.0, 0.49, 0.5, 0.51, 2.0):
+            result = fake(t, sharpe)
+            level = E.evidence_level(t, sharpe)
+            assert report.headline(result) == E.EVIDENCE_WORDS[level], (t, sharpe)
+            if t is not None and np.isfinite(t):
+                assert E.verdict(result).startswith(lead[level]), (t, sharpe)
+    assert [E.evidence_level(t, 1.0) for t in (1.99, 2.0, 2.99, 3.0, -3.0)] == ["bad", "mixed", "mixed", "good", "good"]
+    assert [E.evidence_level(3.0, s) for s in (0.5, 0.51, None, float("nan"), -1.0)] == ["mixed", "good", "mixed", "mixed", "mixed"]          # a clear signal that does not clearly pay is not "strong"
+    assert E.evidence_level(None, 2.0) == "bad" and E.evidence_level(float("nan"), 2.0) == "bad"
+    clear_but_unpaid = E.verdict(fake(3.4, 0.43))
+    assert "short of the 0.5" in clear_but_unpaid and "net Sharpe of 0.43" in clear_but_unpaid and "not validated" in clear_but_unpaid
+    assert "could not be measured" in E.verdict(fake(3.4, None)) and "could not be measured" in E.verdict(fake(3.4, float("nan")))
 
 
 def _anticipation_world(tmp_path, n=150, seed=5):
@@ -237,10 +260,21 @@ def test_a_figure_used_before_it_was_public_is_caught_by_the_look_ahead_audit(tm
     naive_ic = E.rank_ic(E.transforms.apply(naive.panel("net_income", "fy"), spec.steps, naive), naive.forward("1m"), 20)
     assert naive_ic.mean() > 0.04 and honest_ic.mean() < 0.01 and naive_ic.mean() > 5 * max(honest_ic.mean(), 0.002)         # known early, the figure "predicts"; known on time, it does not
     sig = E.transforms.apply(ctx.panel("net_income", "fy"), spec.steps, ctx)
-    assert E.evaluate(ctx, sig, spec)["verdict"].startswith(("No evidence", "Some evidence"))
+    assert E.evaluate(ctx, sig, spec)["verdict"].startswith(("No clear evidence", "Some evidence"))
 
 
 def test_the_audit_function_runs_the_study_both_ways_and_says_which_to_believe(ctx):
     audit = E.look_ahead_audit(ctx.store, E.EvalSpec(factor="fcf_yield", breakdowns=()), UniverseSpec())
     assert {"honest", "naive", "naive_minus_honest_ic", "flattered", "verdict"} <= set(audit) and audit["honest"]["n_dates"] > 100
     assert audit["flattered"] is False and "changes little" in audit["verdict"]
+
+
+def test_the_trend_regime_is_bull_when_the_market_rose_over_the_last_252_days_and_unknown_before_a_year_of_history(ctx):
+    trend = E.regimes(ctx)["trend"]
+    m = ctx.market_return().fillna(0.0).to_numpy()
+    for pos, label in zip(ctx.pos, trend):
+        if pos < 252:
+            assert pd.isna(label)
+        else:
+            assert label == ("bull" if float(np.prod(1.0 + m[pos - 251: pos + 1])) - 1.0 > 0 else "bear")
+    assert (trend == "bull").sum() > 10 and (trend == "bear").sum() > 10 and trend.isna().sum() == int((ctx.pos < 252).sum())

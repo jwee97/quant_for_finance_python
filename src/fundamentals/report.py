@@ -6,6 +6,13 @@ from __future__ import annotations
 
 import math
 
+from .evaluate import EVIDENCE_WORDS, evidence_level
+
+
+def _a(word: str) -> str:
+    """The word with its article: *an exploratory*, *a standard*."""
+    return ("an " if word[:1].lower() in "aeiou" else "a ") + word
+
 
 def _bad(x) -> bool:
     return x is None or (isinstance(x, float) and not math.isfinite(x))
@@ -58,10 +65,7 @@ def _interval(ci, fmt) -> str:
 
 def headline(study: dict) -> str:
     """The one-line reading the page puts on a study, from the same two numbers: the t-statistic of the IC and the net Sharpe of the long-short portfolio."""
-    t, net = abs(study["ic"].get("t_stat") or float("nan")), (study["portfolio"].get("net") or {}).get("sharpe")
-    if _bad(t):
-        return "No clear evidence"
-    return "Strong in this sample" if t >= 3 and not _bad(net) and net > 0.5 else "Some evidence" if t >= 2 else "No clear evidence"
+    return EVIDENCE_WORDS[evidence_level(study["ic"].get("t_stat"), (study["portfolio"].get("net") or {}).get("sharpe"))]
 
 
 def format_status(s: dict, db: str) -> str:
@@ -291,7 +295,7 @@ __all__ = ["format_status", "format_plan", "format_sync", "format_prices", "form
 def format_preflight(pf: dict) -> str:
     rows = [[num(r["ic"], 2), pct(r["first_screen"], 0), pct(r["validation"], 0), pct(r["locked_test"], 0), pct(r["found"], 0)] for r in pf["table"]]
     b = pf["blocks"]
-    return "\n".join([f"What a {pf['strictness']} search of {pf['formulas']} formulas could find", pf["reading"], "",
+    return "\n".join([f"What {_a(pf['strictness'])} search of {pf['formulas']} formulas could find", pf["reading"], "",
                       f"Training dates {b['train'][0]} to {b['train'][1]} ({b['dates']['train']}), validation {b['validation'][0]} to {b['validation'][1]} ({b['dates']['validation']}), "
                       f"locked test {b['oos'][0]} to {b['oos'][1]} ({b['dates']['oos']}); {b['embargo']} date(s) left out between blocks",
                       "", "The chance that a real alpha of each strength gets through (before the screens in between):",
@@ -301,7 +305,7 @@ def format_preflight(pf: dict) -> str:
 def format_placebo(r: dict) -> str:
     s = r["summary"]
     rows = [[k, pct(v["share"], 1), pct(v["expected"], 1)] for k, v in s["tail"].items()]
-    out = [f"Calibration of a {r['strictness']} search on shuffled returns ({s['runs']} shuffle{'s' if s['runs'] != 1 else ''}, {s['tested']} formulas tested)", r["reading"], "",
+    out = [f"Calibration of {_a(r['strictness'])} search on shuffled returns ({s['runs']} shuffle{'s' if s['runs'] != 1 else ''}, {s['tested']} formulas tested)", r["reading"], "",
            "Where the formulas fell, on average per shuffled run:", grid(["stage", "passed"], [[k, num(v, 1)] for k, v in s["funnel_mean"].items()], right=(1,)), "",
            "Shuffled formulas whose |t| reached each level (a correct t-statistic gives the second column):", grid(["|t| of at least", "found", "expected"], rows, right=(0, 1, 2))]
     return "\n".join(out)

@@ -56,7 +56,7 @@
       return { result: await Q.waitJob(started.job, (v) => {
         if (epoch !== FD.epoch) return;
         FD.busyBy[mode] = `${say}: ${v.message} (${Math.round(v.elapsed)} s)`;
-        if (mode === FD.mode) Q.syncLab(FD);
+        if (mode === FD.mode) { Q.syncLab(FD); FD.lockActions(); }
         paintBusy(); paintBackground();
       }, 600), started };
     } finally { if (FD.jobs[mode] === started.job) delete FD.jobs[mode]; }
@@ -69,7 +69,7 @@
     if (blocked) { Q.toast(blocked); return; }
     const epoch = FD.epoch, run = { job: (path, body, say) => FD.runJob(mode, path, body, say) };
     FD.busyBy[mode] = message; FD.errors[mode] = null; paintBackground();
-    if (mode === FD.mode) { Q.syncLab(FD); if (isOpen()) FD.draw(); }
+    if (mode === FD.mode) { Q.syncLab(FD); FD.lockActions(); if (isOpen()) FD.draw(); }
     let got = null, failed = null;
     try { got = { data: await fn(run), body: {} }; }
     catch (e) { failed = e.status === 404 ? "The app behind this page does not know this request: it is older than the page. " + Q.RESTART : e.message; }
@@ -77,7 +77,15 @@
     delete FD.busyBy[mode];
     if (failed) FD.errors[mode] = failed; else FD.results[mode] = got;
     paintBackground();
-    if (mode === FD.mode) { Q.syncLab(FD); if (isOpen()) FD.draw(); }
+    if (mode === FD.mode) { Q.syncLab(FD); FD.lockActions(); if (isOpen()) FD.draw(); }
+  };
+  /* A button in the panel that starts work is disabled while its view is working: pressed, it would only be refused ("Still working"), and a press that does nothing looks like a broken button. */
+  FD.lockActions = () => {
+    const busy = !!FD.busyBy[FD.mode];
+    for (const b of document.querySelectorAll("#fundamentals .panel button[data-action]")) {
+      if (busy && !b.disabled) { b.disabled = true; b.dataset.busyLock = "1"; }
+      else if (!busy && b.dataset.busyLock) { b.disabled = false; delete b.dataset.busyLock; }
+    }
   };
   function paintBusy() { const el = Q.$('[data-role="fund-progress"]'); if (el) el.textContent = FD.busy; }
   /* What the other views are doing, in the panel of this one. */
@@ -180,6 +188,7 @@
     const bg = h("div", "dbswitch bgnote", panel); bg.dataset.role = "fund-bg"; bg.setAttribute("role", "status"); bg.hidden = true;
     paintBackground();
     const v = FD.views[FD.mode]; if (v && v.sections) v.sections(panel);
+    FD.lockActions();
   };
   FD.run = () => { const v = FD.views[FD.mode]; if (v && v.run) return v.run(); };
   FD.auto = () => { const v = FD.views[FD.mode]; if (v && v.auto) v.auto(); };

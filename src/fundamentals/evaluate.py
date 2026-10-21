@@ -522,6 +522,7 @@ def evaluate(ctx: ResearchContext, signal: pd.DataFrame, spec: EvalSpec | None =
               "stability": stability, "warnings": warnings, "charts": charts, "n_dates": int(len(signal)), "average_companies": float(coverage.mean()) if len(coverage) else 0.0,
               "power": power, "premium": premium}
     result["verdict"] = verdict(result)
+    result["evidence_level"] = evidence_level(stats_ic.get("t_stat"), (portfolio.get("net") or {}).get("sharpe"))
     return clean(result)
 
 
@@ -538,6 +539,20 @@ def _drawdown(returns: pd.Series) -> pd.Series:
     return curve / curve.cummax() - 1.0
 
 
+EVIDENCE_WORDS = {"good": "Strong in this sample", "mixed": "Some evidence", "bad": "No clear evidence"}
+
+
+def evidence_level(t_stat, net_sharpe) -> str:
+    """How much a study shows, as the headline over it says it: ``good`` (|t| of at least 3 and a net long-short Sharpe above 0.5), ``mixed`` (|t| of at least 2) or ``bad`` (anything less, or no
+    t-statistic). It is the one rule behind the headline of the page, the first words of the sentence under it and the first line in the terminal, so the three never disagree."""
+    t = abs(float(t_stat)) if t_stat is not None else float("nan")
+    if not np.isfinite(t):
+        return "bad"
+    if t >= 3.0 and net_sharpe is not None and np.isfinite(net_sharpe) and net_sharpe > 0.5:
+        return "good"
+    return "mixed" if t >= 2.0 else "bad"
+
+
 def verdict(result: dict) -> str:
     """The sentence under the numbers. Never "validated": that needs out-of-sample data, a count of the ideas tried and costs."""
     ic = result["ic"]
@@ -548,14 +563,18 @@ def verdict(result: dict) -> str:
     net = result["portfolio"].get("net", {}).get("sharpe")
     mono = result["quantiles"]["monotonicity"].get("spearman")
     direction = "in the expected direction" if mean > 0 else "AGAINST the direction given"
-    if abs(t) < 1.65:
-        return f"No evidence of a relationship in this sample (mean IC {mean:+.3f}, t = {t:.1f}). Treat it as noise."
-    if abs(t) < 3.0:
+    level = evidence_level(t, net)
+    if level == "bad":
+        return f"No clear evidence of a relationship in this sample (mean IC {mean:+.3f}, t = {t:.1f}). Treat it as noise."
+    if level == "mixed" and abs(t) < 3.0:
         return (f"Some evidence, {direction} (mean IC {mean:+.3f}, t = {t:.1f}). With the number of ideas usually tried, a t below 3 is weak: this is interesting, not validated. "
                 "It needs out-of-sample data and a count of everything tried.")
-    cost_note = "" if net is None or not np.isfinite(net) else (f" The long-short portfolio has a net Sharpe of {net:.2f}." if net > 0 else f" But the long-short portfolio loses money after costs (net Sharpe {net:.2f}).")
+    cost_note = (" The long-short portfolio could not be measured." if net is None or not np.isfinite(net) else
+                 f" The long-short portfolio has a net Sharpe of {net:.2f}{', which is short of the 0.5 that a strong case needs' if level == 'mixed' else ''}." if net > 0 else
+                 f" But the long-short portfolio loses money after costs (net Sharpe {net:.2f}).")
     mono_note = "" if mono is None or not np.isfinite(mono) else (" The buckets rise in order." if mono > 0.8 else (" The buckets do not rise cleanly, which is a warning." if mono < 0.5 else ""))
-    return (f"Strong in-sample evidence, {direction} (mean IC {mean:+.3f}, t = {t:.1f}).{cost_note}{mono_note} Interesting is not validated: check it out of sample, against the number of ideas "
+    lead = "Strong in-sample evidence" if level == "good" else "Some evidence"
+    return (f"{lead}, {direction} (mean IC {mean:+.3f}, t = {t:.1f}).{cost_note}{mono_note} Interesting is not validated: check it out of sample, against the number of ideas "
             "tried, and after costs before trusting it.")
 
 
@@ -594,6 +613,20 @@ def evaluate_factor(ctx: ResearchContext, spec: EvalSpec) -> dict:
 LAG_SWEEP = (1, 30, 60, 90)
 
 
+def flattered_by_early_knowledge(honest_ic: float, naive_ic: float) -> bool:
+    """Whether treating every figure as known on its period end earns a good deal more than waiting for the filing: the gain is over half of the honest IC (in the honest IC's direction), or the
+    honest IC is next to nothing and the early-knowledge one is not."""
+    gap = naive_ic - honest_ic
+    return bool(abs(honest_ic) > 1e-12 and gap * np.sign(honest_ic) > 0.5 * abs(honest_ic) or (abs(honest_ic) < 0.01 and abs(naive_ic) > 0.03))
+
+
+def fades_when_waiting(by_lag: list[dict], own_lag: int) -> bool:
+    """Whether the first wait of a month or more leaves less than half of the IC that the study's own lag had (the IC must be worth more than 0.01 to start with)."""
+    waits = [r for r in by_lag if r["lag_days"] >= 30 and r["mean_ic"] is not None and np.isfinite(r["mean_ic"])]
+    first = next((r for r in by_lag if r["lag_days"] == own_lag and r["mean_ic"] is not None), None) or (by_lag[0] if by_lag else None)
+    return bool(waits and first and first["mean_ic"] and np.isfinite(first["mean_ic"]) and abs(first["mean_ic"]) > 0.01 and waits[0]["mean_ic"] * np.sign(first["mean_ic"]) < 0.5 * abs(first["mean_ic"]))
+
+
 def look_ahead_audit(store, spec: EvalSpec, universe=None, freq: str = "M", settings=None, lags: tuple = LAG_SWEEP) -> dict:
     """The same study twice: with every figure available from the day it was public (the honest way) and with every figure treated as known on its period end. If the second is much better
     than the first, the result leans on knowing figures before anyone could have, and the honest number is the one to believe.
@@ -622,12 +655,10 @@ def look_ahead_audit(store, spec: EvalSpec, universe=None, freq: str = "M", sett
             signal = build_signal(ctx, spec)
             stats_lag = ic_stats(rank_ic(signal, ctx.forward(spec.horizon).reindex(signal.index), spec.min_assets), horizon_days(spec.horizon), FREQ_DAYS[freq], PERIODS_PER_YEAR[freq])
         by_lag.append({"lag_days": lag, "mean_ic": stats_lag.get("mean_ic"), "t_stat": stats_lag.get("t_stat"), "n_dates": stats_lag.get("n_dates", 0)})
-    gap = (out["naive"].get("mean_ic") or 0.0) - (out["honest"].get("mean_ic") or 0.0)
-    honest_ic = out["honest"].get("mean_ic") or 0.0
-    flattered = abs(honest_ic) > 1e-12 and gap * np.sign(honest_ic) > 0.5 * abs(honest_ic) or (abs(honest_ic) < 0.01 and abs(out["naive"].get("mean_ic") or 0.0) > 0.03)
-    waits = [r for r in by_lag if r["lag_days"] >= 30 and r["mean_ic"] is not None and np.isfinite(r["mean_ic"])]
-    first = next((r for r in by_lag if r["lag_days"] == base.info_lag_days and r["mean_ic"] is not None), None) or (by_lag[0] if by_lag else None)
-    fades = bool(waits and first and first["mean_ic"] and np.isfinite(first["mean_ic"]) and abs(first["mean_ic"]) > 0.01 and waits[0]["mean_ic"] * np.sign(first["mean_ic"]) < 0.5 * abs(first["mean_ic"]))
+    honest_ic, naive_ic = out["honest"].get("mean_ic") or 0.0, out["naive"].get("mean_ic") or 0.0
+    gap = naive_ic - honest_ic
+    flattered = flattered_by_early_knowledge(honest_ic, naive_ic)
+    fades = fades_when_waiting(by_lag, base.info_lag_days)
     return clean({"factor": spec.factor, "honest": out["honest"], "naive": out["naive"], "naive_minus_honest_ic": gap, "flattered": bool(flattered), "by_lag": by_lag, "fades_when_waiting": fades,
                   "verdict": ("Treating figures as known on their period end flatters this factor a great deal: the honest result is the one to believe." if flattered else
                               "Treating figures as known earlier changes little: the result does not lean on early knowledge."),

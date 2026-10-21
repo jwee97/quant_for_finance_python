@@ -8,7 +8,8 @@
   const GUIDE = "fundamentals";
   const isOpen = () => !Q.$(FD.view).hidden;
   const levelOf = (study) => {                                                                // a verdict is never colour alone: the icon and the words carry it too
-    const t = Math.abs(study.ic.t_stat), net = (study.portfolio.net || {}).sharpe;
+    if (study.evidence_level) return study.evidence_level;                                    // the app says it, with the sentence under it, so the two cannot disagree
+    const t = Math.abs(study.ic.t_stat), net = (study.portfolio.net || {}).sharpe;           // (a result from an older app: the same rule)
     if (Q.bad(t)) return "bad";
     return t >= 3 && !Q.bad(net) && net > 0.5 ? "good" : t >= 2 ? "mixed" : "bad";
   };

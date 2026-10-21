@@ -1202,7 +1202,7 @@ See: [calibration](techniques/calibration.md)
 
 ### Look-ahead audit
 
-A factor study run twice, once with each figure used from the day it was public and once as if it were known at the end of its period, to show how much a naive join of accounts to prices would have flattered the result.
+A factor study run twice, once with each figure used from the day it was public and once as if it were known at the end of its period, to show how much a naive join of accounts to prices would have flattered the result. It is also run with each figure used only 1, 30, 60 and 90 days after its filing, to show whether the signal lives in the days right after a filing.
 
 See: [point-in-time-fundamentals](techniques/point-in-time-fundamentals.md)
 
@@ -1528,6 +1528,14 @@ Probability integral transform: the forecast's cumulative distribution evaluated
 
 See: [probabilistic-forecasting](techniques/probabilistic-forecasting.md), [forecast-evaluation](techniques/forecast-evaluation.md)
 
+### Placebo test
+
+*Also: search on shuffled returns*
+
+A search run again on copies of the data in which each date's returns have been dealt out to other companies at random, so that nothing can predict anything. Whatever still gets through its screens is luck, so counting it measures the search's own error rate and, set beside a real run, the share of that run's survivors that luck would have produced anyway. It cannot show the overconfidence that real, clustered signals cause.
+
+See: [automated-alpha-discovery](techniques/automated-alpha-discovery.md)
+
 ### Platt scaling
 
 Calibrating probabilities by fitting a logistic curve to the raw scores.
@@ -1672,6 +1680,14 @@ A forecast with no view on direction and a constant spread taken from the last y
 
 See: [forecast-evaluation](techniques/forecast-evaluation.md)
 
+### Rank-normal score
+
+*Also: normal score of a rank*
+
+A value replaced by the normal quantile of its rank among the companies on its date. Put through a regression it gives every company the weight its rank deserves, so one extreme value cannot set the slope; it is what the premium regression of a factor study uses for the signal.
+
+See: [factor-studies-ic-quantiles-and-decay](techniques/factor-studies-ic-quantiles-and-decay.md)
+
 ### Reality Check
 
 *Also: SPA*
@@ -1794,6 +1810,26 @@ The process closest in relative entropy to a reference process that starts at on
 
 See: [dynamic-programming-and-optimal-control](techniques/dynamic-programming-and-optimal-control.md)
 
+### Search bars
+
+*Also: strictness, exploratory, standard and strict*
+
+The thresholds a formula has to clear at each stage of a search. They come in three named sets: exploratory (a first look), standard (the default: first-screen |t| of 2, false-discovery q-value of 0.10) and strict (|t| of 3, q-value 0.05). They are part of what makes two verdicts the same, and are chosen before a run: raising one after seeing the funnel is selecting on the answer.
+
+See: [automated-alpha-discovery](techniques/automated-alpha-discovery.md)
+
+### Search ledger
+
+The count of every idea tried on one question (the same universe, dates, horizon, frequency, entry lag, pipeline and costs) across all runs. The false-discovery q-values and the deflated Sharpe ratio of a new run are computed from the pooled count, so ten runs of ten ideas are a hundred ideas to correct for, not ten; an idea tried twice counts once.
+
+See: [automated-alpha-discovery](techniques/automated-alpha-discovery.md)
+
+### Search preflight
+
+What a search of a given size could find, worked out before any formula is tried: the smallest true mean IC the first screen and the locked test can tell from luck, the chance that a real alpha of each strength gets through each screen and all of them, and how many formulas luck alone is expected to pass the first screen.
+
+See: [automated-alpha-discovery](techniques/automated-alpha-discovery.md)
+
 ### Sequence-of-returns risk
 
 The danger that poor returns arrive early in the life of a portfolio that is being drawn down, which a later recovery cannot repair because the money is already gone.
@@ -1819,6 +1855,12 @@ See: [explainability](techniques/explainability.md), [machine-learning-research-
 Mean excess return divided by its standard deviation, annualised.
 
 See: [performance-metrics](techniques/performance-metrics.md)
+
+### Sharpe ratio interval
+
+A 95% interval for an annualised Sharpe ratio from its large-sample standard error, which allows for skew and fat tails (Mertens): for the per-period ratio `sr` and the raw kurtosis `kurt`, `se = sqrt((1 - skew * sr + (kurt - 1) / 4 * sr^2) / (n - 1))`. A Sharpe ratio of 1.9 from 165 months is read as "1.3 to 2.4", not as a fact.
+
+See: [factor-studies-ic-quantiles-and-decay](techniques/factor-studies-ic-quantiles-and-decay.md)
 
 ### Shrinkage
 

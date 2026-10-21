@@ -15,6 +15,9 @@ import pytest
 from src.fundamentals import discovery as D
 from src.fundamentals import evaluate as E
 from src.fundamentals import metrics, transforms
+from src.fundamentals.errors import FundamentalsError
+from src.fundamentals.pit import PeriodTables, PitSettings, availability, step_panel
+from src.fundamentals.store import CompanyProfile, FundamentalsStore, PeriodStatement
 from tests.test_fund_metrics import Y19, Y20, _company, _row
 
 
@@ -129,3 +132,138 @@ def test_the_default_bars_and_the_weights_of_the_fitness_are_what_the_documentat
     assert all(v == 1.0 for v in parts.values()) and top == pytest.approx(0.30 + 0.20 + 0.25 + 0.10 + 0.15 - 0.15 - 0.10)               # no part is more than its scale
     low, parts = D.fitness(dict(ic=0.0, val_ic=0.0, positive_share=0.1, sharpe=-3.0, val_sharpe=-3.0, monotonicity=-1.0, turnover=0.0, nodes=1), decorrelation=-2.0)
     assert all(v == 0.0 for v in parts.values()) and low == 0.0
+
+
+# ------------------------------------------------------------------------------------------------------------------------ what a study may see, and when
+def test_the_assumed_filing_lags_and_the_age_limits_are_the_documented_ones_and_a_missing_filing_date_uses_them():
+    s = PitSettings()
+    assert dict(s.estimated_lag_days) == {"FY": 120, "H1": 90, "H2": 90, "Q1": 60, "Q2": 60, "Q3": 60, "Q4": 60} and s.lag_for("T1") == 120 and s.info_lag_days == 1
+    assert s.age_for("fy") == 640 and s.age_for("ttm") == 540
+    ends = pd.to_datetime(["2020-12-31", "2020-06-30", "2020-03-31", "2020-09-30"])
+    nothing = pd.NaT
+    periods = pd.DataFrame({"period_end": ends, "fiscal_period": ["FY", "H1", "Q1", "Q3"], "filing_date": nothing, "accepted_date": nothing, "publication_date": nothing, "pit_quality": "ok"})
+    available, estimated = availability(periods, s)
+    assert estimated.all() and list((available - ends).dt.days) == [121, 91, 61, 61]                               # the lag, then the day after: a filing may have come after the close
+    known = periods.assign(filing_date=pd.to_datetime(["2021-02-10", "2020-08-01", "2020-05-01", "2020-11-01"]))
+    available, estimated = availability(known, s)
+    assert not estimated.any() and list(available.dt.strftime("%Y-%m-%d")) == ["2021-02-11", "2020-08-02", "2020-05-02", "2020-11-02"]
+    assert list(availability(known, PitSettings(info_lag_days=30))[0].dt.strftime("%Y-%m-%d")) == ["2021-03-12", "2020-08-31", "2020-05-31", "2020-12-01"]
+
+
+def test_a_figure_is_kept_until_the_day_its_period_is_the_limit_old_and_dropped_the_day_after():
+    end = pd.Timestamp("2020-01-01")
+    ev = pd.DataFrame({"security_id": [1], "available_date": [pd.Timestamp("2020-03-01")], "period_end": [end], "value": [5.0]})
+    dates = pd.DatetimeIndex([end + pd.Timedelta(days=d) for d in (59, 60, 599, 600, 601)])
+    panel = step_panel(ev, dates, [1], max_age_days=600)[1]
+    assert np.isnan(panel.iloc[0]) and panel.iloc[1] == 5.0 and panel.iloc[2] == 5.0 and panel.iloc[3] == 5.0 and np.isnan(panel.iloc[4])     # known from the 60th day, expired after the 600th
+
+
+def _quarters(store, name, rows, filing_after=40):
+    """A company whose statements are given as ``(fiscal period, period end, revenue, net income, total assets)``."""
+    sid = store.upsert_security(CompanyProfile("simulated", name, name, name, exchange="NYSE"))
+    store.store_financials(sid, "simulated", [PeriodStatement(fp, end, dict(revenue=rev, net_income=ni, total_assets=assets), fiscal_year=int(end[:4]),
+                                                              filing_date=(pd.Timestamp(end) + pd.Timedelta(days=filing_after)).strftime("%Y-%m-%d")) for fp, end, rev, ni, assets in rows])
+    return sid
+
+
+def test_trailing_twelve_months_add_four_consecutive_reported_quarters_or_two_halves_and_restart_after_a_gap(tmp_path):
+    store = FundamentalsStore(tmp_path / "ttm.db")
+    ends = ["2018-03-31", "2018-06-30", "2018-09-30", "2018-12-31", "2019-03-31", "2019-06-30", "2019-09-30", "2019-12-31", "2020-03-31", "2020-06-30"]
+    quarters = [(f"Q{i % 4 + 1}", end, 100.0 + 10 * i, 10.0 + i, 1000.0 + 5 * i) for i, end in enumerate(ends)]
+    full = _quarters(store, "FULL", quarters)
+    gap = _quarters(store, "GAP", [q for q in quarters if q[1] != "2019-06-30"])                                  # one quarter was never reported
+    halves = _quarters(store, "HALF", [("H1", "2018-06-30", 200.0, 20.0, 2000.0), ("H2", "2018-12-31", 220.0, 22.0, 2100.0), ("H1", "2019-06-30", 240.0, 24.0, 2200.0)])
+    ttm = PeriodTables(store, [full, gap, halves]).ttm
+
+    def revenue(sid):
+        sub = ttm[ttm["security_id"] == sid]
+        return {d.strftime("%Y-%m-%d"): v for d, v in zip(sub["period_end"], sub["revenue"])}
+
+    assert revenue(full) == {ends[i]: sum(100.0 + 10 * j for j in range(i - 3, i + 1)) for i in range(3, 10)}               # 460 at the end of the first year, then a window that slides by a quarter
+    assert revenue(gap) == {"2018-12-31": 460.0, "2019-03-31": 500.0, "2020-06-30": 160.0 + 170.0 + 180.0 + 190.0}        # the missing quarter breaks the run: four new quarters are needed after it
+    assert revenue(halves) == {"2018-12-31": 420.0, "2019-06-30": 460.0}                                                    # two halves of 182 days make a year
+    sub = ttm[(ttm["security_id"] == full) & (ttm["period_end"] == pd.Timestamp("2018-12-31"))].iloc[0]
+    assert sub["net_income"] == 10.0 + 11 + 12 + 13 and sub["total_assets"] == 1015.0 and sub["fiscal_period"] == "TTM"         # a flow is summed, a balance is the latest one
+
+
+def test_quarters_that_do_not_add_up_to_the_year_by_more_than_a_tenth_are_not_used_and_the_year_stands_in(tmp_path):
+    store = FundamentalsStore(tmp_path / "ttm2.db")
+    ends = ["2018-03-31", "2018-06-30", "2018-09-30", "2018-12-31"]
+    quarters = [(f"Q{i + 1}", end, 100.0 + 10 * i, 10.0, 1000.0) for i, end in enumerate(ends)]            # 100 + 110 + 120 + 130 = 460
+    ids = {}
+    for name, annual in (("CLOSE", 505.0), ("FAR", 520.0)):                                                     # 8.9% and 11.5% below the year
+        sid = _quarters(store, name, quarters)
+        store.store_financials(sid, "simulated", [PeriodStatement("FY", "2018-12-31", dict(revenue=annual, net_income=40.0, total_assets=1000.0), fiscal_year=2018, filing_date="2019-02-10")])
+        ids[name] = sid
+    tables = PeriodTables(store, list(ids.values()))
+    ttm = tables.ttm.set_index("security_id")
+    assert ttm.loc[ids["CLOSE"], "revenue"] == 460.0 and ttm.loc[ids["FAR"], "revenue"] == 520.0                    # the first keeps its quarters, the second takes the annual figure
+    assert any("1 companies' quarterly figures do not add up" in n for n in tables.notes)
+
+
+# ------------------------------------------------------------------------------------------------------------------------ the legs, the groups and the look-ahead audit
+def test_a_leg_weighted_by_its_signal_weighs_each_name_by_its_distance_from_the_middle_and_a_thin_leg_is_empty():
+    dates = pd.to_datetime(["2020-01-31"])
+    signal = pd.DataFrame([np.arange(10.0)], index=dates, columns=range(10))                                    # ranks 0.1 ... 1.0
+    by_signal = E.leg_weights(signal, 0.25, "signal", None, min_names=2)
+    assert by_signal[0].iloc[0].round(6).tolist() == [0, 0, 0, 0, 0, 0, 0, 0.25, 0.333333, 0.416667]                # |rank - 0.5| = 0.3, 0.4, 0.5 over 1.2
+    assert by_signal[1].iloc[0].round(6).tolist() == [0.571429, 0.428571, 0, 0, 0, 0, 0, 0, 0, 0]                   # 0.4 and 0.3 over 0.7
+    equal = E.leg_weights(signal, 0.25, "equal", None, min_names=2)
+    assert equal[0].iloc[0].round(6).tolist() == [0] * 7 + [round(1 / 3, 6)] * 3 and equal[1].iloc[0].round(6).tolist() == [0.5, 0.5] + [0] * 8
+    thin = E.leg_weights(signal, 0.25, "equal", None)                                                           # three names are needed in a leg: the bottom one has two
+    assert thin[0].iloc[0].sum() == pytest.approx(1.0) and thin[1].iloc[0].sum() == 0.0
+    with pytest.raises(FundamentalsError, match="equal, signal or inv_vol"):
+        E.leg_weights(signal, 0.25, "vibes", None)
+
+
+def test_a_result_is_called_flattered_when_early_knowledge_adds_over_half_of_the_honest_ic_or_when_the_honest_ic_is_nothing_and_the_early_one_is_not():
+    flat = E.flattered_by_early_knowledge
+    assert flat(0.04, 0.07) and not flat(0.04, 0.059) and flat(-0.04, -0.07) and not flat(-0.04, -0.059)       # +0.03 is over half of 0.04, +0.019 is not, whichever way the signal points
+    assert flat(0.02, 0.031) and not flat(0.02, 0.029) and flat(-0.02, -0.031) and not flat(-0.02, -0.029)
+    assert not flat(0.04, 0.02) and not flat(0.04, 0.04)                                                     # an honest figure that is better than the early one is not flattered
+    assert flat(0.005, -0.031) and not flat(0.005, -0.029)                                                   # next to nothing honestly, and over 0.03 either way with early knowledge
+    assert flat(0.0099, -0.05) and not flat(0.0101, -0.05)                                                   # "next to nothing" is under 0.01
+    assert flat(0.0, 0.031) and flat(0.0, -0.031) and not flat(0.0, 0.03) and not flat(0.0, 0.0)
+
+
+def test_a_signal_is_said_to_fade_when_the_first_wait_of_a_month_or_more_leaves_less_than_half_of_an_ic_worth_more_than_a_hundredth():
+    def lags(*pairs):
+        return [{"lag_days": d, "mean_ic": ic, "t_stat": 1.0, "n_dates": 50} for d, ic in pairs]
+
+    fade = E.fades_when_waiting
+    assert fade(lags((1, 0.04), (30, 0.019), (60, 0.01), (90, 0.0)), 1) and not fade(lags((1, 0.04), (30, 0.021), (60, 0.0), (90, 0.0)), 1)         # it is the first wait that counts
+    assert fade(lags((1, -0.04), (30, -0.019)), 1) and not fade(lags((1, -0.04), (30, -0.021)), 1) and fade(lags((1, 0.04), (30, -0.01)), 1)       # an IC that turned over has gone
+    assert not fade(lags((1, 0.01), (30, 0.0)), 1) and fade(lags((1, 0.0101), (30, 0.0)), 1)                  # an IC of a hundredth or less is too small to say it faded
+    assert not fade(lags((1, 0.04)), 1) and not fade([], 1) and not fade(lags((1, 0.04), (30, None)), 1) and not fade(lags((1, 0.04), (30, float("nan"))), 1)      # nothing to compare with
+    assert not fade(lags((30, 0.04), (60, 0.01)), 30)                                                          # the study's own lag is a month: the wait it is compared with is itself
+    assert fade(lags((1, 0.04), (30, 0.01)), 7)                                                              # no entry for the study's own lag: the first one stands in for it
+
+
+def test_a_group_is_reported_with_eight_companies_and_twelve_dates_and_a_regime_with_twelve_dates():
+    rng = np.random.default_rng(3)
+    dates = pd.date_range("2015-01-31", periods=40, freq="30D")
+    cols = list(range(20))
+    signal = pd.DataFrame(rng.standard_normal((40, 20)), index=dates, columns=cols)
+    forward = signal * 0.5 + pd.DataFrame(rng.standard_normal((40, 20)), index=dates, columns=cols)
+    labels = pd.Series(["a"] * 8 + ["b"] * 7 + ["c"] * 5, index=cols)
+    out = E._group_ic(signal, forward, labels, 21, 21, 12)
+    assert sorted(out) == ["a"] and out["a"]["companies"] == 8 and out["a"]["n_dates"] == 40 and out["a"]["mean_ic"] > 0
+    assert sorted(E._group_ic(signal, forward, labels, 21, 21, 12, 7)) == ["a", "b"] and sorted(E._group_ic(signal, forward, labels, 21, 21, 12, 5)) == ["a", "b", "c"]
+    for dates_with_a_return, kept in ((11, []), (12, ["a"])):
+        cut = forward.copy()
+        cut.iloc[dates_with_a_return:] = np.nan
+        assert sorted(E._group_ic(signal, cut, labels, 21, 21, 12)) == kept
+    ic = pd.Series(rng.normal(0.02, 0.05, 40), index=dates)
+    regime = pd.Series(["up"] * 12 + ["down"] * 11 + [None] * 17, index=dates)
+    got = E._regime_ic(ic, regime, 21, 21, 12)
+    assert list(got) == ["up"] and got["up"]["n_dates"] == 12                                                  # twelve dates are enough, eleven are not
+
+
+def test_the_reports_put_the_right_article_before_the_name_of_the_bars():
+    from src.fundamentals import report
+    assert [report._a(w) for w in ("exploratory", "standard", "strict")] == ["an exploratory", "a standard", "a strict"]
+    pf = {"strictness": "exploratory", "formulas": 80, "reading": "r", "table": [], "blocks": {"train": ["a", "b"], "validation": ["c", "d"], "oos": ["e", "f"], "dates": {"train": 1, "validation": 2, "oos": 3}, "embargo": 1}}
+    assert report.format_preflight(pf).startswith("What an exploratory search of 80 formulas could find")
+    placebo = {"strictness": "strict", "reading": "x", "summary": {"runs": 1, "tested": 5, "tail": {}, "funnel_mean": {}}}
+    assert report.format_placebo(placebo).startswith("Calibration of a strict search on shuffled returns (1 shuffle, 5 formulas tested)")
+    assert report.format_placebo(dict(placebo, strictness="exploratory")).startswith("Calibration of an exploratory search")
