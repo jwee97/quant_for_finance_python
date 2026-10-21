@@ -8,6 +8,7 @@ from __future__ import annotations
 import math
 from dataclasses import FrozenInstanceError, asdict
 from datetime import datetime, timezone
+from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
@@ -18,8 +19,9 @@ from src.fundamentals import evaluate as E
 from src.fundamentals import expr as X
 from src.fundamentals import library as L
 from src.fundamentals import metrics, transforms
-from src.fundamentals.errors import FundamentalsError, InvalidKey, PlanError, QuotaExhausted, RateLimited
+from src.fundamentals.errors import CreditsExhausted, FundamentalsError, InvalidKey, NotFound, PlanError, ProviderError, QuotaExhausted, RateLimited, SyncPending
 from src.fundamentals.keys import MAX_NUMBERED, KeyPool, discover
+from src.fundamentals.providers import openfilings as of
 from src.fundamentals.pit import PeriodTables, PitSettings, availability, step_panel
 from src.fundamentals.store import CompanyProfile, FundamentalsStore, PeriodStatement
 from src.fundamentals.usage import Allowance, UsageLog, allowance
@@ -256,6 +258,26 @@ def test_quarters_that_do_not_add_up_to_the_year_by_more_than_a_tenth_are_not_us
     assert any("1 companies' quarterly figures do not add up" in n for n in tables.notes)
 
 
+def test_quarters_follow_each_other_when_their_period_ends_are_61_to_121_days_apart_and_halves_152_to_212(tmp_path):
+    store = FundamentalsStore(tmp_path / "spacing.db")
+
+    def run(name, labels, days):
+        return _quarters(store, name, [(label, (pd.Timestamp("2018-03-31") + pd.Timedelta(days=days * i)).strftime("%Y-%m-%d"), 100.0, 10.0, 1000.0) for i, label in enumerate(labels)])
+
+    made = {("quarters", d): run(f"Q{d}", ["Q1", "Q2", "Q3", "Q4"], d) for d in (60, 61, 121, 122)}
+    made.update({("halves", d): run(f"H{d}", ["H1", "H2"], d) for d in (151, 152, 212, 213)})
+    ttm = PeriodTables(store, list(made.values())).ttm
+    has_a_year = {key: bool((ttm["security_id"] == sid).any()) for key, sid in made.items()}
+    assert has_a_year == {("quarters", 60): False, ("quarters", 61): True, ("quarters", 121): True, ("quarters", 122): False,
+                          ("halves", 151): False, ("halves", 152): True, ("halves", 212): True, ("halves", 213): False}                       # a quarter is 91 days and a half 182, give or take 30
+
+
+def test_a_set_of_tables_prints_briefly_and_is_compared_by_identity_not_by_its_tables(tmp_path):
+    store, sid = _company(tmp_path, {2019: Y19, 2020: Y20})
+    tables = PeriodTables(store, [sid])
+    assert len(repr(tables)) < 120 and hash(tables) == hash(tables) and tables == tables and tables != PeriodTables(store, [sid])
+
+
 # ------------------------------------------------------------------------------------------------------------------------ the legs, the groups and the look-ahead audit
 def test_a_leg_weighted_by_its_signal_weighs_each_name_by_its_distance_from_the_middle_and_a_thin_leg_is_empty():
     dates = pd.to_datetime(["2020-01-31"])
@@ -369,6 +391,66 @@ def test_a_candidate_is_validated_at_its_bars_and_not_below_them_and_the_alphas_
     assert len(lib.set_status(fresh, "Rejected", "x" * 400)["status_reason"]) == 300                                                # a reason is kept to 300 characters
 
 
+def test_a_refused_move_names_where_the_alpha_may_go_and_the_log_says_why_each_one_was_added_and_whether_a_move_was_forced(tmp_path):
+    import re
+
+    lib = L.AlphaLibrary(FundamentalsStore(tmp_path / "lib.db"))
+    plain = lib.add_candidate(X.parse("div(fcf,market_cap)"), {"freq": "M", "tag": 1}, {})
+    reasoned = lib.add_candidate(X.parse("div(fcf,market_cap)"), {"freq": "M", "tag": 2}, {}, reason="found by a search")
+    assert [e["reason"] for e in lib.status_log(plain)] == ["added"] and [e["reason"] for e in lib.status_log(reasoned)] == ["found by a search"]
+    assert lib.get(plain)["status_reason"] == "passed every screen" and lib.get(reasoned)["status_reason"] == "found by a search"
+    with pytest.raises(FundamentalsError, match=re.escape("is Candidate: it cannot go straight to Production (allowed: Validated, Rejected, Retired)")):
+        lib.set_status(plain, "Production", "too soon")
+    lib.set_status(plain, "Rejected", "no good")
+    with pytest.raises(FundamentalsError, match=re.escape("it cannot go straight to Candidate (allowed: nothing)")):
+        lib.set_status(plain, "Candidate", "second thoughts")
+    lib.set_status(plain, "Candidate", "second thoughts", force=True)
+    assert [(e["from_status"], e["to_status"], e["forced"]) for e in lib.status_log(plain)] == [(None, "Candidate", 0), ("Candidate", "Rejected", 0), ("Rejected", "Candidate", 1)]
+
+
+def _watched(tmp_path, freq, signs, thin_after=None, keep=12, **settings):
+    """A library with one alpha and a context made by hand: thirty companies whose signal is 1 ... 30 on every date, and whose return on each date is that signal times ``signs[t]`` (so the rank
+    information coefficient of the date is exactly +1 or -1). From the date ``thin_after`` on, only the first ``keep`` companies have a signal."""
+    n = len(signs)
+    dates = pd.date_range("2012-01-31", periods=n, freq="ME")
+    signal = pd.DataFrame(np.tile(np.arange(1.0, 31.0), (n, 1)), index=dates, columns=range(30))
+    forward = signal.mul(np.array(signs, float) * 0.01, axis=0)
+    if thin_after is not None:
+        signal.iloc[thin_after:, keep:] = np.nan
+    ctx = SimpleNamespace(freq=freq, forward=lambda horizon: forward, investable=lambda: pd.DataFrame(True, index=dates, columns=range(30)))
+    lib = L.AlphaLibrary(FundamentalsStore(tmp_path / f"watched_{freq}_{n}_{thin_after}_{keep}.db"))
+    alpha = lib.add_candidate(X.parse("div(fcf,market_cap)"), {"freq": freq, "horizon": "1m", "min_assets": 10, **settings}, {"ic": 0.8})
+    return lib, ctx, signal, alpha, dates
+
+
+def test_the_monitor_compares_the_last_window_with_the_one_before_and_the_whole_past_and_counts_how_many_companies_it_still_covers(tmp_path, monkeypatch):
+    signs = [1] * 16 + [1] * 6 + [-1] * 6 + [1] * 9 + [-1] * 3                                          # the last twelve dates average +0.5, the twelve before them 0
+    lib, ctx, signal, alpha, dates = _watched(tmp_path, "M", signs, thin_after=len(signs) - 12)
+    monkeypatch.setattr(L, "build_signal", lambda c, expression, settings: signal)
+    out = lib.monitor(alpha, ctx)
+    d = out["detail"]
+    assert out["monitor"] == "Healthy" and out["as_of"] == dates[-1].strftime("%Y-%m-%d")
+    assert (d["recent_window"], d["recent_ic"], d["original_ic"], d["two_year_ic"]) == (12, pytest.approx(0.5), 0.8, pytest.approx(0.25))
+    assert d["ratio"] == pytest.approx(0.5 / 0.8) and (d["coverage_now"], d["coverage_before"]) == (12.0, 30.0)         # twelve of the thirty companies now, thirty before
+    assert lib.monitor_history(alpha)[0]["coverage"] == 12.0 and lib.monitor(alpha, ctx, recent=6)["detail"]["recent_window"] == 6
+    lib, ctx, signal, alpha, _ = _watched(tmp_path, "M", signs, thin_after=len(signs) - 12, keep=4)                                        # four companies now: under 30% of thirty
+    monkeypatch.setattr(L, "build_signal", lambda c, expression, settings: signal)
+    gone = lib.monitor(alpha, ctx)
+    assert gone["monitor"] == "Broken" and gone["detail"]["coverage_now"] == 4.0 and gone["detail"]["coverage_before"] == 30.0
+
+
+def test_the_monitor_looks_back_a_year_of_monthly_dates_a_year_of_weekly_ones_and_four_quarters_and_wants_twice_that_to_judge(tmp_path, monkeypatch):
+    for freq, window in (("M", 12), ("W", 52), ("Q", 4)):
+        lib, ctx, signal, alpha, _ = _watched(tmp_path, freq, [1] * (2 * window - 1))
+        monkeypatch.setattr(L, "build_signal", lambda c, expression, settings, signal=signal: signal)
+        short = lib.monitor(alpha, ctx)
+        assert short["monitor"] == "Weakening" and short["detail"]["note"] == f"only {2 * window - 1} dates of IC: too few to compare a recent window with the past"
+        lib, ctx, signal, alpha, _ = _watched(tmp_path, freq, [1] * (2 * window))
+        monkeypatch.setattr(L, "build_signal", lambda c, expression, settings, signal=signal: signal)
+        enough = lib.monitor(alpha, ctx)
+        assert enough["monitor"] == "Healthy" and enough["detail"]["recent_window"] == window
+
+
 def test_the_library_finds_the_same_idea_in_another_spelling_under_any_or_the_given_conditions_and_remembers_a_failure_once(tmp_path):
     lib = L.AlphaLibrary(FundamentalsStore(tmp_path / "lib.db"))
     monthly, quarterly = {"freq": "M", "horizon": "1m"}, {"freq": "M", "horizon": "3m"}
@@ -404,6 +486,8 @@ def test_the_allowance_comes_from_the_environment_then_the_plan_then_the_free_pl
     assert (own.daily, own.monthly, own.source) == (7, 100000, "environment limits")
     monkeypatch.setenv("OPENFILINGS_MONTHLY_LIMIT", "0")
     assert allowance("openfilings").monthly is None                                                                                    # zero says there is no limit
+    monkeypatch.setenv("OPENFILINGS_DAILY_LIMIT", "seven")
+    assert allowance("openfilings").daily == 10000                                                                                     # words are not a limit: the plan's daily allowance stands
     simulated = allowance("simulated")
     assert (simulated.unit, simulated.daily, simulated.monthly, simulated.source) == ("requests", 1_000_000, None, "none")
     monkeypatch.setenv("SIMULATED_DAILY_LIMIT", "5")
@@ -480,6 +564,8 @@ def test_the_usage_summary_the_history_and_the_activity_log_say_what_was_spent_a
     for i in range(39):
         usage.record("simulated", "x", True, symbol=f"S{i}")
     assert len(usage.recent("simulated")) == 30 and usage.recent("simulated")[0]["symbol"] == "S38" and len(usage.recent("simulated", 5)) == 5      # newest first, thirty by default
+    usage.record("simulated", "x", False, error="e" * 400)
+    assert usage.recent("simulated", 1)[0]["error"] == "e" * 300                                                                       # a long message is kept to 300 characters
 
 
 def _keys(tmp_path, keys=("of_first_key_aaaa",), daily=100, monthly=1000, name="k.db"):
@@ -570,3 +656,162 @@ def test_numbered_key_slots_are_read_up_to_the_twentieth_and_a_plan_error_is_log
     last = usage.recent("openfilings", 1)[0]
     assert last["success"] == 0 and last["credits_used"] == 0 and last["error"].startswith("plan:")                       # a refusal of the plan is free and says what it was
     assert pool.slots()[0]["state"] == "ready" and pool.remaining_today() == 100                                        # and every key on the plan would say the same, so none is set aside
+
+
+# ------------------------------------------------------------------------------------------------------------------------ what OpenFilings says, and what each answer means here
+def _answer(status, detail=None, headers=None, text=None):
+    import json as _json
+
+    body = text if text is not None else ("" if detail is None else _json.dumps({"detail": detail}))
+    return of.OpenFilingsProvider._interpret(status, headers or {}, body.encode(), "of_secret_key_1234")
+
+
+def test_each_answer_of_openfilings_is_told_apart_by_its_status_and_what_it_says_and_never_repeats_the_key():
+    assert _answer(200, text='{"a": 1}') == {"a": 1} and _answer(204, text='{"b": 2}') == {"b": 2} and _answer(299, text="[1]") == [1]
+    for bad in ("", "not json", "   "):
+        with pytest.raises(ProviderError, match="not JSON"):
+            _answer(200, text=bad)
+    with pytest.raises(SyncPending) as pending:
+        _answer(202, {"retry_after": 90})
+    assert pending.value.retry_after == 90.0
+    with pytest.raises(SyncPending) as later:
+        _answer(202, None, {"Retry-After": "45"}, text="{}")
+    assert later.value.retry_after == 45.0
+    with pytest.raises(SyncPending) as unsaid:
+        _answer(202, None, {}, text="{}")
+    assert unsaid.value.retry_after is None
+    with pytest.raises(InvalidKey, match="HTTP 401"):
+        _answer(401, "no")
+    with pytest.raises(CreditsExhausted) as credits:
+        _answer(402, {"credit_balance": 3}, {"X-Credits-Required": "10"})
+    assert credits.value.balance == 3.0 and credits.value.required == 10.0
+    with pytest.raises(CreditsExhausted) as headers_only:
+        _answer(402, None, {"x-credits-balance": "0.5", "x-credits-required": "1"}, text="{}")
+    assert headers_only.value.balance == 0.5 and headers_only.value.required == 1.0
+    with pytest.raises(PlanError) as upgrade:
+        _answer(403, {"error": "upgrade_required", "feature": "screener", "min_plan": "pro"})
+    assert (upgrade.value.feature, upgrade.value.min_plan) == ("screener", "pro") and "needs the pro plan" in str(upgrade.value) and "does not include screener" in str(upgrade.value)
+    with pytest.raises(PlanError, match=r"refused the request \(HTTP 403\): not for you"):
+        _answer(403, {"message": "not for you"})
+    with pytest.raises(NotFound, match="nothing for this request: no such company"):
+        _answer(404, {"error": "no such company"})
+    with pytest.raises(NotFound, match="nothing for this request: plain text"):
+        _answer(404, "plain text")
+    for dimension, kind in (("daily", "daily"), ("per day", "daily"), ("monthly", "monthly"), ("month", "monthly"), ("minute", "burst"), ("", "daily")):
+        body = {"error": "quota_exceeded", "dimension": dimension, "daily_limit": 100, "daily_used": 100, "monthly_remaining": 900.0, "ignored": "text"}
+        with pytest.raises(RateLimited) as limited:
+            _answer(429, body, {"Retry-After": "7"})
+        assert limited.value.dimension == kind and limited.value.retry_after == 7.0
+        if kind != "burst":
+            assert f"{kind} allowance is spent" in str(limited.value) and "daily limit 100" in str(limited.value) and "monthly remaining 900" in str(limited.value) and "ignored" not in str(limited.value)
+            assert limited.value.detail == {"daily_limit": 100, "daily_used": 100, "monthly_remaining": 900.0}
+    with pytest.raises(RateLimited) as slow:
+        _answer(429, "slow down")
+    assert slow.value.dimension == "burst" and slow.value.retry_after is None
+    for status in (400, 422):
+        with pytest.raises(ProviderError, match=rf"rejected the request \(HTTP {status}\): bad ticker"):
+            _answer(status, {"message": "bad ticker"})
+    for status in (500, 502, 503):
+        with pytest.raises(ProviderError, match=rf"temporarily unavailable \(HTTP {status}\)"):
+            _answer(status, "boom")
+    with pytest.raises(ProviderError, match=r"answered HTTP 418: " + "x" * 120 + "$"):
+        _answer(418, "x" * 300)
+    with pytest.raises(ProviderError) as leaked:
+        _answer(400, {"message": "your key of_secret_key_1234 is not allowed here"})
+    assert "of_secret_key_1234" not in str(leaked.value) and "your key" in str(leaked.value)
+    with pytest.raises(ProviderError) as cut:
+        _answer(400, {"message": "y" * 500})
+    assert str(cut.value).endswith("y" * 200) and "y" * 201 not in str(cut.value)
+
+
+def test_a_search_answer_becomes_one_row_per_company_under_the_listing_asked_for_or_the_primary_one():
+    nvidia = {"display_names": ["NVIDIA Corporation", "NVIDIA"], "isin": "US67066G1040", "lei": "549300S4KLFTLO7GSQ80",
+              "listings": [{"market_id": "UK", "ticker": " nvda ", "company_name": "", "score": "high", "registry": "x" * 60, "hint": "h" * 300},
+                           {"market_id": "us", "ticker": "nvda", "company_name": "NVIDIA Corp", "primary": True, "score": 0.97, "isin": "US67066G1040"},
+                           {"market_id": "de", "ticker": "nvd"}, {"market_id": "us"}, {"ticker": "x"}, "not a listing"]}
+    for market, symbol in ((None, "us:NVDA"), ("us", "us:NVDA"), ("uk", "uk:NVDA")):
+        (row,) = of._search_profiles({"entity": nvidia}, market)
+        assert row.provider_symbol == symbol
+    (primary,) = of._search_profiles({"entity": nvidia})
+    assert (primary.name, primary.isin, primary.country, primary.exchange, primary.extra["primary"], primary.extra["score"]) == ("NVIDIA Corp", "US67066G1040", "US", "US", True, 0.97)
+    assert primary.extra["also_listed"] == ["uk:NVDA", "de:NVD"] and primary.extra["has_financials"] is True                          # the other listings, so the same company is not added twice
+    (uk,) = of._search_profiles({"entity": nvidia}, "uk")
+    assert uk.name == "NVIDIA Corporation" and uk.country == "GB" and uk.extra["score"] is None and uk.extra["primary"] is False         # a name from the list when the listing has none; "uk" is Great Britain
+    assert len(uk.extra["registry"]) == 40 and len(uk.extra["hint"]) == 200 and uk.extra["also_listed"] == ["us:NVDA", "de:NVD"]
+    many = {"entity": {"listings": [{"market_id": "us", "ticker": f"T{i}", "primary": i == 0} for i in range(10)]}}
+    assert len(of._search_profiles(many)[0].extra["also_listed"]) == 6                                                              # no more than six others are kept
+    several = of._search_profiles({"entity": {"listing": "jp:7203", "display_names": ["", "Toyota Motor"]},
+                                   "entities": [{"entity": {"listings": [{"market_id": "zz", "ticker": "q1", "company_name": "C" * 300}], "isin": "XX1234567890"}},
+                                                {"listings": [{"market_id": "jp", "ticker": "7203"}]},                                    # the same listing again
+                                                {"listing": "nocolon"}, {"listings": []}, "junk", None, {"entity": "not a mapping"}]})
+    assert [r.provider_symbol for r in several] == ["jp:7203", "zz:Q1"]
+    assert several[0].name == "Toyota Motor" and several[0].country == "JP" and several[0].extra["primary"] is True                   # a listing given as a string is taken as the primary one
+    assert several[1].extra["has_financials"] is False and len(several[1].name) == 200 and several[1].country == "ZZ"
+    assert of._search_profiles({}) == [] and of._search_profiles({"entity": None, "entities": None}) == []
+    eu = of._search_profiles({"entity": {"isin": "DE0007164600", "listings": [{"market_id": "eu", "ticker": "sap", "primary": True}]}})[0]
+    assert eu.country == "DE" and of._country("eu", None) is None and of._country("eu", "1") is None and of._country("fr", None) == "FR"          # a pan-European listing has the country of its ISIN
+
+
+def _provider(tmp_path, answers, name="of.db"):
+    """An OpenFilings client whose transport gives the listed ``(status, headers, body)`` answers in turn and notes every address and every pause."""
+    import json as _json
+
+    pool, usage = _keys(tmp_path, name=name)
+    asked, slept = [], []
+
+    def transport(url, headers, timeout):
+        asked.append((url, headers))
+        status, extra, body = answers[min(len(asked) - 1, len(answers) - 1)]
+        return status, extra, (body if isinstance(body, bytes) else _json.dumps(body).encode())
+
+    return of.OpenFilingsProvider(pool, transport=transport, sleep=slept.append), asked, slept, usage
+
+
+def test_a_financials_request_asks_for_the_years_the_caller_named_or_the_default_history_and_only_annual_ones(tmp_path):
+    from urllib import parse as urlparse
+
+    page = {"entity": {"market_id": "us", "ticker": "AAA", "name": "A Co"}, "currency_latest": "USD",
+            "periods": [{"fiscal_period": "FY", "fiscal_year": 2020, "period_end": "2020-12-31", "filing_date": "2021-02-20", "values": {"revenue": 10.0}}]}
+    provider, asked, _, _ = _provider(tmp_path, [(200, {}, page)])
+    this_year = datetime.now(timezone.utc).year
+
+    def params():
+        return dict(urlparse.parse_qsl(urlparse.urlparse(asked[-1][0]).query))
+
+    provider.get_financials("us:aaa")
+    assert params()["fiscal_year_from"] == str(this_year - of.DEFAULT_HISTORY_YEARS) and of.DEFAULT_HISTORY_YEARS == 25
+    assert "fiscal_year_to" not in params() and params()["fiscal_period"] == "fy" and params()["ticker"] == "aaa" and params()["market_id"] == "us"
+    provider.get_financials("us:aaa", limit=3)
+    assert params()["fiscal_year_from"] == str(this_year - 3)
+    provider.get_financials("us:aaa", start_year=2005, end_year=2012, limit=3)
+    assert params()["fiscal_year_from"] == "2005" and params()["fiscal_year_to"] == "2012"                              # the years named win over a count of years
+    assert asked[-1][1]["X-API-Key"] == "of_first_key_aaaa" and asked[-1][1]["Accept"] == "application/json"
+    result = provider.get_financials("us:aaa", start_year=2010)
+    assert result.cost == 10 and result.requests == 1 and result.exhausted is True and [p.fiscal_year for p in result.periods] == [2020]      # nothing before 2020 came back for a start in 2010
+    assert provider.get_financials("us:aaa", start_year=2020).exhausted is False
+    with pytest.raises(PlanError, match="quarterly figures are not supported"):
+        provider.get_financials("us:aaa", period="quarter")
+    assert len(asked) == 5                                                                                              # the refused request spent nothing and asked nothing
+
+
+def test_a_burst_of_requests_is_waited_out_twice_for_the_time_asked_or_a_growing_pause_and_never_longer_than_five_seconds(tmp_path):
+    ok = (200, {}, {"entity": {}, "periods": []})
+    slow = (429, {"Retry-After": "3"}, {"detail": "slow down"})
+    unsaid = (429, {}, {"detail": "slow down"})
+    for answers, pauses in (([slow, ok], [3.0]), ([unsaid, unsaid, ok], [2.0, 4.0]), ([(429, {"Retry-After": "99"}, "x"), ok], [5.0]), ([(429, {"Retry-After": "0.5"}, "x"), ok], [0.5])):
+        provider, asked, slept, _ = _provider(tmp_path, answers, name=f"b{len(answers)}{pauses[0]}.db")
+        provider._get("/api/v1/markets", {}, "markets")
+        assert slept == pauses and len(asked) == len(answers)
+    provider, asked, slept, usage = _provider(tmp_path, [unsaid], name="three.db")
+    with pytest.raises(RateLimited) as burst:
+        provider._get("/api/v1/markets", {}, "markets")
+    assert burst.value.dimension == "burst" and slept == [2.0, 4.0] and len(asked) == of.BURST_RETRIES + 1              # two pauses, three tries, then it says so
+    assert usage.used_today("openfilings") == 0 and usage.recent("openfilings", 1)[0]["error"].startswith("burst:")
+
+
+def test_a_company_profile_is_made_only_when_both_the_market_and_the_ticker_are_known():
+    assert of.parse_financials({"periods": []}, "", "")[1] is None and of.parse_financials({"periods": []}, "us", "")[1] is None and of.parse_financials({"periods": []}, "", "aaa")[1] is None
+    profile = of.parse_financials({"periods": [], "currency_latest": "USD"}, "us", "aaa")[1]
+    assert profile.provider_symbol == "us:AAA" and profile.currency == "USD" and profile.country == "US"
+    named = of.parse_financials({"entity": {"market_id": "JP", "ticker": "7203", "name": "Toyota"}, "periods": [], "isin": "JP3633400001"}, "", "")[1]
+    assert (named.provider_symbol, named.name, named.isin, named.country) == ("jp:7203", "Toyota", "JP3633400001", "JP")

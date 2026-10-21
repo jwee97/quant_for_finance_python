@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
@@ -278,3 +279,47 @@ def test_the_trend_regime_is_bull_when_the_market_rose_over_the_last_252_days_an
         else:
             assert label == ("bull" if float(np.prod(1.0 + m[pos - 251: pos + 1])) - 1.0 > 0 else "bear")
     assert (trend == "bull").sum() > 10 and (trend == "bear").sum() > 10 and trend.isna().sum() == int((ctx.pos < 252).sum())
+
+
+def test_the_trend_regime_starts_on_the_day_that_a_full_year_of_returns_exists():
+    market = pd.Series(0.001, index=pd.bdate_range("2019-01-01", periods=400))                           # a market that rises every day
+    at = np.array([250, 251, 252, 253])
+    fake = SimpleNamespace(_cache={}, pos=at, dates=market.index[at], market_return=lambda: market)
+    trend = E.regimes(fake)["trend"]
+    assert list(trend.isna()) == [True, True, False, False] and list(trend.iloc[2:]) == ["bull", "bull"]    # 252 returns exist on the 253rd day, not before
+
+
+def test_a_region_is_shown_from_fifteen_companies_and_one_bucket_has_no_spread(ctx, monkeypatch):
+    spec = E.EvalSpec(factor="fcf_yield", breakdowns=("region",))
+    signal = E.build_signal(ctx, spec)
+    both = signal.notna() & ctx.forward(spec.horizon).reindex(signal.index).notna()
+    best = list(both.sum(axis=0).sort_values(ascending=False, kind="stable").index)                      # the companies with a signal and a return on the most dates
+    original, shown = ctx.group, {}
+    for size in (14, 15):
+        labels = pd.Series(["small" if c in best[:size] else "rest" for c in signal.columns], index=signal.columns)
+        monkeypatch.setattr(ctx, "group", lambda name, labels=labels: labels if name == "region" else original(name))
+        shown[size] = E.evaluate_factor(ctx, spec)["breakdown"]["region"]
+    assert "small" not in shown[14] and shown[14]["rest"]["companies"] == 86                              # fourteen companies are too few to say anything about a region
+    assert shown[15]["small"]["companies"] == 15 and shown[15]["small"]["n_dates"] >= 100 and shown[15]["rest"]["companies"] == 85
+    one = E.evaluate_factor(ctx, E.EvalSpec(factor="fcf_yield", quantiles=1, breakdowns=()))
+    assert one["quantiles"]["buckets"] == 1 and one["quantiles"]["spread_top_minus_bottom"] is None       # one bucket has no top and no bottom
+
+
+def test_the_automatic_direction_flips_the_signal_only_when_the_mean_ic_is_below_zero(ctx, monkeypatch):
+    signal = pd.DataFrame({"a": [1.0, 2.0], "b": [3.0, 1.0]}, index=pd.to_datetime(["2020-01-31", "2020-02-29"]))
+    monkeypatch.setattr(E, "build_signal", lambda c, s: signal)
+    monkeypatch.setattr(E, "evaluate", lambda c, s, spec, label=None: {"warnings": [], "signal": s})
+    spec = E.EvalSpec(factor="fcf_yield", direction="auto")
+    for ics, flipped in (([0.1, -0.1], False), ([0.1, -0.1000001], True), ([0.1, -0.05], False), ([], False)):
+        monkeypatch.setattr(E, "rank_ic", lambda s, f, m, ics=ics: pd.Series(ics, index=signal.index[:len(ics)], dtype=float))
+        result = E.evaluate_factor(ctx, spec)
+        assert result["signal"].equals(-signal if flipped else signal) and ("was flipped" in result["warnings"][0]) is flipped    # a mean of exactly zero keeps the factor's own sign
+
+
+def test_the_histogram_of_the_ic_has_twenty_bins_edges_rounded_to_five_places_and_needs_five_values():
+    values = pd.Series(np.linspace(-0.0123456789, 0.0987654321, 37))
+    h = E._hist(values)
+    counts, edges = np.histogram(values.to_numpy(float), bins=20)
+    assert h["counts"] == [int(c) for c in counts] and h["edges"] == [round(float(e), 5) for e in edges] and len(h["edges"]) == 21
+    assert E._hist(pd.Series([0.1, 0.2, 0.3, 0.4])) == {"edges": [], "counts": []}
+    assert sum(E._hist(pd.Series([0.1, 0.2, 0.3, 0.4, 0.5]))["counts"]) == 5
