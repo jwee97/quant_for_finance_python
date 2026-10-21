@@ -389,6 +389,7 @@ def test_a_candidate_is_validated_at_its_bars_and_not_below_them_and_the_alphas_
     fresh = alpha()
     assert re.fullmatch(r"A[0-9a-f]{8}-[0-9a-f]{4}", fresh)                                                                         # eight characters of the formula, four of the conditions
     assert len(lib.set_status(fresh, "Rejected", "x" * 400)["status_reason"]) == 300                                                # a reason is kept to 300 characters
+    assert lib.status_log(fresh)[-1]["reason"] == "x" * 300                                                                          # in the log as well
 
 
 def test_a_refused_move_names_where_the_alpha_may_go_and_the_log_says_why_each_one_was_added_and_whether_a_move_was_forced(tmp_path):
@@ -623,6 +624,15 @@ def test_a_burst_a_bad_key_and_a_spent_allowance_are_each_logged_as_what_they_we
     with pytest.raises(QuotaExhausted):
         pool.call(refuse(RateLimited("daily allowance", dimension="daily")), "financials", "us:CCC", credits=10)
     assert usage.recent("openfilings", 1)[0]["error"].startswith("limit:day") and pool.slots()[1]["state"] == "spent_day"
+
+
+def test_a_day_the_provider_says_is_spent_is_refused_with_the_day_and_the_reset_even_when_the_count_here_is_lower(tmp_path):
+    pool, usage = _keys(tmp_path, daily=100)
+    usage.record("openfilings", "financials", True, key_id=pool.slots()[0]["key_id"], credits=10)
+    usage.record("openfilings", "financials", False, key_id=pool.slots()[0]["key_id"], error="limit:day the daily allowance is spent")        # the provider's own answer: only 10 of 100 are counted here
+    with pytest.raises(QuotaExhausted) as refused:
+        pool.ensure(10)
+    assert str(refused.value) == "OPENFILINGS daily allowance is spent for key 1 (10 of 100 credits today); it resets at 00:00 UTC"
 
 
 def test_a_pool_whose_every_key_was_rejected_says_so_and_has_nothing_left_to_spend(tmp_path):
