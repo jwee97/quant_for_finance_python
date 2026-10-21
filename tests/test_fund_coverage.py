@@ -476,6 +476,20 @@ def test_a_note_the_provider_adds_to_a_series_is_kept_with_the_request_and_never
     assert svc.coverage(sid)["reading"].endswith("none of them an annual statement this application reads and cost 10 credits. OpenFilings added a note to its answer: \u201cno entries here\u201d.")
 
 
+def test_the_company_list_counts_the_years_missing_between_the_first_held_and_the_last(tmp_path):
+    from src.fundamentals.workbench import Workbench
+
+    svc, fake, sid = _one_company(tmp_path, start=2018)
+    other = svc.add_companies("openfilings", ["MSFT"])[0]
+    bench = Workbench(service=svc)
+    rows = {r["security_id"]: r for r in bench.companies()["companies"]}
+    assert (rows[sid]["annual"], rows[sid]["annual_gaps"], rows[sid]["first_period_end"], rows[sid]["last_period_end"]) == (6, 0, "2018-12-31", "2023-12-31") and rows[other]["annual_gaps"] == 0
+    svc.fetch_years(sid, [2014], budget=10)                                                             # 2015, 2016 and 2017 lie between 2014 and 2018
+    row = [r for r in bench.companies()["companies"] if r["security_id"] == sid][0]
+    assert (row["annual"], row["annual_gaps"], row["first_period_end"]) == (7, 3, "2014-12-31")
+    assert rows[other]["first_period_end"] is None
+
+
 def test_a_company_with_no_statements_yet_lists_every_year_as_missing_and_one_request_covers_the_years_picked(tmp_path):
     svc, fake = _service(tmp_path, clock=Clock())
     sid = svc.add_companies("openfilings", ["AAPL"])[0]

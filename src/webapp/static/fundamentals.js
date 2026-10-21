@@ -484,12 +484,12 @@
     if (!d.companies.length) CO.none(card, dbTotal);
     else {
       const wrap = FD.guardScroll(h("div", "scroll", card)), t = h("table", "data", wrap), hd = h("tr", "", h("thead", "", t));
-      for (const [label, numeric] of [["Ticker", 0], ["Company", 0], ["Country", 0], ["Sector", 0], ["Annual", 1], ["First period", 0], ["Last period", 0], ["Price days", 1], ["Open", 2]]) { const th = h("th", numeric === 1 ? "num" : "", hd); if (numeric === 2) h("span", "vh", th, label); else th.textContent = label; }
+      for (const [label, numeric] of [["Ticker", 0], ["Company", 0], ["Country", 0], ["Sector", 0], ["Annual", 1], ["Gaps", 1], ["First period", 0], ["Last period", 0], ["Price days", 1], ["Open", 2]]) { const th = h("th", numeric === 1 ? "num" : "", hd); if (numeric === 2) h("span", "vh", th, label); else th.textContent = label; }
       const tb = h("tbody", "", t);
       for (const r of d.companies) {
         const tr = h("tr", "", tb); tr.dataset.id = r.security_id;
         h("td", "", tr, r.ticker + (r.exchange ? " · " + r.exchange : "")); h("td", "", tr, r.company_name || ""); h("td", "", tr, r.country || ""); h("td", "", tr, r.sector || "");
-        h("td", "num", tr, String(r.annual)); h("td", "", tr, day(r.first_period_end)); h("td", "", tr, day(r.last_period_end)); h("td", "num", tr, String(r.price_days));
+        h("td", "num", tr, String(r.annual)); h("td", "num", tr, r.annual_gaps ? String(r.annual_gaps) : "").title = "Fiscal years missing between the first and the last that are held"; h("td", "", tr, day(r.first_period_end)); h("td", "", tr, day(r.last_period_end)); h("td", "num", tr, String(r.price_days));
         const open = h("button", "btn small", h("td", "", tr), "Open"); open.type = "button"; open.dataset.action = "open-company"; open.setAttribute("aria-label", "open " + r.ticker);
         open.addEventListener("click", () => { FD.co.id = r.security_id; FD.draw(); window.scrollTo({ top: 0 }); });
       }

@@ -606,6 +606,11 @@ def test_the_years_a_company_holds_are_shown_picked_priced_and_asked_for_without
         page.locator(f"{card} details:has(summary:has-text('Requests made for this company'))").locator("summary").click()
         log = page.inner_text(f"{card} details:has(summary:has-text('Requests made')) table")
         assert "years you chose" in log and "FY2014 to FY2016" in log and "first fetch" in log and "FY2018 onwards" in log
+        page.click("[data-action=back-to-list]")                                               # the list says at a glance which companies have gaps: 2017 and 2018 lie between 2016 and 2019
+        page.wait_for_selector("[data-role=fund-companies] tbody tr")
+        cells = page.locator("[data-role=fund-companies] tbody tr").first.locator("td").all_inner_texts()
+        heads = page.locator("[data-role=fund-companies] th").all_inner_texts()
+        assert heads[4:7] == ["Annual", "Gaps", "First period"] and cells[4] == "8" and cells[5] == "2" and cells[6] == "2014-12-31"
         assert _tables_have_names(page) == [] and KEY_1 not in page.content() and page.problems == []
     finally:
         page.close()
