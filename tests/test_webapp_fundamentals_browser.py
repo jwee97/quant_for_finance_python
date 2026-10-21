@@ -662,6 +662,9 @@ def test_years_picked_for_one_company_are_not_carried_to_another_and_a_failed_pl
         second = page.get_attribute("[data-role=fund-coverage] .years", "aria-label")
         assert first != second and page.locator("[data-role=fund-coverage] button.y[aria-pressed=true]").count() == 0
         assert "Click the years you want" in page.inner_text("[data-role=fund-years-plan]")
+        assert page.evaluate("() => FD.cov.data !== null")
+        page.evaluate("() => FD.resetCaches()")                                                         # a fetch from the Data manager makes what was read about the years out of date
+        assert page.evaluate("() => FD.cov.data === null && FD.cov.picked.size === 0 && FD.cov.id === null")
         page.route("**/api/fund/coverage/plan", lambda route: route.fulfill(status=400, content_type="application/json", body='{"error": "the plan could not be made"}'))
         page.click("[data-role=fund-coverage] button.y[data-year='2013']")
         _wait_until(page, "document.querySelector('[data-role=fund-years-plan]').innerText.includes('the plan could not be made')", 30)

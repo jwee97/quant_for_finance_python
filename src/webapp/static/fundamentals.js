@@ -615,8 +615,8 @@
     }
     const fetchYears = (plan, years) => FD.act("companies", "Asking OpenFilings for the chosen years…", async (run) => {
       const { result } = await run.job("/api/fund/coverage/fetch", { security_id: c.security_id, years, budget: plan.cost, ask_again: asksAgain(years) }, "Asking for the chosen years");
+      FD.resetCaches(); CO.refreshFacets();                                                                          // the figures, the years, the list and the overview are out of date now
       FD.cov = Object.assign(freshCov(c.security_id), { report: result });
-      FD.cache.delete("company:" + FD.db + ":" + c.security_id); FD.resetCaches(); CO.refreshFacets();                    // the figures, the list and the overview are out of date now
       return FD.read("/api/fund/companies", CO.local());
     });
     showPicks();
@@ -746,7 +746,7 @@
     const { result } = await run.job("/api/fund/simulate", body, "Making the simulated world");
     FD.dm.report = result; FD.resetCaches(); return FD.read("/api/fund/status");
   });
-  FD.resetCaches = () => { FD.cache = new Map(); FD.facets = {}; for (const m of ["overview", "companies", "library", "monitor"]) { delete FD.results[m]; delete FD.errors[m]; } };
+  FD.resetCaches = () => { FD.cache = new Map(); FD.facets = {}; clearTimeout(FD.cov.timer); FD.cov = freshCov(); for (const m of ["overview", "companies", "library", "monitor"]) { delete FD.results[m]; delete FD.errors[m]; } };
   DM.test = (button) => {
     button.disabled = true;
     FD.act("data", "Testing the connection (one credit)…", async () => { const r = await FD.send("/api/fund/provider/test", {}); FD.dm.tested = r; return FD.read("/api/fund/status"); });
