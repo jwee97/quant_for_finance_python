@@ -688,6 +688,7 @@ def test_the_overview_says_what_to_do_next_ticks_what_is_done_and_each_step_has_
         card.locator("li.next button").click()
         page.wait_for_selector("[data-role=fund-companies]")                                                              # the step's button goes where the work is done
         page.click("#fundamentals .labtop button[data-mode=data]")                                                          # a company added in the Data manager...
+        page.wait_for_selector("[data-role=fund-provider]")                                                               # ...once it has read its status: a button pressed while a view is still reading is refused ("Still working")
         page.fill("[data-role=fund-symbols]", "us:AAA")
         page.click("[data-action=add-companies]")
         _wait_until(page, "document.querySelector('[data-role=fund-not-ready] li.done') && document.querySelectorAll('[data-role=fund-not-ready] li.done').length === 2", 30)

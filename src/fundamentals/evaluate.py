@@ -103,7 +103,7 @@ def ic_stats(ic: pd.Series, horizon: int, step: int, periods_per_year: int) -> d
     sd = float(ic.std(ddof=1)) if len(ic) > 1 else float("nan")
     return {"n_dates": int(len(ic)), "mean_ic": float(ic.mean()), "median_ic": float(ic.median()), "std_ic": sd, "positive_share": float((ic > 0).mean()),
             "icir": float(ic.mean() / sd) if sd and sd > 0 else float("nan"), "icir_annualised": float(ic.mean() / sd * math.sqrt(periods_per_year)) if sd and sd > 0 else float("nan"),
-            "t_stat": nw["t"], "p_value": nw["p"], "hac_lags": nw["lags"], "skew": float(stats.skew(ic, bias=False)) if len(ic) > 3 else float("nan"),
+            "t_stat": nw["t"], "p_value": nw["p"], "hac_lags": nw["lags"], "skew": float(stats.skew(ic, bias=False)) if len(ic) > 3 and sd and sd > 0 else float("nan"),
             "se": nw["se"], "ci95": [float(ic.mean() - 1.96 * nw["se"]), float(ic.mean() + 1.96 * nw["se"])] if np.isfinite(nw["se"]) else [float("nan"), float("nan")]}
 
 

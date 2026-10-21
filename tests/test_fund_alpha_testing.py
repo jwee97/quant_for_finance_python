@@ -16,7 +16,9 @@ from scipy import stats
 from src.fundamentals import calibration as C
 from src.fundamentals import discovery as D
 from src.fundamentals import evaluate as E
+from src.fundamentals import expr as X
 from src.fundamentals import report as R
+from src.fundamentals import transforms
 from src.fundamentals.errors import FundamentalsError
 from src.fundamentals.evaluate import holding_returns
 from src.fundamentals.research import ResearchContext, UniverseSpec
@@ -489,3 +491,142 @@ def test_a_beta_measured_on_daily_returns_is_the_beta_the_world_gave_the_company
     market = daily.mean(axis=1)
     measured = np.array([daily[t].cov(market) / market.var() for t in adj.columns])
     assert np.corrcoef(measured, world.beta)[0, 1] > 0.7 and abs(measured.mean() - world.beta.mean()) < 0.15
+
+
+# ------------------------------------------------------------------------------------------------------------------------ exact values and edges the first planted-bug audit found nothing checking
+def _bucketed(ctx, levels: int) -> pd.DataFrame:
+    """A signal that takes exactly ``levels`` different values on every date: the market capitalisation cut into that many equal groups."""
+    cap = ctx.market_cap_usd()
+    return np.ceil(cap.rank(axis=1, pct=True) * levels).where(cap.notna())
+
+
+def test_the_spread_between_the_top_and_the_bottom_bucket_is_their_difference_whichever_way_the_signal_points(world):
+    ctx = world[1]
+    spec = E.EvalSpec(breakdowns=(), premium=False)
+    knows = _bucketed(ctx, 5) * 0.0 + ctx.forward("1m").rank(axis=1, pct=True)                                   # a signal that knows what comes next
+    up, down = E.evaluate(ctx, knows, spec, "foresight"), E.evaluate(ctx, -knows, spec, "hindsight")
+    for result, sign in ((up, 1), (down, -1)):
+        mean = result["quantiles"]["mean_forward_return"]
+        assert result["quantiles"]["spread_top_minus_bottom"] == pytest.approx(mean["5"] - mean["1"]) and np.sign(result["quantiles"]["spread_top_minus_bottom"]) == sign
+        assert result["quantiles"]["spread_top_minus_bottom"] * sign > 0.05
+
+
+def test_a_signal_that_takes_few_values_is_warned_about_at_the_edges_the_study_states(world):
+    ctx = world[1]
+    spec = E.EvalSpec(breakdowns=(), premium=False)
+    fifteen, fourteen = (E.evaluate(ctx, _bucketed(ctx, k), spec, "levels")["warnings"] for k in (15, 14))
+    assert not any("distinct values" in w for w in fifteen) and any("only 14 distinct values" in w for w in fourteen)         # a typical date with fifteen different values is enough
+    two = E.evaluate(ctx, _bucketed(ctx, 2), spec, "two levels")["warnings"]
+    assert any("only 2 of 5 buckets are ever populated" in w for w in two)
+    five = E.evaluate(ctx, _bucketed(ctx, 5), spec, "five levels")["warnings"]
+    assert not any("buckets are ever populated" in w for w in five)                                              # five values fill five buckets exactly
+
+
+def test_a_direction_chosen_on_the_data_flips_a_factor_that_works_the_wrong_way_round_and_says_so(world):
+    ctx = world[1]
+    raw = {}
+    for name in ("current_ratio", "debt_to_equity", "operating_margin", "revenue_growth", "asset_growth", "roic"):
+        raw[name] = E.evaluate_factor(ctx, E.EvalSpec(factor=name, direction=1, breakdowns=(), premium=False))["ic"]["mean_ic"]
+    wrong = min(raw, key=raw.get)
+    assert raw[wrong] < -0.002                                                                                   # the world has a factor whose plain sign earned nothing but a loss
+    auto = E.evaluate_factor(ctx, E.EvalSpec(factor=wrong, direction="auto", breakdowns=(), premium=False))
+    assert auto["ic"]["mean_ic"] == pytest.approx(-raw[wrong]) and any("sign was flipped" in w for w in auto["warnings"])
+    right = max(raw, key=raw.get)
+    kept = E.evaluate_factor(ctx, E.EvalSpec(factor=right, direction="auto", breakdowns=(), premium=False))
+    assert raw[right] > 0 and kept["ic"]["mean_ic"] == pytest.approx(raw[right]) and any("kept the factor's own sign" in w for w in kept["warnings"])
+
+
+def test_a_figure_known_before_it_was_public_is_called_flattering_by_the_audit_and_a_slow_signal_is_not(tmp_path):
+    from tests.test_fund_evaluate import _anticipation_world
+    store = _anticipation_world(tmp_path)
+    audit = E.look_ahead_audit(store, E.EvalSpec(factor="net_margin", breakdowns=(), min_assets=20), UniverseSpec(), lags=(1,))
+    assert audit["flattered"] is True and audit["naive"]["mean_ic"] > 0.04 > audit["honest"]["mean_ic"] and "flatters this factor a great deal" in audit["verdict"]
+    assert audit["naive_minus_honest_ic"] == pytest.approx(audit["naive"]["mean_ic"] - audit["honest"]["mean_ic"])
+
+
+def test_the_blocks_of_dates_must_hold_twelve_each_and_a_formula_at_a_bar_has_met_it(world):
+    ctx = world[1]
+    spec = D.DiscoverySpec()
+    n = int((ctx.forward(spec.horizon).notna().sum(axis=1).to_numpy() >= spec.min_assets).sum())
+    embargo = 1                                                                                                   # a month's horizon on a monthly grid
+    total = (n - embargo - 12 + 0.5) / n                                                                          # the share of the dates that leaves the locked block twelve dates
+    exactly = D.splits(ctx, D.DiscoverySpec(train_fraction=0.55, validation_fraction=total - 0.55))
+    assert exactly["dates"]["oos"] == 12
+    with pytest.raises(FundamentalsError, match="too little history"):
+        D.splits(ctx, D.DiscoverySpec(train_fraction=0.55, validation_fraction=total - 0.55 + 1.5 / n))        # one date fewer
+    blocks = D.splits(ctx, spec)
+    formula = X.parse("div(fcf,market_cap)")
+    first = D.Screen(ctx, spec, blocks, D.BoundedCache()).run(formula)
+    t, ic = abs(first["metrics"]["t_train"]), abs(first["metrics"]["ic_raw"])
+    assert first["status"] == "survivor"
+    at_bar = D.Screen(ctx, D.DiscoverySpec(thresholds={"t_ic": t, "min_abs_ic": ic}), blocks, D.BoundedCache()).run(formula)
+    assert at_bar["status"] == "survivor"                                                                         # a t-statistic and an IC exactly at their bars are met
+    for bar in ({"t_ic": t + 1e-9}, {"min_abs_ic": ic + 1e-12}):
+        over = D.Screen(ctx, D.DiscoverySpec(thresholds=bar), blocks, D.BoundedCache()).run(formula)
+        assert over["status"] == "rejected" and over["stage"] == 1 and "too weak on the training dates" in over["reason"]
+    screen = D.Screen(ctx, spec, blocks, D.BoundedCache())
+    lock = screen.locked_test(formula, 1.0)
+    assert lock["passed"] is True
+    exact = D.Screen(ctx, D.DiscoverySpec(thresholds={"oos_t": lock["oos_t"]}), blocks, D.BoundedCache()).locked_test(formula, 1.0)
+    above = D.Screen(ctx, D.DiscoverySpec(thresholds={"oos_t": lock["oos_t"] + 1e-9}), blocks, D.BoundedCache()).locked_test(formula, 1.0)
+    assert exact["passed"] is True and above["passed"] is False                                                   # the locked test is passed at exactly its bar and not just under it
+
+
+def test_a_run_counts_the_formulas_it_generated_and_the_ones_it_skipped_as_known(world, tmp_path):
+    disc = fresh(world, tmp_path)
+    spec = D.DiscoverySpec(n_candidates=30, seed=3, evolve=0.0)
+    first = disc.run(disc.create(spec))
+    assert first["counts"]["generated"] == 30 and first["counts"]["next_index"] == 30 and first["counts"]["tested"] + first["counts"]["skipped_seen"] + first["counts"]["duplicate_idea"] <= 30
+    again = disc.run(disc.create(spec))
+    assert again["counts"]["generated"] == 30 and again["counts"]["skipped_seen"] >= 20                           # the same thirty ideas, found already: counted as generated and as known
+
+
+def test_neutralising_needs_the_companies_the_regression_has_parameters_for(world):
+    ctx = world[1]
+    controls = ("mcap", "beta")
+    date = ctx.dates[60]
+    panels = transforms._controls(ctx, controls, ctx.dates[[60]])
+    complete = [c for c in ctx.ids if all(np.isfinite(panels[name].loc[date, c]) for name in controls)]            # companies whose controls are known on the date
+    need = transforms._dummies(ctx, ("sector",)).shape[1] + len(controls) + 5                                     # as many companies as parameters and five more
+    assert len(complete) > need + 5
+    values = np.random.default_rng(0).standard_normal(len(complete))
+
+    def with_values(count: int) -> pd.DataFrame:
+        frame = pd.DataFrame(np.nan, index=ctx.dates, columns=ctx.ids)
+        frame.loc[date, complete[:count]] = values[:count]
+        return frame
+
+    enough = transforms.neutralize(with_values(need), ctx, ("sector",), controls, min_obs=5)
+    assert enough.loc[date].notna().sum() == need                                                                 # enough: every one of them gets a residual
+    short = transforms.neutralize(with_values(need - 1), ctx, ("sector",), controls, min_obs=5)
+    assert short.loc[date].notna().sum() == 0                                                                     # one fewer: the date is left missing, not fitted on too little
+    assert transforms.neutralize(with_values(need), ctx, ("sector",), controls).loc[date].notna().sum() == 0      # and the bar of thirty companies applies unless it is lowered
+    assert transforms.neutralize(with_values(30), ctx, ("sector",), controls).loc[date].notna().sum() == 30       # thirty are enough
+
+
+def test_alphas_combined_by_equal_weight_get_equal_weights_and_two_are_the_fewest_that_can_be_combined_or_clustered(world):
+    from src.fundamentals import combine as CB
+    from src.fundamentals import factors as F
+    ctx = world[1]
+    signals = {n: F.compute(ctx, n) * (1.0 if F.get(n).direction >= 0 else -1.0) for n in ("fcf_yield", "d_roic", "mom_12_1")}
+    three = CB.combine(ctx, signals, "equal")
+    assert np.allclose(three.weights.to_numpy(), 1.0 / 3.0) and list(three.weights.columns) == ["fcf_yield", "d_roic", "mom_12_1"]
+    two = CB.combine(ctx, {k: signals[k] for k in ("fcf_yield", "d_roic")}, "equal")
+    assert np.allclose(two.weights.to_numpy(), 0.5)
+    with pytest.raises(FundamentalsError, match="at least two alphas"):
+        CB.combine(ctx, {"fcf_yield": signals["fcf_yield"]}, "equal")
+    corr = CB.correlation({k: signals[k] for k in ("fcf_yield", "d_roic")})
+    two_clusters = CB.cluster(corr, cut=0.5)
+    assert len(two_clusters["links"]) == 1 and sorted(two_clusters["order"]) == ["d_roic", "fcf_yield"] and set(two_clusters["labels"]) == {"fcf_yield", "d_roic"}
+    one = CB.cluster(corr.iloc[:1, :1])
+    assert one["links"] == [] and one["order"] == ["fcf_yield"]
+
+
+def test_a_book_reports_in_plain_words_and_starts_with_a_million_dollars():
+    from src.fundamentals import bridge as BR
+    assert BR.PortfolioSpec().capital_usd == 1_000_000.0
+    assert BR._pct(None) == "n/a" and BR._pct(float("nan")) == "n/a" and BR._pct(0.1234) == "+12.3%" and BR._pct(-0.05) == "-5.0%"
+    assert BR._num(None) == "n/a" and BR._num(float("nan")) == "n/a" and BR._num(1.2345) == "1.23" and BR._num(-0.5) == "-0.50"
+    days = pd.bdate_range("2020-01-01", periods=6)
+    five, six = pd.Series([0.01, -0.02, 0.015, 0.0, 0.005], index=days[:5]), pd.Series([0.01, -0.02, 0.015, 0.0, 0.005, 0.002], index=days)
+    assert BR._stats(five) == {"n_obs": 5} and BR._stats(six)["n_obs"] == 6                                       # a Sharpe ratio is not offered for five days

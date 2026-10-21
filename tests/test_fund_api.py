@@ -179,7 +179,8 @@ def test_a_company_is_found_in_the_directory_by_name_then_added_for_nothing_and_
     fake = FakeOpenFilings({KEY_1: "a"})
     pool = KeyPool("openfilings", [("OPENFILINGS_API_KEY_1", KEY_1)], wb.service.usage, wb.store.salt(), Allowance("credits", 100, 1000, "test"))
     wb.service.register("openfilings", OpenFilingsProvider(pool, transport=fake, sleep=lambda s: None))
-    assert get(local, "/api/fund/companies", q="Nvidia")["lookup"] == {"available": True, "reason": "", "cost": 1, "fetch_cost": 11, "unit": "credits", "remaining_today": 100}
+    assert get(local, "/api/fund/companies", q="Nvidia")["lookup"] == {"available": True, "reason": "", "cost": 1, "fetch_cost": 11, "unit": "credits", "remaining_today": 100, "daily_limit": 100, "monthly_limit": 1000,
+                                                                      "remaining_month": 1000}                                            # the allowance as well as what is left of it: the page draws the meter from both
     assert fake.requests == []                                                                  # looking at the list never asks the provider
     found = post(local, "/api/fund/companies/search", q="Nvidia")
     json.dumps(found, allow_nan=False)                                                          # plain JSON
