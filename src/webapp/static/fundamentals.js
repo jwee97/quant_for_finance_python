@@ -79,12 +79,19 @@
     paintBackground();
     if (mode === FD.mode) { Q.syncLab(FD); FD.lockActions(); if (isOpen()) FD.draw(); }
   };
-  /* A button in the panel that starts work is disabled while its view is working: pressed, it would only be refused ("Still working"), and a press that does nothing looks like a broken button. */
+  /* A button in the panel that starts work is disabled while its view is working: pressed, it would only be refused ("Still working"), and a press that does nothing looks like a broken button.
+     A browser takes the focus away from a button that becomes disabled, so the one that had it gets it back when the work is over (a keyboard user is not sent to the top of the page). */
   FD.lockActions = () => {
-    const busy = !!FD.busyBy[FD.mode];
+    const busy = !!FD.busyBy[FD.mode], panel = Q.$("#fundamentals .panel"), at = document.activeElement;
+    if (busy && panel && at && at.dataset && at.dataset.action && panel.contains(at)) FD.focusAfterBusy = at.dataset.action;
     for (const b of document.querySelectorAll("#fundamentals .panel button[data-action]")) {
       if (busy && !b.disabled) { b.disabled = true; b.dataset.busyLock = "1"; }
       else if (!busy && b.dataset.busyLock) { b.disabled = false; delete b.dataset.busyLock; }
+    }
+    if (!busy && FD.focusAfterBusy) {
+      const back = panel && panel.querySelector(`button[data-action="${FD.focusAfterBusy}"]`);
+      if (back && (!document.activeElement || document.activeElement === document.body)) back.focus();
+      FD.focusAfterBusy = null;
     }
   };
   function paintBusy() { const el = Q.$('[data-role="fund-progress"]'); if (el) el.textContent = FD.busy; }

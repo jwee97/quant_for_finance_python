@@ -744,6 +744,7 @@ def test_a_button_that_starts_work_is_off_while_its_view_is_still_reading_and_on
         page.fill("[data-role=fund-symbols]", "us:AAA")
         page.click("#fundamentals .panel [data-action=add-companies]")
         _wait_until(page, "document.querySelectorAll('[data-role=fund-not-ready] li.done').length === 2", 30)         # and a press now does the work
+        assert page.evaluate("() => document.activeElement && document.activeElement.dataset.action") == "add-companies"      # the button that was pressed has the keyboard's place again
         assert page.problems == []
     finally:
         release.set()
