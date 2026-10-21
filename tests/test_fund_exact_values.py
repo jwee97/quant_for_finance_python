@@ -19,7 +19,7 @@ from src.fundamentals import evaluate as E
 from src.fundamentals import expr as X
 from src.fundamentals import library as L
 from src.fundamentals import metrics, transforms
-from src.fundamentals.errors import CreditsExhausted, FundamentalsError, InvalidKey, NotFound, PlanError, ProviderError, QuotaExhausted, RateLimited, SyncPending
+from src.fundamentals.errors import CreditsExhausted, FundamentalsError, InvalidKey, MissingKey, NotFound, PlanError, ProviderError, QuotaExhausted, RateLimited, SyncPending
 from src.fundamentals.keys import MAX_NUMBERED, KeyPool, discover
 from src.fundamentals.providers import openfilings as of
 from src.fundamentals.pit import PeriodTables, PitSettings, availability, step_panel
@@ -807,6 +807,44 @@ def test_a_burst_of_requests_is_waited_out_twice_for_the_time_asked_or_a_growing
         provider._get("/api/v1/markets", {}, "markets")
     assert burst.value.dimension == "burst" and slept == [2.0, 4.0] and len(asked) == of.BURST_RETRIES + 1              # two pauses, three tries, then it says so
     assert usage.used_today("openfilings") == 0 and usage.recent("openfilings", 1)[0]["error"].startswith("burst:")
+
+
+def test_the_shape_of_a_search_text_decides_ticker_or_name_at_five_capitals_and_the_other_reading_is_offered_up_to_eight_letters():
+    plan = of.search_plan
+    assert plan("GOOGL")["kind"] == "symbol" and plan("GOOGLE")["kind"] == "name" and plan("Googl")["kind"] == "name"               # five capitals are a ticker, six letters or any lower case a name
+    assert plan("Zzyzxabc")["alternatives"] == ["symbol"] and plan("Zzyzxabcd")["alternatives"] == [] and plan("Zzyzx Corp")["alternatives"] == []     # a single word of eight letters could be a ticker, nine could not
+    forced = plan("us:NVDA", kind="symbol")
+    assert (forced["kind"], forced["market"], forced["value"], forced["params"]) == ("symbol", "us", "NVDA", {"ticker": "NVDA", "market_id": "us"})   # a market written before a ticker is the market, also when the kind was said
+    assert plan("nvda", kind="symbol", market="jp")["market"] == "jp" and plan("jp:7203", kind="symbol", market="us")["market"] == "jp"                  # what is written in the text wins over the box
+
+
+def test_the_country_of_a_company_comes_from_its_market_or_for_the_pan_european_one_from_the_first_two_letters_of_its_isin():
+    assert [of._country("eu", i) for i in ("DE0005140008", "US", "D", "1234567", "", None)] == ["DE", "US", None, None, None, None]
+    assert of._country("uk", "FR0000000000") == "GB" and of._country("jp", None) == "JP" and of._country("eu", "de0005140008") == "DE"
+
+
+def test_a_provider_with_no_pool_or_a_pool_without_a_key_cannot_be_asked_and_says_where_to_put_one(tmp_path):
+    def never(url, headers, timeout):
+        raise AssertionError("a request was sent")
+
+    for pool in (None, _keys(tmp_path, keys=())[0]):
+        provider = of.OpenFilingsProvider(pool, transport=never)
+        ok, why = provider.available()
+        assert ok is False and "no OPENFILINGS_API_KEY is set" in why and "Tools > Secrets" in why
+        with pytest.raises(MissingKey, match="no OPENFILINGS_API_KEY is set"):
+            provider.get_company("us:AAPL")
+    assert of.OpenFilingsProvider(_keys(tmp_path)[0], transport=never).available() == (True, "")
+
+
+def test_the_account_test_reads_the_markets_it_is_told_and_nothing_else_and_a_search_is_cut_at_ten_by_default(tmp_path):
+    answer = {"plan": "PRO", "markets": [{"id": "us"}, "junk", {"label": "no id"}, {"id": ""}, {"id": "jp"}], "allowed_market_ids": [], "all_markets": 1}
+    provider, _, _, _ = _provider(tmp_path, [(200, {}, answer)], name="markets.db")
+    tested = provider.test()
+    assert tested["markets"] == ["us", "jp"] and tested["allowed_markets"] == ["us", "jp"] and tested["plan"] == "pro" and tested["all_markets"] is True and tested["with_filings"] == ["us", "jp"]
+    twelve = {"entity": {"display_names": ["Zed Corp 0"], "listings": [{"market_id": "us", "ticker": "ZED0", "primary": True}]},
+              "entities": [{"display_names": [f"Zed Corp {i}"], "listings": [{"market_id": "us", "ticker": f"ZED{i}", "primary": True}]} for i in range(1, 12)]}
+    searcher, _, _, _ = _provider(tmp_path, [(200, {}, twelve)], name="search.db")
+    assert len(searcher.search_detail("Zed Corp")["profiles"]) == 10 and len(searcher.search_detail("Zed Corp", limit=3)["profiles"]) == 3 and len(searcher.search("Zed Corp")) == 10
 
 
 def test_a_company_profile_is_made_only_when_both_the_market_and_the_ticker_are_known():
