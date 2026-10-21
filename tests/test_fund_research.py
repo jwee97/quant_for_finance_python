@@ -132,6 +132,7 @@ def test_a_universe_is_cut_by_country_sector_and_development(loaded):
     country = frame["country"].mode().iloc[0]
     only = ResearchContext(store, UniverseSpec(countries=(country,)))
     assert set(only.info["country"]) == {country} and 0 < only.n < 36
+    assert list(only.info.index) == only.ids and "index" not in only.info.columns                              # the old row numbers of the securities table are not kept as a column
     sector = frame["sector"].mode().iloc[0]
     assert set(ResearchContext(store, UniverseSpec(sectors=(sector,))).info["sector"]) == {sector}
     assert set(ResearchContext(store, UniverseSpec(developed_only=True)).info["country"]) <= {"US", "GB", "JP", "SG", "AU", "DE"}
@@ -176,6 +177,26 @@ def test_the_horizons_are_the_documented_trading_days_and_the_settled_lag_is_the
                 waits.append(later[0] - i)
         assert ctx.settled_lag(horizon) == max(max(waits), 1), horizon
     assert ctx.settled_lag("12m") > ctx.settled_lag("3m") >= 3 > 1
+
+
+def test_a_volatility_needs_half_its_window_of_returns_and_never_fewer_than_twenty():
+    returns = pd.DataFrame({"a": np.random.default_rng(3).normal(0.0, 0.01, 120)}, index=pd.bdate_range("2020-01-01", periods=120))
+
+    class Stub:                                                                                                  # the method reads only these four things from its context
+        _cache: dict
+        pos = np.arange(120)
+        dates = returns.index
+
+        def __init__(self):
+            self._cache = {}
+
+        def daily_returns(self):
+            return returns
+
+    for window, needed in ((63, 31), (40, 20), (30, 20), (22, 20)):                                              # half the window, but twenty at the least
+        vol = ResearchContext.volatility(Stub(), window)["a"]
+        assert returns.index.get_loc(vol.first_valid_index()) == needed - 1, window
+        assert vol.iloc[-1] == pytest.approx(returns["a"].iloc[-window:].std() * np.sqrt(252.0))                 # a sample deviation of the last window's returns, annualised
 
 
 def test_the_coverage_the_volatility_and_the_traded_value_are_what_their_definitions_say(ctx):
