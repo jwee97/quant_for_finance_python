@@ -11,7 +11,7 @@ import pytest
 
 from src.fundamentals import coverage as C
 from src.fundamentals.errors import FundamentalsError, NotFound, QuotaExhausted
-from tests.test_fund_data import Clock, _service
+from tests.test_fund_data import KEY_1, Clock, _service
 
 TODAY = date(2026, 10, 21)
 LAG = 150
@@ -249,6 +249,11 @@ def test_the_last_request_is_told_in_words_and_says_what_the_missing_years_could
         assert "recorded the request" not in C.reading({**row, "detail": {"echoed": echo}}, "OpenFilings", "credits"), echo
     bounded = C.reading({**row, "asked_from": 2005, "asked_to": 2012, "first_year": 2005, "last_year": 2012, "detail": {"echoed": {"from": 2005, "to": 2010}}}, "OpenFilings", "credits")
     assert "recorded the request it ran as FY2005 to FY2010, not FY2005 to FY2012" in bounded
+    noted = C.reading({**row, "detail": {"message": "Free plans return the last 6 fiscal years"}}, "OpenFilings", "credits")
+    assert " OpenFilings added a note to its answer: \u201cFree plans return the last 6 fiscal years\u201d. It sent nothing for FY2000" in noted
+    assert "\u201cNo more.\u201d It sent" in C.reading({**row, "detail": {"message": "No more."}}, "OpenFilings", "credits") and "added a note" not in C.reading({**row, "detail": {"message": "  "}}, "OpenFilings", "credits")
+    assert C.reading({**row, "entries": 0, "kept": 0, "detail": {"message": "nothing before 2019"}}, "OpenFilings", "credits").endswith("brought back no periods at all and cost 10 credits. OpenFilings added a note to its answer: \u201cnothing before 2019\u201d.")
+    assert C.reading({**row, "entries": 2, "kept": 0, "detail": {"message": "odd", "labels": {"Q1": 2}}}, "OpenFilings", "credits").endswith("(2 Q1), none of them an annual statement this application reads and cost 10 credits. OpenFilings added a note to its answer: \u201codd\u201d.")
     assert C.reading(None, "OpenFilings", "credits") == ""
 
 
@@ -271,9 +276,11 @@ def test_answers_kept_before_the_log_existed_give_log_rows_with_the_cost_unknown
                {"id": 1, "parameters": {"start_year": 2015, "end_year": 2016}, "retrieved_at": "2026-01-02 00:00:00", "payload": [{"fiscal_period": "FY", "period_end": "2015-12-31"}]}]
     rows = C.derive_log(answers)
     assert rows[0] == {"at": "2026-10-20", "asked_from": 2000, "asked_to": None, "entries": 3, "kept": 3, "new": None, "first_year": 2021, "last_year": 2023, "cost": None, "reason": "",
-                       "derived": True, "detail": {"labels": {"FY": 3}, "echoed": {}}}
+                       "derived": True, "detail": {"labels": {"FY": 3}, "echoed": {}, "message": ""}}
     assert (rows[1]["at"], rows[1]["asked_from"], rows[1]["asked_to"], rows[1]["entries"]) == ("2026-01-02", 2015, 2016, 1)
     assert C.derive_log([{"parameters": None, "payload": None, "retrieved_at": None}])[0]["at"] == ""
+    with_note = C.derive_log([{"parameters": {}, "payload": {"periods": [], "message": "m" * 400}, "retrieved_at": "2026-01-02"}])[0]
+    assert with_note["detail"]["message"] == "m" * 300 and rows[0]["detail"]["message"] == "" and C.derive_log([{"parameters": {}, "payload": [], "retrieved_at": ""}])[0]["detail"]["message"] == ""
     grid = C.grid(held(2021, 2022, 2023), rows[:1], TODAY, LAG)
     assert states(grid["cells"], 2000, 2020)[2010] == "empty"
 
@@ -427,7 +434,7 @@ def test_an_answer_whose_periods_are_not_annual_is_kept_and_explained_not_taken_
     assert report["added"] == [] and report["entries"] == 2 and report["cost"] == 10
     assert report["text"] == "OpenFilings brought back nothing new for FY2014 to FY2015. It sent 2 entries, none of them an annual statement not already held. 10 credits spent."
     log = svc.store.fetch_log(sid, "openfilings")[0]
-    assert (log["entries"], log["kept"], log["detail"]) == (2, 0, {"labels": {"Q4": 2}, "echoed": {"from": 2014, "to": 2015}})
+    assert (log["entries"], log["kept"], log["detail"]) == (2, 0, {"labels": {"Q4": 2}, "echoed": {"from": 2014, "to": 2015}, "message": ""})
     assert svc.coverage(sid)["reading"] == ("On 2026-10-20 the request to OpenFilings for FY2014 to FY2015 brought back 2 entries (2 Q4), none of them an annual statement this application reads and cost 10 credits.")
     stored = svc.store.raw_answers(sid, "openfilings", "financials:annual", 1)[0]
     assert [e["fiscal_period"] for e in stored["payload"]["periods"]] == ["Q4", "Q4"]                       # what the provider really sent is kept, so the cause can be read
@@ -451,6 +458,22 @@ def test_a_database_from_before_the_log_explains_itself_from_the_answers_it_kept
     assert cov["derived"] is True and cov["log"][0]["derived"] is True and cov["log"][0]["cost"] is None
     assert "the request to OpenFilings for FY2000 onwards brought back 12 annual statements (FY2012 to FY2023). Credits pay for the request" in cov["reading"]      # the day is the real one: answers are dated by the real clock
     assert states(cov["annual"]["cells"], 2000, 2012)[2005] == "empty"                                      # the request that was made then still counts
+
+
+def test_a_note_the_provider_adds_to_a_series_is_kept_with_the_request_and_never_carries_a_key(tmp_path):
+    svc, fake = _service(tmp_path, clock=Clock())
+    fake.note = f"Free plan: the last 6 fiscal years only (your key {KEY_1} is on it)"
+    sid = svc.add_companies("openfilings", ["AAPL"])[0]
+    assert svc.sync("openfilings", security_ids=[sid], periods=("annual",), start_year=2018)["fetched"] == 1
+    cov = svc.coverage(sid)
+    assert "OpenFilings added a note to its answer: \u201cFree plan: the last 6 fiscal years only (your key" in cov["reading"] and cov["log"][0]["detail"]["message"].startswith("Free plan: the last 6 fiscal years only")
+    blob = json.dumps(cov) + json.dumps(svc.store.fetch_log(sid, "openfilings")) + json.dumps(svc.store.raw_answers(sid, "openfilings", "financials:annual")[0]["parameters"])
+    assert KEY_1 not in blob                                                                              # the note was cut and had the key taken out before it was kept
+    fake.note = "no entries here"
+    fake.period_label = "Q1"
+    report = svc.fetch_years(sid, [2014], budget=10)
+    assert "OpenFilings added a note to its answer" not in report["text"] and svc.store.fetch_log(sid, "openfilings")[0]["detail"]["message"] == "no entries here"
+    assert svc.coverage(sid)["reading"].endswith("none of them an annual statement this application reads and cost 10 credits. OpenFilings added a note to its answer: \u201cno entries here\u201d.")
 
 
 def test_a_company_with_no_statements_yet_lists_every_year_as_missing_and_one_request_covers_the_years_picked(tmp_path):
@@ -478,7 +501,7 @@ def test_the_log_of_requests_is_returned_newest_first_and_a_request_is_logged_by
     svc.fetch_years(sid, [2014], budget=10)
     rows = svc.store.fetch_log(sid, "openfilings")
     assert [(r["reason"], r["asked_from"], r["asked_to"]) for r in rows] == [("chosen", 2014, 2014), ("missing", 2018, None)]
-    assert json.loads(json.dumps(rows[0]["detail"])) == {"labels": {"FY": 1}, "echoed": {"from": 2014, "to": 2014}} and svc.store.fetch_log(sid, "openfilings", limit=1)[0]["reason"] == "chosen"
+    assert json.loads(json.dumps(rows[0]["detail"])) == {"labels": {"FY": 1}, "echoed": {"from": 2014, "to": 2014}, "message": ""} and svc.store.fetch_log(sid, "openfilings", limit=1)[0]["reason"] == "chosen"
     assert svc.store.fetch_log(sid, "simulated") == [] and svc.store.fetch_log(sid, "openfilings", "financials:quarter") == []
 
 

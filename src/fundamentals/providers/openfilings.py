@@ -17,7 +17,8 @@ The sign of cash outflows is not documented either, so the outflow lines (capita
 collected on demand: the first request can answer HTTP 202 ("still backfilling"), which is treated as "ask again later", not as a failure.
 
 Written from the published OpenAPI description and documentation (and the official Python client's published source for its error handling) and tested against stand-in answers of the documented
-shape; it has not been run against a live key.
+shape. Its first use with a live key (its user's, not the environment it was written in) fetched a company for 11 credits and brought back only a few years of history: why is not
+settled by the documentation, so the company page says what each request asked for and what came back (:mod:`coverage`).
 """
 
 from __future__ import annotations
@@ -362,6 +363,8 @@ class OpenFilingsProvider(FundamentalDataProvider):
             else:
                 raise
         periods, profile, skipped = parse_financials(data, market_id, ticker)
+        secrets = self.pool.secrets() if self.pool else []
+        note = redact(str(data.get("message") or "").strip(), *secrets)[:300]                           # what the provider says about the answer itself, kept with the request
         if not periods:
             message = str(data.get("message") or "").strip()
             answer = summarise_answer(data)
@@ -369,11 +372,12 @@ class OpenFilingsProvider(FundamentalDataProvider):
             error = NotFound(f"OpenFilings returned no annual statements for {market_id}:{ticker}" + (f" ({redact(message, *(self.pool.secrets() if self.pool else []))[:160]})" if message else "")
                              + (f"; {answer['entries']} {'entry' if answer['entries'] == 1 else 'entries'} came back but none was an annual statement with figures ({came})" if answer["entries"] else ""))
             error.raw, error.charged = data, CREDITS["financials"]                      # the answer was paid for: the caller keeps it and remembers which years it covered
-            error.request = {"ticker": ticker, "market_id": market_id, "fiscal_year_from": params["fiscal_year_from"], "fiscal_year_to": params["fiscal_year_to"], "fiscal_period": "fy"}
+            error.request = {"ticker": ticker, "market_id": market_id, "fiscal_year_from": params["fiscal_year_from"], "fiscal_year_to": params["fiscal_year_to"], "fiscal_period": "fy", "message": note}
             raise error
         earliest = min(p.fiscal_year for p in periods if p.fiscal_year is not None) if any(p.fiscal_year is not None for p in periods) else None
         request_info = {"ticker": ticker, "market_id": market_id, "fiscal_year_from": params["fiscal_year_from"], "fiscal_year_to": params["fiscal_year_to"], "fiscal_period": "fy",
-                        "line_items": "ALL" if params["line_items"] == "ALL" else f"{len(canonical.OPENFILINGS_KEYS)} mapped keys", "skipped": skipped}
+                        "line_items": "ALL" if params["line_items"] == "ALL" else f"{len(canonical.OPENFILINGS_KEYS)} mapped keys", "skipped": skipped,
+                        "message": note}
         return FinancialsResult(periods, data, request_info, profile, exhausted=earliest is not None and earliest > params["fiscal_year_from"], requests=1, cost=CREDITS["financials"])
 
 

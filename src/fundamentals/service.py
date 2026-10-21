@@ -47,6 +47,11 @@ def _year_of(statement) -> int:
     return statement.fiscal_year if statement.fiscal_year is not None else int(statement.period_end[:4])
 
 
+def _answer_of(raw, request) -> dict:
+    """What an answer held (:func:`coverage.summarise_answer`) with the note the provider put in it, as the adapter kept it with the request (cut to length, with no key in it)."""
+    return {**coverage.summarise_answer(raw), "message": str((request or {}).get("message") or "")}
+
+
 def _freeze(profile: CompanyProfile) -> dict:
     """A search hit as plain JSON, for the saved answer."""
     out = {k: getattr(profile, k) for k in _PROFILE_TEXT}
@@ -419,7 +424,7 @@ class FundamentalsService:
             self.store.enrich_security(task.security_id, result.profile)
         counts = self.store.store_financials(task.security_id, task.provider, result.periods)
         asked_from, asked_to = coverage.asked_years(result.request)
-        self.store.log_fetch(task.security_id, task.provider, f"financials:{label}", asked_from, asked_to, coverage.summarise_answer(result.raw), len(result.periods), counts["periods"], result.cost,
+        self.store.log_fetch(task.security_id, task.provider, f"financials:{label}", asked_from, asked_to, _answer_of(result.raw, result.request), len(result.periods), counts["periods"], result.cost,
                              task.reason, self.usage.today())
         quality.check_security(self.store, task.security_id)
         summary = self.store.period_summary(task.security_id, task.provider)
@@ -437,7 +442,7 @@ class FundamentalsService:
         request = error.request or {}
         asked_from, asked_to = coverage.asked_years(request)
         self.store.save_raw(provider, security_id, f"financials:{label}", request, error.raw)
-        self.store.log_fetch(security_id, provider, f"financials:{label}", asked_from, asked_to, coverage.summarise_answer(error.raw), 0, 0, int(error.charged or 0), reason, self.usage.today())
+        self.store.log_fetch(security_id, provider, f"financials:{label}", asked_from, asked_to, _answer_of(error.raw, request), 0, 0, int(error.charged or 0), reason, self.usage.today())
 
     # ------------------------------------------------------------------------------------------------------------ which years are held
     def _known(self, security_id: int, provider: str | None) -> tuple[dict, str, FundamentalDataProvider]:
@@ -536,7 +541,7 @@ class FundamentalsService:
         old = self.store.get_sync(sid, name, request_type) or {}
         earliest = min([d for d in (summary.get("first_end"), old.get("earliest_period_end")) if d], default=None)
         asked_from, asked_to = coverage.asked_years(result.request)
-        self.store.log_fetch(sid, name, request_type, asked_from, asked_to, coverage.summarise_answer(result.raw), len(result.periods), counts["periods"], result.cost, "chosen", day)
+        self.store.log_fetch(sid, name, request_type, asked_from, asked_to, _answer_of(result.raw, result.request), len(result.periods), counts["periods"], result.cost, "chosen", day)
         self.store.set_sync(sid, name, request_type, last_checked=day, last_success=day, last_period_end=summary.get("last_end"), earliest_period_end=earliest,
                             history_exhausted=1 if (old.get("history_exhausted") or (first_held is not None and window["from"] < first_held)) else 0,        # asked from before anything held
                             n_periods=int(summary.get("n") or 0), status="ok", error=None)

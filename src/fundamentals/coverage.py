@@ -93,7 +93,7 @@ def derive_log(answers: list[dict]) -> list[dict]:
         asked_from, asked_to = asked_years(a.get("parameters"))
         out.append({"at": str(a.get("retrieved_at") or "")[:10], "asked_from": asked_from, "asked_to": asked_to, "entries": summary["entries"], "kept": summary["annual"], "new": None,
                     "first_year": summary["first_year"], "last_year": summary["last_year"], "cost": None, "reason": "", "derived": True,
-                    "detail": {"labels": summary["labels"], "echoed": summary["echoed"]}})
+                    "detail": {"labels": summary["labels"], "echoed": summary["echoed"], "message": str((a.get("payload") or {}).get("message") or "")[:300] if isinstance(a.get("payload"), dict) else ""}})
     return out
 
 
@@ -259,11 +259,13 @@ def reading(row: dict | None, provider: str, unit: str) -> str:
     price = "" if cost is None else f" and cost {amount(cost, unit)}"
     start = f"On {str(row.get('at') or '')[:10]} the request to {provider} for {asked} brought back"
     entries, kept = int(row.get("entries") or 0), int(row.get("kept") or 0)
+    note = str((row.get("detail") or {}).get("message") or "").strip()
+    said = f" {provider} added a note to its answer: \u201c{note}\u201d" + ("" if note.endswith((".", "!", "?")) else ".") if note else ""
     if entries == 0:
-        return f"{start} no periods at all{price}."
+        return f"{start} no periods at all{price}.{said}"
     if kept == 0:
         labels = ", ".join(f"{n} {k}" for k, n in sorted((row.get("detail") or {}).get("labels", {}).items()))
-        return f"{start} {entries} {'entry' if entries == 1 else 'entries'}{f' ({labels})' if labels else ''}, none of them an annual statement this application reads{price}."
+        return f"{start} {entries} {'entry' if entries == 1 else 'entries'}{f' ({labels})' if labels else ''}, none of them an annual statement this application reads{price}.{said}"
     first, last = row.get("first_year"), row.get("last_year")
     span = f"FY{first}" if first == last else f"FY{first} to FY{last}"
     text = f"{start} {kept} annual {'statement' if kept == 1 else 'statements'} ({span}){price}. Credits pay for the request, not for the years: the same price would have brought back a longer or a shorter series."
@@ -271,6 +273,7 @@ def reading(row: dict | None, provider: str, unit: str) -> str:
     if unused > 0 and not row.get("derived"):
         other = ", ".join(f"{n} {k}" for k, n in sorted(((row.get("detail") or {}).get("labels") or {}).items()) if k != "FY")
         text += (f" It sent {entries} entries in all; {unused} {'was' if unused == 1 else 'were'} not used because {'it was' if unused == 1 else 'they were'} not a full year with figures" + (f" ({other})" if other else "") + ".")
+    text += said
     echo = (row.get("detail") or {}).get("echoed") or {}
     if (echo.get("from") is not None and row.get("asked_from") is not None and echo["from"] != row["asked_from"]) or (echo.get("to") is not None and row.get("asked_to") is not None and echo["to"] != row["asked_to"]):
         text += f" {provider} recorded the request it ran as {describe_window({'from': echo.get('from'), 'to': echo.get('to')})}, not {asked}: it changed the window before answering."

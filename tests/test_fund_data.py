@@ -346,6 +346,7 @@ class FakeOpenFilings:
         self.empty_search_as_200 = False
         self.skipped: list = []
         self.first_year, self.last_year, self.period_label = 2012, 2023, "FY"                  # the years it holds for any company, and how it labels them
+        self.note = None                                                                       # a message it adds to a series
 
     def __call__(self, url, headers, timeout):
         parts = parse.urlparse(url)
@@ -400,7 +401,8 @@ class FakeOpenFilings:
             periods = [{"fiscal_year": y, "fiscal_period": self.period_label, "period_end": f"{y}-12-31", "filing_id": f"{market}:{ticker}:annual:{y}", "filing_date": f"{y + 1}-02-{10 + y % 10:02d}",
                         "form_type": "10-K", "currency": "USD", "values": _values(y, 1.0 + 0.05 * (y - 2012))} for y in range(first, last + 1)]
             return 200, {}, json.dumps({"entity": {"name": f"{ticker} Corp", "market_id": market, "ticker": self.entity_ticker or ticker, "lei": "L" * 20, "isin": "US0000000000"},
-                                        "query": {"fiscal_year_from": first, "fiscal_year_to": last, "fiscal_period": "fy"}, "currency_latest": "USD", "periods": periods}).encode()
+                                        "query": {"fiscal_year_from": first, "fiscal_year_to": last, "fiscal_period": "fy"}, "currency_latest": "USD", "periods": periods,
+                                        **({"message": self.note} if self.note else {})}).encode()
         return 404, {}, b'{"detail": "no such endpoint"}'
 
 
