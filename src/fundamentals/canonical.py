@@ -63,6 +63,7 @@ METRICS: dict[str, Metric] = {m.code: m for m in [
     _m("shareholders_equity", "Shareholders' equity", "balance", "stock", False, "Assets less liabilities (the owners' book value)."),
     _m("minority_interest", "Minority interest", "balance", "stock", False, "Equity held by minority shareholders of subsidiaries."),
     _m("preferred_equity", "Preferred equity", "balance", "stock", True, "Preferred stock."),
+    _m("temporary_equity", "Redeemable (temporary) equity", "balance", "stock", True, "Redeemable preferred stock and redeemable minority interests, shown between liabilities and equity because the holders can require the company to buy them back."),
     # cash flow (flows)
     _m("operating_cash_flow", "Operating cash flow", "cashflow", "flow", False, "Net cash from operating activities."),
     _m("capital_expenditure", "Capital expenditure", "cashflow", "flow", True, "Cash spent on property, plant and equipment (positive)."),
@@ -130,7 +131,11 @@ def _ifrs(*names: str, transform: str = "as_is") -> list[tuple[str, str]]:
 
 SEC_DEBT_CURRENT = "derived: borrowings due within a year (short-term borrowings + commercial paper + current long-term debt)"
 SEC_CASH_AND_INVESTMENTS = "derived: cash and equivalents + short-term investments"
+SEC_POSITIVE_ONLY = frozenset({"dei:EntityCommonStockSharesOutstanding", "us-gaap:CommonStockSharesOutstanding", "us-gaap:WeightedAverageNumberOfDilutedSharesOutstanding",
+                               "us-gaap:WeightedAverageNumberOfSharesOutstandingBasicAndDiluted", "ifrs-full:AdjustedWeightedAverageShares"})     # a share count of zero is a cover page left at 0, not a company without shares
 SEC_LIABILITIES = "derived: total assets - total equity"
+SEC_TEMP_EQUITY = "derived: redeemable equity of the parent + redeemable minority interests"      # the two parts of the mezzanine when the filing gives no total (Kraft Heinz: 8,320 + 23)
+SEC_PARENT_EQUITY = "derived: total equity - minority interest"                       # for a filing that tags only the total (AT&T, Verizon, Kinder Morgan): the parent's share, not the total
 SEC_SGA = "derived: selling and marketing + general and administrative"
 SEC_PRETAX = "derived: domestic + foreign income before tax"
 SEC_MAP: dict[str, list[tuple[str, str]]] = {
@@ -167,7 +172,8 @@ SEC_MAP: dict[str, list[tuple[str, str]]] = {
     "short_term_debt": _gaap("DebtCurrent") + [(SEC_DEBT_CURRENT, "as_is")],
     "long_term_debt": _gaap("LongTermDebtNoncurrent", "LongTermDebtAndCapitalLeaseObligations", "LongTermNotesPayable", "SeniorLongTermNotes", "ConvertibleNotesPayable") + _ifrs("NoncurrentPortionOfNoncurrentBorrowings"),
     "total_liabilities": _gaap("Liabilities") + _ifrs("Liabilities") + [(SEC_LIABILITIES, "as_is")],
-    "shareholders_equity": _gaap("StockholdersEquity", "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest") + _ifrs("EquityAttributableToOwnersOfParent", "Equity"),
+    "temporary_equity": _gaap("TemporaryEquityCarryingAmountIncludingPortionAttributableToNoncontrollingInterests", "TemporaryEquityCarryingAmount") + [(SEC_TEMP_EQUITY, "as_is")],
+    "shareholders_equity": _gaap("StockholdersEquity") + [(SEC_PARENT_EQUITY, "as_is")] + _gaap("StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest") + _ifrs("EquityAttributableToOwnersOfParent", "Equity"),
     "minority_interest": _gaap("MinorityInterest") + _ifrs("NoncontrollingInterests"),
     "preferred_equity": _gaap("PreferredStockValue", "PreferredStockValueOutstanding"),
     # cash flow statement
@@ -193,6 +199,9 @@ SEC_APPROXIMATE_SOURCES = {"dei:EntityCommonStockSharesOutstanding", "us-gaap:In
 # statements (the first alternative the filing has is taken) and the figure is the sum of the groups; it is made only when enough groups are there.
 SEC_SUMS: dict[str, tuple[int, list[list[str]]]] = {
     SEC_DEBT_CURRENT: (1, [["us-gaap:ShortTermBorrowings"], ["us-gaap:CommercialPaper"], ["us-gaap:LongTermDebtCurrent", "us-gaap:LongTermDebtAndCapitalLeaseObligationsCurrent"]]),
+    SEC_TEMP_EQUITY: (1, [["us-gaap:TemporaryEquityCarryingAmountAttributableToParent"],
+                          ["us-gaap:RedeemableNoncontrollingInterestEquityCarryingAmount", "us-gaap:RedeemableNoncontrollingInterestEquityCommonCarryingAmount",
+                           "us-gaap:TemporaryEquityCarryingAmountAttributableToNoncontrollingInterest"]]),
     SEC_SGA: (2, [["us-gaap:SellingAndMarketingExpense", "us-gaap:SalesAndMarketingExpense"], ["us-gaap:GeneralAndAdministrativeExpense"]]),
     SEC_PRETAX: (2, [["us-gaap:IncomeLossFromContinuingOperationsBeforeIncomeTaxesDomestic"], ["us-gaap:IncomeLossFromContinuingOperationsBeforeIncomeTaxesForeign"]]),
     SEC_CASH_AND_INVESTMENTS: (2, [["us-gaap:CashAndCashEquivalentsAtCarryingValue", "us-gaap:CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents"],
@@ -211,7 +220,7 @@ def _sec_field_types() -> dict[str, str]:
             elif not source.startswith("derived:"):
                 out.setdefault(source, kind)
     for name, (_, groups) in SEC_SUMS.items():
-        kind = "instant" if name in (SEC_DEBT_CURRENT, SEC_CASH_AND_INVESTMENTS) else "duration"
+        kind = "instant" if name in (SEC_DEBT_CURRENT, SEC_CASH_AND_INVESTMENTS, SEC_TEMP_EQUITY) else "duration"
         for group in groups:
             for part in group:
                 out.setdefault(part, kind)

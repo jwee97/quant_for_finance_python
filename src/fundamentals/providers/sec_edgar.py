@@ -391,10 +391,16 @@ def _build_synthetic(values: dict) -> None:
         total = values.get("us-gaap:StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest")
         if total is None and "us-gaap:StockholdersEquity" in values:
             total = values["us-gaap:StockholdersEquity"] + values.get("us-gaap:MinorityInterest", 0.0)
-        if total is not None:
-            values[canonical.SEC_LIABILITIES] = values["us-gaap:Assets"] - total
+        if total is not None:                                                                               # what is owed: not the owners' equity, and not the redeemable equity between the two
+            temporary = next((values[f] for f, _ in canonical.SEC_MAP["temporary_equity"] if f in values), 0.0)
+            values[canonical.SEC_LIABILITIES] = values["us-gaap:Assets"] - total - temporary
+        if "us-gaap:StockholdersEquity" not in values and "us-gaap:MinorityInterest" in values:         # only the total is tagged: the owners' equity is the total less the minority's share
+            if "us-gaap:StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest" in values:
+                values[canonical.SEC_PARENT_EQUITY] = values["us-gaap:StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"] - values["us-gaap:MinorityInterest"]
     elif "ifrs-full:Assets" in values and "ifrs-full:Equity" in values:
         values[canonical.SEC_LIABILITIES] = values["ifrs-full:Assets"] - values["ifrs-full:Equity"]
+    if "ifrs-full:EquityAttributableToOwnersOfParent" not in values and "ifrs-full:Equity" in values and "ifrs-full:NoncontrollingInterests" in values:
+        values[canonical.SEC_PARENT_EQUITY] = values["ifrs-full:Equity"] - values["ifrs-full:NoncontrollingInterests"]
 
 
 _MAPPED = frozenset(source for options in canonical.SEC_MAP.values() for source, _ in options)           # the elements (and made-up sums) that stand for a metric; the parts of a sum do not
@@ -456,7 +462,10 @@ def parse_companyfacts(payload: dict) -> tuple[list[PeriodStatement], dict]:
         values: dict[str, float] = {}
         starts: Counter = Counter()
         for field, kind in canonical.SEC_FIELDS.items():
-            fact = _closest(by_accn[accn].get(field, []), report_end, kind, currency)
+            candidates = by_accn[accn].get(field, [])
+            if field in canonical.SEC_POSITIVE_ONLY:                                                  # found on real filings: early cover pages (Southwest, Molson Coors, AT&T) say 0 shares
+                candidates = [f for f in candidates if f.value > 0]
+            fact = _closest(candidates, report_end, kind, currency)
             if fact is not None:
                 values[field] = fact.value
                 if fact.start is not None:

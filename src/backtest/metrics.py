@@ -21,6 +21,7 @@ from ..features.returns import cumulative_returns, drawdown, max_drawdown
 from ..utils.dates import TRADING_DAYS_PER_YEAR, year_fraction
 
 ANN = TRADING_DAYS_PER_YEAR
+FLAT = 1e-12          # a per-period spread below this is rounding noise, not volatility: the variance of a constant series is about 1e-37, not zero, and dividing by it gave a Sharpe ratio of 1e16
 
 
 def cagr(returns: pd.Series, periods_per_year: int = ANN) -> float:
@@ -35,7 +36,8 @@ def cagr(returns: pd.Series, periods_per_year: int = ANN) -> float:
 
 
 def annualised_volatility(returns: pd.Series, periods_per_year: int = ANN) -> float:
-    return float(returns.dropna().std(ddof=1) * np.sqrt(periods_per_year))
+    spread = returns.dropna().std(ddof=1)
+    return 0.0 if spread <= FLAT else float(spread * np.sqrt(periods_per_year))                  # a series that never moves has no volatility, not 1e-17
 
 
 def sharpe_ratio(returns: pd.Series, risk_free: pd.Series | float = 0.0,
@@ -46,7 +48,7 @@ def sharpe_ratio(returns: pd.Series, risk_free: pd.Series | float = 0.0,
     excess = clean - (risk_free.reindex(clean.index).fillna(0.0) if isinstance(risk_free, pd.Series)
                       else risk_free / periods_per_year)
     vol = excess.std(ddof=1)
-    return float(excess.mean() / vol * np.sqrt(periods_per_year)) if vol > 0 else float("nan")
+    return float(excess.mean() / vol * np.sqrt(periods_per_year)) if vol > FLAT else float("nan")
 
 
 def sortino_ratio(returns: pd.Series, target: float = 0.0, periods_per_year: int = ANN) -> float:
@@ -55,7 +57,7 @@ def sortino_ratio(returns: pd.Series, target: float = 0.0, periods_per_year: int
     if len(downside) < 2:
         return float("nan")
     downside_dev = np.sqrt(np.mean((downside - target) ** 2))
-    return float((clean.mean() - target) / downside_dev * np.sqrt(periods_per_year)) if downside_dev > 0 else np.nan
+    return float((clean.mean() - target) / downside_dev * np.sqrt(periods_per_year)) if downside_dev > FLAT else np.nan
 
 
 def calmar_ratio(returns: pd.Series, periods_per_year: int = ANN) -> float:
@@ -104,7 +106,7 @@ def performance_summary(returns: pd.Series, risk_free: pd.Series | float = 0.0,
     vol = annualised_volatility(clean, periods_per_year)
     # The third and fourth moments are undefined for a constant series, and
     # scipy warns about catastrophic cancellation rather than returning NaN.
-    dispersed = float(clean.std(ddof=1)) > 1e-12
+    dispersed = float(clean.std(ddof=1)) > FLAT
 
     out = {
         "start": clean.index[0].date().isoformat(),
@@ -145,9 +147,9 @@ def performance_summary(returns: pd.Series, risk_free: pd.Series | float = 0.0,
             active = clean.loc[common] - bench.loc[common]
             tracking = active.std(ddof=1) * np.sqrt(periods_per_year)
             out["tracking_error"] = float(tracking)
-            out["information_ratio"] = float(active.mean() * periods_per_year / tracking) if tracking > 0 else np.nan
+            out["information_ratio"] = float(active.mean() * periods_per_year / tracking) if tracking > FLAT else np.nan
             beta_denominator = float(bench.loc[common].var(ddof=1))
-            beta = float(clean.loc[common].cov(bench.loc[common]) / beta_denominator) if beta_denominator > 0 else np.nan
+            beta = float(clean.loc[common].cov(bench.loc[common]) / beta_denominator) if beta_denominator > FLAT ** 2 else np.nan
             out["beta_to_benchmark"] = beta
             out["alpha_ann"] = float((clean.loc[common].mean() - beta * bench.loc[common].mean()) * periods_per_year)
     return out
@@ -164,7 +166,7 @@ def comparison_table(strategies: dict[str, pd.Series], risk_free: pd.Series | fl
 def rolling_sharpe(returns: pd.Series, window: int = 252, periods_per_year: int = ANN) -> pd.Series:
     mean = returns.rolling(window, min_periods=max(window // 2, 40)).mean()
     vol = returns.rolling(window, min_periods=max(window // 2, 40)).std(ddof=1)
-    return (mean / vol.replace(0.0, np.nan)) * np.sqrt(periods_per_year)
+    return (mean / vol.where(vol > FLAT)) * np.sqrt(periods_per_year)
 
 
 def rolling_volatility(returns: pd.Series, window: int = 63, periods_per_year: int = ANN) -> pd.Series:
@@ -200,10 +202,14 @@ def deflated_sharpe_ratio(observed_sharpe: float, n_trials: int, n_obs: int,
     if n_trials < 1 or n_obs < 10 or not np.isfinite(observed_sharpe):
         return float("nan")
     euler = 0.5772156649015329
-    # Expected maximum Sharpe ratio from n_trials independent noise strategies.
-    quantile_a = stats.norm.ppf(1.0 - 1.0 / n_trials)
-    quantile_b = stats.norm.ppf(1.0 - 1.0 / (n_trials * np.e))
-    expected_max = (1.0 - euler) * quantile_a + euler * quantile_b
+    # Expected maximum Sharpe ratio from n_trials independent noise strategies. One trial has nothing to be selected from, so its expected maximum is zero: the formula would put it at minus infinity
+    # (the normal quantile of 0), which made every strategy tried once "certain" to survive, a negative Sharpe ratio included.
+    if n_trials < 2:
+        expected_max = 0.0
+    else:
+        quantile_a = stats.norm.ppf(1.0 - 1.0 / n_trials)
+        quantile_b = stats.norm.ppf(1.0 - 1.0 / (n_trials * np.e))
+        expected_max = (1.0 - euler) * quantile_a + euler * quantile_b
 
     sr = observed_sharpe / np.sqrt(periods_per_year)      # per-period
     threshold = expected_max / np.sqrt(n_obs)             # per-period benchmark

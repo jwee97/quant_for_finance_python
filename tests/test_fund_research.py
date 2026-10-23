@@ -115,6 +115,33 @@ def test_market_cap_is_the_close_times_the_shares_known_on_the_date_and_enterpri
     assert (usd.stack().dropna() > 0).all()
 
 
+def test_enterprise_value_adds_debt_and_the_claims_ahead_of_the_shares_takes_off_cash_and_is_missing_where_nothing_is_known():
+    """Market value + debt - cash + minority interest + preferred stock + redeemable equity (the last is in the data only where a filing has it). Cash falls back from 'cash and equivalents' to
+    'cash and short-term investments'; a company with neither debt nor cash on file has no enterprise value."""
+    index = pd.to_datetime(["2020-01-31", "2020-02-28"])
+
+    def frame(first, second):
+        return pd.DataFrame({1: first, 2: second}, index=index)
+    nan = np.nan
+    data = {"total_debt": frame([100.0, 100.0], [50.0, nan]), "cash_and_equivalents": frame([10.0, 10.0], [nan, nan]), "cash": frame([12.0, 12.0], [5.0, nan]),
+            "minority_interest": frame([20.0, 20.0], [nan, nan]), "preferred_equity": frame([30.0, 30.0], [0.0, 0.0]), "temporary_equity": frame([40.0, 40.0], [nan, 7.0])}
+    market = frame([1000.0, 1100.0], [500.0, 550.0])
+
+    def context(columns):
+        ctx = object.__new__(ResearchContext)
+        ctx._cache = {}
+        ctx.panel = lambda name, basis="ttm": data[name]
+        ctx.has = lambda name, basis="ttm": name in columns
+        ctx.market_cap = lambda: market
+        ctx.to_trading = lambda amount: amount
+        return ctx
+    ev = context(set(data)).enterprise_value()
+    assert ev.loc[index[0], 1] == pytest.approx(1000.0 + 100.0 - 10.0 + 20.0 + 30.0 + 40.0) and ev.loc[index[1], 1] == pytest.approx(1100.0 + 180.0)
+    assert ev.loc[index[0], 2] == pytest.approx(500.0 + 50.0 - 5.0) and np.isnan(ev.loc[index[1], 2])
+    without = context(set(data) - {"temporary_equity"}).enterprise_value()
+    assert without.loc[index[0], 1] == pytest.approx(1000.0 + 100.0 - 10.0 + 20.0 + 30.0)                            # databases that never had the figure (OpenFilings, the simulated world) are as before
+
+
 def test_the_investable_mask_applies_the_size_and_liquidity_limits(loaded):
     store = loaded[0].store
     base = ResearchContext(store, UniverseSpec())

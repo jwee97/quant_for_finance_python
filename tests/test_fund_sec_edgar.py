@@ -202,6 +202,116 @@ def test_a_foreign_company_filing_in_ifrs_is_read_in_its_own_currency():
     assert years[2016].filing_date == years[2017].filing_date == "2018-02-28"                # the first two years appear as comparatives of the 2017 report: dated by it, late and never early
 
 
+def test_a_company_that_tags_only_its_total_equity_and_the_minority_share_gets_the_owners_equity_by_subtraction():
+    """Found on 266 real companies: AT&T, Verizon, Energy Transfer and Kinder Morgan tag the total equity (with the minority share) and the minority share, and the parent's own line is not in the SEC's
+    facts. The total was stored as the owners' equity and the minority share was then counted twice by the accounting check."""
+    base = load("AAPL")
+    only_total = copy.deepcopy(base)
+    gaap = only_total["facts"]["us-gaap"]
+    equity = gaap.pop("StockholdersEquity")
+    gaap["StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"] = copy.deepcopy(equity)
+    gaap["MinorityInterest"] = {"units": {"USD": [dict(row, val=1.5e9) for row in equity["units"]["USD"]]}}
+    p = by_year(only_total)[2019]
+    o = observed(p)
+    total = value(by_year(base)[2019], "shareholders_equity")
+    assert o["shareholders_equity"]["value"] == total - 1.5e9 and o["shareholders_equity"]["flag"] == "derived" and o["shareholders_equity"]["source_metric"] == canonical.SEC_PARENT_EQUITY
+    assert o["minority_interest"]["value"] == 1.5e9
+    assert o["total_assets"]["value"] - o["total_liabilities"]["value"] - o["shareholders_equity"]["value"] - o["minority_interest"]["value"] == 0                  # the identity the quality engine checks
+    no_minority = copy.deepcopy(only_total)
+    no_minority["facts"]["us-gaap"].pop("MinorityInterest")
+    assert observed(by_year(no_minority)[2019])["shareholders_equity"]["value"] == total and observed(by_year(no_minority)[2019])["shareholders_equity"]["flag"] == "ok"        # no minority line: the total is all there is
+    both = copy.deepcopy(only_total)
+    both["facts"]["us-gaap"]["StockholdersEquity"] = copy.deepcopy(equity)                       # the owners' own line present: it is used as it stands
+    assert observed(by_year(both)[2019])["shareholders_equity"]["source_metric"] == "us-gaap:StockholdersEquity" and observed(by_year(both)[2019])["shareholders_equity"]["value"] == total
+
+
+def test_a_share_count_of_zero_is_a_missing_count_and_the_next_source_is_used():
+    """Found on real filings: the first XBRL cover pages of Southwest, Molson Coors, AT&T and Royal Caribbean say 0 shares outstanding. A market value of zero would follow from it."""
+    base = load("AAPL")
+    zeroed = copy.deepcopy(base)
+    rows = zeroed["facts"]["dei"]["EntityCommonStockSharesOutstanding"]["units"]["shares"]
+    for row in rows:
+        row["val"] = 0
+    before = observed(by_year(base)[2019])["shares_outstanding"]
+    after = observed(by_year(zeroed)[2019])
+    assert before["value"] > 1e9 and ("shares_outstanding" not in after or after["shares_outstanding"]["source_metric"] != "dei:EntityCommonStockSharesOutstanding")
+    assert "shares_outstanding" not in after or after["shares_outstanding"]["value"] > 0
+    both = copy.deepcopy(base)
+    both["facts"]["dei"]["EntityCommonStockSharesOutstanding"]["units"]["shares"].extend(dict(row, val=0) for row in list(rows)[:3])             # a zero listed after the real count: the real count is used
+    assert observed(by_year(both)[2019])["shares_outstanding"]["value"] == before["value"]
+
+
+def _with_mezzanine(parts: dict, drop_liabilities: bool = False, pay_down: float = 2e9) -> dict:
+    """The Apple facts with redeemable equity added: ``parts`` maps an element to its value on every balance-sheet row. Liabilities are lowered by ``pay_down`` so that the balance sheet still balances
+    with the redeemable equity between the liabilities and the equity (or removed, for a company that does not report them)."""
+    out = copy.deepcopy(load("AAPL"))
+    gaap = out["facts"]["us-gaap"]
+    if drop_liabilities:
+        gaap.pop("Liabilities")
+    else:
+        for row in gaap["Liabilities"]["units"]["USD"]:
+            row["val"] -= pay_down
+    for element, amount in parts.items():
+        gaap[element] = {"units": {"USD": [dict(row, val=amount) for row in gaap["StockholdersEquity"]["units"]["USD"]]}}
+    return out
+
+
+@pytest.mark.parametrize("parts, expected, source, flag", [
+    ({"TemporaryEquityCarryingAmountAttributableToParent": 2e9}, 2e9, canonical.SEC_TEMP_EQUITY, "derived"),                                                              # Uber 2018: redeemable preferred stock
+    ({"RedeemableNoncontrollingInterestEquityCarryingAmount": 2e9}, 2e9, canonical.SEC_TEMP_EQUITY, "derived"),                                                        # S&P Global, Tenet: a redeemable minority
+    ({"RedeemableNoncontrollingInterestEquityCommonCarryingAmount": 2e9}, 2e9, canonical.SEC_TEMP_EQUITY, "derived"),                                                  # Philip Morris, Warner Bros. Discovery
+    ({"TemporaryEquityCarryingAmountAttributableToParent": 1.5e9, "RedeemableNoncontrollingInterestEquityCarryingAmount": 0.5e9}, 2e9, canonical.SEC_TEMP_EQUITY, "derived"),   # Kraft Heinz: 8,320 + 23
+    ({"TemporaryEquityCarryingAmount": 2e9}, 2e9, "us-gaap:TemporaryEquityCarryingAmount", "ok"),                                                                       # a company that tags the total
+    ({"TemporaryEquityCarryingAmount": 2e9, "RedeemableNoncontrollingInterestEquityCarryingAmount": 2e9}, 2e9, "us-gaap:TemporaryEquityCarryingAmount", "ok"),              # the same 2 billion under two names (Global Payments): not 4
+    ({"TemporaryEquityCarryingAmountIncludingPortionAttributableToNoncontrollingInterests": 2e9, "TemporaryEquityCarryingAmountAttributableToParent": 1e9}, 2e9,
+     "us-gaap:TemporaryEquityCarryingAmountIncludingPortionAttributableToNoncontrollingInterests", "ok"),
+])
+def test_redeemable_equity_between_the_liabilities_and_the_equity_is_read_whichever_way_the_company_tags_it(parts, expected, source, flag):
+    """Found on 266 real companies: 38 of the 86 periods that failed the accounting identity after the minority interest was put right were these, and each gap equalled the redeemable equity to the
+    million. The balance sheet reads liabilities, then redeemable equity, then equity."""
+    o = observed(by_year(_with_mezzanine(parts))[2019])
+    assert o["temporary_equity"]["value"] == expected and o["temporary_equity"]["source_metric"] == source and o["temporary_equity"]["flag"] == flag
+    assert o["total_assets"]["value"] - o["total_liabilities"]["value"] - o["temporary_equity"]["value"] - o["shareholders_equity"]["value"] == 0
+
+
+def test_a_company_without_redeemable_equity_has_no_figure_for_it_rather_than_a_zero():
+    assert "temporary_equity" not in observed(by_year(load("AAPL"))[2019])
+
+
+def test_liabilities_a_company_does_not_report_leave_out_the_redeemable_equity_as_well_as_the_owners():
+    o = observed(by_year(_with_mezzanine({"TemporaryEquityCarryingAmountAttributableToParent": 2e9}, drop_liabilities=True))[2019])
+    reported = observed(by_year(load("AAPL"))[2019])
+    assert o["total_liabilities"]["flag"] == "derived" and o["total_liabilities"]["value"] == pytest.approx(reported["total_liabilities"]["value"] - 2e9)
+
+
+def test_the_accounting_check_counts_redeemable_equity_and_still_catches_a_real_gap(tmp_path):
+    svc, _, _ = service(tmp_path)
+    sid = svc.add_companies("sec_edgar", ["AAPL"])[0]
+    balanced = _with_mezzanine({"TemporaryEquityCarryingAmountAttributableToParent": 40e9}, pay_down=40e9)               # 40 billion is about 10% of Apple's assets: beyond the check's tolerance
+    svc.store.store_financials(sid, "sec_edgar", parse_companyfacts(balanced)[0])
+    assert "identity_error" not in quality.check_security(svc.store, sid)
+    unread = copy.deepcopy(balanced)
+    unread["facts"]["us-gaap"].pop("TemporaryEquityCarryingAmountAttributableToParent")                       # the same balance sheet, with the redeemable equity not tagged: 40 billion unaccounted for
+    other, _, _ = service(tmp_path / "other")
+    other_id = other.add_companies("sec_edgar", ["AAPL"])[0]
+    other.store.store_financials(other_id, "sec_edgar", parse_companyfacts(unread)[0])
+    assert quality.check_security(other.store, other_id).get("identity_error", 0) >= 3
+
+
+def test_the_same_holds_for_a_company_filing_in_ifrs_without_the_line_for_the_owners_of_the_parent():
+    base = load("SAP")
+    year = 2024
+    ifrs = copy.deepcopy(base)
+    full = ifrs["facts"]["ifrs-full"]
+    owners = value(by_year(base)[year], "shareholders_equity")
+    full.pop("EquityAttributableToOwnersOfParent", None)
+    full["NoncontrollingInterests"] = {"units": {"EUR": [dict(row, val=7e6) for row in full["Equity"]["units"]["EUR"]]}}
+    o = observed(by_year(ifrs)[year])
+    total = full["Equity"]["units"]["EUR"]
+    assert o["shareholders_equity"]["source_metric"] == canonical.SEC_PARENT_EQUITY and o["shareholders_equity"]["flag"] == "derived"
+    assert o["shareholders_equity"]["value"] == next(row["val"] for row in total if row["end"] == "2024-12-31") - 7e6 and owners > 0
+
+
 def test_the_parts_of_a_sum_are_not_reported_as_unmapped_fields():
     for name in CIKS:
         for p in parse_companyfacts(load(name))[0]:
@@ -983,8 +1093,20 @@ def test_the_command_searches_adds_plans_and_fetches_from_the_sec_in_requests(se
     code, out, _ = sec_cli("plan", "--provider", "sec_edgar")
     assert code == 0 and "To fetch: 0 (2 already fresh)" in out
     code, out, _ = sec_cli("status")
-    assert "SEC EDGAR" in out.replace("sec_edgar", "SEC EDGAR") or "sec_edgar" in out
+    assert code == 0 and "sec_edgar: ready, no key needed" in out and "sec_edgar: not set up" not in out and "openfilings: not set up" in out                # found on a real run: a source with no key was reported as "not set up"
     assert CONTACT not in out and "example.org" not in out
+
+
+def test_the_status_says_a_source_without_its_contact_is_not_set_up(sec_cli, monkeypatch):
+    real = fcli._bench
+
+    def without_contact(config, demo, action):
+        wb = real(config, demo, action)
+        wb.service.register("sec_edgar", SecEdgarProvider(pool=wb.service.pool("sec_edgar"), transport=sec_cli.fake, user_agent="", sleep=lambda s: None))
+        return wb
+    monkeypatch.setattr(fcli, "_bench", without_contact)
+    code, out, _ = sec_cli("status")
+    assert code == 0 and "sec_edgar: not set up" in out and "SEC_EDGAR_USER_AGENT" in out
 
 
 def test_the_years_of_a_company_from_the_sec_are_listed_and_asked_for_only_within_a_stated_budget(sec_cli):

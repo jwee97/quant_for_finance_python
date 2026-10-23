@@ -81,7 +81,8 @@ def format_status(s: dict, db: str) -> str:
         if p["name"] == "simulated":
             out.append("Simulated world: no provider is called here.")
             continue
-        out.append(f"{p['name']}: " + ("key set" if p["keyed"] and p["available"] else "not set up") + (f", plan {p['plan']}" if p.get("plan") else ""))
+        state = ("key set" if p["keyed"] else "ready, no key needed") if p["available"] else "not set up"                  # the SEC has no key: it needs only the contact it asks for
+        out.append(f"{p['name']}: {state}" + (f", plan {p['plan']}" if p.get("plan") else ""))
         if not p["available"]:
             out.append(f"  {p['reason']}")
         out.append(f"  allowance ({p['unit']}): today {count(p['used_today'])} of {count(p['daily_limit'])} (resets {p['resets']['daily']}), this month {count(p['used_month'])} of "

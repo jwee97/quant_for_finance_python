@@ -1,0 +1,36 @@
+name: dependency audit
+
+# Weekly (and on demand) check of the packages the application installs against the public vulnerability databases (PyPI's advisories and OSV). The tests cannot notice a vulnerable dependency; this run does.
+# It installs requirements.txt in an environment of its own, so that only what the application brings is audited and not the runner's own tools, and fails when any installed package has a known
+# vulnerability. A vulnerability that has no fixed release, or that cannot matter here, is listed in .github/pip-audit-ignore.txt (one advisory id per line, with a reason in a comment) and
+# the run passes again.
+on:
+  schedule:
+    - cron: "17 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install the application's requirements in an environment of their own (CPU-only PyTorch, as in the tests)
+        run: |
+          python -m venv /tmp/app
+          /tmp/app/bin/pip install --index-url https://download.pytorch.org/whl/cpu "torch>=2.2"
+          /tmp/app/bin/pip install -r requirements.txt
+      - name: Audit what was installed
+        run: |
+          pip install pip-audit
+          args=""
+          if [ -f .github/pip-audit-ignore.txt ]; then
+            for id in $(grep -v '^[[:space:]]*#' .github/pip-audit-ignore.txt | awk '{print $1}'); do args="$args --ignore-vuln $id"; done
+          fi
+          pip-audit --path /tmp/app/lib/python3.11/site-packages --progress-spinner off $args

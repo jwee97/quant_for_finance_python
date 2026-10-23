@@ -73,11 +73,12 @@ def check_security(store: FundamentalsStore, security_id: int) -> dict:
     for row in data[data["metric_code"].isin(nonneg) & (data["value"] < 0)].itertuples():
         flag(row.period_id, row.metric_code, "negative_value")
 
-    # assets = liabilities + equity (+ minority interest)
+    # assets = liabilities + equity (+ minority interest + redeemable equity, which a balance sheet shows between the two)
     wide = data.pivot_table(index="period_id", columns="metric_code", values="value", aggfunc="last")
     if {"total_assets", "total_liabilities", "shareholders_equity"} <= set(wide.columns):
         minority = wide["minority_interest"].fillna(0.0) if "minority_interest" in wide.columns else 0.0
-        gap = (wide["total_assets"] - wide["total_liabilities"] - wide["shareholders_equity"] - minority).abs() / wide["total_assets"].abs().replace(0, np.nan)
+        redeemable = wide["temporary_equity"].fillna(0.0) if "temporary_equity" in wide.columns else 0.0
+        gap = (wide["total_assets"] - wide["total_liabilities"] - wide["shareholders_equity"] - minority - redeemable).abs() / wide["total_assets"].abs().replace(0, np.nan)
         for period_id in gap.index[gap > IDENTITY_TOLERANCE]:
             for code in ("total_assets", "total_liabilities", "shareholders_equity"):
                 if code in wide.columns and np.isfinite(wide.at[period_id, code]):

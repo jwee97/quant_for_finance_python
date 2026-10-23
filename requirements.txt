@@ -51,3 +51,4 @@ lxml>=5.0
 #   Dashboard rendering test:             pip install playwright   (and a Chromium; the test skips without one)
 # Tests
 pytest>=7.4
+pytest-xdist>=3.5            # the suite can run in one process per core: python -m pytest -n auto --dist loadfile

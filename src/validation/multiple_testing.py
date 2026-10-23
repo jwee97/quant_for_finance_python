@@ -72,7 +72,7 @@ def hansen_spa(matrix: np.ndarray, n_samples: int = 2000, mean_block: float = 21
     mean = x.mean(axis=0)
     boot = bootstrap_means(x, n_samples, mean_block, seed) if boot is None else boot
     sigma = np.sqrt(n) * boot.std(axis=0, ddof=1)
-    sigma = np.where(sigma > 0, sigma, np.nan)
+    sigma = np.where(sigma > 1e-12, sigma, np.nan)              # a candidate whose bootstrap never varies (a cash column) has no t-statistic; its rounding noise (1e-19) must not become one
     t_k = np.sqrt(n) * mean / sigma
     statistic = max(0.0, float(np.nanmax(t_k)))
     threshold = np.sqrt(2.0 * np.log(np.log(n)))

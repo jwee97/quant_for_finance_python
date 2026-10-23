@@ -290,6 +290,8 @@ class ResearchContext:
         if "ev" not in self._cache:
             debt, cash = self.panel("total_debt"), self.panel("cash_and_equivalents").fillna(self.panel("cash"))
             other = self.panel("minority_interest").fillna(0.0) + self.panel("preferred_equity").fillna(0.0)
+            if self.has("temporary_equity"):                                                    # redeemable preferred stock and minority interests are claims ahead of the common shares
+                other = other + self.panel("temporary_equity").fillna(0.0)
             net = self.to_trading(debt.fillna(0.0) - cash.fillna(0.0) + other)
             known = debt.notna() | cash.notna()
             self._cache["ev"] = (self.market_cap() + net).where(known)

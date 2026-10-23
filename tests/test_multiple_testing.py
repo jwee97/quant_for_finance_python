@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 import numpy as np
 import pytest
 
@@ -73,6 +75,100 @@ def test_pbo_is_about_one_half_for_noise_and_small_for_a_persistent_winner():
 def test_pbo_degradation_is_negative_for_noise():
     result = pbo_cscv(_noise(n=1600, k=60, seed=8), blocks=10)
     assert result["degradation_slope"] < 0.2 and result["mean_oos_of_best"] < result["mean_is_of_best"]
+
+
+# ------------------------------------------------------------------------------------------------------------------------ the algebra, against numbers worked out by hand
+def test_the_reality_check_statistic_and_p_value_are_the_root_n_times_the_best_mean_and_the_share_of_null_maxima_at_or_above_it():
+    x = np.tile([0.01, 0.0], (4, 1))                                                    # means 1% and 0, n = 4
+    boot = np.array([[0.00, 0.00], [0.02, 0.00], [0.00, 0.00], [0.01, 0.00]])
+    out = white_reality_check(x, boot=boot)
+    # statistic 2 * 0.01; the null maxima are 2 * max(boot - mean) = 0, 0.02, 0 and 0, so one of four reaches the statistic
+    assert out["statistic"] == pytest.approx(0.02) and out["p_value"] == pytest.approx(0.25) and out["best_index"] == 0 and out["best_mean"] == pytest.approx(0.01)
+    behind = white_reality_check(np.tile([-0.02, -0.01], (4, 1)), boot=np.array([[-0.02, -0.01]] * 4))
+    assert behind["best_index"] == 1 and behind["best_mean"] == pytest.approx(-0.01) and behind["statistic"] == pytest.approx(-0.02)
+    assert behind["p_value"] == 1.0                                                      # the best of them is below zero: every null maximum is at least that
+
+
+def test_the_studentised_statistic_ignores_a_candidate_with_no_spread_and_never_goes_below_zero():
+    n = 100
+    rng = np.random.default_rng(0)
+    x = np.column_stack([np.full(n, 0.001), np.full(n, 0.002)])
+    boot = np.column_stack([0.001 + 0.001 * rng.standard_normal(2000), np.full(2000, 0.002)])         # the second candidate's bootstrap never varies: no t-statistic
+    out = hansen_spa(x, boot=boot)
+    assert out["best_index"] == 0 and out["best_t"] == pytest.approx(0.001 / boot[:, 0].std(ddof=1)) and out["statistic"] == pytest.approx(out["best_t"])
+    losing = hansen_spa(np.full((n, 1), -0.001), boot=-0.001 + 0.001 * rng.standard_normal((2000, 1)))
+    assert losing["best_t"] < 0 and losing["statistic"] == 0.0                         # the statistic is the larger of zero and the best t
+
+
+@pytest.mark.parametrize("loser_mean, recentred", [(-0.0019, True), (-0.0016, False)])
+def test_a_candidate_is_recentred_in_the_consistent_p_value_only_when_it_is_clearly_worse_than_the_benchmark(loser_mean, recentred):
+    """With n = 100 the bar is sqrt(2 ln ln 100) = 1.75 studentised units below zero. A candidate at -1.9 is held where it is (like the lower p-value does); one at -1.6 is brought up to zero (like the
+    upper one does). Moving the bar, or the sign of the comparison, changes which of the two this is."""
+    n, rng = 100, np.random.default_rng(0)
+    z = rng.standard_normal((6000, 2))
+    x = np.column_stack([np.full(n, 0.001), np.full(n, loser_mean)])
+    boot = np.column_stack([0.001 + 0.001 * z[:, 0], loser_mean + 0.001 * z[:, 1]])
+    out = hansen_spa(x, boot=boot)
+    assert out["best_index"] == 0 and out["best_t"] == pytest.approx(1.0, abs=0.05) and out["p_lower"] < out["p_upper"] - 0.05
+    if recentred:
+        assert out["p_consistent"] == out["p_lower"]
+    else:
+        assert out["p_consistent"] == out["p_upper"]
+    assert np.sqrt(2.0 * np.log(np.log(n))) == pytest.approx(1.7477, abs=1e-3)
+
+
+def test_pbo_of_a_persistent_winner_is_zero_and_its_sharpe_is_the_one_worked_out_from_the_blocks():
+    blocks, a, d = 4, 0.01, 0.002
+    persistent = np.tile([a + d, a - d], blocks)                                         # +1% a day, with a little spread inside each block
+    x = np.column_stack([persistent, np.tile([0.02, -0.02], blocks), np.tile([0.03, -0.03], blocks)])       # and two candidates that earn nothing on average
+    out = pbo_cscv(x, blocks=blocks)
+    assert out["n_splits"] == 6 and out["pbo"] == 0.0 and out["share_oos_negative"] == 0.0
+    expected_sharpe = a / (d * math.sqrt(4.0 / 3.0)) * math.sqrt(252.0)                    # the sample variance of two blocks of (a + d, a - d) is 4 d^2 / 3
+    assert np.allclose(out["is_best_sharpe"], expected_sharpe) and np.allclose(out["oos_of_best_sharpe"], expected_sharpe)
+    assert np.allclose(out["logit"], np.log(3.0))                                          # best of three out of sample: relative rank 3/4, logit ln 3
+    assert out["mean_oos_of_best"] == pytest.approx(expected_sharpe) and out["mean_is_of_best"] == pytest.approx(expected_sharpe) and math.isnan(out["degradation_slope"])
+    assert pbo_cscv(x, blocks=blocks, annualise=12.0)["mean_is_of_best"] == pytest.approx(a / (d * math.sqrt(4.0 / 3.0)) * math.sqrt(12.0))
+
+
+def test_pbo_counts_the_splits_in_which_the_in_sample_winner_is_the_worst_out_of_sample_and_the_slope_of_that_fall_is_minus_three():
+    """Two candidates earn +2% in alternate blocks (and -2% in the others). Where the in-sample blocks happen to be the good ones, such a candidate wins by twice as much as the steady one and then
+    loses by as much out of sample: two splits of six. In the other four, the steady candidate wins both halves."""
+    blocks, d = 4, 0.002
+    steady = np.tile([0.01 + d, 0.01 - d], blocks)
+    swing = np.concatenate([[0.02 + d, 0.02 - d], [-0.02 + d, -0.02 - d]] * 2)
+    other = np.roll(swing, 2)
+    out = pbo_cscv(np.column_stack([steady, swing, other]), blocks=blocks)
+    s = 0.01 / (d * math.sqrt(4.0 / 3.0)) * math.sqrt(252.0)
+    assert out["pbo"] == pytest.approx(2.0 / 6.0) and out["share_oos_negative"] == pytest.approx(2.0 / 6.0)
+    assert sorted(np.round(out["logit"], 6)) == sorted(np.round([np.log(1 / 3.0)] * 2 + [np.log(3.0)] * 4, 6))      # lowest of three: relative rank 1/4; highest: 3/4
+    assert out["mean_is_of_best"] == pytest.approx(s * 8.0 / 6.0) and out["mean_oos_of_best"] == pytest.approx(0.0, abs=1e-9)
+    assert out["degradation_slope"] == pytest.approx(-3.0)                                   # points (s, s) four times and (2s, -2s) twice
+
+
+def test_pbo_of_one_candidate_sits_at_the_median_and_an_odd_number_of_blocks_is_refused():
+    x = np.random.default_rng(1).normal(0.0, 0.01, size=(80, 1))
+    out = pbo_cscv(x, blocks=4)
+    assert out["pbo"] == 1.0 and np.allclose(out["logit"], 0.0) and out["n_splits"] == 6                 # rank 1 of 1: relative rank 1/2, logit 0, which counts as overfitting
+    two = pbo_cscv(np.random.default_rng(2).normal(0.0, 0.01, size=(80, 2)), blocks=4)
+    assert set(np.round(np.abs(two["logit"]), 6)) <= {round(math.log(2.0), 6)}                           # ranks 1 or 2 of 2: relative ranks 1/3 and 2/3
+    with pytest.raises(ValueError, match="blocks must be even"):
+        pbo_cscv(x, blocks=5)
+
+
+def test_pbo_drops_the_oldest_rows_that_do_not_fill_a_block():
+    rng = np.random.default_rng(4)
+    core = rng.normal(0.0, 0.01, size=(80, 3))
+    padded = np.vstack([np.full((3, 3), 5.0), core])                                      # three stray rows at the start of 83
+    a, b = pbo_cscv(core, blocks=4), pbo_cscv(padded, blocks=4)
+    assert np.allclose(a["logit"], b["logit"]) and a["pbo"] == b["pbo"] and np.allclose(a["is_best_sharpe"], b["is_best_sharpe"])
+
+
+def test_the_bootstrap_means_are_the_means_of_the_resampled_days_and_a_batch_of_any_size_gives_the_same_draws():
+    x = np.arange(60, dtype=float).reshape(30, 2)
+    one = bootstrap_means(x, n_samples=50, mean_block=5, seed=3, batch=50)
+    many = bootstrap_means(x, n_samples=50, mean_block=5, seed=3, batch=7)
+    assert one.shape == (50, 2) and np.allclose(one, many) and np.all(one >= x.min(axis=0)) and np.all(one <= x.max(axis=0))
+    assert np.allclose(one[:, 1] - one[:, 0], 1.0)                                          # the same days for both columns: they differ by exactly the offset between them
 
 
 def _square(task):
