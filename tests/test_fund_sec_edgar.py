@@ -80,6 +80,28 @@ def plain_file(rows=TICKER_ROWS) -> dict:
     return {str(i): {"cik_str": c, "ticker": t, "title": n} for i, (c, t, n, e) in enumerate(rows)}
 
 
+def submission_of(cik: int) -> dict | None:
+    """What /submissions/CIK##########.json says about a company: the record kept above, else one made from the ticker rows (its name, every ticker it has and where each trades)."""
+    if cik in SUBMISSIONS:
+        return SUBMISSIONS[cik]
+    mine = [r for r in TICKER_ROWS if r[0] == cik]
+    if not mine:
+        return None
+    return {"cik": f"{cik:010d}", "name": mine[0][2], "sic": "3674", "sicDescription": "Semiconductors & Related Devices", "tickers": [r[1] for r in mine], "exchanges": [r[3] for r in mine],
+            "fiscalYearEnd": "1231", "category": "Large accelerated filer", "lei": None}
+
+
+def frame_of(rows, fillers: int) -> dict:
+    """The frame of one quarter's balance sheets: the companies of ``rows`` first (the frame lists the larger ones first) and ``fillers`` others."""
+    seen, data = set(), []
+    for cik, _, name, _ in rows:
+        if cik not in seen:
+            seen.add(cik)
+            data.append({"accn": f"0000000000-26-{cik % 100000:06d}", "cik": cik, "entityName": name, "loc": "US-CA", "end": "2026-06-30", "val": 1_000_000_000 - len(data)})
+    data += [{"accn": f"0000999999-26-{i:06d}", "cik": 9_000_000 + i, "entityName": f"Filler {i} Holdings Inc", "loc": "US-NY", "end": "2026-06-30", "val": 1000 - i} for i in range(fillers)]
+    return {"taxonomy": "us-gaap", "tag": "Assets", "ccp": "CY2026Q2I", "uom": "USD", "label": "Assets", "pts": len(data), "data": data}
+
+
 class FakeSec:
     """A stand-in for data.sec.gov and www.sec.gov: company facts and submissions by CIK, the ticker files, a refusal for a client that does not identify itself, and the rate-threshold page."""
 
@@ -90,6 +112,7 @@ class FakeSec:
         self.errors: list[int] = []             # answer the next requests with these statuses
         self.tickers_status = 200
         self.exchange_file_status = 200
+        self.frames = {"CY2026Q2I": frame_of(TICKER_ROWS, 1200)}                  # the frames that exist, by period: every company that reported assets then
 
     def __call__(self, url, headers, timeout):
         self.requests.append({"url": url, "headers": dict(headers)})
@@ -104,15 +127,19 @@ class FakeSec:
             return (200, {}, json.dumps(exchange_file()).encode()) if self.exchange_file_status == 200 else (self.exchange_file_status, {}, b"")
         if url.endswith("company_tickers.json"):
             return (200, {}, json.dumps(plain_file()).encode()) if self.tickers_status == 200 else (self.tickers_status, {}, b"")
+        if "/api/xbrl/frames/" in url:
+            period = url.rsplit("/", 1)[1].removesuffix(".json")
+            return (200, {}, json.dumps(self.frames[period]).encode()) if period in self.frames else (404, {}, b"<Error><Code>NoSuchKey</Code></Error>")
         cik = int(url.rsplit("CIK", 1)[1][:10])
         if "/api/xbrl/companyfacts/" in url:
             return (200, {}, json.dumps(self.facts[cik]).encode()) if cik in self.facts else (404, {}, b"<Error><Code>NoSuchKey</Code></Error>")
         if "/submissions/" in url:
-            return (200, {}, json.dumps(SUBMISSIONS[cik]).encode()) if cik in SUBMISSIONS else (404, {}, b"")
+            record = submission_of(cik)
+            return (200, {}, json.dumps(record).encode()) if record else (404, {}, b"")
         return 404, {}, b""
 
     def kinds(self) -> list[str]:
-        return ["tickers" if "company_tickers" in r["url"] else "facts" if "companyfacts" in r["url"] else "submissions" for r in self.requests]
+        return ["tickers" if "company_tickers" in r["url"] else "frames" if "/frames/" in r["url"] else "facts" if "companyfacts" in r["url"] else "submissions" for r in self.requests]
 
 
 def provider(tmp_path, fake=None, contact=CONTACT, cache=True, **kwargs) -> tuple[SecEdgarProvider, FakeSec]:
@@ -570,12 +597,11 @@ def test_a_redirect_is_not_followed_and_an_oversized_or_broken_answer_is_refused
 
         def read(self, n=-1):
             return self._data[:n] if n >= 0 else self._data
-    import zlib
-    packed = zlib.compress(b"{}" * 10, wbits=31)
+    packed = gzip.compress(b"{}" * 10)                                                      # gzip.compress, not zlib.compress(wbits=31): that keyword is Python 3.11 and newer
     assert sec._read_body(Body(packed, "gzip")) == b"{}" * 10 and sec._read_body(Body(b"plain")) == b"plain"
     with pytest.raises(ProviderError):
         sec._read_body(Body(b"not gzip at all", "gzip"))
-    bomb = zlib.compress(b"0" * (sec.MAX_BYTES + 10), 9, wbits=31) if sec.MAX_BYTES < 5e7 else b""
+    bomb = gzip.compress(b"0" * (sec.MAX_BYTES + 10), 9) if sec.MAX_BYTES < 5e7 else b""
     if bomb:
         with pytest.raises(ProviderError):
             sec._read_body(Body(bomb, "gzip"))
@@ -657,9 +683,23 @@ def test_the_years_not_yet_held_are_picked_and_fetched_without_touching_the_ones
 def test_a_run_stops_at_the_first_refusal_and_leaves_the_rest_for_later(tmp_path):
     svc, _, fake = service(tmp_path)
     fake.block = 1
-    report = svc.sync("sec_edgar", symbols=["AAPL", "WMT", "JPM"])
+    report = svc.sync("sec_edgar", symbols=["cik:320193", "cik:104169", "cik:19617"])
     assert report["fetched"] == 0 and report["failed"] == [] and "too many requests" in report["stopped"] and "remain" in report["stopped"]
-    assert len(fake.requests) == 1                                                                # one refusal, no more asking
+    assert len(fake.requests) == 1                                                                # the record of the first company was refused: the run stopped there, nothing was asked after it
+    for sid in svc.add_companies("sec_edgar", ["cik:320193"]):
+        assert svc.store.get_sync(sid, "sec_edgar", "financials:annual") is None                  # a refusal says nothing about the company: it is not marked as unknown or as failed
+
+
+def test_an_unreadable_ticker_list_fails_each_ticker_without_marking_it_unknown_and_is_not_asked_again_at_once(tmp_path):
+    svc, _, fake = service(tmp_path)
+    fake.block = 1
+    report = svc.sync("sec_edgar", symbols=["AAPL", "WMT", "JPM"])
+    assert report["fetched"] == 0 and report["not_found"] == [] and report["stopped"] == "" and len(report["failed"]) == 3
+    assert "cannot be read from here" in report["failed"][0]["error"] and "cik:" in report["failed"][0]["error"]
+    assert fake.kinds() == ["tickers"]                                                           # asked once, refused, and not asked again by the next two
+    sid = svc.add_companies("sec_edgar", ["AAPL"])[0]
+    assert svc.store.get_sync(sid, "sec_edgar", "financials:annual")["status"] == "error"        # an error, retried at the next run, not "not found" for two months
+    assert svc.plan("sec_edgar", [sid]).tasks and svc.reason_to_sync(sid, "sec_edgar", "annual") == "missing"
 
 
 def test_a_company_without_facts_is_remembered_as_not_found_and_not_asked_again_for_two_months(tmp_path):
@@ -974,10 +1014,9 @@ def local_sec():
     """A server on this computer that answers the way the SEC does: gzipped JSON, a gzipped refusal page with the SEC's words, a redirect."""
     import http.server
     import threading
-    import zlib
 
     def gz(data: bytes) -> bytes:
-        return zlib.compress(data, wbits=31)
+        return gzip.compress(data)
 
     class Handler(http.server.BaseHTTPRequestHandler):
         seen: list = []
@@ -1028,3 +1067,171 @@ def test_the_real_transport_unzips_answers_and_refusal_pages_and_never_follows_a
     prov = SecEdgarProvider(user_agent=CONTACT, sleep=lambda s: None, base_url=base)               # through the provider, over a real socket
     with pytest.raises(NotFound):
         prov.get_financials("cik:5")
+
+
+# ------------------------------------------------------------------------------------------------------------------------ when the ticker list cannot be read
+TODAY = date(2026, 10, 23)
+
+
+def walled(tmp_path, **kwargs):
+    """A provider whose ticker files are refused (the SEC turns away addresses many programs share) while data.sec.gov answers."""
+    fake = FakeSec()
+    fake.exchange_file_status = fake.tickers_status = 403
+    prov, _ = provider(tmp_path, fake=fake, today=lambda: TODAY, **kwargs)
+    return prov, fake
+
+
+def test_the_newest_complete_quarter_is_the_one_whose_frame_is_read():
+    assert sec.frame_quarters(date(2026, 10, 23)) == [(2026, 2), (2026, 1), (2025, 4), (2025, 3)]
+    assert sec.frame_quarters(date(2026, 3, 1))[0] == (2025, 3) and sec.frame_quarters(date(2026, 1, 10), 2) == [(2025, 3), (2025, 2)]
+    assert sec.frame_quarters(date(2026, 9, 13))[0] == (2026, 2) and sec.frame_quarters(date(2026, 9, 12))[0] == (2026, 1)         # a quarter counts once it is 75 days old
+    assert sec.frame_quarters(date(2026, 12, 20))[0] == (2026, 3) and sec.frame_quarters(date(2027, 1, 5))[0] == (2026, 3)
+    eight = sec.frame_quarters(date(2026, 10, 23), 8)
+    assert len(eight) == 8 and all(a > b for a, b in zip(eight, eight[1:]))
+
+
+def test_the_list_of_reporting_companies_is_read_from_a_frame_and_searched_by_name_or_cik():
+    names = sec.NameList.parse(frame_of(TICKER_ROWS, 5), "2026-10-23", "CY2026Q2")
+    assert len(names.rows) == len({r[0] for r in TICKER_ROWS}) + 5 and names.rows[0] == (1045810, "NVIDIA CORP") and names.period == "CY2026Q2"
+    assert [r[1] for _, r in names.search("Nvidia")] == ["NVIDIA CORP"] and [r for _, r in names.search("berkshire")][0][0] == 1067983
+    assert names.search("320193")[0][0] == 120.0 and names.search("320193")[0][1][1] == "Apple Inc." and names.search("hartford insurance")[0][1][0] == 874766
+    assert names.search("") == [] and names.search("zzzz") == [] and len(names.search("inc", 3)) == 3
+    junk = {"data": [{"cik": 1, "entityName": "Ok Corp"}, {"cik": 1, "entityName": "Duplicate Corp"}, {"cik": True, "entityName": "Bool"}, {"cik": "2", "entityName": "Text id"},
+                     {"cik": 3, "entityName": "  "}, {"cik": 4}, "row", {"cik": -5, "entityName": "Negative"}]}
+    assert sec.NameList.parse(junk).rows == [(1, "Ok Corp")]
+    for nonsense in (None, [], "x", {"data": "x"}, {"data": [None]}):
+        assert sec.NameList.parse(nonsense).rows == []
+    assert sec.NameList.from_json(names.to_json()).rows == names.rows and sec.NameList.from_json({"rows": [["x"], [1]]}) is None
+
+
+def test_without_the_ticker_list_a_name_search_reads_the_frame_looks_the_company_up_and_remembers_its_ticker(tmp_path):
+    prov, fake = walled(tmp_path)
+    found = prov.search_detail("alphabet")
+    assert [p.provider_symbol for p in found["profiles"]] == ["us:GOOGL"] and found["profiles"][0].extra["also_listed"] == ["us:GOOG"] and found["profiles"][0].extra["cik"] == 1652044
+    assert "cannot be read from here" in found["message"] and "2026 Q2" in found["message"] and found["credits"] == 0 and found["degraded"] is True
+    assert fake.kinds() == ["tickers", "tickers", "frames", "submissions"]                       # both ticker files refused, the frame once, the one company looked up
+    assert [r[1] for r in prov.resolved().rows] == ["GOOGL", "GOOG"] and json.loads((tmp_path / "sec_resolved.json").read_text())["rows"][0][0] == 1652044
+    assert (tmp_path / "sec_filers.json").exists()
+    before = len(fake.requests)
+    again = prov.search_detail("alphabet")                                                         # the company is remembered, the frame is kept, the ticker files are not asked for again at once
+    assert [p.provider_symbol for p in again["profiles"]] == ["us:GOOGL"] and len(fake.requests) == before
+
+
+def test_a_name_search_finds_companies_not_yet_looked_up_even_when_one_that_matches_is_remembered(tmp_path):
+    prov, fake = walled(tmp_path)
+    assert [p.provider_symbol for p in prov.search_detail("nvidia")["profiles"]] == ["us:NVDA"]
+    wide = prov.search_detail("inc")                                                               # a word many names hold: some remembered, the rest looked up (at most SEC's cap), none twice
+    symbols = [p.provider_symbol for p in wide["profiles"]]
+    assert len(symbols) == len(set(symbols)) and 1 < len(symbols) <= 10 and fake.kinds().count("submissions") <= 1 + sec.SEARCH_LOOKUPS
+    assert "not shown" in wide["message"] and "type more of the name" in wide["message"]
+    after = len(fake.requests)
+    prov.search_detail("nvidia")
+    assert len(fake.requests) == after                                                             # what was looked up is remembered: asking again costs nothing
+
+
+def test_a_company_found_that_way_can_be_fetched_by_its_ticker_in_this_run_and_in_the_next_without_the_list(tmp_path):
+    prov, fake = walled(tmp_path)
+    assert [p.provider_symbol for p in prov.search_detail("apple")["profiles"]] == ["us:AAPL"]
+    result = prov.get_financials("us:AAPL")
+    assert [p.fiscal_year for p in result.periods] == list(range(2016, 2026)) and "CIK0000320193" in fake.requests[-1]["url"]
+    later, fake2 = walled(tmp_path)                                                                # a new run, the same folder
+    assert later._cik_of("us:AAPL") == 320193 and later.normalise_symbol("cik:320193") == "us:AAPL" and later.offline_profile("cik:320193").ticker == "AAPL"
+    assert [r for r in fake2.kinds() if r != "tickers"] == []                                      # nothing but the refused ticker files was asked for
+
+
+def test_a_ticker_alone_is_not_found_without_the_list_until_its_company_has_been_and_the_message_says_what_to_do(tmp_path):
+    prov, fake = walled(tmp_path)
+    nothing = prov.search_detail("NVDA")
+    assert nothing["profiles"] == [] and "found only once its company has been" in nothing["message"] and "cik:320193" in nothing["message"] and nothing["kind"] == "symbol"
+    with pytest.raises(ProviderError, match="cannot be read from here") as refused:
+        prov.get_financials("us:NVDA")
+    assert not isinstance(refused.value, NotFound)                                                 # not a verdict on the ticker: it is asked about again when the list can be read
+    with pytest.raises(NotFound):
+        provider(tmp_path / "ok")[0].get_financials("us:NOSUCH")                                   # with the list at hand, an unknown ticker is simply unknown
+    assert [p.provider_symbol for p in prov.search_detail("nvidia")["profiles"]] == ["us:NVDA"]
+    sent = len(fake.requests)
+    again = prov.search_detail("NVDA")
+    assert [p.provider_symbol for p in again["profiles"]] == ["us:NVDA"] and again["profiles"][0].name == "NVIDIA CORP" and len(fake.requests) == sent        # now it has been met
+
+
+def test_an_older_frame_is_used_when_the_newest_is_missing_and_a_thin_one_is_not_trusted(tmp_path):
+    prov, fake = walled(tmp_path)
+    fake.frames = {"CY2025Q4I": frame_of(TICKER_ROWS, 1200)}
+    assert prov.filers().period == "CY2025Q4" and fake.kinds() == ["frames", "frames", "frames"]       # the two newer quarters are not published
+    thin, fake2 = walled(tmp_path / "thin")
+    fake2.frames = {"CY2026Q2I": frame_of(TICKER_ROWS, 5), "CY2026Q1I": frame_of(TICKER_ROWS, 1200)}                # the newest has too few companies to be the whole list
+    assert thin.filers().period == "CY2026Q1" and fake2.kinds() == ["frames", "frames"]
+    none, fake3 = walled(tmp_path / "none")
+    fake3.frames = {}
+    with pytest.raises(ProviderError, match="could not be read"):
+        none.filers()
+    with pytest.raises(ProviderError, match="could not be read"):
+        none.search_detail("apple")                                                                # nothing remembered and no list of names: the search says so
+
+
+def test_a_stale_copy_of_the_frame_is_used_when_the_sec_cannot_renew_it_and_a_broken_copy_is_read_again(tmp_path):
+    prov, _ = walled(tmp_path)
+    prov.filers()
+    gone = FakeSec()
+    gone.frames = {}
+    later = SecEdgarProvider(transport=gone, user_agent=CONTACT, cache_path=tmp_path / "tickers.json", sleep=lambda s: None, today=lambda: date(2026, 12, 30))
+    assert len(later.filers().rows) > 1000 and "could not be renewed" in later.notes[-1] and "2026-10-23" in later.notes[-1]
+    (tmp_path / "sec_filers.json").write_text("{broken")
+    again = SecEdgarProvider(transport=FakeSec(), user_agent=CONTACT, cache_path=tmp_path / "tickers.json", sleep=lambda s: None, today=lambda: TODAY)
+    assert len(again.filers().rows) > 1000
+
+
+class Flaky:
+    """Answers the first ``ok`` company records and fails every later one with a server error."""
+
+    def __init__(self, inner: FakeSec, ok: int):
+        self.inner, self.ok, self.records = inner, ok, 0
+
+    def __call__(self, url, headers, timeout):
+        if "/submissions/" in url:
+            self.records += 1
+            if self.records > self.ok:
+                return 500, {}, b""
+        return self.inner(url, headers, timeout)
+
+
+def test_a_name_search_keeps_what_it_found_when_the_sec_stops_answering_part_way_and_says_why_when_it_found_nothing(tmp_path):
+    inner = FakeSec()
+    inner.exchange_file_status = inner.tickers_status = 403
+    prov, _ = provider(tmp_path, fake=Flaky(inner, ok=1), today=lambda: TODAY)
+    part = prov.search_detail("inc")
+    assert [p.provider_symbol for p in part["profiles"]] == ["us:AAPL"] and "stopped answering part-way" in part["message"] and "what was found is shown" in part["message"]
+    assert [r[1] for r in prov.resolved().rows] == ["AAPL"]                                         # the company that was found is remembered all the same
+    other = FakeSec()
+    other.exchange_file_status = other.tickers_status = 403
+    none, _ = provider(tmp_path / "none", fake=Flaky(other, ok=0), today=lambda: TODAY)
+    with pytest.raises(ProviderError, match="temporarily unavailable"):
+        none.search_detail("nvidia")                                                               # nothing found: the cause is raised, not an empty answer
+    assert none.resolved().rows == []
+
+
+def test_a_company_looked_up_by_its_record_has_its_tickers_remembered_and_a_broken_memory_is_ignored(tmp_path):
+    prov, fake = provider(tmp_path)
+    prov.get_company("cik:1652044")
+    assert sorted(r[1] for r in prov.resolved().rows) == ["GOOG", "GOOGL"] and prov.resolved().find("goog")[0] == 1652044
+    prov.get_company("cik:1652044")
+    assert len(prov.resolved().rows) == 2                                                          # looked up twice, remembered once
+    (tmp_path / "sec_resolved.json").write_text("not json")
+    other, _ = provider(tmp_path)
+    assert other.resolved().rows == [] and other._kept_tickers() is None
+
+
+def test_the_name_search_through_the_application_says_why_and_is_not_saved_so_the_next_one_can_be_better(tmp_path):
+    svc, prov, fake = service(tmp_path, today=lambda: TODAY)
+    fake.exchange_file_status = fake.tickers_status = 403
+    found = svc.search_companies("sec_edgar", "apple")
+    assert found["count"] == 1 and found["results"][0]["symbol"] == "us:AAPL" and found["credits"] == 0 and "cannot be read from here" in found["message"] and found["cached"] is False
+    again = svc.search_companies("sec_edgar", "apple")
+    assert again["cached"] is False and again["count"] == 1                                         # not kept as a saved answer: it was made without the ticker list
+    fake.exchange_file_status = fake.tickers_status = 200
+    prov._blocked_until = -1e9                                                                      # ten minutes later, from an address the SEC does not turn away
+    better = svc.search_companies("sec_edgar", "apple")
+    assert better["count"] == 1 and better["message"] == "" and better["cached"] is False
+    report = svc.sync("sec_edgar", symbols=["AAPL"])
+    assert report["fetched"] == 1 and report["periods"] == 10 and report["failed"] == []
+    assert svc.store.get_security(svc.add_companies("sec_edgar", ["AAPL"])[0])["company_name"] == "Apple Inc."

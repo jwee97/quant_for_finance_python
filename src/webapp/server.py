@@ -6,6 +6,11 @@ cannot drive it), the Host and Origin headers must be this server, and POST bodi
 Where the server is reachable by others (a Replit preview, a container), the token alone is no gate: anyone who can load the page receives it. An **access code** closes that: with
 ``QUANT_LAB_ACCESS_CODE`` set, the page, the scripts and the API are served only to a browser that has entered the code (a session cookie that is HttpOnly and SameSite=Strict, kept in
 memory, so a restart signs everyone out; wrong guesses are limited to ten in five minutes).
+
+The server speaks HTTP. Where the traffic crosses a network you do not trust (a machine others can reach, rather than a Replit preview, whose proxy already serves HTTPS), it can speak HTTPS itself:
+set ``QUANT_LAB_TLS_CERT`` and ``QUANT_LAB_TLS_KEY`` to the paths of a certificate and its private key (PEM). The handshake is done in the connection's own thread, so a client that connects and never
+finishes it holds that thread and nothing else; TLS 1.2 is the oldest version offered; the session cookie then carries ``Secure``. No ``Strict-Transport-Security`` is sent: on ``localhost`` it would
+make a browser refuse plain HTTP to every other local server for as long as it lasts.
 """
 
 from __future__ import annotations
@@ -15,6 +20,8 @@ import hashlib
 import json
 import os
 import secrets
+import ssl
+import sys
 import threading
 import time
 import webbrowser
@@ -35,6 +42,7 @@ MAX_BODY = 200_000
 MAX_QUERY_FIELDS = 40
 LOOPBACK = {"127.0.0.1", "localhost", "::1", "[::1]"}
 ACCESS_ENV = "QUANT_LAB_ACCESS_CODE"
+TLS_ENV = ("QUANT_LAB_TLS_CERT", "QUANT_LAB_TLS_KEY")
 SESSION_COOKIE, SESSION_SECONDS = "ql_session", 24 * 3600
 LOGIN_ATTEMPTS, LOGIN_WINDOW = 10, 300.0
 REQUEST_TIMEOUT = 30                                          # seconds a client may take to send its request or take the answer: a stalled connection is dropped, not kept for ever
@@ -52,7 +60,20 @@ button{{margin-top:.8rem;font:inherit;padding:.6rem 1rem;border:0;border-radius:
 <button type="submit">Open the app</button></form></main></body></html>"""
 
 
-def make_handler(app: App, token: str, port_holder: list, access: str | None = None):
+def tls_context(cert: str, key: str) -> ssl.SSLContext:
+    """A server-side TLS context from a certificate and its private key (PEM files). TLS 1.2 is the oldest version offered. A file that is missing or does not match is told in words."""
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
+    try:
+        context.load_cert_chain(certfile=cert, keyfile=key)
+    except FileNotFoundError as error:
+        raise ValueError(f"the certificate or key file is missing: {error.filename}") from None
+    except (ssl.SSLError, OSError) as error:
+        raise ValueError(f"the certificate and key could not be used (they must be PEM files that belong together): {error}") from None
+    return context
+
+
+def make_handler(app: App, token: str, port_holder: list, access: str | None = None, tls: ssl.SSLContext | None = None):
     sessions: dict[str, float] = {}                             # session id -> when it expires
     attempts: deque = deque()                                   # times of recent wrong guesses
     gate = threading.Lock()
@@ -63,6 +84,12 @@ def make_handler(app: App, token: str, port_holder: list, access: str | None = N
 
         def version_string(self) -> str:                        # do not announce which Python this is
             return self.server_version
+
+        def setup(self) -> None:
+            if tls is not None:                                 # the handshake is done here, in the connection's own thread, and under the request timeout: a client that stalls holds only that
+                self.request.settimeout(self.timeout)
+                self.request = tls.wrap_socket(self.request, server_side=True)
+            super().setup()
 
         def log_message(self, fmt, *args):                      # quiet: the terminal belongs to the backtests
             pass
@@ -175,7 +202,7 @@ def make_handler(app: App, token: str, port_holder: list, access: str | None = N
             elif not good:
                 self._login_page(HTTPStatus.UNAUTHORIZED, "That code is not right.")
             else:
-                secure = "; Secure" if (self.headers.get("X-Forwarded-Proto") or "").lower() == "https" else ""
+                secure = "; Secure" if tls is not None or (self.headers.get("X-Forwarded-Proto") or "").lower() == "https" else ""
                 self._redirect("/", {"Set-Cookie": f"{SESSION_COOKIE}={sid}; HttpOnly; SameSite=Strict; Path=/; Max-Age={SESSION_SECONDS}{secure}"})
 
         def _guard(self, api: bool) -> bool:
@@ -296,34 +323,56 @@ def make_handler(app: App, token: str, port_holder: list, access: str | None = N
     return Handler
 
 
+class QuantServer(ThreadingHTTPServer):
+    daemon_threads = True
+
+    def handle_error(self, request, client_address) -> None:
+        if isinstance(sys.exc_info()[1], (ssl.SSLError, ConnectionError, TimeoutError)):      # a handshake that failed or was abandoned is not worth a traceback on the terminal
+            return
+        super().handle_error(request, client_address)
+
+
 class Running:
     """A started server: ``url``, ``token`` and ``stop()``."""
 
-    def __init__(self, httpd: ThreadingHTTPServer, token: str, thread: threading.Thread):
-        self.httpd, self.token, self.thread = httpd, token, thread
-        self.url = f"http://{httpd.server_address[0]}:{httpd.server_address[1]}/"
+    def __init__(self, httpd: ThreadingHTTPServer, token: str, thread: threading.Thread, secure: bool = False):
+        self.httpd, self.token, self.thread, self.secure = httpd, token, thread, secure
+        self.url = f"{'https' if secure else 'http'}://{httpd.server_address[0]}:{httpd.server_address[1]}/"
 
     def stop(self) -> None:
         self.httpd.shutdown()
         self.httpd.server_close()
 
 
-def start(app: App, host: str = "127.0.0.1", port: int = 8765, access_code: str | None = None) -> Running:
-    """Start serving in a background thread (port 0 picks a free one). With an ``access_code`` nothing is served to a browser that has not entered it."""
+def start(app: App, host: str = "127.0.0.1", port: int = 8765, access_code: str | None = None, tls: ssl.SSLContext | None = None) -> Running:
+    """Start serving in a background thread (port 0 picks a free one). With an ``access_code`` nothing is served to a browser that has not entered it; with a ``tls`` context (:func:`tls_context`) it
+    speaks HTTPS."""
     token = secrets.token_urlsafe(16)
     holder: list = []
-    httpd = ThreadingHTTPServer((host, port), make_handler(app, token, holder, access_code or None))
-    httpd.daemon_threads = True
+    httpd = QuantServer((host, port), make_handler(app, token, holder, access_code or None, tls))
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()
-    return Running(httpd, token, thread)
+    return Running(httpd, token, thread, tls is not None)
 
 
 def serve(config, host: str = "127.0.0.1", port: int = 8765, open_browser: bool = True) -> int:
+    cert, key = (os.environ.get(name, "").strip() for name in TLS_ENV)
+    context = None
+    if cert or key:
+        if not (cert and key):
+            print(f"HTTPS needs both {TLS_ENV[0]} and {TLS_ENV[1]} (the paths of a certificate and its private key); only one is set.")
+            return 2
+        try:
+            context = tls_context(cert, key)
+        except ValueError as error:
+            print(error)
+            return 2
     app = App(config)
     access = os.environ.get(ACCESS_ENV) or None
-    running = start(app, host, port, access)
+    running = start(app, host, port, access, context)
     print(f"Quant Lab is running at {running.url}   (Ctrl+C to stop)")
+    if context is not None:
+        print("Serving HTTPS with the certificate in " + TLS_ENV[0] + " (a browser warns about a certificate you made yourself: that is expected, and you accept it once).")
     if access:
         print("An access code is required (the QUANT_LAB_ACCESS_CODE secret).")
     if host not in LOOPBACK and not access:

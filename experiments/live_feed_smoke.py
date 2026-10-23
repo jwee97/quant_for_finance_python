@@ -1,7 +1,8 @@
 """A smoke check of every live data feed the application reads, for a scheduled run: does each public feed still answer, and does the answer still have the shape the parsers expect?
 
 The test suite never touches the network (a feed that changes its fields would not fail it), so this is the one place that does. It fetches a small, fixed set of things from the keyless feeds (Cboe,
-Deribit, four exchanges, Yahoo Finance) and from the SEC (a company's facts and record, and the list of tickers), checks sizes and dates rather than values, and says for each one:
+Deribit, four exchanges, Yahoo Finance) and from the SEC (a company's facts and record, the list of tickers, and the list of companies that report financial data, which stands in for the tickers
+when the SEC refuses a program the ticker file), checks sizes and dates rather than values, and says for each one:
 
 ``ok``       it answered and looked right;
 ``refused``  the server would not talk to this address (HTTP 403, 429 or 451: a shared cloud address is often refused; nothing is known about the feed);
@@ -13,7 +14,7 @@ never had a working one.
 
     python experiments/live_feed_smoke.py [--only cboe,sec] [--json FILE] [--strict]
 
-The SEC contact is read from ``SEC_EDGAR_USER_AGENT``; inside GitHub Actions without it, the address of the repository stands in (the SEC asks for a contact, and a repository page is one).
+The SEC contact is read from ``SEC_EDGAR_USER_AGENT`` and from nowhere else: nothing is invented, so without it the SEC checks are ``skipped``.
 """
 
 from __future__ import annotations
@@ -141,8 +142,16 @@ def sec_tickers(ctx) -> str:
     return f"{len(listing.rows)} tickers; AAPL is CIK {row[0]} ({row[3] or 'no exchange'})"
 
 
+def sec_filers(ctx) -> str:
+    names = _sec(ctx).filers()
+    expect(len(names.rows) >= 4000, f"{len(names.rows)} companies in {names.period}")
+    hit = next(iter(names.search("apple inc", 1)), None)
+    expect(hit is not None and hit[1][0] == 320193, f"Apple Inc. is {hit}")
+    return f"{len(names.rows)} companies reported assets in {names.period}; Apple Inc. is CIK {hit[1][0]}"
+
+
 CHECKS = {"cboe": cboe, "deribit": deribit, "exchanges": exchanges, "crypto_history": crypto_history, "okx_funding": okx_funding, "yahoo": yahoo,
-          "sec_facts": sec_facts, "sec_record": sec_record, "sec_tickers": sec_tickers}
+          "sec_facts": sec_facts, "sec_record": sec_record, "sec_tickers": sec_tickers, "sec_filers": sec_filers}
 
 
 # ------------------------------------------------------------------------------------------------------------------ running them
@@ -204,8 +213,6 @@ def main(argv=None, transport=None, checks: dict | None = None) -> int:
     parser.add_argument("--strict", action="store_true", help="a refusal fails the run too")
     args = parser.parse_args(argv)
     contact = os.environ.get("SEC_EDGAR_USER_AGENT", "").strip()
-    if not contact and os.environ.get("GITHUB_REPOSITORY"):
-        contact = f"QuantLab live-feed check (https://github.com/{os.environ['GITHUB_REPOSITORY']})"
     ctx = {"http": Http(transport=transport, timeout=30.0), "sec_contact": contact}
     results = run_checks(checks or CHECKS, ctx, [x.strip() for x in args.only.split(",")] if args.only else None)
     print(render(results))

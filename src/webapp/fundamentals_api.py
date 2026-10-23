@@ -168,7 +168,8 @@ class FundamentalsApi:
         if not r["ready"]:
             raise ApiError(r["problems"][0])
 
-    def _job(self, label: str, work, stoppable: bool = False) -> dict:
+    def _job(self, label: str, work, stoppable: bool = False, lane: str = "compute") -> dict:
+        """Start ``work(progress, stop)`` as a job. Fetching statements and prices is the ``data`` lane (it waits for a provider, not for the processor); everything else is ``compute``."""
         stop = threading.Event() if stoppable else None
 
         def run(progress):
@@ -179,7 +180,7 @@ class FundamentalsApi:
 
         for old in [j for j in self.stops if j not in self.app.jobs or self.app.jobs[j].status not in ACTIVE]:
             self.stops.pop(old, None)
-        started = self.app.submit_task(label, run, "fundamentals")
+        started = self.app.submit_task(label, run, "fundamentals", lane)
         if stop is not None:
             self.stops[started["job"]] = stop
         return started
@@ -451,7 +452,7 @@ class FundamentalsApi:
             report = wb.service.sync(provider, symbols, ids, periods, start_year, budget, progress, stop.is_set, market)
             wb.forget()
             return report
-        return self._job(f"fundamentals: fetch statements (up to {budget} {unit})", work, True)
+        return self._job(f"fundamentals: fetch statements (up to {budget} {unit})", work, True, "data")
 
     def coverage_fetch(self, body: dict) -> dict:
         """``POST /api/fund/coverage/fetch (a job)``: ask the provider once for the chosen fiscal years of one company that are not held, and store what is new. ``budget`` (required) is the most
@@ -470,7 +471,7 @@ class FundamentalsApi:
             report = wb.service.fetch_years(sid, years, budget, provider, "annual", ask_again, progress)
             wb.forget()
             return report
-        return self._job(f"fundamentals: fetch chosen years (up to {budget} {unit})", work)
+        return self._job(f"fundamentals: fetch chosen years (up to {budget} {unit})", work, False, "data")
 
     def simulate(self, body: dict) -> dict:
         """``POST /api/fund/simulate (a job)``: make the demo database, a simulated world of companies with a few alphas planted in it. ``reset`` starts the file again."""
@@ -509,7 +510,7 @@ class FundamentalsApi:
 
         def work(progress, stop):
             return wb.load_prices(ids, start, self.fetch, progress, stop.is_set, bool(body.get("refresh")), body.get("fx", True) is not False)
-        return self._job("fundamentals: load prices", work, True)
+        return self._job("fundamentals: load prices", work, True, "data")
 
     # ------------------------------------------------------------------------------------------------------------ jobs: research
     def scan(self, body: dict) -> dict:

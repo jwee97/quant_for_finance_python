@@ -183,6 +183,7 @@ class App:
         self.beat_every, self._beating = BEAT, False                 # while a job is queued or running the app says so every few seconds (see _beat), so a crashed app's jobs can be told from live ones
         self.trials: dict[str, set] = {}
         self._pool = ThreadPoolExecutor(max_workers=1)             # one at a time: the models set process-wide torch flags and share the data caches
+        self._data_pool = ThreadPoolExecutor(max_workers=1)        # statements and prices being fetched: they wait for each other (a provider's allowance is one budget), never for a backtest or a search
         self._lock = threading.Lock()
         self._lab_lock = threading.Lock()                          # the Execution and Cash flows tabs: numpy work of a few seconds, one request at a time so a click storm cannot use every core
         # The Options, Futures, Crypto and Machine learning workspaces keep their endpoints in their own modules; the server asks these tables, so ``server.py`` does not change per workspace.
@@ -400,11 +401,16 @@ class App:
                     return
             self.joblog.beat(alive)
 
-    def submit_task(self, label: str, work, kind: str = "task") -> dict:
-        """Run ``work(progress)`` on the single worker and return ``{"job": id}``; the page polls ``/api/job/<id>`` like it does for a backtest. ``work`` returns a JSON-able result and calls
-        ``progress(text)`` to say what it is doing; whatever it raises that the user can fix (``ApiError``, ``ValueError``, ``KeyError``) reaches the page as the job's message."""
+    def submit_task(self, label: str, work, kind: str = "task", lane: str = "compute") -> dict:
+        """Run ``work(progress)`` on a worker and return ``{"job": id}``; the page polls ``/api/job/<id>`` like it does for a backtest. ``work`` returns a JSON-able result and calls
+        ``progress(text)`` to say what it is doing; whatever it raises that the user can fix (``ApiError``, ``ValueError``, ``KeyError``) reaches the page as the job's message.
+
+        There are two workers, one thread each. The ``compute`` lane runs backtests, searches and studies one at a time. The ``data`` lane runs work that mostly waits for a provider (statements, prices): a
+        long search does not hold up a fetch, and a fetch does not hold up a backtest. Work in one lane still waits for the work before it in that lane."""
+        if lane not in ("compute", "data"):
+            raise ValueError("lane must be compute or data")
         job = self._register(Job(label, kind))
-        self._pool.submit(self._run_task, job, work)
+        (self._data_pool if lane == "data" else self._pool).submit(self._run_task, job, work)
         return {"job": job.id}
 
     @staticmethod

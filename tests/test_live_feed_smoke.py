@@ -11,6 +11,8 @@ import pytest
 from experiments import live_feed_smoke as smoke
 from src.assets.free_data.http import FetchError
 from src.fundamentals.errors import NotFound, ProviderError, RateLimited
+from src.fundamentals.providers.sec_edgar import NameList
+from tests.test_fund_sec_edgar import TICKER_ROWS, frame_of
 
 
 def _ok(ctx):
@@ -100,7 +102,7 @@ def test_the_main_function_writes_the_results_the_summary_and_the_exit_code(tmp_
     assert smoke.main(["--strict"], checks={"blocked": _refused}) == 1 and smoke.main([], checks={"changed": _changed}) == 1
 
 
-def test_the_sec_contact_comes_from_the_environment_and_a_repository_page_stands_in_inside_actions(monkeypatch):
+def test_the_sec_contact_comes_from_the_environment_alone_and_nothing_stands_in_for_it(monkeypatch):
     seen = {}
 
     def spy(ctx):
@@ -110,18 +112,37 @@ def test_the_sec_contact_comes_from_the_environment_and_a_repository_page_stands
     smoke.main([], checks={"c": spy})
     assert seen["contact"] == "Jane Doe jane@example.com"
     monkeypatch.delenv("SEC_EDGAR_USER_AGENT")
-    monkeypatch.setenv("GITHUB_REPOSITORY", "someone/quant_repo")
-    smoke.main([], checks={"c": spy})
-    assert seen["contact"] == "QuantLab live-feed check (https://github.com/someone/quant_repo)"
-    monkeypatch.delenv("GITHUB_REPOSITORY")
+    monkeypatch.setenv("GITHUB_REPOSITORY", "someone/quant_repo")                                          # inside Actions: the repository is not made into a contact
     smoke.main([], checks={"c": spy})
     assert seen["contact"] == ""
 
 
 def test_without_a_contact_the_sec_checks_skip_and_do_not_fail_the_run():
     results = smoke.run_checks({k: v for k, v in smoke.CHECKS.items() if k.startswith("sec")}, {"sec_contact": ""})
-    assert [r.status for r in results] == ["skipped", "skipped", "skipped"] and all("SEC_EDGAR_USER_AGENT" in r.detail for r in results)
+    assert [r.name for r in results] == ["sec_facts", "sec_record", "sec_tickers", "sec_filers"]
+    assert all(r.status == "skipped" and "SEC_EDGAR_USER_AGENT" in r.detail for r in results)
     assert smoke.exit_code(results) == 0
+
+
+def test_the_list_of_reporting_companies_is_checked_for_size_and_for_the_company_it_must_hold(monkeypatch):
+    def check(rows, fillers):
+        names = NameList.parse(frame_of(rows, fillers), "2026-10-23", "CY2026Q2")
+
+        class Stand:
+            def __init__(self, user_agent):
+                self.user_agent = user_agent
+
+            def filers(self):
+                return names
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(smoke, "SecEdgarProvider", Stand)
+            return smoke.run_checks({"sec_filers": smoke.sec_filers}, {"sec_contact": "Jane Doe jane@example.com"})[0]
+    good = check(TICKER_ROWS, 4500)
+    assert good.status == "ok" and "CY2026Q2" in good.detail and "CIK 320193" in good.detail
+    small = check(TICKER_ROWS, 20)
+    assert small.status == "broken" and "companies in CY2026Q2" in small.detail
+    without_apple = check([r for r in TICKER_ROWS if r[0] != 320193], 4500)
+    assert without_apple.status == "broken" and "Apple Inc." in without_apple.detail
 
 
 def test_a_check_rejects_an_answer_that_is_too_small_or_too_old():

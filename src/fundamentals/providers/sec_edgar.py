@@ -23,6 +23,11 @@ asking again.
 The ticker list. ``company_tickers_exchange.json`` (a file on www.sec.gov) maps tickers to the CIK numbers the data is filed under; it is fetched once, kept next to the database and renewed weekly.
 A company can always be named by its CIK instead (``cik:320193``), which needs no list.
 
+When the list cannot be read. www.sec.gov turned away every request from the two cloud addresses this was tried from (the SEC answers an address that many programs share with a "Request Rate Threshold
+Exceeded" page), while data.sec.gov, where the financial data is, answered them all. So a search then falls back on what data.sec.gov offers: the frame of balance sheets of one calendar quarter, which lists
+every company that reported assets then (about 5,500, with names and CIK numbers), is searched by name, and each company found is looked up (its record has its tickers) and remembered beside the database,
+after which its ticker works. A ticker alone cannot be found that way until its company has been; the search says so and offers the name search.
+
 Written from the SEC's documentation (https://www.sec.gov/search-filings/edgar-application-programming-interfaces) and tested on the company facts of twelve US companies and on stand-in answers.
 """
 
@@ -54,6 +59,12 @@ END_TOLERANCE_DAYS = 7                       # period ends of the same year writ
 MIN_FIELDS_PER_PERIOD = 3                    # a date is a fiscal year end only when at least this many different elements cover the year ending on it
 MAX_BYTES = 96_000_000
 TICKER_KEEP_DAYS = 7
+FILERS_KEEP_DAYS = 30
+FRAME_PATH = "/api/xbrl/frames/us-gaap/Assets/USD/CY{year}Q{quarter}I.json"
+FRAME_AGE_DAYS = 75                          # a quarter's balance sheets are filed within about 45 days of its end; the frame of a younger quarter lists only the earliest filers
+FRAME_TRIES = 4
+SEARCH_LOOKUPS = 8                           # companies looked up (one request each) to give a name search their tickers when the ticker list cannot be read
+BLOCKED_SECONDS = 600.0                      # after the ticker list was refused it is not asked for again for this long
 _TICKER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.\-]{0,11}$")
 _CIK = re.compile(r"^(?:CIK)?0*(\d{1,10})$", re.IGNORECASE)
 USER_AGENT_VARIABLE = "SEC_EDGAR_USER_AGENT"
@@ -234,6 +245,68 @@ class TickerList:
 def _key(ticker: str) -> str:
     """A ticker with the dots and dashes of share classes made alike (``BRK.B`` and ``BRK-B`` are one company)."""
     return re.sub(r"[.\-]", "", str(ticker or "").upper())
+
+
+def frame_quarters(today: date, count: int = FRAME_TRIES) -> list[tuple[int, int]]:
+    """The calendar quarters (year, 1 to 4) that ended at least :data:`FRAME_AGE_DAYS` before ``today``, newest first."""
+    out: list[tuple[int, int]] = []
+    year = today.year
+    while len(out) < count:
+        for quarter, (month, day) in ((4, (12, 31)), (3, (9, 30)), (2, (6, 30)), (1, (3, 31))):
+            if (today - date(year, month, day)).days >= FRAME_AGE_DAYS and len(out) < count:
+                out.append((year, quarter))
+        year -= 1
+    return out
+
+
+class NameList:
+    """The companies that reported assets in one calendar quarter, from the SEC's frames: ``rows`` of ``(cik, name)``. It has no tickers; it is what can be searched by name when the ticker file cannot be read."""
+
+    def __init__(self, rows: list[tuple[int, str]], fetched: str = "", period: str = ""):
+        self.rows, self.fetched, self.period = rows, fetched, period
+
+    @classmethod
+    def parse(cls, data, fetched: str = "", period: str = "") -> "NameList":
+        seen: set[int] = set()
+        rows = []
+        for item in (data.get("data") if isinstance(data, dict) and isinstance(data.get("data"), list) else []):
+            cik, name = (item.get("cik"), item.get("entityName")) if isinstance(item, dict) else (None, None)
+            if isinstance(cik, bool) or not isinstance(cik, int) or cik <= 0 or cik in seen or not isinstance(name, str) or not name.strip():
+                continue
+            seen.add(cik)
+            rows.append((cik, " ".join(name.split())[:200]))
+        return cls(rows, fetched, period)
+
+    def to_json(self) -> dict:
+        return {"fetched": self.fetched, "period": self.period, "rows": [list(r) for r in self.rows]}
+
+    @classmethod
+    def from_json(cls, data) -> "NameList | None":
+        if not isinstance(data, dict) or not isinstance(data.get("rows"), list):
+            return None
+        rows = [(r[0], str(r[1])[:200]) for r in data["rows"] if isinstance(r, list) and len(r) == 2 and isinstance(r[0], int) and isinstance(r[1], str)]
+        return cls(rows, str(data.get("fetched") or "")[:10], str(data.get("period") or "")[:12]) if rows else None
+
+    def search(self, text: str, limit: int = 10) -> list[tuple[float, tuple[int, str]]]:
+        """Companies whose name starts with the words typed (best) or holds all of them, or whose CIK is the number typed; the larger companies come first among equals (the frame lists them by size)."""
+        query = " ".join(str(text or "").split())
+        words = [w for w in re.split(r"[^a-z0-9]+", query.lower()) if w]
+        if not words:
+            return []
+        hits = []
+        for n, (cik, name) in enumerate(self.rows):
+            low = " ".join(re.split(r"[^a-z0-9]+", name.lower())).strip()
+            if query.isdecimal() and int(query) == cik:
+                score = 120.0
+            elif low.startswith(" ".join(words)):
+                score = 70.0
+            elif all(w in low for w in words):
+                score = 50.0
+            else:
+                continue
+            hits.append((-score, n, (cik, name)))
+        hits.sort()
+        return [(-score, row) for score, _, row in hits[:limit]]
 
 
 # ------------------------------------------------------------------------------------------------------------------ reading company facts
@@ -445,12 +518,17 @@ class SecEdgarProvider(FundamentalDataProvider):
         self.timeout, self.sleep, self.clock = timeout, sleep, clock
         self.user_agent = " ".join(str(user_agent or "").split())
         self.cache_path = Path(cache_path) if cache_path else None
+        self.filers_path = self.cache_path.with_name("sec_filers.json") if self.cache_path else None                  # the companies of one quarter's frame, searched by name when the ticker file is out of reach
+        self.resolved_path = self.cache_path.with_name("sec_resolved.json") if self.cache_path else None              # the tickers of every company looked up, so that a ticker keeps working
         self.base_url = base_url.rstrip("/")
         self.ticker_urls = tuple(ticker_urls)
         self._today = today or (lambda: datetime.now(timezone.utc).date())
         self._last = -1e9
         self._lock = threading.Lock()
         self._tickers: TickerList | None = None
+        self._resolved: TickerList | None = None
+        self._filers: NameList | None = None
+        self._blocked_until = -1e9
         self.notes: list[str] = []
 
     # ------------------------------------------------------------------------------------------------------------ availability
@@ -502,12 +580,15 @@ class SecEdgarProvider(FundamentalDataProvider):
             except ValueError:
                 raise ProviderError("SEC EDGAR answered with something that is not JSON") from None
         text = body[:4000].decode("utf-8", "replace") if body else ""
+        titled = re.search(r"<title>(.*?)</title>", text, re.IGNORECASE | re.DOTALL)
+        page = " ".join(titled.group(1).split())[:80] if titled else ""
         if status == 404:
             raise NotFound("SEC EDGAR has no XBRL financial data for this company: it may not file with the SEC, or be too small or too new to have filed with XBRL")
         if status == 429 or (status == 403 and "rate threshold" in text.lower()):
             raise RateLimited("SEC EDGAR says this network sent too many requests (its limit is ten a second for everything on one address): wait ten minutes and try again", 600.0, "burst")
         if status == 403:
-            raise ProviderError("SEC EDGAR refused the request (HTTP 403). It requires the contact in SEC_EDGAR_USER_AGENT (a name and an email address) and refuses a program it cannot identify")
+            raise ProviderError(f"SEC EDGAR refused the request (HTTP 403{', its page says “' + page + '”' if page else ''}). It requires the contact in SEC_EDGAR_USER_AGENT (a name and an email address) "
+                                "and refuses a program it cannot identify")
         if status >= 500:
             raise ProviderError(f"SEC EDGAR is temporarily unavailable (HTTP {status}); try again in a few minutes")
         raise ProviderError(f"SEC EDGAR answered HTTP {status}")
@@ -544,6 +625,7 @@ class SecEdgarProvider(FundamentalDataProvider):
             try:
                 fresh = TickerList.parse(self._get(url, "tickers", "company_tickers"), today.isoformat())
             except RateLimited:
+                self._blocked_until = self.clock() + BLOCKED_SECONDS
                 raise                                                                     # asked to be left alone: the other file would only be refused too
             except ProviderError as err:
                 error = err
@@ -561,7 +643,88 @@ class SecEdgarProvider(FundamentalDataProvider):
             self.notes.append("the SEC's ticker list could not be renewed; the copy from " + (saved.fetched or "an earlier day") + " is used")
             self._tickers = saved
             return saved
+        self._blocked_until = self.clock() + BLOCKED_SECONDS
         raise ProviderError("the SEC's list of tickers could not be read" + (f" ({error})" if error else "") + ". A company can still be added by its CIK number, for example cik:320193")
+
+    # ------------------------------------------------------------------------------------------------------------ what is remembered, and what is searched when the ticker list is out of reach
+    @staticmethod
+    def _write(path: Path | None, data: dict) -> bool:
+        if path is None:
+            return False
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(data, separators=(",", ":")), encoding="utf-8")
+            return True
+        except OSError:
+            return False
+
+    def resolved(self) -> TickerList:
+        """The tickers of every company this application has looked up (a company's record lists its tickers), kept beside the database."""
+        if self._resolved is None:
+            loaded = None
+            if self.resolved_path is not None:
+                try:
+                    loaded = TickerList.from_json(json.loads(self.resolved_path.read_text(encoding="utf-8")))
+                except (OSError, ValueError):
+                    loaded = None
+            self._resolved = loaded or TickerList([], "")
+        return self._resolved
+
+    def _remember(self, cik: int, name: str, tickers: list, exchanges: list) -> None:
+        known = {(r[0], r[1]) for r in self.resolved().rows}
+        added = [(cik, str(t).strip().upper(), name, str(exchanges[i]) if i < len(exchanges) and isinstance(exchanges[i], str) else "")
+                 for i, t in enumerate(tickers) if isinstance(t, str) and _TICKER.match(t.strip()) and (cik, t.strip().upper()) not in known]
+        if added and len(self.resolved().rows) < 20000:
+            self._resolved = TickerList(self.resolved().rows + added, self._today().isoformat())
+            if not self._write(self.resolved_path, self._resolved.to_json()) and self.resolved_path is not None:
+                self.notes.append("the tickers of the companies looked up could not be saved next to the database")
+
+    def directory(self) -> tuple[TickerList, bool]:
+        """``(the tickers known, whether the SEC's whole list is among them)``. When the list cannot be read (and not for ten minutes after a refusal) what is known is the companies looked up before."""
+        if self.clock() >= self._blocked_until:
+            try:
+                base = self.tickers()
+            except ProviderError as error:                                                # a refusal (the SEC's rate-threshold page, a 403) or a list that is not there
+                self._blocked_until = self.clock() + BLOCKED_SECONDS
+                self.notes.append(f"the SEC's ticker list could not be read ({error})")
+            else:
+                extra = [r for r in self.resolved().rows if base.find(r[1]) is None]
+                return (TickerList(base.rows + extra, base.fetched) if extra else base), True
+        return self.resolved(), False
+
+    def filers(self) -> NameList:
+        """The companies that reported assets in the newest calendar quarter whose frame is complete (names and CIK numbers; about 5,500), kept for a month beside the database."""
+        today = self._today()
+        if self._filers is not None:
+            return self._filers
+        saved = None
+        if self.filers_path is not None:
+            try:
+                saved = NameList.from_json(json.loads(self.filers_path.read_text(encoding="utf-8")))
+            except (OSError, ValueError):
+                saved = None
+        day = _day(saved.fetched) if saved is not None else None
+        if saved is not None and day is not None and 0 <= (today - day).days < FILERS_KEEP_DAYS:
+            self._filers = saved
+            return saved
+        error = None
+        for year, quarter in frame_quarters(today):
+            try:
+                found = NameList.parse(self._get(self.base_url + FRAME_PATH.format(year=year, quarter=quarter), "frames", f"CY{year}Q{quarter}"), today.isoformat(), f"CY{year}Q{quarter}")
+            except NotFound:
+                continue                                                                  # that quarter's frame is not there (yet): the one before it is
+            except ProviderError as err:
+                error = err
+                break
+            if len(found.rows) >= 1000:
+                self._write(self.filers_path, found.to_json())
+                self._filers = found
+                return found
+        if saved is not None:
+            self.notes.append("the SEC's list of companies could not be renewed; the copy from " + (saved.fetched or "an earlier day") + " is used")
+            self._filers = saved
+            return saved
+        raise ProviderError("the SEC's list of companies that report financial data could not be read" + (f" ({error})" if error else "") + ". A company can still be added by its CIK number, for example cik:320193")
 
     # ------------------------------------------------------------------------------------------------------------ companies
     def _split(self, symbol: str, market: str | None = None) -> tuple[str, int | None]:
@@ -589,15 +752,17 @@ class SecEdgarProvider(FundamentalDataProvider):
         return text.upper(), None
 
     def _kept_tickers(self) -> TickerList | None:
-        """The ticker list if it is in memory or saved beside the database, whatever its age: nothing is asked of the SEC."""
-        if self._tickers is not None:
-            return self._tickers
-        if self.cache_path is not None:
+        """The tickers known without asking the SEC anything: the list if it is in memory or saved beside the database (whatever its age), and the companies looked up before."""
+        base = self._tickers
+        if base is None and self.cache_path is not None:
             try:
-                return TickerList.from_json(json.loads(self.cache_path.read_text(encoding="utf-8")))
+                base = TickerList.from_json(json.loads(self.cache_path.read_text(encoding="utf-8")))
             except (OSError, ValueError):
-                return None
-        return None
+                base = None
+        extra = self.resolved().rows
+        if base is None:
+            return TickerList(list(extra)) if extra else None
+        return TickerList(base.rows + [r for r in extra if base.find(r[1]) is None], base.fetched) if extra else base
 
     def normalise_symbol(self, symbol: str, market: str | None = None) -> str:
         ticker, cik = self._split(symbol, market)
@@ -615,9 +780,12 @@ class SecEdgarProvider(FundamentalDataProvider):
         match = _CIK.match(ticker)
         if ticker.startswith("CIK") and match:
             return int(match.group(1))
-        row = self.tickers().find(ticker)
-        if row is None:
+        known, complete = self.directory()
+        row = known.find(ticker)
+        if row is None and complete:
             raise NotFound(f"the SEC's ticker list has no company with the ticker {ticker}: check the spelling, or use its CIK (cik:320193)")
+        if row is None:                                                                   # not a verdict on the ticker: it can be asked about again when the list can be read
+            raise ProviderError(f"The SEC's ticker list cannot be read from here and {ticker} has not been met before: search the company by name (that remembers its ticker) or use its cik:320193")
         return row[0]
 
     def search_plan(self, text: str, kind: str = "auto", market: str | None = None) -> dict:
@@ -630,14 +798,83 @@ class SecEdgarProvider(FundamentalDataProvider):
 
     def search_detail(self, query: str, limit: int = 10, kind: str = "auto", market: str | None = None) -> dict:
         plan = self.search_plan(query, kind, market)
-        hits = self.tickers().search(plan["value"], limit)
-        profiles = []
-        for score, (cik, ticker, name, exchange) in hits:
-            also = [r[1] for r in self.tickers().of_cik(cik) if r[1] != ticker][:6]
-            profiles.append(_profile(ticker, name, extra={"also_listed": [f"us:{t}" for t in also], "score": score, "registry": "sec", "hint": exchange, "primary": True, "has_financials": True,
-                                                         "cik": cik}))
-        message = "" if profiles else "the SEC's ticker list has no company with that name or ticker (it lists the companies that file with the US SEC)"
-        return {**{k: plan[k] for k in ("kind", "value", "market", "alternatives")}, "profiles": profiles, "message": message, "ambiguous": len(profiles) > 1, "markets_skipped": [], "credits": 0}
+        known, complete = self.directory()
+        profiles, message = [], ""
+        if complete:
+            for score, (cik, ticker, name, exchange) in known.search(plan["value"], limit):
+                also = [r[1] for r in known.of_cik(cik) if r[1] != ticker][:6]
+                profiles.append(_profile(ticker, name, extra={"also_listed": [f"us:{t}" for t in also], "score": score, "registry": "sec", "hint": exchange, "primary": True, "has_financials": True,
+                                                             "cik": cik}))
+            message = "" if profiles else "the SEC's ticker list has no company with that name or ticker (it lists the companies that file with the US SEC)"
+        else:
+            profiles, message = self._search_without_the_list(plan, known, limit)
+        return {**{k: plan[k] for k in ("kind", "value", "market", "alternatives")}, "profiles": profiles, "message": message, "ambiguous": len(profiles) > 1, "markets_skipped": [], "credits": 0,
+                "degraded": not complete}                                                         # an answer made without the ticker list is not saved: the next search is free and better once the list can be read
+
+    def _search_without_the_list(self, plan: dict, known: TickerList, limit: int) -> tuple[list[CompanyProfile], str]:
+        """A search when the ticker list cannot be read: the companies looked up before (their tickers are kept) and, for a name, the companies that reported assets last quarter. A company found
+        there that has not been looked up is looked up now (one request; its record has its tickers), so that its ticker works from then on."""
+        why = "The SEC's ticker list cannot be read from here (www.sec.gov turns away addresses many programs share)"
+        hits: list[tuple[float, CompanyProfile]] = []
+        seen: set[int] = set()
+
+        def add(score: float, cik: int, ticker: str, name: str, also: list, hint: str) -> None:
+            seen.add(cik)
+            hits.append((score, _profile(ticker, name, extra={"also_listed": [f"us:{t}" for t in also[:6]], "score": score, "registry": "sec", "hint": hint, "primary": True, "has_financials": True, "cik": cik})))
+
+        for score, (cik, ticker, name, exchange) in known.search(plan["value"], limit):
+            add(score, cik, ticker, name, [r[1] for r in known.of_cik(cik) if r[1] != ticker], exchange)
+        if plan["kind"] == "symbol":
+            return [p for _, p in hits], ("" if hits else f"{why}, so a ticker is found only once its company has been: search for the company by name (for example “apple”), or use its CIK number (cik:320193).")
+        try:
+            names = self.filers()
+            matches = names.search(plan["value"], len(names.rows))                          # all of them, so that the message can say how many were left out
+        except ProviderError as error:
+            if not hits:
+                raise
+            return [p for _, p in hits], f"{why}, and the SEC's list of companies could not be read either ({error}), so only the companies looked up before are shown."
+        looked, more, stopped = 0, 0, None
+        remembered = {r[0] for r in known.rows}
+        for score, (cik, name) in matches:
+            if cik in seen:
+                continue
+            mine = known.of_cik(cik) if cik in remembered else []
+            if mine and len(hits) < limit:                                                 # looked up before, under a name the ticker list spelled differently: its tickers are known
+                add(score, cik, mine[0][1], mine[0][2] or name, [r[1] for r in mine[1:]], mine[0][3])
+            elif mine or len(hits) >= limit or looked >= SEARCH_LOOKUPS:
+                more += 1
+            else:
+                looked += 1
+                try:
+                    record = self._record(cik, name)
+                except NotFound:
+                    continue                                                               # a company the SEC has no record of: left out
+                except ProviderError as error:                                             # a refusal or a lost connection part-way: what was found is kept
+                    stopped = error
+                    break
+                add(score, cik, record["ticker"], record["name"], record["also"], record["hint"])
+        if not hits:
+            if stopped is not None:
+                raise stopped
+            return [], f"{why}, and no company that reported assets recently has a name like that. Try fewer words, or use the CIK number (cik:320193)."
+        hits.sort(key=lambda t: -t[0])                                                     # best first; the order the frame gives (larger companies first) decides among equals
+        quarter = (self.filers().period or "a recent quarter").removeprefix("CY").replace("Q", " Q")
+        message = f"{why}, so this search used the SEC's list of the companies that reported assets in {quarter} (names and CIK numbers), and each company found was looked up for its ticker."
+        if more:
+            message += f" {more} more with a name like that are not shown: type more of the name to narrow it."
+        if stopped is not None:
+            message += f" The SEC stopped answering part-way ({stopped}): what was found is shown."
+        return [p for _, p in hits], message
+
+    def _record(self, cik: int, fallback_name: str = "") -> dict:
+        """A company's record (one request): its name, its tickers (the first is the one shown) and where it trades; the tickers are remembered. A company with no ticker is shown by its CIK."""
+        data = self._get(f"{self.base_url}/submissions/CIK{cik:010d}.json", "lookup", f"cik:{cik}")
+        data = data if isinstance(data, dict) else {}
+        name = " ".join(str(data.get("name") or fallback_name or "").split())[:200]
+        tickers = [t.strip().upper() for t in (data.get("tickers") or []) if isinstance(t, str) and _TICKER.match(t.strip())]
+        exchanges = [str(e) for e in (data.get("exchanges") or []) if isinstance(e, str)]
+        self._remember(cik, name, tickers, exchanges)
+        return {"ticker": tickers[0] if tickers else f"CIK{cik:010d}", "name": name, "also": tickers[1:7], "hint": exchanges[0] if exchanges else "", "data": data}
 
     def search(self, query: str, limit: int = 10, kind: str = "auto", market: str | None = None) -> list[CompanyProfile]:
         return self.search_detail(query, limit, kind, market)["profiles"]
@@ -647,6 +884,7 @@ class SecEdgarProvider(FundamentalDataProvider):
         cik = self._cik_of(symbol, market)
         data = self._get(f"{self.base_url}/submissions/CIK{cik:010d}.json", "lookup", f"us:{ticker}")
         data = data if isinstance(data, dict) else {}
+        self._remember(cik, " ".join(str(data.get("name") or "").split())[:200], [t for t in (data.get("tickers") or [])][:8], [e for e in (data.get("exchanges") or [])][:8])
         lei = data.get("lei") if isinstance(data.get("lei"), str) and len(data["lei"]) == 20 else None
         extra = {"cik": cik, "sic": str(data.get("sic") or ""), "exchanges": [str(e) for e in (data.get("exchanges") or []) if isinstance(e, str)][:4],
                  "tickers": [str(t) for t in (data.get("tickers") or []) if isinstance(t, str)][:8], "fiscal_year_end": str(data.get("fiscalYearEnd") or ""), "category": str(data.get("category") or "")}

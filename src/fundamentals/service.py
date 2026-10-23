@@ -351,7 +351,8 @@ class FundamentalsService:
             detail = self._call(provider, lambda: prov.search_detail(text, limit, plan["kind"], plan["market"]), "search", text)
             profiles, message, ambiguous, credits, at = detail["profiles"], str(detail.get("message") or ""), bool(detail.get("ambiguous")), int(detail.get("credits", 0)), today.strftime("%Y-%m-%d")
             skipped = [str(m)[:12] for m in (detail.get("markets_skipped") or []) if isinstance(m, str)][:20]
-            self.store.set_meta(key, json.dumps({"at": at, "message": message, "ambiguous": ambiguous, "skipped": skipped, "profiles": [_freeze(p) for p in profiles]}, separators=(",", ":")))
+            if not detail.get("degraded"):
+                self.store.set_meta(key, json.dumps({"at": at, "message": message, "ambiguous": ambiguous, "skipped": skipped, "profiles": [_freeze(p) for p in profiles]}, separators=(",", ":")))
             for p in profiles:
                 self.store.set_meta(f"hit:{provider}:{p.provider_symbol}", json.dumps(_freeze(p), separators=(",", ":")))
         allowed = self.allowed_markets(provider)

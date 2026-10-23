@@ -2,8 +2,8 @@ name: live feeds
 
 # Weekly (and on demand) check that every public data feed the application reads still answers, and still in the shape the parsers expect. The test suite never touches the network, so a feed that
 # changes a field, moves an address or goes away would pass every test and break the app; this run is the one that notices. It fails when a feed answered with something unusable ("broken"), and only
-# warns when a server refused this address ("refused": shared cloud addresses are often turned away). iTick needs a key and is not checked. The SEC checks use the secret SEC_EDGAR_USER_AGENT (a name and
-# an email address, which the SEC asks every program to give) when the repository has it, and the address of this repository when it does not.
+# warns when a server refused this address ("refused": shared cloud addresses are often turned away). iTick needs a key and is not checked. The SEC checks need the repository secret SEC_EDGAR_USER_AGENT (a name
+# and an email address, which the SEC asks every program to give); without it they are skipped, and nothing is sent to the SEC in anyone's name.
 on:
   schedule:
     - cron: "43 5 * * 1"
