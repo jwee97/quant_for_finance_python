@@ -30,11 +30,13 @@ from ..fundamentals.jsonutil import clean
 from ..fundamentals.library import STATUSES
 from ..fundamentals.providers.openfilings import SEARCH_KINDS
 from ..fundamentals.providers.simulated import PLANTED
-from ..fundamentals.service import FundamentalsService
+from ..fundamentals.service import PROVIDER_WORDS, FundamentalsService
 from ..fundamentals.workbench import MAX_SYMBOLS, Workbench, eval_spec
 from .api import ACTIVE, ApiError
 
 DBS = ("real", "demo")
+REAL_PROVIDERS = ("openfilings", "sec_edgar")                                                  # the providers the real database is filled from
+SEC_SEARCH_KINDS = ("auto", "name", "symbol")                                                  # the SEC's list has no ISINs or LEIs
 DEMO_FILE = Path("data") / "user" / "fundamentals_demo.db"
 SYMBOL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.:\-^=]{0,23}$")
 MAX_BUDGET = 1_000_000
@@ -56,6 +58,14 @@ def _db(source: dict) -> str:
     if db not in DBS:
         raise ApiError(f"db must be one of {', '.join(DBS)}")
     return db
+
+
+def _provider(source: dict) -> str:
+    """The provider a request is about (``openfilings`` unless it says ``sec_edgar``)."""
+    name = str(source.get("provider") or "openfilings")
+    if name not in REAL_PROVIDERS:
+        raise ApiError("the real database is filled from OpenFilings or SEC EDGAR (provider: openfilings or sec_edgar)")
+    return name
 
 
 def _symbols(raw) -> list[str]:
@@ -200,7 +210,8 @@ class FundamentalsApi:
         wb = self.bench(db, create=db == "real")
         out = self._guard(wb.overview)
         if db == "real":
-            out["setup"] = self._lookup_state(wb)
+            lookups = self._lookups(wb)
+            out["setup"], out["lookups"] = self._lookup_state(lookups), lookups
         return out
 
     def catalogue(self, q: dict | None = None) -> dict:
@@ -213,16 +224,29 @@ class FundamentalsApi:
         db = _db(q)
         out = self._guard(self.bench(db, create=db == "real").companies, q.get("q", ""), q.get("country", ""), q.get("sector", ""), q.get("limit", 50), q.get("offset", 0))
         if db == "real":
-            out["lookup"] = self._lookup_state(self.bench(db))
+            lookups = self._lookups(self.bench(db))
+            out["lookup"], out["lookups"] = self._lookup_state(lookups), lookups
         return out
 
     @staticmethod
-    def _lookup_state(wb: Workbench) -> dict:
+    def _provider_state(wb: Workbench, name: str) -> dict:
         svc = wb.service
-        prov, pool = svc.provider("openfilings"), svc.pool("openfilings")
+        prov, pool = svc.provider(name), svc.pool(name)
         ok, why = prov.available()
-        return {"available": ok, "reason": why, "cost": prov.cost("search"), "fetch_cost": prov.cost("financials") + (prov.cost("profile") if prov.has_lookup else 0), "unit": pool.allow.unit,
+        return {"provider": name, "word": PROVIDER_WORDS.get(name, name), "free": bool(prov.describe().get("free")), "available": ok, "reason": why, "cost": prov.cost("search"),
+                "fetch_cost": prov.cost("financials") + (prov.cost("profile") if prov.has_lookup else 0), "unit": pool.allow.unit,
                 "remaining_today": pool.remaining_today() if ok else None, "daily_limit": pool.allow.daily, "monthly_limit": pool.allow.monthly, "remaining_month": pool.remaining_month() if ok else None}
+
+    @classmethod
+    def _lookups(cls, wb: Workbench) -> dict:
+        """What the page needs to offer a search and a fetch in each provider that fills the real database."""
+        return {name: cls._provider_state(wb, name) for name in REAL_PROVIDERS}
+
+    @staticmethod
+    def _lookup_state(lookups: dict) -> dict:
+        """The state the page has always had (``lookup``, ``setup``): that of the first provider that can be used, OpenFilings unless only the SEC can be, with ``available`` true when any can."""
+        primary = next((s for s in lookups.values() if s["available"]), lookups["openfilings"])
+        return {k: primary[k] for k in ("available", "reason", "cost", "fetch_cost", "unit", "remaining_today", "daily_limit", "monthly_limit", "remaining_month")} | {"available": any(s["available"] for s in lookups.values())}
 
     def company(self, q: dict | None = None) -> dict:
         q = q or {}
@@ -307,33 +331,35 @@ class FundamentalsApi:
         market = body.get("market")
         if market is not None and not re.match(r"^[A-Za-z]{2,4}$", str(market)):
             raise ApiError("market is a short code such as us, jp or uk")
-        ids = self._guard(wb.service.add_companies, "openfilings", symbols, None, market)
+        ids = self._guard(wb.service.add_companies, _provider(body), symbols, None, market)
         rows = [wb.store.get_security(i) or {} for i in ids]
         return {"added": len(ids), "security_ids": ids, "symbols": symbols, "companies": [{"security_id": i, "ticker": r.get("ticker"), "name": r.get("company_name")} for i, r in zip(ids, rows)]}
 
     def search_companies(self, body: dict) -> dict:
-        """``POST /api/fund/companies/search {q, kind?, market?, refresh?}``: look a company up in OpenFilings' directory by name, ticker or ISIN. It spends one credit of the day's allowance (the same
-        search again is answered from what was saved, for nothing; ``refresh`` asks again) and registers nothing: adding a company and fetching its statements are separate steps."""
+        """``POST /api/fund/companies/search {q, kind?, market?, refresh?, provider?}``: look a company up in a provider's directory by name, ticker or ISIN. In OpenFilings' it spends one credit of the
+        day's allowance (the same search again is answered from what was saved, for nothing; ``refresh`` asks again); in the SEC's list of US-listed companies (``provider: sec_edgar``) it is free.
+        It registers nothing: adding a company and fetching its statements are separate steps."""
         db = _db(body)
-        self._real_only(db, "searching OpenFilings")
+        self._real_only(db, "searching a provider's directory")
         wb = self.bench(db)
+        provider = _provider(body)
         q = body.get("q")
         if not isinstance(q, str) or len(q.strip()) < 2 or len(q) > 120:
             raise ApiError("type at least two characters (up to 120) of a name, a ticker or an ISIN to search for")
-        kind = str(body.get("kind") or "auto")
-        if kind not in SEARCH_KINDS:
-            raise ApiError(f"kind must be one of {', '.join(SEARCH_KINDS)}")
+        kind, kinds = str(body.get("kind") or "auto"), SEC_SEARCH_KINDS if provider == "sec_edgar" else SEARCH_KINDS
+        if kind not in kinds:
+            raise ApiError(f"kind must be one of {', '.join(kinds)}")
         market = body.get("market") or None
         if market is not None and not re.match(r"^[A-Za-z]{2,4}$", str(market)):
             raise ApiError("market is a short code such as us, jp or uk")
-        return self._guard(wb.service.search_companies, "openfilings", q, kind, str(market) if market else None, 10, bool(body.get("refresh")))
+        return self._guard(wb.service.search_companies, provider, q, kind, str(market) if market else None, 10, bool(body.get("refresh")))
 
     def sync_plan(self, body: dict) -> dict:
         """``POST /api/fund/sync/plan``: what a sync would fetch and what it would cost against the allowance. Nothing is spent."""
         db = _db(body)
         self._real_only(db, "planning a sync")
         wb = self.bench(db)
-        provider = str(body.get("provider") or "openfilings")
+        provider = _provider(body)
         ids = _ids(body.get("security_ids"))
         periods = tuple(body.get("periods") or ("annual",))
         start_year = _number(body["start_year"], "the first year", 1990, 2100, True) if body.get("start_year") else None
@@ -364,10 +390,11 @@ class FundamentalsApi:
         return self._guard(self.bench(db).service.use_key, "openfilings", slot)
 
     def provider_test(self, body: dict) -> dict:
-        """``POST /api/fund/provider/test {provider}``: one cheap call (one credit) to prove the key works and learn the plan, which sets the allowance the quota manager enforces."""
+        """``POST /api/fund/provider/test {provider}``: one cheap call (one credit; one free request to the SEC) to prove the key or contact works and, for OpenFilings, learn the plan, which sets the
+        allowance the quota manager enforces."""
         db = _db(body)
         self._real_only(db, "testing a provider")
-        return self._guard(self.bench(db).service.test_provider, str(body.get("provider") or "openfilings"))
+        return self._guard(self.bench(db).service.test_provider, _provider(body))
 
     def price_symbol(self, body: dict) -> dict:
         db = _db(body)
@@ -402,16 +429,15 @@ class FundamentalsApi:
 
     # ------------------------------------------------------------------------------------------------------------ jobs: the data
     def sync(self, body: dict) -> dict:
-        """``POST /api/fund/sync (a job)``: fetch what is missing or stale. ``budget`` (required) is the most credits this run may spend; the run stops cleanly when it is reached, when the allowance is spent or on
-        ``/api/fund/stop``. Statements cost credits: look at ``/api/fund/sync/plan`` first."""
+        """``POST /api/fund/sync (a job)``: fetch what is missing or stale. ``budget`` (required) is the most credits (requests, for the SEC) this run may spend; the run stops cleanly when it is reached,
+        when the allowance is spent, when the provider asks to be left alone or on ``/api/fund/stop``. OpenFilings' statements cost credits: look at ``/api/fund/sync/plan`` first."""
         db = _db(body)
         self._real_only(db, "fetching statements")
         wb = self.bench(db)
-        provider = str(body.get("provider") or "openfilings")
-        if provider != "openfilings":
-            raise ApiError("the real database is filled from OpenFilings (provider: openfilings)")
+        provider = _provider(body)
+        unit = wb.service.pool(provider).allow.unit
         if body.get("budget") in (None, ""):
-            raise ApiError("say how many credits this run may spend (budget): fetching statements uses the account's allowance")
+            raise ApiError(f"say how many {unit} this run may spend (budget): fetching statements uses the provider's allowance")
         budget = _number(body["budget"], "the budget", 1, MAX_BUDGET, True)
         symbols = _symbols(body["symbols"]) if body.get("symbols") else None
         ids = _ids(body.get("security_ids"))
@@ -425,7 +451,7 @@ class FundamentalsApi:
             report = wb.service.sync(provider, symbols, ids, periods, start_year, budget, progress, stop.is_set, market)
             wb.forget()
             return report
-        return self._job(f"fundamentals: fetch statements (up to {budget} credits)", work, True)
+        return self._job(f"fundamentals: fetch statements (up to {budget} {unit})", work, True)
 
     def coverage_fetch(self, body: dict) -> dict:
         """``POST /api/fund/coverage/fetch (a job)``: ask the provider once for the chosen fiscal years of one company that are not held, and store what is new. ``budget`` (required) is the most
@@ -433,18 +459,18 @@ class FundamentalsApi:
         db = _db(body)
         self._real_only(db, "fetching statements")
         wb = self.bench(db)
-        if str(body.get("provider") or "openfilings") != "openfilings":
-            raise ApiError("the real database is filled from OpenFilings (provider: openfilings)")
+        provider = _provider(body)
+        unit = wb.service.pool(provider).allow.unit
         if body.get("budget") in (None, ""):
-            raise ApiError("say how many credits this may spend (budget): asking for years uses the account's allowance")
+            raise ApiError(f"say how many {unit} this may spend (budget): asking for years uses the provider's allowance")
         budget = _number(body["budget"], "the budget", 1, MAX_BUDGET, True)
         sid, years, ask_again = _company_id(body), _years(body.get("years")), bool(body.get("ask_again"))
 
         def work(progress, stop):
-            report = wb.service.fetch_years(sid, years, budget, "openfilings", "annual", ask_again, progress)
+            report = wb.service.fetch_years(sid, years, budget, provider, "annual", ask_again, progress)
             wb.forget()
             return report
-        return self._job(f"fundamentals: fetch chosen years (up to {budget} credits)", work)
+        return self._job(f"fundamentals: fetch chosen years (up to {budget} {unit})", work)
 
     def simulate(self, body: dict) -> dict:
         """``POST /api/fund/simulate (a job)``: make the demo database, a simulated world of companies with a few alphas planted in it. ``reset`` starts the file again."""

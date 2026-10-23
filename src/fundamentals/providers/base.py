@@ -15,6 +15,7 @@ class FinancialsResult:
     raw: object                                  # JSON-able; stored compressed and deduplicated by hash
     request: dict = field(default_factory=dict)
     profile: CompanyProfile | None = None        # what the answer itself said about the company (a free update of the security master)
+    answer: dict | None = None                   # what the answer held within the years asked, when the provider cuts the window itself (:func:`coverage.summarise_answer` otherwise reads it from ``raw``)
     exhausted: bool = False                      # True when the provider has nothing older than the earliest period returned
     requests: int = 1                            # how many external requests this answer cost
     cost: int = 1                                # what they cost in the provider's unit (credits for OpenFilings)
@@ -34,6 +35,10 @@ class FundamentalDataProvider:
     keyed = False
     periods_available = ("annual", "quarter")
     default_market: str | None = None
+    meters_itself = False                        # True when the provider counts its own requests (the service then does not count them again)
+    price_note = "Credits pay for the request, not for the years: the same price would have brought back a longer or a shorter series."
+    early_note = ("either it holds no statements that early for this company or it limits how long a series it returns (its documentation says neither). "
+                  "Asking for just those years tells which, for the same price.")
 
     def available(self) -> tuple[bool, str]:
         """``(usable, reason)``: whether this provider can be called now, and if not, what is missing."""

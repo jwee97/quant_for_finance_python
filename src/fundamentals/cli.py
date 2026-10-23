@@ -3,8 +3,10 @@
     quant fundamentals status                  what the database holds, the allowance of each provider and every key slot (never a key)
     quant fundamentals use-key 2               choose which key slot makes the requests (the numbers are in `status`; nothing is spent, nothing switches by itself, and it is refused while the key in use has spent its allowance)
     quant fundamentals simulate                make the demo database: a simulated world with a few alphas planted in it (add --demo to the commands below to work in it)
-    quant fundamentals search nvidia           look a company up in OpenFilings' directory by name, ticker or ISIN (1 credit; the same search again is free)
-    quant fundamentals add us:AAPL jp:7203     register companies (free); `plan` says what fetching them would cost, `sync --budget 100` fetches within that many credits
+    quant fundamentals search nvidia           look a company up in OpenFilings' directory by name, ticker or ISIN (1 credit; the same search again is free); --provider sec_edgar searches the SEC's list of
+                                               US-listed companies instead (free)
+    quant fundamentals add us:AAPL jp:7203     register companies (free); `plan` says what fetching them would cost, `sync --budget 100` fetches within that many credits (or, with --provider sec_edgar,
+                                               requests: SEC EDGAR is free and gives US companies their whole history, about fifteen years of annual statements)
     quant fundamentals coverage us:AAPL        which fiscal years of a company the database holds, which are missing, and what the last request to the provider brought back (free)
     quant fundamentals years us:AAPL --pick 2005-2012 [--budget 10]   ask for chosen years that are not held (without --budget it only says what that would cost; held years are never asked for)
     quant fundamentals prices                  daily prices and exchange rates for the companies, from Yahoo Finance
@@ -18,7 +20,8 @@
     quant fundamentals backtest --alpha ID     an alpha as a book under limits, through the platform's backtest engine, net of costs
 
 The real database is ``data/user/fundamentals.db`` and the demo is ``data/user/fundamentals_demo.db``: separate files, so a simulated company never mixes with a real one. A provider key is never an
-argument of this command: it is read from the environment (on Replit, a secret named OPENFILINGS_API_KEY_1 ... _5)."""
+argument of this command: it is read from the environment (on Replit, a secret named OPENFILINGS_API_KEY_1 ... _5; SEC EDGAR needs no key, only the contact it asks every program to give, in a secret
+named SEC_EDGAR_USER_AGENT: your name and an email address)."""
 
 from __future__ import annotations
 
@@ -41,7 +44,7 @@ from .service import FundamentalsService
 from .workbench import Workbench, eval_spec
 
 ACTIONS = ("status", "use-key", "simulate", "search", "add", "plan", "sync", "coverage", "years", "prices", "factors", "evaluate", "preflight", "discover", "placebo", "library", "monitor", "backtest")
-REAL_ONLY = {"use-key": "choosing a key", "search": "searching OpenFilings", "add": "adding companies", "plan": "planning a sync", "sync": "fetching statements", "years": "asking for years", "prices": "loading prices"}
+REAL_ONLY = {"use-key": "choosing a key", "search": "searching a provider's directory", "add": "adding companies", "plan": "planning a sync", "sync": "fetching statements", "years": "asking for years", "prices": "loading prices"}
 DEMO_FILE, REAL_FILE = "fundamentals_demo.db", "fundamentals.db"
 
 
@@ -188,22 +191,22 @@ def _search(wb, args) -> int:
     text = " ".join(args.items)
     if len(text.strip()) < 2:
         raise FundamentalsError("say what to look for: quant fundamentals search nvidia (a name, a ticker such as NVDA or us:NVDA, or an ISIN)")
-    found = wb.service.search_companies("openfilings", text, args.kind, args.market, 10, args.refresh)
+    found = wb.service.search_companies(args.provider, text, args.kind, args.market, 10, args.refresh)
     return _out(args, R.format_search(found), found)
 
 
 def _add(wb, args) -> int:
     if not args.items:
         raise FundamentalsError("name at least one company, such as us:AAPL or jp:7203")
-    ids = wb.service.add_companies("openfilings", args.items, None, args.market)
+    ids = wb.service.add_companies(args.provider, args.items, None, args.market)
     return _out(args, f"{len(ids)} companies registered. Adding costs nothing; `quant fundamentals plan` says what fetching their statements would cost.", {"added": len(ids), "security_ids": ids})
 
 
 def _plan_of(wb, args):
     svc = wb.service
     periods = tuple(args.periods)
-    plan = svc.plan("openfilings", None, periods, args.start_year)
-    return {"plan": plan.summary(), "affordability": svc.affordability("openfilings", plan), "tasks": [{"security_id": t.security_id, "symbol": t.symbol, "reason": t.reason, "cost": t.cost} for t in plan.tasks[:200]]}
+    plan = svc.plan(args.provider, None, periods, args.start_year)
+    return {"plan": plan.summary(), "affordability": svc.affordability(args.provider, plan), "tasks": [{"security_id": t.security_id, "symbol": t.symbol, "reason": t.reason, "cost": t.cost} for t in plan.tasks[:200]]}
 
 
 def _plan(wb, args) -> int:
@@ -213,10 +216,10 @@ def _plan(wb, args) -> int:
 
 def _sync(wb, args) -> int:
     if args.budget is None:
-        raise FundamentalsError("say how many credits this run may spend (--budget N): fetching statements uses the account's allowance. `quant fundamentals plan` shows what is needed")
+        raise FundamentalsError(f"say how many {wb.service.pool(args.provider).allow.unit} this run may spend (--budget N): fetching statements uses the provider's allowance. `quant fundamentals plan` shows what is needed")
     symbols = list(args.items) or None
     with _Stop() as stop:
-        report = wb.service.sync("openfilings", symbols, None, tuple(args.periods), args.start_year, args.budget, _progress(), stop, args.market)
+        report = wb.service.sync(args.provider, symbols, None, tuple(args.periods), args.start_year, args.budget, _progress(), stop, args.market)
     wb.forget()
     return _out(args, R.format_sync(report), report)
 
@@ -238,7 +241,7 @@ def _one_company(wb, items) -> int:
 
 
 def _coverage(wb, args) -> int:
-    c = wb.service.coverage(_one_company(wb, args.items))
+    c = wb.service.coverage(_one_company(wb, args.items), args.provider_given)
     return _out(args, R.format_coverage(c), c)
 
 
@@ -250,11 +253,11 @@ def _years(wb, args) -> int:
         years = coverage_module.parse_years(args.pick)
     except ValueError as error:
         raise FundamentalsError(str(error)) from None
-    plan = wb.service.plan_years(sid, years, None, "annual", args.ask_again)
+    plan = wb.service.plan_years(sid, years, args.provider_given, "annual", args.ask_again)
     if args.budget is None:
         return _out(args, R.format_year_plan(plan) + "\nNothing was asked. Add --budget N (the plan's cost or more) to ask.", plan)
     with _Stop():
-        report = wb.service.fetch_years(sid, years, args.budget, None, "annual", args.ask_again, _progress())
+        report = wb.service.fetch_years(sid, years, args.budget, args.provider_given, "annual", args.ask_again, _progress())
     wb.forget()
     return _out(args, report["text"], report)
 
@@ -414,6 +417,8 @@ HANDLERS = {"status": _status, "use-key": _use_key, "simulate": _simulate, "sear
 
 
 def cmd_fundamentals(args, config) -> int:
+    args.provider_given = args.provider                                                     # what the user said, for the views that otherwise follow the company
+    args.provider = args.provider or "openfilings"
     try:
         if args.demo and args.action in REAL_ONLY:
             raise FundamentalsError(f"{REAL_ONLY[args.action]} is for real data: the demo database is a simulated world and never calls a provider")
@@ -474,11 +479,12 @@ def _add_parser(sub) -> None:
     d.add_argument("--companies", type=int, default=120); d.add_argument("--from-year", type=int, default=2009); d.add_argument("--to-year", type=int, default=2022); d.add_argument("--seed", type=int, default=7)
     d.add_argument("--reset", action="store_true", help="start the demo file again"); d.add_argument("--strong", action="store_true", help="plant stronger alphas (easier to find in a small world)")
     s = p.add_argument_group("search, add, plan, sync, coverage, years, prices")
+    s.add_argument("--provider", choices=["openfilings", "sec_edgar"], help="where the statements come from: openfilings (about twenty-five markets, paid in credits; the default) or sec_edgar (US-listed companies, free, the deepest history)")
     s.add_argument("--market", help="search: only this market; add, sync: the market of tickers typed without one (us, jp, uk, ...)"); s.add_argument("--start-year", type=int, help="first fiscal year to fetch")
     s.add_argument("--kind", choices=["auto", "name", "symbol", "isin", "lei"], default="auto", help="search: what the text is (auto reads it from its shape: us:NVDA and NVDA are tickers, Nvidia is a name)")
-    s.add_argument("--periods", nargs="*", choices=["annual", "quarter"], default=["annual"]); s.add_argument("--budget", type=int, help="sync: the most credits this run may spend (required: statements use the account's allowance)")
+    s.add_argument("--periods", nargs="*", choices=["annual", "quarter"], default=["annual"]); s.add_argument("--budget", type=int, help="sync: the most credits (requests, for sec_edgar) this run may spend (required: statements use the provider's allowance)")
     s.add_argument("--pick", help="years: the fiscal years to ask for, such as 2005-2012,2015 (held years are never asked for)"); s.add_argument("--ask-again", action="store_true", help="years: include years the provider was asked for before and sent nothing")
-    s.add_argument("--price-start", default="2010-01-01", help="prices: the first date"); s.add_argument("--refresh", action="store_true", help="prices: fetch the whole history again; search: ask OpenFilings again instead of using the saved answer")
+    s.add_argument("--price-start", default="2010-01-01", help="prices: the first date"); s.add_argument("--refresh", action="store_true", help="prices: fetch the whole history again; search: ask the provider again instead of using the saved answer")
     e = p.add_argument_group("evaluate, factors --scan")
     e.add_argument("--formula", help="evaluate or backtest a formula such as div(fcf,market_cap)"); e.add_argument("--scan", action="store_true", help="factors: study every factor and set them side by side")
     e.add_argument("--horizon", default="1m", help="the return measured over the next 1w, 2w, 1m, 2m, 3m, 6m or 12m"); e.add_argument("--direction", default="theory", help="theory (the factor's own), auto (counts as a second trial), 1 or -1")

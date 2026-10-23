@@ -38,7 +38,7 @@ class PitSettings:
     use_estimated: bool = True                  # False: periods without a real filing date are left out altogether
     exclude_flags: tuple = DEFAULT_EXCLUDE      # observations carrying these quality flags are treated as missing
     max_age_days: tuple = (("fy", 640), ("ttm", 540))        # a year, the slowest usual filing lag, and a margin: later than that the company has stopped reporting
-    provider_priority: tuple = ("openfilings", "simulated")
+    provider_priority: tuple = ("sec_edgar", "openfilings", "simulated")
     naive_availability: bool = False            # a diagnostic only: treat every figure as known on its period end, to measure how much look-ahead would flatter a result
 
     def lag_for(self, fiscal_period: str) -> int:

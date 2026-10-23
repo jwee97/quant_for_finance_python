@@ -31,6 +31,10 @@ JUMP_WINDOW_YEARS, JUMP_WINDOW_QUARTERS, JUMP_WINDOW_HALVES = 3, 6, 3      # per
 MIN_POINTS = 5
 DISAGREEMENT = 0.05
 JUMP_METRICS = ("revenue", "total_assets", "shareholders_equity", "shares_outstanding", "operating_cash_flow", "net_income")
+# A level is a suspicious jump when it is more than this many times above or below the median of the periods around it. Earnings and operating cash flow cross zero and fall to a tenth of a good year
+# without any error; a share count steps by the split ratio (NVIDIA's ten for one, Alphabet's twenty for one) when a company splits. A thousandfold unit error is far beyond all three.
+JUMP_FACTORS = {"net_income": 100.0, "operating_cash_flow": 100.0, "shares_outstanding": 30.0}
+SHARE_SCALE = 20.0          # diluted weighted shares and shares outstanding differing by more than this factor are counted in different units (thousands against units)
 
 
 def _level_outliers(values: np.ndarray, window: int, factor: float = JUMP_FACTOR) -> np.ndarray:
@@ -88,11 +92,24 @@ def check_security(store: FundamentalsStore, security_id: int) -> dict:
             series = group[group["metric_code"] == code].sort_values("period_end")
             if len(series) < MIN_POINTS:
                 continue
-            for k in np.flatnonzero(_level_outliers(series["value"].to_numpy(float), window)):
+            for k in np.flatnonzero(_level_outliers(series["value"].to_numpy(float), window, JUMP_FACTORS.get(code, JUMP_FACTOR))):
                 flag(int(series["period_id"].iloc[k]), code, "suspicious_jump")
 
-    # two providers, one period, one figure
-    multi = data[data.groupby(["fiscal_period", "period_end", "metric_code"])["provider"].transform("nunique") > 1]
+    # a share count in thousands against one in units: the diluted weighted average against the count in issue (a filer's own tagging error, found in real filings)
+    shares = first_vintage[first_vintage["metric_code"].isin(("shares_outstanding", "weighted_avg_shares_diluted"))].pivot_table(index="period_id", columns="metric_code", values="value", aggfunc="last")
+    if {"shares_outstanding", "weighted_avg_shares_diluted"} <= set(shares.columns):
+        ratio = (shares["weighted_avg_shares_diluted"] / shares["shares_outstanding"].replace(0, np.nan)).abs()
+        for period_id in ratio.index[(ratio > SHARE_SCALE) | (ratio < 1.0 / SHARE_SCALE)]:
+            flag(int(period_id), "weighted_avg_shares_diluted", "suspicious_jump")
+
+    # two providers, one period, one figure: the figures as first filed, and not the ones that are only approximations or computed by the application
+    approximate = {(provider, code) for provider, codes in canonical.APPROXIMATE.items() for code in codes}
+    approximate_sources = {(provider, source) for provider, sources in canonical.APPROXIMATE_SOURCES.items() for source in sources}
+    pairs = list(zip(data["provider"], data["metric_code"]))
+    sources = list(zip(data["provider"], data["source_metric"].astype(str)))
+    comparable = data[(data["vintage"] == 0) & ~data["source_metric"].astype(str).str.startswith("derived:") & ~pd.Series([p in approximate for p in pairs], index=data.index)
+                      & ~pd.Series([s in approximate_sources for s in sources], index=data.index)]
+    multi = comparable[comparable.groupby(["fiscal_period", "period_end", "metric_code"])["provider"].transform("nunique") > 1]
     if not multi.empty:
         spread = multi.groupby(["fiscal_period", "period_end", "metric_code"])["value"].agg(lambda s: (s.max() - s.min()) / max(abs(s).max(), 1e-12))
         for key in spread.index[spread > DISAGREEMENT]:
@@ -100,14 +117,12 @@ def check_security(store: FundamentalsStore, security_id: int) -> dict:
                 flag(row.period_id, row.metric_code, "provider_disagreement")
 
     # the flag each observation deserves: a serious finding, else the informative one it was stored with (so re-running the check can clear a flag that no longer applies)
-    approximate = {(provider, code) for provider, codes in canonical.APPROXIMATE.items() for code in codes}
-
     def natural(row) -> str:
         if row.is_restated:
             return "restated"
         if str(row.source_metric).startswith("derived:"):
             return "derived"
-        return "estimated" if (row.provider, row.metric_code) in approximate else "ok"
+        return "estimated" if (row.provider, row.metric_code) in approximate or (row.provider, str(row.source_metric)) in approximate_sources else "ok"
 
     final = [updates.get((int(r.period_id), r.metric_code), natural(r)) for r in data.itertuples()]
     changed = data.assign(final=final)

@@ -99,15 +99,16 @@ def format_search(found: dict) -> str:
     spent = ("answered from the saved answer of " + str(found["searched_at"]) + ", for nothing") if found["cached"] else (f"{found['credits']} {found['unit'][:-1] if found['credits'] == 1 else found['unit']} spent"
                                                                                                                        if found["credits"] else "nothing spent")
     left = "" if found["remaining_today"] is None else f"; {found['remaining_today']} left today"
-    out = [f"OpenFilings, \u201c{found['query']}\u201d read as {found['kind_word']}" + (f" on the {found['market']} market" if found["market"] else "") + f": {found['count']} "
+    word, flag = found.get("provider_word", "OpenFilings"), "" if found.get("provider", "openfilings") == "openfilings" else f" --provider {found['provider']}"
+    out = [f"{word}, \u201c{found['query']}\u201d read as {found['kind_word']}" + (f" on the {found['market']} market" if found["market"] else "") + f": {found['count']} "
            f"{'match' if found['count'] == 1 else 'matches'} ({spent}{left})"]
     if found["message"]:
         out.append(f"  {found['message']}")
     if found.get("markets_skipped"):
-        out.append("  OpenFilings did not search these markets this time: " + ", ".join(m.upper() for m in found["markets_skipped"]) + ". A company listed only there will not appear.")
+        out.append(f"  {word} did not search these markets this time: " + ", ".join(m.upper() for m in found["markets_skipped"]) + ". A company listed only there will not appear.")
     if not found["results"]:
         for kind in found["alternatives"]:
-            out.append(f"  It could also be {'a ticker' if kind == 'symbol' else 'a company name'}: quant fundamentals search --kind {kind} \"{found['query']}\" (one more credit)")
+            out.append(f"  It could also be {'a ticker' if kind == 'symbol' else 'a company name'}: quant fundamentals search{flag} --kind {kind} \"{found['query']}\"" + (f" (one more {found['unit'][:-1]})" if found.get("credits") else ""))
         return "\n".join(out)
     rows = []
     for r in found["results"]:
@@ -120,7 +121,7 @@ def format_search(found: dict) -> str:
         out += ["", "Other listings of the same company (add one only if you want its filings in that market): " + "; ".join(also)]
     todo = [r for r in found["results"] if not r["in_database"] and r["has_financials"] and r["plan_allows"] is not False]
     if todo:
-        out += ["", f"Add one for nothing with `quant fundamentals add {todo[0]['symbol']}`; `quant fundamentals sync {todo[0]['symbol']} --budget {found['cost_to_fetch']}` then fetches its statements "
+        out += ["", f"Add one for nothing with `quant fundamentals add{flag} {todo[0]['symbol']}`; `quant fundamentals sync{flag} {todo[0]['symbol']} --budget {found['cost_to_fetch']}` then fetches its statements "
                     f"(about {found['cost_to_fetch']} {found['unit']})."]
     return "\n".join(out)
 

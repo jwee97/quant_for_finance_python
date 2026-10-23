@@ -14,7 +14,7 @@ from src.fundamentals import expr as X
 from src.fundamentals.keys import KeyPool
 from src.fundamentals.providers.openfilings import OpenFilingsProvider
 from src.fundamentals.usage import Allowance
-from src.fundamentals.workbench import KEY_NAMES
+from src.fundamentals.workbench import SECRET_NAMES
 from src.utils.config import load_config
 from src.webapp import server
 from src.webapp.api import App
@@ -47,7 +47,7 @@ def _app(tmp_path_factory, tag):
 def live_fund(tmp_path_factory):
     """An app whose real database is empty and whose demo database holds a simulated world and one finished search (so the library has Candidates and the graveyard has failures)."""
     saved = pytest.MonkeyPatch()
-    for name in KEY_NAMES:
+    for name in SECRET_NAMES:
         saved.delenv(name, raising=False)                                                   # a key in the developer's own environment would change what an empty setup looks like
     app = _app(tmp_path_factory, "fund")
     run(app, "/api/fund/simulate", **WORLD)
@@ -65,7 +65,7 @@ def live_fund(tmp_path_factory):
 def live_real(tmp_path_factory):
     """An app whose real database is empty and whose OpenFilings is a stand-in that answers as its documentation says (a free plan: 100 credits a day, 1 for a search, 10 for statements, 1 for a lookup)."""
     saved = pytest.MonkeyPatch()
-    for name in KEY_NAMES:
+    for name in SECRET_NAMES:
         saved.delenv(name, raising=False)
     app = _app(tmp_path_factory, "real")
     wb = app.fundamentals.bench("real")

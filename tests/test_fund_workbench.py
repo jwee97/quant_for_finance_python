@@ -116,7 +116,7 @@ def test_the_catalogue_lists_every_choice_the_forms_offer(world):
     assert "rank" in c["operators"]["cross_sectional"] and c["formula"]["max_nodes"] == X.MAX_NODES and len(c["metrics"]) > 80
     assert c["discovery"]["stages"][0] == "sanity" and c["discovery"]["stages"][-1] == "locked_test" and c["combination"]["methods"] == ["equal", "ic", "icir", "diversified", "cluster"]
     assert "ridge" in c["combination"]["models"] and c["portfolio"]["defaults"]["side"] == "long_only" and "mom_12_1" in c["portfolio"]["technical"]
-    assert c["library"]["statuses"][0] == "Candidate" and c["library"]["transitions"]["Retired"] == [] and c["providers"] == ["openfilings", "simulated"] and "not a validated alpha" in c["rule"]
+    assert c["library"]["statuses"][0] == "Candidate" and c["library"]["transitions"]["Retired"] == [] and c["providers"] == ["openfilings", "sec_edgar", "simulated"] and "not a validated alpha" in c["rule"]
 
 
 def test_what_a_form_sends_is_checked_strictly():

@@ -1,0 +1,41 @@
+name: live feeds
+
+# Weekly (and on demand) check that every public data feed the application reads still answers, and still in the shape the parsers expect. The test suite never touches the network, so a feed that
+# changes a field, moves an address or goes away would pass every test and break the app; this run is the one that notices. It fails when a feed answered with something unusable ("broken"), and only
+# warns when a server refused this address ("refused": shared cloud addresses are often turned away). iTick needs a key and is not checked. The SEC checks use the secret SEC_EDGAR_USER_AGENT (a name and
+# an email address, which the SEC asks every program to give) when the repository has it, and the address of this repository when it does not.
+on:
+  schedule:
+    - cron: "43 5 * * 1"
+  workflow_dispatch:
+    inputs:
+      strict:
+        description: "Fail the run for a refused feed as well"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  feeds:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - name: Install (the packages the check imports; no PyTorch)
+        run: pip install "numpy>=1.26" "pandas>=2.1" "scipy>=1.11" "PyYAML>=6.0" "statsmodels>=0.14"
+      - name: Check every feed
+        env:
+          SEC_EDGAR_USER_AGENT: ${{ secrets.SEC_EDGAR_USER_AGENT }}
+        run: python experiments/live_feed_smoke.py --json live_feeds.json ${{ inputs.strict && '--strict' || '' }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: live-feeds
+          path: live_feeds.json

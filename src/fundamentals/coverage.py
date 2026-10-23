@@ -255,8 +255,9 @@ def plan_text(p: dict, unit: str, remaining: int | None) -> str:
     return text
 
 
-def reading(row: dict | None, provider: str, unit: str) -> str:
-    """The last request in plain words, and what it says about why the years that are held are the years that are held."""
+def reading(row: dict | None, provider: str, unit: str, price_note: str | None = None, early_note: str | None = None) -> str:
+    """The last request in plain words, and what it says about why the years that are held are the years that are held. ``price_note`` is the provider's own sentence about what a request buys
+    (OpenFilings charges per request, not per year) and ``early_note`` what it says of years before the earliest it sent; both default to OpenFilings'."""
     if not row:
         return ""
     asked = describe_window({"from": row.get("asked_from"), "to": row.get("asked_to")})
@@ -273,7 +274,8 @@ def reading(row: dict | None, provider: str, unit: str) -> str:
         return f"{start} {entries} {'entry' if entries == 1 else 'entries'}{f' ({labels})' if labels else ''}, none of them an annual statement this application reads{price}.{said}"
     first, last = row.get("first_year"), row.get("last_year")
     span = f"FY{first}" if first == last else f"FY{first} to FY{last}"
-    text = f"{start} {kept} annual {'statement' if kept == 1 else 'statements'} ({span}){price}. Credits pay for the request, not for the years: the same price would have brought back a longer or a shorter series."
+    price_note = price_note if price_note is not None else "Credits pay for the request, not for the years: the same price would have brought back a longer or a shorter series."
+    text = f"{start} {kept} annual {'statement' if kept == 1 else 'statements'} ({span}){price}. {price_note}"
     unused = entries - kept
     if unused > 0 and not row.get("derived"):
         other = ", ".join(f"{n} {k}" for k, n in sorted(((row.get("detail") or {}).get("labels") or {}).items()) if k != "FY")
@@ -284,8 +286,9 @@ def reading(row: dict | None, provider: str, unit: str) -> str:
         text += f" {provider} recorded the request it ran as {describe_window({'from': echo.get('from'), 'to': echo.get('to')})}, not {asked}: it changed the window before answering."
     if row.get("asked_from") and first and first > row["asked_from"]:
         gap = f"FY{row['asked_from']}" + (f" to FY{first - 1}" if first - 1 > row["asked_from"] else "")
-        text += (f" It sent nothing for {gap}: either it holds no statements that early for this company or it limits how long a series it returns (its documentation says neither). "
-                 "Asking for just those years tells which, for the same price.")
+        early_note = early_note if early_note is not None else ("either it holds no statements that early for this company or it limits how long a series it returns (its documentation says neither). "
+                                                                "Asking for just those years tells which, for the same price.")
+        text += f" It sent nothing for {gap}: {early_note}"
     return text
 
 

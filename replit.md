@@ -201,7 +201,11 @@ up with one call per ticker. See [docs/dashboard.md](docs/dashboard.md) for the
 settings (`ITICK_CALLS_PER_MINUTE`, `ITICK_BASE_URL`, `ITICK_DAILY_KTYPE`, ...) and
 for what is and is not verified about iTick's data.
 
-## Using the Fundamentals tab: OpenFilings keys
+## Using the Fundamentals tab: SEC EDGAR (free, no key) and OpenFilings keys
+
+**Free and deep, for US-listed companies: SEC EDGAR.** It needs no key and has no allowance, only the contact the SEC asks every program to give. In the Replit workspace open **Tools**, then **Secrets**, **New Secret**, name it `SEC_EDGAR_USER_AGENT`, give it your name and an email address as the value (for example `Jane Doe jane@example.com`) and **Add Secret**; stop the app and press **Run** again. Open the Fundamentals tab, **Data manager**, and press **Test the connection** on the SEC EDGAR card (one free request). Then in the **Company explorer** choose *Look it up in → SEC EDGAR*, search a name or ticker, and press **Add and fetch**: two requests bring back the company's whole history (about fifteen to nineteen annual statements for most US companies, from its first XBRL filing). The SEC sees the contact with every request, so use an address you are happy to give it; the app never shows it, never sends it anywhere else and nothing in the page or the command line accepts it. Details and what was measured: [docs/fundamentals.md](docs/fundamentals.md#more-history-free-sec-edgar).
+
+**Other markets, paid in credits: OpenFilings.**
 
 The Fundamentals tab ([docs/fundamentals.md](docs/fundamentals.md)) works with no key on its **Demo (simulated)** data. Real company statements come from [OpenFilings](https://openfilings.org), which needs an API key.
 

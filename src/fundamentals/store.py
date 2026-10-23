@@ -128,7 +128,7 @@ class FundamentalsStore:
                 security_id = int(cur.lastrowid)
             else:
                 security_id = int(row[0])
-                sets = [f"{k} = COALESCE(?, {k})" for k in fields]
+                sets = [f"{k} = COALESCE({k}, ?)" if k == "source" else f"{k} = COALESCE(?, {k})" for k in fields]
                 conn.execute(f"UPDATE securities SET {', '.join(sets)}, last_seen = ?, active = ? WHERE security_id = ?",
                              list(fields.values()) + [today, 1 if profile.active else 0, security_id])
             for id_type, value in (("symbol", profile.provider_symbol), ("isin", profile.isin), ("lei", profile.lei), ("figi", profile.figi)):

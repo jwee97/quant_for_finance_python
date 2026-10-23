@@ -20,7 +20,7 @@ from src.fundamentals.keys import KeyPool
 from src.fundamentals.providers.openfilings import OpenFilingsProvider
 from src.fundamentals.service import FundamentalsService
 from src.fundamentals.usage import Allowance
-from src.fundamentals.workbench import KEY_NAMES, Workbench
+from src.fundamentals.workbench import SECRET_NAMES, Workbench
 from src.utils.config import load_config
 from tests.test_fund_data import KEY_1, FakeOpenFilings
 
@@ -33,7 +33,7 @@ def home(tmp_path_factory):
     """A folder the command treats as the project root, with one demo world made through the command itself and one finished search in it."""
     root = tmp_path_factory.mktemp("fund_cli_home")
     patch = pytest.MonkeyPatch()
-    for name in KEY_NAMES:
+    for name in SECRET_NAMES:
         patch.delenv(name, raising=False)                                                   # a key in the developer's own environment would change what an empty setup looks like
     config = dataclasses.replace(load_config(), root=root)
     patch.setattr(cli, "load_config", lambda *a, **k: config)
@@ -99,7 +99,7 @@ def test_the_status_shows_the_slots_and_the_allowance_and_never_a_key(home, monk
 def test_a_key_slot_is_chosen_by_its_number_and_refused_while_the_key_in_use_has_spent_its_allowance(tmp_path, monkeypatch, capsys):
     config = dataclasses.replace(load_config(), root=tmp_path)                              # a project folder of its own: nothing here is spent in the one the other tests share
     monkeypatch.setattr(cli, "load_config", lambda *a, **k: config)
-    for name in KEY_NAMES:
+    for name in SECRET_NAMES:
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("OPENFILINGS_API_KEY_1", SECRETS[0])
     monkeypatch.setenv("OPENFILINGS_API_KEY_2", SECRETS[1])

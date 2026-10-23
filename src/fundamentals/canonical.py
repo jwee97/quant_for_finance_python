@@ -116,11 +116,116 @@ OPENFILINGS_MAP: dict[str, list[tuple[str, str]]] = {
 OPENFILINGS_APPROXIMATE = {"shares_outstanding"}
 OPENFILINGS_KEYS: tuple[str, ...] = tuple(dict.fromkeys(source for options in OPENFILINGS_MAP.values() for source, _ in options))
 
+# SEC EDGAR (https://www.sec.gov/edgar): the XBRL facts every US filer (and the foreign companies that file annual reports with the SEC) tags in its filings, as filed. A source field is written
+# ``taxonomy:Element`` exactly as the filing tags it (``us-gaap:Revenues``, ``ifrs-full:Revenue``), so the source field stored with each figure says which element it came from. Companies change the
+# element they use for the same line over the years (revenue is ``SalesRevenueNet`` before 2018 and ``RevenueFromContractWithCustomerExcludingAssessedTax`` after, for many), so each canonical metric
+# lists the elements in the order they are tried, within one filing: the total comes before its parts, and the broad element before the narrow one. Money is in the filing's own currency units.
+def _gaap(*names: str, transform: str = "as_is") -> list[tuple[str, str]]:
+    return [(f"us-gaap:{name}", transform) for name in names]
+
+
+def _ifrs(*names: str, transform: str = "as_is") -> list[tuple[str, str]]:
+    return [(f"ifrs-full:{name}", transform) for name in names]
+
+
+SEC_DEBT_CURRENT = "derived: borrowings due within a year (short-term borrowings + commercial paper + current long-term debt)"
+SEC_CASH_AND_INVESTMENTS = "derived: cash and equivalents + short-term investments"
+SEC_LIABILITIES = "derived: total assets - total equity"
+SEC_SGA = "derived: selling and marketing + general and administrative"
+SEC_PRETAX = "derived: domestic + foreign income before tax"
+SEC_MAP: dict[str, list[tuple[str, str]]] = {
+    # income statement
+    "revenue": _gaap("Revenues", "RevenueFromContractWithCustomerExcludingAssessedTax", "RevenueFromContractWithCustomerIncludingAssessedTax", "SalesRevenueNet", "SalesRevenueGoodsNet",
+                     "RevenuesNetOfInterestExpense") + _ifrs("Revenue", "RevenueFromContractsWithCustomers"),
+    "cost_of_revenue": _gaap("CostOfRevenue", "CostOfGoodsAndServicesSold", "CostOfGoodsSold", "CostOfServices") + _ifrs("CostOfSales"),
+    "gross_profit": _gaap("GrossProfit") + _ifrs("GrossProfit"),
+    "research_and_development": _gaap("ResearchAndDevelopmentExpense", "ResearchAndDevelopmentExpenseExcludingAcquiredInProcessCost") + _ifrs("ResearchAndDevelopmentExpense"),
+    "selling_general_admin": _gaap("SellingGeneralAndAdministrativeExpense") + [(SEC_SGA, "as_is")] + _ifrs("SellingGeneralAndAdministrativeExpense"),
+    "operating_income": _gaap("OperatingIncomeLoss") + _ifrs("ProfitLossFromOperatingActivities"),
+    "interest_expense": _gaap("InterestExpense", "InterestExpenseDebt", "InterestAndDebtExpense", "InterestExpenseNonoperating", "InterestExpenseLongTermDebt", transform="abs")
+                        + _ifrs("InterestExpense", "FinanceCosts", transform="abs"),
+    "income_before_tax": _gaap("IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest",
+                               "IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments") + [(SEC_PRETAX, "as_is")] + _ifrs("ProfitLossBeforeTax"),
+    "income_tax": _gaap("IncomeTaxExpenseBenefit", "IncomeTaxExpenseBenefitContinuingOperations") + _ifrs("IncomeTaxExpenseContinuingOperations"),
+    "net_income": _gaap("NetIncomeLoss", "ProfitLoss", "NetIncomeLossAvailableToCommonStockholdersBasic") + _ifrs("ProfitLossAttributableToOwnersOfParent", "ProfitLoss"),
+    "eps_basic": _gaap("EarningsPerShareBasic", "EarningsPerShareBasicAndDiluted", "IncomeLossFromContinuingOperationsPerBasicShare", "IncomeLossFromContinuingOperationsPerBasicAndDilutedShare")
+                 + _ifrs("BasicEarningsLossPerShare"),
+    "eps_diluted": _gaap("EarningsPerShareDiluted", "EarningsPerShareBasicAndDiluted", "IncomeLossFromContinuingOperationsPerDilutedShare", "IncomeLossFromContinuingOperationsPerBasicAndDilutedShare")
+                   + _ifrs("DilutedEarningsLossPerShare"),
+    # balance sheet
+    "cash": _gaap("CashCashEquivalentsAndShortTermInvestments") + [(SEC_CASH_AND_INVESTMENTS, "as_is")],
+    "cash_and_equivalents": _gaap("CashAndCashEquivalentsAtCarryingValue", "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents", "Cash", "CashAndDueFromBanks") + _ifrs("CashAndCashEquivalents"),
+    "accounts_receivable": _gaap("AccountsReceivableNetCurrent", "ReceivablesNetCurrent", "AccountsAndOtherReceivablesNetCurrent") + _ifrs("TradeAndOtherCurrentReceivables", "CurrentTradeReceivables"),
+    "inventory": _gaap("InventoryNet") + _ifrs("Inventories"),
+    "current_assets": _gaap("AssetsCurrent") + _ifrs("CurrentAssets"),
+    "total_assets": _gaap("Assets") + _ifrs("Assets"),
+    "ppe": _gaap("PropertyPlantAndEquipmentNet", "PropertyPlantAndEquipmentAndFinanceLeaseRightOfUseAssetAfterAccumulatedDepreciationAndAmortization") + _ifrs("PropertyPlantAndEquipment"),
+    "goodwill": _gaap("Goodwill") + _ifrs("Goodwill"),
+    "intangible_assets": _gaap("IntangibleAssetsNetExcludingGoodwill", "FiniteLivedIntangibleAssetsNet") + _ifrs("IntangibleAssetsOtherThanGoodwill"),
+    "accounts_payable": _gaap("AccountsPayableCurrent", "AccountsPayableTradeCurrent", "AccountsPayableAndAccruedLiabilitiesCurrent") + _ifrs("TradeAndOtherCurrentPayables", "CurrentTradePayables"),
+    "current_liabilities": _gaap("LiabilitiesCurrent") + _ifrs("CurrentLiabilities"),
+    "short_term_debt": _gaap("DebtCurrent") + [(SEC_DEBT_CURRENT, "as_is")],
+    "long_term_debt": _gaap("LongTermDebtNoncurrent", "LongTermDebtAndCapitalLeaseObligations", "LongTermNotesPayable", "SeniorLongTermNotes", "ConvertibleNotesPayable") + _ifrs("NoncurrentPortionOfNoncurrentBorrowings"),
+    "total_liabilities": _gaap("Liabilities") + _ifrs("Liabilities") + [(SEC_LIABILITIES, "as_is")],
+    "shareholders_equity": _gaap("StockholdersEquity", "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest") + _ifrs("EquityAttributableToOwnersOfParent", "Equity"),
+    "minority_interest": _gaap("MinorityInterest") + _ifrs("NoncontrollingInterests"),
+    "preferred_equity": _gaap("PreferredStockValue", "PreferredStockValueOutstanding"),
+    # cash flow statement
+    "operating_cash_flow": _gaap("NetCashProvidedByUsedInOperatingActivities", "NetCashProvidedByUsedInOperatingActivitiesContinuingOperations") + _ifrs("CashFlowsFromUsedInOperatingActivities"),
+    "capital_expenditure": _gaap("PaymentsToAcquirePropertyPlantAndEquipment", "PaymentsToAcquireProductiveAssets", "PaymentsForCapitalImprovements", transform="abs")
+                           + _ifrs("PurchaseOfPropertyPlantAndEquipmentClassifiedAsInvestingActivities", transform="abs"),
+    "depreciation_amortization": _gaap("DepreciationDepletionAndAmortization", "DepreciationAndAmortization", "DepreciationAmortizationAndAccretionNet", "Depreciation")
+                                 + _ifrs("DepreciationAndAmortisationExpense"),
+    "stock_based_compensation": _gaap("ShareBasedCompensation", "AllocatedShareBasedCompensationExpense") + _ifrs("AdjustmentsForSharebasedPayments"),
+    "acquisitions": _gaap("PaymentsToAcquireBusinessesNetOfCashAcquired", "PaymentsToAcquireBusinessesGross", transform="abs"),
+    "share_repurchases": _gaap("PaymentsForRepurchaseOfCommonStock", transform="abs"),
+    "dividends_paid": _gaap("PaymentsOfDividends", "PaymentsOfDividendsCommonStock", transform="abs") + _ifrs("DividendsPaidClassifiedAsFinancingActivities", transform="abs"),
+    "investing_cash_flow": _gaap("NetCashProvidedByUsedInInvestingActivities") + _ifrs("CashFlowsFromUsedInInvestingActivities"),
+    "financing_cash_flow": _gaap("NetCashProvidedByUsedInFinancingActivities") + _ifrs("CashFlowsFromUsedInFinancingActivities"),
+    # share counts
+    "weighted_avg_shares_diluted": _gaap("WeightedAverageNumberOfDilutedSharesOutstanding", "WeightedAverageNumberOfSharesOutstandingBasicAndDiluted") + _ifrs("AdjustedWeightedAverageShares"),
+    "shares_outstanding": _gaap("CommonStockSharesOutstanding") + [("dei:EntityCommonStockSharesOutstanding", "as_is")],
+}
+# the cover page's share count is as of a date a few weeks after the period end, not at the period end itself; earnings per share from continuing operations leaves out what a discontinued business earned
+SEC_APPROXIMATE_SOURCES = {"dei:EntityCommonStockSharesOutstanding", "us-gaap:IncomeLossFromContinuingOperationsPerBasicShare", "us-gaap:IncomeLossFromContinuingOperationsPerDilutedShare",
+                           "us-gaap:IncomeLossFromContinuingOperationsPerBasicAndDilutedShare"}
+# a synthetic source field the SEC adapter builds from lines of the same filing when it has no single element for the figure: ``(groups needed, [[alternatives], ...])``. Each group is one line of the
+# statements (the first alternative the filing has is taken) and the figure is the sum of the groups; it is made only when enough groups are there.
+SEC_SUMS: dict[str, tuple[int, list[list[str]]]] = {
+    SEC_DEBT_CURRENT: (1, [["us-gaap:ShortTermBorrowings"], ["us-gaap:CommercialPaper"], ["us-gaap:LongTermDebtCurrent", "us-gaap:LongTermDebtAndCapitalLeaseObligationsCurrent"]]),
+    SEC_SGA: (2, [["us-gaap:SellingAndMarketingExpense", "us-gaap:SalesAndMarketingExpense"], ["us-gaap:GeneralAndAdministrativeExpense"]]),
+    SEC_PRETAX: (2, [["us-gaap:IncomeLossFromContinuingOperationsBeforeIncomeTaxesDomestic"], ["us-gaap:IncomeLossFromContinuingOperationsBeforeIncomeTaxesForeign"]]),
+    SEC_CASH_AND_INVESTMENTS: (2, [["us-gaap:CashAndCashEquivalentsAtCarryingValue", "us-gaap:CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents"],
+                                   ["us-gaap:ShortTermInvestments", "us-gaap:MarketableSecuritiesCurrent", "us-gaap:AvailableForSaleSecuritiesDebtSecuritiesCurrent", "us-gaap:AvailableForSaleSecuritiesCurrent"]]),
+}
+
+
+def _sec_field_types() -> dict[str, str]:
+    """Which kind of XBRL fact each source field is: ``duration`` (a flow over the fiscal year), ``instant`` (a balance at the period end) or ``cover`` (the front page of the filing)."""
+    out: dict[str, str] = {}
+    for code, options in SEC_MAP.items():
+        kind = "duration" if METRICS[code].kind in FLOW_KINDS or code == "weighted_avg_shares_diluted" else "instant"
+        for source, _ in options:
+            if source.startswith("dei:"):
+                out.setdefault(source, "cover")
+            elif not source.startswith("derived:"):
+                out.setdefault(source, kind)
+    for name, (_, groups) in SEC_SUMS.items():
+        kind = "instant" if name in (SEC_DEBT_CURRENT, SEC_CASH_AND_INVESTMENTS) else "duration"
+        for group in groups:
+            for part in group:
+                out.setdefault(part, kind)
+    return out
+
+
+SEC_FIELDS: dict[str, str] = _sec_field_types()
+
 # the simulated provider speaks canonical codes already
 IDENTITY_MAP: dict[str, list[tuple[str, str]]] = {code: [(code, "as_is")] for code in METRICS}
 
-SOURCE_MAPS = {"openfilings": OPENFILINGS_MAP, "simulated": IDENTITY_MAP}
+SOURCE_MAPS = {"openfilings": OPENFILINGS_MAP, "sec_edgar": SEC_MAP, "simulated": IDENTITY_MAP}
 APPROXIMATE = {"openfilings": OPENFILINGS_APPROXIMATE}
+APPROXIMATE_SOURCES = {"sec_edgar": SEC_APPROXIMATE_SOURCES}
 
 
 def _finite(value) -> float | None:
@@ -139,6 +244,13 @@ def _apply(value: float, transform: str) -> float | None:
     if transform == "outflow":
         return -value if value < 0 else None
     raise ValueError(f"unknown transform {transform!r}")
+
+
+def _flag(provider: str, code: str, source: str) -> str:
+    """``derived`` for a source field a provider adapter computed from other figures of the same filing (its name starts ``derived:``), ``estimated`` for one that only approximates the metric."""
+    if source.startswith("derived:"):
+        return "derived"
+    return "estimated" if code in APPROXIMATE.get(provider, ()) or source in APPROXIMATE_SOURCES.get(provider, ()) else "ok"
 
 
 def normalise_values(provider: str, values: dict) -> tuple[dict[str, dict], list[str]]:
@@ -162,7 +274,7 @@ def normalise_values(provider: str, values: dict) -> tuple[dict[str, dict], list
             used.add(source)
             v = _apply(v, transform)
             if v is not None and code not in out:
-                out[code] = {"value": v, "source_metric": source, "flag": "estimated" if code in APPROXIMATE.get(provider, ()) else "ok"}
+                out[code] = {"value": v, "source_metric": source, "flag": _flag(provider, code, source)}
     known = {source for options in table.values() for source, _ in options}
     unmapped = sorted(str(k) for k in values if k not in known and k not in used)
     _derive(out)

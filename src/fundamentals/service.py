@@ -21,10 +21,12 @@ from pathlib import Path
 
 import pandas as pd
 
+from ..webapp.providers import read_secret
 from . import coverage, quality
-from .errors import FundamentalsError, InvalidKey, MissingKey, NotFound, PlanError, ProviderError, QuotaExhausted, SyncPending
+from .errors import FundamentalsError, InvalidKey, MissingKey, NotFound, PlanError, ProviderError, QuotaExhausted, RateLimited, SyncPending
 from .keys import KeyPool
 from .providers import PROVIDER_NAMES, make_provider
+from .providers.sec_edgar import USER_AGENT_VARIABLE
 from .providers.base import FundamentalDataProvider
 from .store import DEFAULT_PATH, CompanyProfile, FundamentalsStore
 from .usage import UsageLog
@@ -36,8 +38,9 @@ NOT_FOUND_RETRY_DAYS = 60
 SEARCH_KEEP_DAYS = 30                              # a saved search answer is used again for this long (a company's listing hardly ever changes) ...
 SEARCH_EMPTY_KEEP_DAYS = 1                         # ... and one that found nothing for a day, so a second press does not spend another credit
 KIND_WORDS = {"name": "a company name", "symbol": "a ticker", "isin": "an ISIN", "lei": "a LEI"}
-PROVIDER_WORDS = {"openfilings": "OpenFilings", "simulated": "the simulated world"}
-NO_QUARTERS = {"openfilings": "OpenFilings quarterly and half-year figures cannot be requested yet: its documentation does not say how to ask for them, and a guess would cost 10 credits a try."}
+PROVIDER_WORDS = {"openfilings": "OpenFilings", "sec_edgar": "SEC EDGAR", "simulated": "the simulated world"}
+NO_QUARTERS = {"openfilings": "OpenFilings quarterly and half-year figures cannot be requested yet: its documentation does not say how to ask for them, and a guess would cost 10 credits a try.",
+               "sec_edgar": "SEC EDGAR quarterly figures (the 10-Q reports) are not read by this application yet; the annual statements (10-K) are."}
 _PROFILE_TEXT = ("provider_symbol", "ticker", "name", "exchange", "market", "country", "currency", "sector", "industry", "isin", "lei")
 _PROFILE_EXTRA = ("also_listed", "score", "registry", "hint", "primary", "has_financials")
 
@@ -47,9 +50,10 @@ def _year_of(statement) -> int:
     return statement.fiscal_year if statement.fiscal_year is not None else int(statement.period_end[:4])
 
 
-def _answer_of(raw, request) -> dict:
-    """What an answer held (:func:`coverage.summarise_answer`) with the note the provider put in it, as the adapter kept it with the request (cut to length, with no key in it)."""
-    return {**coverage.summarise_answer(raw), "message": str((request or {}).get("message") or "")}
+def _answer_of(raw, request, answer: dict | None = None) -> dict:
+    """What an answer held (:func:`coverage.summarise_answer`, or the provider's own account of it when it cut the window itself) with the note the provider put in it, as the adapter kept it with the
+    request (cut to length, with no key in it)."""
+    return {**(answer if isinstance(answer, dict) else coverage.summarise_answer(raw)), "message": str((request or {}).get("message") or "")}
 
 
 def _freeze(profile: CompanyProfile) -> dict:
@@ -150,6 +154,9 @@ class FundamentalsService:
         if name not in self._providers:
             if name == "openfilings":
                 self._providers[name] = make_provider("openfilings", pool=self.pool("openfilings"))
+            elif name == "sec_edgar":
+                self._providers[name] = make_provider("sec_edgar", pool=self.pool(name), user_agent=read_secret(USER_AGENT_VARIABLE, self.root),
+                                                      cache_path=Path(self.store.db.path).parent / "sec_company_tickers.json")
             elif name == "simulated":
                 self._providers[name] = make_provider("simulated")
             else:
@@ -168,9 +175,10 @@ class FundamentalsService:
         return pd.Timestamp(self.usage.today())
 
     def _call(self, name: str, fn, endpoint: str, symbol: str = ""):
-        """Run a provider call through the budget. A keyed provider does its own accounting (it knows what each call costs); any other is counted here, one unit a call."""
+        """Run a provider call through the budget. A keyed provider, or one that counts its own requests, does its own accounting (it knows what each call costs and how many it made); any other
+        is counted here, one unit a call."""
         prov = self.provider(name)
-        if prov.keyed:
+        if prov.keyed or prov.meters_itself:
             return fn()
         return self.pool(name).call(lambda _key: fn(), endpoint=endpoint, symbol=symbol)
 
@@ -356,7 +364,8 @@ class FundamentalsService:
                          "has_financials": bool(p.extra.get("has_financials", True)), "plan_allows": None if allowed is None else (allowed[1] or market_id in allowed[0]),
                          "in_database": sid is not None, "security_id": sid, "periods": int(self.store.period_summary(sid, provider).get("n") or 0) if sid is not None else 0})
         pool = self.pool(provider)
-        return {"query": text, "kind": plan["kind"], "kind_word": KIND_WORDS.get(plan["kind"], plan["kind"]), "market": plan["market"] or "", "alternatives": list(plan["alternatives"]),
+        return {"provider": provider, "provider_word": PROVIDER_WORDS.get(provider, provider), "query": text, "kind": plan["kind"], "kind_word": KIND_WORDS.get(plan["kind"], plan["kind"]),
+                "market": plan["market"] or "", "alternatives": list(plan["alternatives"]),
                 "results": rows, "count": len(rows), "cached": saved is not None, "credits": credits, "message": message, "ambiguous": ambiguous, "markets_skipped": skipped, "searched_at": at,
                 "remaining_today": pool.remaining_today(), "unit": pool.allow.unit, "cost_to_fetch": prov.cost("financials") + (prov.cost("profile") if prov.has_lookup else 0)}
 
@@ -396,6 +405,9 @@ class FundamentalsService:
                 break
             except InvalidKey as error:
                 report["stopped"] = str(error)
+                break
+            except RateLimited as error:                                       # the provider asked to be left alone: every further request would only be refused again
+                report["stopped"] = f"{error}; {len(plan.tasks) - n} companies remain"
                 break
             except NotFound:
                 self.store.set_sync(task.security_id, provider, self._state_key(task.period), last_checked=self.usage.today(), status="not_found", error="not found")
@@ -441,8 +453,8 @@ class FundamentalsService:
             self.store.enrich_security(task.security_id, result.profile)
         counts = self.store.store_financials(task.security_id, task.provider, result.periods)
         asked_from, asked_to = coverage.asked_years(result.request)
-        self.store.log_fetch(task.security_id, task.provider, f"financials:{label}", asked_from, asked_to, _answer_of(result.raw, result.request), len(result.periods), counts["periods"], result.cost,
-                             task.reason, self.usage.today())
+        self.store.log_fetch(task.security_id, task.provider, f"financials:{label}", asked_from, asked_to, _answer_of(result.raw, result.request, result.answer), len(result.periods), counts["periods"],
+                             result.cost, task.reason, self.usage.today())
         quality.check_security(self.store, task.security_id)
         summary = self.store.period_summary(task.security_id, task.provider)
         old = self.store.get_sync(task.security_id, task.provider, self._state_key(task.period)) or {}
@@ -490,10 +502,13 @@ class FundamentalsService:
         for r in held:
             if r["fiscal_period"] != "FY":
                 quarters.setdefault(int(r["fiscal_year"]), {})[r["fiscal_period"]] = str(r["period_end"])[:10]
+        known = [{"name": n, "word": PROVIDER_WORDS.get(n, n), "periods": len([r for r in self.store.held_periods(sid, n) if r["fiscal_period"] == "FY" and r["vintage"] == 0])}
+                 for n in PROVIDER_NAMES if n != "simulated" and self._symbols(n).get(sid)]
         return {"security_id": int(security_id), "ticker": info["ticker"], "name": info.get("company_name"), "provider": name, "provider_word": word, "symbol": self._symbols(name).get(sid),
+                "providers": known,
                 "annual": annual, "quarterly": {"supported": "quarter" in prov.periods_available, "held": sum(len(v) for v in quarters.values()),
                                                 "rows": [{"year": y, "periods": quarters[y]} for y in sorted(quarters)], "note": "" if "quarter" in prov.periods_available else NO_QUARTERS.get(name, f"{word} has no quarterly figures here.")},
-                "last_request": log[0] if log else None, "reading": coverage.reading(log[0] if log else None, word, pool.allow.unit), "derived": derived,
+                "last_request": log[0] if log else None, "reading": coverage.reading(log[0] if log else None, word, pool.allow.unit, prov.price_note, prov.early_note), "derived": derived,
                 "log": [{**r, "asked": coverage.describe_window({"from": r.get("asked_from"), "to": r.get("asked_to")})} for r in log[:8]],
                 "unit": pool.allow.unit, "request_cost": prov.cost("financials"), "remaining_today": pool.remaining_today() if ok else None, "can_fetch": ok and "annual" in prov.periods_available,
                 "why_not": "" if ok else why, "sync": self.store.get_sync(sid, name, request_type), "today": day.isoformat()}
@@ -558,13 +573,13 @@ class FundamentalsService:
         old = self.store.get_sync(sid, name, request_type) or {}
         earliest = min([d for d in (summary.get("first_end"), old.get("earliest_period_end")) if d], default=None)
         asked_from, asked_to = coverage.asked_years(result.request)
-        self.store.log_fetch(sid, name, request_type, asked_from, asked_to, _answer_of(result.raw, result.request), len(result.periods), counts["periods"], result.cost, "chosen", day)
+        self.store.log_fetch(sid, name, request_type, asked_from, asked_to, _answer_of(result.raw, result.request, result.answer), len(result.periods), counts["periods"], result.cost, "chosen", day)
         self.store.set_sync(sid, name, request_type, last_checked=day, last_success=day, last_period_end=summary.get("last_end"), earliest_period_end=earliest,
                             history_exhausted=1 if (old.get("history_exhausted") or (first_held is not None and window["from"] < first_held)) else 0,        # asked from before anything held
                             n_periods=int(summary.get("n") or 0), status="ok", error=None)
         report = {"security_id": sid, "symbol": p["symbol"], "provider": name, "window": window, "cost": result.cost, "unit": p["unit"], "added": [{"year": y, "period_end": e} for y, e in added],
                   "left_alone": len(inside) - len(fresh), "outside": len(result.periods) - len(inside), "nothing_for": [y for y in p["to_fetch"] if y not in {y for y, _ in added}],
-                  "entries": coverage.summarise_answer(result.raw)["entries"]}
+                  "entries": _answer_of(result.raw, result.request, result.answer)["entries"]}
         return {**report, "text": coverage.report_text(report, word)}
 
     # ------------------------------------------------------------------------------------------------------------ status for the Data Manager
