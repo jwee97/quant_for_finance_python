@@ -52,11 +52,9 @@ def parametric_var(returns: pd.Series, alpha: float = 0.95, horizon: int = 1,
         quantile = stats.norm.ppf(1.0 - alpha)
     elif distribution in {"t", "student_t"}:
         df, loc, scale = stats.t.fit(clean.to_numpy())
-        # Standardise so the quantile is comparable to the normal case.
+        # The t quantile goes with the fitted scale (which is not the standard deviation: that is scale * sqrt(df / (df - 2))), so nothing is rescaled.
         quantile = stats.t.ppf(1.0 - alpha, df)
-        sigma = scale * np.sqrt(df / (df - 2.0)) if df > 2 else scale
-        mu = loc
-        return -(mu + quantile * scale) * np.sqrt(horizon)
+        return -(loc + quantile * scale) * np.sqrt(horizon)
     else:
         raise ValueError(f"unknown distribution '{distribution}'")
     return -(mu + quantile * sigma) * np.sqrt(horizon)
@@ -97,9 +95,10 @@ def monte_carlo_var(returns: pd.DataFrame | pd.Series, weights: pd.Series | None
     """
     rng = np.random.default_rng(seed)
 
-    if isinstance(returns, pd.Series) or weights is None:
-        series = returns if isinstance(returns, pd.Series) else (returns @ weights)
-        clean = series.dropna()
+    if isinstance(returns, pd.DataFrame) and weights is None:
+        raise ValueError("a table of returns needs the portfolio weights: pass weights=")
+    if isinstance(returns, pd.Series):
+        clean = returns.dropna()
         mu, sigma = float(clean.mean()), float(clean.std(ddof=1))
         if distribution == "normal":
             draws = rng.normal(mu, sigma, n_scenarios)
@@ -260,7 +259,7 @@ def kupiec_test(n_breaches: int, n_obs: int, alpha: float) -> tuple[float, float
         return float("nan"), float("nan")
     log_null = (n_obs - n_breaches) * np.log(1.0 - p) + n_breaches * np.log(p)
     log_alt = (n_obs - n_breaches) * np.log(1.0 - rate) + n_breaches * np.log(rate)
-    statistic = -2.0 * (log_null - log_alt)
+    statistic = max(-2.0 * (log_null - log_alt), 0.0)             # a likelihood ratio is never below 0; at exactly the expected count floating point can give -1e-14
     return float(statistic), float(1.0 - stats.chi2.cdf(statistic, 1))
 
 
@@ -309,8 +308,10 @@ def christoffersen_test(breaches: pd.Series) -> tuple[float, float]:
     log_alt = (xlogy(n00, 1.0 - pi01) + xlogy(n01, pi01)
                + xlogy(n10, 1.0 - pi11) + xlogy(n11, pi11))
     statistic = float(-2.0 * (log_null - log_alt))
-    if not np.isfinite(statistic) or statistic < 0:
+    if not np.isfinite(statistic) or statistic < -1e-9:
         return float("nan"), float("nan")
+    # A chain as likely to breach after a breach as after a calm day (1 0 0 1 0 1 1 1 1 1 1 1 0: two thirds both ways) has a ratio of exactly 0, which floating point gives as -2e-15.
+    statistic = max(statistic, 0.0)
     return statistic, float(1.0 - stats.chi2.cdf(statistic, 1))
 
 

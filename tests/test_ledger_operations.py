@@ -27,9 +27,9 @@ def cats(led: Ledger) -> dict:
 def test_average_cost_runs_through_adds_partial_closes_and_a_flip_and_the_realised_profit_adds_up():
     reg, led = make_ledger()
     led.apply_fill(T0, Fill(T0, "STK", 100.0, 50.0), mid=50.0)
-    led.apply_fill(T0, Fill(T0, "STK", 100.0, 60.0), mid=60.0)
+    led.apply_fill(T0 + DAY, Fill(T0, "STK", 100.0, 60.0), mid=60.0)
     pos = led.positions["STK"]
-    assert pos.quantity == 200.0 and pos.avg_price == pytest.approx(55.0) and pos.opened_at == pd.Timestamp(T0)
+    assert pos.quantity == 200.0 and pos.avg_price == pytest.approx(55.0) and pos.opened_at == pd.Timestamp(T0)                 # adding a day later does not move the day it was opened
     led.apply_fill(T0 + DAY, Fill(T0, "STK", -50.0, 70.0), mid=70.0)                                      # sells 50 against an average of 55
     assert pos.quantity == 150.0 and pos.avg_price == pytest.approx(55.0) and pos.realized_pnl == pytest.approx(750.0)
     led.apply_fill(T0 + 2 * DAY, Fill(T0, "STK", -250.0, 80.0), mid=80.0)                                 # closes the 150 and goes 100 short at 80
@@ -343,6 +343,10 @@ def test_a_share_priced_in_euros_is_traded_translated_marked_exposed_and_settled
     reg, led = make_ledger([euro_stock()], cash={"USD": 1_000_000.0, "EUR": 50_000.0}, pegs={"EUR": 1.10})
     led.apply_fill(T0, Fill(T0, "SAP", 100.0, 100.0), mid=100.0)                                              # 10,000 euros of shares
     assert led.cash["EUR"] == 40_000.0 and led.positions["SAP"].last_value == 10_000.0
+    bought = led.journal[-1]
+    assert bought.category == "trade" and bought.pnl == pytest.approx(0.0, abs=1e-9) and bought.currency == "EUR"          # a purchase at the mid earns nothing, in dollars or in euros
+    assert bought.cash_base == pytest.approx(-11_000.0) and bought.value == pytest.approx(11_000.0)                         # the cash out and the shares in, both at 1.10
+    assert [e.currency for e in led.journal[:2]] == ["USD", "EUR"]                                                           # a deposit is entered in the currency deposited
     assert led.equity() == pytest.approx(1_000_000.0 + 50_000.0 * 1.10) and led.net_assets() == pytest.approx({"USD": 1_000_000.0, "EUR": 50_000.0})
     led.converter.set_pair("EUR", "USD", 1.20)                                                                 # the euro gains ten cents
     led.revalue(T0 + DAY, {"SAP": 100.0})
@@ -355,6 +359,8 @@ def test_a_share_priced_in_euros_is_traded_translated_marked_exposed_and_settled
     equity = led.equity()
     led.close_position(T0 + 3 * DAY, "SAP", 120.0)
     assert led.cash["EUR"] == pytest.approx(40_000.0 + 12_000.0) and led.equity() == pytest.approx(equity + 1_000.0 * 1.20)
+    settled = led.journal[-1]                                                                                   # the gain was booked when the shares were marked to 120: the settlement itself earns nothing
+    assert settled.category == "lifecycle_settlement" and settled.pnl == pytest.approx(0.0, abs=1e-9) and settled.value == pytest.approx(-12_000.0 * 1.20)
 
 
 def test_a_euro_position_removed_for_nothing_or_for_stated_cash_leaves_its_value_at_the_euro_rate():
@@ -363,6 +369,7 @@ def test_a_euro_position_removed_for_nothing_or_for_stated_cash_leaves_its_value
     before = led.equity()
     led.remove_position_value(T0 + DAY, "SAP", 100.0)
     assert led.equity() == pytest.approx(before - 10_000.0 * 1.10)                                            # the shares' value left the books, in dollars at 1.10
+    assert led.journal[-1].category == "lifecycle_settlement" and led.journal[-1].pnl == pytest.approx(-10_000.0 * 1.10)    # and the entry says so
     reg, led = make_ledger([euro_stock()], cash={"USD": 1_000_000.0, "EUR": 50_000.0}, pegs={"EUR": 1.10})
     led.apply_fill(T0, Fill(T0, "SAP", 100.0, 100.0), mid=100.0)
     led.settle_with_cash(T0 + DAY, "SAP", {"EUR": 9_000.0}, mark=100.0)
@@ -385,3 +392,23 @@ def test_the_refusal_of_an_entry_that_does_not_balance_states_the_two_sides():
         led._post(T0, "mtm", None, "USD", None, 100.0, 0.0, 50.0)
     with pytest.raises(LedgerError, match=r"entry 'mtm' for STK breaks the accounting identity: movements 100 != pnl \+ transfer 60"):
         led._post(T0, "mtm", reg.get("STK"), "USD", None, 100.0, 0.0, 50.0, 10.0)
+
+
+def test_a_split_entry_is_in_the_currency_of_the_instrument_split():
+    reg, led = make_ledger([euro_stock()], cash={"USD": 1_000_000.0, "EUR": 50_000.0}, pegs={"EUR": 1.10})
+    led.apply_fill(T0, Fill(T0, "SAP", 100.0, 100.0), mid=100.0)
+    led.split(T0 + DAY, "SAP", 2.0)
+    assert led.journal[-1].category == "corporate_action" and led.journal[-1].currency == "EUR" and led.positions["SAP"].quantity == 200.0
+
+
+def test_a_currency_contract_moves_its_multiplier_of_the_base_currency_for_the_quote_currency_at_the_mid():
+    contract = fx_spot("EUR", "USD", contract_multiplier=1000.0)
+    reg, led = make_ledger([contract], cash={"USD": 1_000_000.0})
+    led.converter.set_pair("EUR", "USD", 1.10)
+    led.apply_fill(T0, Fill(T0, "EURUSD", 3.0, 1.10), mid=1.10)                                               # three contracts of 1,000 euros
+    assert led.cash["EUR"] == pytest.approx(3_000.0) and led.cash["USD"] == pytest.approx(1_000_000.0 - 3_300.0)
+    entry = led.journal[-1]
+    assert entry.category == "trade" and entry.currency == "USD" and entry.pnl == pytest.approx(0.0, abs=1e-9) and entry.cash == pytest.approx({"EUR": 3_000.0, "USD": -3_300.0})
+    assert led.equity() == pytest.approx(1_000_000.0)
+    led.apply_fill(T0 + DAY, Fill(T0, "EURUSD", -3.0, 1.10), mid=1.10)
+    assert led.cash["EUR"] == pytest.approx(0.0, abs=1e-9) and led.cash["USD"] == pytest.approx(1_000_000.0)

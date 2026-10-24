@@ -1,9 +1,10 @@
 name: dependency audit
 
 # Weekly (and on demand) check of the packages the application installs against the public vulnerability databases (PyPI's advisories and OSV). The tests cannot notice a vulnerable dependency; this run does.
-# It installs requirements.txt in an environment of its own, so that only what the application brings is audited and not the runner's own tools, and fails when any installed package has a known
-# vulnerability. A vulnerability that has no fixed release, or that cannot matter here, is listed in .github/pip-audit-ignore.txt (one advisory id per line, with a reason in a comment) and
-# the run passes again.
+# It installs requirements.txt in an environment of its own that has no pip or setuptools of its own (the first run audited the ones a new environment starts with, pip 24.0 and setuptools 79.0.1,
+# which the application does not bring and does not use), so that only what the application brings is audited, and fails when any installed package has a known vulnerability. The versions
+# are audited as listed (the CPU build of PyTorch is on PyPI without its "+cpu" label). A vulnerability that has no fixed release, or that cannot matter here, is listed in
+# .github/pip-audit-ignore.txt (one advisory id per line, with a reason in a comment) and the run passes again.
 on:
   schedule:
     - cron: "17 5 * * 1"
@@ -23,9 +24,10 @@ jobs:
           python-version: "3.11"
       - name: Install the application's requirements in an environment of their own (CPU-only PyTorch, as in the tests)
         run: |
-          python -m venv /tmp/app
-          /tmp/app/bin/pip install --index-url https://download.pytorch.org/whl/cpu "torch>=2.2"
-          /tmp/app/bin/pip install -r requirements.txt
+          python -m venv --without-pip /tmp/app
+          pip --python /tmp/app/bin/python install --index-url https://download.pytorch.org/whl/cpu "torch>=2.2"
+          pip --python /tmp/app/bin/python install -r requirements.txt
+          pip --python /tmp/app/bin/python freeze | sed 's/+cpu$//' | tee /tmp/installed.txt
       - name: Audit what was installed
         run: |
           pip install pip-audit
@@ -33,4 +35,4 @@ jobs:
           if [ -f .github/pip-audit-ignore.txt ]; then
             for id in $(grep -v '^[[:space:]]*#' .github/pip-audit-ignore.txt | awk '{print $1}'); do args="$args --ignore-vuln $id"; done
           fi
-          pip-audit --path /tmp/app/lib/python3.11/site-packages --progress-spinner off $args
+          pip-audit --requirement /tmp/installed.txt --no-deps --disable-pip --progress-spinner off $args

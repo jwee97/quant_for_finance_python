@@ -117,6 +117,21 @@ def test_a_candidate_is_recentred_in_the_consistent_p_value_only_when_it_is_clea
     assert np.sqrt(2.0 * np.log(np.log(n))) == pytest.approx(1.7477, abs=1e-3)
 
 
+def test_when_nothing_beats_the_benchmark_every_spa_p_value_is_exactly_one():
+    """The statistic is the larger of zero and the best t, so a field of losers has statistic 0, and every null maximum (also at least 0) is at or above it: no evidence at all, p = 1 and not about a half."""
+    rng = np.random.default_rng(0)
+    losing = hansen_spa(np.full((100, 1), -0.001), boot=-0.001 + 0.001 * rng.standard_normal((2000, 1)))
+    assert losing["statistic"] == 0.0 and losing["p_lower"] == losing["p_consistent"] == losing["p_upper"] == 1.0
+
+
+def test_a_candidate_that_never_moves_cannot_win_the_in_sample_ranking_of_pbo_and_changes_nothing_but_the_denominator_of_the_ranks():
+    noise = _noise(n=160, k=4, seed=9)
+    with_cash = pbo_cscv(np.column_stack([noise, np.zeros(160)]), blocks=8)
+    without = pbo_cscv(noise, blocks=8)
+    assert np.isfinite(with_cash["is_best_sharpe"]).all() and np.isfinite(with_cash["oos_of_best_sharpe"]).all()          # a constant has no Sharpe ratio: it ranks last, it is not infinite or undefined
+    assert np.allclose(with_cash["is_best_sharpe"], without["is_best_sharpe"]) and np.allclose(with_cash["oos_of_best_sharpe"], without["oos_of_best_sharpe"])
+
+
 def test_pbo_of_a_persistent_winner_is_zero_and_its_sharpe_is_the_one_worked_out_from_the_blocks():
     blocks, a, d = 4, 0.01, 0.002
     persistent = np.tile([a + d, a - d], blocks)                                         # +1% a day, with a little spread inside each block
