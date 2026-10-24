@@ -1,10 +1,19 @@
-# Advisories the weekly dependency audit (.github/workflows/dependency-audit.yml) is told to leave out, one id per line, each with the reason. An entry that is no longer needed is removed.
+# Advisories the weekly dependency audit (.github/workflows/dependency-audit.yml) is told to leave out, with the reason for each group. Several ids may share a line; an entry that is no longer needed is removed.
 #
-# filelock 3.32.3 is the newest release that installs on Python 3.10 (a Replit workspace); the fix, filelock 4.2.1, needs Python 3.11, where the fixed release is installed and these are not reported.
-# The application does not import filelock; torch and huggingface_hub do. Checked by searching every installed package on 24 October 2026:
-#   - GHSA-v4x8-3wr5-3wq8 (Linux and macOS) and GHSA-9vhv-jxww-xfm5 (Windows) are about the ReadWriteLock and AsyncReadWriteLock classes, which nothing installed uses
-#   - GHSA-567q-5qvw-pf92 is about soft locks on Windows (another local account holding an oplock on the marker file); huggingface_hub uses a soft lock only as a fallback in its download cache
-# All three need another local account on the same machine.
-CVE-2026-112940
-CVE-2026-112913
-CVE-2026-112907
+# Every advisory below is reported on Python 3.10 only. The audit of Python 3.11 reports none of them, because the fixed releases (filelock 4.2.1, Pillow 13.0.0) need Python 3.11 and a Replit workspace, which
+# runs Python 3.10, cannot take them (3.10 gets filelock 4.1.0 and Pillow 12.3.0, the newest it can install). The cure is to run the app on Python 3.11 or later; see replit.md. A new advisory in either
+# package fails the run, so that someone reads it and adds it here with the same reason or finds a reason not to.
+#
+# filelock: a dependency of torch and huggingface_hub (the application does not import it). Six advisories about ReadWriteLock, AsyncReadWriteLock and the soft locks; each needs another local account with write
+# access to the directory that holds the lock files (a shared /tmp without the sticky bit, a Windows temp folder). Nothing installed uses ReadWriteLock or AsyncReadWriteLock (searched), and
+# huggingface_hub uses a soft lock only as the fallback in its download cache in the user's own home directory.
+CVE-2026-112940 CVE-2026-112913 CVE-2026-112907 CVE-2026-112906 CVE-2026-112914 CVE-2026-112937
+#
+# Pillow: a dependency of matplotlib only (the application does not import PIL, and searching src and experiments for Image.open and imread finds nothing). Thirty-seven advisories in the readers and writers of
+# crafted files (PDF, GIF, TIFF, EPS through Ghostscript, XBM, MIC, PPM, fonts) and in image operations on crafted input. The application opens no image, PDF or font file that came from outside; matplotlib
+# is used to draw charts the application makes itself.
+CVE-2026-112895 CVE-2026-112400 CVE-2026-112397 CVE-2026-112896 CVE-2026-112897 CVE-2026-112395 CVE-2026-112404 CVE-2026-112899
+CVE-2026-112402 CVE-2026-112900 CVE-2026-112893 CVE-2026-112392 CVE-2026-112891 CVE-2026-112405 CVE-2026-112390 CVE-2026-112401
+CVE-2026-112901 CVE-2026-112391 CVE-2026-112894 CVE-2026-112406 CVE-2026-112399 CVE-2026-112892 CVE-2026-112393 CVE-2026-112396
+CVE-2026-96638 CVE-2026-96641 CVE-2026-96640 CVE-2026-96642 CVE-2026-96639 CVE-2026-96643 CVE-2026-96637 CVE-2026-96644
+CVE-2026-96778 CVE-2026-96636 GHSA-78g4-xqwv-q3g8 CVE-2026-114501 CVE-2026-112398

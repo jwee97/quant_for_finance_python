@@ -5,7 +5,7 @@ name: dependency audit
 # application brings is audited (the first run audited the pip 24.0 and setuptools 79.0.1 a new environment starts with, which the application neither brings nor uses), on the two interpreters it supports:
 # Python 3.11 and Python 3.10, which is what a Replit workspace runs and where some packages stop at older releases. The versions are audited as listed (the "+cpu" label of the CPU build of PyTorch removed,
 # which PyPI does not know). The run fails when any installed package has a known vulnerability. One that has no fixed release, or that cannot matter here, is listed in .github/pip-audit-ignore.txt
-# (one advisory id per line, with the reason in a comment) and the run passes again.
+# (ids in lines of their own, with the reason in the comments above them) and the run passes again.
 on:
   schedule:
     - cron: "17 5 * * 1"
@@ -37,6 +37,6 @@ jobs:
           pip install pip-audit
           args=""
           if [ -f .github/pip-audit-ignore.txt ]; then
-            for id in $(grep -v '^[[:space:]]*#' .github/pip-audit-ignore.txt | awk '{print $1}'); do args="$args --ignore-vuln $id"; done
+            for id in $(grep -v '^[[:space:]]*#' .github/pip-audit-ignore.txt); do args="$args --ignore-vuln $id"; done
           fi
           pip-audit --requirement /tmp/installed.txt --no-deps --disable-pip --progress-spinner off $args
