@@ -1,0 +1,10 @@
+# Advisories the weekly dependency audit (.github/workflows/dependency-audit.yml) is told to leave out, one id per line, each with the reason. An entry that is no longer needed is removed.
+#
+# filelock 3.32.3 is the newest release that installs on Python 3.10 (a Replit workspace); the fix, filelock 4.2.1, needs Python 3.11, where the fixed release is installed and these are not reported.
+# The application does not import filelock; torch and huggingface_hub do. Checked by searching every installed package on 24 October 2026:
+#   - GHSA-v4x8-3wr5-3wq8 (Linux and macOS) and GHSA-9vhv-jxww-xfm5 (Windows) are about the ReadWriteLock and AsyncReadWriteLock classes, which nothing installed uses
+#   - GHSA-567q-5qvw-pf92 is about soft locks on Windows (another local account holding an oplock on the marker file); huggingface_hub uses a soft lock only as a fallback in its download cache
+# All three need another local account on the same machine.
+CVE-2026-112940
+CVE-2026-112913
+CVE-2026-112907

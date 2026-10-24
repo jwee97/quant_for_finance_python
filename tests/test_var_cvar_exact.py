@@ -38,9 +38,9 @@ def test_historical_var_is_the_empirical_quantile_of_the_losses_scaled_by_the_ro
 
 
 def test_a_return_that_is_itself_the_cutoff_belongs_to_the_tail():
-    twenty_one = pd.Series(np.arange(-10, 11) / 100.0)                                  # the 5% point is the second smallest, -9%, exactly
-    assert V.historical_var(twenty_one, 0.95) == pytest.approx(0.09)
-    assert C.historical_cvar(twenty_one, 0.95) == pytest.approx(0.095)                  # the mean of -10% and -9%, not of -10% alone
+    twenty_one = pd.Series(np.arange(-10, 11) / 100.0)                                  # the 25% point (1 - 0.75 is exact in binary) is the sixth smallest, -5%, exactly
+    assert V.historical_var(twenty_one, 0.75) == pytest.approx(0.05)
+    assert C.historical_cvar(twenty_one, 0.75) == pytest.approx(0.075)                  # the mean of -10% to -5%, not of -10% to -6%
 
 
 def test_historical_cvar_is_the_mean_of_the_returns_at_or_below_the_cutoff():
@@ -157,10 +157,10 @@ def test_a_simulated_book_keeps_the_correlation_between_its_assets_and_ignores_a
 
 def test_the_simulated_cvar_is_the_mean_loss_beyond_the_simulated_var_and_the_tables_hold_each_method_side_by_side():
     r = noise(1500, seed=9)
-    var, draws = V.monte_carlo_var(r, None, 0.95, 1, 20_001, "student_t", 5.0, seed=2)             # 20,001 draws: the 5% point is the 1,001st smallest exactly, and it belongs to the tail
-    expected = -draws[draws <= np.quantile(draws, 0.05)].mean()
-    assert C.monte_carlo_cvar(r, None, 0.95, 1, 20_001, "student_t", 5.0, 2) == pytest.approx(expected) and expected > var
-    assert (draws <= np.quantile(draws, 0.05)).sum() == 1001
+    var, draws = V.monte_carlo_var(r, None, 0.75, 1, 20_001, "student_t", 5.0, seed=2)             # 20,001 draws: the 25% point is the 5,001st smallest exactly, and it belongs to the tail
+    expected = -draws[draws <= np.quantile(draws, 0.25)].mean()
+    assert C.monte_carlo_cvar(r, None, 0.75, 1, 20_001, "student_t", 5.0, 2) == pytest.approx(expected, rel=1e-12) and expected > var
+    assert (draws <= np.quantile(draws, 0.25)).sum() == 5001
     table = V.var_comparison(r, alphas=(0.95, 0.99), n_scenarios=20_000)
     assert list(table.index) == [0.95, 0.99] and list(table.columns) == ["historical", "parametric_normal", "parametric_t", "cornish_fisher", "monte_carlo_normal", "monte_carlo_t"]
     assert table.loc[0.99, "historical"] == pytest.approx(V.historical_var(r, 0.99)) and table.loc[0.95, "parametric_t"] == pytest.approx(V.parametric_var(r, 0.95, 1, "t"))

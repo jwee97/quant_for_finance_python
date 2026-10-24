@@ -124,6 +124,13 @@ def test_when_nothing_beats_the_benchmark_every_spa_p_value_is_exactly_one():
     assert losing["statistic"] == 0.0 and losing["p_lower"] == losing["p_consistent"] == losing["p_upper"] == 1.0
 
 
+def test_the_documented_defaults_are_2000_resamples_in_blocks_of_21_days_with_seed_7():
+    x = _noise(n=300, k=4, seed=3)
+    assert np.array_equal(bootstrap_means(x), bootstrap_means(x, 2000, 21.0, 7))
+    assert white_reality_check(x) == white_reality_check(x, 2000, 21.0, 7)
+    assert hansen_spa(x) == hansen_spa(x, 2000, 21.0, 7)
+
+
 def test_a_candidate_that_never_moves_cannot_win_the_in_sample_ranking_of_pbo_and_changes_nothing_but_the_denominator_of_the_ranks():
     noise = _noise(n=160, k=4, seed=9)
     with_cash = pbo_cscv(np.column_stack([noise, np.zeros(160)]), blocks=8)
