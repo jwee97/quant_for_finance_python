@@ -204,9 +204,13 @@ Mean over three simulated years (330 trading days after a 250-day warm-up), capi
 |  | total return | Sharpe | max drawdown | costs ($) |
 |---|---|---|---|---|
 | short_put | 0.026 | 0.716 | -0.055 | 20.150 |
+| put_spread | 0.002 | 0.353 | -0.039 | 40.300 |
 | covered_call | 0.026 | 0.313 | -0.115 | 20.888 |
+| collar | 0.007 | 0.027 | -0.097 | 41.038 |
+| protective_put | 0.029 | 0.184 | -0.108 | 20.888 |
 | short_strangle | -0.006 | 0.040 | -0.049 | 40.300 |
 | iron_condor | -0.017 | -0.469 | -0.037 | 78.867 |
+| iron_butterfly | -0.043 | -0.855 | -0.059 | 80.600 |
 | delta_hedged_straddle(short) | -0.045 | -0.736 | -0.066 | 75.833 |
 | delta_hedged_straddle(long) | 0.002 | -0.142 | -0.047 | 75.833 |
 | risk_reversal | 0.015 | 0.712 | -0.017 | 53.378 |

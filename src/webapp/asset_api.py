@@ -83,12 +83,13 @@ class AssetApi:
 
     # ------------------------------------------------------------------------------------------------------------ routes
     def get_routes(self) -> dict:
-        return {"/api/assets/catalog": self.catalog, "/api/options/chain": self.options_chain, "/api/options/surface": self.options_surface, "/api/futures/curve": self.futures_curve,
+        return {"/api/assets/catalog": self.catalog, "/api/options/chain": self.options_chain, "/api/options/surface": self.options_surface, "/api/options/distribution": self.options_distribution,
+                "/api/options/positioning": self.options_positioning, "/api/futures/curve": self.futures_curve,
                 "/api/futures/roll": self.futures_roll, "/api/futures/series": self.futures_series, "/api/crypto/overview": self.crypto_overview, "/api/crypto/funding": self.crypto_funding, "/api/crypto/cross-exchange": self.crypto_cross_exchange}
 
     def post_routes(self) -> dict:
         return {"/api/options/portfolio-risk": self.options_portfolio_risk, "/api/options/strategy/payoff": self.options_strategy_payoff, "/api/options/strategy/backtest": self.options_strategy_backtest,
-                "/api/futures/margin": self.futures_margin, "/api/futures/strategy/backtest": self.futures_strategy_backtest, "/api/futures/signals": self.futures_signals, "/api/crypto/signals": self.crypto_signals, "/api/crypto/strategy/backtest": self.crypto_strategy_backtest}
+                "/api/options/strategy/sweep": self.options_strategy_sweep, "/api/options/strategy/compare": self.options_strategy_compare, "/api/futures/margin": self.futures_margin, "/api/futures/strategy/backtest": self.futures_strategy_backtest, "/api/futures/signals": self.futures_signals, "/api/crypto/signals": self.crypto_signals, "/api/crypto/strategy/backtest": self.crypto_strategy_backtest}
 
     # ------------------------------------------------------------------------------------------------------------ user files
     def _user_files(self, folder: str) -> dict[str, Path]:
@@ -127,7 +128,9 @@ class AssetApi:
         symbols = [{"id": s, "source": "user_file" if s in cry_files else "platform"} for s in ca.REAL_SYMBOLS] + [{"id": s, "source": "user_file" if s in cry_files else "downloaded" if s in dl_coins else "simulated"} for s in ca.SIMULATED_ALTS]
         symbols += [{"id": s, "source": "user_file" if s in cry_files else "downloaded"} for s in dl_coins if s not in ca.REAL_SYMBOLS and s not in ca.SIMULATED_ALTS]
         symbols += [{"id": s, "source": "user_file"} for s in cry_files if s not in ca.REAL_SYMBOLS and s not in ca.SIMULATED_ALTS and s not in dl_coins]
-        return clean({"underlyings": underlyings, "option_strategies": [{"id": k, "text": v} for k, v in oa.STRATEGY_INFO.items()], "option_backtests": [{"id": k, "text": oa.BACKTEST_TEXT[k], "params": oa.backtest_params(k)} for k in oa.BACKTEST_STRATEGIES],
+        return clean({"underlyings": underlyings, "option_strategies": [{"id": k, "text": oa.STRATEGY_INFO[k], "group": g, "references": references("options", k)} for g, names in oa.STRATEGY_GROUPS.items() for k in names], "option_groups": list(oa.STRATEGY_GROUPS),
+                      "option_backtests": [{"id": k, "text": oa.BACKTEST_TEXT[k], "params": oa.backtest_params(k), "references": references("options", k)} for k in oa.BACKTEST_STRATEGIES],
+                      "option_timing": {"defaults": oa.TIMING_DEFAULTS, "references": references("options", "timing")},
                       "defaults": {"rate": oa.DEFAULT_RATE, "premium": 0.15, "dividend_yields": oa.DIVIDEND_YIELDS}, "futures_roots": roots, "futures_series": dl_series,
                       "futures_strategies": [self._futures_strategy_info(k, v) for k, v in fa.FUTURES_STRATEGIES.items()],
                       "crypto_symbols": symbols, "crypto_strategies": [self._crypto_strategy_info(k, v) for k, v in ca.CRYPTO_STRATEGIES.items()],
@@ -270,6 +273,57 @@ class AssetApi:
             parts["reference_index"] = "platform"
         return _wrap("options_chain", data, parts, warnings + ov["risk_flags"], ctx.as_of, notes)
 
+    def options_distribution(self, q: dict) -> dict:
+        """``GET /api/options/distribution?underlying=SPY&expiry=2026-11-27``: what the quotes imply for the price at one expiry (the density, quantiles and the chance of a 5 to 20% fall or rise against the
+        lognormal's), the move the at-the-money straddle prices in at every expiry, the model-free implied volatility of every expiry and at 30 days (with the published index beside it where the platform has
+        one), and the volatility cone of the underlying with the chain's at-the-money volatilities on it."""
+        underlying, rate, dividend, premium = self._option_params(q)
+        chain, ctx, source, notes = self._option_chain(underlying, rate, dividend, premium)
+        try:
+            expiry = pd.Timestamp(q["expiry"]) if q.get("expiry") else oa.nearest_expiry_to(chain, 30)
+            dist = oa.implied_distribution(chain, expiry)
+        except (ValueError, KeyError) as exc:
+            raise ApiError(str(exc)) from None
+        term = oa.model_free_term(chain)
+        rv = ctx.rv_21 if np.isfinite(ctx.rv_21) else None
+        macro = self._bundle().macro if source != "user_file" else None
+        ref = oa.reference_index_view(ctx.symbol, macro, term["atm_30d"], ctx.as_of)
+        if ref is not None:
+            ref["model_free"] = term["iv_30d"]
+        cone = oa.volatility_cone(ctx.prices) if ctx.prices is not None and len(ctx.prices) > 120 else None
+        if cone and cone["rows"]:                                                       # the at-the-money volatility of an expiry as long as each window, where the chain has one that long
+            atm = oa.term_structure(chain)
+            for r in cone["rows"]:
+                r["implied"] = oa.interpolate_iv(atm, r["calendar_days"]) if atm and atm[0]["dte"] <= r["calendar_days"] <= atm[-1]["dte"] else None
+        data = {"underlying": underlying, "expiry": dist["expiry"], "expiries": [e for e in oa.expiry_list(chain) if e["dte"] >= 2], "distribution": dist, "expected_moves": oa.expected_moves(chain),
+                "model_free": {**term, "realized_21d": rv, "reference": ref}, "cone": cone if cone and cone["rows"] else None,
+                "references": {k: references("options", k) for k in ("distribution", "model_free", "cone")}}
+        warnings = [f"The fit does not reproduce the quotes closely (largest miss {dist['fit']['max_error_vol'] * 100:.1f} volatility points): read the shape with care."] if dist["fit"]["max_error_vol"] > 0.01 else []
+        warnings += ["The fitted smile admits a butterfly arbitrage, so part of the density was negative and was set to zero."] if dist["fit"]["negative_share"] > 0.001 else []
+        simulated = source == "simulated"
+        return _wrap("options_distribution", data, {"underlying_price": "platform" if simulated else source, "chain": source}, warnings, ctx.as_of,
+                     notes + ["The distribution is the one the options are PRICED on (risk-neutral): it has the market's price of risk inside it, so a fall looks likelier than it has been in practice.",
+                              "It is read from an SVI curve fitted to the out-of-the-money implied volatilities of one expiry; the model-free volatility needs no curve (the Cboe VIX rules on the quotes themselves)."])
+
+    def options_positioning(self, q: dict) -> dict:
+        """``GET /api/options/positioning?underlying=SPY&expiry=2026-11-27``: open interest and volume by strike (one expiry, or every expiry when none is given), the walls, the max-pain strike of one expiry and the
+        gamma exposure with the price at which it flips sign."""
+        underlying, rate, dividend, premium = self._option_params(q)
+        chain, ctx, source, notes = self._option_chain(underlying, rate, dividend, premium)
+        try:
+            expiry = pd.Timestamp(q["expiry"]) if q.get("expiry") and q.get("expiry") != "all" else None
+            view = oa.positioning(chain, expiry)
+        except ValueError as exc:
+            raise ApiError(str(exc)) from None
+        data = {"underlying": underlying, "expiry": None if expiry is None else str(expiry.date()), "expiries": [e for e in oa.expiry_list(chain) if e["dte"] >= 1], "positioning": view,
+                "references": {"positioning": references("options", "positioning")}}
+        warnings = ["The chain has no open interest (the file did not carry it), so there is nothing to show."] if view["call_oi"] + view["put_oi"] == 0 else []
+        simulated = source == "simulated"
+        return _wrap("options_positioning", data, {"underlying_price": "platform" if simulated else source, "open_interest": source}, warnings, ctx.as_of,
+                     notes + ["Open interest has no sign: who is long and who is short is not in the data. The gamma exposure counts calls as positive and puts as negative, the convention that follows if dealers hold the other "
+                              "side of customers who sell calls and buy puts. Treat it as a map of where the hedging sensitivity sits, not as dealers' books.",
+                              "Max pain is a folk rule for the settlement of one expiry; the evidence behind it is that prices tend to cluster at strikes with large open interest near expiry."])
+
     def options_surface(self, q: dict) -> dict:
         """``GET /api/options/surface?underlying=SPY``: the implied-volatility surface (strike by expiry), the term structure, the skew metrics of every expiry and the static no-arbitrage checks."""
         underlying, rate, dividend, premium = self._option_params(q)
@@ -348,38 +402,39 @@ class AssetApi:
                                      risk["risk_flags"], ctx.as_of, notes + ["Stress P&L revalues every option with Black-Scholes at the shocked spot and volatility; time passes only if you set days."])
 
     def options_strategy_payoff(self, body: dict) -> dict:
-        """``POST /api/options/strategy/payoff``: the legs of a named structure (or your own), their payoff at the horizon, today and half way, maximum profit and loss, break-evens, Greeks, an indicative margin, the probability of profit and expected value."""
+        """``POST /api/options/strategy/payoff``: the legs of a named structure (or your own), their payoff at the horizon, today and half way, maximum profit and loss, break-evens, Greeks, an indicative margin, the probability of profit and expected value, the odds by price, the profit by price and day, the Greeks by price, and (``compare``) up to three other structures on the same settings."""
         underlying, rate, dividend, premium = self._option_params(body)
         chain, ctx, source, notes = self._option_chain(underlying, rate, dividend, premium)
         simulated = source == "simulated"
-        name = str(body.get("strategy") or "long_straddle")
+        custom = bool(body.get("legs"))
+        name = None if custom else str(body.get("strategy") or "long_straddle")
         dte = _number(body, "dte", 30, 1, 700, integer=True)
         far = _number(body, "far_dte", max(dte * 2, dte + 14), dte + 1, 800, integer=True)
-        e1, e2 = oa.nearest_expiry_to(chain, dte), oa.nearest_expiry_to(chain, far)
-        g1 = chain[chain["expiry"] == e1]
-        forward = float(g1["F"].iloc[0])
-        dte1, dte2 = int(round(float(g1["T"].iloc[0]) * 365)), int(round(float(chain[chain["expiry"] == e2]["T"].iloc[0]) * 365))
-        step = oa.strike_step(chain, e1)
         qty = _number(body, "quantity", 1, 1, 1000, integer=True)
+        offset, width = _number(body, "offset", 0.05, 0.0, 0.5), _number(body, "width", 0.05, 0.005, 0.5)
+        others = body.get("compare") or []
+        if not isinstance(others, list) or len(others) > 3 or not all(isinstance(x, str) for x in others):
+            raise ApiError("compare must be a list of up to three structure names")
         try:
-            if body.get("legs"):
-                legs = self._custom_legs(body["legs"], chain, ctx.as_of)
+            if custom:
+                legs, built = oa.chain_legs(chain, self._custom_legs(body["legs"], chain, ctx.as_of)), oa.structure_context(chain, dte, far)
             else:
-                legs = oa.strategy_legs(name, ctx.spot, forward, step, dte1, _number(body, "offset", 0.05, 0.0, 0.5), _number(body, "width", 0.05, 0.005, 0.5), max(dte2, dte1 + 1), qty)
-            for leg in legs:
-                if leg["type"] == "option":
-                    leg["iv"] = oa.iv_lookup(chain, oa.nearest_expiry_to(chain, leg["dte"]), leg["strike"])
-                    leg["dte"] = int(round(float(chain[chain["expiry"] == oa.nearest_expiry_to(chain, leg["dte"])]["T"].iloc[0]) * 365))
-            atm = oa.atm_iv(g1)
+                legs, built = oa.named_structure(chain, ctx.spot, name, dte, offset, width, far, qty)
+            atm = built["atm_iv"]
             view_vol = None if body.get("view_vol") in (None, "") else _number(body, "view_vol", atm, 0.02, 3.0)
             view_drift = None if body.get("view_drift") in (None, "") else _number(body, "view_drift", 0.0, -2.0, 2.0)
-            horizon = None if body.get("horizon_days") in (None, "") else _number(body, "horizon_days", dte1, 1, 800, integer=True)
-            result = oa.strategy_analysis(legs, ctx.spot, forward, atm, float(chain["rate"].iloc[0]), float(chain["dividend"].iloc[0]), 0.0, view_vol, view_drift, horizon,
-                                          _choice(body, "fill", "mid", ("mid", "worst")), _number(body, "spread_pct", 0.05, 0.0, 1.0), _number(body, "commission", 0.65, 0.0, 50.0))
+            horizon = None if body.get("horizon_days") in (None, "") else _number(body, "horizon_days", built["dte"], 1, 800, integer=True)
+            common = {"rate": float(chain["rate"].iloc[0]), "dividend": float(chain["dividend"].iloc[0]), "view_vol": view_vol, "view_drift": view_drift, "horizon_days": horizon,
+                      "fill": _choice(body, "fill", "mid", ("mid", "worst")), "spread_pct": _number(body, "spread_pct", 0.05, 0.0, 1.0), "commission": _number(body, "commission", 0.65, 0.0, 50.0)}
+            result = oa.strategy_analysis(legs, ctx.spot, built["forward"], atm, cash_secured=(name == "cash_secured_put"), **common)
+            unknown = [x for x in others if x not in oa.STRATEGY_INFO]
+            if unknown:
+                raise ValueError(f"unknown structure {unknown[0]!r} to compare; choose from {sorted(oa.STRATEGY_INFO)}")
+            compare = oa.compare_structures(chain, ctx.spot, [x for x in dict.fromkeys(others) if x != name], result["curve"]["spot"], dte=dte, offset=offset, width=width, far_dte=far, quantity=qty, analysis=common)
         except ValueError as exc:
             raise ApiError(str(exc)) from None
-        data = {"underlying": underlying, "strategy": name, "text": oa.STRATEGY_INFO.get(name, "Your own legs"), "expiry": str(pd.Timestamp(e1).date()), "far_expiry": str(pd.Timestamp(e2).date()), "atm_iv": atm,
-                "analysis": result}
+        data = {"underlying": underlying, "strategy": name, "group": None if custom else oa.group_of(name), "text": "Your own legs" if custom else oa.STRATEGY_INFO[name], "expiry": str(pd.Timestamp(built["expiry"]).date()),
+                "far_expiry": str(pd.Timestamp(built["far_expiry"]).date()), "atm_iv": atm, "analysis": result, "compare": compare, "references": [] if custom else references("options", name)}
         return _wrap("options_strategy", data, {"prices": "platform" if simulated else source, "premiums": source}, result["risk_flags"], ctx.as_of,
                                      notes + ["Entry prices are the model's mids (or worse, if you chose to cross the spread). Margin is indicative. Probability of profit and expected value assume a lognormal spot with one volatility."])
 
@@ -397,26 +452,76 @@ class AssetApi:
                          "dte": _number(leg, "dte", 30, 1, 800, integer=True)})
         return legs
 
-    def options_strategy_backtest(self, body: dict) -> dict:
-        """``POST /api/options/strategy/backtest``: one of the rolling option strategies on the simulated option market, run as a job."""
+    @staticmethod
+    def _backtest_arguments(body: dict) -> dict:
+        """The market, costs and filter of an options backtest, checked: the arguments of ``run_strategy_backtest`` after the strategy and its settings."""
+        try:
+            timing = oa.parse_timing(body.get("timing"))
+        except ValueError as exc:
+            raise ApiError(str(exc)) from None
+        return {"n_days": _number(body, "days", 252, 60, 756, integer=True), "seed": _number(body, "seed", 0, 0, 1_000_000, integer=True), "capital": _number(body, "capital", 100_000, 1e3, 1e9),
+                "premium": _number(body, "premium", 0.25, -0.3, 1.0), "commission": _number(body, "commission", 0.65, 0.0, 50.0), "fill_fraction": _number(body, "fill_fraction", 1.0, 0.0, 1.0), "timing": timing}
+
+    @staticmethod
+    def _backtest_strategy(body: dict) -> tuple[str, dict]:
         name = str(body.get("strategy") or "short_put")
         if name not in oa.BACKTEST_STRATEGIES:
             raise ApiError(f"strategy must be one of {list(oa.BACKTEST_STRATEGIES)}")
         try:
-            params = oa.parse_backtest_params(name, body.get("params"))
+            return name, oa.parse_backtest_params(name, body.get("params"))
         except ValueError as exc:
             raise ApiError(str(exc)) from None
-        days = _number(body, "days", 252, 60, 756, integer=True)
-        seed, capital = _number(body, "seed", 0, 0, 1_000_000, integer=True), _number(body, "capital", 100_000, 1e3, 1e9)
-        premium, commission = _number(body, "premium", 0.25, -0.3, 1.0), _number(body, "commission", 0.65, 0.0, 50.0)
-        fill = _number(body, "fill_fraction", 1.0, 0.0, 1.0)
+
+    def options_strategy_backtest(self, body: dict) -> dict:
+        """``POST /api/options/strategy/backtest``: one of the rolling option strategies on the simulated option market, run as a job."""
+        name, params = self._backtest_strategy(body)
+        args = self._backtest_arguments(body)
 
         def work(progress):
             progress("building the simulated option market (the first run of a given length takes several seconds)")
-            out = oa.run_strategy_backtest(name, params, days, seed, capital, premium, commission, fill)
+            try:
+                out = oa.run_strategy_backtest(name, params, **args)
+            except ValueError as exc:
+                raise ApiError(str(exc)) from None
+            out["references"] = references("options", name) + (references("options", "timing") if args["timing"] else [])
             return _wrap("options_backtest", out, {"market": "simulated"}, [], out["dates"][-1] if out["dates"] else None, out.pop("notes"))
 
         return self.app.submit_task(f"options: {name}", work)
+
+    def options_strategy_sweep(self, body: dict) -> dict:
+        """``POST /api/options/strategy/sweep``: the same backtest at 2 to 9 values of one numeric setting (``sweep_param``, ``sweep_values``), run as a job."""
+        name, params = self._backtest_strategy(body)
+        args = self._backtest_arguments(body)
+        param, raw = str(body.get("sweep_param") or ""), body.get("sweep_values")
+        if not isinstance(raw, list):
+            raise ApiError("sweep_values must be a list of numbers")
+        try:
+            values = [float(x) for x in raw]
+            oa.check_sweep(name, param, values, params)
+        except (TypeError, ValueError) as exc:
+            raise ApiError(str(exc) or "sweep_values must be numbers") from None
+
+        def work(progress):
+            progress("building the simulated option market (the first run of a given length takes several seconds)")
+            out = oa.run_strategy_sweep(name, param, values, params, progress, **args)
+            return _wrap("options_sweep", out, {"market": "simulated"}, [], None, ["Every value is run on the same simulated market and seed; only the setting changes."])
+
+        return self.app.submit_task(f"options: sweep {name} {param}", work)
+
+    def options_strategy_compare(self, body: dict) -> dict:
+        """``POST /api/options/strategy/compare``: every rolling strategy (or the ``strategies`` named) at its defaults on one simulated market, run as a job."""
+        args = self._backtest_arguments(body)
+        names = body.get("strategies")
+        if names is not None and (not isinstance(names, list) or not all(isinstance(x, str) and x in oa.BACKTEST_STRATEGIES for x in names) or len(names) < 2):
+            raise ApiError(f"strategies must be a list of at least two of {list(oa.BACKTEST_STRATEGIES)}")
+
+        def work(progress):
+            progress("building the simulated option market (the first run of a given length takes several seconds)")
+            out = oa.run_strategy_comparison(names, progress, **args)
+            return _wrap("options_compare", out, {"market": "simulated"}, [], out["dates"][-1] if out["dates"] else None,
+                         ["Every strategy is run at its default settings on the same simulated market and seed.", "The market pays the variance premium it was built with and has jumps, so premium sellers do well here by construction."])
+
+        return self.app.submit_task("options: compare strategies", work)
 
     # ------------------------------------------------------------------------------------------------------------ futures
     def _downloaded_curve(self, root: str, rec: dict) -> fa.CurveData:

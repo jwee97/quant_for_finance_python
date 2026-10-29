@@ -74,10 +74,10 @@ def test_a_task_runs_on_the_worker_and_reports_its_result_or_its_message(assets)
 
 
 def test_the_version_announces_the_new_workspaces_and_the_routes_are_registered(assets):
-    assert assets.catalog()["api_version"] == api.API_VERSION == 12
-    for path in ("/api/options/chain", "/api/options/surface", "/api/futures/curve", "/api/futures/roll", "/api/crypto/funding", "/api/ml/catalog", "/api/ml/experiments"):
+    assert assets.catalog()["api_version"] == api.API_VERSION == 13
+    for path in ("/api/options/chain", "/api/options/surface", "/api/options/distribution", "/api/options/positioning", "/api/futures/curve", "/api/futures/roll", "/api/crypto/funding", "/api/ml/catalog", "/api/ml/experiments"):
         assert path in assets.extra_get, path
-    for path in ("/api/options/portfolio-risk", "/api/options/strategy/payoff", "/api/options/strategy/backtest", "/api/ml/train", "/api/ml/search", "/api/ml/combine"):
+    for path in ("/api/options/portfolio-risk", "/api/options/strategy/payoff", "/api/options/strategy/backtest", "/api/options/strategy/sweep", "/api/options/strategy/compare", "/api/ml/train", "/api/ml/search", "/api/ml/combine"):
         assert path in assets.extra_post, path
 
 
@@ -166,6 +166,90 @@ def test_an_option_strategy_backtest_is_a_job_on_the_simulated_market_and_says_s
     for bad, text in (({"strategy": "nope"}, "strategy must"), ({"strategy": "short_put", "params": {"bogus": 1}}, "no setting"), ({"days": 10}, "days")):
         with pytest.raises(ApiError, match=text):
             assets.extra_post["/api/options/strategy/backtest"]({"strategy": "short_put", **bad} if "strategy" not in bad else bad)
+
+
+def test_the_distribution_endpoint_gives_the_implied_density_the_expected_moves_and_the_model_free_volatility(assets):
+    out = _safe(assets.extra_get["/api/options/distribution"]({"underlying": "AAA"}))
+    d = out["distribution"]
+    assert out["source"] == "mixed" and out["sources"]["chain"] == "simulated" and 20 <= d["dte"] <= 40 and out["expiry"] == d["expiry"] and any("risk-neutral" in n for n in out["notes"])
+    assert len(d["price"]) == len(d["density"]) == len(d["cdf"]) == len(d["lognormal"]) and d["price"] == sorted(d["price"]) and 0.99 < d["area"] <= 1.0001
+    q = [d["quantiles"][k] for k in ("0.01", "0.05", "0.1", "0.25", "0.5", "0.75", "0.9", "0.95", "0.99")]
+    assert q == sorted(q) and q[0] < d["spot"] < q[-1] and d["moments"]["skewness"] < 0 and d["fit"]["arbitrage_free"] and d["fit"]["max_error_vol"] < 0.01
+    assert any(t["side"] == "fall" and t["implied"] > t["lognormal"] for t in d["tails"])
+    moves = out["expected_moves"]
+    assert [m["dte"] for m in moves] == sorted(m["dte"] for m in moves) and len(moves) >= 8 and all(0 < m["straddle_pct"] < m["one_sd_pct"] < 1 for m in moves)
+    mf = out["model_free"]
+    assert mf["iv_30d"] > mf["atm_30d"] > 0.05 and len(mf["rows"]) >= 8 and mf["realized_21d"] > 0 and out["cone"]["rows"] and any(r["implied"] for r in out["cone"]["rows"]) and {"distribution", "model_free", "cone"} <= set(out["references"])
+    assert all(r["url"] is None or r["url"].startswith("https://") for refs in out["references"].values() for r in refs) and out["references"]["distribution"][0]["cite"].startswith("Breeden and Litzenberger (1978)")
+    nxt = out["expiries"][4]["expiry"]
+    later = assets.extra_get["/api/options/distribution"]({"underlying": "AAA", "expiry": nxt})
+    assert later["distribution"]["expiry"] == nxt and later["distribution"]["dte"] > d["dte"] and later["distribution"]["moments"]["sd_log_return"] > d["moments"]["sd_log_return"]
+    for fn_args, text in (({"underlying": "NOPE"}, "unknown underlying"), ({"underlying": "AAA", "expiry": "2030-01-01"}, "not on the chain"), ({"underlying": "AAA", "expiry": "soon"}, "")):
+        with pytest.raises((ApiError, ValueError), match=text or None):
+            assets.extra_get["/api/options/distribution"](fn_args)
+
+
+def test_the_positioning_endpoint_maps_open_interest_walls_max_pain_and_gamma(assets):
+    out = _safe(assets.extra_get["/api/options/positioning"]({"underlying": "AAA"}))
+    p = out["positioning"]
+    assert out["expiry"] is None and p["scope"] == "all expiries" and p["max_pain"] is None and p["call_oi"] > 0 and p["put_oi"] > 0 and p["put_call_oi"] == p["put_oi"] / p["call_oi"]
+    assert p["put_wall"] <= p["spot"] <= p["call_wall"] and p["rows"] and p["gex"]["curve"]["spot"] == sorted(p["gex"]["curve"]["spot"]) and len(p["gex"]["curve"]["net"]) == len(p["gex"]["curve"]["spot"])
+    assert any("no sign" in n for n in out["notes"]) and out["references"]["positioning"] and out["sources"]["open_interest"] == "simulated"
+    one = assets.extra_get["/api/options/positioning"]({"underlying": "AAA", "expiry": out["expiries"][3]["expiry"]})["positioning"]
+    strikes = [r["strike"] for r in one["rows"]]
+    assert one["max_pain"] in strikes and strikes == sorted(strikes) and one["call_oi"] < p["call_oi"] and one["scope"] == out["expiries"][3]["expiry"]
+    assert assets.extra_get["/api/options/positioning"]({"underlying": "AAA", "expiry": "all"})["positioning"]["scope"] == "all expiries"
+    with pytest.raises(ApiError, match="not on the chain"):
+        assets.extra_get["/api/options/positioning"]({"underlying": "AAA", "expiry": "2030-01-01"})
+
+
+def test_a_named_structure_comes_with_its_group_sources_odds_by_price_and_up_to_three_comparisons(assets):
+    out = _safe(assets.extra_post["/api/options/strategy/payoff"]({"underlying": "AAA", "strategy": "collar", "dte": 30, "compare": ["iron_butterfly", "long_straddle", "collar"]}))
+    a = out["analysis"]
+    assert out["strategy"] == "collar" and out["group"] == "Own the shares" and out["references"][0]["cite"].startswith("Israelov and Klein (2016)") and a["margin"]["defined_risk"]
+    assert [c["strategy"] for c in out["compare"]] == ["iron_butterfly", "long_straddle"]                                  # the structure itself is not repeated
+    assert all(len(c["curve"]) == len(a["curve"]["spot"]) and c["group"] for c in out["compare"]) and out["compare"][0]["net_credit"] > 0 and out["compare"][1]["unlimited_profit"]
+    assert {"edges", "mass"} <= set(a["density"]) and a["grid"]["days"][0] == 0 and {"delta", "gamma", "vega", "theta"} <= set(a["greeks_curve"])
+    cash = assets.extra_post["/api/options/strategy/payoff"]({"underlying": "AAA", "strategy": "cash_secured_put"})["analysis"]
+    assert cash["margin"]["cash_secured"] and not any("naked" in f for f in cash["risk_flags"])
+    custom = assets.extra_post["/api/options/strategy/payoff"]({"underlying": "AAA", "legs": [{"type": "option", "right": "C", "strike": 220, "quantity": 1, "dte": 45}], "compare": ["collar"]})
+    assert custom["strategy"] is None and custom["text"] == "Your own legs" and custom["group"] is None and custom["references"] == [] and custom["compare"][0]["strategy"] == "collar"
+    for bad, text in (({"compare": ["nope"]}, "unknown structure"), ({"compare": "collar"}, "list of up to three"), ({"compare": ["collar", "strap", "strip", "long_put"]}, "list of up to three"), ({"strategy": "nope"}, "unknown strategy")):
+        with pytest.raises(ApiError, match=text):
+            assets.extra_post["/api/options/strategy/payoff"]({"underlying": "AAA", **({"strategy": "long_call"} | bad)})
+
+
+def test_the_catalog_groups_the_structures_and_gives_every_strategy_its_sources(assets):
+    cat = _safe(assets.extra_get["/api/assets/catalog"]({}))
+    from src.assets import options_analytics as oa
+
+    assert cat["option_groups"] == list(oa.STRATEGY_GROUPS) and {s["group"] for s in cat["option_strategies"]} == set(oa.STRATEGY_GROUPS)
+    assert all(s["references"] for s in cat["option_strategies"]) and all(b["references"] for b in cat["option_backtests"]) and cat["option_timing"]["defaults"] == {"window": 21, "threshold": 0.0}
+    assert {b["id"] for b in cat["option_backtests"]} >= {"put_spread", "iron_butterfly", "collar", "protective_put"} and len(cat["option_strategies"]) == 25
+
+
+def test_an_options_backtest_can_wait_for_a_positive_variance_premium_and_returns_the_risk_views(assets):
+    plain = finished(assets, assets.extra_post["/api/options/strategy/backtest"]({"strategy": "collar", "days": 90, "params": {"call_moneyness": 1.08}}))
+    assert plain["timing"] is None and plain["params"] == {"call_moneyness": 1.08} and plain["references"][0]["cite"].startswith("Israelov and Klein (2016)")
+    assert {"drawdown", "rolling_vol", "years", "monthly", "distribution", "risk", "drawdown_episodes", "calendar_months", "share_in_market"} <= set(plain)
+    timed = finished(assets, assets.extra_post["/api/options/strategy/backtest"]({"strategy": "short_put", "days": 90, "timing": {"window": 21, "threshold": 0.5}}))
+    assert timed["timing"] == {"window": 21, "threshold": 0.5} and timed["trades"] == 0 and timed["share_in_market"] == 0.0 and any(r["cite"].startswith("Bollerslev") for r in timed["references"])
+    for bad, text in (({"timing": {"window": 2}}, "timing window"), ({"timing": {"speed": 1}}, "timing takes"), ({"params": {"long_delta": 0.5}, "strategy": "put_spread"}, "long_delta")):
+        with pytest.raises(ApiError, match=text):
+            assets.extra_post["/api/options/strategy/backtest"]({"strategy": "short_put", "days": 90, **bad})
+
+
+def test_a_sweep_and_a_comparison_are_jobs_that_run_the_same_market_and_refuse_bad_requests(assets):
+    sweep = finished(assets, assets.extra_post["/api/options/strategy/sweep"]({"strategy": "short_put", "days": 70, "sweep_param": "delta", "sweep_values": [0.1, 0.2, 0.3], "params": {"dte": 30}}))
+    assert sweep["kind"] == "options_sweep" and sweep["param"] == "delta" and [r["value"] for r in sweep["rows"]] == [0.1, 0.2, 0.3] and sweep["base"] == 0.25 and sweep["params"] == {"dte": 30}
+    assert all({"sharpe", "cagr", "max_drawdown", "cvar_95", "trades", "costs"} <= set(r) for r in sweep["rows"])
+    cmp = finished(assets, assets.extra_post["/api/options/strategy/compare"]({"days": 70, "strategies": ["short_put", "put_spread", "collar"]}))
+    assert cmp["kind"] == "options_compare" and [r["strategy"] for r in cmp["rows"]] == ["short_put", "put_spread", "collar"] and set(cmp["equity"]) == {"short_put", "put_spread", "collar"} and cmp["benchmark"]
+    for path, body, text in (("sweep", {"strategy": "short_put", "sweep_param": "delta", "sweep_values": [0.1]}, "between 2 and 9"), ("sweep", {"strategy": "short_put", "sweep_param": "nope", "sweep_values": [1, 2]}, "numeric setting"),
+                             ("sweep", {"strategy": "short_put", "sweep_param": "delta", "sweep_values": "0.1"}, "list of numbers"), ("sweep", {"strategy": "short_put", "sweep_param": "delta", "sweep_values": [0.1, "x"]}, ""),
+                             ("compare", {"strategies": ["short_put"]}, "at least two"), ("compare", {"strategies": ["short_put", "naked_hope"]}, "at least two"), ("compare", {"days": 5}, "days")):
+        with pytest.raises((ApiError, ValueError), match=text or None):
+            assets.extra_post["/api/options/strategy/" + path](body)
 
 
 # ------------------------------------------------------------------------------------------------------------------ futures

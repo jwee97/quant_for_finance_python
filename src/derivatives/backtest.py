@@ -274,6 +274,16 @@ def pick_by_delta(chain: pd.DataFrame, expiry, right: str, target_delta: float):
     return float(g["strike"].iloc[i]), float(delta[i])
 
 
+def pick_by_moneyness(chain: pd.DataFrame, expiry, right: str, moneyness: float):
+    """The quoted strike (a live bid) at ``expiry`` of the given ``right`` nearest ``moneyness`` times the underlying's price (0.95 is five per cent below the market): the strikes of the Cboe
+    95-110 collar and 5% put-protection indices are set this way."""
+    g = chain[(chain["expiry"] == expiry) & (chain["right"] == right) & (chain["bid"] > 0)]
+    if g.empty:
+        return None
+    target = float(moneyness) * float(g["underlying"].iloc[0])
+    return float(g["strike"].iloc[int(np.argmin(np.abs(g["strike"].to_numpy() - target)))])
+
+
 def pick_atm(chain: pd.DataFrame, expiry):
     """The strike nearest the forward at ``expiry``."""
     g = chain[chain["expiry"] == expiry]

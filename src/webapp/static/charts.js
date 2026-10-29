@@ -1,4 +1,4 @@
-/* Small SVG chart kit: line, area, columns, horizontal bars (and waterfalls), month heat map, matrix, scatter, histogram. No dependencies; labels are inserted with textContent only. */
+/* Small SVG chart kit: line, area, columns, mirrored columns, horizontal bars (and waterfalls), month heat map, matrix, scatter, histogram. No dependencies; labels are inserted with textContent only. */
 (function () {
   "use strict";
   const NS = "http://www.w3.org/2000/svg";
@@ -92,7 +92,8 @@
      arrays ({ lo, hi, color, name }), which is how a range of outcomes (a fan of wealth paths) is drawn behind its median. o.tipExtra(i) adds [label, text] rows to the hover.
    o.regions shades stretches of the horizontal axis behind the lines ({ from, to, name }, in the axis' own units: date strings, or numbers) and names them above the plot: the training, validation, test and
    forward sections of a machine-learning equity curve. o.vlines marks single positions ({ x, label }): today's price and the break-evens on a payoff chart. o.signFill shades the first series against
-   the baseline, blue where it is above and red where it is below (profit and loss). */
+   the baseline, blue where it is above and red where it is below (profit and loss). o.ylim = [low, high] fixes the vertical range and cuts every line and band off at the edges of the plot, so that one series that runs
+   far beyond the others (a structure with unlimited profit drawn beside one without) does not flatten them. */
   let uid = 0;
   function line(host, o) {
     const W = width(host);
@@ -109,6 +110,7 @@
     for (const b of bands) for (const arr of [b.lo, b.hi]) for (const v of arr) if (v !== null && isFinite(v) && (!log || v > 0)) { lo = Math.min(lo, v); hi = Math.max(hi, v); }
     if (o.include !== undefined) { lo = Math.min(lo, o.include); hi = Math.max(hi, o.include); }
     if (!isFinite(lo)) { el("text", { x: W / 2, y: H / 2, "text-anchor": "middle" }, svg, "No data"); return; }
+    if (o.ylim) { lo = o.ylim[0]; hi = o.ylim[1]; }
     const pad = (hi - lo) * 0.05 || 0.5;
     if (!log) { lo -= pad; hi += pad; if (o.floor !== undefined) lo = Math.min(lo, o.floor); if (o.ceil !== undefined) hi = Math.max(hi, o.ceil); }
     const ticks = log ? logTicks(lo, hi) : niceTicks(lo, hi, 5);
@@ -137,11 +139,13 @@
       el("line", { x1: px, x2: px, y1: m.t, y2: m.t + ih, class: "ref" }, svg);
       if (v.label && px - lastLabelX > 8 * v.label.length * 0.8 + 6) { el("text", { x: px, y: m.t - 8, "text-anchor": "middle", class: "ink" }, svg, v.label); lastLabelX = px; }
     }
+    const clipId = o.ylim ? "yc" + ++uid : null, clip = clipId ? { "clip-path": `url(#${clipId})` } : {};
+    if (clipId) el("rect", { x: m.l, y: m.t, width: iw, height: ih }, el("clipPath", { id: clipId }, el("defs", {}, svg)));
     for (const b of bands) {
       const keep = []; b.hi.forEach((v, i) => { const l = b.lo[i]; if (v !== null && l !== null && isFinite(v) && isFinite(l) && (!log || (v > 0 && l > 0))) keep.push(i); });
       if (keep.length < 2) continue;
       const top = keep.map((i, k) => (k ? "L" : "M") + X(dates[i]).toFixed(1) + " " + Y(b.hi[i]).toFixed(1)).join(""), bottom = keep.slice().reverse().map((i) => "L" + X(dates[i]).toFixed(1) + " " + Y(b.lo[i]).toFixed(1)).join("");
-      el("path", { d: top + bottom + "Z", fill: b.color, "fill-opacity": b.opacity || 0.14, stroke: "none" }, svg);
+      el("path", { d: top + bottom + "Z", fill: b.color, "fill-opacity": b.opacity || 0.14, stroke: "none", ...clip }, svg);
     }
     const paths = [];
     o.series.forEach((s, k) => {
@@ -151,7 +155,7 @@
         if (v === null || !isFinite(v) || (log && v <= 0)) { if (!s.connect) pen = false; return; }
         const x = X(dates[i]), y = Y(v);
         d += (pen ? "L" : "M") + x.toFixed(1) + " " + y.toFixed(1); pen = true; lastX = x; lastY = y; if (first === null) first = [x, y];
-        if (s.dots) marks.push([x, y]);
+        if (s.dots && (!o.ylim || (v >= o.ylim[0] && v <= o.ylim[1]))) marks.push([x, y]);
       });
       if (o.signFill && k === 0 && first) {
         const yz = Y(o.baseline !== undefined ? o.baseline : 0), id = "sf" + ++uid, defs = el("defs", {}, svg), area = d + `L${lastX.toFixed(1)} ${yz.toFixed(1)}L${first[0].toFixed(1)} ${yz.toFixed(1)}Z`;
@@ -160,8 +164,8 @@
         el("path", { d: area, fill: css("--pos"), "fill-opacity": 0.14, stroke: "none", "clip-path": `url(#${id}u)` }, svg);
         el("path", { d: area, fill: css("--neg"), "fill-opacity": 0.14, stroke: "none", "clip-path": `url(#${id}d)` }, svg);
       }
-      if (o.area && k === 0 && first) el("path", { d: d + `L${lastX.toFixed(1)} ${(o.areaBase !== undefined ? Y(o.areaBase) : m.t + ih).toFixed(1)}L${first[0].toFixed(1)} ${(o.areaBase !== undefined ? Y(o.areaBase) : m.t + ih).toFixed(1)}Z`, fill: s.color, "fill-opacity": 0.1, stroke: "none" }, svg);
-      const stroke = { d, fill: "none", stroke: s.color, "stroke-width": s.width || 2, "stroke-linejoin": "round", "stroke-linecap": "round" };
+      if (o.area && k === 0 && first) el("path", { d: d + `L${lastX.toFixed(1)} ${(o.areaBase !== undefined ? Y(o.areaBase) : m.t + ih).toFixed(1)}L${first[0].toFixed(1)} ${(o.areaBase !== undefined ? Y(o.areaBase) : m.t + ih).toFixed(1)}Z`, fill: s.color, "fill-opacity": 0.1, stroke: "none", ...clip }, svg);
+      const stroke = { d, fill: "none", stroke: s.color, "stroke-width": s.width || 2, "stroke-linejoin": "round", "stroke-linecap": "round", ...clip };
       if (s.dash) stroke["stroke-dasharray"] = s.dash;
       if (d) el("path", stroke, svg);
       for (const [x, y] of marks) el("circle", { cx: x, cy: y, r: s.dotSize || 3.5, fill: s.color, stroke: css("--surface"), "stroke-width": 1.5 }, svg);
@@ -234,6 +238,44 @@
       const hit = el("rect", { x: cx - slot / 2, y: m.t, width: slot, height: ih, fill: "transparent" }, svg);
       hit.addEventListener("pointermove", () => { bar.setAttribute("opacity", 0.8); tip.replaceChildren(); html("div", "t", tip, o.tipLabel ? o.tipLabel(i) : String(lab)); const r2 = html("div", "r", tip); html("span", "k", r2, o.name || "Value"); html("b", "", r2, (o.tipFormat || o.yFormat)(v)); place(tip, host, cx, Y(Math.max(v, 0))); });
       hit.addEventListener("pointerleave", () => { bar.setAttribute("opacity", 1); tip.hidden = true; });
+    });
+  }
+
+  /* ---------- mirrored columns: two measures of the same strikes or dates, one drawn up and one down from the baseline ----------
+     o.labels names each column (a blank label draws nothing); o.up and o.down are arrays of non-negative numbers, the second drawn below the baseline (calls above and puts below); o.upName and o.downName name them
+     in the legend and the hover and o.upColor and o.downColor colour them; o.yFormat writes an axis value (without a sign) and o.tipFormat a hover value; o.tipTitle(i) names a column in the hover;
+     o.mark is the index of a column to point out (the one nearest the price) and o.markLabel names it. */
+  function mirror(host, o) {
+    const W = width(host);
+    host.replaceChildren();
+    const clean = (a) => a.map((v) => (v === null || !isFinite(v) ? 0 : Math.max(v, 0))), up = clean(o.up), down = clean(o.down), upColor = o.upColor || css("--s1"), downColor = o.downColor || css("--s2");
+    legend(host, [{ name: o.upName, color: upColor, box: true, opacity: 0.4 }, { name: o.downName, color: downColor, box: true, opacity: 0.4 }]);
+    const H = o.height || 260, m = { l: 56, r: 10, t: 16, b: 26 }, iw = W - m.l - m.r, ih = H - m.t - m.b;
+    const svg = el("svg", { class: "chart", viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": o.label || "mirrored column chart" }, host);
+    const top = Math.max(0, ...up), bottom = Math.max(0, ...down);
+    if (!(top || bottom)) { el("text", { x: W / 2, y: H / 2, "text-anchor": "middle" }, svg, "No data"); return; }
+    const ticks = niceTicks(-bottom * 1.08, top * 1.08, 5), min = Math.min(ticks[0], -bottom), max = Math.max(ticks[ticks.length - 1], top), fy = o.yFormat || fmt.num;
+    const Y = (v) => m.t + ih - ((v - min) / (max - min || 1)) * ih;
+    for (const v of ticks) { el("line", { x1: m.l, x2: W - m.r, y1: Y(v), y2: Y(v), class: "grid" }, svg); el("text", { x: m.l - 6, y: Y(v) + 4, "text-anchor": "end" }, svg, fy(Math.abs(v))); }
+    el("line", { x1: m.l, x2: W - m.r, y1: Y(0), y2: Y(0), class: "axis" }, svg);
+    const n = o.labels.length, slot = iw / n, bw = Math.max(1, Math.min(24, slot - 1.5)), tip = tooltip(host), y0 = Y(0);
+    if (o.mark !== undefined && o.mark >= 0 && o.mark < n) {                                  // the column to point out: a reference line behind the bars
+      const px = m.l + slot * (o.mark + 0.5);
+      el("line", { x1: px, x2: px, y1: m.t, y2: m.t + ih, class: "ref" }, svg);
+      if (o.markLabel) el("text", { x: px, y: m.t - 5, "text-anchor": "middle", class: "ink" }, svg, o.markLabel);
+    }
+    o.labels.forEach((lab, i) => {
+      const cx = m.l + slot * (i + 0.5), x = cx - bw / 2, bars = [];
+      if (up[i] > 0) { const hgt = Math.max(1, y0 - Y(up[i])); bars.push(el("rect", { x, y: y0 - hgt, width: bw, height: hgt, fill: upColor, rx: Math.min(2, bw / 2) }, svg)); }
+      if (down[i] > 0) { const hgt = Math.max(1, Y(-down[i]) - y0); bars.push(el("rect", { x, y: y0, width: bw, height: hgt, fill: downColor, rx: Math.min(2, bw / 2) }, svg)); }
+      if (lab !== "" && lab !== null && lab !== undefined) el("text", { x: cx, y: H - 8, "text-anchor": "middle" }, svg, String(lab));
+      const hit = el("rect", { x: cx - slot / 2, y: m.t, width: slot, height: ih, fill: "transparent" }, svg);
+      hit.addEventListener("pointermove", () => {
+        bars.forEach((b) => b.setAttribute("opacity", 0.75)); tip.replaceChildren(); html("div", "t", tip, o.tipTitle ? o.tipTitle(i) : String(lab));
+        for (const [name, v, c] of [[o.upName, up[i], upColor], [o.downName, down[i], downColor]]) { const r = html("div", "r", tip), kk = html("span", "k", r), sw = html("i", "", kk); sw.style.setProperty("--c", c); kk.appendChild(document.createTextNode(name)); html("b", "", r, (o.tipFormat || fy)(v)); }
+        place(tip, host, cx, m.t + 20);
+      });
+      hit.addEventListener("pointerleave", () => { bars.forEach((b) => b.setAttribute("opacity", 1)); tip.hidden = true; });
     });
   }
 
@@ -438,5 +480,5 @@
     overlay.addEventListener("focus", () => show(svg.getBoundingClientRect().left + svg.getBoundingClientRect().width * 0.5)); overlay.addEventListener("blur", hide);
   }
 
-  window.Charts = { line, columns, hbars, heatmap, matrix, scatter, histogram, fmt, html, el, niceTicks };
+  window.Charts = { line, columns, mirror, hbars, heatmap, matrix, scatter, histogram, fmt, html, el, niceTicks };
 })();

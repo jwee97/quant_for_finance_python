@@ -121,6 +121,118 @@ def test_the_option_chain_shows_both_sides_and_the_strategy_builder_draws_a_payo
     assert "Break-even" in ws.inner_text("#options-results") and ws.locator("#options-results svg.chart").count() >= 1 and ws.locator("#options-results .banner.err").count() == 0
 
 
+def _options_run_finished(page):
+    """Wait for a request on the Options tab to end: the run button is greyed while one is under way."""
+    time.sleep(0.6)
+    _wait_until(page, "document.querySelector('#options .runbar button.primary').disabled === false", timeout=600.0)
+
+
+def test_the_options_distribution_view_draws_the_implied_density_the_moves_the_smile_and_the_cone(ws):
+    ws.click("#tab-options")
+    ws.wait_for_selector("#options-results .tile", timeout=90_000)
+    _mode(ws, "options", "distribution")
+    ws.wait_for_selector("#options-results .charts", timeout=120_000)
+    text = ws.inner_text("#options-results")
+    for title in ("Move the straddle prices in", "68% of outcomes between", "Chance of a 10% fall", "Model-free volatility, 30 days", "What the options imply for the price in", "Chance of a large move", "The move each expiry prices in",
+                  "The smile the density comes from", "Model-free against at-the-money volatility", "Volatility cone: implied against the stock's own history"):
+        assert title in text, title
+    assert ws.locator("#options-results svg.chart").count() >= 6 and ws.locator("#options-results .banner.err").count() == 0 and "Simulated" in text
+    pills = ws.locator("#options-results .filters .tabsmall button")
+    before = ws.locator("#options-results .filters .tabsmall button[aria-pressed=true]").get_attribute("data-value")
+    target = pills.nth(pills.count() - 3)
+    chosen = target.get_attribute("data-value")
+    assert chosen != before
+    target.click()
+    _wait_until(ws, f"document.querySelector('#options-results .filters .tabsmall button[aria-pressed=true]').dataset.value === '{chosen}'", timeout=120.0)
+    assert chosen in ws.inner_text("#options-results h2, #options-results .labhead") or chosen in ws.inner_text("#options-results")
+    ws.click("#options-results details.how:has(summary:text-is('Where these ideas come from')) summary")
+    links = ws.locator("#options-results details.how:has(summary:text-is('Where these ideas come from')) a")
+    assert links.count() >= 8 and all(links.nth(i).get_attribute("href").startswith("https://") for i in range(links.count()))
+    assert any("10.1086/296025" in links.nth(i).get_attribute("href") for i in range(links.count()))                         # Breeden and Litzenberger
+
+
+def test_the_options_positioning_view_maps_open_interest_walls_and_gamma(ws):
+    ws.click("#tab-options")
+    ws.wait_for_selector("#options-results .tile", timeout=90_000)
+    _mode(ws, "options", "positioning")
+    ws.wait_for_selector("#options-results .charts", timeout=120_000)
+    text = ws.inner_text("#options-results")
+    for title in ("Put-call ratio, open interest", "Call wall", "Put wall", "Gamma exposure", "Gamma flip", "Open interest by strike", "Gamma exposure by strike", "Net gamma exposure as the price moves", "The ten strikes with the most open interest"):
+        assert title in text, title
+    assert "Max pain" not in ws.inner_text("#options-results .earnrow") and ws.locator("#options-results svg.chart").count() >= 3 and "has no sign" in text
+    pills = ws.locator("#options-results .filters .tabsmall button")
+    assert pills.nth(0).inner_text() == "All expiries" and pills.nth(0).get_attribute("aria-pressed") == "true"
+    pills.nth(4).click()
+    _wait_until(ws, "document.querySelectorAll('#options-results .earnrow .tile').length > 5", timeout=120.0)
+    assert "Max pain" in ws.inner_text("#options-results .earnrow")                                                         # an expiry has one; all of them together do not
+    assert ws.locator("#options-results svg.chart rect[fill]").count() > 20
+
+
+def test_the_options_strategy_builder_groups_the_structures_and_draws_them_beside_each_other(ws):
+    ws.click("#tab-options")
+    ws.wait_for_selector("#options-results .tile", timeout=90_000)
+    _mode(ws, "options", "strategy")
+    groups = ws.evaluate("[...document.querySelectorAll('#options select[data-key=strategy] optgroup')].map(g => g.label)")
+    assert groups == ["Bet on direction", "Own the shares", "Sell premium", "Buy volatility", "Bet on a range", "Bet on time", "Your own"]
+    assert ws.locator("#options select[data-key=strategy] option").count() == 26
+    ws.select_option("#options select[data-key=strategy]", "collar")
+    assert ws.locator("#options .refs a").count() >= 2
+    _open_all(ws, "options")
+    for name in ("iron_butterfly", "long_straddle"):
+        ws.click(f"#options .picks button[data-value={name}]")
+    _run(ws, "options")
+    _wait_until(ws, "document.querySelectorAll('#options-results .charts .card').length >= 6", timeout=120.0)
+    text = ws.inner_text("#options-results")
+    for title in ("The structures side by side", "Where the price may end up", "Profit and loss by price and day", "Greeks of the structure by price", "Where the structure comes from", "Backtest the rolling version of this idea"):
+        assert title in text, title
+    assert ws.locator("#options-results .card.wide:has(h3:text-is('The structures side by side')) tbody tr").count() == 3
+    assert ws.locator("#options-results a[href*='10.3905/jai.2016.19.1.041']").count() == 1                                  # Israelov and Klein, on the collar
+    ws.click("#options-results .chartcard:has(h3:text-is('Greeks of the structure by price')) .seg button:text-is('Gamma')")
+    assert "Gamma" in ws.get_attribute("#options-results .chartcard:has(h3:text-is('Greeks of the structure by price')) svg.chart", "aria-label")
+    ws.click("#options-results button:text-is('Backtest the rolling version of this idea')")
+    ws.wait_for_selector("#options select[data-key=bt]", timeout=30_000)
+    assert ws.input_value("#options select[data-key=bt]") == "collar"
+    _mode(ws, "options", "strategy")
+    _open_all(ws, "options")
+    for name in ("strap", "strip", "tail_hedge", "long_put"):                                                              # a fourth structure beside the two already chosen is one too many
+        ws.click(f"#options .picks button[data-value={name}]")
+    assert ws.locator("#options .runbar button.primary").is_disabled() and "at most three" in ws.inner_text("#options .runbar")
+
+
+def test_the_options_backtest_varies_a_setting_runs_every_strategy_and_waits_for_a_rich_premium(ws):
+    ws.click("#tab-options")
+    ws.wait_for_selector("#options-results .tile", timeout=90_000)
+    _mode(ws, "options", "backtest")
+    groups = ws.evaluate("[...document.querySelectorAll('#options select[data-key=bt] optgroup')].map(g => g.label)")
+    assert groups == ["Sell premium", "Own the shares", "Trade volatility and skew"] and ws.locator("#options select[data-key=bt] option").count() == 11
+    ws.fill("#options input[data-key=btDays]", "150")
+    ws.select_option("#options select[data-key=btMode]", "sweep")
+    _open_all(ws, "options")
+    assert ws.input_value("#options select[data-key=sweepParam]") == "delta" and ws.input_value("#options input[data-key=sweepFrom]") != "" and "Values:" in ws.inner_text("#options")
+    ws.fill("#options input[data-key=sweepN]", "3")
+    _run(ws, "options")
+    _options_run_finished(ws)
+    text = ws.inner_text("#options-results")
+    for title in ("Sharpe ratio as delta changes", "Return and worst fall as delta changes", "Drawdown from the previous peak", "Rolling three-month volatility", "Distribution of daily returns", "Every risk measure", "Where the rule comes from"):
+        assert title in text, title
+    assert ws.locator("#options-results .banner.err").count() == 0 and "-0%" not in text.replace("−0%", "-0%").split("Drawdown from the previous peak")[1][:400]
+    ws.select_option("#options select[data-key=btMode]", "compare")
+    _run(ws, "options")
+    _options_run_finished(ws)
+    text = ws.inner_text("#options-results")
+    assert "Every rolling strategy on one simulated market" in text and "Sharpe ratio by strategy" in text and "Return against the worst fall" in text and "Sharpe ratio as delta changes" not in text
+    assert ws.locator("#options-results .card.wide:has(h3:text-is('Every strategy')) tbody tr").count() == 11
+    ws.select_option("#options select[data-key=btMode]", "single")
+    _open_all(ws, "options")
+    ws.check("#options input[data-key=btTiming]")
+    _open_all(ws, "options")                                                                                              # the form is drawn again with the two fields the filter adds, its sections shut
+    ws.fill("#options input[data-key=btThreshold]", "50")
+    _run(ws, "options")
+    _options_run_finished(ws)
+    text = ws.inner_text("#options-results")
+    assert "Time in the market" in text and "traded only while implied volatility is 50.0% above realised" in text and ws.locator("#options-results a[href*='10.1093/rfs/hhp008']").count() >= 1
+
+
 def test_the_futures_margin_view_prices_an_example_book_and_warns(ws):
     ws.click("#tab-futures")
     ws.wait_for_selector("#futures-results .tile", timeout=90_000)
@@ -406,10 +518,10 @@ def test_an_app_without_the_data_routes_explains_the_card_instead_of_leaving_it_
 
 
 def test_an_app_behind_the_page_asks_for_a_restart_on_the_tabs_that_need_more_and_keeps_the_others(browser, live_ws):  # noqa: F811
-    """Each tab needs the API version it was written for: iTick arrived with 6 (Options), the Futures tab's Yahoo search with 7, and the signals board and strategy settings of the Futures and Crypto tabs with 12, the Tune tab and the Machine learning tab's beginner tuning with 8, the Forecast tab with 9. An older app
+    """Each tab needs the API version it was written for: iTick arrived with 6, the Futures tab's Yahoo search with 7, the signals board and strategy settings of the Futures and Crypto tabs with 12, the implied-distribution and open-interest views of the Options tab with 13, the Tune tab and the Machine learning tab's beginner tuning with 8, the Forecast tab with 9. An older app
     says so on exactly the tabs that need a newer one, and the Backtest tab keeps working."""
-    needs = {"options": 6, "futures": 12, "crypto": 12, "ml": 8, "tune": 8, "forecast": 9}
-    for served in (5, 6, 7, 8, 9, 11, 12):
+    needs = {"options": 13, "futures": 12, "crypto": 12, "ml": 8, "tune": 8, "forecast": 9}
+    for served in (5, 6, 7, 8, 9, 11, 12, 13):
         pg = _page_with(browser, live_ws, rewrite=lambda catalog, served=served: catalog.update(api_version=served))
         try:
             pg.wait_for_selector(".chip")

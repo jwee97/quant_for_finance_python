@@ -57,7 +57,7 @@ def test_the_plan_lists_the_models_products_and_what_the_forms_choose_among(app)
 
 def test_the_routes_are_in_the_app_and_the_api_version_says_so(app):
     assert {"/api/models/plan"} <= set(app.extra_get) and {"/api/models/fit", "/api/models/price", "/api/models/hedge"} <= set(app.extra_post)
-    assert app.catalog()["api_version"] == api.API_VERSION == 12
+    assert app.catalog()["api_version"] == api.API_VERSION == 13
 
 
 # ------------------------------------------------------------------------------------------------------------------------------ the fit

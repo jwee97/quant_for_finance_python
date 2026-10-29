@@ -127,6 +127,73 @@
      drawdown with its deepest falls shaded, the volatility through time, the returns by year, calendar month and month, the distribution of days, how the book was spread across the assets through time,
      what each asset earned, and every risk measure with what it means. ``d`` is ``assets.strategy_runs.compact_result``; ``opts.benchmarkName`` names the benchmark ("Equal weight"). */
   const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  /* The charts that describe a daily return series, shared by every page that has one (the pipeline result, the options backtest): the drawdown with its deepest falls shaded, the volatility through time, the
+     returns by year, by calendar month and by month, and the distribution of days with its tail measures. ``d`` carries dates, drawdown, drawdown_episodes, rolling_vol, years, calendar_months, monthly,
+     distribution and risk (``risk.performance``); each chart is left out when its data is. */
+  /* A percentage axis with as many decimals as its range needs, so that neighbouring ticks never read alike ("-0%, -0%, 0%" for a strategy that moves a tenth of a percent); ``floor`` is the fewest decimals. */
+  function pctAxis(values, floor) {
+    const v = values.filter((x) => x !== null && x !== undefined && isFinite(x)), span = v.length ? Math.max(...v) - Math.min(...v) : 1, digits = span >= 0.05 ? 0 : span >= 0.005 ? 1 : span >= 0.0005 ? 2 : 3;
+    return (x) => (x * 100).toFixed(Math.max(digits, floor || 0)) + "%";
+  }
+  function riskCharts(ch, d) {
+    const num = Q.num, pct = Q.pct, C = Q.C, css = Q.css, table = Q.simpleTable, fmt = Q.fmt, rk = d.risk || {};
+    const na = (v, f) => (Q.bad(v) ? "n/a" : f(v)), rows = (n) => d.dates.map((_, i) => i).filter((i) => i % n === 0);
+    const episodes = d.drawdown_episodes || [], last = d.dates[d.dates.length - 1];
+    Q.chartCard(ch, "Drawdown from the previous peak", episodes.length ? "How far below its high the strategy has been; the three deepest falls are shaded, from the peak to the day it was regained. The Table view lists the five deepest." : "How far below its high the strategy has been.", {
+      draw: (b) => C.line(b, { dates: d.dates, series: [{ name: "Strategy", color: css("--s1"), values: d.drawdown }], area: true, areaBase: 0, baseline: 0, ceil: 0, yFormat: pctAxis(d.drawdown), tipFormat: (v) => fmt.pct(v), height: 230, label: "Drawdown",
+        regions: episodes.slice(0, 3).map((e, i) => ({ from: e.peak, to: e.recovered || last, name: `#${i + 1}  ${pctAxis(d.drawdown)(e.depth)}`, color: css("--neg"), opacity: 0.08 })) }),
+      table: (b) => (episodes.length
+        ? table(b, [{ label: "Peak", get: (e) => e.peak }, { label: "Deepest", get: (e) => e.trough }, { label: "Regained", get: (e) => e.recovered || "not yet" }, { label: "Fall", num: true, get: (e) => fmt.pct(e.depth) },
+          { label: "Days down to the low", num: true, get: (e) => e.days_to_trough }, { label: "Days in all", num: true, get: (e) => e.days }], episodes)
+        : table(b, [{ label: "Date", get: (n) => d.dates[n] }, { label: "Drawdown", num: true, get: (n) => pct(d.drawdown[n]) }], rows(4))) });
+    const rv = d.rolling_vol || [], live = rv.filter((v) => v !== null);
+    if (live.length > 20) {
+      const mean = live.reduce((a, b) => a + b, 0) / live.length;
+      Q.chartCard(ch, "Rolling three-month volatility", "Annualised standard deviation of the last 63 daily returns. The dashed line is its average: a strategy whose risk swings far from it is not the one the volatility tile describes.", {
+        draw: (b) => C.line(b, { dates: d.dates, series: [{ name: "63-day volatility", color: css("--s1"), values: rv }, { name: "Average", color: css("--muted"), dash: "5 4", width: 1.25, values: rv.map((v) => (v === null ? null : mean)) }],
+          include: 0, yFormat: pctAxis(live), tipFormat: (v) => fmt.pct(v), height: 230, label: "Rolling volatility" }),
+        table: (b) => table(b, [{ label: "Date", get: (n) => d.dates[n] }, { label: "63-day volatility", num: true, get: (n) => (rv[n] === null ? "" : fmt.pct(rv[n])) }], rows(4)) });
+    }
+    Q.chartCard(ch, "Return by calendar year", "Faded bars are partial years.", {
+      draw: (b) => C.columns(b, { labels: d.years.map((y) => y.year), values: d.years.map((y) => y.value), yFormat: pctAxis([0, ...d.years.map((y) => y.value)]), tipFormat: Q.fmt.spct, faded: d.years.map((y) => y.days < 240), height: 230, name: "Return", label: "Annual returns",
+        tipLabel: (i) => d.years[i].year + (d.years[i].days < 240 ? ` (${d.years[i].days} trading days)` : "") }),
+      table: (b) => table(b, [{ label: "Year", get: (y) => y.year }, { label: "Return", num: true, get: (y) => Q.fmt.spct(y.value) }, { label: "Days", num: true, get: (y) => y.days }], d.years) });
+    const cm = d.calendar_months || [];
+    if (cm.length >= 6) Q.chartCard(ch, "Average return by calendar month", "The mean of every January, every February and so on over the backtest. With a few years of each it describes the sample; it is not a calendar to trade.", {
+      draw: (b) => C.columns(b, { labels: cm.map((c) => MONTHS[c.month - 1]), values: cm.map((c) => c.mean), yFormat: pctAxis([0, ...cm.map((c) => c.mean)], 1), tipFormat: fmt.spct, colors: (v) => (v >= 0 ? css("--pos") : css("--neg")), height: 230, name: "Average return",
+        tipLabel: (i) => `${MONTHS[cm[i].month - 1]} · ${cm[i].n} years · up in ${(cm[i].hit_rate * 100).toFixed(0)}% of them`, label: "Average return by calendar month" }),
+      table: (b) => table(b, [{ label: "Month", get: (c) => MONTHS[c.month - 1] }, { label: "Years", num: true, get: (c) => c.n }, { label: "Average", num: true, get: (c) => fmt.spct(c.mean) }, { label: "Median", num: true, get: (c) => fmt.spct(c.median) },
+        { label: "Best", num: true, get: (c) => fmt.spct(c.best) }, { label: "Worst", num: true, get: (c) => fmt.spct(c.worst) }, { label: "Up in", num: true, get: (c) => pct(c.hit_rate, 0) }], cm) });
+    if ((d.monthly || []).length >= 6) Q.chartCard(ch, "Monthly returns", "Blue is a gain and red a loss; shade shows size (capped at ±12%).", { wide: true,
+      draw: (b) => C.heatmap(b, { cells: d.monthly, label: "Monthly returns" }),
+      table: (b) => table(b, [{ label: "Month", get: (c) => `${c.year}-${String(c.month).padStart(2, "0")}` }, { label: "Return", num: true, get: (c) => fmt.spct(c.value) }], d.monthly.slice().reverse()) });
+    const dist = d.distribution;
+    if (dist && dist.counts) Q.chartCard(ch, "Distribution of daily returns", "The central 99% of days: the height is the share of days in each band of return. The second line is the normal distribution with the same mean and spread: where the strategy's line is higher at the centre and in the tails, its days are more extreme than a bell curve says. Markers: the loss exceeded on 5% of days (VaR) and the average loss beyond it (ES).", {
+      draw: (b) => C.histogram(b, { series: [{ name: "Strategy", edges: dist.edges, counts: dist.counts, color: css("--s1") }, { name: "Normal, same mean and spread", edges: dist.edges, counts: dist.normal, color: css("--s2") }],
+        markers: [{ x: 0, label: "0" }, ...(rk.var_95 === undefined ? [] : [{ x: -rk.var_95, label: "VaR" }, { x: -rk.es_95, label: "ES" }])], xFormat: pctAxis(dist.edges, 1), unit: dist.edges[1] - dist.edges[0], yFormat: (v) => (v * 100).toFixed(0) + "%", height: 230, label: "Distribution of daily returns" }),
+      table: (b) => table(b, [{ label: "Measure", get: (x) => x[0] }, { label: "Value", num: true, get: (x) => x[1] }], [["Days", String(dist.n)], ["Mean daily return", fmt.spct(dist.mean, 3)], ["Daily standard deviation", pct(dist.sd, 2)],
+        ["Loss exceeded on 5% of days (VaR 95%)", na(rk.var_95, (v) => pct(v, 2))], ["Average loss on those days (ES 95%)", na(rk.es_95, (v) => pct(v, 2))]]) });
+  }
+  /* "Every risk measure": the ratios, the losses and the shape of the returns in three columns of labelled figures, and the beta and alpha against each benchmark in ``d.benchmark_relative``. */
+  function riskGrid(root, d, benchmarkName) {
+    const num = Q.num, pct = Q.pct, fmt = Q.fmt, rk = d.risk || {}, bn = benchmarkName || "Equal weight";
+    const na = (v, f) => (Q.bad(v) ? "n/a" : f(v)), n2 = (v) => num(v);
+    if (rk.var_95 !== undefined) {
+      const rc = card(root, "Every risk measure", "Over the whole backtest, from daily net returns, 252 days to a year, with a risk-free rate of zero. A ratio whose denominator is zero (no losing day, no fall) is n/a."), grid = h("div", "kvgrid", rc);
+      kv(grid, "Return for the risk taken", [["Sortino ratio (downside risk only)", na(rk.sortino, n2)], ["Calmar ratio (CAGR ÷ deepest fall)", na(rk.calmar, n2)], ["Martin ratio (CAGR ÷ Ulcer index)", na(rk.martin_ratio, n2)],
+        ["Omega ratio (gains ÷ losses)", na(rk.omega, n2)], ["Gain to pain (sum of months ÷ sum of the losing months)", na(rk.gain_to_pain, n2)], ["Recovery factor (total return ÷ deepest fall)", na(rk.recovery_factor, n2)], ["Kelly leverage (mean ÷ variance of daily returns)", na(rk.kelly_leverage, n2)]]);
+      kv(grid, "Losses", [["Loss exceeded on 1 day in 20 (VaR 95%)", na(rk.var_95, (v) => pct(v, 2))], ["Average loss on those days (ES 95%)", na(rk.es_95, (v) => pct(v, 2))], ["Loss exceeded on 1 day in 100 (VaR 99%)", na(rk.var_99, (v) => pct(v, 2))],
+        ["Cornish-Fisher VaR 95% (adjusts for skew and fat tails)", na(rk.cornish_fisher_var_95, (v) => pct(v, 2))], ["Average drawdown", na(rk.average_drawdown, (v) => pct(v, 1))], ["Pain index (mean depth of the drawdown)", na(rk.pain_index, (v) => pct(v, 1))]]);
+      kv(grid, "Shape of the returns", [["Days with a gain", na(rk.positive_days, (v) => pct(v, 1))], ["Skewness", na(rk.skew, n2)], ["Excess kurtosis", na(rk.excess_kurtosis, n2)], ["Tail ratio (95th ÷ 5th percentile of daily returns)", na(rk.tail_ratio, n2)],
+        ["Years of returns needed for 95% confidence that the Sharpe ratio is above 0", na(rk.min_track_record_years, (v) => num(v, 1))]]);
+      for (const [name, v] of Object.entries(d.benchmark_relative || {})) {
+        if (!v || v.beta === undefined) continue;
+        kv(grid, "Against " + (name === "equal_weight" ? bn.toLowerCase() : name.replace(/_/g, " ")), [["Beta", na(v.beta, n2)], ["Alpha a year (after beta)", na(v.alpha_annual, (x) => fmt.spct(x))], ["Correlation", na(v.correlation, n2)], ["Tracking error", na(v.tracking_error, (x) => pct(x, 1))],
+          ["Information ratio", na(v.information_ratio, n2)], ["Up-capture (gain on its up days)", na(v.up_capture, (x) => pct(x, 0))], ["Down-capture (loss on its down days)", na(v.down_capture, (x) => pct(x, 0))]]);
+      }
+    }
+  }
+
   function pipelineResult(root, d, opts) {
     const o = opts || {}, m = d.metrics, bn = o.benchmarkName || "Equal weight", tile = Q.tile, num = Q.num, pct = Q.pct, C = Q.C, css = Q.css, table = Q.simpleTable, fmt = Q.fmt, rk = d.risk || {};
     const na = (v, f) => (Q.bad(v) ? "n/a" : f(v)), n2 = (v) => num(v), rows = (n) => d.dates.map((_, i) => i).filter((i) => i % n === 0);
@@ -157,41 +224,7 @@
     mark();
     l1.addEventListener("click", () => { log = false; mark(); growth._draw(); });
     l2.addEventListener("click", () => { log = true; mark(); growth._draw(); });
-    const episodes = d.drawdown_episodes || [], last = d.dates[d.dates.length - 1];
-    Q.chartCard(ch, "Drawdown from the previous peak", episodes.length ? "How far below its high the strategy has been; the three deepest falls are shaded, from the peak to the day it was regained. The Table view lists the five deepest." : "How far below its high the strategy has been.", {
-      draw: (b) => C.line(b, { dates: d.dates, series: [{ name: "Strategy", color: css("--s1"), values: d.drawdown }], area: true, areaBase: 0, baseline: 0, ceil: 0, yFormat: (v) => (v * 100).toFixed(0) + "%", tipFormat: (v) => fmt.pct(v), height: 230, label: "Drawdown",
-        regions: episodes.slice(0, 3).map((e, i) => ({ from: e.peak, to: e.recovered || last, name: `#${i + 1}  ${(e.depth * 100).toFixed(0)}%`, color: css("--neg"), opacity: 0.08 })) }),
-      table: (b) => (episodes.length
-        ? table(b, [{ label: "Peak", get: (e) => e.peak }, { label: "Deepest", get: (e) => e.trough }, { label: "Regained", get: (e) => e.recovered || "not yet" }, { label: "Fall", num: true, get: (e) => fmt.pct(e.depth) },
-          { label: "Days down to the low", num: true, get: (e) => e.days_to_trough }, { label: "Days in all", num: true, get: (e) => e.days }], episodes)
-        : table(b, [{ label: "Date", get: (n) => d.dates[n] }, { label: "Drawdown", num: true, get: (n) => pct(d.drawdown[n]) }], rows(4))) });
-    const rv = d.rolling_vol || [], live = rv.filter((v) => v !== null);
-    if (live.length > 20) {
-      const mean = live.reduce((a, b) => a + b, 0) / live.length;
-      Q.chartCard(ch, "Rolling three-month volatility", "Annualised standard deviation of the last 63 daily returns. The dashed line is its average: a strategy whose risk swings far from it is not the one the volatility tile describes.", {
-        draw: (b) => C.line(b, { dates: d.dates, series: [{ name: "63-day volatility", color: css("--s1"), values: rv }, { name: "Average", color: css("--muted"), dash: "5 4", width: 1.25, values: rv.map((v) => (v === null ? null : mean)) }],
-          include: 0, yFormat: (v) => (v * 100).toFixed(0) + "%", tipFormat: (v) => fmt.pct(v), height: 230, label: "Rolling volatility" }),
-        table: (b) => table(b, [{ label: "Date", get: (n) => d.dates[n] }, { label: "63-day volatility", num: true, get: (n) => (rv[n] === null ? "" : fmt.pct(rv[n])) }], rows(4)) });
-    }
-    Q.chartCard(ch, "Return by calendar year", "Faded bars are partial years.", {
-      draw: (b) => C.columns(b, { labels: d.years.map((y) => y.year), values: d.years.map((y) => y.value), yFormat: (v) => (v * 100).toFixed(0) + "%", tipFormat: Q.fmt.spct, faded: d.years.map((y) => y.days < 240), height: 230, name: "Return", label: "Annual returns",
-        tipLabel: (i) => d.years[i].year + (d.years[i].days < 240 ? ` (${d.years[i].days} trading days)` : "") }),
-      table: (b) => table(b, [{ label: "Year", get: (y) => y.year }, { label: "Return", num: true, get: (y) => Q.fmt.spct(y.value) }, { label: "Days", num: true, get: (y) => y.days }], d.years) });
-    const cm = d.calendar_months || [];
-    if (cm.length >= 6) Q.chartCard(ch, "Average return by calendar month", "The mean of every January, every February and so on over the backtest. With a few years of each it describes the sample; it is not a calendar to trade.", {
-      draw: (b) => C.columns(b, { labels: cm.map((c) => MONTHS[c.month - 1]), values: cm.map((c) => c.mean), yFormat: (v) => (v * 100).toFixed(1) + "%", tipFormat: fmt.spct, colors: (v) => (v >= 0 ? css("--pos") : css("--neg")), height: 230, name: "Average return",
-        tipLabel: (i) => `${MONTHS[cm[i].month - 1]} · ${cm[i].n} years · up in ${(cm[i].hit_rate * 100).toFixed(0)}% of them`, label: "Average return by calendar month" }),
-      table: (b) => table(b, [{ label: "Month", get: (c) => MONTHS[c.month - 1] }, { label: "Years", num: true, get: (c) => c.n }, { label: "Average", num: true, get: (c) => fmt.spct(c.mean) }, { label: "Median", num: true, get: (c) => fmt.spct(c.median) },
-        { label: "Best", num: true, get: (c) => fmt.spct(c.best) }, { label: "Worst", num: true, get: (c) => fmt.spct(c.worst) }, { label: "Up in", num: true, get: (c) => pct(c.hit_rate, 0) }], cm) });
-    if ((d.monthly || []).length >= 6) Q.chartCard(ch, "Monthly returns", "Blue is a gain and red a loss; shade shows size (capped at ±12%).", { wide: true,
-      draw: (b) => C.heatmap(b, { cells: d.monthly, label: "Monthly returns" }),
-      table: (b) => table(b, [{ label: "Month", get: (c) => `${c.year}-${String(c.month).padStart(2, "0")}` }, { label: "Return", num: true, get: (c) => fmt.spct(c.value) }], d.monthly.slice().reverse()) });
-    const dist = d.distribution;
-    if (dist && dist.counts) Q.chartCard(ch, "Distribution of daily returns", "The central 99% of days: the height is the share of days in each band of return. The second line is the normal distribution with the same mean and spread: where the strategy's line is higher at the centre and in the tails, its days are more extreme than a bell curve says. Markers: the loss exceeded on 5% of days (VaR) and the average loss beyond it (ES).", {
-      draw: (b) => C.histogram(b, { series: [{ name: "Strategy", edges: dist.edges, counts: dist.counts, color: css("--s1") }, { name: "Normal, same mean and spread", edges: dist.edges, counts: dist.normal, color: css("--s2") }],
-        markers: [{ x: 0, label: "0" }, ...(rk.var_95 === undefined ? [] : [{ x: -rk.var_95, label: "VaR" }, { x: -rk.es_95, label: "ES" }])], xFormat: (v) => (v * 100).toFixed(1) + "%", unit: dist.edges[1] - dist.edges[0], yFormat: (v) => (v * 100).toFixed(0) + "%", height: 230, label: "Distribution of daily returns" }),
-      table: (b) => table(b, [{ label: "Measure", get: (x) => x[0] }, { label: "Value", num: true, get: (x) => x[1] }], [["Days", String(dist.n)], ["Mean daily return", fmt.spct(dist.mean, 3)], ["Daily standard deviation", pct(dist.sd, 2)],
-        ["Loss exceeded on 5% of days (VaR 95%)", na(rk.var_95, (v) => pct(v, 2))], ["Average loss on those days (ES 95%)", na(rk.es_95, (v) => pct(v, 2))]]) });
+    riskCharts(ch, d);
     const pos = d.positions, ex = d.exposure;
     if (pos && pos.assets.length > 1 && pos.months.length > 2) Q.chartCard(ch, "Positions through time", "The average weight of each asset in each month: blue is long, red short, grey flat. A book that sits in one colour for years is a bet on one direction.", { wide: true,
       draw: (b) => C.matrix(b, { rows: pos.assets, cols: pos.months.map((x) => x.slice(2)), values: pos.values, diverging: true, mid: 0, format: (v) => (v * 100).toFixed(0) + "%", name: "Average weight", cellText: false, cellHeight: 22, label: "Positions through time" }),
@@ -207,20 +240,7 @@
     if (ct.length > 1) Q.chartCard(ch, "Return contributed by asset", "Total return points over the backtest, before compounding and costs: what each asset's held weight earned.", {
       draw: (b) => C.hbars(b, { rows: ct, format: (v) => (v * 100).toFixed(0) + " pts", tipFormat: (v) => (v * 100).toFixed(1) + " points", name: "Contribution", label: "Contribution by asset" }),
       table: (b) => table(b, [{ label: "Asset", get: (x) => x.asset }, { label: "Contribution (points)", num: true, get: (x) => num(x.contribution_pct, 1) }, { label: "Average weight", num: true, get: (x) => fmt.spct(x.average_weight) }, { label: "Class", get: (x) => x.asset_class }], d.contribution) });
-    if (rk.var_95 !== undefined) {
-      const rc = card(root, "Every risk measure", "Over the whole backtest, from daily net returns, 252 days to a year, with a risk-free rate of zero. A ratio whose denominator is zero (no losing day, no fall) is n/a."), grid = h("div", "kvgrid", rc);
-      kv(grid, "Return for the risk taken", [["Sortino ratio (downside risk only)", na(rk.sortino, n2)], ["Calmar ratio (CAGR ÷ deepest fall)", na(rk.calmar, n2)], ["Martin ratio (CAGR ÷ Ulcer index)", na(rk.martin_ratio, n2)],
-        ["Omega ratio (gains ÷ losses)", na(rk.omega, n2)], ["Gain to pain (sum of months ÷ sum of the losing months)", na(rk.gain_to_pain, n2)], ["Recovery factor (total return ÷ deepest fall)", na(rk.recovery_factor, n2)], ["Kelly leverage (mean ÷ variance of daily returns)", na(rk.kelly_leverage, n2)]]);
-      kv(grid, "Losses", [["Loss exceeded on 1 day in 20 (VaR 95%)", na(rk.var_95, (v) => pct(v, 2))], ["Average loss on those days (ES 95%)", na(rk.es_95, (v) => pct(v, 2))], ["Loss exceeded on 1 day in 100 (VaR 99%)", na(rk.var_99, (v) => pct(v, 2))],
-        ["Cornish-Fisher VaR 95% (adjusts for skew and fat tails)", na(rk.cornish_fisher_var_95, (v) => pct(v, 2))], ["Average drawdown", na(rk.average_drawdown, (v) => pct(v, 1))], ["Pain index (mean depth of the drawdown)", na(rk.pain_index, (v) => pct(v, 1))]]);
-      kv(grid, "Shape of the returns", [["Days with a gain", na(rk.positive_days, (v) => pct(v, 1))], ["Skewness", na(rk.skew, n2)], ["Excess kurtosis", na(rk.excess_kurtosis, n2)], ["Tail ratio (95th ÷ 5th percentile of daily returns)", na(rk.tail_ratio, n2)],
-        ["Years of returns needed for 95% confidence that the Sharpe ratio is above 0", na(rk.min_track_record_years, (v) => num(v, 1))]]);
-      for (const [name, v] of Object.entries(d.benchmark_relative || {})) {
-        if (!v || v.beta === undefined) continue;
-        kv(grid, "Against " + (name === "equal_weight" ? bn.toLowerCase() : name.replace(/_/g, " ")), [["Beta", na(v.beta, n2)], ["Alpha a year (after beta)", na(v.alpha_annual, (x) => fmt.spct(x))], ["Correlation", na(v.correlation, n2)], ["Tracking error", na(v.tracking_error, (x) => pct(x, 1))],
-          ["Information ratio", na(v.information_ratio, n2)], ["Up-capture (gain on its up days)", na(v.up_capture, (x) => pct(x, 0))], ["Down-capture (loss on its down days)", na(v.down_capture, (x) => pct(x, 0))]]);
-      }
-    }
+    riskGrid(root, d, bn);
     const spec = d.spec || {}, own = ((spec.models || [])[0] || {}).params, what = h("div", "card", root); h("h3", "", what, "What ran");
     kv(what, "Settings", [["Strategy", d.label || d.strategy], ["Universe", (d.universe || []).join(", ")], ["Rebalance", (spec.execution || {}).rebalance || "the strategy's own"], ["Cost, one way", (spec.execution || {}).cost_bps === undefined ? null : num(spec.execution.cost_bps, 1) + " bps"],
       ["Volatility target", spec.risk ? (spec.risk.mode === "regime" ? "by regime (" + ((spec.regime || {}).detector || "") + ")" : pct(spec.risk.target_vol, 0)) : "the platform's default"], ["Evaluated days", String(d.n_days)],
@@ -445,5 +465,5 @@
     st.busy = ""; paintLive(lab);
   }
 
-  window.WS = { pipelineResult, request, catalog, refreshCatalog, dataCard, picks, finder, itickBox, ago, provenance, flags, seg, pills, meter, palette, kv, sub, hint, card, signed, points, shortDate, dayMonth, percentList, csvDownload, qs, sourceText };
+  window.WS = { pipelineResult, riskCharts, riskGrid, pctAxis, request, catalog, refreshCatalog, dataCard, picks, finder, itickBox, ago, provenance, flags, seg, pills, meter, palette, kv, sub, hint, card, signed, points, shortDate, dayMonth, percentList, csvDownload, qs, sourceText };
 })();

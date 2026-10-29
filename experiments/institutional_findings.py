@@ -300,7 +300,7 @@ def main() -> int:
 
         rep.h("8. Option strategies on the synthetic option market (simulated)")
         rows, attrs, vrps = {}, {}, []
-        names = ["short_put", "covered_call", "short_strangle", "iron_condor", "delta_hedged_straddle(short)", "delta_hedged_straddle(long)", "risk_reversal", "calendar_spread"]
+        names = ["short_put", "put_spread", "covered_call", "collar", "protective_put", "short_strangle", "iron_condor", "iron_butterfly", "delta_hedged_straddle(short)", "delta_hedged_straddle(long)", "risk_reversal", "calendar_spread"]
         acc = {n: [] for n in names}
         attr_acc = []
         for seed in (1, 2, 3):

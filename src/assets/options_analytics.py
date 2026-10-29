@@ -366,6 +366,7 @@ class UnderlyingContext:
     long_run_vol: float
     rv_history: pd.Series            # trailing 21-day realised volatility
     dollar_volume: float
+    prices: pd.Series | None = None  # the closes the volatilities came from (the volatility cone is drawn from them)
 
 
 def underlying_context(symbol: str, prices: pd.Series, volume: pd.Series | None = None) -> UnderlyingContext:
@@ -377,7 +378,7 @@ def underlying_context(symbol: str, prices: pd.Series, volume: pd.Series | None 
     rv63 = float(realized_vol(p, 63).dropna().iloc[-1])
     dollar_volume = float((p * volume.reindex(p.index)).tail(60).median()) if volume is not None else float("nan")
     return UnderlyingContext(symbol=symbol, spot=float(p.iloc[-1]), as_of=p.index[-1], rv_21=float(rv.iloc[-1]), rv_63=rv63, long_run_vol=float(np.sqrt((rv.tail(1260) ** 2).mean())), rv_history=rv,
-                             dollar_volume=dollar_volume)
+                             dollar_volume=dollar_volume, prices=p)
 
 
 def simulated_chain(symbol: str, prices: pd.Series, volume: pd.Series | None = None, rate: float | None = None, dividend: float | None = None, premium: float = 0.15):
@@ -448,6 +449,249 @@ def overview(chain: pd.DataFrame, ctx: UnderlyingContext, premium: float = 0.15,
             "put_call_volume": put_v / call_v if call_v > 0 else None, "put_call_oi": put_o / call_o if call_o > 0 else None, "nearest_expiry": str(pd.Timestamp(near).date()),
             "nearest_dte": int(round(float(g_near["T"].iloc[0]) * 365)), "term_slope": tm["term_slope"], "term_inverted": tm["inverted"], "skew": skew, "reference_index": ref,
             "atm_spread_pct": atm_spread_pct, "stale_share": stale_share, "quote_ages": "quote_age_min" in chain.columns, "snapshot": snap.to_dict(), "risk_flags": flags}
+
+
+# ------------------------------------------------------------------------------------------------------------------ what the quotes imply
+def _integrate(y, x) -> float:
+    """The trapezoid rule (``numpy.trapz`` was renamed between numpy releases)."""
+    y, x = np.asarray(y, dtype=float), np.asarray(x, dtype=float)
+    return float(np.sum(0.5 * (y[1:] + y[:-1]) * np.diff(x)))
+
+
+def _cumulative(y, x) -> np.ndarray:
+    y, x = np.asarray(y, dtype=float), np.asarray(x, dtype=float)
+    return np.r_[0.0, np.cumsum(0.5 * (y[1:] + y[:-1]) * np.diff(x))]
+
+
+TAIL_MOVES = (0.05, 0.10, 0.15, 0.20)
+
+
+def implied_distribution(chain: pd.DataFrame, expiry, points: int = 801) -> dict:
+    """The distribution of the price at one expiry that the option quotes imply (the risk-neutral density of Breeden and Litzenberger 1978): the second derivative of the call price with respect to
+    the strike, taken here from a smooth volatility smile rather than from the noisy quotes themselves. An SVI curve (Gatheral) is fitted to the expiry's out-of-the-money implied volatilities
+    (``derivatives.surface.fit_svi_slice``, weighted by the inverse of each quote's total variance so that the wings do not dominate) and its density is read from the fitted total variance
+    (``risk_neutral_density``, the density of ``ln(S_T / F)``). A negative density (a butterfly arbitrage in the fit) is set to zero and its share reported; the density is rescaled to one over the grid
+    (``area`` says how much of the mass the grid held). Returned: the price, the density per dollar and the cumulative probability on a grid, the lognormal density with the at-the-money volatility
+    for comparison, quantiles, moments of the log return, the probability of a fall or a rise of 5, 10, 15 and 20% against the lognormal's, the move the at-the-money straddle prices in, and how well the fit
+    reproduced the quotes. It is the distribution the options are PRICED on (the market's risk-neutral view, with the risk premium inside it), not a forecast of the price."""
+    from ..derivatives.surface import fit_svi_slice, risk_neutral_density
+
+    g = _expiry_slice(chain, expiry)
+    quotes = otm_smile(g)
+    if len(quotes) < 6:
+        raise ValueError(f"the {pd.Timestamp(expiry).date()} expiry has {len(quotes)} usable out-of-the-money quotes; the implied distribution needs at least 6")
+    T, F, spot = float(g["T"].iloc[0]), float(g["F"].iloc[0]), float(g["underlying"].iloc[0])
+    k, iv = quotes["k"].to_numpy(), quotes["iv"].to_numpy()
+    sigma = atm_iv(g)
+    fit = fit_svi_slice(k, iv, T, weights=1.0 / (iv ** 2 * T))
+    half = float(min(1.5, max(0.15, 6.0 * sigma * math.sqrt(T))))
+    grid = np.linspace(-half, half, points)
+    raw = risk_neutral_density(lambda kk, tt: fit.w(kk), T, grid).to_numpy()
+    negative = _integrate(np.clip(-raw, 0.0, None), grid) / max(_integrate(np.abs(raw), grid), 1e-300)
+    dens = np.clip(raw, 0.0, None)
+    area = _integrate(dens, grid)
+    dens = dens / area
+    cdf = _cumulative(dens, grid)
+    cdf = cdf / cdf[-1]
+    sd = sigma * math.sqrt(T)
+    lognormal = norm.pdf(grid, loc=-0.5 * sigma ** 2 * T, scale=sd)
+    price = F * np.exp(grid)
+    m1 = _integrate(grid * dens, grid)
+    var = _integrate((grid - m1) ** 2 * dens, grid)
+    moments = {"mean_log_return": m1, "sd_log_return": math.sqrt(var), "skewness": _integrate((grid - m1) ** 3 * dens, grid) / var ** 1.5, "excess_kurtosis": _integrate((grid - m1) ** 4 * dens, grid) / var ** 2 - 3.0,
+               "mean_price_over_forward": _integrate(np.exp(grid) * dens, grid)}
+    quantiles = {f"{p:g}": float(np.interp(p, cdf, price)) for p in (0.01, 0.05, 0.10, 0.25, 0.50, 0.75, 0.90, 0.95, 0.99)}
+    tails = []
+    for x in TAIL_MOVES:
+        for side, level in (("fall", spot * (1.0 - x)), ("rise", spot * (1.0 + x))):
+            kk = math.log(level / F)
+            if not -half < kk < half:
+                continue
+            below = float(np.interp(kk, grid, cdf))
+            lognormal_below = float(norm.cdf((kk + 0.5 * sigma ** 2 * T) / sd))
+            tails.append({"side": side, "move": x, "level": float(level), "implied": below if side == "fall" else 1.0 - below, "lognormal": lognormal_below if side == "fall" else 1.0 - lognormal_below})
+    # the move the at-the-money straddle prices in: its price over the spot (about 0.8 standard deviations of the move, for a normal)
+    atm_strike = float(g.loc[(g["strike"] - F).abs().idxmin(), "strike"])
+    at = g[g["strike"] == atm_strike]
+    call, put = at.loc[at["right"] == "C", "mid"], at.loc[at["right"] == "P", "mid"]
+    straddle = float(call.iloc[0] + put.iloc[0]) if len(call) and len(put) else float("nan")
+    lo_k, hi_k = np.interp([0.16, 0.84], cdf, grid)
+    shown = np.abs(grid) <= min(half, 4.5 * sd)
+    strike = quotes["strike"].to_numpy()
+    return {"expiry": str(pd.Timestamp(expiry).date()), "dte": int(round(T * 365)), "forward": F, "spot": spot, "atm_iv": sigma, "one_sd_move": sd, "area": area,
+            "smile": {"strike": [round(float(x), 4) for x in strike], "quote_iv": [round(float(x), 6) for x in iv], "fit_iv": [round(float(x), 6) for x in fit.iv(k)]},
+            "price": [round(float(x), 4) for x in price[shown]], "density": [float(f"{x:.6g}") for x in (dens / price)[shown]], "lognormal": [float(f"{x:.6g}") for x in (lognormal / price)[shown]],
+            "cdf": [round(float(x), 6) for x in cdf[shown]], "quantiles": quantiles, "moments": moments, "tails": tails,
+            "expected_move": {"straddle": straddle, "straddle_pct": straddle / spot if np.isfinite(straddle) else float("nan"), "one_sd_pct": sd, "band_low": float(F * math.exp(lo_k)), "band_high": float(F * math.exp(hi_k))},
+            "fit": {"rmse_vol": float(fit.rmse), "max_error_vol": float(np.max(np.abs(np.sqrt(fit.w(k) / T) - iv))), "quotes": int(len(quotes)), "arbitrage_free": bool(fit.arbitrage_free((-half, half))),
+                    "negative_share": float(negative), "params": {"a": fit.a, "b": fit.b, "rho": fit.rho, "m": fit.m, "s": fit.s}}}
+
+
+def expected_moves(chain: pd.DataFrame, min_dte: int = 2) -> list[dict]:
+    """For every expiry of at least ``min_dte`` days: the at-the-money straddle's price (the strike nearest the forward) as a share of the spot, and one standard deviation of the move, the at-the-money
+    volatility times the square root of the time. The straddle is worth about 0.8 of a standard deviation for a normal move, so the two disagree when the smile does."""
+    rows = []
+    for expiry, g in chain.groupby("expiry"):
+        T = float(g["T"].iloc[0])
+        if T * 365 < min_dte:
+            continue
+        F, spot, sigma = float(g["F"].iloc[0]), float(g["underlying"].iloc[0]), atm_iv(g)
+        if not np.isfinite(sigma):
+            continue
+        strike = float(g.loc[(g["strike"] - F).abs().idxmin(), "strike"])
+        at = g[g["strike"] == strike]
+        call, put = at.loc[at["right"] == "C", "mid"], at.loc[at["right"] == "P", "mid"]
+        if not (len(call) and len(put)):
+            continue
+        straddle = float(call.iloc[0] + put.iloc[0])
+        rows.append({"expiry": str(pd.Timestamp(expiry).date()), "dte": int(round(T * 365)), "atm_iv": sigma, "strike": strike, "straddle": straddle, "straddle_pct": straddle / spot, "one_sd_pct": sigma * math.sqrt(T)})
+    return sorted(rows, key=lambda r: r["dte"])
+
+
+def model_free_variance(chain: pd.DataFrame, expiry) -> dict:
+    """The model-free implied variance of one expiry, by the Cboe VIX rules (Cboe 2025; Demeterfi, Derman, Kamal and Zou 1999; Britten-Jones and Neuberger 2000): the out-of-the-money options of
+    every strike, weighted by 1 / K^2, replicate a variance swap, whatever the smile, so no pricing model is needed. With ``K0`` the strike at or just below the forward, puts are used below it and
+    calls above (the average of the two at ``K0``), each at the mid, walking outwards from ``K0`` and stopping after two strikes in a row without a bid or an ask; ``sigma^2 = (2 / T) e^{rT} sum
+    (dK / K^2) Q(K) - (1 / T)(F / K0 - 1)^2`` with ``dK`` half the gap between the neighbouring strikes. Returns the annualised variance and volatility, ``K0`` and the strikes used. ``None``
+    where the expiry has no quote at ``K0`` or fewer than three strikes qualify."""
+    from ..derivatives.surface import variance_swap_strike
+
+    g = _expiry_slice(chain, expiry)
+    T, F, r = float(g["T"].iloc[0]), float(g["F"].iloc[0]), float(g["rate"].iloc[0])
+    strikes = np.sort(g["strike"].unique())
+    below = strikes[strikes <= F]
+    if not len(below):
+        return None
+    k0 = float(below.max())
+    mids = {}
+    for right in ("C", "P"):
+        side = g[g["right"] == right].drop_duplicates("strike").set_index("strike")
+        mids[right] = side
+    if k0 not in mids["C"].index or k0 not in mids["P"].index:
+        return None
+
+    def usable(right: str, strike: float) -> bool:
+        row = mids[right]
+        return strike in row.index and float(row.at[strike, "bid"]) > 0.0 and float(row.at[strike, "ask"]) > 0.0
+
+    def walk(candidates, right: str) -> list[float]:
+        chosen, misses = [], 0
+        for strike in candidates:
+            if usable(right, float(strike)):
+                chosen.append(float(strike))
+                misses = 0
+            else:
+                misses += 1
+                if misses == 2:
+                    break
+        return chosen
+
+    puts = walk(strikes[strikes < k0][::-1], "P")
+    calls = walk(strikes[strikes > k0], "C")
+    if len(puts) + len(calls) < 2:
+        return None
+    used = np.r_[puts[::-1], k0, calls]
+    mid = lambda right, strike: 0.5 * float(mids[right].at[strike, "bid"] + mids[right].at[strike, "ask"])             # noqa: E731
+    prices = np.r_[[mid("P", x) for x in puts[::-1]], 0.5 * (mid("C", k0) + mid("P", k0)), [mid("C", x) for x in calls]]
+    variance = variance_swap_strike(F, T, r, used, prices)
+    return {"expiry": str(pd.Timestamp(expiry).date()), "dte": int(round(T * 365)), "variance": float(variance), "vol": float(math.sqrt(variance)) if variance > 0 else float("nan"), "k0": k0, "forward": F,
+            "strikes": int(len(used)), "lowest": float(used[0]), "highest": float(used[-1])}
+
+
+def model_free_term(chain: pd.DataFrame, target_days: float = 30.0) -> dict:
+    """``model_free_variance`` for every expiry (with the at-the-money volatility beside it, so that the difference the smile makes is visible) and the constant-maturity figure at ``target_days``: the
+    total variance (variance times time) of the two expiries around it, interpolated in time, as the VIX does with its near and next terms, flat in volatility beyond the ends."""
+    rows = []
+    for expiry in sorted(chain["expiry"].unique()):
+        mf = model_free_variance(chain, expiry)
+        atm = atm_iv(_expiry_slice(chain, expiry))
+        if mf is None or not np.isfinite(mf["vol"]) or mf["dte"] < 2:
+            continue
+        rows.append({**mf, "atm_iv": atm, "difference": mf["vol"] - atm if np.isfinite(atm) else float("nan")})
+    out = {"rows": rows, "target_days": float(target_days), "iv_30d": float("nan"), "atm_30d": interpolate_iv(term_structure(chain), target_days)}
+    if rows:
+        days = np.array([r["dte"] for r in rows], dtype=float)
+        total = np.array([r["variance"] * r["dte"] / 365.0 for r in rows])
+        if target_days <= days[0]:
+            out["iv_30d"] = rows[0]["vol"]
+        elif target_days >= days[-1]:
+            out["iv_30d"] = rows[-1]["vol"]
+        else:
+            out["iv_30d"] = float(math.sqrt(np.interp(target_days, days, total) / (target_days / 365.0)))
+    return out
+
+
+def volatility_cone(prices: pd.Series, windows: tuple = (5, 10, 21, 42, 63, 126, 252), periods: float = 252.0, min_windows: int = 60) -> dict:
+    """The volatility cone of Burghardt and Lane (1990): for each window of ``h`` trading days, the lowest, 10th, 25th, 50th, 75th, 90th percentile and highest realised volatility of the underlying over every
+    ``h``-day window of its history, and today's, with the share of windows at or below it. Each row also carries ``calendar_days`` (``h`` trading days in calendar days) so that the at-the-money implied
+    volatility of an expiry that far out can be set against it. A window the history is too short to give ``min_windows`` observations of is left out."""
+    r = np.log(prices.dropna().astype(float)).diff().dropna()
+    rows = []
+    for h in windows:
+        vol = (r.rolling(h).std(ddof=1) * math.sqrt(periods)).dropna()
+        if len(vol) < min_windows:
+            continue
+        q = vol.quantile([0.1, 0.25, 0.5, 0.75, 0.9])
+        rows.append({"days": int(h), "calendar_days": int(round(h * 365.0 / periods)), "now": float(vol.iloc[-1]), "min": float(vol.min()), "p10": float(q[0.1]), "p25": float(q[0.25]), "median": float(q[0.5]),
+                     "p75": float(q[0.75]), "p90": float(q[0.9]), "max": float(vol.max()), "percentile": float((vol <= vol.iloc[-1]).mean()), "windows": int(len(vol))})
+    return {"rows": rows, "history_days": int(len(r))}
+
+
+def positioning(chain: pd.DataFrame, expiry=None, grid_points: int = 41, span: float = 0.15) -> dict:
+    """Where the open interest sits, from the chain's ``open_interest`` and ``volume`` columns: by strike, the open interest of calls and puts (one expiry, or all together when ``expiry`` is None); the walls
+    (the call strike above the price and the put strike below it with the most open interest); the *max pain* strike of a single expiry (the settlement price at which option holders would be paid the
+    least, ``argmin_S sum_calls OI max(S - K, 0) + sum_puts OI max(K - S, 0)``, which is a folk rule: the evidence is that prices tend to cluster at strikes with large open interest near expiry, Ni,
+    Pearson and Poteshman 2005); and the *gamma exposure* (GEX): the change in the dollar delta of all the open contracts for a 1% move in the underlying, ``Gamma x OI x 100 x S^2 / 100``, counted
+    positive for calls and negative for puts, the sign that follows if the people who hold the other side (the dealers) are long the calls customers write and short the puts they buy. Open interest
+    has no sign, so that assumption is not in the data: it is the convention of the dealer-gamma literature (Garleanu, Pedersen and Poteshman 2009 show the demand pressure on prices; Barbon and Buraschi 2020 build a
+    gamma imbalance from signed data). The net GEX is also recomputed at spot levels from ``1 - span`` to ``1 + span`` times the price, with each contract's volatility held fixed, and the *flip* is where it
+    crosses zero nearest the price: below it dealers' hedging would add to the move, above it damp it."""
+    if expiry is not None:
+        g = _expiry_slice(chain, expiry)
+        label = str(pd.Timestamp(expiry).date())
+    else:
+        g, label = chain, "all expiries"
+    spot = float(g["underlying"].iloc[0])
+    oi = g.pivot_table(index="strike", columns="right", values="open_interest", aggfunc="sum").reindex(columns=["C", "P"]).fillna(0.0)
+    vol = g.pivot_table(index="strike", columns="right", values="volume", aggfunc="sum").reindex(columns=["C", "P"]).fillna(0.0)
+    book = g[(g["open_interest"] > 0) & np.isfinite(g["iv"]) & (g["iv"] > 0)]
+
+    def gamma_dollars(level: float) -> pd.Series:
+        """Per row of ``book``: signed dollar gamma for a 1% move with the underlying at ``level``."""
+        gam = bsm_greeks(level, book["strike"].to_numpy(), np.maximum(book["T"].to_numpy(), 1.0 / 365.0), book["rate"].to_numpy(), book["dividend"].to_numpy(), book["iv"].to_numpy(), True)["gamma"]
+        sign = np.where(book["right"].to_numpy() == "C", 1.0, -1.0)
+        return pd.Series(sign * gam * book["open_interest"].to_numpy() * MULTIPLIER * level ** 2 / 100.0, index=book.index)
+
+    now = gamma_dollars(spot)
+    by_row = pd.DataFrame({"strike": book["strike"], "right": book["right"], "gex": now}).groupby(["strike", "right"])["gex"].sum().unstack("right").reindex(columns=["C", "P"]).fillna(0.0)
+    levels = spot * np.linspace(1.0 - span, 1.0 + span, grid_points)
+    net = np.array([float(gamma_dollars(x).sum()) for x in levels])
+    flip = None
+    for i in np.flatnonzero(net[:-1] * net[1:] < 0):
+        crossing = float(levels[i] - net[i] * (levels[i + 1] - levels[i]) / (net[i + 1] - net[i]))
+        if flip is None or abs(crossing - spot) < abs(flip - spot):
+            flip = crossing
+    strikes = sorted(set(oi.index) | set(by_row.index))
+    rows = [{"strike": float(k), "call_oi": float(oi["C"].get(k, 0.0)), "put_oi": float(oi["P"].get(k, 0.0)), "call_volume": float(vol["C"].get(k, 0.0)), "put_volume": float(vol["P"].get(k, 0.0)),
+             "call_gex": float(by_row["C"].get(k, 0.0)), "put_gex": float(by_row["P"].get(k, 0.0))} for k in strikes]
+    call_wall = oi["C"][oi.index >= spot].idxmax() if (oi["C"][oi.index >= spot] > 0).any() else None
+    put_wall = oi["P"][oi.index <= spot].idxmax() if (oi["P"][oi.index <= spot] > 0).any() else None
+    pain = max_pain(oi["C"], oi["P"]) if expiry is not None and len(oi) else None
+    total_c, total_p = float(oi["C"].sum()), float(oi["P"].sum())
+    return {"scope": label, "spot": spot, "rows": rows, "call_oi": total_c, "put_oi": total_p, "put_call_oi": total_p / total_c if total_c > 0 else None, "call_volume": float(vol["C"].sum()), "put_volume": float(vol["P"].sum()),
+            "call_wall": None if call_wall is None else float(call_wall), "put_wall": None if put_wall is None else float(put_wall), "max_pain": pain,
+            "gex": {"net": float(now.sum()), "calls": float(now[book["right"] == "C"].sum()), "puts": float(now[book["right"] == "P"].sum()), "flip": flip,
+                    "curve": {"spot": [round(float(x), 4) for x in levels], "net": [round(float(x), 2) for x in net]}}}
+
+
+def max_pain(call_oi: pd.Series, put_oi: pd.Series) -> float:
+    """The strike at which the open interest, if the price settled exactly there, would pay its holders the least: ``argmin_S [sum_K OI_call(K) max(S - K, 0) + sum_K OI_put(K) max(K - S, 0)]`` over the
+    listed strikes (the first, the lowest, on a tie). The payout is a convex piecewise-linear function of the settlement, so its minimum is at a strike."""
+    strikes = np.sort(np.union1d(call_oi.index.to_numpy(dtype=float), put_oi.index.to_numpy(dtype=float)))
+    calls = call_oi.reindex(strikes).fillna(0.0).to_numpy()
+    puts = put_oi.reindex(strikes).fillna(0.0).to_numpy()
+    payout = np.array([float((calls * np.maximum(s - strikes, 0.0)).sum() + (puts * np.maximum(strikes - s, 0.0)).sum()) for s in strikes])
+    return float(strikes[int(np.argmin(payout))])
 
 
 # ------------------------------------------------------------------------------------------------------------------ positions and portfolio risk
@@ -553,8 +797,27 @@ STRATEGY_INFO = {
     "calendar_spread": "Sell the near call and buy the same-strike far call: profit from the near option decaying faster",
     "butterfly": "Buy the wings and sell two at the middle: profit if the price ends near the middle strike, loss limited",
     "ratio_spread": "Buy one call and sell two higher calls: profit from a modest rise; losses are unlimited above the break-even",
+    "collar": "Own 100 shares, buy a put below the market and sell a call above it: the call pays for (some of) the put, so the shares are held between a floor and a cap",
+    "cash_secured_put": "Sell a put below the market and hold the cash to buy the shares if they are put to you: paid to wait for a lower price",
+    "iron_butterfly": "Sell the at-the-money call and put and buy wings either side: the most premium for a price that stays put, loss limited to the wing width",
+    "long_condor": "Buy the outer calls and sell the two inner ones: profit across a band between the inner strikes, loss limited to the debit",
+    "risk_reversal": "Buy a call above the market and sell a put below it: a bet on a rise that costs little, with the loss of the shares on a fall",
+    "strap": "Buy two calls and one put at the same strike: a bet on a big move, more on the upside",
+    "strip": "Buy one call and two puts at the same strike: a bet on a big move, more on the downside",
+    "call_backspread": "Sell one call at the money and buy two higher: a free or cheap bet on a big rise that loses a little if the price drifts to the higher strike",
+    "put_backspread": "Sell one put at the money and buy two lower: a free or cheap hedge against a crash that loses a little in a modest fall",
+    "diagonal_spread": "Buy a longer-dated at-the-money call and sell a nearer-dated higher call against it: cheaper than the long call, with the near option's decay working for you",
+    "tail_hedge": "Buy a put far below the market: costs little and pays only in a crash",
 }
 STRATEGY_PARAMS = {"offset": 0.05, "width": 0.05, "dte": 30, "far_dte": 60}
+STRATEGY_GROUPS = {
+    "Bet on direction": ["long_call", "long_put", "bull_call_spread", "bear_put_spread", "risk_reversal", "ratio_spread", "call_backspread"],
+    "Own the shares": ["covered_call", "protective_put", "collar"],
+    "Sell premium": ["cash_secured_put", "short_straddle", "short_strangle", "iron_condor", "iron_butterfly"],
+    "Buy volatility": ["long_straddle", "long_strangle", "strap", "strip", "put_backspread", "tail_hedge"],
+    "Bet on a range": ["butterfly", "long_condor"],
+    "Bet on time": ["calendar_spread", "diagonal_spread"],
+}
 
 
 def strategy_legs(name: str, spot: float, forward: float, step: float, dte: int = 30, offset: float = 0.05, width: float = 0.05, far_dte: int = 60, quantity: int = 1) -> list[dict]:
@@ -580,12 +843,67 @@ def strategy_legs(name: str, spot: float, forward: float, step: float, dte: int 
         "calendar_spread": [leg("C", atm, -1), leg("C", atm, 1, far_dte)],
         "butterfly": [leg("C", r(forward * (1.0 - width)), 1), leg("C", atm, -2), leg("C", r(forward * (1.0 + width)), 1)],
         "ratio_spread": [leg("C", atm, 1), leg("C", r(forward * (1.0 + width)), -2)],
+        "collar": [shares, leg("P", dn, 1), leg("C", up, -1)], "cash_secured_put": [leg("P", dn, -1)],
+        "iron_butterfly": [leg("P", r(forward * (1.0 - width)), 1), leg("P", atm, -1), leg("C", atm, -1), leg("C", r(forward * (1.0 + width)), 1)],
+        "long_condor": [leg("C", wide_dn, 1), leg("C", dn, -1), leg("C", up, -1), leg("C", wide_up, 1)],
+        "risk_reversal": [leg("C", up, 1), leg("P", dn, -1)], "strap": [leg("C", atm, 2), leg("P", atm, 1)], "strip": [leg("C", atm, 1), leg("P", atm, 2)],
+        "call_backspread": [leg("C", atm, -1), leg("C", r(forward * (1.0 + width)), 2)], "put_backspread": [leg("P", atm, -1), leg("P", r(forward * (1.0 - width)), 2)],
+        "diagonal_spread": [leg("C", atm, 1, far_dte), leg("C", up, -1)], "tail_hedge": [leg("P", wide_dn, 1)],
     }
     legs = layouts[name]
     for L in legs:
         if L["type"] == "option" and L["strike"] <= 0:
             raise ValueError("a strike came out at or below zero: reduce the offset or width")
     return legs
+
+
+def chain_legs(chain: pd.DataFrame, legs: list[dict]) -> list[dict]:
+    """The legs with each option's days moved to the nearest listed expiry and its implied volatility read from the chain at its strike (shares are unchanged)."""
+    out = []
+    for leg in legs:
+        if leg["type"] == "option":
+            expiry = nearest_expiry_to(chain, leg["dte"])
+            leg = {**leg, "iv": iv_lookup(chain, expiry, leg["strike"]), "dte": int(round(float(chain.loc[chain["expiry"] == expiry, "T"].iloc[0]) * 365))}
+        out.append(leg)
+    return out
+
+
+def structure_context(chain: pd.DataFrame, dte: int = 30, far_dte: int | None = None) -> dict:
+    """What a structure is built around: the expiries nearest ``dte`` and ``far_dte`` (default about twice ``dte``), the forward, the at-the-money volatility and the strike step of the first, and the
+    days to both."""
+    e1, e2 = nearest_expiry_to(chain, dte), nearest_expiry_to(chain, far_dte if far_dte else max(dte * 2, dte + 14))
+    g1 = chain[chain["expiry"] == e1]
+    return {"expiry": e1, "far_expiry": e2, "forward": float(g1["F"].iloc[0]), "atm_iv": atm_iv(g1), "step": strike_step(chain, e1), "dte": int(round(float(g1["T"].iloc[0]) * 365)),
+            "far_dte": int(round(float(chain.loc[chain["expiry"] == e2, "T"].iloc[0]) * 365))}
+
+
+def named_structure(chain: pd.DataFrame, spot: float, name: str, dte: int = 30, offset: float = 0.05, width: float = 0.05, far_dte: int | None = None, quantity: int = 1) -> tuple[list[dict], dict]:
+    """``(legs, context)`` for a named structure on this chain (``structure_context`` is the second): the strikes are set around the forward of the expiry nearest ``dte`` and rounded to its strike step,
+    and each option takes the chain's own volatility at its strike."""
+    ctx = structure_context(chain, dte, far_dte)
+    legs = strategy_legs(name, spot, ctx["forward"], ctx["step"], ctx["dte"], offset, width, max(ctx["far_dte"], ctx["dte"] + 1), quantity)
+    return chain_legs(chain, legs), ctx
+
+
+def compare_structures(chain: pd.DataFrame, spot: float, names: list[str], prices, **kwargs) -> list[dict]:
+    """Other structures priced on the same chain and the same settings, each with the headline numbers of ``strategy_analysis`` and its profit at the horizon at the given ``prices`` (by linear
+    interpolation of its own exact curve, so the lines can be drawn on one axis). ``kwargs`` are the arguments of ``named_structure`` (``dte``, ``offset``, ``width``, ``far_dte``, ``quantity``) and,
+    under ``analysis``, those of ``strategy_analysis``."""
+    analysis = kwargs.pop("analysis", {})
+    out = []
+    for name in names:
+        legs, meta = named_structure(chain, spot, name, **kwargs)
+        a = strategy_analysis(legs, spot, meta["forward"], meta["atm_iv"], cash_secured=(name == "cash_secured_put"), **analysis)
+        curve = np.interp(np.asarray(prices, dtype=float), a["curve"]["spot"], a["curve"]["expiry"])
+        out.append({"strategy": name, "group": group_of(name), "net_debit": a["net_debit"], "net_credit": a["net_credit"], "max_profit": a["max_profit"], "max_loss": a["max_loss"], "unlimited_profit": a["unlimited_profit"],
+                    "unlimited_loss": a["unlimited_loss"], "breakevens": a["breakevens"], "prob_profit": a["prob_profit"], "expected_value": a["expected_value"], "margin": a["margin"]["estimate"],
+                    "curve": [round(float(x), 2) for x in curve]})
+    return out
+
+
+def group_of(name: str) -> str:
+    """The family a named structure belongs to (``STRATEGY_GROUPS``)."""
+    return next((g for g, members in STRATEGY_GROUPS.items() if name in members), "Other")
 
 
 def _leg_value(leg: dict, s, horizon: float, sigma_of, rate: float, dividend: float, mult: float):
@@ -628,10 +946,11 @@ def _breakevens(s: np.ndarray, pnl: np.ndarray) -> list[float]:
     return sorted(out)
 
 
-def margin_estimate(legs: list[dict], spot: float, premium: float, mult: float = MULTIPLIER) -> dict:
+def margin_estimate(legs: list[dict], spot: float, premium: float, mult: float = MULTIPLIER, cash_secured: bool = False) -> dict:
     """An INDICATIVE initial margin. Positions with a bounded worst case (long options, spreads, condors, butterflies) need their maximum loss; naked short options need the Reg-T style
     ``max(20% x spot - out-of-the-money amount, 10% x spot)`` (puts: 10% of the strike) per contract plus the premium, taking the larger of the call and put side for a straddle or strangle; shares need 50%
-    of their value. Your broker's rule and exchange house margins differ: this is for comparing structures, not for sizing an account."""
+    of their value. With ``cash_secured`` the short puts are held against the cash to buy the shares at the strike (strike x contracts x multiplier, less the premium): the requirement of the Cboe PutWrite
+    index, which is the whole strike. Your broker's rule and exchange house margins differ: this is for comparing structures, not for sizing an account."""
     shares = sum(l["quantity"] for l in legs if l["type"] == "stock")
     stock_margin = 0.5 * max(shares, 0.0) * spot
     opts = [l for l in legs if l["type"] == "option"]
@@ -648,16 +967,54 @@ def margin_estimate(legs: list[dict], spot: float, premium: float, mult: float =
     if net_puts < 0:
         shorts = [l for l in puts if l["quantity"] < 0]
         k = max(l["strike"] for l in shorts)
-        req["put"] = -net_puts * mult * max(0.2 * spot - max(spot - k, 0.0), 0.1 * k)
+        req["put"] = -net_puts * mult * (k if cash_secured and not calls else max(0.2 * spot - max(spot - k, 0.0), 0.1 * k))
     naked = max(req.values())
     bounded_hint = naked == 0.0
-    return {"stock_margin": float(stock_margin), "naked_requirement": float(naked), "defined_risk": bool(bounded_hint), "premium_received": float(max(-premium, 0.0)),
-            "basis": "max loss of the option legs" if bounded_hint else "Reg-T style naked-option rule (indicative)"}
+    secured = bool(cash_secured and not calls and net_puts < 0)
+    return {"stock_margin": float(stock_margin), "naked_requirement": float(naked), "defined_risk": bool(bounded_hint), "premium_received": float(max(-premium, 0.0)), "cash_secured": secured,
+            "basis": "max loss of the option legs" if bounded_hint else "the strike held in cash against the put" if secured else "Reg-T style naked-option rule (indicative)"}
+
+
+def _price_density(spot: float, vol: float, drift: float, horizon: float, bins: int = 56, width: float = 3.5) -> dict:
+    """The probability of each price band at the horizon when the log price is normal with the given drift and volatility (the lognormal the structure's odds use): ``edges`` (``bins`` + 1 prices,
+    ``width`` standard deviations either side of the median) and ``mass`` (the probability in each band, exact from the normal distribution function, so they sum to the probability inside the range)."""
+    sd = vol * math.sqrt(horizon)
+    centre = math.log(spot) + (drift - 0.5 * vol ** 2) * horizon
+    edges = np.exp(centre + sd * np.linspace(-width, width, bins + 1))
+    cdf = norm.cdf((np.log(edges) - centre) / sd)
+    return {"edges": [round(float(x), 4) for x in edges], "mass": [float(x) for x in np.diff(cdf)], "median": float(math.exp(centre))}
+
+
+def _pnl_grid(value_on, cost: float, spot: float, vol: float, horizon: float, horizon_days: int, prices: int = 21, steps: int = 8) -> dict:
+    """The profit or loss of the legs on a coarse grid: ``prices`` spot values spread over +-2.5 standard deviations of the horizon and the days from now to the horizon (at most ``steps`` + 1 of them,
+    including both ends). ``value_on(years_passed, prices)`` is the value of all the legs; ``pnl[i][j]`` is the profit at price ``spot[i]`` after ``days[j]`` days."""
+    sd = vol * math.sqrt(horizon)
+    s = spot * np.exp(np.linspace(-2.5, 2.5, prices) * sd)
+    days = sorted({int(round(x)) for x in np.linspace(0, horizon_days, min(horizon_days, steps) + 1)})
+    pnl = np.array([value_on(d / 365.0, s) - cost for d in days])
+    return {"spot": [round(float(x), 4) for x in s], "days": days, "pnl": [[round(float(pnl[j][i]), 2) for j in range(len(days))] for i in range(prices)]}
+
+
+def _greeks_curve(legs: list[dict], prices: list[float], rate: float, dividend: float, sigma_of, mult: float) -> dict:
+    """Delta (shares), gamma (shares per dollar), vega (dollars per volatility point) and theta (dollars per day) of the legs together today, at each of ``prices``."""
+    s = np.asarray(prices, dtype=float)
+    out = {"delta": np.zeros_like(s), "gamma": np.zeros_like(s), "vega": np.zeros_like(s), "theta": np.zeros_like(s)}
+    for leg in legs:
+        if leg["type"] == "stock":
+            out["delta"] += leg["quantity"]
+            continue
+        g = bsm_greeks(s, leg["strike"], leg["dte"] / 365.0, rate, dividend, sigma_of(leg), leg["right"] == "C")
+        q = leg["quantity"] * mult
+        out["delta"] += q * g["delta"]
+        out["gamma"] += q * g["gamma"]
+        out["vega"] += q * g["vega"] / 100.0
+        out["theta"] += q * g["theta"] / 365.0
+    return {"spot": [round(float(x), 4) for x in s], **{k: [round(float(x), 5) for x in v] for k, v in out.items()}}
 
 
 def strategy_analysis(legs: list[dict], spot: float, forward: float, atm_vol: float, rate: float = DEFAULT_RATE, dividend: float = 0.0, skew_slope: float = 0.0, view_vol: float | None = None,
                       view_drift: float | None = None, horizon_days: int | None = None, fill: str = "mid", spread_pct: float = 0.05, commission: float = 0.65, mult: float = MULTIPLIER,
-                      points: int = 241) -> dict:
+                      points: int = 241, cash_secured: bool = False) -> dict:
     """Everything the strategy builder shows for a set of legs.
 
     Each option leg is priced with its own ``iv`` if it has one (the dashboard takes it from the chain), else with the ATM volatility plus the skew slope times its log-strike (``skew_slope`` in volatility per unit of ln K / F, negative for equities). The P&L at the horizon (default the
@@ -665,7 +1022,11 @@ def strategy_analysis(legs: list[dict], spot: float, forward: float, atm_vol: fl
     flat), break-evens by interpolation, the Greeks are the position's today, ``prob_profit`` and ``expected_value`` integrate the lognormal distribution of the spot at the horizon with volatility
     ``view_vol`` (default the ATM volatility, i.e. the market's own view) and drift ``view_drift`` (default the risk-neutral ``r - q``): at the market's own view the expected value is the costs, and a view
     that differs from the market's is what makes it nonzero. The distribution is lognormal with a single volatility, so with a skewed smile the expected value of a put-heavy or call-heavy
-    structure is not zero even at the market's own volatility."""
+    structure is not zero even at the market's own volatility.
+
+    Three further views are returned for the picture: ``density`` (the probability of each price band at the horizon under that same lognormal view), ``grid`` (the profit or loss at a coarse grid of prices
+    and days passed, from today to the horizon) and ``greeks_curve`` (the structure's delta, gamma, vega and theta today at each price of the grid; each leg keeps its own volatility, so a leg's vega does not
+    move with the price)."""
     if not legs:
         raise ValueError("add at least one leg")
     if fill not in ("mid", "worst"):
@@ -683,7 +1044,8 @@ def strategy_analysis(legs: list[dict], spot: float, forward: float, atm_vol: fl
     sd = atm_vol * math.sqrt(H)
     lo, hi = min(lo, spot * math.exp(-4.5 * sd)), max(hi, spot * math.exp(4.5 * sd))
     s = np.unique(np.r_[0.0, np.linspace(lo, hi, points), [l["strike"] for l in opts]])
-    value_at = lambda h: sum(_leg_value(l, s, h, sigma_of, rate, dividend, mult) for l in legs)                          # noqa: E731
+    value_on = lambda h, prices: sum(_leg_value(l, prices, h, sigma_of, rate, dividend, mult) for l in legs)             # noqa: E731
+    value_at = lambda h: value_on(h, s)                                                                                      # noqa: E731
     exp_pnl = value_at(H) - cost
     now_pnl = value_at(0.0) - cost
     mid_pnl = value_at(H / 2.0) - cost
@@ -697,8 +1059,10 @@ def strategy_analysis(legs: list[dict], spot: float, forward: float, atm_vol: fl
     max_loss = None if unlimited_loss else float(exp_pnl.min())
     stock_cost = sum(l["quantity"] for l in legs if l["type"] == "stock") * spot
     option_cost = cost - stock_cost
-    margin = margin_estimate(legs, spot, option_cost if option_cost < 0 else 0.0, mult)
-    if not margin["defined_risk"]:                                                  # naked shorts: the requirement already counts the premium received, which stays on deposit
+    margin = margin_estimate(legs, spot, option_cost if option_cost < 0 else 0.0, mult, cash_secured)
+    if margin["cash_secured"]:                                                      # the strike is held in cash and the premium received reduces what has to be put up
+        margin_total = max(margin["naked_requirement"] - margin["premium_received"], 0.0) + margin["stock_margin"]
+    elif not margin["defined_risk"]:                                                # naked shorts: the requirement already counts the premium received, which stays on deposit
         margin_total = margin["naked_requirement"] + margin["premium_received"] + margin["stock_margin"]
     elif stock_cost:                                                                # covered calls and protective puts: half the shares' value plus any option premium paid
         margin_total = margin["stock_margin"] + max(option_cost, 0.0)
@@ -720,20 +1084,23 @@ def strategy_analysis(legs: list[dict], spot: float, forward: float, atm_vol: fl
     g = {"delta_shares": float(greeks["delta"].sum()), "delta_dollars": float(greeks["delta"].sum() * spot), "gamma": float(greeks["gamma"].sum()), "gamma_pnl_1pct": float(0.5 * greeks["gamma"].sum() * (0.01 * spot) ** 2),
          "vega_per_point": float(greeks["vega"].sum()), "theta_per_day": float(greeks["theta"].sum()), "rho_per_1pct": float(greeks["rho"].sum())}
     risk = abs(max_loss) if max_loss is not None else None
+    density = _price_density(spot, vv, mu, H)
+    grid = _pnl_grid(value_on, cost, spot, vv, H, horizon_d)
+    gcurve = _greeks_curve(legs, grid["spot"], rate, dividend, sigma_of, mult)
     legs_out = [{**l, "price": (round(p, 4) if l["type"] == "option" else None), "iv": (round(sigma_of(l), 5) if l["type"] == "option" else None)} for l, p in zip(legs, prices)]
     flags: list[str] = []
     add_flag(flags, unlimited_loss, "unlimited loss on the upside" if top_slope < 0 else "unlimited loss")
-    add_flag(flags, not margin["defined_risk"], "naked short options: margin and gap risk are large, and the estimate is indicative only")
+    add_flag(flags, not margin["defined_risk"] and not margin["cash_secured"], "naked short options: margin and gap risk are large, and the estimate is indicative only")
     return {"legs": legs_out, "cost": float(cost), "net_debit": float(max(cost, 0.0)), "net_credit": float(max(-cost, 0.0)), "horizon_days": horizon_d, "spot": float(spot), "forward": float(forward),
             "max_profit": max_profit, "max_loss": max_loss, "unlimited_profit": unlimited_profit, "unlimited_loss": unlimited_loss, "breakevens": _breakevens(s, exp_pnl), "greeks": g,
             "margin": {**margin, "estimate": float(margin_total)}, "prob_profit": pop, "expected_value": ev, "view_vol": vv, "view_drift": mu,
             "reward_risk": (max_profit / risk if (max_profit is not None and risk) else None),
             "curve": {"spot": [round(float(x), 4) for x in s], "expiry": [round(float(x), 2) for x in exp_pnl], "now": [round(float(x), 2) for x in now_pnl], "half": [round(float(x), 2) for x in mid_pnl]},
-            "risk_flags": flags}
+            "density": density, "grid": grid, "greeks_curve": gcurve, "risk_flags": flags}
 
 
 # ------------------------------------------------------------------------------------------------------------------ strategy backtests
-BACKTEST_STRATEGIES = ("short_put", "covered_call", "short_strangle", "iron_condor", "delta_hedged_straddle", "risk_reversal", "calendar_spread")
+BACKTEST_STRATEGIES = ("short_put", "put_spread", "covered_call", "collar", "protective_put", "short_strangle", "iron_condor", "iron_butterfly", "delta_hedged_straddle", "risk_reversal", "calendar_spread")
 
 
 BACKTEST_TEXT = {
@@ -744,6 +1111,10 @@ BACKTEST_TEXT = {
     "delta_hedged_straddle": "Sell (or buy) the at-the-money straddle and hedge the delta daily: a pure bet on realised against implied volatility.",
     "risk_reversal": "Buy a 25-delta call and sell a 25-delta put, delta-hedged: the skew premium.",
     "calendar_spread": "Sell the front-month at-the-money option and buy the back month: long the term structure.",
+    "put_spread": "Sell a 25-delta put and buy a 10-delta put against it each period: the short put's premium with the loss limited to the width of the spread.",
+    "collar": "Own the underlying, buy a put 5% below the market and sell a call 5% above it each period (the Cboe CLL index buys its put at 95% and sells its call at 110%).",
+    "protective_put": "Own the underlying and buy a put 5% below the market each period (the Cboe PPUT index): what insurance costs.",
+    "iron_butterfly": "Sell the at-the-money put and call and buy wings 5% out of the money each period (the Cboe BFLY index): the most premium for a price that stays put.",
 }
 
 
@@ -763,6 +1134,10 @@ BACKTEST_PARAMS: dict[str, dict[str, dict]] = {
     "risk_reversal": {"delta": _param(0.25, 0.02, 0.6, text="delta of the call and the put"), "side": _param(1, kind="choice", choices=[-1, 1], text="+1 is long the call and short the put"), **_ROLL},
     "calendar_spread": {"front_dte": _param(30, 7, 200, "int", text="days to expiry of the option sold"), "back_dte": _param(90, 21, 400, "int", text="days to expiry of the option bought"),
                         **{k: v for k, v in _ROLL.items() if k != "dte"}},
+    "put_spread": {"short_delta": _param(0.25, 0.05, 0.6, text="absolute delta of the put sold"), "long_delta": _param(0.10, 0.01, 0.4, text="absolute delta of the put bought against it (further out of the money)"), **_ROLL},
+    "iron_butterfly": {"wing": _param(0.05, 0.01, 0.3, text="distance of the bought put and call from the price, as a fraction of it"), **_ROLL},
+    "collar": {"put_moneyness": _param(0.95, 0.6, 0.99, text="strike of the put bought, as a fraction of the price"), "call_moneyness": _param(1.05, 1.01, 1.4, text="strike of the call sold, as a fraction of the price"), **_ROLL},
+    "protective_put": {"put_moneyness": _param(0.95, 0.6, 0.99, text="strike of the put bought, as a fraction of the price"), **_ROLL},
 }
 
 
@@ -807,7 +1182,28 @@ def parse_backtest_params(name: str, given: dict | None) -> dict:
         raise ValueError("back_dte must be at least a week longer than front_dte")
     if name == "iron_condor" and out.get("wing_delta", spec["wing_delta"]["default"]) >= out.get("short_delta", spec["short_delta"]["default"]):
         raise ValueError("wing_delta must be smaller than short_delta (the wings are further out of the money)")
+    if name == "put_spread" and out.get("long_delta", spec["long_delta"]["default"]) >= out.get("short_delta", spec["short_delta"]["default"]):
+        raise ValueError("long_delta must be smaller than short_delta (the put bought is further out of the money)")
     return out
+
+
+TIMING_DEFAULTS = {"window": 21, "threshold": 0.0}
+
+
+def parse_timing(given: dict | None) -> dict | None:
+    """The variance-premium filter of a backtest, checked: ``{"window": days of realised volatility, "threshold": volatility points}``. The strategy is traded only while the implied volatility of the
+    30-day expiry exceeds the trailing realised volatility by more than the threshold (Bollerslev, Tauchen and Zhou 2009; Carr and Wu 2009), and closed while it does not. ``None`` or ``{}``: always trade."""
+    if not given:
+        return None
+    if not isinstance(given, dict) or set(given) - set(TIMING_DEFAULTS):
+        raise ValueError(f"timing takes {sorted(TIMING_DEFAULTS)}")
+    try:
+        window, threshold = int(round(float(given.get("window", 21)))), float(given.get("threshold", 0.0))
+    except (TypeError, ValueError):
+        raise ValueError("timing window and threshold must be numbers") from None
+    if not 5 <= window <= 126 or not -0.2 <= threshold <= 0.5:
+        raise ValueError("timing window must be between 5 and 126 days and the threshold between -0.20 and 0.50 (volatility, as a fraction)")
+    return {"window": window, "threshold": threshold}
 
 
 _MARKETS: "OrderedDict[tuple, object]" = OrderedDict()
@@ -831,11 +1227,17 @@ def simulated_market(n_days: int = 252, seed: int = 0, premium: float = 0.25):
     return market
 
 
-def run_strategy_backtest(name: str, params: dict | None = None, n_days: int = 252, seed: int = 0, capital: float = 100_000.0, premium: float = 0.25, commission: float = 0.65,
-                          fill_fraction: float = 1.0) -> dict:
-    """Backtest one of the rolling option strategies on the simulated option market and summarise it with the platform's own performance and tail-risk measures. The market is a MODEL: it pays the
-    variance risk premium it was built with, so the result says whether the machinery books costs, hedges and settles correctly, not whether the premium exists."""
-    from ..backtest.metrics import conditional_value_at_risk, performance_summary, value_at_risk
+def _timed(strategy, timing: dict | None):
+    """The strategy as given, or trading only while the variance premium is positive (``VRPTimed``)."""
+    if not timing:
+        return strategy
+    from ..derivatives.strategies import VRPTimed
+
+    return VRPTimed(strategy, window=timing["window"], threshold=timing["threshold"])
+
+
+def _backtest_result(name: str, params: dict | None, n_days: int, seed: int, capital: float, premium: float, commission: float, fill_fraction: float, timing: dict | None):
+    """``(result, market)``: the strategy run on the simulated market (``OptionBacktester``), possibly behind the variance-premium filter."""
     from ..derivatives.backtest import OptionBacktester
     from ..derivatives.strategies import make_strategy
 
@@ -846,19 +1248,98 @@ def run_strategy_backtest(name: str, params: dict | None = None, n_days: int = 2
     market = simulated_market(n_days, seed, premium)
     spot = market.underlying["spot"]
     bt = OptionBacktester(market._by_date, spot, capital=float(capital), commission=float(commission), fill_fraction=float(fill_fraction))
-    result = bt.run(make_strategy(name, **(params or {})))
+    return bt.run(_timed(make_strategy(name, **(params or {})), parse_timing(timing))), spot
+
+
+def run_strategy_backtest(name: str, params: dict | None = None, n_days: int = 252, seed: int = 0, capital: float = 100_000.0, premium: float = 0.25, commission: float = 0.65,
+                          fill_fraction: float = 1.0, timing: dict | None = None) -> dict:
+    """Backtest one of the rolling option strategies on the simulated option market and summarise it with the platform's own performance and tail-risk measures. The market is a MODEL: it pays the
+    variance risk premium it was built with, so the result says whether the machinery books costs, hedges and settles correctly, not whether the premium exists. ``timing`` (see ``parse_timing``) trades the
+    strategy only while the trailing variance premium is positive. Beside the equity curve the result carries the views the other workspaces show for a strategy: the deepest falls, the volatility
+    through time, the years, months and distribution of daily returns, and every risk measure (``risk.performance``)."""
+    from ..backtest.metrics import conditional_value_at_risk, performance_summary, value_at_risk
+    from ..risk import performance
+
+    timing = parse_timing(timing)
+    result, spot = _backtest_result(name, params, n_days, seed, capital, premium, commission, fill_fraction, timing)
     returns = result.returns.dropna()
     summary = performance_summary(returns)
     equity = (1.0 + returns).cumprod()
+    drawdown = equity / equity.cummax() - 1.0
     bench = spot / spot.iloc[0]
     greeks = result.greeks.reindex(equity.index)
-    return {"strategy": name, "params": dict(params or {}), "n_days": int(n_days), "seed": int(seed), "capital": float(capital), "summary": {k: float(v) for k, v in summary.items() if isinstance(v, (int, float, np.floating, np.integer)) and np.isfinite(v)},
+    every = slice(None, None, 2)
+    rolling = performance.rolling_volatility(returns, 63).reindex(equity.index)
+    years = [{"year": int(y), "value": float((1.0 + r).prod() - 1.0), "days": int(len(r))} for y, r in returns.groupby(returns.index.year)]
+    held = result.positions.reindex(equity.index)
+    in_market = float(((held["open_contracts"] > 0) | (held["underlying_units"].abs() > 0)).mean()) if len(held) else float("nan")
+    return {"strategy": name, "params": dict(params or {}), "timing": timing, "n_days": int(n_days), "seed": int(seed), "capital": float(capital), "summary": {k: float(v) for k, v in summary.items() if isinstance(v, (int, float, np.floating, np.integer)) and np.isfinite(v)},
             "start": summary.get("start"), "end": summary.get("end"),
             "option_summary": {k: float(v) for k, v in result.summary().items()}, "var_95": float(value_at_risk(returns, 0.95)), "cvar_95": float(conditional_value_at_risk(returns, 0.95)),
-            "dates": [str(d.date()) for d in equity.index[::2]], "equity": [round(float(v), 5) for v in equity.to_numpy()[::2]], "benchmark": [round(float(v), 5) for v in bench.reindex(equity.index).to_numpy()[::2]],
-            "net_delta": [None if not np.isfinite(v) else round(float(v), 4) for v in greeks["delta"].to_numpy()[::2]] if "delta" in greeks else [],
+            "dates": [str(d.date()) for d in equity.index[every]], "equity": [round(float(v), 5) for v in equity.to_numpy()[every]], "benchmark": [round(float(v), 5) for v in bench.reindex(equity.index).to_numpy()[every]],
+            "drawdown": [round(float(v), 5) for v in drawdown.to_numpy()[every]], "drawdown_episodes": performance.drawdown_episodes(returns, 5), "rolling_vol": [None if not np.isfinite(v) else round(float(v), 4) for v in rolling.to_numpy()[every]],
+            "years": years, "calendar_months": performance.calendar_month_profile(returns), "monthly": performance.monthly_returns(returns), "distribution": performance.return_distribution(returns),
+            "risk": performance.risk_metrics(returns), "share_in_market": in_market,
+            "net_delta": [None if not np.isfinite(v) else round(float(v), 4) for v in greeks["delta"].to_numpy()[every]] if "delta" in greeks else [],
             "attribution": {c: float(result.attribution[c].sum()) for c in result.attribution.columns}, "trades": int(len(result.trades)), "skipped_orders": int(result.skipped_orders),
             "recent_trades": [{k: (str(v.date()) if isinstance(v, pd.Timestamp) else (float(v) if isinstance(v, (int, float, np.floating, np.integer)) else str(v))) for k, v in row.items()}
                               for row in result.trades.tail(12).to_dict("records")],
             "notes": ["The option market is simulated (an SSVI surface with a built-in variance risk premium and jump risk); it is not historical data.",
                       "Returns are daily P&L over a fixed capital: margin and funding are not modelled."]}
+
+
+SWEEP_POINTS = (2, 9)
+
+
+def _headline(out: dict) -> dict:
+    """The few numbers a sweep or a comparison tabulates for a finished backtest."""
+    s = out["summary"]
+    return {"sharpe": s.get("sharpe"), "cagr": s.get("cagr"), "ann_vol": s.get("ann_vol"), "max_drawdown": s.get("max_drawdown"), "total_return": s.get("total_return"), "worst_day": s.get("worst_day"),
+            "cvar_95": out["cvar_95"], "trades": out["trades"], "costs": out["option_summary"]["costs_total"], "share_in_market": out["share_in_market"]}
+
+
+def check_sweep(name: str, param: str, values, params: dict | None = None) -> list[dict]:
+    """The settings of each run of a sweep, checked: ``param`` must be a numeric setting of ``name``, there must be 2 to 9 values, and each must pass ``parse_backtest_params`` together with the strategy's
+    other settings. Returns the full checked settings of each run."""
+    if name not in BACKTEST_PARAMS:
+        raise ValueError(f"unknown strategy '{name}'; choose from {list(BACKTEST_PARAMS)}")
+    spec = BACKTEST_PARAMS[name].get(param)
+    if spec is None or spec["kind"] not in ("float", "int"):
+        raise ValueError(f"{name} has no numeric setting '{param}' to sweep; it takes {[k for k, v in BACKTEST_PARAMS[name].items() if v['kind'] in ('float', 'int')]}")
+    if not isinstance(values, (list, tuple)) or not SWEEP_POINTS[0] <= len(values) <= SWEEP_POINTS[1]:
+        raise ValueError(f"give between {SWEEP_POINTS[0]} and {SWEEP_POINTS[1]} values to sweep")
+    return [parse_backtest_params(name, {**(params or {}), param: v}) for v in values]
+
+
+def run_strategy_sweep(name: str, param: str, values: list, params: dict | None = None, progress=None, **kwargs) -> dict:
+    """The same backtest at each of ``values`` (2 to 9) of one numeric setting ``param`` of the strategy, everything else as in ``params``: how the result moves as the setting does, which is how a
+    setting is fine-tuned and, as importantly, how fragile the choice is (a Sharpe ratio that peaks at one value and falls away either side is a fit to this market, not a finding). ``kwargs`` are those of
+    ``run_strategy_backtest``. Every value is checked against the setting's own range and against the strategy's other settings (``check_sweep``)."""
+    runs = check_sweep(name, param, values, params)
+    rows = []
+    for i, checked in enumerate(runs):
+        if progress:
+            progress(f"{param.replace('_', ' ')} = {checked[param]:g} ({i + 1} of {len(runs)})")
+        rows.append({"value": checked[param], **_headline(run_strategy_backtest(name, checked, **kwargs))})
+    default = BACKTEST_PARAMS[name][param]["default"]
+    return {"strategy": name, "param": param, "rows": rows, "base": parse_backtest_params(name, params).get(param, default), "default": default, "params": dict(params or {})}
+
+
+def run_strategy_comparison(names: list | None = None, progress=None, **kwargs) -> dict:
+    """Every rolling strategy (or ``names``) at its default settings on the SAME simulated market, so that they can be set side by side: their headline numbers and their equity curves. ``kwargs`` are
+    those of ``run_strategy_backtest`` (days, seed, capital, premium, commission, fill and timing)."""
+    names = list(names or BACKTEST_STRATEGIES)
+    unknown = [n for n in names if n not in BACKTEST_STRATEGIES]
+    if unknown:
+        raise ValueError(f"unknown strategy '{unknown[0]}'; choose from {list(BACKTEST_STRATEGIES)}")
+    if len(names) < 2:
+        raise ValueError("compare at least two strategies")
+    rows, curves, dates, bench = [], {}, None, None
+    for i, name in enumerate(names):
+        if progress:
+            progress(f"{name.replace('_', ' ')} ({i + 1} of {len(names)})")
+        out = run_strategy_backtest(name, None, **kwargs)
+        rows.append({"strategy": name, **_headline(out)})
+        curves[name] = out["equity"]
+        dates, bench = out["dates"], out["benchmark"]
+    return {"rows": rows, "dates": dates, "equity": curves, "benchmark": bench, "params": {k: v for k, v in kwargs.items() if k in ("n_days", "seed", "capital", "premium", "commission", "fill_fraction", "timing")}}

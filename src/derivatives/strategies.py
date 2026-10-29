@@ -11,6 +11,10 @@ on covered calls; Bondarenko 2014 and Carr & Wu 2009 on the variance risk premiu
 ``DeltaHedgedStraddle``   short (``side=-1``) or long (``+1``) the at-the-money straddle with the delta hedged daily: a pure bet on realised against implied volatility
 ``RiskReversal``          long a 25-delta call against a short 25-delta put, delta-hedged: the skew premium
 ``CalendarSpread``        short the front-month ATM option, long the back month
+``PutSpread``             sell a ~25-delta put and buy a ~10-delta put against it: the short put with a defined worst case (a credit put spread)
+``IronButterfly``         sell the at-the-money put and call, buy wings 5% out of the money (the Cboe BFLY index)
+``Collar``                long the underlying, long a put 5% below and short a call 5% above the market (Cboe CLL-style collar)
+``ProtectivePut``         long the underlying and a put 5% below the market (the Cboe PPUT index)
 ``VRPTimed``              wraps another strategy and trades it only while the TRAILING variance risk premium (implied minus realised volatility) is positive
 """
 
@@ -19,7 +23,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from .backtest import Hedge, Order, OptionStrategy, StrategyContext, pick_atm, pick_by_delta, pick_expiry, quoted
+from .backtest import Hedge, Order, OptionStrategy, StrategyContext, pick_atm, pick_by_delta, pick_by_moneyness, pick_expiry, quoted
 
 
 class _Roller(OptionStrategy):
@@ -189,6 +193,78 @@ class CalendarSpread(_Roller):
         return self._open(ctx) or []
 
 
+class PutSpread(_Roller):
+    """Sell a put of ``short_delta`` and buy one of ``long_delta`` against it (the credit put spread): the short put's premium with its loss limited to the width of the spread."""
+
+    name = "put_spread"
+
+    def __init__(self, short_delta: float = 0.25, long_delta: float = 0.10, **kw):
+        super().__init__(**kw)
+        if not 0.0 < long_delta < short_delta < 1.0:
+            raise ValueError("long_delta must be smaller than short_delta (the bought put is further out of the money)")
+        self.short_delta, self.long_delta = short_delta, long_delta
+
+    def legs(self, ctx, expiry):
+        sp, lp = pick_by_delta(ctx.chain, expiry, "P", self.short_delta), pick_by_delta(ctx.chain, expiry, "P", self.long_delta)
+        if not (sp and lp) or lp[0] >= sp[0]:
+            return None
+        return [Order(expiry, sp[0], "P", -self.size), Order(expiry, lp[0], "P", self.size)]
+
+
+class IronButterfly(_Roller):
+    """Sell the at-the-money put and call and buy a put and a call ``wing`` out of the money (as a fraction of the price): the Cboe BFLY index, with its 5% wings."""
+
+    name = "iron_butterfly"
+
+    def __init__(self, wing: float = 0.05, **kw):
+        super().__init__(**kw)
+        if not 0.01 <= wing <= 0.5:
+            raise ValueError("wing must be between 0.01 and 0.5 (a fraction of the price)")
+        self.wing = wing
+
+    def legs(self, ctx, expiry):
+        k = pick_atm(ctx.chain, expiry)
+        wp, wc = pick_by_moneyness(ctx.chain, expiry, "P", 1.0 - self.wing), pick_by_moneyness(ctx.chain, expiry, "C", 1.0 + self.wing)
+        if not (quoted(ctx.chain, expiry, k, "C") and quoted(ctx.chain, expiry, k, "P") and wp and wc) or wp >= k or wc <= k:
+            return None
+        return [Order(expiry, k, "C", -self.size), Order(expiry, k, "P", -self.size), Order(expiry, wp, "P", self.size), Order(expiry, wc, "C", self.size)]
+
+
+class Collar(_Roller):
+    """Own ``shares_per_contract`` x ``size`` shares, buy a put ``put_moneyness`` times the price and sell a call ``call_moneyness`` times it (the Cboe CLL collar buys the put at 95% and sells the
+    call at 110%; the default here is the symmetric 95-105)."""
+
+    name = "collar"
+
+    def __init__(self, put_moneyness: float = 0.95, call_moneyness: float = 1.05, shares_per_contract: float = 100.0, **kw):
+        super().__init__(**kw)
+        if not (0.5 <= put_moneyness < 1.0 < call_moneyness <= 1.5):
+            raise ValueError("put_moneyness must be in [0.5, 1) and call_moneyness in (1, 1.5]")
+        self.put_moneyness, self.call_moneyness, self.shares = put_moneyness, call_moneyness, shares_per_contract
+
+    def legs(self, ctx, expiry):
+        p, c = pick_by_moneyness(ctx.chain, expiry, "P", self.put_moneyness), pick_by_moneyness(ctx.chain, expiry, "C", self.call_moneyness)
+        if not (p and c):
+            return None
+        return [Order(expiry, p, "P", self.size), Order(expiry, c, "C", -self.size), Hedge(self.size * self.shares)]
+
+
+class ProtectivePut(_Roller):
+    """Own ``shares_per_contract`` x ``size`` shares and buy a put ``put_moneyness`` times the price each period: insurance with a floor (the Cboe PPUT index buys a monthly put 5% out of the money)."""
+
+    name = "protective_put"
+
+    def __init__(self, put_moneyness: float = 0.95, shares_per_contract: float = 100.0, **kw):
+        super().__init__(**kw)
+        if not 0.5 <= put_moneyness < 1.0:
+            raise ValueError("put_moneyness must be in [0.5, 1)")
+        self.put_moneyness, self.shares = put_moneyness, shares_per_contract
+
+    def legs(self, ctx, expiry):
+        p = pick_by_moneyness(ctx.chain, expiry, "P", self.put_moneyness)
+        return [Order(expiry, p, "P", self.size), Hedge(self.size * self.shares)] if p else None
+
+
 class VRPTimed(OptionStrategy):
     """Trade ``inner`` only while the trailing variance risk premium is positive: the ATM implied volatility of the ~30-day expiry minus the volatility realised over the last
     ``window`` days (both known at the decision date). When the premium turns negative the position is closed and not re-opened."""
@@ -219,7 +295,7 @@ class VRPTimed(OptionStrategy):
 
 
 STRATEGIES = {"short_put": ShortPut, "covered_call": CoveredCall, "short_strangle": ShortStrangle, "iron_condor": IronCondor, "delta_hedged_straddle": DeltaHedgedStraddle,
-              "risk_reversal": RiskReversal, "calendar_spread": CalendarSpread}
+              "risk_reversal": RiskReversal, "calendar_spread": CalendarSpread, "put_spread": PutSpread, "iron_butterfly": IronButterfly, "collar": Collar, "protective_put": ProtectivePut}
 
 
 def make_strategy(name: str, **params) -> OptionStrategy:

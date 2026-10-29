@@ -7,7 +7,7 @@ prerequisites: [volatility-surfaces, backtest-engine-and-costs]
 stages: []
 files: [src/derivatives/backtest.py, src/derivatives/strategies.py, src/derivatives/volatility.py, src/derivatives/synthetic.py]
 figures: []
-tests: [tests/test_derivatives.py]
+tests: [tests/test_derivatives.py, tests/test_options_strategies_exact.py]
 models: []
 ---
 
@@ -21,10 +21,10 @@ Selling options earns a premium most of the time and loses it in crashes; the op
 
 The **variance risk premium** is the gap between implied variance (what option sellers charge, measured by a VIX-style index) and the variance that is later realised; it is positive on average in equity indices, and `variance_risk_premium` reports it with both trailing and forward realised variance (the forward one is look-ahead and used only to measure, never to trade). Strategies that harvest or time it, all in `src.derivatives.strategies`:
 
-- `short_put`, `covered_call`, `short_strangle`, `iron_condor`: premium selling with different tail protection, strikes chosen by delta;
+- `short_put`, `put_spread`, `covered_call`, `short_strangle`, `iron_condor`, `iron_butterfly`: premium selling with different tail protection, strikes chosen by delta (or, for the butterfly's wings, by distance from the price); `collar` and `protective_put`: the shares held with a put (and a call sold against it), strikes chosen by moneyness. The last four follow the Cboe benchmark indices (CNDR, BFLY, CLL, PPUT; see [the structures and chain analytics guide](option-structures-distribution-and-positioning.md));
 - `delta_hedged_straddle`: buy or sell an at-the-money straddle and hedge delta daily, so the P&L is approximately `0.5 * gamma * S^2 * (realised variance - implied variance) dt`; `side=-1` sells the variance premium;
 - `risk_reversal` (skew), `calendar_spread` (term structure);
-- `vrp_timed`: trade only when implied volatility is rich against trailing realised volatility.
+- `vrp_timed`: trade only when implied volatility is rich against trailing realised volatility (the Options tab's backtest offers it as a filter on any strategy).
 
 `OptionBacktester` enforces the accounting: orders placed on day `t` fill on `t + execution_lag` at that day's quotes, crossing the spread (a `fill_fraction` below one models fills inside it), commissions are charged per contract, hedges trade the underlying at a cost in basis points, expiry settles at intrinsic value, and `pnl_explain` attributes each day's P&L to delta, gamma, vega, theta and residual. **Dispersion** (`simulate_dispersion_world`, `dispersion_backtest`) sells index variance against single-name variance and is profitable when implied correlation exceeds what is realised.
 

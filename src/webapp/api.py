@@ -76,10 +76,10 @@ SAFE_SLUG = re.compile(r"^[a-z0-9][a-z0-9_-]{0,80}$")
 # Cash flows tabs (``/api/exec``, ``/api/cash``); 4 added the Options, Futures, Crypto and Machine learning workspaces (``asset_api``, ``ml_api``); 5 added the Free data downloads of the Options, Futures and
 # Crypto tabs (``data_api``) and the ``downloaded`` source kind those tabs now read; 6 added iTick data to the Futures, Crypto and Options cards; 7 added the Yahoo futures search and the Clear buttons
 # of the background runs (``/api/jobs/clear``); 8 added the Tune tab (``tune_api``); 9 added the Forecast tab (``forecast_api``); 10 added the option-model modes of the Options tab (``models_api``); 11 added the Fundamentals tab (``fundamentals_api``); 12 added the signals board, the strategy settings and the curve views of the Futures tab and the new strategies and
-# views of the Crypto, Options and Fundamentals tabs. The page compares it with its own number and says so
+# views of the Crypto tab; 13 added the implied-distribution and open-interest views, the structure comparison and the backtest sweep of the Options tab and the new scores of the Fundamentals tab. The page compares it with its own number and says so
 # when the server behind it is older (the files were updated while the app was running, so it still runs the old code): the whole page needs 2, and the newer tabs ask for 3 or more on their own, so an
 # older app still runs the Backtest tab.
-API_VERSION = 12
+API_VERSION = 13
 CODE_ROOT = Path(__file__).resolve().parents[1]
 
 

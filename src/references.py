@@ -187,6 +187,42 @@ KUPIEC = paper("Kupiec", 1995, "Techniques for verifying the accuracy of risk me
 GOYAL_WELCH = paper("Goyal and Welch", 2008, "A comprehensive look at the empirical performance of equity premium prediction", "Review of Financial Studies 21(4)", "10.1093/rfs/hhm014")
 
 
+# ---- options
+CBOE_BENCHMARKS = paper("Cboe", 2026, "Strategy benchmark indices (PUT, BXM, CLL, PPUT, CLLZ, CNDR, BFLY)", "Cboe Global Indices web page, accessed October 2026", url="https://www.cboe.com/us/indices/benchmark_indices/")
+CBOE_2015 = paper("Cboe", 2015, "CBOE introduces 10 options-based strategy performance benchmark indexes", "press release of 29 July 2015",
+                  url="https://ir.cboe.com/news/news-details/2015/CBOE-Introduces-10-Options-Based-Strategy-Performance-Benchmark-Indexes-07-29-2015/default.aspx")
+CBOE_VIX = paper("Cboe", 2025, "Cboe Volatility Index mathematics methodology", "Cboe Global Indices white paper", url="https://cdn.cboe.com/resources/indices/Cboe_Volatility_Index_Mathematics_Methodology.pdf")
+MCMILLAN = book("McMillan", 2012, "Options as a Strategic Investment, 5th edition", "Prentice Hall Press")
+NATENBERG = book("Natenberg", 2014, "Option Volatility and Pricing: Advanced Trading Strategies and Techniques, 2nd edition", "McGraw-Hill")
+HULL_BOOK = book("Hull", 2018, "Options, Futures, and Other Derivatives, 10th edition", "Pearson")
+COHEN = book("Cohen", 2005, "The Bible of Options Strategies: The Definitive Guide for Practical Trading Strategies", "Financial Times Prentice Hall")
+SINCLAIR = book("Sinclair", 2013, "Volatility Trading, 2nd edition", "Wiley")
+TALEB = book("Taleb", 1997, "Dynamic Hedging: Managing Vanilla and Exotic Options", "Wiley")
+GATHERAL_BOOK = book("Gatheral", 2006, "The Volatility Surface: A Practitioner's Guide", "Wiley")
+GATHERAL_JACQUIER = paper("Gatheral and Jacquier", 2014, "Arbitrage-free SVI volatility surfaces", "Quantitative Finance 14(1)", "10.1080/14697688.2013.819986")
+WHALEY_BXM = paper("Whaley", 2002, "Return and risk of CBOE buy write monthly index", "Journal of Derivatives 10(2)", "10.3905/jod.2002.319194")
+HILL_COVERED = paper("Hill, Balasubramanian, Gregory and Tierens", 2006, "Finding alpha via covered index writing", "Financial Analysts Journal 62(5)", "10.2469/faj.v62.n5.4281")
+ISRAELOV_NIELSEN = paper("Israelov and Nielsen", 2014, "Covered call strategies: one fact and eight myths", "Financial Analysts Journal 70(6)", "10.2469/faj.v70.n6.3")
+ISRAELOV_KLEIN = paper("Israelov and Klein", 2016, "Risk and return of equity index collar strategies", "Journal of Alternative Investments 19(1)", "10.3905/jai.2016.19.1.041")
+COVAL_SHUMWAY = paper("Coval and Shumway", 2001, "Expected option returns", "Journal of Finance 56(3)", "10.1111/0022-1082.00352")
+BAKSHI_KAPADIA = paper("Bakshi and Kapadia", 2003, "Delta-hedged gains and the negative market volatility risk premium", "Review of Financial Studies 16(2)", "10.1093/rfs/hhg002")
+BONDARENKO = paper("Bondarenko", 2014, "Why are put options so expensive?", "Quarterly Journal of Finance 4(1)", "10.1142/s2010139214500153")
+BREEDEN_LITZENBERGER = paper("Breeden and Litzenberger", 1978, "Prices of state-contingent claims implicit in option prices", "Journal of Business 51(4)", "10.1086/296025")
+JACKWERTH_RUBINSTEIN = paper("Jackwerth and Rubinstein", 1996, "Recovering probability distributions from option prices", "Journal of Finance 51(5)", "10.1111/j.1540-6261.1996.tb05219.x")
+BLISS_PANIGIRTZOGLOU = paper("Bliss and Panigirtzoglou", 2004, "Option-implied risk aversion estimates", "Journal of Finance 59(1)", "10.1111/j.1540-6261.2004.00637.x")
+FIGLEWSKI = paper("Figlewski", 2010, "Estimating the implied risk-neutral density for the U.S. market portfolio", "in Volatility and Time Series Econometrics, Oxford University Press",
+                  "10.1093/acprof:oso/9780199549498.003.0015")
+BRITTEN_JONES = paper("Britten-Jones and Neuberger", 2000, "Option prices, implied price processes, and stochastic volatility", "Journal of Finance 55(2)", "10.1111/0022-1082.00228")
+DEMETERFI = paper("Demeterfi, Derman, Kamal and Zou", 1999, "A guide to volatility and variance swaps", "Journal of Derivatives 6(4)", "10.3905/jod.1999.319129")
+NEUBERGER = paper("Neuberger", 1994, "The log contract", "Journal of Portfolio Management 20(2)", "10.3905/jpm.1994.409478")
+JIANG_TIAN = paper("Jiang and Tian", 2005, "The model-free implied volatility and its information content", "Review of Financial Studies 18(4)", "10.1093/rfs/hhi027")
+GARLEANU_PEDERSEN_POTESHMAN = paper("Gârleanu, Pedersen and Poteshman", 2009, "Demand-based option pricing", "Review of Financial Studies 22(10)", "10.1093/rfs/hhp005")
+BOLLEN_WHALEY = paper("Bollen and Whaley", 2004, "Does net buying pressure affect the shape of implied volatility functions?", "Journal of Finance 59(2)", "10.1111/j.1540-6261.2004.00647.x")
+NI_PEARSON_POTESHMAN = paper("Ni, Pearson and Poteshman", 2005, "Stock price clustering on option expiration dates", "Journal of Financial Economics 78(1)", "10.1016/j.jfineco.2004.08.005")
+NI_PEARSON_POTESHMAN_WHITE = paper("Ni, Pearson, Poteshman and White", 2021, "Does option trading have a pervasive impact on underlying stock prices?", "Review of Financial Studies 34(4)", "10.1093/rfs/hhaa082")
+BARBON_BURASCHI = paper("Barbon and Buraschi", 2020, "Gamma fragility", "SSRN 3725454", "10.2139/ssrn.3725454")
+
+
 # ------------------------------------------------------------------------------------------------------------------ method -> sources
 MODELS: dict[str, tuple[Ref, ...]] = {
     "tsmom": (MOSKOWITZ, HURST), "tsmom_multi": (HURST, MOSKOWITZ), "ma_ensemble": (BAZ,), "donchian": (FAITH, CLENOW_FTT), "kama_trend": (KAUFMAN,),
@@ -242,4 +278,21 @@ CRYPTO_VIEWS: dict[str, tuple[Ref, ...]] = {
     "trend": (BROCK, GERRITSEN, DETZEL, LIU_TSYVINSKI, LIU_TSYVINSKI_WU), "volatility": (BURGHARDT_LANE, MOREIRA_MUIR), "relative": (MAKAROV_SCHOAR, GRIFFIN_SHAMS, LIU_TSYVINSKI_WU), "carry": (SCHMELING, HE_MANELA, MAKAROV_SCHOAR),
     "signals": (LIU_TSYVINSKI, LIU_TSYVINSKI_WU, SCHMELING, MOSKOWITZ),
 }
-EXTRA: dict[str, dict[str, tuple[Ref, ...]]] = {"forecaster": FORECASTERS, "futures": FUTURES_VIEWS, "crypto": CRYPTO_VIEWS}                 # tables of the other tabs (forecasters, futures views, option strategies, ...)
+_STRATEGY_BOOKS = (MCMILLAN, NATENBERG, COHEN)                                                                      # the textbooks that catalogue the standard structures
+OPTIONS: dict[str, tuple[Ref, ...]] = {
+    # structures (the strategy builder) and rolling strategies (its backtest), by name
+    "long_call": (HULL_BOOK, MCMILLAN, NATENBERG), "long_put": (HULL_BOOK, MCMILLAN, NATENBERG), "covered_call": (WHALEY_BXM, ISRAELOV_NIELSEN, HILL_COVERED, MCMILLAN, CBOE_BENCHMARKS),
+    "protective_put": (CBOE_2015, MCMILLAN, HULL_BOOK), "bull_call_spread": (HULL_BOOK, *_STRATEGY_BOOKS), "bear_put_spread": (HULL_BOOK, *_STRATEGY_BOOKS),
+    "iron_condor": (CBOE_2015, NATENBERG, COHEN, MCMILLAN), "long_straddle": (COVAL_SHUMWAY, BAKSHI_KAPADIA, HULL_BOOK, NATENBERG), "long_strangle": (COVAL_SHUMWAY, HULL_BOOK, NATENBERG),
+    "short_straddle": (COVAL_SHUMWAY, BONDARENKO, CARR_WU, SINCLAIR), "short_strangle": (COVAL_SHUMWAY, BONDARENKO, CARR_WU, SINCLAIR), "calendar_spread": (HULL_BOOK, NATENBERG, MCMILLAN),
+    "butterfly": (HULL_BOOK, *_STRATEGY_BOOKS), "ratio_spread": (NATENBERG, MCMILLAN), "collar": (ISRAELOV_KLEIN, CBOE_2015, CBOE_BENCHMARKS, HULL_BOOK, MCMILLAN),
+    "cash_secured_put": (CBOE_BENCHMARKS, BONDARENKO, COVAL_SHUMWAY), "iron_butterfly": (CBOE_2015, NATENBERG, COHEN, MCMILLAN), "long_condor": _STRATEGY_BOOKS,
+    "risk_reversal": (NATENBERG, HULL_BOOK, COHEN), "strap": (HULL_BOOK, MCMILLAN, NATENBERG), "strip": (HULL_BOOK, MCMILLAN, NATENBERG), "call_backspread": (NATENBERG, MCMILLAN, COHEN),
+    "put_backspread": (NATENBERG, MCMILLAN, COHEN), "diagonal_spread": (HULL_BOOK, MCMILLAN, COHEN), "tail_hedge": (TALEB, BONDARENKO, COVAL_SHUMWAY, CBOE_2015),
+    "short_put": (CBOE_BENCHMARKS, BONDARENKO, BAKSHI_KAPADIA), "delta_hedged_straddle": (BAKSHI_KAPADIA, COVAL_SHUMWAY, CARR_WU, SINCLAIR), "put_spread": (HULL_BOOK, *_STRATEGY_BOOKS),
+    # what the chain says
+    "distribution": (BREEDEN_LITZENBERGER, GATHERAL_JACQUIER, GATHERAL_BOOK, JACKWERTH_RUBINSTEIN, BLISS_PANIGIRTZOGLOU, FIGLEWSKI), "model_free": (BRITTEN_JONES, DEMETERFI, NEUBERGER, JIANG_TIAN, CARR_WU, CBOE_VIX),
+    "positioning": (GARLEANU_PEDERSEN_POTESHMAN, BOLLEN_WHALEY, NI_PEARSON_POTESHMAN, NI_PEARSON_POTESHMAN_WHITE, BARBON_BURASCHI), "cone": (BURGHARDT_LANE, NATENBERG, SINCLAIR),
+    "timing": (BOLLERSLEV_TZ, CARR_WU, SINCLAIR),
+}
+EXTRA: dict[str, dict[str, tuple[Ref, ...]]] = {"forecaster": FORECASTERS, "futures": FUTURES_VIEWS, "crypto": CRYPTO_VIEWS, "options": OPTIONS}   # tables of the other tabs (forecasters, futures views, option structures, ...)

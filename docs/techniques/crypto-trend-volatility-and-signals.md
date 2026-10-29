@@ -15,7 +15,7 @@ models: [mayer_multiple]
 
 ## In one sentence
 
-The Crypto tab now runs fifteen strategies in four groups with their own settings, adds a rule that holds a coin until its price is stretched over its 200-day average (the Mayer multiple), draws the price against its own history (the multiple, the cone of its volatility, its drawdowns, its ratio and correlation with the other coin), and shows what every rule says about BTC and ETH today; on the platform's Deribit data none of the fourteen spot rules beat holding the two coins equally over the same dates, and only the funding-carry rule, which is market-neutral, had a high Sharpe ratio.
+The Crypto tab now runs fifteen strategies in four groups with their own settings, adds a rule that holds a coin until its price is stretched over its 200-day average (the Mayer multiple), draws the price against its own history (the multiple, the cone of its volatility, its drawdowns, its ratio and correlation with the other coin), and shows what every rule says about BTC and ETH today; on the platform's Deribit data none of the thirteen spot rules beat holding the two coins equally over the same dates, and only the funding-carry rule, which is market-neutral, had a high Sharpe ratio.
 
 ## The idea
 
@@ -59,7 +59,7 @@ The platform's data are Deribit's BTC and ETH, daily, 2019 to 2026, sampled on w
 | Mayer multiple | 2022−03 | +0.43 | +0.43 | +9.5% | −67% | 0.83 |
 | Volatility-managed hold (Moreira and Muir) | 2022−06 | +0.73 | +0.82 | +8.2% | −18% | 0.94 |
 
-- **No spot rule beat holding.** Of the fourteen rules that trade the coins themselves none had a higher net Sharpe ratio than holding both over its own dates; the closest were the Mayer multiple (+0.43, level with holding) and the volatility-managed hold (+0.73 against +0.82, with a worst fall of 18%). The two coins rose a great deal over the sample, and a rule that is out of the market for part of it gives that up.
+- **No spot rule beat holding.** Of the thirteen rules that trade the coins themselves none had a higher net Sharpe ratio than holding both over its own dates; the closest were the Mayer multiple (+0.43, level with holding) and the volatility-managed hold (+0.73 against +0.82, with a worst fall of 18%). The two coins rose a great deal over the sample, and a rule that is out of the market for part of it gives that up.
 - **The one high Sharpe ratio is a market-neutral rule.** Funding carry (long spot, short the perpetual, earning the funding) had a Sharpe ratio of +3.7 on a return of 3.2% a year and a worst fall of 1%: the ratio is high because the volatility is tiny, which is what a carry trade looks like until the day it does not (the Basis tab shows its tail). The basis rule, which times the same position, lost (-1.1).
 - **Read the deflated Sharpe with the count of tries.** The last column assumes each run was the only one tried; fifteen strategies were tried here, so a value of 0.94 (volatility-managed) or 0.83 (Mayer) is less than it looks.
 - **On the data's last day (2 October 2026)** BTC's multiple of its 200-day average was 1.21 (higher than 70% of the days since 2019, above 2.4 on 0.9% of them); its 30-day volatility, 32% a year, was in the 13th percentile of its history; it was 31% below its high (its deepest falls were 77% from November 2021 and 63% from July 2019); and its 90-day correlation with ETH was 0.86 against an average of 0.83. Those are descriptions, not forecasts.
