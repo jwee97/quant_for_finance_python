@@ -33,5 +33,5 @@ def equal_weight_book(investable: pd.DataFrame, constraints: Constraints | None 
     counts = mask.sum(axis=1).replace(0, np.nan)
     weights = mask.div(counts, axis=0).fillna(0.0)
     if constraints is not None:
-        weights = project_frame(weights, constraints)
+        weights = project_frame(weights, constraints, keep_empty=True)                              # capital freed by a limit goes to the names that can be held, not to those that have not listed
     return weights

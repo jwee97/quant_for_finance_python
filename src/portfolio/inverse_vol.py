@@ -36,5 +36,5 @@ def inverse_vol_book(returns: pd.DataFrame, investable: pd.DataFrame, lookback: 
     inverse = 1.0 / vol.replace(0.0, np.nan)
     weights = inverse.div(inverse.sum(axis=1), axis=0).fillna(0.0)
     if constraints is not None:
-        weights = project_frame(weights, constraints)
+        weights = project_frame(weights, constraints, keep_empty=True)                              # a name with no volatility or no listing stays out
     return weights

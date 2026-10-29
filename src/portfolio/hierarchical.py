@@ -271,7 +271,7 @@ def hierarchical_book(returns: pd.DataFrame, investable: pd.DataFrame, kind: str
 
     book = book.ffill().fillna(0.0)
     if constraints is not None:
-        book = project_frame(book, constraints)
+        book = project_frame(book, constraints, keep_empty=True)                                    # only the names the book holds can take what a limit frees
     return book
 
 

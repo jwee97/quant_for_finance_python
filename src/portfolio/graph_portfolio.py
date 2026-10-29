@@ -251,4 +251,4 @@ def graph_book(returns: pd.DataFrame, investable: pd.DataFrame, method: str = "g
             continue
         book.loc[stamp, live] = w.reindex(live).to_numpy()
     book = book.ffill().fillna(0.0)
-    return project_frame(book, constraints) if constraints is not None else book
+    return project_frame(book, constraints, keep_empty=True) if constraints is not None else book

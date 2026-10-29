@@ -267,3 +267,12 @@ def test_the_threshold_is_thirty_percent_and_the_range_of_leads_is_a_setting():
     wide = detect_suspicious_alignment(five, returns, max_lead=5)
     assert wide["lead"].tolist() == list(range(-5, 6)) and wide["leakage"].iloc[0] and detect_suspicious_alignment(returns.shift(-3), returns)["leakage"].iloc[0], "but three days ahead is, and a wider range finds the five"
     assert len(detect_suspicious_alignment(returns, returns, max_lead=0)) == 1
+
+
+def test_weights_that_stop_at_the_split_leave_no_future_to_compare_and_the_result_says_inconclusive_not_pass():
+    m = toy_market()
+    result = check_no_lookahead(m, lambda market: honest(market).loc[:SPLIT], SPLIT)
+    assert result.passed is False and result.future_weights_changed is False and result.n_differing_cells == 0
+    assert result.message.startswith("INCONCLUSIVE: the perturbation did not change any post-split weight either"), "no weights after the split: the test exercised nothing"
+    with pytest.raises(ValueError, match="leaves no future observations"):
+        check_no_lookahead(m, honest, m.prices.index[-1])

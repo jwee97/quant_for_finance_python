@@ -42,9 +42,9 @@ def red_flags(result) -> list[dict]:
     add("Deflated Sharpe probability >= 0.95", f"{v['deflated_sharpe_probability']:.2f} with {v['n_trials']} trial(s)" + (" (one trial: the probability the true Sharpe is above zero)" if v["n_trials"] == 1 else ""), v["deflated_sharpe_probability"] < 0.95,
         "The probability the Sharpe exceeds what the best of the ideas tried would show by chance.")
     gross = m["gross_sharpe"]
-    add("Costs take less than half of the gross Sharpe", f"gross {gross:+.2f} -> net {m['sharpe']:+.2f}", gross > 0 and m["sharpe"] < 0.5 * gross,
+    add("Costs take less than half of the gross Sharpe", f"gross {gross:+.2f} -> net {m['sharpe']:+.2f}", gross > 0 and m["sharpe"] <= 0.5 * gross,
         "High turnover strategies often die on costs.")
-    add("Annual turnover below 10x", f"{m['ann_turnover']:.1f}x", m["ann_turnover"] > 10, "Costs scale with turnover; capacity shrinks with it.")
+    add("Annual turnover below 10x", f"{m['ann_turnover']:.1f}x", m["ann_turnover"] >= 10, "Costs scale with turnover; capacity shrinks with it.")
     add("Evaluation window of at least 8 years", f"{m['n_days'] / 252:.1f} years", m["n_days"] < 8 * 252, "Short windows cannot separate skill from one good regime.")
     caus = v.get("causality")
     if caus:

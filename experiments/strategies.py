@@ -187,6 +187,9 @@ def _hierarchical_kwargs(config, kind: str) -> dict:
 # ---------------------------------------------------------------------------
 # The ladder
 # ---------------------------------------------------------------------------
+LADDER_VERSION = 2        # 2: a limit no longer hands capital to names that cannot be held (equal weight, inverse volatility, HRP, HERC, graph books)
+
+
 def build_ladder(market, config, include: list[str] | None = None) -> dict[str, pd.DataFrame]:
     """Return ``{model_name: target weights}`` for the requested models."""
     constraints = Constraints.from_config(config)
@@ -248,16 +251,18 @@ def cached_ladder(market, config, directory, include: list[str] | None = None,
                   rebuild: bool = False) -> dict[str, pd.DataFrame]:
     """Build the ladder once and reuse it across stages.
 
-    The cache key is the config fingerprint and the data version, so a changed
-    parameter or a re-downloaded dataset invalidates it automatically rather
-    than silently serving stale books.
+    The cache key is the config fingerprint, the data version and the version
+    of the books' arithmetic (``LADDER_VERSION``, raised whenever a book would
+    come out different for the same data), so a changed parameter, a
+    re-downloaded dataset or a corrected book invalidates it automatically
+    rather than silently serving stale books.
     """
     from pathlib import Path
 
     directory = Path(directory) / "books"
     directory.mkdir(parents=True, exist_ok=True)
     stamp = directory / "cache_key.txt"
-    key = f"{config.fingerprint()}|{market.data_version}"
+    key = f"{config.fingerprint()}|{market.data_version}|books-{LADDER_VERSION}"
     if rebuild or not stamp.exists() or stamp.read_text().strip() != key:
         for path in directory.glob("*.csv"):
             path.unlink()

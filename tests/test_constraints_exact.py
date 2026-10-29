@@ -241,6 +241,34 @@ def test_the_table_projection_without_a_net_target_only_clips_and_caps_groups_an
     assert unreachable.iloc[0].tolist() == pytest.approx([0.25, 0.25, 0.25]), "three names at a quarter: capped, and short of the target, not over the cap"
 
 
+def test_a_name_with_no_weight_can_be_kept_out_of_what_a_limit_frees():
+    book = pd.DataFrame([[0.5, 0.5, 0.0, 0.0]], index=pd.bdate_range("2021-01-04", periods=1), columns=list("ABCD"))
+    capped = Constraints(max_weight=0.4)
+    assert project_frame(book, capped).iloc[0].tolist() == pytest.approx([0.4, 0.4, 0.1, 0.1]), "by default the 0.2 the cap frees goes to the names with room, held or not"
+    kept = project_frame(book, capped, keep_empty=True)
+    assert kept.iloc[0].tolist() == pytest.approx([0.4, 0.4, 0.0, 0.0]), "kept out, the two stay at nothing and the book is short of its target rather than over a cap"
+    floored = Constraints(min_weight=0.1, max_weight=0.6)
+    assert project_frame(book, floored).iloc[0, 2] == pytest.approx(0.1) and project_frame(book, floored, keep_empty=True).iloc[0, 2] == 0.0, "a floor does not lift a name that is not held"
+    grouped = Constraints(max_weight=0.5, group_limits={"eq": 0.6}, group_map={"A": "eq", "B": "eq"})
+    assert project_frame(book, grouped, keep_empty=True).iloc[0].tolist() == pytest.approx([0.3, 0.3, 0.0, 0.0]), "a group limit scales the group, and what it frees has nowhere to go but cash"
+    assert project_frame(book, grouped).iloc[0].sum() == pytest.approx(1.0) and project_frame(book, grouped).iloc[0, 2] > 0.0
+    short = pd.DataFrame([[0.5, -0.3, 0.0]], index=book.index, columns=list("ABC"))
+    assert project_frame(short, Constraints(min_weight=-0.4, max_weight=0.4, net_exposure=None), keep_empty=True).iloc[0].tolist() == pytest.approx([0.4, -0.3, 0.0]), "a short is held, so it keeps its room"
+
+
+def test_limits_that_cannot_all_be_met_leave_the_book_short_of_its_net_and_never_over_a_cap():
+    """Two names in a group limited to 0.6 and nothing else to hold: the exposure step wants a whole book, the group step wants 0.6. The loop used to end on the exposure step, so the answer was over the group
+    limit by as much as the book was short; it is now short of the net, as the weight cap has always been when three names at a quarter cannot make a book."""
+    grouped = Constraints(max_weight=0.5, group_limits={"eq": 0.6}, group_map={"A": "eq", "B": "eq"})
+    row = pd.Series({"A": 0.5, "B": 0.5})
+    projected = grouped.project(row)
+    assert projected.tolist() == pytest.approx([0.3, 0.3]) and grouped.violations(projected) == {"net_exposure": pytest.approx(-0.4)}, "over no cap, 0.4 short of the net"
+    table = project_frame(pd.DataFrame([[0.5, 0.5], [0.2, 0.1]], columns=["A", "B"], index=pd.bdate_range("2021-01-04", periods=2)), grouped)
+    assert table.iloc[0].tolist() == pytest.approx([0.3, 0.3]) and table.iloc[1].tolist() == pytest.approx([0.3, 0.3]), "the table gives what the row gives, and a book that was short is lifted to the group's limit and no further"
+    three = Constraints(max_weight=0.5, group_limits={"eq": 0.6}, group_map={"A": "eq", "B": "eq"})
+    assert three.project(pd.Series({"A": 0.5, "B": 0.5, "C": 0.0})).tolist() == pytest.approx([0.3, 0.3, 0.4]), "with a third name to take what the group frees the book is whole again"
+
+
 # ------------------------------------------------------------------------------------------------------------------ turnover
 def test_a_trade_a_trillionth_over_the_limit_is_cut_and_nothing_of_a_trade_is_left_alone():
     previous = series(A=0.5, B=0.5)

@@ -8,7 +8,7 @@ code that repeats a check made elsewhere: an equivalent change) or a place where
     python -m experiments.plant_bugs src/fundamentals/metrics.py tests/test_fund_metrics.py tests/test_fund_exact_values.py --again metrics_bugs.json --out metrics_again.json
 
 The first draws ``--n`` places at random (a fixed ``--seed``) from everywhere a change can be made and tests each. The second puts back the survivors of an earlier file, found again by the text of their
-line (line numbers move), and runs the tests as they are now: the way to see that a test written for a survivor does kill it. The work is done in a copy of ``src``, ``tests``, ``config`` and
+line (line numbers move), and runs the tests as they are now: the way to see that a test written for a survivor does kill it. The work is done in a copy of ``src``, ``tests``, ``experiments``, ``config`` and
 ``pyproject.toml`` made for the purpose, so the working tree is never changed. It takes a test run per change: choose the test files that exercise the module, not the whole suite."""
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-COPIED = ("src", "tests", "config", "pyproject.toml")
+COPIED = ("src", "tests", "experiments", "config", "pyproject.toml")
 CMP = {ast.Lt: ast.LtE, ast.LtE: ast.Lt, ast.Gt: ast.GtE, ast.GtE: ast.Gt, ast.Eq: ast.NotEq, ast.NotEq: ast.Eq, ast.Is: ast.IsNot, ast.IsNot: ast.Is, ast.In: ast.NotIn, ast.NotIn: ast.In}
 ARITH = {ast.Add: ast.Sub, ast.Sub: ast.Add, ast.Mult: ast.Div, ast.Div: ast.Mult}
 KINDS = ("compare", "arith", "bool", "unary", "flag", "number")

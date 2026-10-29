@@ -117,13 +117,15 @@ def test_psd_repair_preserves_the_diagonal():
 
 
 def test_constraints_are_respected_after_projection(tickers):
-    constraints = Constraints(min_weight=0.0, max_weight=0.30, group_limits={"grp": 0.8},
-                              group_map={t: "grp" for t in tickers}, net_exposure=1.0)
+    # a group limit that the other names can make up for (a limit on a group that held every name could not be met together with a net of one: see test_constraints_exact)
+    constraints = Constraints(min_weight=0.0, max_weight=0.30, group_limits={"grp": 0.5},
+                              group_map={t: "grp" for t in tickers[:2]}, net_exposure=1.0)
     raw = pd.Series([0.9, 0.05, 0.02, 0.02, 0.01], index=tickers)
     projected = constraints.project(raw)
     assert projected.sum() == pytest.approx(1.0, abs=1e-8)
     assert projected.max() <= 0.30 + 1e-9
     assert projected.min() >= 0.0
+    assert projected[tickers[:2]].sum() <= 0.5 + 1e-9 and constraints.violations(projected) == {}
 
 
 def test_vectorised_projection_matches_the_row_version(tickers, rng):

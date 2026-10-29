@@ -132,22 +132,29 @@ class Constraints:
         Used to make a heuristic portfolio (equal weight, inverse volatility,
         risk parity) obey the same limits as the optimised ones without
         re-solving. Alternating projections: box, then groups, then the
-        exposure equality, repeated to convergence.
+        exposure equality, repeated to convergence. Limits that cannot all be
+        met (the names under a group's limit cannot take what it frees) have no
+        point on which the three steps agree, and the loop would end on the
+        exposure step, over the limit; a last pass of the caps alone leaves the
+        book short of its net target instead.
         """
         w = weights.astype(float).copy()
         target = self.net_exposure
 
-        for _ in range(iterations):
-            before = w.copy()
-            w = w.clip(lower=self.min_weight, upper=self.max_weight)
-
+        def capped(book: pd.Series) -> pd.Series:
+            book = book.clip(lower=self.min_weight, upper=self.max_weight)
             for key, limit in self.group_limits.items():
-                members = [a for a in w.index if self.group_map.get(a) == key]
+                members = [a for a in book.index if self.group_map.get(a) == key]
                 if not members:
                     continue
-                exposure = float(w[members].sum())
+                exposure = float(book[members].sum())
                 if exposure > limit + 1e-12:
-                    w[members] = w[members] * (limit / exposure)
+                    book[members] = book[members] * (limit / exposure)
+            return book
+
+        for _ in range(iterations):
+            before = w.copy()
+            w = capped(w)
 
             total = float(w.sum())
             if abs(total) > 1e-12 and self.net_exposure is not None:
@@ -162,11 +169,11 @@ class Constraints:
 
             if float((w - before).abs().max()) < tolerance:
                 break
-        return w
+        return capped(w)
 
 
 def project_frame(weights: pd.DataFrame, constraints: "Constraints",
-                  iterations: int = 100, tolerance: float = 1e-10) -> pd.DataFrame:
+                  iterations: int = 100, tolerance: float = 1e-10, keep_empty: bool = False) -> pd.DataFrame:
     """Project every row of a weight frame onto the constraint set, vectorised.
 
     Same alternating projection as ``Constraints.project`` (box -> group caps
@@ -178,6 +185,13 @@ def project_frame(weights: pd.DataFrame, constraints: "Constraints",
     Rows that are already feasible are untouched, and all-zero rows (dates
     with nothing investable) are left flat rather than being scaled up from
     nothing.
+
+    ``keep_empty`` keeps a name that has no weight at zero. A book that was
+    built over the names it can hold (the investable ones, those with a
+    history) gives the others nothing; without this, capital freed by a cap or
+    a group limit would be handed to them too, in proportion to their room, and
+    the engine would then drop it (a book left partly in cash on the days a
+    limit binds before every asset has listed).
     """
     assets = list(weights.columns)
     values = weights.to_numpy(dtype=float).copy()
@@ -197,19 +211,24 @@ def project_frame(weights: pd.DataFrame, constraints: "Constraints",
     group_index = {k: v for k, v in group_index.items() if len(v)}
 
     work = values[active]
+    if keep_empty:
+        held = work != 0.0
+        lo, hi = np.where(held, lo, 0.0), np.where(held, hi, 0.0)                              # a name with no weight has no room either way
+
+    def cap(book: np.ndarray) -> None:
+        np.clip(book, lo, hi, out=book)
+        for key, columns in group_index.items():
+            limit = constraints.group_limits[key]
+            exposure = book[:, columns].sum(axis=1)
+            breach = exposure > limit + 1e-12
+            if breach.any():
+                scale = np.ones(len(book))
+                scale[breach] = limit / exposure[breach]
+                book[:, columns] *= scale[:, None]
 
     for _ in range(iterations):
         before = work.copy()
-        np.clip(work, lo, hi, out=work)
-
-        for key, columns in group_index.items():
-            limit = constraints.group_limits[key]
-            exposure = work[:, columns].sum(axis=1)
-            breach = exposure > limit + 1e-12
-            if breach.any():
-                scale = np.ones(len(work))
-                scale[breach] = limit / exposure[breach]
-                work[:, columns] *= scale[:, None]
+        cap(work)
 
         if target is not None:
             deficit = target - work.sum(axis=1)
@@ -233,6 +252,7 @@ def project_frame(weights: pd.DataFrame, constraints: "Constraints",
         if np.max(np.abs(work - before)) < tolerance:
             break
 
+    cap(work)                                                                                  # limits that cannot all be met end the loop on the exposure step, over a cap: the caps once more
     values[active] = work
     out = pd.DataFrame(values, index=weights.index, columns=weights.columns)
     return out.where(finite, np.nan)
