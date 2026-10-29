@@ -1,7 +1,7 @@
 """A smoke check of every live data feed the application reads, for a scheduled run: does each public feed still answer, and does the answer still have the shape the parsers expect?
 
 The test suite never touches the network (a feed that changes its fields would not fail it), so this is the one place that does. It fetches a small, fixed set of things from the keyless feeds (Cboe,
-Deribit, four exchanges, Yahoo Finance) and from the SEC (a company's facts and record, the list of tickers, and the list of companies that report financial data, which stands in for the tickers
+Deribit, four exchanges, Yahoo Finance, and the futures curves: Cboe's VIX futures files, Yahoo's contracts, Deribit's expired futures) and from the SEC (a company's facts and record, the list of tickers, and the list of companies that report financial data, which stands in for the tickers
 when the SEC refuses a program the ticker file), checks sizes and dates rather than values, and says for each one:
 
 ``ok``       it answered and looked right;
@@ -30,7 +30,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src.assets.free_data import crypto, options                      # noqa: E402
+import pandas as pd                                                     # noqa: E402
+
+from src.assets.free_data import cboe_futures, crypto, futures, options   # noqa: E402
 from src.assets.free_data.http import FetchError, Http                 # noqa: E402
 from src.fundamentals.errors import FundamentalsError, NotFound, ProviderError, RateLimited   # noqa: E402
 from src.fundamentals.providers.sec_edgar import SecEdgarProvider      # noqa: E402
@@ -108,6 +110,39 @@ def yahoo(ctx) -> str:
     return f"SPY: {len(d.frame)} daily prices to {d.meta['as_of']}"
 
 
+def cboe_vx(ctx) -> str:
+    """Cboe's own list of VIX futures (one call) and the file of the nearest contract that has not expired (one more): the list must hold the contracts since 2013 and the file a recent settlement with open interest."""
+    http = ctx["http"]
+    listed = cboe_futures.contracts(http.get_json(cboe_futures.LIST_URL))
+    expect(len(listed) >= 100, f"{len(listed)} monthly VX contracts in Cboe's list")
+    today = pd.Timestamp.now().normalize()
+    alive = [c for c in listed if c["expiry"] >= today]
+    expect(len(alive) >= 4, f"{len(alive)} VX contracts that have not expired")
+    nearest = alive[0]
+    frame = cboe_futures.parse_contract(http.get_text(cboe_futures.FILE_URL.format(path=nearest["path"])), nearest["expiry"])
+    expect(len(frame) >= 20 and float(frame["price"].iloc[-1]) > 0, f"{nearest['contract']}: {len(frame)} days")
+    expect(bool(frame["open_interest"].notna().any()), f"{nearest['contract']} has no open interest")
+    fresh(frame["date"].max(), 7, f"the {nearest['contract']} file")
+    return f"VX: {len(listed)} monthly contracts since {listed[0]['expiry'].year}; {nearest['contract']} (expires {nearest['expiry'].date()}) has {len(frame)} days to {frame['date'].max().date()}"
+
+
+def yahoo_futures(ctx) -> str:
+    d = futures.fetch_yahoo_curve(ctx["http"], "CL", 4, "6mo")
+    expect(d.frame["contract"].nunique() >= 3 and len(d.frame) >= 200, f"{d.frame['contract'].nunique()} contracts, {len(d.frame)} rows")
+    fresh(d.meta["as_of"], 7, "Yahoo's crude oil contracts")
+    return f"CL: {d.frame['contract'].nunique()} contracts, {len(d.frame)} rows to {d.meta['as_of']}"
+
+
+def deribit_futures(ctx) -> str:
+    """The expired Bitcoin futures of the last year and a bit, from Deribit's chart service (about twenty calls): the contracts that have expired must still be there."""
+    today = pd.Timestamp.now().normalize()
+    d = futures.fetch_deribit_history(ctx["http"], "BTC", first_year=today.year - 1)
+    expired = int(d.frame[pd.to_datetime(d.frame["expiry"]) < today]["contract"].nunique())
+    expect(expired >= 4 and d.frame["contract"].nunique() >= 6, f"{expired} expired contracts of {d.frame['contract'].nunique()}")
+    fresh(d.meta["as_of"], 4, "Deribit's futures")
+    return f"BTC: {d.frame['contract'].nunique()} contracts, {expired} of them expired, {len(d.frame)} rows to {d.meta['as_of']}"
+
+
 def _sec(ctx) -> SecEdgarProvider:
     contact = ctx.get("sec_contact")
     if not contact:
@@ -150,8 +185,8 @@ def sec_filers(ctx) -> str:
     return f"{len(names.rows)} companies reported assets in {names.period}; Apple Inc. is CIK {hit[1][0]}"
 
 
-CHECKS = {"cboe": cboe, "deribit": deribit, "exchanges": exchanges, "crypto_history": crypto_history, "okx_funding": okx_funding, "yahoo": yahoo,
-          "sec_facts": sec_facts, "sec_record": sec_record, "sec_tickers": sec_tickers, "sec_filers": sec_filers}
+CHECKS = {"cboe": cboe, "deribit": deribit, "exchanges": exchanges, "crypto_history": crypto_history, "okx_funding": okx_funding, "yahoo": yahoo, "cboe_vx": cboe_vx, "yahoo_futures": yahoo_futures,
+          "deribit_futures": deribit_futures, "sec_facts": sec_facts, "sec_record": sec_record, "sec_tickers": sec_tickers, "sec_filers": sec_filers}
 
 
 # ------------------------------------------------------------------------------------------------------------------ running them

@@ -9,8 +9,14 @@ roll-by-open-interest read-outs are then unavailable), and anything official: th
 **Expiry dates** are not in the feed. They are computed from each exchange's published rule (``last_trade_date``) without a holiday calendar, so a date can be a day early or late; the curve only
 uses them to measure the time between contracts, where a day is a small error.
 
-**Bitcoin and Ether (Deribit).** Deribit lists dated futures as well as the perpetual and publishes the whole strip at once, with open interest. One download is one day's curve; the file adds a day
-with every download, so the history of the curve is the history of your downloads.
+**How far out Yahoo goes.** The nearest contracts are not all it has. Measured on 29 October 2026, Yahoo served 53 WTI crude contracts (to December 2036), 72 Henry Hub natural gas (to 2034), 24 copper,
+21 Brent, 14 gold, 13 corn, 6 euro FX, 5 E-mini S&P 500 and 3 ten-year note contracts: a download asks for 2 to 120 of them, or with ``n_contracts=None`` for every one that Yahoo lists (the search stops
+when three in a row are missing, because its listing has no gaps), and for as much of each one's history as it has (``max``; the far contracts trade rarely, so their histories are sparse). What Yahoo
+does not have is any contract that has expired: a curve you download today starts, for the dates before today, at the contracts that are still alive.
+
+**Bitcoin and Ether (Deribit).** Deribit lists dated futures as well as the perpetual and publishes the whole strip at once, with open interest. ``fetch_deribit_curve`` takes one day's curve; the file adds a
+day with every download. ``fetch_deribit_history`` takes the whole past instead: Deribit keeps the daily chart of a future after it has expired, so the monthly and quarterly futures since 2019 come
+back in one download (prices are the last trade of each day, volume is in dollars, and there is no open interest in a chart).
 
 **Any futures product (iTick).** iTick serves one daily price series per product (``NQ``, ``HSI``, ``RB``), not one per contract month, so it cannot draw a curve; ``data_itick`` downloads it
 as a price history, which the Futures tab's History view reads. The product list is ``itick_catalog``.
@@ -31,7 +37,17 @@ from .store import Download
 MONTH_CODES = "FGHJKMNQUVXZ"
 YAHOO_CHART = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
 DERIBIT_URL = "https://www.deribit.com/api/v2/public/get_book_summary_by_currency"
+DERIBIT_CHART = "https://www.deribit.com/api/v2/public/get_tradingview_chart_data"
+DERIBIT_INDEX = "https://www.deribit.com/api/v2/public/get_index_chart_data"
 ROOT = re.compile(r"^[A-Z0-9]{1,4}$")
+HISTORY_RANGES = ("3mo", "6mo", "1y", "2y", "5y", "10y", "max")
+MAX_CONTRACTS = 160                       # the most contracts one download asks Yahoo for
+DEEP_YEARS = 14                           # a deep download looks at most this many years ahead
+GAP_DAYS = 730                            # ... and ends when two years pass after the last contract Yahoo has with none found: it lists far contracts only when they trade (WTI after five years is June
+                                          # and December only, 8 months in a row can be missing), so a few misses in a row are not the end of its listing, two years of them are
+FIRST_DAYS = 400                          # before the first contract Yahoo has, it may skip the nearest months (gone from Yahoo, still traded), but not more than this many days
+SPARSE_BARS = 20                          # a contract with fewer daily bars than this is called sparse in the notes
+DERIBIT_FIRST_YEAR = 2019                 # the first year Deribit's monthly and quarterly futures are looked for
 
 
 @dataclass(frozen=True)
@@ -210,7 +226,8 @@ def upcoming_contracts(root: FreeRoot, today, n: int = 12) -> list[dict]:
     """The next ``n`` contracts of a root that have not expired on ``today``: ``{contract, symbol, expiry}`` with ``contract`` like ``Z26`` and ``symbol`` the Yahoo symbol ``CLZ26.NYM``."""
     today = pd.Timestamp(today).normalize()
     out = []
-    for year in (today.year, today.year + 1, today.year + 2, today.year + 3, today.year + 4):
+    span = max(5, -(-int(n) // max(len(root.months), 1)) + 2)                                  # as many years ahead as n contracts of this root's cycle need, and two to spare
+    for year in range(today.year, today.year + span):
         for month in root.months:
             expiry = last_trade_date(root.rule, year, month).normalize()
             if expiry < today:
@@ -256,21 +273,31 @@ def merge_history(old: pd.DataFrame | None, new: pd.DataFrame, keys=("date", "co
     return merged.sort_values(["date", "expiry", "contract"]).reset_index(drop=True)
 
 
-def fetch_yahoo_curve(http: Http, root: str, n_contracts: int = 12, history: str = "1y", today=None, progress=None) -> Download:
-    """The curve of ``root`` from Yahoo's per-contract histories. ``history`` is a Yahoo range (``6mo``, ``1y``, ``2y``, ``5y``). Contracts Yahoo does not have are skipped and counted; with none,
-    the download fails."""
+def fetch_yahoo_curve(http: Http, root: str, n_contracts: int | None = 12, history: str = "1y", today=None, progress=None) -> Download:
+    """The curve of ``root`` from Yahoo's per-contract histories. ``history`` is a Yahoo range (``6mo`` ... ``10y``, ``max``). Contracts Yahoo does not have are skipped and counted; with none, the
+    download fails.
+
+    ``n_contracts`` is how many of the next delivery months to ask for (1 to ``MAX_CONTRACTS``), or ``None`` (``0`` is the same) for every contract Yahoo lists: the search then goes month by month for
+    up to ``DEEP_YEARS`` years and ends when ``GAP_DAYS`` pass after the last contract found with no other, so the request count follows what exists."""
     root = str(root).upper()
     if root not in FREE_ROOTS:
         raise ValueError(f"free curves are available for {', '.join(FREE_ROOTS)}")
-    if history not in ("3mo", "6mo", "1y", "2y", "5y"):
-        raise ValueError("history must be 3mo, 6mo, 1y, 2y or 5y")
+    if history not in HISTORY_RANGES:
+        raise ValueError(f"history must be one of {', '.join(HISTORY_RANGES)}")
+    deep = n_contracts is None or int(n_contracts) <= 0
+    if not deep and not 1 <= int(n_contracts) <= MAX_CONTRACTS:
+        raise ValueError(f"n_contracts must be 1 to {MAX_CONTRACTS}, or None for every contract Yahoo lists")
     spec = FREE_ROOTS[root]
     today = pd.Timestamp(today if today is not None else datetime.now(timezone.utc).date())
-    contracts = upcoming_contracts(spec, today, n_contracts)
-    frames, missing, blocked = [], [], None
+    contracts = upcoming_contracts(spec, today, MAX_CONTRACTS if deep else int(n_contracts))
+    if deep:
+        contracts = [c for c in contracts if c["expiry"] <= today + pd.DateOffset(years=DEEP_YEARS)]
+    frames, missing, blocked, last_found = [], [], None, None
     for i, c in enumerate(contracts):
+        if deep and ((last_found is not None and c["expiry"] > last_found + pd.Timedelta(days=GAP_DAYS)) or (last_found is None and c["expiry"] > today + pd.Timedelta(days=FIRST_DAYS))):
+            break
         if progress:
-            progress(f"{root}: {c['contract']} ({i + 1} of {len(contracts)})")
+            progress(f"{root}: {c['contract']} ({i + 1} of {len(contracts)})" if not deep else f"{root}: {c['contract']} ({len(frames)} found)")
         try:
             h = yahoo_history(http.get_json(YAHOO_CHART.format(symbol=c["symbol"]), {"range": history, "interval": "1d"}))
         except FetchError as exc:
@@ -283,26 +310,38 @@ def fetch_yahoo_curve(http: Http, root: str, n_contracts: int = 12, history: str
         h = h.assign(contract=c["contract"], expiry=c["expiry"])
         if len(h):
             frames.append(h)
+            last_found = c["expiry"]
         else:
             missing.append(c["contract"])
     if blocked is not None and not frames:
         raise blocked
     if not frames:
-        raise FetchError(f"Yahoo Finance had no price history for any of the next {len(contracts)} {root} contracts")
+        raise FetchError(f"Yahoo Finance had no price history for any of the next {len(contracts) if not deep else len(missing)} {root} contracts")
+    if deep:
+        missing = [m for m in missing if next(c["expiry"] for c in contracts if c["contract"] == m) < last_found]       # months after the last contract Yahoo has are the end of its listing, not gaps
     df = pd.concat(frames, ignore_index=True)[["date", "contract", "expiry", "price", "volume"]]
     df["volume"] = df["volume"].fillna(0.0)
     df = df.sort_values(["date", "expiry"]).reset_index(drop=True)
     last = df["date"].max()
     today_rows = df[df["date"] == last]
+    bars = df.groupby("contract")["date"].count()
+    sparse = [c["contract"] for c in contracts if c["contract"] in bars.index and bars[c["contract"]] < SPARSE_BARS]
+    furthest = max((c for c in contracts if c["contract"] in bars.index), key=lambda c: c["expiry"])
     notes = [f"Yahoo Finance's delayed daily prices of each {root} contract ({len(frames)} contracts, {df['date'].min().date()} to {last.date()}); the last bar can be a session in progress, not a settlement.",
              "Expiry dates are computed from the exchange's rule without a holiday calendar and can be a day off. The feed has no open interest, so the roll read-outs that need it are unavailable.",
              "Yahoo no longer serves a contract once it expires: later downloads are merged with this one, so the history keeps what has expired."]
-    if missing:
+    if deep:
+        notes.append(f"Yahoo lists {len(frames)} {root} contracts, as far out as {furthest['contract']} ({furthest['expiry'].date()}); it lists a far contract only once it trades, so {len(missing)} of the delivery months before it are not in the file "
+                     "and the far end of the curve has gaps." if missing else f"Yahoo lists {len(frames)} {root} contracts, as far out as {furthest['contract']} ({furthest['expiry'].date()}); it does not list the ones after.")
+        if sparse:
+            notes.append(f"The far contracts trade rarely: {', '.join(sparse[:8])}{' ...' if len(sparse) > 8 else ''} have fewer than {SPARSE_BARS} daily bars, so read the far end of the curve as indicative.")
+    elif missing:
         notes.append(f"Yahoo had no history for {', '.join(missing)}; the curve is shorter by those contracts.")
     if blocked is not None:
         notes.append(f"Yahoo Finance stopped answering after {len(frames)} of {len(contracts)} contracts ({blocked}); this is common on shared cloud addresses. Download again in a few minutes to add the rest.")
     meta = {"incomplete": blocked is not None, "source_id": "yahoo", "source": "Yahoo Finance", "url": YAHOO_CHART.format(symbol=f"{root}<month><yy>{spec.suffix}"), "as_of": str(last.date()), "root": root, "contracts": len(frames),
-            "contracts_on_last_day": int(len(today_rows)), "first_date": str(df["date"].min().date()), **spec.terms(), "notes": notes}
+            "contracts_on_last_day": int(len(today_rows)), "first_date": str(df["date"].min().date()), "deep": deep, "furthest": furthest["contract"], "furthest_expiry": str(furthest["expiry"].date()),
+            "sparse_contracts": sparse, **spec.terms(), "notes": notes}
     return Download("futures", root, "curve", frame=df, meta=meta)
 
 
@@ -356,4 +395,106 @@ def fetch_deribit_curve(http: Http, currency: str) -> Download:
              "Deribit's futures are inverse (margined and settled in the coin), which this workspace treats as linear."]
     meta = {"source_id": "deribit", "source": "Deribit", "url": DERIBIT_URL, "as_of": str(df["date"].iloc[0].date()), "root": currency, "contracts": int(len(df)), "root_name": f"{CRYPTO_ROOTS[currency]} futures",
             "exchange": "Deribit", "asset_class": "crypto", "multiplier": 1.0, "tick_size": 0.5, "perpetual": extra["perpetual"], "index": extra["index"], "notes": notes}
+    return Download("futures", currency, "curve", frame=df, meta=meta)
+
+
+# ------------------------------------------------------------------------------------------------------------------ Deribit: the past of the dated futures
+def _last_friday(year: int, month: int) -> pd.Timestamp:
+    last = pd.Timestamp(year, month, 1) + pd.offsets.MonthEnd(0)
+    return last - pd.Timedelta(days=(last.weekday() - 4) % 7)
+
+
+def deribit_expiries(today, first_year: int = DERIBIT_FIRST_YEAR, months_ahead: int = 12) -> list[pd.Timestamp]:
+    """The last Friday of every month from January of ``first_year`` to ``months_ahead`` months after ``today``: the days Deribit's monthly and quarterly futures expire (08:00 UTC). Not every one of them
+    existed (the early years had only the quarters, ETH started later); the download asks for each and keeps the ones Deribit answers for."""
+    today = pd.Timestamp(today).normalize()
+    stop = today + pd.DateOffset(months=months_ahead)
+    out = []
+    for year in range(first_year, stop.year + 1):
+        for month in range(1, 13):
+            day = _last_friday(year, month)
+            if day <= stop:
+                out.append(day)
+    return out
+
+
+def deribit_chart(result: dict, expiry) -> pd.DataFrame:
+    """``date, price, volume`` of one future from Deribit's daily chart. The price is the last trade of the day (a day without a trade repeats the day before), the volume is in US dollars. Deribit goes on
+    drawing the chart of a future after it has expired, as a flat line: rows after the expiry day are dropped, and so are the rows before the first day with a trade."""
+    ticks = (result or {}).get("ticks") or []
+    if (result or {}).get("status") != "ok" or not ticks or len(result.get("close") or []) != len(ticks):
+        raise FetchError("Deribit has no daily prices for this future")
+    cost = result.get("cost") or [0.0] * len(ticks)
+    df = pd.DataFrame({"date": pd.to_datetime(ticks, unit="ms").normalize(), "price": pd.to_numeric(pd.Series(result["close"]), errors="coerce"),
+                       "volume": pd.to_numeric(pd.Series(cost if len(cost) == len(ticks) else [0.0] * len(ticks)), errors="coerce").fillna(0.0)})
+    df = df[(df["price"] > 0) & (df["date"] <= pd.Timestamp(expiry).normalize())]
+    traded = df.index[df["volume"] > 0]
+    if len(traded) == 0:
+        raise FetchError("Deribit shows no trade in this future")
+    return df.loc[traded[0]:].drop_duplicates("date", keep="last").reset_index(drop=True)
+
+
+def deribit_index(result: list) -> pd.Series:
+    """The coin's index price by day (the last of the day's readings) from Deribit's index chart: the ``spot`` of the curve."""
+    rows = [(int(t), float(v)) for t, v in (result or []) if v]
+    if not rows:
+        raise FetchError("Deribit's index chart is empty")
+    frame = pd.DataFrame(rows, columns=["t", "v"])
+    frame["date"] = pd.to_datetime(frame["t"], unit="ms").dt.normalize()
+    return frame.groupby("date")["v"].last()
+
+
+def fetch_deribit_history(http: Http, currency: str, today=None, first_year: int = DERIBIT_FIRST_YEAR, progress=None) -> Download:
+    """The curve of Deribit's monthly and quarterly futures on every day since ``first_year``, expired contracts included, from the daily charts it keeps (one call per contract and one for the index).
+    A contract Deribit has no chart for is skipped; with none the download fails."""
+    currency = str(currency).upper()
+    if currency not in CRYPTO_ROOTS:
+        raise ValueError(f"Deribit futures are available for {', '.join(CRYPTO_ROOTS)}")
+    now = pd.Timestamp(today if today is not None else datetime.now(timezone.utc).date()).normalize()
+    expiries = deribit_expiries(now, first_year)
+    frames, missing, blocked = [], [], None
+    for i, expiry in enumerate(expiries):
+        name = f"{currency}-{expiry:%d%b%y}".upper()
+        listed = expiry - pd.Timedelta(days=400)
+        if listed > now:
+            continue
+        if progress:
+            progress(f"{currency}: {name[len(currency) + 1:]} ({i + 1} of {len(expiries)})")
+        params = {"instrument_name": name, "resolution": "1D", "start_timestamp": int(listed.timestamp() * 1000), "end_timestamp": int((min(expiry, now) + pd.Timedelta(days=2)).timestamp() * 1000)}
+        try:
+            answer = http.get_json(DERIBIT_CHART, params)
+            h = deribit_chart(answer.get("result") if isinstance(answer, dict) else None, expiry)
+        except FetchError as exc:
+            if exc.blocked or (exc.status is not None and exc.status >= 429):
+                blocked = exc
+                break
+            missing.append(name)
+            continue
+        frames.append(h.assign(contract=name[len(currency) + 1:], expiry=expiry))
+    if blocked is not None and not frames:
+        raise blocked
+    if not frames:
+        raise FetchError(f"Deribit had no daily chart for any {currency} monthly or quarterly future")
+    df = pd.concat(frames, ignore_index=True)
+    spot_note = ""
+    try:
+        answer = http.get_json(DERIBIT_INDEX, {"index_name": f"{currency.lower()}_usd", "range": "all"})
+        spot = deribit_index(answer.get("result") if isinstance(answer, dict) else None)
+        df["spot"] = df["date"].map(spot)
+    except FetchError as exc:
+        spot_note = f" The index price could not be read ({exc}), so this file has no spot column."
+    df = df[["date", "contract", "expiry", "price", "volume"] + (["spot"] if "spot" in df else [])].sort_values(["date", "expiry"]).reset_index(drop=True)
+    last = df["date"].max()
+    notes = [f"Deribit's daily charts of the {currency} monthly and quarterly futures, {df['date'].min().date()} to {last.date()}: {len(frames)} contracts, expired ones included. The price is the last trade of each day "
+             "(a day without a trade repeats the day before); the volume is in US dollars; a chart has no open interest.",
+             "Deribit's futures are inverse (margined and settled in the coin), which this workspace treats as linear. Weekly and daily futures are left out, so the curve is the monthly and quarterly strip.",
+             "Downloading the current curve (mark prices and open interest) adds today's row with open interest to this file."]
+    if missing:
+        notes.append(f"Deribit had no chart for {len(missing)} of the {len(frames) + len(missing)} month-end Fridays asked about ({', '.join(m[len(currency) + 1:] for m in missing[:6])}{' ...' if len(missing) > 6 else ''}): no future of that name existed.")
+    if blocked is not None:
+        notes.append(f"Deribit stopped answering after {len(frames)} contracts ({blocked}); download again in a few minutes to add the rest.")
+    if spot_note:
+        notes.append(spot_note.strip())
+    meta = {"incomplete": blocked is not None, "source_id": "deribit", "source": "Deribit", "url": DERIBIT_CHART, "as_of": str(last.date()), "root": currency, "contracts": len(frames), "root_name": f"{CRYPTO_ROOTS[currency]} futures",
+            "exchange": "Deribit", "asset_class": "crypto", "multiplier": 1.0, "tick_size": 0.5, "first_date": str(df["date"].min().date()), "history": True, "notes": notes}
     return Download("futures", currency, "curve", frame=df, meta=meta)

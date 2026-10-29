@@ -250,7 +250,13 @@ def test_the_futures_tab_downloads_a_curve_chooses_it_and_says_what_the_feed_lac
     for root in ("ES", "GC"):                                                                   # the table of answers has Yahoo's crude oil only
         card.locator(f".picks button[data-value={root}]").click()
         assert card.locator(f".picks button[data-value={root}]").get_attribute("aria-pressed") == "false"
-    card.locator("select[data-key=contracts]").select_option("4")
+    contracts = card.locator("select[data-key=contracts]")
+    assert contracts.locator("option").all_inner_texts()[-1].startswith("Every contract Yahoo lists"), "the card can ask Yahoo for all its contracts, not only the nearest sixteen"
+    assert "As long as Yahoo has it" in card.locator("select[data-key=history]").inner_text() and "10 years" in card.locator("select[data-key=history]").inner_text()
+    assert card.locator("select[data-key=deribit] option").count() == 2 and card.locator(".picks button[data-value=VX]").count() == 1, "VX (Cboe) and the Deribit choice are on the card"
+    contracts.select_option("0")
+    assert "takes about" in card.locator("[data-role=estimate]").inner_text()
+    contracts.select_option("4")
     assert "takes about" in card.locator("[data-role=estimate]").inner_text()
     _download(page, "futures")
     assert page.locator("#futures .fdres li:not(.fail)").count() == 1 and page.locator("#futures .fdres li.fail").count() == 0
@@ -261,6 +267,15 @@ def test_the_futures_tab_downloads_a_curve_chooses_it_and_says_what_the_feed_lac
     text = page.locator("#futures-results").text_content()
     assert "Yahoo Finance" in text and "computed from the exchange" in text and page.locator("#futures-results .banner.err").count() == 0
     assert page.locator("#futures-results svg.chart").count() >= 1
+    # the Backtest view can trade the downloaded curve; a Yahoo download is a few months of unexpired contracts, which the page explains instead of running
+    _mode(page, "futures", "backtest")
+    page.locator("#futures select[data-key=data]").select_option("real")
+    boxes = page.locator("#futures .checks label")
+    assert boxes.count() == 1 and "CL" in boxes.first.inner_text() and "contracts" in boxes.first.inner_text() and page.locator("#futures details.freedata").count() == 1, "the downloaded root is listed with its span, and the download card stays"
+    assert "less than a year of front-month history are refused" in page.inner_text("#futures")
+    _run(page, "futures")
+    page.wait_for_selector("#futures-results .banner.err", timeout=120_000)
+    assert "at least 252" in page.inner_text("#futures-results .banner.err") and "Yahoo" in page.inner_text("#futures-results .banner.err")
 
 
 def test_the_crypto_tab_downloads_a_coin_and_reads_its_real_books_and_funding(free):
@@ -337,8 +352,10 @@ def test_a_form_that_cannot_run_is_not_sent(ws):
     boxes = ws.locator("#ml details:has(summary:text-is('3. Data')) input[data-value]")
     assert boxes.count() >= 7 and ws.locator("#ml .runbar button.primary").is_enabled()
     for i in range(boxes.count()):
+        _open_all(ws, "ml")                                                                      # a late redraw of the panel (seen on a busy machine) shuts the sections again
         boxes.nth(i).uncheck()
     assert ws.locator("#ml .runbar button.primary").is_disabled() and "at least one group of features" in ws.inner_text("#ml .runbar .guard")
+    _open_all(ws, "ml")
     boxes.nth(0).check()
     assert ws.locator("#ml .runbar button.primary").is_enabled()
     ws.fill("#ml input[data-key=valFrac]", "40")

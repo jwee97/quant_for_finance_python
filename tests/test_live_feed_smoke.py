@@ -166,3 +166,82 @@ def test_a_check_rejects_an_answer_that_is_too_small_or_too_old():
     assert run(smoke.yahoo, Fake({"as_of": today}, frame.head(20)), smoke.options, "fetch_underlying_prices").status == "broken"
     books = Fake({}, payload={"venues": [{"label": "A"}], "failed": {"kraken": "down"}})
     assert run(smoke.exchanges, books, smoke.crypto, "fetch_venues").status == "broken"                    # one venue of four is not a working feed
+
+
+# ------------------------------------------------------------------------------------------------------------------ the futures curves
+BASE = "data/us/futures/market_statistics/historical_data/VX/"
+
+
+class StubCboe:
+    """Cboe's list of VX contracts and the file of each, as the two calls of the check see them."""
+
+    def __init__(self, months: int = 130, alive: int = 6, last_day: pd.Timestamp | None = None, open_interest: bool = True):
+        today = pd.Timestamp.now().normalize()
+        first = today + pd.Timedelta(days=30 * alive - 15) - pd.Timedelta(days=30 * months)
+        self.expiries = [first + pd.Timedelta(days=30 * k) for k in range(months)]
+        self.today, self.last_day, self.open_interest = today, last_day or today, open_interest
+        rows: dict[str, list] = {}
+        for day in self.expiries:
+            rows.setdefault(str(day.year), []).append({"expire_date": str(day.date()), "futures_root": "VX", "duration_type": "M", "path": f"{BASE}VX_{day.date()}.csv"})
+        self.listing = rows
+        self.calls: list[str] = []
+
+    def get_json(self, url, **kwargs):
+        self.calls.append(url)
+        return self.listing
+
+    def get_text(self, url, **kwargs):
+        self.calls.append(url)
+        days = pd.bdate_range(self.last_day - pd.Timedelta(days=60), self.last_day)
+        interest = lambda i: str(1000 + i) if self.open_interest else ""                      # noqa: E731
+        lines = [f"{d.date()},F,1,1,1,1,{16.0 + 0.01 * i},0,{100 + i},0,{interest(i)}" for i, d in enumerate(days)]
+        return "Trade Date,Futures,Open,High,Low,Close,Settle,Change,Total Volume,EFP,Open Interest\n" + "\n".join(lines) + "\n"
+
+
+def run_vx(stub):
+    return smoke.run_checks({"cboe_vx": smoke.cboe_vx}, {"http": stub})[0]
+
+
+def test_the_vix_futures_check_wants_a_long_list_live_contracts_and_a_recent_file_with_open_interest():
+    stub = StubCboe()
+    good = run_vx(stub)
+    assert good.status == "ok" and "130 monthly contracts" in good.detail and "days to" in good.detail
+    assert len(stub.calls) == 2 and stub.calls[0].endswith("/product/list/VX/") and "cdn.cboe.com/data/us/futures/market_statistics/historical_data/VX/VX_" in stub.calls[1], "the list and one file, nothing more"
+    short = run_vx(StubCboe(months=60))
+    assert short.status == "broken" and "monthly VX contracts in Cboe's list" in short.detail
+    dead = run_vx(StubCboe(alive=2))
+    assert dead.status == "broken" and "VX contracts that have not expired" in dead.detail
+    no_interest = run_vx(StubCboe(open_interest=False))
+    assert no_interest.status == "broken" and "no open interest" in no_interest.detail
+    stale = run_vx(StubCboe(last_day=pd.Timestamp.now().normalize() - pd.Timedelta(days=30)))
+    assert stale.status == "broken" and "days ago" in stale.detail
+
+
+def test_the_yahoo_and_deribit_futures_checks_want_enough_contracts_and_a_recent_last_day(monkeypatch):
+    class Fake:
+        def __init__(self, contracts: int, rows: int, as_of: str, expired: int = 0):
+            today = pd.Timestamp.now().normalize()
+            expiry = [today - pd.Timedelta(days=30 * (k + 1)) if k < expired else today + pd.Timedelta(days=30 * (k + 1)) for k in range(contracts)]
+            per = max(rows // max(contracts, 1), 1)
+            self.frame = pd.DataFrame({"contract": [f"C{k}" for k in range(contracts) for _ in range(per)], "expiry": [e for e in expiry for _ in range(per)]})
+            self.meta = {"as_of": as_of}
+
+    today = pd.Timestamp.now().strftime("%Y-%m-%d")
+    old = (pd.Timestamp.now() - pd.Timedelta(days=60)).strftime("%Y-%m-%d")
+
+    def run(check, module, name, download):
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(module, name, lambda *a, **k: download)
+            return smoke.run_checks({"c": check}, {"http": None})[0]
+
+    assert run(smoke.yahoo_futures, smoke.futures, "fetch_yahoo_curve", Fake(4, 400, today)).status == "ok"
+    assert run(smoke.yahoo_futures, smoke.futures, "fetch_yahoo_curve", Fake(2, 400, today)).status == "broken"
+    assert run(smoke.yahoo_futures, smoke.futures, "fetch_yahoo_curve", Fake(4, 100, today)).status == "broken"
+    stale = run(smoke.yahoo_futures, smoke.futures, "fetch_yahoo_curve", Fake(4, 400, old))
+    assert stale.status == "broken" and "days ago" in stale.detail
+    good = run(smoke.deribit_futures, smoke.futures, "fetch_deribit_history", Fake(10, 400, today, expired=6))
+    assert good.status == "ok" and "6 of them expired" in good.detail
+    assert run(smoke.deribit_futures, smoke.futures, "fetch_deribit_history", Fake(10, 400, today, expired=2)).status == "broken", "a history with almost no expired contract is not the history of expired contracts"
+    assert run(smoke.deribit_futures, smoke.futures, "fetch_deribit_history", Fake(4, 400, today, expired=4)).status == "broken"
+    assert run(smoke.deribit_futures, smoke.futures, "fetch_deribit_history", Fake(10, 400, old, expired=6)).status == "broken"
+    assert {"cboe_vx", "yahoo_futures", "deribit_futures"} <= set(smoke.CHECKS) and {r.name for r in smoke.run_checks({k: v for k, v in smoke.CHECKS.items() if k.startswith("cboe")}, {"http": StubCboe()}, only=["cboe_vx"])} == {"cboe_vx"}

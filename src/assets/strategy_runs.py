@@ -53,10 +53,18 @@ def compact_result(result, top_weights: int = 8) -> dict:
     metrics = {k: v for k, v in result.metrics.items() if isinstance(v, (int, float)) and not isinstance(v, bool) and np.isfinite(v)}
     metrics["hit_rate"] = float((net > 0).mean())
     metrics["gross_exposure_mean"] = float(result.weights.abs().sum(axis=1).loc[net.index[0]:].mean()) if len(result.weights) else float("nan")
+    warnings = []
+    ruin = net[net <= -1.0 + 1e-12]
+    if len(ruin):
+        warnings.append(f"The account was wiped out on {ruin.index[0].date()}: the book lost all of its capital in one day (a leveraged position can lose more than 100%). The backtest stops there and every later day is zero; "
+                        "lower the volatility target or the leverage to see the strategy without the blow-up.")
+    if metrics["gross_exposure_mean"] < 1e-9:
+        warnings.append("The strategy held no position on any evaluated day: its signal never fired for this universe (a cross-sectional rule needs at least two assets of the same asset class, and a rule that needs "
+                        "history needs more days than the data has).")
     return {"start": str(net.index[0].date()), "end": str(net.index[-1].date()), "n_days": int(len(net)), "metrics": metrics,
             "dates": [str(d.date()) for d in idx], "equity": [round(float(v), 5) for v in equity.reindex(idx).to_numpy()], "drawdown": [round(float(v), 5) for v in dd.reindex(idx).to_numpy()],
             "benchmarks": benches, "years": years, "weights": {str(k): round(float(v), 4) for k, v in last.items()},
-            "deflated_sharpe_probability": result.validation.get("deflated_sharpe_probability"), "n_trials": result.validation.get("n_trials")}
+            "deflated_sharpe_probability": result.validation.get("deflated_sharpe_probability"), "n_trials": result.validation.get("n_trials"), "warnings": warnings}
 
 
 def run_strategy(bundle: MarketBundle, config, model: str, params: dict | None = None, rebalance: str | None = None, target_vol: float | None = None, regime: str | None = None,

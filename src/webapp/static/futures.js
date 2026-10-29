@@ -1,5 +1,5 @@
 /* The Futures workspace: the forward curve and how it moved, the roll (which contract to hold and when to leave it), carry and basis, the price history of any futures product, a margin dashboard for a book of
-   futures, and strategies run on the simulated roots through the platform's pipeline. It talks to /api/futures/*. No futures prices are held in this repository: the curves are a model (Schwartz-Smith)
+   futures, and strategies run through the platform's pipeline on the simulated roots or on the real curves you downloaded. It talks to /api/futures/*. No futures prices are held in this repository: the curves are a model (Schwartz-Smith)
    unless a file of yours or a download replaces them, and every payload says which, and this page prints it. */
 (function () {
   "use strict";
@@ -21,7 +21,7 @@
       history: "The daily price history of a futures product downloaded from iTick or Yahoo Finance: returns, volatility, drawdown, the calendar months and the biggest one-day moves. It is one price series, so there is no curve, roll or carry here.",
       margin: "Notional, initial and maintenance margin, leverage and the distance to a margin call for a book of futures, with warnings for heavy use, concentration and contracts close to expiry.",
       backtest: "Trade carry, trend, breakout or momentum across the roots through the platform's pipeline: costed, lagged and volatility-targeted like any other backtest." },
-    form: { root: "CL", series: "", rollDays: "5", book: [], equity: "100000", scale: "1", near: "7", strategy: "carry_ts", roots: new Set(["CL", "NG", "GC", "HG", "ES"]), lookback: "", frequency: "weekly", targetVol: "", cost: "2" },
+    form: { root: "CL", series: "", rollDays: "5", book: [], equity: "100000", scale: "1", near: "7", strategy: "carry_ts", roots: new Set(["CL", "NG", "GC", "HG", "ES"]), data: "simulated", realRoots: null, lookback: "", frequency: "weekly", targetVol: "", cost: "2" },
     catalog: null,
   };
   const contractColor = W.palette();
@@ -29,8 +29,9 @@
     F.catalog = c; if (!c.futures_roots.some((r) => r.id === F.form.root)) F.form.root = (c.futures_roots[0] || {}).id || "CL";
     const list = c.futures_series || []; if (!list.some((x) => x.id === F.form.series)) F.form.series = (list[0] || {}).id || "";
   };
-  const CONTRACTS = [["4", "4 contracts"], ["6", "6 contracts"], ["8", "8 contracts"], ["10", "10 contracts"], ["12", "12 contracts"], ["16", "16 contracts"]];
-  const HISTORY = { "6mo": "6 months", "1y": "1 year", "2y": "2 years", "5y": "5 years" };
+  const CONTRACTS = [["4", "4 contracts"], ["6", "6 contracts"], ["8", "8 contracts"], ["10", "10 contracts"], ["12", "12 contracts"], ["16", "16 contracts"], ["24", "24 contracts"], ["36", "36 contracts"], ["0", "Every contract Yahoo lists (up to 14 years out)"]];
+  const HISTORY = { "6mo": "6 months", "1y": "1 year", "2y": "2 years", "5y": "5 years", "10y": "10 years", "max": "As long as Yahoo has it" };
+  const DERIBIT = [["curve", "Today's curve: mark prices and open interest (adds a day each time)"], ["history", "Every monthly and quarterly future since 2019, expired ones included (last trades, no open interest)"]];
   const YEARS = { 1: "1 year", 2: "2 years", 3: "3 years", 5: "5 years", 10: "10 years", 20: "20 years" };
   const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
   let itick = null;                                                                          // the server's iTick status, kept by the card for its time estimate
@@ -38,8 +39,8 @@
      the ~1,600 futures products it lists, which has no contract months and so no curve; the History view reads it. */
   const FREE = {
     kind: "futures", title: "Real futures data (free)",
-    intro: "Download real futures prices. Yahoo Finance (no account, no key) gives the delayed daily price of each contract month of 44 roots, stacked into a forward curve; Bitcoin and Ether futures come from Deribit. iTick (needs your key) gives the daily price history of any futures product it lists, about 1,600 in the United States, Hong Kong and China, but no curve. Expiry dates are computed from each exchange's rule, Yahoo has no open interest, and a later download is merged with the earlier one, so the contracts that have expired keep their history.",
-    defaults: () => ({ source: "yahoo", chosen: new Set(["CL", "ES", "GC"]), contracts: "10", history: "1y", products: new Set(["US:NQ"]), names: { "US:NQ": "E-mini Nasdaq-100 Futures" }, years: "5",
+    intro: "Download real futures prices. Yahoo Finance (no account, no key) gives the delayed daily price of each contract month of 44 roots, stacked into a forward curve (ask for every contract it lists: crude oil has about 50); the VIX futures (VX) come from Cboe's own files, every contract since 2013 with its open interest; Bitcoin and Ether futures come from Deribit, today's curve or all their past. iTick (needs your key) gives the daily price history of any futures product it lists, about 1,600 in the United States, Hong Kong and China, but no curve. Expiry dates are computed from each exchange's rule, Yahoo has no open interest, and a later download is merged with the earlier one, so the contracts that have expired keep their history.",
+    defaults: () => ({ source: "yahoo", chosen: new Set(["CL", "ES", "GC"]), contracts: "10", history: "1y", deribit: "curve", products: new Set(["US:NQ"]), names: { "US:NQ": "E-mini Nasdaq-100 Futures" }, years: "5",
       yproducts: new Set(["ES=F"]), ynames: { "ES=F": "E-Mini S&P 500" }, yyears: "5" }),
     controls: (box, f, ks, changed, redraw) => {
       itick = ks.itick_status;
@@ -65,19 +66,20 @@
       }
       h("span", "grouplabel", box, "Crypto");
       W.picks(box, ks.crypto.map((c) => [c.id, c.id + " · Deribit", `${c.name} futures from Deribit, live`]), f.chosen, changed);
-      Q.labField(box, { key: "contracts", label: "Contracts per root", kind: "choice", options: CONTRACTS, help: "How many of the next delivery months to ask Yahoo for" }, f, changed);
-      Q.labField(box, { key: "history", label: "History to download", kind: "choice", options: ks.history.map((x) => [x, HISTORY[x] || x]), help: "Not used for the Deribit futures, which are a snapshot of today" }, f, changed);
+      Q.labField(box, { key: "contracts", label: "Contracts per root", kind: "choice", options: CONTRACTS, help: "How many of the next delivery months to ask Yahoo for. Yahoo lists far more than 12 of some (crude oil: about 50, ten years out) and few of others (the E-mini S&P 500: 5); the far ones trade rarely" }, f, changed);
+      Q.labField(box, { key: "history", label: "History to download", kind: "choice", options: ks.history.map((x) => [x, HISTORY[x] || x]), help: "Yahoo drops a contract when it expires, so this is the history of the contracts still alive. VX comes from Cboe (every contract since 2013, expired ones included) and is not limited by it" }, f, changed);
+      Q.labField(box, { key: "deribit", label: "Bitcoin and Ether futures", kind: "choice", options: DERIBIT, help: "Only for BTC and ETH above" }, f, changed);
       h("p", "hint", box, "Need a product that is not here (lumber, the Nikkei, a single stock, iron ore, Hang Seng …)? Choose Yahoo's search or iTick above and search their lists.");
     },
     request: (f) => {
       if (f.source === "yahoo_series") { if (!f.yproducts.size) throw new Error("Choose at least one future"); return { kind: "futures", source: "yahoo_series", items: [...f.yproducts], years: Number(f.yyears) }; }
       if (f.source === "itick") { if (!f.products.size) throw new Error("Choose at least one product"); return { kind: "futures", source: "itick", items: [...f.products], years: Number(f.years) }; }
       if (!f.chosen.size) throw new Error("Pick at least one root");
-      return { kind: "futures", items: [...f.chosen], contracts: Number(f.contracts), history: f.history };
+      return { kind: "futures", items: [...f.chosen], contracts: Number(f.contracts), history: f.history, deribit: f.deribit };
     },
     estimate: (b) => {
       if (b.source === "yahoo_series") return b.items.length * 2;
-      if (b.source !== "itick") return b.items.length * (4 + b.contracts * 0.5);
+      if (b.source !== "itick") return b.items.reduce((sum, r) => sum + (r === "VX" ? 50 : (r === "BTC" || r === "ETH") ? (b.deribit === "history" ? 40 : 3) : 4 + (b.contracts || 60) * 0.4), 0);
       const info = itick || {}, cpm = info.calls_per_minute || 5, page = info.page_size || 1000, free = info.calls_available_now === undefined ? cpm : info.calls_available_now;
       const calls = b.items.length * Math.max(1, Math.ceil((b.years * ((info.bars_per_year || {}).future || 260)) / page));
       return 2 * calls + Math.max(0, calls - free) * (60 / cpm);
@@ -94,13 +96,19 @@
   W.catalog().then((c) => { F.catalog = c; if (!Q.$(F.view).hidden) Q.renderLab(F); }, () => {});
   const rootsList = () => (F.catalog ? F.catalog.futures_roots : []);
   const rootInfo = (id) => rootsList().find((r) => r.id === id) || {};
+  const realRoots = () => rootsList().filter((r) => r.source !== "simulated");                // the roots with a downloaded or uploaded curve
+  const realChosen = () => { const ids = new Set(realRoots().map((r) => r.id)), f = F.form; if (!f.realRoots) f.realRoots = new Set(ids); for (const id of [...f.realRoots]) if (!ids.has(id)) f.realRoots.delete(id); return f.realRoots; };
   const key = (name, q) => name + ":" + JSON.stringify(q);
 
   /* ---------- the form ---------- */
   F.check = () => {
     if (!F.catalog) return "Loading the list of roots…";
     if (F.mode === "history" && !F.form.series) return "Download a product first (the card below: choose Yahoo's search or iTick).";
-    if (F.mode === "backtest") { if (!F.form.roots.size) return "Tick at least one root."; if (["carry_xs", "xs_momentum"].includes(F.form.strategy) && F.form.roots.size < 2) return "A cross-sectional strategy needs at least two roots."; }
+    if (F.mode === "backtest") {
+      const chosen = F.form.data === "real" ? realChosen() : F.form.roots;
+      if (!chosen.size) return F.form.data === "real" ? "Download a curve first (the card below), then tick it here." : "Tick at least one root.";
+      if (["carry_xs", "xs_momentum"].includes(F.form.strategy) && chosen.size < 2) return "A cross-sectional strategy needs at least two roots.";
+    }
     return "";
   };
   F.sections = (panel) => {
@@ -121,7 +129,7 @@
         h("p", "hint", b, "Daily prices as the provider keeps them for the product. They are not the prices of one contract: see the notes under the badge for how the series is joined, and the list of the biggest moves for where it may jump.");
       } else h("p", "hint", b, "No price history is downloaded yet. Use the card below: choose Yahoo's search (no key) or iTick, search for a product (nasdaq, crude, gold, lumber …) and press Download real data.");
     }
-    if (m !== "backtest") W.dataCard(panel, F, FREE);
+    if (m !== "backtest" || f.data === "real") W.dataCard(panel, F, FREE);
     if (m === "margin") {
       const b = sec("1. The book");
       h("p", "hint", b, "Quantities: positive long, negative short. Leave the contract blank to use the front one. Margins are illustrative figures per contract, not your broker's.");
@@ -135,18 +143,24 @@
       const b = sec("1. The strategy");
       Q.labField(b, { key: "strategy", label: "Strategy", kind: "choice", options: cat.futures_strategies.map((s) => [s.id, s.label]) }, f, () => Q.renderLab(F));
       const info = cat.futures_strategies.find((s) => s.id === f.strategy); if (info) h("p", "hint", b, info.text);
-      const roots = sec("2. Roots");
-      const box = h("div", "checks", roots); h("span", "hint", box, "Tick the roots to trade:");
-      for (const r of cat.futures_roots.filter((x) => x.source !== "user_file" || x.id in { CL: 1, NG: 1, GC: 1, HG: 1, ES: 1 })) {
-        const label = h("label", "f inline", box), c = h("input", "", label); c.type = "checkbox"; c.checked = f.roots.has(r.id); label.appendChild(document.createTextNode(`${r.id}: ${r.name} (${r.asset_class})`));
-        c.addEventListener("change", () => { if (c.checked) f.roots.add(r.id); else f.roots.delete(r.id); after(); });
+      const roots = sec("2. Prices and roots");
+      Q.labField(roots, { key: "data", label: "Prices", kind: "choice", options: [["simulated", "Simulated roots (a model)"], ["real", "Real curves (a backtest)"]] }, f, () => Q.renderLab(F));
+      const box = h("div", "checks", roots), real = f.data === "real", pool = real ? realRoots() : cat.futures_roots.filter((x) => x.source === "simulated" || x.id in { CL: 1, NG: 1, GC: 1, HG: 1, ES: 1 }), chosen = real ? realChosen() : f.roots;
+      h("span", "hint", box, "Tick the roots to trade:");
+      for (const r of pool) {
+        const label = h("label", "f inline", box), c = h("input", "", label); c.type = "checkbox"; c.checked = chosen.has(r.id);
+        label.appendChild(document.createTextNode(`${r.id}: ${r.name} (${r.asset_class})` + (real ? (r.first_date ? ` · ${r.first_date} to ${r.as_of} · ${r.contracts} contracts` : " · your file") : "")));
+        c.addEventListener("change", () => { if (c.checked) chosen.add(r.id); else chosen.delete(r.id); after(); });
       }
-      h("p", "hint", roots, "Only the simulated roots can be backtested: they share one calendar and one model. Downloaded curves are used by the other views, not here.");
+      if (real && !pool.length) h("p", "hint", box, "No real curves yet. Download Cboe's VX futures or Deribit's BTC history with the card below.");
+      h("p", "hint", roots, real
+        ? "A backtest needs the front month on every day, so it needs the contracts that have expired. Cboe's VX (since 2013) and Deribit's history (since 2019) keep them; Yahoo lists only unexpired contracts, so a Yahoo download can be backtested only after it has been repeated over a year (each download keeps what expired since). Roots with less than a year of front-month history are refused."
+        : "The simulated roots share one calendar and one model. Choose Real curves to trade what you downloaded.");
       const c = sec("3. Trading");
       Q.labField(c, { key: "frequency", label: "Rebalance", kind: "choice", options: [["daily", "Daily"], ["weekly", "Weekly"], ["monthly", "Monthly"]] }, f, after);
       for (const s of [{ key: "lookback", label: "Lookback in days (blank = the strategy's own)", kind: "number", step: 1, min: 5, max: 756 }, { key: "targetVol", label: "Volatility target (% a year, blank = the platform's)", kind: "number", step: 1, min: 1, max: 100 },
         { key: "cost", label: "Cost of trading, one way (bps)", kind: "number", step: 0.5, min: 0, max: 200 }]) Q.labField(c, s, f, after);
-      h("p", "hint", c, "The first run builds the simulated futures and takes up to half a minute; later runs reuse them.");
+      h("p", "hint", c, real ? "A run builds the front-month series of each root from its contract table: several seconds a root the first time, then it is reused." : "The first run builds the simulated futures and takes up to half a minute; later runs reuse them.");
     }
   };
   function marginRows(parent, list, onChange) {
@@ -192,14 +206,14 @@
       return [{ modes: ["margin"], path: "/api/futures/margin", body: { positions: f.book.map((x, i) => { const q = Number(x.quantity); if (!isFinite(q) || q === 0) throw new Error(`Row ${i + 1} needs a quantity`); return { root: x.root, contract: x.contract || undefined, quantity: q }; }),
         equity: Number(f.equity), margin_scale: Number(f.scale), near_expiry_days: Number(f.near) } }];
     }, "Computing the margin…");
-    return W.request(F, () => [{ modes: ["backtest"], job: true, path: "/api/futures/strategy/backtest", body: { strategy: f.strategy, roots: [...f.roots], frequency: f.frequency, lookback: f.lookback === "" ? undefined : Number(f.lookback),
+    return W.request(F, () => [{ modes: ["backtest"], job: true, path: "/api/futures/strategy/backtest", body: { strategy: f.strategy, data: f.data, roots: f.data === "real" ? [...realChosen()] : [...f.roots], frequency: f.frequency, lookback: f.lookback === "" ? undefined : Number(f.lookback),
       target_vol: f.targetVol === "" ? undefined : Number(f.targetVol) / 100, cost_bps: Number(f.cost) } }], "Running the backtest…");
   };
   F.auto = () => { if ((CURVE_MODES.has(F.mode) || (F.mode === "history" && F.form.series)) && F.catalog) F.run(true); };
   F.empty = (root) => {
     const text = { history: ["Read a price history", "Download a futures product with iTick (the card below: choose iTick, search, press Download real data) and its returns, volatility, drawdown and biggest moves appear here."],
       margin: ["Check the margin of a book", "Add the contracts you hold (or load the example) to see the notional, the margin they need, the leverage and how far you are from a margin call."],
-      backtest: ["Backtest a futures strategy", "Carry, trend, breakout or momentum across the roots, costed and lagged like every other backtest here. The prices are a model, so this checks the machinery, not the strategy."] }[F.mode] || ["Read the curve", "Loading."];
+      backtest: ["Backtest a futures strategy", "Carry, trend, breakout or momentum across the roots, costed and lagged like every other backtest here. On the simulated roots the prices are a model, so it checks the machinery, not the strategy; on a real curve (VX, Deribit) it is a backtest."] }[F.mode] || ["Read the curve", "Loading."];
     Q.labEmpty(root, F, text[0], [text[1]], F.runLabel[F.mode]);
   };
   F.draw = () => Q.drawLab(F);
@@ -355,10 +369,16 @@
   }
 
   function buildBacktest(root, d) {
-    header(root, `${d.label} on simulated futures`, `${d.text} · roots ${d.roots.join(", ")} · ${d.start} to ${d.end}`);
+    const real = !!d.coverage;
+    header(root, `${d.label} on ${real ? "real" : "simulated"} futures`, `${d.text} · roots ${d.roots.join(", ")} · ${d.start} to ${d.end}`);
     W.provenance(root, d);
     W.pipelineResult(root, d);
-    W.hint(root, "The futures are a model: the result checks that carry, roll and costs are booked correctly, not whether the strategy earns money in the world. Returns are the excess return of holding the front contract and rolling it; margin and funding are not modelled.");
+    if (real) {
+      const card = h("div", "card wide", root); h("h3", "", card, "What each root contributes");
+      table(card, [{ label: "Root", get: (x) => x.root }, { label: "Front-month days", num: true, get: (x) => x.front_days }, { label: "First", get: (x) => x.first }, { label: "Last", get: (x) => x.last },
+        { label: "Days in the file", num: true, get: (x) => x.file_days }, { label: "Contracts", num: true, get: (x) => x.contracts }], Object.entries(d.coverage).map(([k, v]) => ({ root: k, ...v })));
+      W.hint(root, "A backtest on real prices, not a forecast: the excess return of holding the nearest contract of each root and rolling it, from the settlements in the files. Margin, funding, the spread paid at the roll and the capacity of each market are not modelled.");
+    } else W.hint(root, "The futures are a model: the result checks that carry, roll and costs are booked correctly, not whether the strategy earns money in the world. Returns are the excess return of holding the front contract and rolling it; margin and funding are not modelled.");
   }
 
   Q.registerWorkspace("futures", F);

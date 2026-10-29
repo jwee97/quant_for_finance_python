@@ -23,6 +23,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from ..assets.free_data import cboe_futures as cb
 from ..assets.free_data import crypto as fc
 from ..assets.free_data import futures as ff
 from ..assets.free_data import itick_catalog as ic
@@ -40,12 +41,14 @@ from .providers import ITickError, RateLimitTimeout
 MAX_ITEMS = 15
 OPTION_PRESETS = ("SPY", "QQQ", "IWM", "DIA", "TLT", "GLD", "AAPL", "MSFT", "NVDA", "TSLA", "AMZN", "SPX")
 WHAT = ("history", "venues", "funding")
-SOURCE_IDS = {"options": ("cboe", "yahoo", "deribit", "itick"), "futures": ("yahoo", "deribit", "itick"), "crypto": ("okx", "coinbase", "kraken", "bitstamp", "deribit", "itick")}
+SOURCE_IDS = {"options": ("cboe", "yahoo", "deribit", "itick"), "futures": ("yahoo", "cboe_cfe", "deribit", "itick"), "crypto": ("okx", "coinbase", "kraken", "bitstamp", "deribit", "itick")}
 FUTURES_SOURCES = ("yahoo", "itick", "yahoo_series")       # the curve of each contract month, the price history of a product from iTick, or of any future Yahoo lists
 CRYPTO_SOURCES = ("exchanges", "itick")
 PRICE_SOURCES = ("itick", "yahoo")                         # where an option underlying's daily prices can come from
 BARS_PER_YEAR = {"future": 260, "crypto": 365, "stock": 252}
-HOSTS = {"query1.finance.yahoo.com": 0.5, "www.okx.com": 0.12, "api.kraken.com": 0.3}
+HOSTS = {"query1.finance.yahoo.com": 0.5, "www.okx.com": 0.12, "api.kraken.com": 0.3, "cdn.cboe.com": 0.15, "www-api.cboe.com": 0.15, "www.deribit.com": 0.15}
+DERIBIT_MODES = ("curve", "history")                       # Bitcoin and Ether futures: today's strip with open interest, or every monthly and quarterly future since 2019 from the daily charts
+FUTURES_HISTORY = ("6mo", "1y", "2y", "5y", "10y", "max")
 
 
 def _items(body: dict, check, limit: int = MAX_ITEMS) -> list[str]:
@@ -77,9 +80,9 @@ def _check_option_item(x: str) -> str:
 
 def _check_root(x: str) -> str:
     root = x.strip().upper()
-    if root not in ff.FREE_ROOTS and root not in ff.CRYPTO_ROOTS:
+    if root not in ff.FREE_ROOTS and root not in ff.CRYPTO_ROOTS and root not in cb.CBOE_ROOTS:
         listed = list(ff.FREE_ROOTS)
-        raise ValueError(f"free curves are available for {len(listed)} roots ({', '.join(listed[:8])}, …) and {', '.join(ff.CRYPTO_ROOTS)}: pick one from the list, or choose iTick for any other futures product")
+        raise ValueError(f"free curves are available for {len(listed)} roots ({', '.join(listed[:8])}, …), {', '.join(cb.CBOE_ROOTS)} and {', '.join(ff.CRYPTO_ROOTS)}: pick one from the list, or choose iTick for any other futures product")
     return root
 
 
@@ -148,8 +151,9 @@ class DataApi:
         return {
             "options": {"symbols": list(OPTION_PRESETS), "crypto": list(fo.DERIBIT_CURRENCIES), "max_dte": [30, 90, 180, 365, 730], "defaults": {"max_dte": 365},
                         "prices": {"sources": [{"id": "itick", "text": "iTick (needs your key)"}, {"id": "yahoo", "text": "Yahoo Finance"}], "years": [1, 2, 3, 5, 10], "defaults": {"years": 3, "source": "yahoo"}}},
-            "futures": {"roots": [{"id": r.root, "name": r.name, "exchange": r.exchange, "group": r.group} for r in roots], "groups": list(dict.fromkeys(r.group for r in roots)),
-                        "crypto": [{"id": k, "name": v} for k, v in ff.CRYPTO_ROOTS.items()], "history": ["6mo", "1y", "2y", "5y"], "defaults": {"contracts": 10, "history": "1y"},
+            "futures": {"roots": [{"id": r.root, "name": r.name, "exchange": r.exchange, "group": r.group} for r in roots + list(cb.CBOE_ROOTS.values())], "groups": list(dict.fromkeys(r.group for r in roots + list(cb.CBOE_ROOTS.values()))),
+                        "crypto": [{"id": k, "name": v} for k, v in ff.CRYPTO_ROOTS.items()], "history": list(FUTURES_HISTORY), "max_contracts": ff.MAX_CONTRACTS, "deribit": list(DERIBIT_MODES),
+                        "defaults": {"contracts": 10, "history": "1y", "deribit": "curve"},
                         "itick": {"regions": [{"id": k, "name": v} for k, v in ic.REGION_NAMES.items()], "groups": ic.groups(), "years": [1, 2, 3, 5, 10, 20], "products": len(ic.futures_products()), "defaults": {"years": 5}},
                         "yahoo": {"groups": yf.groups(self._yahoo_list()), "years": [1, 2, 3, 5, 10, 20], "products": len(yf.catalog(self._yahoo_list())), "defaults": {"years": 5}}},
             "crypto": {"coins": list(fc.DEFAULT_COINS), "what": [{"id": "history", "text": "Daily history: spot, perpetual and funding"}, {"id": "venues", "text": "Real quotes and order books on six venues, now"},
@@ -273,16 +277,21 @@ class DataApi:
 
     def _one_root(self, http: Http, item: str, s: dict, progress) -> list[dict]:
         try:
-            d = ff.fetch_deribit_curve(http, item) if item in ff.CRYPTO_ROOTS else ff.fetch_yahoo_curve(http, item, s["contracts"], s["history"], progress=progress)
-            path = self.store.path("futures", d.name)
-            earlier = pd.read_csv(path) if path.exists() and (self.store.meta("futures", d.name) or {}).get("item") == "curve" else None
+            path = self.store.path("futures", item)
+            earlier = pd.read_csv(path) if path.exists() and (self.store.meta("futures", item) or {}).get("item") == "curve" else None
+            if item in cb.CBOE_ROOTS:
+                d = cb.fetch_vx_curve(http, earlier=earlier, progress=progress)
+            elif item in ff.CRYPTO_ROOTS:
+                d = ff.fetch_deribit_history(http, item, progress=progress) if s["deribit"] == "history" else ff.fetch_deribit_curve(http, item)
+            else:
+                d = ff.fetch_yahoo_curve(http, item, s["contracts"], s["history"], progress=progress)
             if earlier is not None:
                 d.frame = ff.merge_history(earlier, d.frame)
                 d.meta["first_date"] = str(d.frame["date"].min().date())
                 d.meta["notes"] = list(d.meta["notes"]) + [f"Merged with the earlier download: the file now runs from {d.meta['first_date']} and holds {d.frame['contract'].nunique()} contracts."]
             held = d.frame["contract"].nunique()
             msg = f"{held} contracts, {d.frame['date'].nunique()} days to {d.meta['as_of']} ({d.meta['source']})" + (" · incomplete: the feed stopped answering" if d.meta.get("incomplete") else "")
-            return [self._save(d, msg, {"items": [item], "contracts": s["contracts"], "history": s["history"]})]
+            return [self._save(d, msg, {"items": [item], "contracts": s["contracts"] or 0, "history": s["history"], "deribit": s["deribit"]})]      # 0: every contract Yahoo lists
         except Exception as exc:                                              # noqa: BLE001
             return [self._fail(item, "curve", exc)]
 
@@ -345,9 +354,11 @@ class DataApi:
             if source == "yahoo_series":
                 return _items(body, _check_yahoo_future), {"source": "yahoo_series", "years": _number(body, "years", 5, 1, 20, integer=True)}
             history = str(body.get("history") or "1y")
-            if history not in ("6mo", "1y", "2y", "5y"):
-                raise ApiError("history must be 6mo, 1y, 2y or 5y")
-            return _items(body, _check_root), {"source": "yahoo", "contracts": _number(body, "contracts", 10, 2, 16, integer=True), "history": history}
+            if history not in FUTURES_HISTORY:
+                raise ApiError(f"history must be one of {', '.join(FUTURES_HISTORY)}")
+            raw = body.get("contracts")
+            contracts = None if str(raw).lower() in ("0", "all") else _number(body, "contracts", 10, 2, ff.MAX_CONTRACTS, integer=True)        # None: every contract Yahoo lists
+            return _items(body, _check_root), {"source": "yahoo", "contracts": contracts, "history": history, "deribit": _choice(body, "deribit", "curve", DERIBIT_MODES)}
         source = _choice(body, "source", "exchanges", CRYPTO_SOURCES)
         what = body.get("what") or (["history"] if source == "itick" else list(WHAT))
         if not isinstance(what, list) or not what or any(w not in WHAT for w in what):

@@ -24,8 +24,19 @@ def _index(returns: pd.Series, start: float = 100.0) -> pd.Series:
     return start * (1.0 + returns.fillna(0.0)).cumprod()
 
 
-def futures_bundle(curves: dict[str, pd.DataFrame], asset_class: dict | None = None, roll_days: int = 5, name: str = "futures") -> MarketBundle:
-    """From ``{root: long contract table}`` (columns ``date, contract, expiry, price``) build the excess-return index and the carry signals of each root."""
+def _hold_through_closures(frame: pd.DataFrame, limit: int) -> pd.DataFrame:
+    """Carry each column's last value over at most ``limit`` dates on which only other columns have one (an exchange holiday), never before the column's first value or after its last."""
+    out = frame.ffill(limit=limit)
+    for col in frame.columns:
+        last = frame[col].last_valid_index()
+        if last is not None:
+            out.loc[out.index > last, col] = np.nan
+    return out
+
+
+def futures_bundle(curves: dict[str, pd.DataFrame], asset_class: dict | None = None, roll_days: int = 5, name: str = "futures", hold_days: int = 0) -> MarketBundle:
+    """From ``{root: long contract table}`` (columns ``date, contract, expiry, price``) build the excess-return index and the carry signals of each root. Roots on different exchange calendars have
+    dates the others lack; ``hold_days`` (default 0: none) carries a root's index and signals across at most that many such dates, which is the right return for a closed market (zero)."""
     prices, macro = {}, {}
     for root, long in curves.items():
         ex = excess_return_series(long, roll_days)
@@ -37,6 +48,8 @@ def futures_bundle(curves: dict[str, pd.DataFrame], asset_class: dict | None = N
         macro[f"BASISMOM_{root}"] = basis_momentum(cr)
     price_frame = pd.DataFrame(prices).dropna(how="all")
     macro_frame = pd.DataFrame(macro).reindex(price_frame.index)
+    if hold_days:
+        price_frame, macro_frame = _hold_through_closures(price_frame, hold_days), _hold_through_closures(macro_frame, hold_days)
     return bundle_from_prices(price_frame, asset_class=asset_class or {r: "commodity" for r in curves}, macro=macro_frame, name=name)
 
 

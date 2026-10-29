@@ -77,6 +77,17 @@ class Http:
         return error
 
     def get_json(self, url: str, params: dict | None = None, headers: dict | None = None) -> Any:
+        body = self._get(url, params, headers, "application/json, */*")
+        try:
+            return json.loads(body)
+        except ValueError:
+            raise FetchError(f"{_host(url)} answered with something that is not JSON") from None
+
+    def get_text(self, url: str, params: dict | None = None, headers: dict | None = None) -> str:
+        """The body of a GET as text (a CSV file), with the same pacing, retries and cool-down as :meth:`get_json`."""
+        return self._get(url, params, headers, "text/csv, text/plain, */*").decode("utf-8-sig", errors="replace")
+
+    def _get(self, url: str, params: dict | None, headers: dict | None, accept: str) -> bytes:
         if params:
             url = f"{url}{'&' if '?' in url else '?'}{parse.urlencode(params)}"
         host = _host(url)
@@ -84,7 +95,7 @@ class Http:
             until, earlier = self._tripped.get(host, (0.0, None))
         if earlier is not None and self._clock() < until:
             raise FetchError(f"{earlier} (not asked again: it refused a moment ago)", status=earlier.status, blocked=earlier.blocked)
-        head = {"User-Agent": USER_AGENT, "Accept": "application/json, */*", **(headers or {})}
+        head = {"User-Agent": USER_AGENT, "Accept": accept, **(headers or {})}
         last = "no answer"
         for attempt in range(self.retries + 1):
             self._wait(host)
@@ -97,10 +108,7 @@ class Http:
                     self._sleep(self.backoff * (2 ** attempt))
                 continue
             if status == 200:
-                try:
-                    return json.loads(body)
-                except ValueError:
-                    raise FetchError(f"{host} answered with something that is not JSON") from None
+                return body
             last = f"{host} {_reading(status)}"
             if status in (429, 500, 502, 503, 504) and attempt < self.retries:
                 try:

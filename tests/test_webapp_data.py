@@ -224,7 +224,8 @@ def test_bad_requests_are_refused_before_anything_is_queued_and_no_request_can_n
                        ({"kind": "options", "items": ["SPY"] * 3 + [f"T{i}" for i in range(20)]}, "at most|items must be"), ({"kind": "options", "items": ["../etc/passwd"]}, "not a ticker"),
                        ({"kind": "options", "items": ["http://evil.test/x"]}, "not a ticker"), ({"kind": "options", "items": ["deribit:SOL"]}, "BTC, ETH"), ({"kind": "options", "items": ["SPY"], "max_dte": 0}, "between"),
                        ({"kind": "options", "items": ["SPY"], "rate": 5}, "between"), ({"kind": "futures", "items": ["XX"]}, "free curves are available"), ({"kind": "futures", "items": ["CL"], "history": "forever"}, "history must be"),
-                       ({"kind": "futures", "items": ["CL"], "contracts": 99}, "between"), ({"kind": "crypto", "items": ["btc/usd"]}, "not a coin"), ({"kind": "crypto", "items": ["SOL"], "what": ["nope"]}, "what must be"),
+                       ({"kind": "futures", "items": ["CL"], "contracts": ff.MAX_CONTRACTS + 1}, "between"), ({"kind": "futures", "items": ["CL"], "history": "3y"}, "history must be"),
+                           ({"kind": "futures", "items": ["BTC"], "deribit": "weekly"}, "deribit must be"), ({"kind": "futures", "items": ["VXM"]}, "free curves are available"), ({"kind": "crypto", "items": ["btc/usd"]}, "not a coin"), ({"kind": "crypto", "items": ["SOL"], "what": ["nope"]}, "what must be"),
                        ({"kind": "crypto", "items": ["SOL"], "days": 100}, "between")):
         with pytest.raises(ApiError, match=text):
             fetch(body)
@@ -318,3 +319,69 @@ def test_the_default_client_paces_the_hosts_that_rate_limit_and_retries_with_a_l
     http = DataApi._client(client)
     assert http.retries == 3 and http.backoff == 3.0 and http.pauses == HOSTS and HOSTS["query1.finance.yahoo.com"] >= 0.5
     assert fo.MAX_DTE >= 730 and len(ff.FREE_ROOTS) == 44
+
+
+# ------------------------------------------------------------------------------------------------------------------ the deeper futures downloads
+def test_vix_futures_download_from_cboe_with_open_interest_and_an_update_fetches_only_the_live_contracts(app):
+    from tests import test_free_data_cboe_futures as cx
+
+    f = feeds(app, cx._routes())
+    out = _safe(run(app, kind="futures", items=["VX"]))
+    assert out["ok"] == 1 and out["results"][0]["ok"] and "5 contracts" in out["results"][0]["message"] and "Cboe Futures Exchange" in out["results"][0]["message"]
+    cat = _safe(app.extra_get["/api/assets/catalog"]({}))
+    roots = {r["id"]: r for r in cat["futures_roots"]}
+    assert roots["VX"]["source"] == "downloaded" and roots["VX"]["asset_class"] == "volatility" and roots["VX"]["exchange"] == "CFE"
+    curve = _safe(app.extra_get["/api/futures/curve"]({"root": "VX"}))
+    assert curve["sources"]["open_interest"] == "downloaded" and curve["curve"]["rows"][0]["open_interest"] > 0 and curve["spec"]["multiplier"] == 1000.0
+    assert any("Cboe Futures Exchange" in n for n in curve["notes"]) and curve["spec"]["initial_margin"] > 0, "a volatility future gets an illustrative margin, labelled as one"
+    first_calls = len([u for u in f.calls if "VX_" in u])
+    f2 = feeds(app, cx._routes())
+    again = _safe(run(app, kind="futures", items=["VX"]))
+    assert again["results"][0]["ok"] and len([u for u in f2.calls if "VX_" in u]) < first_calls, "an update does not ask again for the contracts that had expired"
+    saved = app.data.store.meta("futures", "VX")
+    assert saved["refresh"]["items"] == ["VX"] and saved["source_id"] == "cboe_cfe"
+    after = pd.read_csv(app.data.store.path("futures", "VX"))
+    assert after.duplicated(["date", "contract"]).sum() == 0 and after["contract"].nunique() == 5
+
+
+def test_a_deep_download_asks_yahoo_for_every_contract_it_lists_and_the_record_remembers_that_it_did(app):
+    from tests import test_free_data_deep_futures as dx
+
+    served = dx._wti_cycle()
+    expiries = {c["contract"]: c["expiry"] for c in ff.upcoming_contracts(ff.FREE_ROOTS["CL"], pd.Timestamp.today(), ff.MAX_CONTRACTS)}
+    alive = {code for code in served if code in expiries}                                                    # the fixture lists fixed months; the app counts from the real date
+    f = feeds(app, dx._listing(served))
+    out = _safe(run(app, kind="futures", items=["CL"], contracts=0, history="max"))
+    assert out["ok"] == 1 and f"{len(alive)} contracts" in out["results"][0]["message"]
+    saved = app.data.store.meta("futures", "CL")
+    assert saved["refresh"]["contracts"] == 0 and saved["refresh"]["history"] == "max" and saved["deep"] is True and saved["furthest"] == max(alive, key=expiries.get)
+    assert all("range=max" in u for u in f.calls) and set(pd.read_csv(app.data.store.path("futures", "CL"))["contract"]) == alive
+    out2 = _safe(run(app, kind="futures", items=["CL"], contracts="all", history="10y"))
+    assert out2["results"][0]["ok"], "the word all means the same as 0"
+    shallow = _safe(run(app, kind="futures", items=["CL"], contracts=24, history="2y"))
+    assert shallow["results"][0]["ok"]
+
+
+def test_bitcoin_futures_can_be_downloaded_as_their_whole_history_from_deribits_charts(app):
+    from tests import test_free_data_deep_futures as dx
+
+    existing = {"BTC-27FEB26": ("2025-12-01", "2026-02-27", 99.0), "BTC-27MAR26": ("2025-12-29", "2026-03-27", 130.0), "BTC-26JUN26": ("2026-01-30", "2026-06-26", 90.0), "BTC-25SEP26": ("2026-03-27", "2026-09-25", 95.0),
+                "BTC-30OCT26": ("2026-04-24", "2026-10-30", 96.0), "BTC-27NOV26": ("2026-05-29", "2026-11-27", 97.0)}
+    feeds(app, dx._deribit_routes(existing))
+    out = _safe(run(app, kind="futures", items=["BTC"], deribit="history"))
+    assert out["ok"] == 1 and "6 contracts" in out["results"][0]["message"] and "Deribit" in out["results"][0]["message"]
+    saved = app.data.store.meta("futures", "BTC")
+    assert saved["refresh"]["deribit"] == "history" and saved["history"] is True and saved["first_date"] == "2025-12-01"
+    cat = _safe(app.extra_get["/api/assets/catalog"]({}))
+    roots = {r["id"]: r for r in cat["futures_roots"]}
+    assert roots["BTC"]["source"] == "downloaded" and roots["BTC"]["asset_class"] == "crypto"
+    curve = _safe(app.extra_get["/api/futures/curve"]({"root": "BTC"}))
+    assert len(curve["curve"]["rows"]) >= 2 and curve["spec"]["multiplier"] == 1.0
+
+
+def test_the_status_lists_the_new_options_of_the_futures_card(app):
+    futures = _safe(app.extra_get["/api/data/status"]({}))["kinds"]["futures"]
+    assert futures["max_contracts"] == ff.MAX_CONTRACTS and "max" in futures["history"] and "10y" in futures["history"] and futures["deribit"] == ["curve", "history"]
+    assert {r["id"] for r in futures["roots"]} >= {"CL", "VX"} and "Volatility" in futures["groups"]
+    ids = {s["id"] for s in futures["sources"]}
+    assert {"yahoo", "cboe_cfe", "deribit", "itick"} <= ids

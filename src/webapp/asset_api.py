@@ -112,10 +112,15 @@ class AssetApi:
         underlyings += [{"id": f"dl:{n}", "label": f"{n} (real chain, {r.get('source', 'downloaded')}, {r.get('as_of', '?')})", "source": "downloaded", "has_index": str(r.get("underlying", "")).upper() in oa.REFERENCE_INDEX,
                          "as_of": r.get("as_of"), "fetched_at": r.get("fetched_at")} for n, r in dl_chains.items()]
         underlyings += [{"id": f"file:{n}", "label": f"{n} (your file)", "source": "user_file", "has_index": False} for n in opt_files]
+
+        def span(r: str) -> dict:
+            rec = None if r in fut_files else dl_curves.get(r)
+            return {} if rec is None else {"first_date": rec.get("first_date"), "as_of": rec.get("as_of"), "contracts": rec.get("contracts")}
+
         roots = [{"id": r, "name": s.name, "asset_class": s.asset_class, "exchange": s.exchange, "multiplier": s.multiplier, "tick_size": s.tick_size,
-                  "source": "user_file" if r in fut_files else "downloaded" if r in dl_curves else "simulated"} for r, s in fa.ROOTS.items()]
+                  "source": "user_file" if r in fut_files else "downloaded" if r in dl_curves else "simulated", **span(r)} for r, s in fa.ROOTS.items()]
         roots += [{"id": r, "name": rec.get("root_name", r), "asset_class": rec.get("asset_class", "unknown"), "exchange": rec.get("exchange", "?"), "multiplier": float(rec.get("multiplier", 1.0)),
-                   "tick_size": float(rec.get("tick_size", 0.01)), "source": "user_file" if r in fut_files else "downloaded"} for r, rec in dl_curves.items() if r not in fa.ROOTS]
+                   "tick_size": float(rec.get("tick_size", 0.01)), "source": "user_file" if r in fut_files else "downloaded", **span(r)} for r, rec in dl_curves.items() if r not in fa.ROOTS]
         roots += [{"id": r, "name": r, "asset_class": "unknown", "exchange": "?", "multiplier": 1.0, "tick_size": 0.01, "source": "user_file"} for r in fut_files if r not in fa.ROOTS and r not in dl_curves]
         symbols = [{"id": s, "source": "user_file" if s in cry_files else "platform"} for s in ca.REAL_SYMBOLS] + [{"id": s, "source": "user_file" if s in cry_files else "downloaded" if s in dl_coins else "simulated"} for s in ca.SIMULATED_ALTS]
         symbols += [{"id": s, "source": "user_file" if s in cry_files else "downloaded"} for s in dl_coins if s not in ca.REAL_SYMBOLS and s not in ca.SIMULATED_ALTS]
@@ -488,21 +493,35 @@ class AssetApi:
                                      self._bundle().index[-1])
 
     def futures_strategy_backtest(self, body: dict) -> dict:
-        """``POST /api/futures/strategy/backtest``: a strategy on the simulated futures roots through the platform pipeline, as a job."""
+        """``POST /api/futures/strategy/backtest``: a strategy through the platform pipeline, as a job: on the simulated roots (``data`` "simulated", the default) or on the curves downloaded or uploaded
+        for the roots chosen (``data`` "real")."""
         name = str(body.get("strategy") or "carry_ts")
         if name not in fa.FUTURES_STRATEGIES:
             raise ApiError(f"strategy must be one of {sorted(fa.FUTURES_STRATEGIES)}")
-        roots = _list(body.get("roots") or list(fa.ROOTS))
+        real = _choice(body, "data", "simulated", ("simulated", "real")) == "real"
+        roots = _list(body.get("roots") or ([] if real else list(fa.ROOTS)))
         lookback = None if body.get("lookback") in (None, "") else _number(body, "lookback", 63, 5, 756, integer=True)
         target = None if body.get("target_vol") in (None, "") else _number(body, "target_vol", 0.1, 0.01, 1.0)
         freq = _choice(body, "frequency", "weekly", ("daily", "weekly", "monthly"))
         cost = _number(body, "cost_bps", 2.0, 0.0, 200.0)
         as_of = self._bundle().index[-1]
+        curves = None
+        if real:
+            if not roots:
+                raise ApiError("choose at least one root with a downloaded or uploaded curve")
+            curves = {}
+            for r in roots:
+                curve = self._curve(r)
+                if curve.source == "simulated":
+                    raise ApiError(f"{curve.root} has no real curve to backtest: download it with the Free data card on this tab (Cboe's VX and Deribit's history keep expired contracts), or put {curve.root}.csv in data/user/futures/")
+                curves[curve.root] = curve
+            as_of = max(c.as_of for c in curves.values())
 
         def work(progress):
-            progress("building the simulated futures (the first run takes up to half a minute)")
-            out = fa.run_futures_strategy(self.app.config, name, roots, freq, lookback, target, cost, as_of)
-            return _wrap("futures_backtest", out, {"prices": "simulated"}, [], as_of, out.pop("notes"))
+            progress("building the front-month series from the contract tables (several seconds per root the first time)" if real else "building the simulated futures (the first run takes up to half a minute)")
+            out = fa.run_futures_strategy(self.app.config, name, roots, freq, lookback, target, cost, as_of, curves)
+            parts = {"prices": common.overall_source({r: c.source for r, c in curves.items()}) if real else "simulated"}
+            return _wrap("futures_backtest", out, parts, [], as_of, out.pop("notes"))
 
         return self.app.submit_task(f"futures: {name}", work)
 

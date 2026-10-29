@@ -144,6 +144,23 @@ def excess_return_series(long: pd.DataFrame, roll_days: int = 5) -> pd.Series:
     return pd.Series(out, name="excess_return")
 
 
+def front_month_dates(long: pd.DataFrame, roll_days: int = 5, slack: int = 10) -> pd.Series:
+    """Whether, on each date, the nearest contract a roll strategy could hold is the front of the market and not only the nearest one that is still in the table.
+
+    A table of the contracts alive on the day it was fetched (a free Yahoo download) holds no contract that has expired since, so before that day its nearest contract is years away and the "excess
+    return" of holding it is that of a deferred contract. The test is the distance to expiry of the nearest contract: no more than one gap between expiries (the larger of the gap before it and after it
+    in the table) plus ``roll_days`` plus ``slack`` days. Returns a boolean Series by date, for the dates on which some contract is more than ``roll_days`` from its expiry."""
+    t = long.copy()
+    t["date"], t["expiry"] = pd.to_datetime(t["date"]), pd.to_datetime(t["expiry"])
+    expiries = pd.Series(np.sort(t["expiry"].unique()))
+    after = expiries.shift(-1).sub(expiries).dt.days
+    before = expiries.sub(expiries.shift(1)).dt.days
+    span = pd.Series(np.fmax(after.fillna(before).to_numpy(float), before.fillna(after).to_numpy(float)), index=expiries.to_numpy())
+    live = t[(t["expiry"] - t["date"]).dt.days > roll_days].dropna(subset=["price"]).sort_values(["date", "expiry"]).drop_duplicates("date")
+    distance = (live["expiry"] - live["date"]).dt.days.to_numpy(float)
+    return pd.Series(distance <= span.reindex(live["expiry"].to_numpy()).to_numpy(float) + roll_days + slack, index=pd.DatetimeIndex(live["date"]), name="front_month")
+
+
 def basis_momentum(contract_returns: pd.DataFrame, window: int = 252, near: str = "F1", far: str = "F2") -> pd.Series:
     """Boons & Prado (2019): the trailing mean of the daily return of the nearest contract minus that of the second; high basis momentum means the front of the curve is
     outperforming the back (tightening supply) and has predicted subsequent returns."""

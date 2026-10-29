@@ -51,7 +51,7 @@ def test_the_status_reports_itick_without_the_key_and_the_search_costs_no_call(i
     itick = next(s for s in st["kinds"]["futures"]["sources"] if s["id"] == "itick")
     assert itick["needs_key"] and "no option data" in itick["provides"] and "curves" in itick["provides"], "the card says plainly what iTick does not have"
     fut = st["kinds"]["futures"]
-    assert len(fut["roots"]) == 44 and fut["groups"][0] == "Energy" and {"Metals", "Grains", "Livestock", "Softs", "Equity indexes", "Rates", "Currencies"} <= set(fut["groups"])
+    assert len(fut["roots"]) == 45 and "VX" in [r["id"] for r in fut["roots"]] and fut["groups"][0] == "Energy" and {"Metals", "Grains", "Livestock", "Softs", "Equity indexes", "Rates", "Currencies"} <= set(fut["groups"])
     assert {r["id"] for r in fut["itick"]["regions"]} == {"US", "HK", "CN"} and fut["itick"]["products"] > 1500 and fut["itick"]["defaults"] == {"years": 5}
     assert st["kinds"]["crypto"]["itick"]["coins"] > 150 and st["kinds"]["options"]["prices"]["defaults"]["years"] == 3
 

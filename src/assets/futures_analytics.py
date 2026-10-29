@@ -13,14 +13,14 @@ positive in backwardation (the curve slopes down; a long earns the roll) and neg
 from __future__ import annotations
 
 import threading
-from collections import OrderedDict
+from collections import Counter, OrderedDict
 from dataclasses import dataclass, field, replace
 
 import numpy as np
 import pandas as pd
 
 from .common import TRADING_DAYS, AssetSnapshot, add_flag, last_zscore, liquidity_score, percentile_rank, realized_vol
-from .futures import SchwartzSmithParams, basis_momentum, carry, contract_returns, excess_return_series, synthetic_term_structure, term_structure
+from .futures import SchwartzSmithParams, basis_momentum, carry, contract_returns, excess_return_series, front_month_dates, synthetic_term_structure, term_structure
 
 
 @dataclass(frozen=True)
@@ -128,7 +128,7 @@ def simulated_curve(root: str, as_of=None, n_days: int = HISTORY_DAYS) -> CurveD
     return data
 
 
-MARGIN_SHARE = {"commodity": 0.09, "metal": 0.06, "agricultural": 0.06, "equity_index": 0.06, "rates": 0.02, "fx": 0.035, "crypto": 0.15}      # ILLUSTRATIVE initial margin as a share of a contract's value
+MARGIN_SHARE = {"commodity": 0.09, "metal": 0.06, "agricultural": 0.06, "equity_index": 0.06, "rates": 0.02, "fx": 0.035, "crypto": 0.15, "volatility": 0.35}      # ILLUSTRATIVE initial margin as a share of a contract's value
 
 
 def illustrative_margin(asset_class: str, notional: float) -> tuple[float, float] | None:
@@ -435,30 +435,98 @@ def futures_bundle_for(roots: list[str], as_of=None, n_days: int = HISTORY_DAYS)
     return bundle
 
 
+MIN_FRONT_DAYS = 252
+HOLD_DAYS = 5
+
+
+def real_futures_bundle(curves: dict[str, CurveData], roll_days: int = 5, min_days: int = MIN_FRONT_DAYS, name: str = "futures-real"):
+    """The MarketBundle of curves that are not simulated (downloaded or your own files) and what each root contributes: ``(bundle, {root: {...}})``.
+
+    Only the dates on which the nearest contract is the front of the market are used (``front_month_dates``), and only weekdays: the weekend of a market that never closes is folded into Monday's
+    return, so a year is about 252 returns for every root. A root with fewer than ``min_days`` such dates is refused with the reason, because a strategy cannot be judged on less than a year. Dates a
+    root's exchange was closed are held flat for at most ``HOLD_DAYS`` days."""
+    from .bundles import futures_bundle
+
+    used, report = {}, {}
+    for root, data in curves.items():
+        long = data.long[["date", "contract", "expiry", "price"]]
+        weekdays = long[long["date"].dt.day_of_week < 5]
+        front = front_month_dates(weekdays, roll_days)
+        days = front[front].index
+        report[root] = {"first": str(days.min().date()) if len(days) else None, "last": str(days.max().date()) if len(days) else None, "front_days": int(len(days)), "file_days": int(len(front)),
+                        "contracts": int(long["contract"].nunique()), "source": data.source}
+        if len(days) < min_days:
+            raise ValueError(f"{root} has {len(days)} days on which its nearest contract is the front of the market ({len(front)} days in the file); a strategy needs at least {min_days}. A Yahoo download holds only "
+                             "the contracts that have not expired, so it has no front month before the day it was fetched: download again over the coming months (each download keeps the contracts that have "
+                             "expired since), or use Cboe's VX futures or Deribit's history, which keep expired contracts")
+        used[root] = weekdays[weekdays["date"].isin(days)]
+    classes = {r: curves[r].spec.asset_class for r in curves}
+    return futures_bundle(used, classes, roll_days, name, hold_days=HOLD_DAYS), report
+
+
+def _real_bundle_for(curves: dict[str, CurveData]):
+    """``real_futures_bundle`` cached by what the tables hold (building one takes several seconds per root)."""
+    key = ("real",) + tuple((r, len(c.long), str(c.long["date"].min().date()), str(c.long["date"].max().date()), round(float(c.long["price"].sum()), 4)) for r, c in sorted(curves.items()))
+    with _LOCK:
+        if key in _BUNDLES:
+            _BUNDLES.move_to_end(key)
+            return _BUNDLES[key]
+    built = real_futures_bundle(curves)
+    with _LOCK:
+        _BUNDLES[key] = built
+        while len(_BUNDLES) > 3:
+            _BUNDLES.popitem(last=False)
+    return built
+
+
 def run_futures_strategy(config, strategy: str, roots: list[str] | None = None, frequency: str | None = None, lookback: int | None = None, target_vol: float | None = None, cost_bps: float = 2.0,
-                         as_of=None) -> dict:
-    """Run one of ``FUTURES_STRATEGIES`` on the SIMULATED roots through the platform pipeline. The signal is traded as written (the calibrated forecast needs more history than the simulation has);
-    ``cost_bps`` is the one-way cost of trading the whole book. Prices are a model, so the result checks the machinery, not the strategy."""
+                         as_of=None, curves: dict[str, CurveData] | None = None) -> dict:
+    """Run one of ``FUTURES_STRATEGIES`` through the platform pipeline: on the SIMULATED roots, or, given ``curves`` (``{root: CurveData}`` of downloaded or user files), on those real contract tables.
+    The signal is traded as written (the calibrated forecast needs more history than the simulation has); ``cost_bps`` is the one-way cost of trading the whole book. On simulated prices the result
+    checks the machinery, not the strategy; on real ones it is a backtest of the excess return of holding the nearest contract, with the limits listed in its notes."""
     from .strategy_runs import run_strategy, subset_bundle
 
     if strategy not in FUTURES_STRATEGIES:
         raise ValueError(f"unknown futures strategy '{strategy}'; choose from {sorted(FUTURES_STRATEGIES)}")
     spec = FUTURES_STRATEGIES[strategy]
-    chosen = [r.upper() for r in (roots or list(ROOTS))]
-    bad = [r for r in chosen if r not in ROOTS]
-    if bad:
-        raise ValueError(f"unknown futures roots {bad}; the simulated roots are {sorted(ROOTS)}")
+    real = curves is not None
+    if real:
+        chosen = sorted(r.upper() for r in curves)
+        classes = {r: curves[r].spec.asset_class for r in chosen}
+    else:
+        chosen = [r.upper() for r in (roots or list(ROOTS))]
+        bad = [r for r in chosen if r not in ROOTS]
+        if bad:
+            raise ValueError(f"unknown futures roots {bad}; the simulated roots are {sorted(ROOTS)}")
+        classes = {r: ROOTS[r].asset_class for r in chosen}
+    if not chosen:
+        raise ValueError("choose at least one root")
     if len(chosen) < 2 and strategy in ("carry_xs", "xs_momentum"):
         raise ValueError("a cross-sectional strategy needs at least two roots")
-    if strategy == "basis_momentum" and sum(ROOTS[r].asset_class == "commodity" for r in chosen) < 2:
-        raise ValueError("basis momentum ranks commodities: choose at least two commodity roots (CL, NG, HG)")
-    bundle = futures_bundle_for(chosen, as_of)
+    if strategy == "carry_xs" and max(Counter(classes.values()).values()) < 2:
+        raise ValueError("cross-sectional carry ranks the roots within an asset class: choose at least two roots of the same class (chosen: "
+                         + ", ".join(f"{r} is {c}" for r, c in sorted(classes.items())) + ")")
+    if strategy == "basis_momentum" and sum(c == "commodity" for c in classes.values()) < 2:
+        raise ValueError("basis momentum ranks commodities: choose at least two commodity roots" + ("" if real else " (CL, NG, HG)"))
+    if real:
+        bundle, report = _real_bundle_for(curves)
+    else:
+        bundle, report = futures_bundle_for(chosen, as_of), None
     params = {spec["lookback"]: int(lookback)} if (lookback is not None and spec["lookback"]) else {}
     out = run_strategy(subset_bundle(bundle, sorted(chosen)), config, spec["model"], params, rebalance=frequency, target_vol=target_vol, cost_bps=float(cost_bps), label=spec["label"],
                        allocator=spec["allocator"])
-    out.update({"strategy": strategy, "label": spec["label"], "text": spec["text"], "roots": sorted(chosen), "cost_bps": float(cost_bps), "source": "simulated",
-                "notes": ["The futures are a Schwartz-Smith model simulation: the result checks that carry, roll and costs are booked correctly, not whether the strategy earns money.",
-                          "Returns are the excess return of holding the front contract and rolling it; margin and funding are not modelled."]})
+    out.update({"strategy": strategy, "label": spec["label"], "text": spec["text"], "roots": sorted(chosen), "cost_bps": float(cost_bps), "source": "real" if real else "simulated"})
+    if real:
+        out["coverage"] = report
+        out["notes"] = [f"{r}: {v['front_days']} days from {v['first']} to {v['last']} on which the nearest contract is the front of the market (of {v['file_days']} in the file, {v['contracts']} contracts)." for r, v in report.items()]
+        out["notes"] += ["The result is the excess return of holding the nearest contract of each root and rolling it 5 days before it expires, from the prices in the files (settlements where the source gives them): "
+                         "a backtest on real prices, not a forecast.",
+                         "Costs are the one-way basis points above on the traded notional; margin, funding, the bid-ask spread of the roll and the capacity of each market are not modelled.",
+                         "Weekends are folded into Monday's return and an exchange holiday is held flat for at most 5 days. Only the dates on which the file shows the front of the market are used, so a gap in a file "
+                         "is a gap in the backtest."]
+    else:
+        out["notes"] = ["The futures are a Schwartz-Smith model simulation: the result checks that carry, roll and costs are booked correctly, not whether the strategy earns money.",
+                        "Returns are the excess return of holding the front contract and rolling it; margin and funding are not modelled."]
     return out
 
 
