@@ -27,6 +27,13 @@ Default parameters on the 15 ETFs, net of costs, traded as written: net Sharpe -
 
 Net of costs on the window the search used: Sharpe nan (-0.39 over its own, longer live window), CAGR 0.0%, volatility 0.0%, max drawdown 0.0%, turnover 0.0 times a year. This is one backtest among those in a search; read the search-aware tests in the Generation 5 report before treating any row as evidence.
 
+## Sources
+
+Where the rule comes from. A source is not evidence that it works on this repository's data: the survey above and the application's own result pages say that.
+
+- Faith (2007), Way of the Turtle, McGraw-Hill
+- Clenow (2013), Following the Trend, Wiley
+
 ## Learn more
 
 [Momentum and trend following](../techniques/momentum.md)

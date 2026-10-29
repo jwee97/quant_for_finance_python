@@ -25,6 +25,7 @@ import yaml
 from ..framework import ALLOCATORS, DETECTORS, MODELS, Pipeline, PipelineSpec, load_library
 from ..framework.requirements import factory_min_assets, minimum_assets, universe_problem
 from ..framework.tearsheet import red_flags
+from ..references import references
 from ..strategies import expression
 from ..strategies.user import TEMPLATE, load_user_strategies
 from .payload import clean, result_payload
@@ -214,8 +215,8 @@ class App:
             models.append({"name": e.name, "family": e.family or "other", "description": e.description, "params": parameters("model", e.name, e.factory), "requires": instance_requires,
                            "slow": SLOW.get(e.name), "user": not getattr(e.factory, "__module__", "").startswith("src.strategies"), "structured": bool(getattr(e.factory, "structured", False)),
                            "book": getattr(e.factory, "book", None), "rebalance": getattr(e.factory, "rebalance", None), "position_mode": getattr(e.factory, "position_mode", None),
-                           "min_assets": factory_min_assets(e.factory)})
-        allocators = [{"name": e.name, "description": e.description, "params": parameters("allocator", e.name, e.factory), "slow": SLOW.get(e.name)} for e in ALLOCATORS.entries()
+                           "min_assets": factory_min_assets(e.factory), "references": references("model", e.name)})
+        allocators = [{"name": e.name, "description": e.description, "params": parameters("allocator", e.name, e.factory), "slow": SLOW.get(e.name), "references": references("allocator", e.name)} for e in ALLOCATORS.entries()
                       if e.name not in ("model_weights", "regime_switch")]
         for a in allocators:
             a["description"] = ALLOCATOR_TEXT.get(a["name"], a["description"])

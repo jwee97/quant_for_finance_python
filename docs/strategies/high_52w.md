@@ -27,6 +27,12 @@ Default parameters on the 15 ETFs, net of costs, traded as written: net Sharpe +
 
 Ranks 15 ETFs across asset classes, so the ranking is partly a ranking of asset classes.
 
+## Sources
+
+Where the rule comes from. A source is not evidence that it works on this repository's data: the survey above and the application's own result pages say that.
+
+- [George and Hwang (2004), The 52-week high and momentum investing, Journal of Finance 59(5)](https://doi.org/10.1111/j.1540-6261.2004.00695.x)
+
 ## Learn more
 
 [Trend following and momentum: the indicator toolkit](../techniques/trend-following-toolkit.md)

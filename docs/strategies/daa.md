@@ -23,6 +23,12 @@ quant backtest --model daa --tearsheet
 
 Default parameters on the 15 ETFs, net of costs, traded as written: net Sharpe +0.76, CAGR 8.1%, volatility 11.0%, max drawdown -26.0%, turnover 13.0 times a year, deflated Sharpe probability 0.77 counting every strategy in the survey as a trial. One run, not a test: see [the survey](../strategy_survey.md) for how to read it.
 
+## Sources
+
+Where the rule comes from. A source is not evidence that it works on this repository's data: the survey above and the application's own result pages say that.
+
+- [Keller and Keuning (2018), Breadth momentum and the canary universe: defensive asset allocation (DAA), SSRN 3212862](https://doi.org/10.2139/ssrn.3212862)
+
 ## Learn more
 
 [Tactical asset allocation: Faber, Keller and the classic model portfolios](../techniques/tactical-asset-allocation.md)

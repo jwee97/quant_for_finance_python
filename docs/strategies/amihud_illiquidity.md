@@ -27,6 +27,12 @@ Default parameters on the 15 ETFs, net of costs, traded as written: net Sharpe -
 
 Ranks 15 ETFs across asset classes, so the ranking is partly a ranking of asset classes.
 
+## Sources
+
+Where the rule comes from. A source is not evidence that it works on this repository's data: the survey above and the application's own result pages say that.
+
+- [Amihud (2002), Illiquidity and stock returns: cross-section and time-series effects, Journal of Financial Markets 5(1)](https://doi.org/10.1016/s1386-4181(01)00024-6)
+
 ## Learn more
 
 [Low risk, lottery demand, illiquidity and value with momentum](../techniques/low-risk-and-multi-factor.md)

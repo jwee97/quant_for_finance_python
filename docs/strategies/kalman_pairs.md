@@ -31,6 +31,13 @@ Net of costs on the window the search used: Sharpe -0.06 (0.01 over its own, lon
 
 Needs pairs that are genuinely related; with 15 ETFs there are few. Trades both legs, so costs are doubled.
 
+## Sources
+
+Where the rule comes from. A source is not evidence that it works on this repository's data: the survey above and the application's own result pages say that.
+
+- [Elliott, van der Hoek and Malcolm (2005), Pairs trading, Quantitative Finance 5(3)](https://doi.org/10.1080/14697680500149370)
+- Chan (2013), Algorithmic Trading: Winning Strategies and Their Rationale, Wiley
+
 ## Learn more
 
 [Pairs, cointegration and statistical arbitrage](../techniques/pairs-and-statistical-arbitrage.md)

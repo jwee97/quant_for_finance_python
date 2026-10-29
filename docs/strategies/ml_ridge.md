@@ -27,6 +27,12 @@ Net of costs on the window the search used: Sharpe -0.42 (-0.40 over its own, lo
 
 Walk-forward ridge; the signal-to-noise ratio of monthly returns is very low.
 
+## Sources
+
+Where the rule comes from. A source is not evidence that it works on this repository's data: the survey above and the application's own result pages say that.
+
+- [Gu, Kelly and Xiu (2020), Empirical asset pricing via machine learning, Review of Financial Studies 33(5)](https://doi.org/10.1093/rfs/hhaa009)
+
 ## Learn more
 
 [Machine learning on returns: ridge, forests and honesty](../techniques/machine-learning-for-returns.md)

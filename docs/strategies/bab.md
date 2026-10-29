@@ -27,6 +27,12 @@ Default parameters on the 15 ETFs, net of costs, traded as written: net Sharpe +
 
 Ranks 15 ETFs across asset classes, so the ranking is partly a ranking of asset classes.
 
+## Sources
+
+Where the rule comes from. A source is not evidence that it works on this repository's data: the survey above and the application's own result pages say that.
+
+- [Frazzini and Pedersen (2014), Betting against beta, Journal of Financial Economics 111(1)](https://doi.org/10.1016/j.jfineco.2013.10.005)
+
 ## Learn more
 
 [Low risk, lottery demand, illiquidity and value with momentum](../techniques/low-risk-and-multi-factor.md)

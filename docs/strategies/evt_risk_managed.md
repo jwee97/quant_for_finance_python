@@ -29,6 +29,12 @@ Default parameters on the 15 ETFs, net of costs, traded as written: net Sharpe +
 
 Uses VIX-type indices as the implied-volatility input; no option-level data.
 
+## Sources
+
+Where the rule comes from. A source is not evidence that it works on this repository's data: the survey above and the application's own result pages say that.
+
+- [McNeil and Frey (2000), Estimation of tail-related risk measures for heteroscedastic financial time series: an extreme value approach, Journal of Empirical Finance 7(3-4)](https://doi.org/10.1016/s0927-5398(00)00012-8)
+
 ## Learn more
 
 [Econometric strategies: Kalman trend, GARCH and EVT sizing, and a shrunk VAR](../techniques/econometric-strategies.md)

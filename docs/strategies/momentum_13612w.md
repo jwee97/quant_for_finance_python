@@ -27,6 +27,13 @@ Default parameters on the 15 ETFs, net of costs, traded as written: net Sharpe +
 
 Ranks 15 ETFs across asset classes, so the ranking is partly a ranking of asset classes.
 
+## Sources
+
+Where the rule comes from. A source is not evidence that it works on this repository's data: the survey above and the application's own result pages say that.
+
+- [Keller and Keuning (2017), Breadth momentum and vigilant asset allocation (VAA): winning more by losing less, SSRN 3002624](https://doi.org/10.2139/ssrn.3002624)
+- [Keller and Keuning (2018), Breadth momentum and the canary universe: defensive asset allocation (DAA), SSRN 3212862](https://doi.org/10.2139/ssrn.3212862)
+
 ## Learn more
 
 [Trend following and momentum: the indicator toolkit](../techniques/trend-following-toolkit.md)

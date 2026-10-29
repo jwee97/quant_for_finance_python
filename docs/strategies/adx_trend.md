@@ -25,6 +25,12 @@ This rule declares a weekly rebalance; pass `execution: {rebalance: monthly}` in
 
 Default parameters on the 15 ETFs, net of costs, traded as written: net Sharpe -0.24, CAGR -1.9%, volatility 6.8%, max drawdown -36.7%, turnover 9.2 times a year, deflated Sharpe probability 0.00 counting every strategy in the survey as a trial. One run, not a test: see [the survey](../strategy_survey.md) for how to read it.
 
+## Sources
+
+Where the rule comes from. A source is not evidence that it works on this repository's data: the survey above and the application's own result pages say that.
+
+- Wilder (1978), New Concepts in Technical Trading Systems, Trend Research
+
 ## Learn more
 
 [Trend following and momentum: the indicator toolkit](../techniques/trend-following-toolkit.md)

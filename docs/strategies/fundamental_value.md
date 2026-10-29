@@ -26,6 +26,13 @@ quant backtest --model fundamental_value --tearsheet
 
 Reads company statements from a file you supply (data/user/fundamentals.csv); without it the model refuses to run, except the price-only momentum factors. Needs a wide cross-section of stocks, not 15 ETFs, and statements that are point-in-time.
 
+## Sources
+
+Where the rule comes from. A source is not evidence that it works on this repository's data: the survey above and the application's own result pages say that.
+
+- [Fama and French (1993), Common risk factors in the returns on stocks and bonds, Journal of Financial Economics 33(1)](https://doi.org/10.1016/0304-405x(93)90023-5)
+- [Novy-Marx (2013), The other side of value: the gross profitability premium, Journal of Financial Economics 108(1)](https://doi.org/10.1016/j.jfineco.2013.01.003)
+
 ## Learn more
 
 [Fundamental factors: value, quality, momentum, DCF, and nonlinear and contextual effects](../techniques/fundamental-factors.md)

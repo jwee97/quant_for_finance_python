@@ -27,6 +27,12 @@ quant backtest --model fundamental_alpha --tearsheet
 
 Reads company statements from a file you supply (data/user/fundamentals.csv); without it the model refuses to run, except the price-only momentum factors. Needs a wide cross-section of stocks, not 15 ETFs, and statements that are point-in-time.
 
+## Sources
+
+Where the rule comes from. A source is not evidence that it works on this repository's data: the survey above and the application's own result pages say that.
+
+- Grinold and Kahn (2000), Active Portfolio Management, 2nd edition, McGraw-Hill
+
 ## Learn more
 
 [Fundamental factors: value, quality, momentum, DCF, and nonlinear and contextual effects](../techniques/fundamental-factors.md)

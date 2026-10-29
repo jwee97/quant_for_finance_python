@@ -25,6 +25,12 @@ This rule declares a weekly rebalance; pass `execution: {rebalance: monthly}` in
 
 Default parameters on the 15 ETFs, net of costs, traded as written: net Sharpe +0.46, CAGR 4.2%, volatility 10.2%, max drawdown -25.0%, turnover 16.7 times a year, deflated Sharpe probability 0.31 counting every strategy in the survey as a trial. One run, not a test: see [the survey](../strategy_survey.md) for how to read it.
 
+## Sources
+
+Where the rule comes from. A source is not evidence that it works on this repository's data: the survey above and the application's own result pages say that.
+
+- Antonacci (2014), Dual Momentum Investing, McGraw-Hill
+
 ## Learn more
 
 [Trend following and momentum: the indicator toolkit](../techniques/trend-following-toolkit.md)

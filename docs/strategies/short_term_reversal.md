@@ -29,6 +29,13 @@ Default parameters on the 15 ETFs, net of costs, traded as written: net Sharpe -
 
 Ranks 15 ETFs across asset classes, so the ranking is partly a ranking of asset classes.
 
+## Sources
+
+Where the rule comes from. A source is not evidence that it works on this repository's data: the survey above and the application's own result pages say that.
+
+- [Jegadeesh (1990), Evidence of predictable behavior of security returns, Journal of Finance 45(3)](https://doi.org/10.1111/j.1540-6261.1990.tb05110.x)
+- [Lehmann (1990), Fads, martingales, and market efficiency, Quarterly Journal of Economics 105(1)](https://doi.org/10.2307/2937816)
+
 ## Learn more
 
 [Short-term mean reversion: pullbacks, bands and reversals](../techniques/short-term-mean-reversion.md)

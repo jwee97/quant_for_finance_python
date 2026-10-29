@@ -25,6 +25,15 @@ quant backtest --model fundamental_quality --tearsheet
 
 Reads company statements from a file you supply (data/user/fundamentals.csv); without it the model refuses to run, except the price-only momentum factors. Needs a wide cross-section of stocks, not 15 ETFs, and statements that are point-in-time.
 
+## Sources
+
+Where the rule comes from. A source is not evidence that it works on this repository's data: the survey above and the application's own result pages say that.
+
+- [Novy-Marx (2013), The other side of value: the gross profitability premium, Journal of Financial Economics 108(1)](https://doi.org/10.1016/j.jfineco.2013.01.003)
+- [Piotroski (2000), Value investing: the use of historical financial statement information to separate winners from losers, Journal of Accounting Research 38(S)](https://doi.org/10.2307/2672906)
+- [Sloan (1996), Do stock prices fully reflect information in accruals and cash flows about future earnings?, The Accounting Review 71(3)](https://doi.org/10.2308/tar-9608042309)
+- [Asness, Frazzini and Pedersen (2019), Quality minus junk, Review of Accounting Studies 24(1)](https://doi.org/10.1007/s11142-018-9470-2)
+
 ## Learn more
 
 [Fundamental factors: value, quality, momentum, DCF, and nonlinear and contextual effects](../techniques/fundamental-factors.md)

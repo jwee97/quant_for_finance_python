@@ -73,6 +73,8 @@ input[type=text], input[type=number], input[type=date], select, textarea { width
 input[type=checkbox] { accent-color: var(--accent); width: 16px; height: 16px; }
 textarea { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; resize: vertical; min-height: 64px; }
 .hint { color: var(--muted); font-size: 12px; margin: 0; }
+.refs a { color: inherit; text-decoration: underline dotted; text-underline-offset: 2px; }
+.refs a:hover, .refs a:focus-visible { color: var(--accent); }
 .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .row.tight { gap: 6px; }
 button.btn { background: var(--surface); border: 1px solid var(--axis); border-radius: 8px; padding: 7px 12px; cursor: pointer; font-weight: 500; }

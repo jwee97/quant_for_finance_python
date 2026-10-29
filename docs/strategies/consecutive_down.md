@@ -25,6 +25,12 @@ This rule declares a daily rebalance; pass `execution: {rebalance: monthly}` in 
 
 Default parameters on the 15 ETFs, net of costs, traded as written: net Sharpe -0.26, CAGR -0.4%, volatility 1.5%, max drawdown -12.4%, turnover 15.2 times a year, deflated Sharpe probability 0.00 counting every strategy in the survey as a trial. One run, not a test: see [the survey](../strategy_survey.md) for how to read it.
 
+## Sources
+
+Where the rule comes from. A source is not evidence that it works on this repository's data: the survey above and the application's own result pages say that.
+
+- Connors and Alvarez (2009), Short Term Trading Strategies That Work, TradingMarkets Publishing
+
 ## Learn more
 
 [Short-term mean reversion: pullbacks, bands and reversals](../techniques/short-term-mean-reversion.md)

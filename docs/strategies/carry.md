@@ -31,6 +31,12 @@ Net of costs on the window the search used: Sharpe 0.25 (0.15 over its own, long
 
 Ranks 15 ETFs across asset classes, so the ranking is partly a ranking of asset classes.
 
+## Sources
+
+Where the rule comes from. A source is not evidence that it works on this repository's data: the survey above and the application's own result pages say that.
+
+- [Koijen, Moskowitz, Pedersen and Vrugt (2018), Carry, Journal of Financial Economics 127(2)](https://doi.org/10.1016/j.jfineco.2017.11.002)
+
 ## Learn more
 
 [Cross-sectional factors: low volatility, value, quality, carry, defensive beta](../techniques/cross-sectional-factors.md)

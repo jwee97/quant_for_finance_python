@@ -112,7 +112,7 @@ def test_adding_tickers_checks_them_and_marks_bad_ones(page):
 
 def test_a_backtest_draws_every_chart_and_the_controls_work(page):
     _run_and_wait(page)
-    assert page.locator(".kpis .tile").count() == 6 and page.locator(".tile.hero .value").inner_text() not in ("", "n/a")
+    assert page.locator(".kpis .tile").count() == 12 and page.locator(".tile.hero .value").inner_text() not in ("", "n/a")          # six headline tiles and six more measures of risk
     assert page.locator("svg.chart").count() >= 7
     assert page.locator("#results .legend").count() >= 1 and page.locator(".flag").count() >= 5
     first_equity = page.locator("svg.chart").first.inner_html()
@@ -128,6 +128,30 @@ def test_a_backtest_draws_every_chart_and_the_controls_work(page):
     page.wait_for_selector(".tip:not([hidden])")
     assert "$" in page.inner_text(".tip:not([hidden])")
     assert page.inner_text("#trials").startswith("1 trial")
+
+
+def test_the_risk_charts_are_drawn_and_the_page_agrees_with_the_server_on_the_loss_it_reports(page):
+    _run_and_wait(page)
+    text = page.inner_text("#results")
+    for title in ("Rolling three-month volatility", "Rolling one-year beta to", "Average return by calendar month", "Distribution of daily returns", "Monthly returns against", "Drawdown from the previous peak"):
+        assert title in text, title
+    assert page.locator("svg.chart").count() >= 12
+    card = page.locator(".chartcard:has(h3:has-text('Distribution of daily returns'))")
+    assert card.locator("svg.chart .ref").count() >= 2                                                    # the zero line and the loss markers
+    card.locator(".seg button:has-text('Table')").click()
+    from_page = float(card.locator("tr:has-text('VaR 95%') td.num").inner_text().rstrip("%"))               # computed in the browser from the chart window's equity curve
+    page.click(".tabsmall button:has-text('Risk measures')")
+    from_server = float(page.locator("tr:has-text('1 day in 20') td.num").first.inner_text().rstrip("%"))   # computed by the server from the daily returns
+    assert abs(from_page - from_server) < 0.05, (from_page, from_server)
+    assert page.locator("tr:has-text('Sortino ratio') td.num").count() >= 1 and page.locator(".kv h4:has-text('Against equal weight')").count() == 1
+
+
+def test_the_strategy_picker_shows_where_a_rule_comes_from(page):
+    page.select_option("#s-body select", "variance_ratio_switch")
+    text = page.inner_text("#s-body")
+    assert "Sources:" in text and "Lo and MacKinlay (1988)" in text
+    link = page.locator("#s-body .refs a").first
+    assert link.get_attribute("href").startswith("https://doi.org/") and link.get_attribute("rel") == "noopener noreferrer" and link.get_attribute("target") == "_blank"
 
 
 # ------------------------------------------------------------------------------------------------- an app that is older than the page

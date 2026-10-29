@@ -25,6 +25,12 @@ This rule declares a weekly rebalance; pass `execution: {rebalance: monthly}` in
 
 Default parameters on the 15 ETFs, net of costs, traded as written: net Sharpe +0.81, CAGR 13.5%, volatility 17.7%, max drawdown -30.6%, turnover 10.2 times a year, deflated Sharpe probability 0.82 counting every strategy in the survey as a trial. One run, not a test: see [the survey](../strategy_survey.md) for how to read it.
 
+## Sources
+
+Where the rule comes from. A source is not evidence that it works on this repository's data: the survey above and the application's own result pages say that.
+
+- [Moreira and Muir (2017), Volatility-managed portfolios, Journal of Finance 72(4)](https://doi.org/10.1111/jofi.12513)
+
 ## Learn more
 
 [Risk-managed exposure: volatility scaling, fear and credit](../techniques/risk-managed-exposure.md)

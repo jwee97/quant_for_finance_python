@@ -27,6 +27,13 @@ Default parameters on the 15 ETFs, net of costs, traded as written: net Sharpe -
 
 Ranks 15 ETFs across asset classes, so the ranking is partly a ranking of asset classes.
 
+## Sources
+
+Where the rule comes from. A source is not evidence that it works on this repository's data: the survey above and the application's own result pages say that.
+
+- [De Bondt and Thaler (1985), Does the stock market overreact?, Journal of Finance 40(3)](https://doi.org/10.1111/j.1540-6261.1985.tb05004.x)
+- [Asness, Moskowitz and Pedersen (2013), Value and momentum everywhere, Journal of Finance 68(3)](https://doi.org/10.1111/jofi.12021)
+
 ## Learn more
 
 [Cross-asset carry, basis momentum and long-term reversal](../techniques/cross-asset-carry.md)

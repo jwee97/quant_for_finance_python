@@ -26,6 +26,12 @@ quant backtest --model gp_factor_model --tearsheet
 
 Walk-forward ridge; the signal-to-noise ratio of monthly returns is very low.
 
+## Sources
+
+Where the rule comes from. A source is not evidence that it works on this repository's data: the survey above and the application's own result pages say that.
+
+- Rasmussen and Williams (2006), Gaussian Processes for Machine Learning, MIT Press
+
 ## Learn more
 
 [Hierarchical Bayes, Bayesian decisions and Gaussian processes](../techniques/hierarchical-bayes-decisions-and-gaussian-processes.md)

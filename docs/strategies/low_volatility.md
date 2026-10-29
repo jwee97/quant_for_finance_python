@@ -31,6 +31,12 @@ Net of costs on the window the search used: Sharpe nan (-0.38 over its own, long
 
 Ranks 15 ETFs across asset classes, so the ranking is partly a ranking of asset classes.
 
+## Sources
+
+Where the rule comes from. A source is not evidence that it works on this repository's data: the survey above and the application's own result pages say that.
+
+- [Ang, Hodrick, Xing and Zhang (2006), The cross-section of volatility and expected returns, Journal of Finance 61(1)](https://doi.org/10.1111/j.1540-6261.2006.00836.x)
+
 ## Learn more
 
 [Cross-sectional factors: low volatility, value, quality, carry, defensive beta](../techniques/cross-sectional-factors.md)

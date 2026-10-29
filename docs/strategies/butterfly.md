@@ -31,6 +31,12 @@ Net of costs on the window the search used: Sharpe -0.12 (-0.03 over its own, lo
 
 Bond ETFs only; durations are estimated from rolling data, not taken from bond analytics.
 
+## Sources
+
+Where the rule comes from. A source is not evidence that it works on this repository's data: the survey above and the application's own result pages say that.
+
+- [Litterman and Scheinkman (1991), Common factors affecting bond returns, Journal of Fixed Income 1(1)](https://doi.org/10.3905/jfi.1991.692347)
+
 ## Learn more
 
 [Fixed income and volatility strategy families](../techniques/fixed-income-and-volatility-strategies.md)

@@ -344,12 +344,15 @@
 
   /* ---------- scatter: points with their own labels ----------
      o.points is [{ x, y, label, color, r, tip }] (tip: [[label, text]]). The pointer finds the NEAREST point, so no point has to be hit dead centre. Labels are written beside the points where they do not collide
-     (o.labels: "auto", "all" or "none"); o.legend is [{ name, color }] for points coloured by group; o.xLabel and o.yLabel name the axes; o.xZero and o.yZero draw the zero lines. */
+     (o.labels: "auto", "all" or "none"); o.legend is [{ name, color }] for points coloured by group; o.xLabel and o.yLabel name the axes; o.xZero and o.yZero draw the zero lines. o.lines is
+     [{ x1, y1, x2, y2, color, dash, name }]: straight lines in data units (a regression fit, the diagonal of a Q-Q plot), clipped to the plot and named in the legend. */
   function scatter(host, o) {
     const W = width(host);
     host.replaceChildren();
     const H = o.height || 320, pts = o.points.filter((p) => isFinite(p.x) && isFinite(p.y)), m = { l: 50, r: 16, t: o.yLabel ? 26 : 10, b: o.xLabel ? 42 : 26 }, iw = W - m.l - m.r, ih = H - m.t - m.b;
     if (o.legend && o.legend.length > 1) legend(host, o.legend.map((g) => ({ name: g.name, color: g.color, box: true, opacity: 0.4 })));
+    const named = (o.lines || []).filter((l) => l.name);
+    if (named.length) legend(host, named.map((l) => ({ name: l.name, color: l.color || css("--s2") })));
     const svg = el("svg", { class: "chart", viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": o.label || "scatter plot" }, host);
     if (!pts.length) { el("text", { x: W / 2, y: H / 2, "text-anchor": "middle" }, svg, "No data"); return; }
     const span = (arr, pad) => { let lo = Math.min(...arr), hi = Math.max(...arr); const p = (hi - lo) * pad || 0.5; return [lo - p, hi + p]; };
@@ -362,6 +365,10 @@
     if (o.yZero && y0 < 0 && y1 > 0) el("line", { x1: m.l, x2: W - m.r, y1: Y(0), y2: Y(0), class: "axis" }, svg);
     if (o.xLabel) el("text", { x: m.l + iw / 2, y: H - 4, "text-anchor": "middle", class: "ink" }, svg, o.xLabel);
     if (o.yLabel) el("text", { x: 4, y: 12, "text-anchor": "start", class: "ink" }, svg, o.yLabel);
+    if ((o.lines || []).length) {
+      const clip = "sc" + ++uid; el("rect", { x: m.l, y: m.t, width: iw, height: ih }, el("clipPath", { id: clip }, el("defs", {}, svg)));
+      for (const l of o.lines) el("line", { x1: X(l.x1), y1: Y(l.y1), x2: X(l.x2), y2: Y(l.y2), stroke: l.color || css("--s2"), "stroke-width": 2, "stroke-dasharray": l.dash || "", "clip-path": `url(#${clip})`, "pointer-events": "none" }, svg);
+    }
     const dots = pts.map((p) => el("circle", { cx: X(p.x), cy: Y(p.y), r: Math.max(4, p.r || 4.5), fill: p.color || css("--s1"), stroke: css("--surface"), "stroke-width": 2 }, svg));
     const placed = [];
     if (o.labels !== "none") pts.forEach((p, i) => {
@@ -394,7 +401,8 @@
 
   /* ---------- histogram: the shape of a distribution, one or several samples on the same axis ----------
      o.series is [{ name, edges, counts, color }]: bin edges (one more than the counts) and how many observations fell in each. Samples of different sizes are compared as the SHARE of their observations per
-     bin width, drawn as stepped lines (the first with a faint fill). o.markers is [{ x, label }] for a reference position (zero). */
+     bin width, drawn as stepped lines (the first with a faint fill). o.markers is [{ x, label }] for a reference position (zero). With o.unit the vertical scale is the share of observations per
+     band of that width (a unit of 0.001 on a return axis: the share of days per 0.1% band) and o.yFormat writes it; without, it is the density (share per unit of x). */
   function histogram(host, o) {
     const W = width(host);
     host.replaceChildren();
@@ -402,10 +410,10 @@
     if (series.length > 1) legend(host, series.map((s) => ({ name: s.name, color: s.color })));
     const svg = el("svg", { class: "chart", viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": o.label || "histogram" }, host);
     if (!series.length) { el("text", { x: W / 2, y: H / 2, "text-anchor": "middle" }, svg, "No data"); return; }
-    const dens = series.map((s) => { const n = s.counts.reduce((a, b) => a + b, 0) || 1; return s.counts.map((c, i) => c / n / (s.edges[i + 1] - s.edges[i] || 1)); });
+    const unit = o.unit || 1, dens = series.map((s) => { const n = s.counts.reduce((a, b) => a + b, 0) || 1; return s.counts.map((c, i) => (c / n / (s.edges[i + 1] - s.edges[i] || 1)) * unit); });
     const x0 = Math.min(...series.map((s) => s.edges[0])), x1 = Math.max(...series.map((s) => s.edges[s.edges.length - 1])), top = Math.max(...dens.flat()) * 1.08 || 1;
     const X = (v) => m.l + ((v - x0) / (x1 - x0 || 1)) * iw, Y = (v) => m.t + ih - (v / top) * ih;
-    for (const v of niceTicks(0, top, 4)) { el("line", { x1: m.l, x2: W - m.r, y1: Y(v), y2: Y(v), class: "grid" }, svg); el("text", { x: m.l - 6, y: Y(v) + 4, "text-anchor": "end" }, svg, v >= 10 ? v.toFixed(0) : v.toPrecision(2)); }
+    for (const v of niceTicks(0, top, 4)) { el("line", { x1: m.l, x2: W - m.r, y1: Y(v), y2: Y(v), class: "grid" }, svg); el("text", { x: m.l - 6, y: Y(v) + 4, "text-anchor": "end" }, svg, o.yFormat ? o.yFormat(v) : v >= 10 ? v.toFixed(0) : v.toPrecision(2)); }
     for (const v of niceTicks(x0, x1, Math.max(2, Math.floor(iw / 80)))) el("text", { x: X(v), y: H - 8, "text-anchor": "middle" }, svg, (o.xFormat || fmt.num)(v));
     el("line", { x1: m.l, x2: W - m.r, y1: m.t + ih, y2: m.t + ih, class: "axis" }, svg);
     for (const mk of o.markers || []) if (mk.x >= x0 && mk.x <= x1) { el("line", { x1: X(mk.x), x2: X(mk.x), y1: m.t, y2: m.t + ih, class: "ref" }, svg); if (mk.label) el("text", { x: X(mk.x) + 4, y: m.t + 10, class: "ink" }, svg, mk.label); }

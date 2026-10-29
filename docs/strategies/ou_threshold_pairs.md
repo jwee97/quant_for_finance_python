@@ -31,6 +31,13 @@ Default parameters on the 15 ETFs, net of costs, traded as written: net Sharpe -
 
 Needs pairs that are genuinely related; with 15 ETFs there are few. Trades both legs, so costs are doubled.
 
+## Sources
+
+Where the rule comes from. A source is not evidence that it works on this repository's data: the survey above and the application's own result pages say that.
+
+- [Bertram (2010), Analytic solutions for optimal statistical arbitrage trading, Physica A 389(11)](https://doi.org/10.1016/j.physa.2010.01.045)
+- [Avellaneda and Lee (2010), Statistical arbitrage in the US equities market, Quantitative Finance 10(7)](https://doi.org/10.1080/14697680903124632)
+
 ## Learn more
 
 [Pairs, cointegration and statistical arbitrage](../techniques/pairs-and-statistical-arbitrage.md)

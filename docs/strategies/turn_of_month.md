@@ -25,6 +25,13 @@ This rule declares a daily rebalance; pass `execution: {rebalance: monthly}` in 
 
 Default parameters on the 15 ETFs, net of costs, traded as written: net Sharpe +0.01, CAGR -0.0%, volatility 3.1%, max drawdown -12.2%, turnover 8.1 times a year, deflated Sharpe probability 0.01 counting every strategy in the survey as a trial. One run, not a test: see [the survey](../strategy_survey.md) for how to read it.
 
+## Sources
+
+Where the rule comes from. A source is not evidence that it works on this repository's data: the survey above and the application's own result pages say that.
+
+- [Lakonishok and Smidt (1988), Are seasonal anomalies real? A ninety-year perspective, Review of Financial Studies 1(4)](https://doi.org/10.1093/rfs/1.4.403)
+- [McConnell and Xu (2008), Equity returns at the turn of the month, Financial Analysts Journal 64(2)](https://doi.org/10.2469/faj.v64.n2.11)
+
 ## Learn more
 
 [Seasonality and calendar effects](../techniques/seasonality-and-calendar-effects.md)

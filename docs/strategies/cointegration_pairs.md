@@ -31,6 +31,14 @@ Net of costs on the window the search used: Sharpe nan, CAGR 0.0%, volatility 0.
 
 Needs pairs that are genuinely related; with 15 ETFs there are few. Trades both legs, so costs are doubled.
 
+## Sources
+
+Where the rule comes from. A source is not evidence that it works on this repository's data: the survey above and the application's own result pages say that.
+
+- [Gatev, Goetzmann and Rouwenhorst (2006), Pairs trading: performance of a relative-value arbitrage rule, Review of Financial Studies 19(3)](https://doi.org/10.1093/rfs/hhj020)
+- [Engle and Granger (1987), Co-integration and error correction: representation, estimation, and testing, Econometrica 55(2)](https://doi.org/10.2307/1913236)
+- Vidyamurthy (2004), Pairs Trading: Quantitative Methods and Analysis, Wiley
+
 ## Learn more
 
 [Pairs, cointegration and statistical arbitrage](../techniques/pairs-and-statistical-arbitrage.md)

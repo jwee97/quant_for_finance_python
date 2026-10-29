@@ -25,10 +25,11 @@
     factor_models     statistical APT (PCA residual alpha), macroeconomic factor model, cross-sectional characteristic regression, machine learning on the characteristics (lasso, elastic net, PCR, PLS, CART, forest, network)
     fundamental_factors   value, quality, momentum and estimate-revision factors, discounted cash flow (point and multipath), the optimal alpha model, contextual and nonlinear versions; read data/user/fundamentals.csv
     gp_models         Gaussian process regression on the price characteristics, with a length scale per characteristic and a posterior standard deviation
+    systematic        Carver's scaled EWMAC forecast, Clenow's regression momentum, t-statistic trend, the variance-ratio switch, ConnorsRSI, Double 7s, the skewness premium, CPPI / TIPP
     factor_timing     factors forecast from the calendar (January, month, quarter), a macroeconomic state (Fed policy, M1, GDP, CPI, PPI, up or down market) or the earnings-announcement season
 
 Run ``quant list models`` to see them with their hypotheses.
 """
 
 from . import (alpha_styles, crypto, cross_sectional, deep, econometric, economic_outlook, expression, factor_models, factor_timing, factors, fixed_income, fundamental_factors, gp_models, macro, ml, multi_asset,  # noqa: F401
-               online, rebalance_styles, representation, reversion, risk_timing, seasonal, statarb, taa, time_series, trend, volatility)
+               online, rebalance_styles, representation, reversion, risk_timing, seasonal, statarb, systematic, taa, time_series, trend, volatility)

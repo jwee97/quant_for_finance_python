@@ -257,6 +257,16 @@
   }
 
   /* ================================================================= strategy form */
+  /* The books and papers behind a method, under its description. A link opens in a new tab; a book has none. The text goes in with textContent, and only an https address becomes a link. */
+  function refsLine(parent, refs) {
+    if (!refs || !refs.length) return null;
+    const p = h("p", "hint refs", parent); p.appendChild(document.createTextNode("Sources: "));
+    refs.forEach((r, i) => {
+      if (i) p.appendChild(document.createTextNode(" · "));
+      if (r.url && /^https:\/\//.test(r.url)) { const a = h("a", "", p, r.cite); a.href = r.url; a.target = "_blank"; a.rel = "noopener noreferrer"; } else p.appendChild(document.createTextNode(r.cite));
+    });
+    return p;
+  }
   const modelInfo = (name) => S.catalog.models.find((m) => m.name === name);
   function fieldFor(p, value, onchange, extra) {
     const wrap = h("label", "f" + (extra && extra.wide ? " wide" : ""));
@@ -293,6 +303,7 @@
       if (S.models.length > 1) { const rm = h("button", "btn", row, "Remove"); rm.addEventListener("click", () => { S.models.splice(idx, 1); autoAllocator(); renderStrategies(); renderPortfolio(); }); }
       if (!info) return;
       h("p", "hint", block, info.description);
+      refsLine(block, info.references);
       if (info.min_assets > 1) h("p", "hint", block, `Needs at least ${info.min_assets} tickers: it works by comparing them with each other.`);
       else if (info.book === "sleeves") h("p", "hint", block, "Works on each ticker alone, sized by its own signal: long when the signal is positive, short when it is negative (where the rule shorts) and in cash when there is none. The Trades tab of the result lists when it bought and sold.");
       if (info.rebalance) h("p", "hint", block, "This rule rebalances " + info.rebalance + " unless you change it in the spec.");
@@ -341,6 +352,7 @@
     sel.addEventListener("change", () => { S.allocator = sel.value; S.allocatorTouched = true; S.allocParams = {}; renderPortfolio(); });
     const info = S.catalog.allocators.find((a) => a.name === S.allocator);
     h("p", "hint", box, info ? info.description : "The strategy's forecast is calibrated against past returns and turned into risk-scaled positions. A signal that has not paid in the past gets no position.");
+    if (info) refsLine(box, info.references);
     if (info && info.slow) h("p", "hint", box, "⏱ " + info.slow + ".");
     if (info && info.params.length) {
       const grid = h("div", "params", box);
@@ -459,7 +471,7 @@
     const eq = rebase(r.equity), bench = {}; for (const k in r.benchmarks) bench[k] = rebase(r.benchmarks[k]);
     const dd = []; let peak = 0; for (const v of eq) { peak = Math.max(peak, v); dd.push(v / peak - 1); }
     const first = r.dates[i0], year0 = +first.slice(0, 4);
-    return { i0, dates: r.dates.slice(i0), equity: eq, bench, drawdown: dd, rolling: r.rolling_sharpe.slice(i0), first,
+    return { i0, dates: r.dates.slice(i0), equity: eq, bench, drawdown: dd, rolling: r.rolling_sharpe.slice(i0), rollingVol: (r.rolling_vol || []).slice(i0), rollingBeta: r.rolling_beta ? r.rolling_beta.values.slice(i0) : null, first,
       monthly: r.monthly.filter((c) => `${c.year}-${String(c.month).padStart(2, "0")}` >= first.slice(0, 7)), annual: r.annual.filter((a) => a.year >= year0),
       exposure: { dates: r.exposure.dates.filter((d) => d >= first), gross: r.exposure.gross.slice(r.exposure.dates.length - r.exposure.dates.filter((d) => d >= first).length), net: r.exposure.net.slice(r.exposure.dates.length - r.exposure.dates.filter((d) => d >= first).length) } };
   }
@@ -469,6 +481,45 @@
     let peak = 0, mdd = 0; for (const v of eq) { peak = Math.max(peak, v); mdd = Math.min(mdd, v / peak - 1); }
     return { sharpe: sd > 0 ? (Math.sqrt(252) * mean) / sd : NaN, cagr: Math.pow(end, 252 / n) - 1, vol: sd * Math.sqrt(252), mdd, years: n / 252 };
   }
+  /* Small pieces of arithmetic for the extra risk charts, on the equity curve of the chart window. */
+  const dailyReturns = (eq) => { const out = []; for (let i = 1; i < eq.length; i++) out.push(eq[i] / eq[i - 1] - 1); return out; };
+  function normalCdf(x) {                                                                    // Abramowitz and Stegun 7.1.26: good to 1.5e-7, which is far finer than a chart bin
+    const t = 1 / (1 + 0.3275911 * Math.abs(x) / Math.SQRT2), y = 1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-x * x / 2);
+    return 0.5 * (1 + (x < 0 ? -y : y));
+  }
+  /* Bins of the central 99% of the returns, and the counts a normal distribution with the same mean and spread would put in the same bins. */
+  function returnBins(rets, bins) {
+    const sorted = rets.slice().sort((a, b) => a - b), n = sorted.length, q = (p) => sorted[Math.min(n - 1, Math.max(0, Math.round(p * (n - 1))))];
+    const lo = q(0.005), hi = q(0.995), step = (hi - lo) / bins || 1e-6, edges = [], counts = new Array(bins).fill(0);
+    for (let i = 0; i <= bins; i++) edges.push(lo + step * i);
+    for (const v of rets) if (v >= lo && v <= hi) counts[Math.min(bins - 1, Math.floor((v - lo) / step))]++;
+    const mean = rets.reduce((a, b) => a + b, 0) / n, sd = Math.sqrt(rets.reduce((a, b) => a + (b - mean) ** 2, 0) / (n - 1));
+    const normal = counts.map((_, i) => n * (normalCdf((edges[i + 1] - mean) / sd) - normalCdf((edges[i] - mean) / sd)));
+    const q05 = quantile(sorted, 0.05), tail = sorted.filter((v) => v <= q05), es = -tail.reduce((a, b) => a + b, 0) / tail.length;
+    return { edges, counts, normal, mean, sd, n, var95: -q05, es95: es };
+  }
+  function monthlyOf(dates, eq) {                                                            // {"2020-03": return} from an equity curve; the first month is measured from the first value
+    const last = {}; dates.forEach((d, i) => { last[d.slice(0, 7)] = eq[i]; });
+    const keys = Object.keys(last).sort(), out = {}; let prev = eq[0];
+    for (const k of keys) { out[k] = last[k] / prev - 1; prev = last[k]; }
+    return out;
+  }
+  function ols(xs, ys) {
+    const n = xs.length, mx = xs.reduce((a, b) => a + b, 0) / n, my = ys.reduce((a, b) => a + b, 0) / n;
+    let sxy = 0, sxx = 0, syy = 0; for (let i = 0; i < n; i++) { sxy += (xs[i] - mx) * (ys[i] - my); sxx += (xs[i] - mx) ** 2; syy += (ys[i] - my) ** 2; }
+    const beta = sxx > 0 ? sxy / sxx : NaN; return { beta, alpha: my - beta * mx, r2: sxx > 0 && syy > 0 ? (sxy * sxy) / (sxx * syy) : NaN };
+  }
+  const quantile = (sorted, q) => { const pos = q * (sorted.length - 1), lo = Math.floor(pos), hi = Math.ceil(pos); return sorted[lo] + (sorted[hi] - sorted[lo]) * (pos - lo); };
+  function shadeFalls(dates, dd, k) {                                                        // the k deepest falls from a peak in a drawdown series: from the last peak to the day it was regained
+    const falls = []; let start = 0, trough = 0, open = false;
+    for (let i = 0; i < dd.length; i++) {
+      if (dd[i] < -1e-12) { if (!open) { open = true; start = Math.max(0, i - 1); trough = i; } else if (dd[i] < dd[trough]) trough = i; }
+      else if (open) { falls.push({ from: dates[start], to: dates[i], depth: dd[trough] }); open = false; }
+    }
+    if (open) falls.push({ from: dates[start], to: dates[dd.length - 1], depth: dd[trough] });
+    return falls.sort((a, b) => a.depth - b.depth).slice(0, k);
+  }
+  const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
   /* ================================================================= results */
   function tile(parent, label, value, delta, cls, title) {
@@ -548,6 +599,17 @@
     tile(k, "Turnover per year", num(r.metrics.ann_turnover, 1) + "×", { text: `cost drag ${num(r.metrics.ann_cost_bps, 0)} bps/yr` });
     const dsr = r.validation.deflated_sharpe_probability;
     tile(k, "Deflated Sharpe", dsr === null ? "n/a" : num(dsr), { text: `${r.validation.n_trials} trial${r.validation.n_trials === 1 ? "" : "s"}; ≥ 0.95 is the bar`, dir: dsr !== null && dsr >= 0.95 ? "up" : "" }, "", "Probability the Sharpe ratio is above what the best of your tries would show by luck alone");
+    const rk = r.risk || {};
+    if (rk.var_95 !== undefined) {
+      h("p", "hint", root, "More ways to measure the same returns, over the whole backtest. The Risk measures tab below lists them all with what each one means.");
+      const k2 = h("div", "kpis", root), na = (v, f) => (v === null || v === undefined ? "n/a" : f(v));
+      tile(k2, "Sortino ratio", na(rk.sortino, (v) => num(v)), { text: "return per unit of downside risk" }, "", "Annualised mean return over the root mean square of the losing days (Sortino and Price 1994). Unlike the Sharpe ratio it does not count a big gain as risk");
+      tile(k2, "Calmar ratio", na(rk.calmar, (v) => num(v)), { text: "CAGR ÷ deepest fall" }, "", "Compound annual growth over the size of the deepest fall from a peak (Young 1991)");
+      tile(k2, "Ulcer index", num(rk.ulcer_index, 1), { text: rk.martin_ratio === null ? "" : `Martin ratio ${num(rk.martin_ratio)}` }, "", "Root mean square of the drawdowns, in percentage points: it counts how deep and how long the falls were, not just the worst one (Martin and McCann 1989). The Martin ratio is CAGR over it");
+      tile(k2, "Omega ratio", na(rk.omega, (v) => num(v)), { text: "gains ÷ losses" }, "", "Total of the days with a gain over the total of the days with a loss (Keating and Shadwick 2002); above 1 means the gains outweigh the losses");
+      tile(k2, "A bad day", pct(rk.var_95, 2), { text: `lost on 1 day in 20 · average beyond it ${na(rk.es_95, (v) => pct(v, 2))}` }, "", "Historical value at risk (VaR) and expected shortfall (ES) at 95% over one day");
+      tile(k2, "Track record needed", na(rk.min_track_record_years, (v) => `${num(v, 1)} years`), { text: "for 95% confidence" }, "", "Bailey and Lopez de Prado (2012): how many years of returns with this Sharpe ratio, skewness and kurtosis it takes before luck can be ruled out at 95%. Compare it with the length of the backtest");
+    }
     if (r.earnings) earningsTiles(root, r);
     const ch = h("div", "charts", root);
     const cap = r.capital || 100000, dollars = (arr) => arr.map((v) => (v === null ? null : v * cap));
@@ -562,16 +624,58 @@
     markLog();
     l1.addEventListener("click", () => { S.view.log = false; markLog(); growth._draw(); });
     l2.addEventListener("click", () => { S.view.log = true; markLog(); growth._draw(); });
-    chartCard(ch, "Drawdown from the previous peak", "How far below its high the strategy has been.", {
-      draw: (b) => C.line(b, { dates: w.dates, series: [{ name: "Strategy", color: css("--s1"), values: w.drawdown }], area: true, areaBase: 0, baseline: 0, ceil: 0, yFormat: (v) => (v * 100).toFixed(0) + "%", tipFormat: (v) => fmt.pct(v), height: 220, label: "Drawdown" }),
-      table: (b) => simpleTable(b, [{ label: "Date", get: (i) => w.dates[i] }, { label: "Drawdown", num: true, get: (i) => fmt.pct(w.drawdown[i]) }], sampleRows(w.dates, null, 21)) });
+    const falls = shadeFalls(w.dates, w.drawdown, 3), episodes = r.drawdown_episodes || [];
+    chartCard(ch, "Drawdown from the previous peak", episodes.length ? "How far below its high the strategy has been; the three deepest falls are shaded. The Table view lists the five deepest of the whole backtest." : "How far below its high the strategy has been.", {
+      draw: (b) => C.line(b, { dates: w.dates, series: [{ name: "Strategy", color: css("--s1"), values: w.drawdown }], area: true, areaBase: 0, baseline: 0, ceil: 0, yFormat: (v) => (v * 100).toFixed(0) + "%", tipFormat: (v) => fmt.pct(v), height: 220, label: "Drawdown",
+        regions: falls.map((f, k) => ({ from: f.from, to: f.to, name: `#${k + 1}  ${(f.depth * 100).toFixed(0)}%`, color: css("--neg"), opacity: 0.08 })) }),
+      table: (b) => (episodes.length
+        ? simpleTable(b, [{ label: "Peak", get: (e) => e.peak }, { label: "Deepest", get: (e) => e.trough }, { label: "Regained", get: (e) => e.recovered || "not yet" }, { label: "Fall", num: true, get: (e) => fmt.pct(e.depth) },
+          { label: "Days down to the low", num: true, get: (e) => e.days_to_trough }, { label: "Days in all", num: true, get: (e) => e.days }], episodes)
+        : simpleTable(b, [{ label: "Date", get: (i) => w.dates[i] }, { label: "Drawdown", num: true, get: (i) => fmt.pct(w.drawdown[i]) }], sampleRows(w.dates, null, 21))) });
     chartCard(ch, "Rolling one-year Sharpe ratio", "A strategy that only works in some years shows up here.", {
       draw: (b) => C.line(b, { dates: w.dates, series: [{ name: "1-year Sharpe", color: css("--s1"), values: w.rolling }], baseline: 0, include: 0, yFormat: (v) => v.toFixed(1), tipFormat: (v) => v.toFixed(2), height: 220, label: "Rolling Sharpe" }),
       table: (b) => simpleTable(b, [{ label: "Date", get: (i) => w.dates[i] }, { label: "Rolling Sharpe", num: true, get: (i) => (w.rolling[i] === null ? "" : w.rolling[i].toFixed(2)) }], sampleRows(w.dates, null, 21)) });
+    if (w.rollingVol.length) {
+      const live = w.rollingVol.filter((v) => v !== null), mean = live.reduce((a, b) => a + b, 0) / (live.length || 1);
+      chartCard(ch, "Rolling three-month volatility", "Annualised standard deviation of the last 63 daily returns. The dashed line is its average over the window: a strategy whose risk swings far from it is not the one the volatility tile describes.", {
+        draw: (b) => C.line(b, { dates: w.dates, series: [{ name: "63-day volatility", color: css("--s1"), values: w.rollingVol }, { name: "Window average", color: css("--muted"), dash: "5 4", width: 1.25, values: w.rollingVol.map((v) => (v === null ? null : mean)) }],
+          include: 0, yFormat: (v) => (v * 100).toFixed(0) + "%", tipFormat: (v) => fmt.pct(v), height: 220, label: "Rolling volatility" }),
+        table: (b) => simpleTable(b, [{ label: "Date", get: (i) => w.dates[i] }, { label: "63-day volatility", num: true, get: (i) => (w.rollingVol[i] === null ? "" : fmt.pct(w.rollingVol[i])) }], sampleRows(w.dates, null, 21)) });
+    }
+    if (w.rollingBeta) {
+      const benchName = r.rolling_beta.benchmark === "equal_weight" ? refName : r.rolling_beta.benchmark.replace(/_/g, " ");
+      chartCard(ch, `Rolling one-year beta to ${benchName}`, "How much the strategy moved for each unit the benchmark moved over the last 252 days. Beta of 1 (dashed) is a strategy that moves with it; 0 is a market-neutral one; below 0 it hedges.", {
+        draw: (b) => C.line(b, { dates: w.dates, series: [{ name: "Beta", color: css("--s1"), values: w.rollingBeta }, { name: "Beta of 1", color: css("--muted"), dash: "5 4", width: 1.25, values: w.rollingBeta.map((v) => (v === null ? null : 1)) }],
+          baseline: 0, include: 0, yFormat: (v) => v.toFixed(1), tipFormat: (v) => v.toFixed(2), height: 220, label: "Rolling beta" }),
+        table: (b) => simpleTable(b, [{ label: "Date", get: (i) => w.dates[i] }, { label: "Beta", num: true, get: (i) => (w.rollingBeta[i] === null ? "" : w.rollingBeta[i].toFixed(2)) }], sampleRows(w.dates, null, 21)) });
+    }
     const years = w.annual;
     chartCard(ch, "Return by calendar year", "Faded bars are partial years.", {
       draw: (b) => C.columns(b, { labels: years.map((a) => a.year), values: years.map((a) => a.value), yFormat: (v) => (v * 100).toFixed(0) + "%", tipFormat: fmt.spct, faded: years.map((a) => a.partial), height: 240, name: "Return", tipLabel: (i) => years[i].year + (years[i].partial ? ` (${years[i].days} trading days)` : ""), label: "Annual returns" }),
       table: (b) => simpleTable(b, [{ label: "Year", get: (a) => a.year }, { label: "Return", num: true, get: (a) => fmt.spct(a.value) }, { label: "Days", num: true, get: (a) => a.days }], years) });
+    const cm = r.calendar_months || [];
+    if (cm.length) chartCard(ch, "Average return by calendar month", "The mean of every January, every February and so on over the whole backtest. With a few years of each it describes the sample; it is not a calendar to trade.", {
+      draw: (b) => C.columns(b, { labels: cm.map((c) => MONTH_NAMES[c.month - 1]), values: cm.map((c) => c.mean), yFormat: (v) => (v * 100).toFixed(1) + "%", tipFormat: fmt.spct, colors: (v) => (v >= 0 ? css("--pos") : css("--neg")), height: 220, name: "Average return",
+        tipLabel: (i) => `${MONTH_NAMES[cm[i].month - 1]} · ${cm[i].n} years · up in ${(cm[i].hit_rate * 100).toFixed(0)}% of them`, label: "Average return by calendar month" }),
+      table: (b) => simpleTable(b, [{ label: "Month", get: (c) => MONTH_NAMES[c.month - 1] }, { label: "Years", num: true, get: (c) => c.n }, { label: "Average", num: true, get: (c) => fmt.spct(c.mean) }, { label: "Median", num: true, get: (c) => fmt.spct(c.median) },
+        { label: "Best", num: true, get: (c) => fmt.spct(c.best) }, { label: "Worst", num: true, get: (c) => fmt.spct(c.worst) }, { label: "Up in", num: true, get: (c) => pct(c.hit_rate, 0) }], cm) });
+    const rets = dailyReturns(w.equity), dist = rets.length > 60 ? returnBins(rets, 41) : null;
+    if (dist) chartCard(ch, "Distribution of daily returns", "The central 99% of days: the height is the share of days that fall in each 0.1%-wide band of return. The second line is the normal distribution with the same mean and spread: where the strategy's line is higher at the centre and in the tails, days are more extreme than a bell curve says. Markers: the loss exceeded on 5% of days (VaR) and the average loss beyond it (ES).", {
+      draw: (b) => C.histogram(b, { series: [{ name: "Strategy", edges: dist.edges, counts: dist.counts, color: css("--s1") }, { name: "Normal, same mean and spread", edges: dist.edges, counts: dist.normal, color: css("--s2") }],
+        markers: [{ x: 0, label: "0" }, { x: -dist.var95, label: "VaR" }, { x: -dist.es95, label: "ES" }], xFormat: (v) => (v * 100).toFixed(1) + "%", unit: 0.001, yFormat: (v) => (v * 100).toFixed(0) + "%", height: 230, label: "Distribution of daily returns" }),
+      table: (b) => simpleTable(b, [{ label: "Measure", get: (x) => x[0] }, { label: "Value", num: true, get: (x) => x[1] }], [["Days", String(dist.n)], ["Mean daily return", fmt.spct(dist.mean, 3)], ["Daily standard deviation", pct(dist.sd, 2)],
+        ["Loss exceeded on 5% of days (VaR 95%)", pct(dist.var95, 2)], ["Average loss on those days (ES 95%)", pct(dist.es95, 2)]]) });
+    const bmk = w.bench.equal_weight ? w.bench.equal_weight : null;
+    if (bmk) {
+      const bm = monthlyOf(w.dates, bmk), sm = monthlyOf(w.dates, w.equity), keys = Object.keys(sm).filter((k) => k in bm);
+      if (keys.length >= 12) {
+        const xs = keys.map((k) => bm[k]), ys = keys.map((k) => sm[k]), fit = ols(xs, ys), x0 = Math.min(...xs), x1 = Math.max(...xs);
+        chartCard(ch, `Monthly returns against ${refName}`, `Each dot is a month. The line is the least-squares fit: slope (beta) ${num(fit.beta, 2)}, intercept (alpha) ${fmt.spct(fit.alpha)} a month, R² ${num(fit.r2, 2)}. Dots above the line are months the strategy did better than its beta to ${refName} explains.`, {
+          draw: (b) => C.scatter(b, { points: keys.map((k, i) => ({ x: xs[i], y: ys[i], label: k, color: css("--s1"), tip: [[refName, fmt.spct(xs[i])], ["Strategy", fmt.spct(ys[i])]] })), lines: [{ x1: x0, y1: fit.alpha + fit.beta * x0, x2: x1, y2: fit.alpha + fit.beta * x1, color: css("--s2"), name: "Least-squares fit" }],
+            xLabel: `${refName} (month)`, yLabel: "Strategy (month)", xFormat: (v) => (v * 100).toFixed(0) + "%", yFormat: (v) => (v * 100).toFixed(0) + "%", xZero: true, yZero: true, labels: "none", height: 300, label: "Monthly returns against the benchmark" }),
+          table: (b) => simpleTable(b, [{ label: "Month", get: (k) => k }, { label: refName, num: true, get: (k) => fmt.spct(bm[k]) }, { label: "Strategy", num: true, get: (k) => fmt.spct(sm[k]) }], keys.slice().reverse()) });
+      }
+    }
     chartCard(ch, "Gross and net exposure", "Weekly. Net 0 with gross 1 is a market-neutral book; gross above 1 uses leverage.", {
       draw: (b) => C.line(b, { dates: w.exposure.dates, series: [{ name: "Gross", color: css("--s1"), values: w.exposure.gross }, { name: "Net", color: css("--s2"), values: w.exposure.net }], baseline: 0, include: 0, yFormat: (v) => v.toFixed(1), tipFormat: (v) => v.toFixed(2), height: 240, label: "Exposure" }),
       table: (b) => simpleTable(b, [{ label: "Week", get: (i) => w.exposure.dates[i] }, { label: "Gross", num: true, get: (i) => num(w.exposure.gross[i]) }, { label: "Net", num: true, get: (i) => num(w.exposure.net[i]) }], sampleRows(w.exposure.dates, null, 4)) });
@@ -637,6 +741,26 @@
     simpleTable(b, [{ label: "Month", get: (m) => `${m.year}-${String(m.month).padStart(2, "0")}` }, { label: "Profit", num: true, get: (m) => smoney(m.pnl) }, { label: "Return", num: true, get: (m) => fmt.spct(m.ret) },
       { label: "Account value", num: true, get: (m) => money(m.end_value) }], e.monthly.slice().reverse());
   }
+  function riskTab(b, r) {
+    const k = r.risk, na = (v, f) => (v === null || v === undefined ? "n/a" : f(v)), n2 = (v) => num(v);
+    h("p", "hint", b, "Every measure is over the whole backtest, from daily net returns, 252 days to a year, with a risk-free rate of zero. A ratio whose denominator is zero (no losing day, no fall) is n/a.");
+    const grid = h("div", "kvgrid", b);
+    kvTable(grid, "Return for the risk taken", [["Sortino ratio (downside risk only)", na(k.sortino, n2)], ["Calmar ratio (CAGR ÷ deepest fall)", na(k.calmar, n2)], ["Martin ratio (CAGR ÷ Ulcer index)", na(k.martin_ratio, n2)],
+      ["Omega ratio (gains ÷ losses)", na(k.omega, n2)], ["Gain to pain (sum of months ÷ sum of the losing months)", na(k.gain_to_pain, n2)], ["Recovery factor (total return ÷ deepest fall)", na(k.recovery_factor, n2)],
+      ["Kelly leverage (mean ÷ variance of daily returns)", na(k.kelly_leverage, n2)]]);
+    kvTable(grid, "Losses", [["Loss exceeded on 1 day in 20 (VaR 95%)", na(k.var_95, (v) => pct(v, 2))], ["Average loss on those days (ES 95%)", na(k.es_95, (v) => pct(v, 2))], ["Loss exceeded on 1 day in 100 (VaR 99%)", na(k.var_99, (v) => pct(v, 2))],
+      ["Cornish-Fisher VaR 95% (adjusts for skew and fat tails)", na(k.cornish_fisher_var_95, (v) => pct(v, 2))], ["Average drawdown", na(k.average_drawdown, (v) => pct(v, 1))], ["Pain index (mean depth of the drawdown)", na(k.pain_index, (v) => pct(v, 1))],
+      ["Ulcer index (percentage points)", na(k.ulcer_index, (v) => num(v, 1))]]);
+    kvTable(grid, "Shape of the returns", [["Days with a gain", na(k.positive_days, (v) => pct(v, 1))], ["Skewness", na(k.skew, n2)], ["Excess kurtosis", na(k.excess_kurtosis, n2)], ["Tail ratio (95th ÷ 5th percentile of daily returns)", na(k.tail_ratio, n2)],
+      ["Daily downside deviation", na(k.daily_downside_deviation, (v) => pct(v, 2))]]);
+    kvTable(grid, "How sure the Sharpe ratio is", [["Years of returns needed for 95% confidence that the Sharpe ratio is above 0", na(k.min_track_record_years, (v) => num(v, 1))], ["Years in this backtest", num(r.stats.years, 1)]]);
+    for (const [name, v] of Object.entries(r.benchmark_relative || {})) {
+      if (!v || v.beta === undefined) continue;
+      const label = name === "equal_weight" ? (r.universe.tickers.length === 1 ? "buy and hold" : "equal weight") : name.replace(/_/g, " ");
+      kvTable(grid, "Against " + label, [["Beta", na(v.beta, n2)], ["Alpha a year (after beta)", na(v.alpha_annual, (x) => fmt.spct(x))], ["Correlation", na(v.correlation, n2)], ["Tracking error", na(v.tracking_error, (x) => pct(x, 1))],
+        ["Information ratio", na(v.information_ratio, n2)], ["Up-capture (gain on its up days)", na(v.up_capture, (x) => pct(x, 0))], ["Down-capture (loss on its down days)", na(v.down_capture, (x) => pct(x, 0))]]);
+    }
+  }
   function tradesTab(b, r) {
     const t = r.trades, s = t.stats, tp = (x) => (x ? `${x.ticker} ${x.side}, ${x.entered} → ${x.exited}: ${smoney(x.pnl)}` : null);
     h("p", "hint", b, "A round trip is one stretch in which a ticker is held on the same side: bought (long) or sold first (short). It opens when the position appears and closes when the position goes to zero or flips. Profit is what the position earned while it was held, before trading costs, in dollars on the account value of each day; the move is the price change between the two dates (reversed for a short). Prices are the adjusted closes the backtest used.");
@@ -673,6 +797,7 @@
     };
     if (r.earnings) add("earn", "Earnings", (b) => earningsTab(b, r));
     if (r.trades) add("trades", "Trades", (b) => tradesTab(b, r));
+    if (r.risk && Object.keys(r.risk).length) add("risk", "Risk measures", (b) => riskTab(b, r));
     if (T.benchmarks) add("bench", "Against benchmarks", tab("benchmarks"));
     if (T.by_sample) add("sample", "By period", tab("by_sample"));
     if (T.by_regime) add("regime", "By regime", tab("by_regime"));
@@ -1430,6 +1555,6 @@
   }
   window.QL = { C, h, fmt, $, api, css, store, toast, copy, download, num, pct, money, smoney, axisMoney, bad, bps, grouped, plain, unsign, colorOf, SLOTS, tile, chartCard, simpleTable, sampleRows, keepScroll, labField, checkList, numbers,
     labHead, labBanner, labEmpty, labOld, syncLab, renderLab, drawLab, openGuide, serverApi, RESTART, notice, registerWorkspace, labelPx, running, S, setupGuide, waitJob, keyHistory,
-    universeBody, pickAllocator, useStrategy, setTrials, showTab };
+    universeBody, pickAllocator, useStrategy, setTrials, showTab, refsLine };
   boot();
 })();

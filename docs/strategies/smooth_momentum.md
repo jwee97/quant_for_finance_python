@@ -27,6 +27,12 @@ Default parameters on the 15 ETFs, net of costs, traded as written: net Sharpe +
 
 Ranks 15 ETFs across asset classes, so the ranking is partly a ranking of asset classes.
 
+## Sources
+
+Where the rule comes from. A source is not evidence that it works on this repository's data: the survey above and the application's own result pages say that.
+
+- [Da, Gurun and Warachka (2014), Frog in the pan: continuous information and momentum, Review of Financial Studies 27(7)](https://doi.org/10.1093/rfs/hhu003)
+
 ## Learn more
 
 [Trend following and momentum: the indicator toolkit](../techniques/trend-following-toolkit.md)

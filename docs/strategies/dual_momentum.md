@@ -27,6 +27,12 @@ Default parameters on the 15 ETFs, net of costs, traded as written: net Sharpe +
 
 Net of costs on the window the search used: Sharpe 0.90 (0.86 over its own, longer live window), CAGR 10.2%, volatility 11.6%, max drawdown -20.1%, turnover 5.1 times a year. This is one backtest among those in a search; read the search-aware tests in the Generation 5 report before treating any row as evidence.
 
+## Sources
+
+Where the rule comes from. A source is not evidence that it works on this repository's data: the survey above and the application's own result pages say that.
+
+- Antonacci (2014), Dual Momentum Investing, McGraw-Hill
+
 ## Learn more
 
 [Momentum and trend following](../techniques/momentum.md)

@@ -31,6 +31,12 @@ Net of costs on the window the search used: Sharpe -0.19 (-0.09 over its own, lo
 
 Uses VIX-type indices as the implied-volatility input; no option-level data.
 
+## Sources
+
+Where the rule comes from. A source is not evidence that it works on this repository's data: the survey above and the application's own result pages say that.
+
+- [Carr and Wu (2009), Variance risk premiums, Review of Financial Studies 22(3)](https://doi.org/10.1093/rfs/hhn038)
+
 ## Learn more
 
 [Fixed income and volatility strategy families](../techniques/fixed-income-and-volatility-strategies.md)

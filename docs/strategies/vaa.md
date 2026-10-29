@@ -23,6 +23,12 @@ quant backtest --model vaa --tearsheet
 
 Default parameters on the 15 ETFs, net of costs, traded as written: net Sharpe +0.39, CAGR 3.9%, volatility 11.3%, max drawdown -21.4%, turnover 16.5 times a year, deflated Sharpe probability 0.21 counting every strategy in the survey as a trial. One run, not a test: see [the survey](../strategy_survey.md) for how to read it.
 
+## Sources
+
+Where the rule comes from. A source is not evidence that it works on this repository's data: the survey above and the application's own result pages say that.
+
+- [Keller and Keuning (2017), Breadth momentum and vigilant asset allocation (VAA): winning more by losing less, SSRN 3002624](https://doi.org/10.2139/ssrn.3002624)
+
 ## Learn more
 
 [Tactical asset allocation: Faber, Keller and the classic model portfolios](../techniques/tactical-asset-allocation.md)

@@ -25,6 +25,12 @@ This rule declares a daily rebalance; pass `execution: {rebalance: monthly}` in 
 
 Default parameters on the 15 ETFs, net of costs, traded as written: net Sharpe +0.27, CAGR 1.7%, volatility 6.9%, max drawdown -22.9%, turnover 8.7 times a year, deflated Sharpe probability 0.10 counting every strategy in the survey as a trial. One run, not a test: see [the survey](../strategy_survey.md) for how to read it.
 
+## Sources
+
+Where the rule comes from. A source is not evidence that it works on this repository's data: the survey above and the application's own result pages say that.
+
+- Bollinger (2001), Bollinger on Bollinger Bands, McGraw-Hill
+
 ## Learn more
 
 [Short-term mean reversion: pullbacks, bands and reversals](../techniques/short-term-mean-reversion.md)

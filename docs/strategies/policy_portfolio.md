@@ -28,6 +28,12 @@ quant backtest --model policy_portfolio --tearsheet
 
 Default parameters on the 15 ETFs, net of costs, traded as written: net Sharpe +0.83, CAGR 9.1%, volatility 11.4%, max drawdown -26.6%, turnover 1.4 times a year, deflated Sharpe probability 0.85 counting every strategy in the survey as a trial. One run, not a test: see [the survey](../strategy_survey_2.md) for how to read it.
 
+## Sources
+
+Where the rule comes from. A source is not evidence that it works on this repository's data: the survey above and the application's own result pages say that.
+
+- [Perold and Sharpe (1988), Dynamic strategies for asset allocation, Financial Analysts Journal 44(1)](https://doi.org/10.2469/faj.v44.n1.16)
+
 ## Learn more
 
 [Portfolio rebalancing styles: policy bands, month-end flows, flight to quality, market outlook](../techniques/portfolio-rebalancing-styles.md)

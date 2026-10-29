@@ -23,6 +23,12 @@ quant backtest --model paa --tearsheet
 
 Default parameters on the 15 ETFs, net of costs, traded as written: net Sharpe +0.73, CAGR 7.9%, volatility 11.3%, max drawdown -31.2%, turnover 6.9 times a year, deflated Sharpe probability 0.73 counting every strategy in the survey as a trial. One run, not a test: see [the survey](../strategy_survey.md) for how to read it.
 
+## Sources
+
+Where the rule comes from. A source is not evidence that it works on this repository's data: the survey above and the application's own result pages say that.
+
+- [Keller and Keuning (2016), Protective asset allocation (PAA): a simple momentum-based alternative for term deposits, SSRN 2759734](https://doi.org/10.2139/ssrn.2759734)
+
 ## Learn more
 
 [Tactical asset allocation: Faber, Keller and the classic model portfolios](../techniques/tactical-asset-allocation.md)

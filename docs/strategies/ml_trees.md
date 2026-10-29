@@ -24,6 +24,13 @@ quant backtest --model ml_trees --tearsheet
 
 Walk-forward ridge; the signal-to-noise ratio of monthly returns is very low.
 
+## Sources
+
+Where the rule comes from. A source is not evidence that it works on this repository's data: the survey above and the application's own result pages say that.
+
+- [Gu, Kelly and Xiu (2020), Empirical asset pricing via machine learning, Review of Financial Studies 33(5)](https://doi.org/10.1093/rfs/hhaa009)
+- Lopez de Prado (2018), Advances in Financial Machine Learning, Wiley
+
 ## Learn more
 
 [Gradient boosting and representation learning on returns](../techniques/gradient-boosting-and-representation-learning.md)

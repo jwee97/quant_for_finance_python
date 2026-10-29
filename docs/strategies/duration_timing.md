@@ -31,6 +31,12 @@ Net of costs on the window the search used: Sharpe -0.22 (-0.19 over its own, lo
 
 Bond ETFs only; durations are estimated from rolling data, not taken from bond analytics.
 
+## Sources
+
+Where the rule comes from. A source is not evidence that it works on this repository's data: the survey above and the application's own result pages say that.
+
+- Ilmanen (2011), Expected Returns, Wiley
+
 ## Learn more
 
 [Fixed income and volatility strategy families](../techniques/fixed-income-and-volatility-strategies.md)

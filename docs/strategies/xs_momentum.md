@@ -31,6 +31,12 @@ Net of costs on the window the search used: Sharpe 0.21 (0.07 over its own, long
 
 Ranks 15 ETFs across asset classes, so the ranking is partly a ranking of asset classes.
 
+## Sources
+
+Where the rule comes from. A source is not evidence that it works on this repository's data: the survey above and the application's own result pages say that.
+
+- [Jegadeesh and Titman (1993), Returns to buying winners and selling losers: implications for stock market efficiency, Journal of Finance 48(1)](https://doi.org/10.1111/j.1540-6261.1993.tb04702.x)
+
 ## Learn more
 
 [Momentum and trend following](../techniques/momentum.md)

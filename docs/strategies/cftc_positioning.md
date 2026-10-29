@@ -28,6 +28,12 @@ Default parameters on the 15 ETFs, net of costs, traded as written: net Sharpe +
 
 Macro series enter with their publication lags; revisions are not modelled.
 
+## Sources
+
+Where the rule comes from. A source is not evidence that it works on this repository's data: the survey above and the application's own result pages say that.
+
+- [Bessembinder (1992), Systematic risk, hedging pressure, and risk premiums in futures markets, Review of Financial Studies 5(4)](https://doi.org/10.1093/rfs/5.4.637)
+
 ## Learn more
 
 [Macro and alternative data without look-ahead](../techniques/macro-and-alternative-data.md)

@@ -27,6 +27,12 @@ Default parameters on the 15 ETFs, net of costs, traded as written: net Sharpe +
 
 Ranks 15 ETFs across asset classes, so the ranking is partly a ranking of asset classes.
 
+## Sources
+
+Where the rule comes from. A source is not evidence that it works on this repository's data: the survey above and the application's own result pages say that.
+
+- [Bali, Cakici and Whitelaw (2011), Maxing out: stocks as lotteries and the cross-section of expected returns, Journal of Financial Economics 99(2)](https://doi.org/10.1016/j.jfineco.2010.08.014)
+
 ## Learn more
 
 [Low risk, lottery demand, illiquidity and value with momentum](../techniques/low-risk-and-multi-factor.md)

@@ -13,6 +13,7 @@ from pathlib import Path
 import pandas as pd
 
 from ..assistant.explain import load_guides
+from ..references import references
 
 NOT_BUILT = """## What this library does not contain
 
@@ -103,6 +104,10 @@ def strategy_cards(config) -> dict[str, str]:
                       "This is one backtest among those in a search; read the search-aware tests in the Generation 5 report before treating any row as evidence.", ""]
         if entry.family in FAMILY_CAVEATS:
             lines += ["## Caveats", "", FAMILY_CAVEATS[entry.family], ""]
+        sources = references("model", entry.name)
+        if sources:
+            lines += ["## Sources", "", "Where the rule comes from. A source is not evidence that it works on this repository's data: the survey above and the application's own result pages say that.", ""]
+            lines += [f"- [{r['cite']}]({r['url']})" if r["url"] else f"- {r['cite']}" for r in sources] + [""]
         if guide:
             lines += ["## Learn more", "", f"[{guide.title}](../techniques/{guide.slug}.md)", ""]
         cards[f"{entry.name}.md"] = "\n".join(lines)

@@ -27,6 +27,13 @@ Net of costs on the window the search used: Sharpe -1.92, CAGR -2.6%, volatility
 
 One exchange (Deribit), four assets, about five years of data; the inverse perpetual is treated as linear.
 
+## Sources
+
+Where the rule comes from. A source is not evidence that it works on this repository's data: the survey above and the application's own result pages say that.
+
+- [Schmeling, Schrimpf and Todorov (2023), Crypto carry, BIS Working Paper 1087](https://www.bis.org/publ/work1087.htm)
+- [He, Manela, Ross and von Wachter (2022), Fundamentals of perpetual futures, arXiv 2212.06888](https://arxiv.org/abs/2212.06888)
+
 ## Learn more
 
 [Crypto carry: funding, basis and stablecoin flows](../techniques/crypto-carry.md)

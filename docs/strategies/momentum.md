@@ -27,6 +27,12 @@ Default parameters on the 15 ETFs, net of costs, traded as written: net Sharpe +
 
 Net of costs on the window the search used: Sharpe -0.15 (-0.16 over its own, longer live window), CAGR -1.1%, volatility 5.9%, max drawdown -30.6%, turnover 7.7 times a year. This is one backtest among those in a search; read the search-aware tests in the Generation 5 report before treating any row as evidence.
 
+## Sources
+
+Where the rule comes from. A source is not evidence that it works on this repository's data: the survey above and the application's own result pages say that.
+
+- [Jegadeesh and Titman (1993), Returns to buying winners and selling losers: implications for stock market efficiency, Journal of Finance 48(1)](https://doi.org/10.1111/j.1540-6261.1993.tb04702.x)
+
 ## Learn more
 
 [Momentum and trend following](../techniques/momentum.md)
