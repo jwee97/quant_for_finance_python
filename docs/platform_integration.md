@@ -46,4 +46,6 @@ data bundle (prices, macro levels with release lags, CFTC positioning)
 | Impact → attribution | `cost_breakdown` table | `src/framework/analytics.py::cost_breakdown` |
 | Research database | automatic on `quant run` | `src/framework/experiments.py::ExperimentManager.record` |
 
+The risk limits act on the target weights, one row a day, and the engine trades only on its rebalance dates (monthly unless `execution.rebalance` says otherwise), so a regime cap that starts to bind between two of them reaches the book at the next one. The `risk_limits` table therefore has three rows: the days the cap bound on the targets, the days the drawdown rule was on, and the days the book actually held was above the cap in force when it was decided. Set `execution: {rebalance: daily}` for limits that act at once (and pay for the trading they cause).
+
 Nothing here reads data after the date it is used for: every plug-in passes the repository's causality check (all data after a cutoff replaced by noise must leave earlier outputs unchanged), and `tests/test_adaptive_integration.py` repeats it for the adaptive layer.

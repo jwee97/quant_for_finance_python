@@ -491,7 +491,8 @@ def run_futures_strategy(config, strategy: str, roots: list[str] | None = None, 
     spec = FUTURES_STRATEGIES[strategy]
     real = curves is not None
     if real:
-        chosen = sorted(r.upper() for r in curves)
+        curves = dict(sorted(((r.upper(), data) for r, data in curves.items()), key=lambda item: item[0]))      # roots are named in capitals everywhere else, whatever case the caller used
+        chosen = list(curves)
         classes = {r: curves[r].spec.asset_class for r in chosen}
     else:
         chosen = [r.upper() for r in (roots or list(ROOTS))]

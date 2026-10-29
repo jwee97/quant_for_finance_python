@@ -120,7 +120,7 @@ def continuous_series(long: pd.DataFrame, roll_days: int = 5, adjust: str = "rat
             old_px, new_px = adjusted_offsets[d]
             mask = adj.index < d
             adj[mask] = adj[mask] * (new_px / old_px) if adjust == "ratio" else adj[mask] + (new_px - old_px)
-    rets = adj.pct_change() if adjust != "difference" else adj.diff() / adj.shift(1)
+    rets = adj.pct_change()                                                       # the move over the level before it, whichever way the history was adjusted
     return ContinuousSeries(adj, raw, contract, roll_dates, rets)
 
 
@@ -138,7 +138,7 @@ def excess_return_series(long: pd.DataFrame, roll_days: int = 5) -> pd.Series:
         live = [c for c in live.index if np.isfinite(pivot.at[d, c])]
         if not live:
             continue
-        if prev_contract is not None and np.isfinite(pivot.at[d, prev_contract]) and i > 0 and np.isfinite(pivot.at[dates[i - 1], prev_contract]):
+        if prev_contract is not None and np.isfinite(pivot.at[d, prev_contract]) and np.isfinite(pivot.at[dates[i - 1], prev_contract]):
             out[d] = pivot.at[d, prev_contract] / pivot.at[dates[i - 1], prev_contract] - 1.0
         prev_contract = live[0]
     return pd.Series(out, name="excess_return")

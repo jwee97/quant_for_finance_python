@@ -84,6 +84,33 @@ def test_the_weekend_of_a_market_that_never_closes_is_folded_into_monday_and_a_y
     assert bundle.returns.at[monday, "X"] == pytest.approx(expected[monday]), "Monday's return is the move from Friday's close"
 
 
+def test_a_closed_exchange_is_held_for_five_days_and_not_for_a_sixth():
+    a, b = monthly_table("2019-01-02", "2023-12-29", seed=11), monthly_table("2019-01-02", "2023-12-29", seed=12)
+    week = pd.bdate_range("2022-05-23", "2022-05-27")                                          # five weekdays on which B did not trade
+    six = pd.bdate_range("2022-08-15", "2022-08-22")                                           # and six
+    b = b[~b["date"].isin(week.union(six))]
+    bundle, report = fa.real_futures_bundle({"A": curve_of("A", a), "B": curve_of("B", b)})
+    before_week, before_six = bundle.prices.at[pd.Timestamp("2022-05-20"), "B"], bundle.prices.at[pd.Timestamp("2022-08-12"), "B"]
+    assert all(bundle.prices.at[d, "B"] == before_week for d in week) and all(bundle.returns.at[d, "B"] == 0.0 for d in week), "five closed days are held flat"
+    assert all(bundle.prices.at[d, "B"] == before_six for d in six[:5]) and np.isnan(bundle.prices.at[six[5], "B"]), "and the sixth is a day without a price"
+    assert report["A"]["front_days"] > report["B"]["front_days"] > 1000
+
+
+def test_a_root_needs_a_year_of_front_months_to_the_day():
+    table = monthly_table("2021-01-04", "2022-12-30", seed=13)
+    days = front_month_dates(table[table["date"].dt.day_of_week < 5])
+    enough, short = days[days].index[251], days[days].index[250]                              # the 252nd and the 251st day on which the nearest contract is the front
+    ok, report = fa.real_futures_bundle({"X": curve_of("X", table[table["date"] <= enough])})
+    assert report["X"]["front_days"] == 252 and report["X"]["first"] == str(days[days].index[0].date()) and report["X"]["last"] == str(enough.date()), "252 days are enough"
+    assert report["X"]["file_days"] == report["X"]["front_days"] and report["X"]["contracts"] == int(table[table["date"] <= enough]["contract"].nunique()) and report["X"]["source"] == "downloaded"
+    with pytest.raises(ValueError, match=r"X has 251 days on which its nearest contract is the front of the market \(251 days in the file\); a strategy needs at least 252"):
+        fa.real_futures_bundle({"X": curve_of("X", table[table["date"] <= short])})
+    assert fa.MIN_FRONT_DAYS == 252 and fa.HOLD_DAYS == 5
+    with pytest.raises(ValueError, match="at least 100"):
+        fa.real_futures_bundle({"X": curve_of("X", table[table["date"] <= days[days].index[98]])}, min_days=100)
+    assert fa.real_futures_bundle({"X": curve_of("X", table[table["date"] <= days[days].index[99]])}, min_days=100)[1]["X"]["front_days"] == 100
+
+
 # ------------------------------------------------------------------------------------------------------------------ real tables through the pipeline
 def test_a_real_table_runs_through_the_pipeline_with_its_own_coverage_and_notes():
     curves = {"AAA": curve_of("AAA", monthly_table("2019-01-02", "2023-12-29", seed=4)), "BBB": curve_of("BBB", monthly_table("2019-01-02", "2023-12-29", seed=5))}
@@ -116,6 +143,93 @@ def test_the_strategies_that_cannot_trade_the_chosen_roots_say_so_instead_of_ret
         fa.run_futures_strategy(load_config(), "carry_ts", curves={})
     with pytest.raises(ValueError, match="within an asset class"):
         fa.run_futures_strategy(load_config(), "carry_xs", ["CL", "GC"])                       # simulated roots: a commodity and a metal are not ranked against each other
+
+
+# ------------------------------------------------------------------------------------------------------------------ what a futures strategy is told to run, and what it is refused
+class Calls:
+    """Stand-ins for the pipeline run and the bundles, so that what ``run_futures_strategy`` decides can be read from what it asks for."""
+
+    def __init__(self, monkeypatch):
+        from src.assets import strategy_runs
+
+        self.runs = []
+        monkeypatch.setattr(strategy_runs, "run_strategy", lambda bundle, config, model, params, **kwargs: self.runs.append((bundle, model, params, kwargs)) or {"metrics": {"sharpe": 1.0}})
+        monkeypatch.setattr(strategy_runs, "subset_bundle", lambda bundle, columns: (bundle, tuple(columns)))
+        monkeypatch.setattr(fa, "_real_bundle_for", lambda curves: ("real bundle", {r: {"front_days": 300, "first": "2020-01-02", "last": "2021-03-31", "file_days": 310, "contracts": 14, "source": "downloaded"} for r in curves}))
+        monkeypatch.setattr(fa, "futures_bundle_for", lambda roots, as_of=None: "simulated bundle")
+
+
+def stand_in(classes: dict) -> dict:
+    return {r: SimpleNamespace(spec=SimpleNamespace(asset_class=c)) for r, c in classes.items()}
+
+
+def test_a_strategy_is_refused_the_roots_it_cannot_rank_and_run_with_the_parameters_its_description_gives(monkeypatch):
+    calls = Calls(monkeypatch)
+    config = load_config()
+    with pytest.raises(ValueError, match=r"unknown futures strategy 'vote'; choose from \['basis_momentum', 'carry_ts', 'carry_xs', 'donchian', 'tsmom', 'xs_momentum'\]"):
+        fa.run_futures_strategy(config, "vote", curves=stand_in({"A": "commodity"}))
+    for strategy in ("carry_xs", "xs_momentum"):
+        with pytest.raises(ValueError, match="a cross-sectional strategy needs at least two roots"):
+            fa.run_futures_strategy(config, strategy, curves=stand_in({"A": "commodity"}))
+    with pytest.raises(ValueError, match=r"choose at least two roots of the same class \(chosen: A is commodity, B is fx\)"):
+        fa.run_futures_strategy(config, "carry_xs", curves=stand_in({"A": "commodity", "B": "fx"}))
+    assert calls.runs == [], "nothing was run for any of them"
+    fa.run_futures_strategy(config, "carry_xs", curves=stand_in({"A": "commodity", "B": "commodity", "C": "fx"}))                 # two of one class are enough
+    with pytest.raises(ValueError, match=r"basis momentum ranks commodities: choose at least two commodity roots$"):
+        fa.run_futures_strategy(config, "basis_momentum", curves=stand_in({"A": "commodity", "B": "fx"}))
+    with pytest.raises(ValueError, match=r"two commodity roots \(CL, NG, HG\)$"):
+        fa.run_futures_strategy(config, "basis_momentum", ["CL", "ES"])
+    fa.run_futures_strategy(config, "basis_momentum", curves=stand_in({"A": "commodity", "B": "commodity"}))
+    assert [call[1] for call in calls.runs] == ["carry_xs", "basis_momentum"]
+    calls.runs.clear()
+    fa.run_futures_strategy(config, "tsmom", curves=stand_in({"A": "commodity"}), lookback=60, frequency="weekly", target_vol=0.12, cost_bps=3)
+    (bundle, model, params, kwargs), = calls.runs
+    assert bundle == ("real bundle", ("A",)) and model == "tsmom" and params == {"lookback": 60} and kwargs == {"rebalance": "weekly", "target_vol": 0.12, "cost_bps": 3.0, "label": "Trend", "allocator": "score_stack"}
+    calls.runs.clear()
+    for strategy, expected in (("donchian", {"entry": 30}), ("carry_ts", {"smooth": 30}), ("carry_xs", {})):
+        fa.run_futures_strategy(config, strategy, curves=stand_in({"A": "commodity", "B": "commodity"}), lookback=30)
+    assert [call[2] for call in calls.runs] == [{"entry": 30}, {"smooth": 30}, {}], "the lookback is the parameter the strategy names, and a strategy with none ignores it"
+    calls.runs.clear()
+    fa.run_futures_strategy(config, "carry_ts", curves=stand_in({"A": "commodity"}))
+    assert calls.runs[0][2] == {} and calls.runs[0][3] == {"rebalance": None, "target_vol": None, "cost_bps": 2.0, "label": "Carry (time-series)", "allocator": "sleeves"}, "no lookback, no parameters; two basis points by default"
+
+
+def test_the_result_says_what_ran_and_on_what_and_a_simulation_is_not_called_a_backtest(monkeypatch):
+    Calls(monkeypatch)
+    config = load_config()
+    real = fa.run_futures_strategy(config, "tsmom", curves=stand_in({"b": "commodity", "a": "equity"}))
+    assert real["source"] == "real" and real["roots"] == ["A", "B"] and real["strategy"] == "tsmom" and real["label"] == "Trend" and real["cost_bps"] == 2.0 and real["text"].startswith("Long what has risen")
+    assert real["coverage"]["A"]["front_days"] == 300 and set(real["coverage"]) == {"A", "B"}
+    assert real["notes"][0] == "A: 300 days from 2020-01-02 to 2021-03-31 on which the nearest contract is the front of the market (of 310 in the file, 14 contracts)." and len(real["notes"]) == 5
+    assert real["notes"][2].startswith("The result is the excess return of holding the nearest contract of each root and rolling it 5 days before it expires") and real["notes"][3].startswith("Costs are the one-way basis points")
+    assert real["notes"][4].startswith("Weekends are folded into Monday's return and an exchange holiday is held flat for at most 5 days")
+    simulated = fa.run_futures_strategy(config, "tsmom", ["cl", "es"], cost_bps=1.5)
+    assert simulated["source"] == "simulated" and simulated["roots"] == ["CL", "ES"] and "coverage" not in simulated and simulated["cost_bps"] == 1.5
+    assert len(simulated["notes"]) == 2 and simulated["notes"][0].startswith("The futures are a Schwartz-Smith model simulation")
+    with pytest.raises(ValueError, match=r"unknown futures roots \['ZZ'\]; the simulated roots are \["):
+        fa.run_futures_strategy(config, "tsmom", ["CL", "zz"])
+    with pytest.raises(ValueError, match="choose at least one root"):
+        fa.run_futures_strategy(config, "tsmom", curves={})
+
+
+def test_the_bundle_of_a_real_table_is_built_once_for_the_same_table_and_the_three_latest_are_kept(monkeypatch):
+    built = []
+    monkeypatch.setattr(fa, "real_futures_bundle", lambda curves: built.append(sorted(curves)) or ("bundle", {}))
+    monkeypatch.setattr(fa, "_BUNDLES", fa.OrderedDict())
+
+    def curves_of(root: str, price: float = 1.0) -> dict:
+        return {root: SimpleNamespace(long=pd.DataFrame({"date": pd.to_datetime(["2021-01-04", "2021-01-05"]), "price": [price, price]}))}
+
+    for root in "ABCD":
+        fa._real_bundle_for(curves_of(root))
+    assert built == [["A"], ["B"], ["C"], ["D"]] and len(fa._BUNDLES) == 3, "the oldest of four is dropped"
+    fa._real_bundle_for(curves_of("B"))
+    fa._real_bundle_for(curves_of("C"))
+    assert len(built) == 4, "B and C are still there"
+    fa._real_bundle_for(curves_of("A"))
+    assert built[-1] == ["A"] and len(built) == 5, "A is not"
+    fa._real_bundle_for(curves_of("C", 2.0))
+    assert len(built) == 6, "the same root with other prices is another table"
 
 
 # ------------------------------------------------------------------------------------------------------------------ an account that loses more than it has

@@ -188,6 +188,10 @@ class RegimeRiskLimits:
     ``drawdown``: ``{"trigger": 0.10, "derisk": 0.5, "recover": 0.05}``. When the drawdown of the LIMITED book's own realised equity from its running peak
     reaches ``trigger``, exposure is multiplied by ``derisk`` until the drawdown has recovered to ``recover``.
     The limited book's equity path uses weights lagged one day, as the engine does, so the rule uses only returns already realised.
+
+    The limits act on the TARGET weights, one row a day. The engine trades only on its rebalance dates (monthly unless the specification says otherwise), so a cap that starts to bind between two of them
+    reaches the held book at the next one: ``Pipeline`` reports the days the held book was above the cap beside the days the cap bound, and ``execution: {rebalance: daily}`` makes a limit act at once.
+    A ``derisk`` of 0 is final: a book that holds nothing earns nothing, so its drawdown can never recover.
     """
 
     gross_caps: dict = field(default_factory=dict)

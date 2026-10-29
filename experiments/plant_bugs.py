@@ -152,6 +152,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--n", type=int, default=30, help="how many places to draw at random")
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--kinds", default=",".join(KINDS), help=f"which kinds of change ({', '.join(KINDS)})")
+    ap.add_argument("--lines", metavar="FIRST-LAST", help="draw only from these lines of the module (one class in a long file)")
     ap.add_argument("--again", metavar="FILE", help="put back the survivors of an earlier --out file instead of drawing new places")
     ap.add_argument("--timeout", type=int, default=420, help="seconds the tests may take for one change")
     ap.add_argument("--repo", default=str(ROOT), help="the repository to copy (default: this one)")
@@ -169,7 +170,8 @@ def main(argv: list[str] | None = None) -> int:
         if a.again:
             chosen = survivors_again(tree, lines, json.loads(Path(a.again).read_text()))
         else:
-            pool = [s for s in sites(tree) if s[0] in a.kinds.split(",")]
+            first, last = (int(x) for x in a.lines.split("-")) if a.lines else (0, len(lines))
+            pool = [s for s in sites(tree) if s[0] in a.kinds.split(",") and first <= s[2] <= last]
             random.Random(a.seed).shuffle(pool)
             chosen = pool[:a.n]
         results = audit(work, a.module, a.tests, chosen, a.timeout, Path(a.out))

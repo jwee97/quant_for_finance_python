@@ -20,11 +20,12 @@ import yaml
 
 from ..backtest.costs import LinearCostModel
 from ..backtest.engine import BacktestEngine
-from ..backtest.impact import market_state
+from ..features.returns import FLAT
 from ..signals.alpha_engine import trailing_sharpe, trust_weights
 from ..utils.dates import rebalance_dates
 from ..utils.logging import get_logger
 from .allocation import ALLOCATORS, Context
+from .analytics import DEFAULT_GRID, brinson_vs_benchmark, bundle_market_state, capacity_by_aum, cost_breakdown, model_attribution, standalone_shares
 from .data import MarketBundle
 from .adaptive import RegimeRiskLimits, calibrate_confidence, decay_trust_weights, regime_spread_scale
 from .forecasting import combine_forecasts, ic_trust_weights, regime_trust_weights
@@ -34,7 +35,6 @@ from .risk import RegimeRiskPolicy
 from .types import ForecastPanel
 
 LOGGER = get_logger(__name__)
-ANN = 252.0
 
 
 @dataclass
@@ -280,18 +280,19 @@ class Pipeline:
             targets, scalar, _ = policy.apply(targets, bundle.returns, regimes)
         elif mode != "none":
             raise ValueError("risk.mode must be none, constant or regime")
+        rules = None
         if limits:
             unknown_limits = set(limits) - {"gross_caps", "drawdown"}
             if unknown_limits:
                 raise ValueError(f"unknown risk limits {sorted(unknown_limits)}; allowed: gross_caps, drawdown")
-            targets, limit_diag = RegimeRiskLimits(dict(limits.get("gross_caps") or {}), dict(limits.get("drawdown") or {})).apply(targets, bundle.returns, regimes)
+            rules = RegimeRiskLimits(dict(limits.get("gross_caps") or {}), dict(limits.get("drawdown") or {}))
+            targets, limit_diag = rules.apply(targets, bundle.returns, regimes)
 
         result = engine.run(targets, bundle.returns, spec.name, bundle.investable, apply_vol_target=apply_vol_target)
         if spec.execution.get("aum"):
             from ..backtest.impact import ImpactSettings, impact_net_returns
 
-            sigma, adv = market_state(bundle.prices if bundle.volume is not None else bundle.prices, bundle.volume if bundle.volume is not None else bundle.prices * 0.0 + 1e9,
-                                      bundle.returns)
+            sigma, adv = bundle_market_state(bundle)
             net, daily, _ = impact_net_returns(result.gross_returns, result.trades, float(spec.execution["aum"]), sigma, adv,
                                                engine.cost_model.rates(result.trades.columns), ImpactSettings(float(spec.execution.get("impact_coefficient", 1.0))))
             net_returns, costs = net.dropna(), daily
@@ -322,17 +323,20 @@ class Pipeline:
                     out.tables[f"explain_{model.name}"] = table
         if limit_diag is not None:
             ld = limit_diag.loc[start:]
+            held_gross = result.weights.abs().sum(axis=1).reindex(ld.index)
+            cap_in_force = rules.cap_series(regimes, bundle.index).shift(engine.signal_lag).reindex(ld.index)          # the book held on a date was decided signal_lag days before
+            needed = (cap_in_force / held_gross.where(held_gross > FLAT)).clip(upper=1.0).fillna(1.0)                    # what the held book would have to be multiplied by to sit under that cap
             out.tables["risk_limits"] = pd.DataFrame({"share_of_days": {"gross cap binding": float((ld["cap_factor"] < 1.0 - 1e-9).mean()),
-                                                                          "drawdown limit on": float(ld["drawdown_limit_on"].mean())},
-                                                       "mean_exposure_factor": {"gross cap binding": float(ld["cap_factor"].mean()), "drawdown limit on": float(ld["drawdown_factor"].mean())}})
+                                                                          "drawdown limit on": float(ld["drawdown_limit_on"].mean()),
+                                                                          "held book above the gross cap": float((needed < 1.0 - 1e-9).mean())},
+                                                       "mean_exposure_factor": {"gross cap binding": float(ld["cap_factor"].mean()), "drawdown limit on": float(ld["drawdown_factor"].mean()),
+                                                                                "held book above the gross cap": float(needed.mean())}})
             out.metrics["risk_limit_days_share"] = float(((ld["cap_factor"] < 1.0 - 1e-9) | (ld["drawdown_limit_on"] > 0)).mean())
         timings["total"] = time.perf_counter() - t0
         return out
 
     def _attribution_extras(self, out, models, panels, trust, engine, start) -> None:
         """Brinson against equal weight, model-level attribution, cost split and capacity: the integrated attribution and execution reports."""
-        from .analytics import DEFAULT_GRID, brinson_vs_benchmark, capacity_by_aum, cost_breakdown, model_attribution, standalone_shares
-
         opts = self.spec.evaluation
         if opts.get("brinson", True):
             table = brinson_vs_benchmark(out, self.bundle)
@@ -340,7 +344,7 @@ class Pipeline:
                 out.tables["attribution_vs_benchmark"] = table
         if len(models) > 1 and opts.get("model_attribution", True):
             try:
-                shares = standalone_shares(panels, self._rule or "equal", trust)
+                shares = standalone_shares(panels, self._rule, trust)
             except ValueError:
                 shares = None
             if shares is not None:
@@ -349,8 +353,7 @@ class Pipeline:
         if aum or self.spec.execution.get("capacity"):
             from ..backtest.impact import ImpactSettings
 
-            volume = self.bundle.volume if self.bundle.volume is not None else self.bundle.prices * 0.0 + 1e9
-            sigma, adv = market_state(self.bundle.prices, volume, self.bundle.returns)
+            sigma, adv = bundle_market_state(self.bundle)
             coefficient = float(self.spec.execution.get("impact_coefficient", 1.0))
             if aum:
                 out.tables["cost_breakdown"] = cost_breakdown(out, engine.cost_model.rates(out.trades.columns), sigma, adv, float(aum), ImpactSettings(coefficient))

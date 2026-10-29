@@ -11,6 +11,7 @@ import pandas as pd
 from scipy.stats import norm, spearmanr
 
 from ..backtest.metrics import deflated_sharpe_ratio, performance_summary
+from ..features.returns import FLAT
 from ..signals.alpha_engine import forward_returns
 from ..utils.dates import DateWindow
 from ..validation.robustness import paired_sharpe_test
@@ -58,7 +59,7 @@ def deflated_probability(net: pd.Series, n_trials: int) -> float:
     Sharpe ratio is above zero given the sample length, skewness and kurtosis (Bailey and Lopez de Prado).
     """
     clean = net.dropna()
-    if len(clean) < 30 or clean.std(ddof=1) == 0:
+    if len(clean) < 30 or clean.std(ddof=1) <= FLAT:
         return float("nan")
     sharpe = float(ANN ** 0.5 * clean.mean() / clean.std(ddof=1))
     skew, kurt = float(clean.skew()), float(clean.kurt() + 3.0)
@@ -100,7 +101,7 @@ def evaluate(out, pipeline, engine, ctx, models, validate: bool, trust) -> None:
     perf = performance_summary(net, turnover=turnover, costs=out.costs.loc[start:])
     gross = out.gross_returns.loc[start:].dropna()
     out.metrics = {**{k: perf.get(k, np.nan) for k in ("sharpe", "cagr", "ann_vol", "max_drawdown", "sortino", "calmar", "ann_turnover")},
-                   "gross_sharpe": float(ANN ** 0.5 * gross.mean() / gross.std(ddof=1)) if gross.std(ddof=1) > 0 else np.nan,
+                   "gross_sharpe": float(ANN ** 0.5 * gross.mean() / gross.std(ddof=1)) if gross.std(ddof=1) > FLAT else np.nan,
                    "ann_cost_bps": float(1e4 * out.costs.loc[start:].mean() * ANN), "n_days": int(len(net)), "start": str(net.index[0].date()), "end": str(net.index[-1].date()),
                    "mean_ann_turnover": float(turnover.mean() * ANN)}
     # splits
@@ -114,7 +115,7 @@ def evaluate(out, pipeline, engine, ctx, models, validate: bool, trust) -> None:
         for name, r in net.groupby(labels):
             if len(r) > 5:
                 table[name] = {"share_of_days": len(r) / len(net), "ann_return": float(r.mean() * ANN), "ann_vol": float(r.std(ddof=1) * np.sqrt(ANN)),
-                               "sharpe": float(ANN ** 0.5 * r.mean() / r.std(ddof=1)) if r.std(ddof=1) > 0 else np.nan}
+                               "sharpe": float(ANN ** 0.5 * r.mean() / r.std(ddof=1)) if r.std(ddof=1) > FLAT else np.nan}
         out.tables["by_regime"] = pd.DataFrame(table).T
     # attribution: additive daily contributions of each asset's held weight, then costs
     held = out.weights.shift(1).reindex(net.index)
@@ -148,7 +149,7 @@ def evaluate(out, pipeline, engine, ctx, models, validate: bool, trust) -> None:
             rows.append({"benchmark": name, "error": "the benchmark held nothing on these dates (the portfolio builders need at least five investable assets)"})
             continue
         out.benchmarks[name] = b.loc[common]
-        if len(common) > 250 and net.loc[common].std(ddof=1) > 0:
+        if len(common) > 250 and net.loc[common].std(ddof=1) > FLAT:
             t = paired_sharpe_test(net.loc[common], b.loc[common], n_samples=int(boot.get("n_samples", 2000)), block_length=int(boot.get("block_length", 21)),
                                    seed=int(boot.get("seed", 7)))
             rows.append({"benchmark": name, "sharpe_strategy": t["sharpe_a"], "sharpe_benchmark": t["sharpe_b"], "difference": t["difference"], "p_value": t["p_value"]})

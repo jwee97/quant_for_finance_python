@@ -19,6 +19,12 @@ from ..backtest.impact import ImpactSettings, capacity_curve, capacity_from_curv
 DEFAULT_GRID = (1e7, 1e8, 1e9, 1e10, 1e11)
 
 
+def bundle_market_state(bundle) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Each asset's daily volatility and average dollar volume through the previous close. A bundle without volume is given a billion dollars a day in every asset, so that impact depends on the size alone."""
+    volume = bundle.volume if bundle.volume is not None else bundle.prices * 0.0 + 1e9
+    return market_state(bundle.prices, volume, bundle.returns)
+
+
 def brinson_vs_benchmark(result, bundle) -> pd.DataFrame:
     """Linked Brinson-Fachler effects, in return points, by asset class, for the evaluation window."""
     index = bundle.index
@@ -91,8 +97,7 @@ def cost_breakdown(result, trades_rates: pd.Series, sigma: pd.DataFrame, adv: pd
 
 def capacity_by_aum(result, bundle, engine, grid=DEFAULT_GRID, coefficient: float = 1.0) -> tuple[pd.Series, object]:
     """Net Sharpe at each AUM in ``grid`` from the result's gross returns and trades, and the AUM at which it falls to half the linear-cost Sharpe."""
-    volume = bundle.volume if bundle.volume is not None else bundle.prices * 0.0 + 1e9
-    sigma, adv = market_state(bundle.prices, volume, bundle.returns)
+    sigma, adv = bundle_market_state(bundle)
     rates = engine.cost_model.rates(result.trades.columns)
     window = result.net_returns.loc[result.start:].index
     gross, trades = result.gross_returns.reindex(window), result.trades.reindex(window).fillna(0.0)
