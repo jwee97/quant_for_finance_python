@@ -9,7 +9,7 @@ import pandas as pd
 import pytest
 from scipy.stats import norm
 
-from src.webapp import riskstats as rs
+from src.risk import performance as rs
 
 
 def series(values, start="2020-01-01"):
@@ -191,3 +191,45 @@ def test_benchmark_relative_handles_gaps_and_short_overlaps():
     r.iloc[:190] = np.nan
     assert rs.benchmark_relative(r, b) == {}
     assert rs.benchmark_relative(b * 0.0, b)["correlation"] is None                # a flat strategy has no correlation
+
+
+# ------------------------------------------------------------------------------------------------------------------ the monthly cells and the distribution of days
+def test_monthly_returns_compound_each_calendar_month_and_skip_nothing():
+    net = series([0.01, -0.02, 0.03] + [0.0] * 20 + [0.05, 0.05], start="2021-01-27")           # 27 January 2021 is a Wednesday
+    got = rs.monthly_returns(net)
+    by_month = {}
+    for date, value in net.items():
+        by_month.setdefault((date.year, date.month), []).append(value)
+    expected = {key: math.prod(1.0 + v for v in values) - 1.0 for key, values in by_month.items()}
+    assert [(c["year"], c["month"]) for c in got] == sorted(expected) and len(got) >= 2
+    for cell in got:
+        assert cell["value"] == pytest.approx(expected[(cell["year"], cell["month"])], abs=5e-6)         # rounded to five decimals
+    assert rs.monthly_returns(series([])) == []
+
+
+def test_the_return_distribution_bins_the_central_99_percent_and_counts_what_a_normal_would():
+    rng = np.random.default_rng(11)
+    values = rng.standard_t(4, 1500) * 0.008
+    out = rs.return_distribution(series(values), bins=41)
+    srt = sorted(values)
+    n = len(values)
+    lo, hi = (srt[int(math.floor(p * (n - 1) + 0.5))] for p in (0.005, 0.995))                         # the 0.5th and 99.5th percentiles, rounded half up
+    step = (hi - lo) / 41
+    assert out["edges"][0] == pytest.approx(lo, rel=1e-12) and out["edges"][-1] == pytest.approx(hi, rel=1e-12) and len(out["edges"]) == 42 and len(out["counts"]) == 41
+    loop = [0] * 41
+    for v in values:
+        if lo <= v <= hi:
+            loop[min(40, int((v - lo) // step))] += 1
+    assert out["counts"] == loop and sum(loop) >= 0.98 * n
+    mean, sd = float(np.mean(values)), float(np.std(values, ddof=1))
+    cdf = lambda x: 0.5 * (1.0 + math.erf((x - mean) / (sd * math.sqrt(2.0))))                           # noqa: E731
+    for i, expected in enumerate(n * (cdf(out["edges"][i + 1]) - cdf(out["edges"][i])) for i in range(41)):
+        assert out["normal"][i] == pytest.approx(expected, abs=1e-3)
+    assert out["mean"] == pytest.approx(mean, rel=1e-12) and out["sd"] == pytest.approx(sd, rel=1e-12) and out["n"] == n
+    assert out["counts"][20] > 1.1 * out["normal"][20]                                                    # fat tails: the centre holds more days than the bell curve with the same spread
+
+
+def test_the_return_distribution_is_empty_for_a_short_history_and_survives_a_flat_one():
+    assert rs.return_distribution(series(np.random.default_rng(1).normal(0, 0.01, 59))) == {}
+    flat = rs.return_distribution(series([0.0] * 100))
+    assert flat["n"] == 100 and sum(flat["counts"]) == 100 and flat["normal"] == [0.0] * 41

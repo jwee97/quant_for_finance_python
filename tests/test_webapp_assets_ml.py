@@ -74,7 +74,7 @@ def test_a_task_runs_on_the_worker_and_reports_its_result_or_its_message(assets)
 
 
 def test_the_version_announces_the_new_workspaces_and_the_routes_are_registered(assets):
-    assert assets.catalog()["api_version"] == api.API_VERSION == 11
+    assert assets.catalog()["api_version"] == api.API_VERSION == 12
     for path in ("/api/options/chain", "/api/options/surface", "/api/futures/curve", "/api/futures/roll", "/api/crypto/funding", "/api/ml/catalog", "/api/ml/experiments"):
         assert path in assets.extra_get, path
     for path in ("/api/options/portfolio-risk", "/api/options/strategy/payoff", "/api/options/strategy/backtest", "/api/ml/train", "/api/ml/search", "/api/ml/combine"):
@@ -183,6 +183,50 @@ def test_the_futures_curve_roll_and_margin_endpoints_label_their_simulated_data(
             fn(arg)
 
 
+def test_the_futures_curve_endpoint_draws_the_curves_you_ask_for_and_carries_the_shape_the_factors_and_the_sources(assets):
+    cur = _safe(assets.extra_get["/api/futures/curve"]({"root": "CL", "spacing": "63", "dates": "4"}))
+    assert len(cur["history"]) == 4
+    gaps = [int(np.busday_count(older["date"], newer["date"])) for newer, older in zip(cur["history"], cur["history"][1:])]
+    assert gaps == [63, 63, 63]                                                                                 # trading days apart: the simulated calendar has every weekday
+    assert cur["shape"]["ranks"] == list(range(2, 9)) and len(cur["shape"]["values"]) == 7 and len(cur["shape"]["dates"]) > 30
+    assert cur["pca"]["components"][0]["label"] == "level" and cur["pca"]["n_days"] > 500 and cur["carry"]["by_month"] and cur["carry"]["series"]["bands"]["p50"]
+    assert set(cur["references"]) == {"curve", "convenience", "pca", "carry", "seasonality"} and all(r["cite"] for rs in cur["references"].values() for r in rs)
+    assert cur["references"]["pca"][0]["url"].startswith("https://doi.org/")
+    for bad in ({"spacing": "0"}, {"spacing": "900"}, {"dates": "1"}, {"dates": "9"}):
+        with pytest.raises(ApiError):
+            assets.extra_get["/api/futures/curve"]({"root": "CL", **bad})
+
+
+def test_the_catalog_lists_the_futures_strategies_by_group_with_their_settings_and_sources(assets):
+    cat = _safe(assets.extra_get["/api/assets/catalog"]({}))
+    strategies = {s["id"]: s for s in cat["futures_strategies"]}
+    assert len(strategies) == 15 and strategies["carry_ts"]["group"] == "Carry and curve" and strategies["ewmac"]["group"] == "Trend" and strategies["skew"]["needs"] == "cross"
+    assert {p["name"] for p in strategies["ewmac"]["params"]} >= {"fast_spans", "slow_multiple", "vol_span", "cap"} and strategies["ewmac"]["references"][0]["cite"].startswith("Carver")
+    assert next(p for p in strategies["momentum_carry"]["params"] if p["name"] == "trend_weight")["default"] == 0.5 and strategies["momentum_carry"]["references"]
+
+
+def test_the_futures_strategy_backtest_takes_the_strategys_own_settings_and_says_what_it_did(assets):
+    out = finished(assets, assets.extra_post["/api/futures/strategy/backtest"]({"strategy": "momentum_carry", "roots": ["CL", "NG", "GC"], "params": {"trend_weight": 0.9}}))
+    assert out["spec"]["models"][0]["params"] == {"trend_weight": 0.9} and out["source"] == "simulated" and out["strategy"] == "momentum_carry"
+    assert out["risk"]["sortino"] is not None and out["correlation"]["assets"] == ["CL", "GC", "NG"] and out["positions"]["assets"] and out["distribution"]["n"] > 100 and out["exposure"]["net"]
+    refused = wait(assets, assets.extra_post["/api/futures/strategy/backtest"]({"strategy": "momentum_carry", "roots": ["CL", "NG", "GC"], "params": {"trend_weight": 4.0}}))
+    assert refused["status"] == "error" and "Trend and carry together" in refused["error"] and "trend_weight" in refused["error"]
+    for bad, text in (({"params": [1, 2]}, "params must be an object"), ({"strategy": "no_such"}, "strategy must be one of"), ({"data": "real", "roots": []}, "choose at least one root")):
+        with pytest.raises(ApiError, match=text):
+            assets.extra_post["/api/futures/strategy/backtest"](bad)
+
+
+def test_the_signals_endpoint_reads_every_rule_on_every_root_as_a_job_and_labels_the_source(assets):
+    out = finished(assets, assets.extra_post["/api/futures/signals"]({"data": "simulated", "roots": ["CL", "NG", "GC", "HG", "ES"]}))
+    assert out["source"] == "simulated" and out["roots"] == ["CL", "ES", "GC", "HG", "NG"] and len(out["signals"]) == 12 and out["window"] == 504
+    ok = [r for r in out["signals"] if "strength" in r]
+    assert len(ok) >= 10 and all(set(r["strength"]) == set(out["roots"]) for r in ok) and set(out["agreement"]) == set(out["roots"]) and out["references"] and out["notes"]
+    wrong = wait(assets, assets.extra_post["/api/futures/signals"]({"data": "simulated", "roots": ["CL", "ZZ"]}))
+    assert wrong["status"] == "error" and "unknown futures roots" in wrong["error"]
+    with pytest.raises(ApiError, match="choose at least one root"):
+        assets.extra_post["/api/futures/signals"]({"data": "real", "roots": []})
+
+
 def test_a_futures_file_of_your_own_replaces_the_simulation(tmp_path):
     app = _app(tmp_path, _rich, root=tmp_path)
     d = tmp_path / "data" / "user" / "futures"
@@ -226,6 +270,36 @@ def test_a_crypto_strategy_backtest_runs_through_the_pipeline_and_refuses_data_i
         assets.extra_post["/api/crypto/strategy/backtest"]({"strategy": "exchange_flow"})
     with pytest.raises(ApiError, match="platform's data"):
         assets.extra_post["/api/crypto/strategy/backtest"]({"strategy": "spot_momentum", "assets": ["SOL"]})
+
+
+def test_the_catalog_lists_the_crypto_strategies_by_group_with_their_settings_and_sources(assets):
+    cat = _safe(assets.extra_get["/api/assets/catalog"]({}))
+    strategies = {s["id"]: s for s in cat["crypto_strategies"]}
+    assert len(strategies) == 16 and strategies["mayer"]["group"] == "Trend" and strategies["funding_carry"]["group"] == "Carry and basis" and strategies["vol_managed"]["group"] == "Risk management"
+    assert next(p for p in strategies["spot_momentum"]["params"] if p["name"] == "lookback")["default"] == 90 and strategies["mayer"]["references"][0]["cite"].startswith("Brock")
+    assert strategies["exchange_flow"]["available"] is False and strategies["exchange_flow"]["params"] == []
+
+
+@needs_crypto
+def test_the_crypto_overview_carries_the_price_against_its_own_history_and_the_sources(assets):
+    ov = _safe(assets.extra_get["/api/crypto/overview"]({"symbol": "BTC"}))
+    t = ov["technical"]
+    assert t["long_average"]["window"] == 200 and t["volatility_cone"]["rows"] and t["drawdown"]["episodes"] and t["relative"]["pair"] == "BTC/ETH"
+    assert set(ov["references"]) == {"trend", "volatility", "relative", "carry"} and all(r["cite"] for rs in ov["references"].values() for r in rs)
+    eth = _safe(assets.extra_get["/api/crypto/overview"]({"symbol": "ETH"}))
+    assert eth["technical"]["relative"]["pair"] == "ETH/BTC"
+
+
+@needs_crypto
+def test_the_crypto_backtest_takes_the_strategys_settings_and_the_signals_job_reads_the_rules(assets):
+    out = finished(assets, assets.extra_post["/api/crypto/strategy/backtest"]({"strategy": "mayer", "assets": ["BTC"], "params": {"floor": 1.0}}))
+    assert out["spec"]["models"][0]["params"] == {"floor": 1.0} and out["strategy"] == "mayer" and out["risk"]["sortino"] is not None
+    refused = wait(assets, assets.extra_post["/api/crypto/strategy/backtest"]({"strategy": "mayer", "params": {"cap": 0.5, "floor": 0.9}}))
+    assert refused["status"] == "error" and "Mayer multiple" in refused["error"]
+    with pytest.raises(ApiError, match="params must be an object"):
+        assets.extra_post["/api/crypto/strategy/backtest"]({"strategy": "mayer", "params": "cap=3"})
+    board = finished(assets, assets.extra_post["/api/crypto/signals"]({}))
+    assert board["assets"] == ["BTC", "ETH"] and len(board["signals"]) == 12 and board["source"] == "platform" and board["references"] and board["notes"] and set(board["agreement"]) == {"BTC", "ETH"}
 
 
 def test_your_own_crypto_file_is_analysed_and_marked_as_yours(tmp_path):

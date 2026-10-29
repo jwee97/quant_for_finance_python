@@ -265,7 +265,7 @@ def test_multi_asset_bundle_is_well_formed_and_every_instrument_carries_a_signal
     assert f2.macro.shape[1] == len(f2.assets) and (f2.macro.iloc[:, 0] == parts["fx"]["rates"].iloc[:, 0] - parts["fx"]["usd_rate"]).all()
 
 
-@pytest.mark.parametrize("name,kwargs", [("carry_xs", {}), ("carry_ts", {}), ("basis_momentum", {}), ("long_term_reversal", {"lookback": 500, "skip": 60})])
+@pytest.mark.parametrize("name,kwargs", [("carry_xs", {}), ("carry_ts", {}), ("basis_momentum", {}), ("momentum_carry", {}), ("long_term_reversal", {"lookback": 500, "skip": 60})])
 def test_cross_asset_models_are_causal_and_forecast(world, name, kwargs):
     b, _ = world
     model = MODELS.create(name, **kwargs)
@@ -299,7 +299,7 @@ def test_carry_models_make_money_when_carry_is_the_return_and_refuse_bundles_wit
     res = Pipeline(PipelineSpec.from_dict({"name": "carry_ts", "models": [{"name": "carry_ts"}], "allocation": {"allocator": "sleeves"}}), cfg, b).run()
     assert res.metrics["sharpe"] > 0.5
     plain = bundle_from_prices(prices, name="no-signals")
-    for name in ("carry_xs", "carry_ts", "basis_momentum"):
+    for name in ("carry_xs", "carry_ts", "basis_momentum", "momentum_carry"):
         with pytest.raises(KeyError):
             MODELS.create(name).score(plain)
     with pytest.raises(ValueError):

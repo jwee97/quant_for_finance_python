@@ -230,6 +230,80 @@ def curve_history(data: CurveData, dates: int = 3, spacing: int = 21) -> list[di
     return out
 
 
+# ------------------------------------------------------------------------------------------------------------------ the shape of the curve through time and its factors
+def curve_shape_history(data: CurveData, depth: int = 8, step: int = 21) -> dict:
+    """How the shape of the curve changed: for every ``step``-th date back from the last, the log of each contract's price over the front's (``ln(F_k / F_1)`` for ``k`` = 2 to ``depth``). Positive is
+    contango (later contracts dearer), negative backwardation; a contract the curve does not reach on a date is ``None``."""
+    ts = _panel(data, depth)
+    price = ts["price"].dropna(subset=["F1"])
+    cols = [c for c in price.columns if c != "F1"]
+    if not cols:
+        raise ValueError("the curve has only one contract: there is no shape to show")
+    pos = list(range(len(price) - 1, -1, -max(1, int(step))))[::-1]
+    sample = np.log(price.iloc[pos][cols].div(price.iloc[pos]["F1"], axis=0))
+    values = [[None if not np.isfinite(v) else round(float(v), 5) for v in sample[c]] for c in cols]
+    return {"dates": [str(d.date()) for d in sample.index], "ranks": [int(c[1:]) for c in cols], "values": values, "step_days": int(step)}
+
+
+def rank_changes(long: pd.DataFrame, depth: int = 8) -> pd.DataFrame:
+    """Daily log price changes of the contracts that held ranks 1 to ``depth`` on the PREVIOUS date, one column ``F1 .. F{depth}`` per rank. A contract keeps its own price history through its life, so the
+    change in ``F2`` is that of the contract that was second yesterday, not of whichever one is second today; a contract that has expired (or has no price) on the day has no change."""
+    df = long[["date", "contract", "expiry", "price"]].copy()
+    df["date"], df["expiry"] = pd.to_datetime(df["date"]), pd.to_datetime(df["expiry"])
+    df = df[(df["expiry"] >= df["date"]) & (df["price"] > 0)].dropna(subset=["price"])
+    df["rank"] = df.groupby("date")["expiry"].rank(method="first")
+    df = df.sort_values(["contract", "date"])
+    position = pd.Series(np.arange(df["date"].nunique()), index=np.sort(df["date"].unique()))
+    df["pos"] = df["date"].map(position)
+    by = df.groupby("contract")
+    df["step"] = df["pos"] - by["pos"].shift(1)
+    df["prev_rank"] = by["rank"].shift(1)
+    df["change"] = np.log(df["price"]) - np.log(by["price"].shift(1))
+    kept = df[(df["step"] == 1) & (df["prev_rank"] <= depth)]
+    out = kept.pivot(index="date", columns="prev_rank", values="change").sort_index()
+    out.columns = [f"F{int(c)}" for c in out.columns]
+    return out
+
+
+def _factor_label(loadings: np.ndarray) -> str:
+    """Level (one sign across the curve), slope (one change of sign), curvature (two) or higher order, from the signs of the loadings that are not negligible."""
+    big = loadings[np.abs(loadings) >= 0.1 * np.abs(loadings).max()]
+    changes = int(np.sum(np.sign(big[1:]) != np.sign(big[:-1])))
+    return {0: "level", 1: "slope", 2: "curvature"}.get(changes, "higher order")
+
+
+def pca_of_changes(changes: pd.DataFrame, components: int = 3) -> dict:
+    """The principal components of the covariance of ``changes`` (rows are days, columns the points of the curve): each component's share of the variance, its loadings, and its label (level, slope,
+    curvature). Signs are fixed so that the level loads up, the slope loads more on the back than the front and the curvature loads more on the middle than on the ends."""
+    x = changes.to_numpy(dtype=float)
+    x = x - x.mean(axis=0)
+    cov = x.T @ x / (len(x) - 1)
+    values, vectors = np.linalg.eigh(cov)
+    order = np.argsort(values)[::-1]
+    values, vectors = values[order], vectors[:, order]
+    n = vectors.shape[0]
+    out = []
+    for k in range(min(components, n)):
+        v = vectors[:, k].copy()
+        label = _factor_label(v)
+        key = {"level": v.sum(), "slope": v[-1] - v[0], "curvature": v[n // 2] - 0.5 * (v[0] + v[-1])}.get(label, v[np.argmax(np.abs(v))])
+        if key < 0:
+            v = -v
+        out.append({"label": label, "explained": float(values[k] / values.sum()), "loadings": [round(float(a), 5) for a in v]})
+    return {"components": out, "total_explained": float(sum(c["explained"] for c in out)), "n_days": int(len(x))}
+
+
+def term_structure_pca(data: CurveData, depth: int = 8, components: int = 3) -> dict:
+    """What moves the curve: the principal components of the daily log price changes of the contracts at ranks 1 to ``depth`` (Litterman and Scheinkman 1991 for bonds; Tolmasky and Hindanov 2002 for
+    petroleum futures). The first few usually say a parallel move, a tilt and a hump, and how much of the variance each holds."""
+    changes = rank_changes(data.long, depth).dropna()
+    if changes.shape[1] < 3 or len(changes) < 60:
+        raise ValueError(f"at least 60 days with three or more contracts are needed for the factors of the curve ({len(changes)} here)")
+    out = pca_of_changes(changes, components)
+    out["ranks"] = [int(c[1:]) for c in changes.columns]
+    return out
+
+
 # ------------------------------------------------------------------------------------------------------------------ roll
 def calendar_roll_date(expiry, roll_days: int) -> pd.Timestamp:
     return pd.Timestamp(expiry) - pd.Timedelta(days=int(roll_days))
@@ -310,7 +384,23 @@ def carry_dashboard(data: CurveData) -> dict:
     return {"root": data.root, "as_of": str(cy.index[-1].date()), "state": snap["state"], "carry": now, "carry_ma_21": float(cy.tail(21).mean()), "carry_percentile_1y": percentile_rank(year, now),
             "carry_zscore": last_zscore(cy, 252), "excess_return_vol": vol, "carry_to_vol": now / vol if np.isfinite(vol) and vol > 0 else None,
             "carry_earned_1y": earned, "excess_return_1y": realised, "curvature": snap["curvature"],
-            "series": {"dates": [str(d.date()) for d in cy.index[-400:]], "carry": [round(float(v), 5) for v in cy.tail(400)], "carry_ma": [None if not np.isfinite(v) else round(float(v), 5) for v in cy.rolling(21).mean().tail(400)]}}
+            "series": {"dates": [str(d.date()) for d in cy.index[-400:]], "carry": [round(float(v), 5) for v in cy.tail(400)], "carry_ma": [None if not np.isfinite(v) else round(float(v), 5) for v in cy.rolling(21).mean().tail(400)],
+                       "bands": {f"p{int(q * 100)}": [None if not np.isfinite(v) else round(float(v), 5) for v in cy.rolling(252, min_periods=60).quantile(q).tail(400)] for q in CARRY_BAND_LEVELS}},
+            "by_month": carry_by_month(cy)}
+
+
+CARRY_BAND_LEVELS = (0.1, 0.25, 0.5, 0.75, 0.9)
+
+
+def carry_by_month(carry_series: pd.Series) -> list[dict]:
+    """The carry of each calendar month of the year, over the whole history: the mean and median daily carry, the share of days with positive carry (backwardation) and the number of years that month
+    appears in. A seasonal commodity (natural gas, with its winter premium) has a shape here; with a few years of history it describes the sample and is not a calendar to trade."""
+    out = []
+    for month in range(1, 13):
+        v = carry_series[carry_series.index.month == month]
+        if len(v):
+            out.append({"month": month, "mean": float(v.mean()), "median": float(v.median()), "positive": float((v > 0).mean()), "years": int(v.index.year.nunique()), "days": int(len(v))})
+    return out
 
 
 def basis_dashboard(data: CurveData) -> dict:
@@ -405,12 +495,21 @@ def futures_snapshot(data: CurveData) -> AssetSnapshot:
 
 # ------------------------------------------------------------------------------------------------------------------ strategies
 FUTURES_STRATEGIES = {
-    "carry_ts": {"label": "Carry (time-series)", "model": "carry_ts", "allocator": "sleeves", "lookback": "smooth", "text": "Long where the roll yield is positive and short where negative, sized by carry over volatility."},
-    "carry_xs": {"label": "Carry (cross-sectional)", "model": "carry_xs", "allocator": "score_stack", "lookback": None, "text": "Long the high-carry roots against the low-carry ones within each asset class."},
-    "basis_momentum": {"label": "Basis momentum", "model": "basis_momentum", "allocator": "score_stack", "lookback": None, "text": "Favour commodities whose front contract has outperformed the second over the last year."},
-    "tsmom": {"label": "Trend", "model": "tsmom", "allocator": "score_stack", "lookback": "lookback", "text": "Long what has risen over the lookback, short what has fallen, sized by volatility."},
-    "donchian": {"label": "Breakout", "model": "donchian", "allocator": "score_stack", "lookback": "entry", "text": "Long a new high of the lookback window, short a new low."},
-    "xs_momentum": {"label": "Cross-sectional momentum", "model": "xs_momentum", "allocator": "score_stack", "lookback": "lookback", "text": "Long the strongest roots against the weakest."},
+    "carry_ts": {"label": "Carry (time-series)", "group": "Carry and curve", "model": "carry_ts", "allocator": "sleeves", "lookback": "smooth", "text": "Long where the roll yield is positive and short where negative, sized by carry over volatility."},
+    "carry_xs": {"label": "Carry (cross-sectional)", "group": "Carry and curve", "model": "carry_xs", "allocator": "score_stack", "lookback": None, "needs": "class", "text": "Long the high-carry roots against the low-carry ones within each asset class."},
+    "basis_momentum": {"label": "Basis momentum", "group": "Carry and curve", "model": "basis_momentum", "allocator": "score_stack", "lookback": None, "needs": "commodities", "text": "Favour commodities whose front contract has outperformed the second over the last year."},
+    "momentum_carry": {"label": "Trend and carry together", "group": "Carry and curve", "model": "momentum_carry", "allocator": "sleeves", "lookback": "lookback", "text": "The weighted average of a bounded trend signal and a bounded carry signal for each root: trend pays after a move has started, carry while the curve stays as it is."},
+    "tsmom": {"label": "Trend", "group": "Trend", "model": "tsmom", "allocator": "score_stack", "lookback": "lookback", "text": "Long what has risen over the lookback, short what has fallen, sized by volatility."},
+    "ewmac": {"label": "Multi-speed trend (Carver)", "group": "Trend", "model": "carver_ewmac", "allocator": "sleeves", "lookback": None, "text": "Six speeds of exponentially weighted crossover, each scaled to the same average size, capped and averaged with a diversification multiplier."},
+    "tstat": {"label": "Trend by t-statistic (Baltas and Kosowski)", "group": "Trend", "model": "tstat_momentum", "allocator": "sleeves", "lookback": "lookback", "text": "The t-statistic of the past year's daily returns, capped at one: a steady drift counts for more than a lucky jump, and positions move in and out gradually."},
+    "tsmom_multi": {"label": "Multi-horizon trend (Hurst, Ooi and Pedersen)", "group": "Trend", "model": "tsmom_multi", "allocator": "sleeves", "lookback": None, "text": "The average of the signs of the one-, three- and twelve-month returns: most of the premium of the single lookback at about half its turnover."},
+    "ma_ensemble": {"label": "Moving-average ensemble (Baz et al.)", "group": "Trend", "model": "ma_ensemble", "allocator": "sleeves", "lookback": None, "text": "Three exponential crossovers (8/24, 16/48 and 32/96 days) normalised by the volatility of price changes, with a response that fades extreme trends."},
+    "kama": {"label": "Adaptive trend (Kaufman)", "group": "Trend", "model": "kama_trend", "allocator": "sleeves", "lookback": "er_window", "text": "Long above an average that speeds up in clean trends and slows in noise, short below it: fewer whipsaws than a fixed-length average."},
+    "donchian": {"label": "Breakout", "group": "Trend", "model": "donchian", "allocator": "score_stack", "lookback": "entry", "text": "Long a new high of the lookback window, short a new low."},
+    "xs_momentum": {"label": "Cross-sectional momentum", "group": "Cross-section", "model": "xs_momentum", "allocator": "score_stack", "lookback": "lookback", "needs": "cross", "text": "Long the strongest roots against the weakest."},
+    "skew": {"label": "Skewness premium (Fernandez-Perez et al.)", "group": "Cross-section", "model": "skew_premium", "allocator": "score_stack", "lookback": "window", "needs": "cross", "text": "Long the roots whose recent daily returns are the most negatively skewed, against the most positively skewed: lottery-like roots are dear."},
+    "vr_switch": {"label": "Variance-ratio switch (Lo and MacKinlay)", "group": "Switches and reversion", "model": "variance_ratio_switch", "allocator": "sleeves", "lookback": "window", "text": "Follow the last move where the variance ratio says moves persist, fade it where it says they reverse, and stay out where it cannot tell."},
+    "ou": {"label": "Mean reversion (Ornstein-Uhlenbeck)", "group": "Switches and reversion", "model": "ou_reversion", "allocator": "sleeves", "lookback": "window", "text": "Fade the deviation from the long-run mean, only where a unit-root test rejects a random walk and the half-life is short."},
 }
 _BUNDLES: "OrderedDict[tuple, object]" = OrderedDict()
 
@@ -480,12 +579,14 @@ def _real_bundle_for(curves: dict[str, CurveData]):
 
 
 def run_futures_strategy(config, strategy: str, roots: list[str] | None = None, frequency: str | None = None, lookback: int | None = None, target_vol: float | None = None, cost_bps: float = 2.0,
-                         as_of=None, curves: dict[str, CurveData] | None = None) -> dict:
+                         as_of=None, curves: dict[str, CurveData] | None = None, params: dict | None = None) -> dict:
     """Run one of ``FUTURES_STRATEGIES`` through the platform pipeline: on the SIMULATED roots, or, given ``curves`` (``{root: CurveData}`` of downloaded or user files), on those real contract tables.
     The signal is traded as written (the calibrated forecast needs more history than the simulation has); ``cost_bps`` is the one-way cost of trading the whole book. On simulated prices the result
     checks the machinery, not the strategy; on real ones it is a backtest of the excess return of holding the nearest contract, with the limits listed in its notes."""
+    from ..framework import MODELS, load_library
     from .strategy_runs import run_strategy, subset_bundle
 
+    load_library()
     if strategy not in FUTURES_STRATEGIES:
         raise ValueError(f"unknown futures strategy '{strategy}'; choose from {sorted(FUTURES_STRATEGIES)}")
     spec = FUTURES_STRATEGIES[strategy]
@@ -502,19 +603,25 @@ def run_futures_strategy(config, strategy: str, roots: list[str] | None = None, 
         classes = {r: ROOTS[r].asset_class for r in chosen}
     if not chosen:
         raise ValueError("choose at least one root")
-    if len(chosen) < 2 and strategy in ("carry_xs", "xs_momentum"):
+    needs = spec.get("needs")
+    if needs in ("cross", "class") and len(chosen) < 2:
         raise ValueError("a cross-sectional strategy needs at least two roots")
-    if strategy == "carry_xs" and max(Counter(classes.values()).values()) < 2:
+    if needs == "class" and max(Counter(classes.values()).values()) < 2:
         raise ValueError("cross-sectional carry ranks the roots within an asset class: choose at least two roots of the same class (chosen: "
                          + ", ".join(f"{r} is {c}" for r, c in sorted(classes.items())) + ")")
-    if strategy == "basis_momentum" and sum(c == "commodity" for c in classes.values()) < 2:
+    if needs == "commodities" and sum(c == "commodity" for c in classes.values()) < 2:
         raise ValueError("basis momentum ranks commodities: choose at least two commodity roots" + ("" if real else " (CL, NG, HG)"))
     if real:
         bundle, report = _real_bundle_for(curves)
     else:
         bundle, report = futures_bundle_for(chosen, as_of), None
-    params = {spec["lookback"]: int(lookback)} if (lookback is not None and spec["lookback"]) else {}
-    out = run_strategy(subset_bundle(bundle, sorted(chosen)), config, spec["model"], params, rebalance=frequency, target_vol=target_vol, cost_bps=float(cost_bps), label=spec["label"],
+    settings = {spec["lookback"]: int(lookback)} if (lookback is not None and spec["lookback"]) else {}
+    settings.update(params or {})                                                                    # the settings of the strategy's own constructor, which win over the single lookback
+    try:
+        MODELS.create(spec["model"], **settings)
+    except (TypeError, ValueError, KeyError) as error:
+        raise ValueError(f"{spec['label']}: {error}") from None
+    out = run_strategy(subset_bundle(bundle, sorted(chosen)), config, spec["model"], settings, rebalance=frequency, target_vol=target_vol, cost_bps=float(cost_bps), label=spec["label"],
                        allocator=spec["allocator"])
     out.update({"strategy": strategy, "label": spec["label"], "text": spec["text"], "roots": sorted(chosen), "cost_bps": float(cost_bps), "source": "real" if real else "simulated"})
     if real:
@@ -528,6 +635,35 @@ def run_futures_strategy(config, strategy: str, roots: list[str] | None = None, 
     else:
         out["notes"] = ["The futures are a Schwartz-Smith model simulation: the result checks that carry, roll and costs are booked correctly, not whether the strategy earns money.",
                         "Returns are the excess return of holding the front contract and rolling it; margin and funding are not modelled."]
+    return out
+
+
+# ------------------------------------------------------------------------------------------------------------------ what every rule says today
+SIGNAL_BOARD = (
+    ("Trend, one year", "tsmom", {}), ("Trend, six speeds (Carver)", "carver_ewmac", {}), ("Trend, t-statistic", "tstat_momentum", {}), ("Trend, three horizons", "tsmom_multi", {}),
+    ("Trend, moving averages", "ma_ensemble", {}), ("Trend, adaptive", "kama_trend", {}), ("Carry", "carry_ts", {}), ("Carry within the class", "carry_xs", {}), ("Basis momentum", "basis_momentum", {}),
+    ("Trend and carry together", "momentum_carry", {}), ("Skewness", "skew_premium", {}), ("Variance-ratio switch", "variance_ratio_switch", {}),
+)
+def signals_board(bundle, window: int = 504) -> dict:
+    """What each rule of ``SIGNAL_BOARD`` says about each root on the last day (see ``strategy_runs.signals_board``)."""
+    from .strategy_runs import signals_board as board
+
+    return board(bundle, SIGNAL_BOARD, window)
+
+
+def run_signals(roots: list[str] | None = None, as_of=None, curves: dict[str, CurveData] | None = None) -> dict:
+    """``signals_board`` on the simulated roots, or, given ``curves`` (``{root: CurveData}`` of downloaded or user files), on those real contract tables."""
+    if curves is not None:
+        curves = dict(sorted(((r.upper(), data) for r, data in curves.items()), key=lambda item: item[0]))
+        bundle, report = _real_bundle_for(curves)
+    else:
+        chosen = [r.upper() for r in (roots or list(ROOTS))]
+        bad = [r for r in chosen if r not in ROOTS]
+        if bad:
+            raise ValueError(f"unknown futures roots {bad}; the simulated roots are {sorted(ROOTS)}")
+        bundle, report = futures_bundle_for(sorted(chosen), as_of), None
+    out = signals_board(bundle)
+    out.update({"roots": list(bundle.prices.columns), "source": "real" if curves is not None else "simulated", "coverage": report})
     return out
 
 

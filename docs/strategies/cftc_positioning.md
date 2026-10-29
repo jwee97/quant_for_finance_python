@@ -33,6 +33,7 @@ Macro series enter with their publication lags; revisions are not modelled.
 Where the rule comes from. A source is not evidence that it works on this repository's data: the survey above and the application's own result pages say that.
 
 - [Bessembinder (1992), Systematic risk, hedging pressure, and risk premiums in futures markets, Review of Financial Studies 5(4)](https://doi.org/10.1093/rfs/5.4.637)
+- [Basu and Miffre (2013), Capturing the risk premium of commodity futures: the role of hedging pressure, Journal of Banking & Finance 37(7)](https://doi.org/10.1016/j.jbankfin.2013.02.031)
 
 ## Learn more
 

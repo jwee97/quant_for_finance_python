@@ -355,23 +355,129 @@ def cross_exchange(s: CryptoSeries, slippage_bps: float = 1.0, notional: float =
 
 
 # ------------------------------------------------------------------------------------------------------------------ strategies
+# ------------------------------------------------------------------------------------------------------------------ the price against its history
+VOL_CONE_DAYS = (7, 14, 30, 60, 90)
+MAYER_CAP = 2.4
+
+
+def volatility_cone(spot: pd.Series, horizons: tuple = VOL_CONE_DAYS) -> dict:
+    """Realised volatility over the last ``h`` days for several ``h``, against every ``h``-day window of the coin's own history (annualised by 365): the lowest, the 10th, 25th, 50th, 75th and 90th percentiles
+    and the highest, and where today's sits among them (Burghardt and Lane 1990 draw the same cone for options). A short window that is high while a long one is low is a volatility spike; the reverse
+    is a calm after a storm. A horizon the history is too short for (under 60 windows) is left out."""
+    returns = np.log(spot.dropna()).diff().dropna()
+    rows = []
+    for h in horizons:
+        vol = (returns.rolling(h).std(ddof=1) * math.sqrt(ANN)).dropna()
+        if len(vol) < 60:
+            continue
+        q = vol.quantile([0.1, 0.25, 0.5, 0.75, 0.9])
+        rows.append({"days": int(h), "now": float(vol.iloc[-1]), "min": float(vol.min()), "p10": float(q[0.1]), "p25": float(q[0.25]), "median": float(q[0.5]), "p75": float(q[0.75]), "p90": float(q[0.9]),
+                     "max": float(vol.max()), "percentile": float((vol <= vol.iloc[-1]).mean()), "windows": int(len(vol))})
+    return {"rows": rows, "history_days": int(len(returns))}
+
+
+def long_average_view(spot: pd.Series, window: int = 200, days: int = 730, cap: float = MAYER_CAP) -> dict | None:
+    """The price, its ``window``-day average and the multiple of the one over the other (the *Mayer multiple* for a 200-day window: Trace Mayer's measure of how stretched Bitcoin is) over the last ``days``
+    days, with today's multiple and its percentile in the whole history. ``None`` when the history is shorter than the window."""
+    price = spot.dropna()
+    average = price.rolling(window, min_periods=window).mean()
+    multiple = (price / average).dropna()
+    if multiple.empty:
+        return None
+    tail = multiple.index[-int(days):]
+    return {"window": int(window), "cap": float(cap), "dates": [str(d.date()) for d in tail], "price": [float(v) for v in price.reindex(tail)], "average": [float(v) for v in average.reindex(tail)],
+            "multiple": [round(float(v), 4) for v in multiple.reindex(tail)], "now": float(multiple.iloc[-1]), "percentile": percentile_rank(multiple, float(multiple.iloc[-1])),
+            "share_above_cap": float((multiple >= cap).mean()), "share_below_one": float((multiple < 1.0).mean())}
+
+
+def relative_view(coin: CryptoSeries, other: CryptoSeries, window: int = 60, corr_window: int = 90, days: int = 730) -> dict | None:
+    """One coin priced in another: the ratio, its z-score against the last ``window`` days of its own log (how stretched the pair is), and the rolling correlation of the two coins' daily returns over
+    ``corr_window`` days. ``None`` when the two share fewer than ``window + 30`` days."""
+    both = pd.concat([coin.spot, other.spot], axis=1, join="inner").dropna()
+    both.columns = ["a", "b"]
+    if len(both) < window + 30:
+        return None
+    log_ratio = np.log(both["a"] / both["b"])
+    z = (log_ratio - log_ratio.rolling(window).mean()) / log_ratio.rolling(window).std(ddof=1)
+    corr = np.log(both).diff().dropna().iloc[:, 0].rolling(corr_window).corr(np.log(both).diff().dropna().iloc[:, 1])
+    tail = both.index[-int(days):]
+    clean = lambda x: [None if not np.isfinite(v) else round(float(v), 4) for v in x.reindex(tail)]               # noqa: E731
+    return {"pair": f"{coin.symbol}/{other.symbol}", "window": int(window), "corr_window": int(corr_window), "dates": [str(d.date()) for d in tail], "ratio": [round(float(v), 6) for v in (both["a"] / both["b"]).reindex(tail)],
+            "z": clean(z), "correlation": clean(corr), "z_now": None if not np.isfinite(z.iloc[-1]) else float(z.iloc[-1]), "correlation_now": None if not np.isfinite(corr.iloc[-1]) else float(corr.iloc[-1]),
+            "correlation_mean": float(corr.dropna().mean()) if corr.notna().any() else None}
+
+
+def drawdown_view(spot: pd.Series, days: int = 1500, limit: int = 5) -> dict:
+    """How far below its previous high the coin has been, through the last ``days`` days, and its ``limit`` deepest falls from a peak (peak, low, the day the peak was regained)."""
+    from ..risk import performance
+
+    price = spot.dropna()
+    depth = price / price.cummax() - 1.0
+    tail = depth.index[-int(days):]
+    return {"dates": [str(d.date()) for d in tail], "depth": [round(float(v), 4) for v in depth.reindex(tail)], "now": float(depth.iloc[-1]), "episodes": performance.drawdown_episodes(price.pct_change().dropna(), limit)}
+
+
+def technical_view(s: CryptoSeries, other: CryptoSeries | None = None, days: int = 730) -> dict:
+    """The coin's price against its own history and against another coin: the cone of its volatility, its multiple of the 200-day average, its drawdowns and (given ``other``) the ratio and correlation."""
+    return {"volatility_cone": volatility_cone(s.spot), "long_average": long_average_view(s.spot, days=days), "drawdown": drawdown_view(s.spot), "relative": None if other is None else relative_view(s, other, days=days)}
+
+
 CRYPTO_STRATEGIES = {
-    "spot_momentum": {"label": "Spot momentum", "model": "tsmom", "params": {"lookback": 90}, "assets": "spot", "text": "Long what has risen over the lookback, short what has fallen, sized by volatility (time-series momentum)."},
-    "funding_carry": {"label": "Funding carry", "model": "funding_carry", "params": {}, "assets": "carry", "text": "Hold long-spot / short-perpetual when trailing funding is high and reverse it when negative."},
-    "basis_trade": {"label": "Basis trade", "model": "basis_reversion", "params": {}, "assets": "carry", "text": "Hold the carry position when the perpetual trades rich to spot against its own history."},
-    "vol_breakout": {"label": "Volatility breakout", "model": "vol_breakout", "params": {"window": 20, "k": 2.0}, "assets": "spot", "text": "Long above the moving average plus k ATRs, short below it minus k ATRs."},
-    "stablecoin_flow": {"label": "Stablecoin flow", "model": "stablecoin_flow", "params": {"window": 30}, "assets": "spot", "text": "Long BTC and ETH when the total stablecoin supply has been growing quickly."},
-    "regime_trend": {"label": "Regime-filtered trend", "model": "ma_crossover", "params": {"fast": 20, "slow": 100}, "assets": "spot", "regime": "vol_state", "text": "A moving-average crossover whose volatility target depends on the volatility regime."},
-    "exchange_flow": {"label": "Exchange-flow", "model": None, "params": {}, "assets": "spot", "text": "Needs exchange net-flow data, which the platform does not have."},
+    "spot_momentum": {"label": "Spot momentum", "group": "Trend", "model": "tsmom", "params": {"lookback": 90}, "assets": "spot", "text": "Long what has risen over the lookback, short what has fallen, sized by volatility (time-series momentum)."},
+    "funding_carry": {"label": "Funding carry", "group": "Carry and basis", "model": "funding_carry", "params": {}, "assets": "carry", "text": "Hold long-spot / short-perpetual when trailing funding is high and reverse it when negative."},
+    "basis_trade": {"label": "Basis trade", "group": "Carry and basis", "model": "basis_reversion", "params": {}, "assets": "carry", "text": "Hold the carry position when the perpetual trades rich to spot against its own history."},
+    "vol_breakout": {"label": "Volatility breakout", "group": "Trend", "model": "vol_breakout", "params": {"window": 20, "k": 2.0}, "assets": "spot", "text": "Long above the moving average plus k ATRs, short below it minus k ATRs."},
+    "stablecoin_flow": {"label": "Stablecoin flow", "group": "On-chain", "model": "stablecoin_flow", "params": {"window": 30}, "assets": "spot", "text": "Long BTC and ETH when the total stablecoin supply has been growing quickly."},
+    "regime_trend": {"label": "Regime-filtered trend", "group": "Trend", "model": "ma_crossover", "params": {"fast": 20, "slow": 100}, "assets": "spot", "regime": "vol_state", "text": "A moving-average crossover whose volatility target depends on the volatility regime."},
+    "ewmac": {"label": "Multi-speed trend (Carver)", "group": "Trend", "model": "carver_ewmac", "params": {}, "assets": "spot", "allocator": "sleeves", "text": "Six speeds of exponentially weighted crossover, each scaled to the same average size, capped and averaged with a diversification multiplier."},
+    "tstat": {"label": "Trend by t-statistic (Baltas and Kosowski)", "group": "Trend", "model": "tstat_momentum", "params": {}, "assets": "spot", "allocator": "sleeves", "text": "The t-statistic of the past year's daily returns, capped at one: a steady drift counts for more than a lucky jump."},
+    "tsmom_multi": {"label": "Multi-horizon trend (Hurst, Ooi and Pedersen)", "group": "Trend", "model": "tsmom_multi", "params": {}, "assets": "spot", "allocator": "sleeves", "text": "The average of the signs of the one-, three- and twelve-month returns."},
+    "ma_ensemble": {"label": "Moving-average ensemble (Baz et al.)", "group": "Trend", "model": "ma_ensemble", "params": {}, "assets": "spot", "allocator": "sleeves", "text": "Three exponential crossovers normalised by the volatility of price changes, with a response that fades extreme trends."},
+    "kama": {"label": "Adaptive trend (Kaufman)", "group": "Trend", "model": "kama_trend", "params": {}, "assets": "spot", "allocator": "sleeves", "text": "Long above an average that speeds up in clean trends and slows in noise, short below it."},
+    "adx": {"label": "Directional movement (Wilder)", "group": "Trend", "model": "adx_trend", "params": {}, "assets": "spot", "allocator": "sleeves", "text": "Follow the direction of the move only while the average directional index says that there is a trend."},
+    "breakout": {"label": "Breakout (Donchian)", "group": "Trend", "model": "donchian", "params": {}, "assets": "spot", "allocator": "sleeves", "text": "Long a new high of the entry window, short a new low, out on the opposite channel of the exit window."},
+    "mayer": {"label": "Mayer multiple", "group": "Trend", "model": "mayer_multiple", "params": {}, "assets": "spot", "allocator": "sleeves", "text": "Hold while the price is under 2.4 times its 200-day average, and sit out when it is above (set the floor to 1 to also sit out under the average)."},
+    "vol_managed": {"label": "Volatility-managed hold (Moreira and Muir)", "group": "Risk management", "model": "vol_managed_long", "params": {}, "assets": "spot", "text": "Hold the asset with its exposure scaled down when volatility is high and up when it is low."},
+    "exchange_flow": {"label": "Exchange-flow", "group": "On-chain", "model": None, "params": {}, "assets": "spot", "text": "Needs exchange net-flow data, which the platform does not have."},
 }
 
 
+CRYPTO_SIGNAL_BOARD = (
+    ("Trend, one year", "tsmom", {}), ("Trend, six speeds (Carver)", "carver_ewmac", {}), ("Trend, t-statistic", "tstat_momentum", {}), ("Trend, three horizons", "tsmom_multi", {}),
+    ("Trend, moving averages", "ma_ensemble", {}), ("Trend, adaptive", "kama_trend", {}), ("Directional movement", "adx_trend", {}), ("Mayer multiple", "mayer_multiple", {}),
+    ("Volatility-managed hold", "vol_managed_long", {}), ("Funding carry", "funding_carry", {}), ("Basis", "basis_reversion", {}), ("Stablecoin flow", "stablecoin_flow", {}),
+)
+
+
+CARRY_RULES = {"funding_carry", "basis_reversion"}
+
+
+def run_crypto_signals(config) -> dict:
+    """What each rule of ``CRYPTO_SIGNAL_BOARD`` says about BTC and ETH on the last day (``strategy_runs.signals_board`` on the platform's crypto bundle); the carry rules are read on the coin's long-spot,
+    short-perpetual index and shown under the coin."""
+    from ..framework.crypto_bundle import load_crypto_bundle
+    from .strategy_runs import signal_agreement, signals_board
+
+    out = signals_board(load_crypto_bundle(config), CRYPTO_SIGNAL_BOARD)
+    for row in out["signals"]:                                                              # a carry rule trades the coin's carry index; the board shows it under the coin
+        if "strength" in row:
+            where = (lambda a: f"{a}_CARRY") if row["id"] in CARRY_RULES else (lambda a: a)         # noqa: E731
+            row["score"], row["strength"] = ({a: row[k][where(a)] for a in REAL_SYMBOLS} for k in ("score", "strength"))
+    out["assets"] = list(REAL_SYMBOLS)
+    out["agreement"] = signal_agreement(out["signals"], out["assets"])
+    out["source"] = "platform"
+    return out
+
+
 def run_crypto_strategy(config, strategy: str, assets: list[str] | None = None, frequency: str | None = None, lookback: int | None = None, target_vol: float | None = None,
-                        fees_bps: float = 5.0, slippage_bps: float = 2.0, regime: str | None = None) -> dict:
+                        fees_bps: float = 5.0, slippage_bps: float = 2.0, regime: str | None = None, settings: dict | None = None) -> dict:
     """Run one of ``CRYPTO_STRATEGIES`` on the Deribit-based crypto bundle through the platform pipeline. ``assets`` picks BTC and/or ETH (the carry strategies trade the matching ``_CARRY`` index);
     ``fees_bps`` plus ``slippage_bps`` is the one-way cost of trading the whole book; ``regime`` overrides the strategy's detector. Weekday marks and 252-day annualisation, like every other backtest."""
+    from ..framework import MODELS, load_library
     from ..framework.crypto_bundle import load_crypto_bundle
     from .strategy_runs import run_strategy, subset_bundle
+
+    load_library()
 
     if strategy not in CRYPTO_STRATEGIES:
         raise ValueError(f"unknown crypto strategy '{strategy}'; choose from {sorted(CRYPTO_STRATEGIES)}")
@@ -394,8 +500,13 @@ def run_crypto_strategy(config, strategy: str, assets: list[str] | None = None, 
         params["fast"] = max(5, int(lookback) // 5)
     if lookback is not None and strategy == "vol_breakout":
         params["window"] = int(lookback)
+    params.update(settings or {})                                                           # the strategy's own settings, which win over the single lookback
+    try:
+        MODELS.create(spec["model"], **params)
+    except (TypeError, ValueError, KeyError) as error:
+        raise ValueError(f"{spec['label']}: {error}") from None
     out = run_strategy(subset_bundle(bundle, columns), config, spec["model"], params, rebalance=frequency, target_vol=target_vol, regime=regime or spec.get("regime"),
-                       cost_bps=float(fees_bps) + float(slippage_bps), label=spec["label"])
+                       cost_bps=float(fees_bps) + float(slippage_bps), label=spec["label"], allocator=spec.get("allocator"))
     out.update({"strategy": strategy, "label": spec["label"], "text": spec["text"], "assets": chosen, "fees_bps": float(fees_bps), "slippage_bps": float(slippage_bps), "source": "platform",
                 "notes": ["Deribit BTC and ETH daily data, weekday marks; the carry strategies trade a synthetic delta-neutral index (long spot, short perpetual, linear approximation).",
                           "Fees and slippage are one-way basis points on the traded notional; funding is earned inside the carry index."]})

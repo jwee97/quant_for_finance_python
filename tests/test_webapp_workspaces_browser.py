@@ -132,6 +132,59 @@ def test_the_futures_margin_view_prices_an_example_book_and_warns(ws):
     assert "Margin used" in ws.inner_text("#futures-results") and ws.locator("#futures-results .banner.err").count() == 0
 
 
+def test_the_futures_curve_shows_its_shape_through_time_its_factors_and_the_comparison_dates_you_choose(ws):
+    ws.click("#tab-futures")
+    ws.wait_for_selector("#futures-results .tile", timeout=90_000)
+    ws.wait_for_selector("#futures-results svg.chart")
+    text = ws.inner_text("#futures-results")
+    assert "How the shape of the curve changed" in text and "What moves the curve" in text and "Level" in text and "Where these ideas come from" in text
+    assert ws.locator("#futures-results .legend:has-text('Today') span").count() == 3                                                          # today and two earlier curves, a month apart
+    ws.locator("#futures select[data-key=spacing]").select_option("63")
+    ws.locator("#futures select[data-key=dates]").select_option("5")
+    _wait_until(ws, "document.querySelectorAll('#futures-results .legend')[0] && document.querySelectorAll('#futures-results .legend')[0].children.length === 5", 60)
+    legend = ws.locator("#futures-results .legend").first.inner_text()
+    assert legend.count("20") >= 5                                                                                                            # five dates, each a year of the form 20xx-mm-dd
+    _mode(ws, "futures", "carry")
+    ws.wait_for_selector("#futures-results:has-text('Carry by calendar month')")
+    text = ws.inner_text("#futures-results")
+    assert "Median of the last year" in text and "Middle 80% of the last year" in text and "Carry by calendar month" in text
+    assert "Koijen" in ws.locator("#futures-results details.how").last.text_content() and "Routledge" in ws.locator("#futures-results details.how").last.text_content()      # the sources, folded away
+
+
+def test_the_futures_backtest_lists_strategies_by_group_with_their_settings_and_draws_the_risk_views(ws):
+    ws.click("#tab-futures")
+    ws.wait_for_selector("#futures-results .tile", timeout=90_000)
+    _mode(ws, "futures", "backtest")
+    assert ws.evaluate("[...document.querySelectorAll('#futures select[data-key=strategy] optgroup')].map(g => g.label)") == ["Carry and curve", "Trend", "Cross-section", "Switches and reversion"]
+    ws.select_option("#futures select[data-key=strategy]", "momentum_carry")
+    assert ws.locator("#futures .params label.f").count() == 7 and ws.locator("#futures .refs a").count() >= 2
+    ws.locator("#futures .params label.f:has-text('trend weight') input").fill("0.8")
+    _run(ws, "futures")
+    ws.wait_for_selector("#futures-results .charts", timeout=300_000)
+    text = ws.inner_text("#futures-results")
+    for title in ("Rolling three-month volatility", "Monthly returns", "Distribution of daily returns", "Positions through time", "Return contributed by asset", "How alike the roots are", "Every risk measure", "Where the rule comes from"):
+        assert title in text, title
+    assert "trend weight 0.8" in text and ws.locator("#futures-results .tile").count() == 12                                                   # "What ran" names the one setting that was changed
+    ws.select_option("#futures select[data-key=strategy]", "skew")
+    boxes = ws.locator("#futures .checks input[type=checkbox]")
+    boxes.nth(0).uncheck()
+    assert ws.locator("#futures .checks input[type=checkbox]:checked").count() == 4 and not ws.locator("#futures .runbar button.primary").is_disabled()
+    for i in (1, 2, 3):
+        boxes.nth(i).uncheck()
+    assert ws.locator("#futures .runbar button.primary").is_disabled() and "at least two roots" in ws.inner_text("#futures .runbar")                    # a cross-sectional strategy needs two roots
+
+
+def test_the_futures_signals_board_reads_every_rule_on_every_root(ws):
+    ws.click("#tab-futures")
+    ws.wait_for_selector("#futures-results .tile", timeout=90_000)
+    _mode(ws, "futures", "signals")
+    _run(ws, "futures")
+    ws.wait_for_selector("#futures-results:has-text('Every rule on every root')", timeout=300_000)
+    text = ws.inner_text("#futures-results")
+    assert "What the rules say today" in text and "Where the rules agree" in text and "Where the rules come from" in text and "Most agreement" in text
+    assert ws.locator("#futures-results svg.chart").count() == 1 and ws.locator("#futures-results .card.wide table tbody tr").count() >= 5
+
+
 def test_the_crypto_views_keep_real_and_simulated_apart_and_count_what_survives_the_fees(ws):
     ws.click("#tab-crypto")
     ws.wait_for_selector("#crypto-results .tile", timeout=90_000)
@@ -142,6 +195,37 @@ def test_the_crypto_views_keep_real_and_simulated_apart_and_count_what_survives_
     _mode(ws, "crypto", "cross")
     ws.wait_for_selector("#crypto-results .earnrow", timeout=60_000)
     assert "Pairs that pay" in ws.inner_text("#crypto-results") and "illustrative" in ws.inner_text("#crypto-results")
+
+
+def test_the_crypto_overview_draws_the_price_against_its_own_history(ws):
+    ws.click("#tab-crypto")
+    ws.wait_for_selector("#crypto-results svg.chart", timeout=90_000)
+    text = ws.inner_text("#crypto-results")
+    for title in ("BTC against its 200-day average", "The cone of volatility", "Drawdown from the previous high", "BTC/ETH against its own 60 days", "BTC/ETH: rolling correlation", "Where these ideas come from"):
+        assert title in text, title
+    assert "Brock" in ws.locator("#crypto-results details.how").last.text_content() and "Liu and Tsyvinski" in ws.locator("#crypto-results details.how").last.text_content()
+
+
+def test_the_crypto_backtest_lists_strategies_by_group_with_settings_and_the_signals_board_reads_the_rules(ws):
+    ws.click("#tab-crypto")
+    ws.wait_for_selector("#crypto-results .tile", timeout=90_000)
+    _mode(ws, "crypto", "backtest")
+    assert ws.evaluate("[...document.querySelectorAll('#crypto select[data-key=strategy] optgroup')].map(g => g.label)") == ["Trend", "Carry and basis", "On-chain", "Risk management"]
+    ws.select_option("#crypto select[data-key=strategy]", "mayer")
+    assert ws.locator("#crypto .params label.f").count() == 3 and ws.locator("#crypto .refs a").count() >= 2
+    ws.locator("#crypto .params label.f:has-text('floor') input").fill("1")
+    _run(ws, "crypto")
+    ws.wait_for_selector("#crypto-results .charts", timeout=300_000)
+    text = ws.inner_text("#crypto-results")
+    for title in ("Rolling three-month volatility", "Distribution of daily returns", "Every risk measure", "How alike the assets are", "Where the rule comes from"):
+        assert title in text, title
+    assert "floor 1" in text and ws.locator("#crypto-results .tile").count() == 12
+    _mode(ws, "crypto", "signals")
+    assert ws.locator("#crypto select[data-key=symbol]").count() == 0                                                  # the board reads both coins: there is no coin to choose
+    _run(ws, "crypto")
+    ws.wait_for_selector("#crypto-results:has-text('Every rule on each coin')", timeout=300_000)
+    text = ws.inner_text("#crypto-results")
+    assert "What the rules say today" in text and "Where the rules agree" in text and "Mayer multiple" in text and ws.locator("#crypto-results svg.chart").count() == 1
 
 
 @pytest.mark.parametrize("tab, ready, title", [("options", "#options-results .tile", "Reading an option chain"), ("futures", "#futures-results .tile", "Reading a futures curve"), ("crypto", "#crypto-results .tile", "Crypto funding, basis"),
@@ -322,10 +406,10 @@ def test_an_app_without_the_data_routes_explains_the_card_instead_of_leaving_it_
 
 
 def test_an_app_behind_the_page_asks_for_a_restart_on_the_tabs_that_need_more_and_keeps_the_others(browser, live_ws):  # noqa: F811
-    """Each tab needs the API version it was written for: iTick arrived with 6 (Options, Crypto), the Futures tab's Yahoo search with 7, the Tune tab and the Machine learning tab's beginner tuning with 8, the Forecast tab with 9. An older app
+    """Each tab needs the API version it was written for: iTick arrived with 6 (Options), the Futures tab's Yahoo search with 7, and the signals board and strategy settings of the Futures and Crypto tabs with 12, the Tune tab and the Machine learning tab's beginner tuning with 8, the Forecast tab with 9. An older app
     says so on exactly the tabs that need a newer one, and the Backtest tab keeps working."""
-    needs = {"options": 6, "futures": 7, "crypto": 6, "ml": 8, "tune": 8, "forecast": 9}
-    for served in (5, 6, 7, 8, 9):
+    needs = {"options": 6, "futures": 12, "crypto": 12, "ml": 8, "tune": 8, "forecast": 9}
+    for served in (5, 6, 7, 8, 9, 11, 12):
         pg = _page_with(browser, live_ws, rewrite=lambda catalog, served=served: catalog.update(api_version=served))
         try:
             pg.wait_for_selector(".chip")

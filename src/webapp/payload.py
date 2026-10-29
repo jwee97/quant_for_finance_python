@@ -7,7 +7,7 @@ import math
 import numpy as np
 import pandas as pd
 
-from . import riskstats
+from ..risk import performance
 
 ANN = 252.0
 
@@ -45,11 +45,6 @@ def records(table, limit: int = 60) -> list[dict]:
     frame = frame.head(limit).reset_index(drop=isinstance(frame.index, pd.RangeIndex))
     frame.columns = [str(c) for c in frame.columns]
     return clean(frame.to_dict(orient="records"))
-
-
-def _monthly(net: pd.Series) -> list[dict]:
-    grouped = (1.0 + net).groupby([net.index.year, net.index.month]).prod() - 1.0
-    return [{"year": int(y), "month": int(m), "value": round(float(v), 5)} for (y, m), v in grouped.items()]
 
 
 def _annual(net: pd.Series) -> list[dict]:
@@ -275,11 +270,11 @@ def result_payload(result, bundle, flags: list[dict], universe: dict, spec: dict
             benches[name] = _series((1.0 + b.fillna(0.0)).cumprod(), 4)
             bench_returns[name] = b
     ref_name = "equal_weight" if "equal_weight" in bench_returns else next(iter(bench_returns), None)
-    rolling_beta = riskstats.rolling_beta(net, bench_returns[ref_name], int(ANN)).reindex(net.index) if ref_name else None
+    rolling_beta = performance.rolling_beta(net, bench_returns[ref_name], int(ANN)).reindex(net.index) if ref_name else None
     weights = result.weights.loc[start:]
     held = weights.shift(1).reindex(net.index)
     gross_exposure = weights.abs().sum(axis=1).resample("W").last().dropna()
-    net_exposure = weights.sum(axis=1).reindex(gross_exposure.index)
+    net_exposure = weights.sum(axis=1).resample("W").last().reindex(gross_exposure.index)           # a week is labelled by its Sunday, which is not a trading day: look the net up in the same weeks
     average = pd.DataFrame({"average_weight": weights.mean(), "average_abs_weight": weights.abs().mean(), "latest_weight": weights.iloc[-1]})
     tables = {}
     for key, table in result.tables.items():
@@ -293,10 +288,10 @@ def result_payload(result, bundle, flags: list[dict], universe: dict, spec: dict
         "flags": flags, "stats": _stats(net),
         "dates": [str(d.date()) for d in net.index], "equity": _series(equity, 4), "benchmarks": benches, "drawdown": _series(drawdown, 4), "rolling_sharpe": _series(rolling, 3),
         "exposure": {"dates": [str(d.date()) for d in gross_exposure.index], "gross": _series(gross_exposure, 3), "net": _series(net_exposure, 3)},
-        "monthly": _monthly(net), "annual": _annual(net),
-        "risk": riskstats.risk_metrics(net), "drawdown_episodes": riskstats.drawdown_episodes(net, 5), "rolling_vol": _series(riskstats.rolling_volatility(net, 63).reindex(net.index), 4),
-        "rolling_beta": None if rolling_beta is None else {"benchmark": ref_name, "values": _series(rolling_beta, 3)}, "calendar_months": riskstats.calendar_month_profile(net),
-        "benchmark_relative": {name: riskstats.benchmark_relative(net, b) for name, b in bench_returns.items()},
+        "monthly": performance.monthly_returns(net), "annual": _annual(net),
+        "risk": performance.risk_metrics(net), "drawdown_episodes": performance.drawdown_episodes(net, 5), "rolling_vol": _series(performance.rolling_volatility(net, 63).reindex(net.index), 4),
+        "rolling_beta": None if rolling_beta is None else {"benchmark": ref_name, "values": _series(rolling_beta, 3)}, "calendar_months": performance.calendar_month_profile(net),
+        "benchmark_relative": {name: performance.benchmark_relative(net, b) for name, b in bench_returns.items()},
         "weights": records(average.sort_values("average_abs_weight", ascending=False), 40),
         "contribution": records(result.tables["attribution_by_asset"], 40) if "attribution_by_asset" in result.tables else [],
         "held_days": int((held.abs().sum(axis=1) > 0).sum()),

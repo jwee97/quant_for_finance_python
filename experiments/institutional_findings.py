@@ -277,7 +277,8 @@ def main() -> int:
         from src.assets.bundles import multi_asset_demo_bundle
 
         rep.h("7. Multi-asset strategies on the synthetic cross-asset universe (simulated)")
-        names = {"carry_xs": "score_stack", "carry_ts": "sleeves", "tsmom": "sleeves", "basis_momentum": "score_stack", "long_term_reversal": "score_stack"}
+        names = {"carry_xs": "score_stack", "carry_ts": "sleeves", "tsmom": "sleeves", "basis_momentum": "score_stack", "long_term_reversal": "score_stack",
+                 "momentum_carry": "sleeves", "carver_ewmac": "sleeves", "tstat_momentum": "sleeves", "skew_premium": "score_stack", "variance_ratio_switch": "sleeves"}
         rows = {name: [] for name in names}
         for seed in range(3):
             b, _ = multi_asset_demo_bundle(2200, seed=seed)

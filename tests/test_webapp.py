@@ -552,7 +552,7 @@ def test_the_catalog_states_its_version_and_that_the_code_has_not_changed_since_
     from src.webapp import api
 
     catalog = app.catalog()
-    assert catalog["api_version"] == api.API_VERSION == 11
+    assert catalog["api_version"] == api.API_VERSION == 12
     assert catalog["restart_needed"] is False                       # nothing under src/ was touched while this test process ran
 
 
@@ -649,6 +649,8 @@ def test_the_earnings_numbers_add_up_on_a_real_run(app):
     assert sum(trip["pnl"] for trip in t["round_trips"]) == pytest.approx(e["gross_profit"], rel=1e-6, abs=0.01)         # every dollar made before costs belongs to some round trip
     assert t["stats"]["round_trips"] + t["stats"]["open_positions"] == t["total"] > 3 and t["stats"]["buys"] > 0 and t["stats"]["sells"] > 0
     assert 0 < t["stats"]["days_in_market"] <= 1 and e["exposure"]["peak"] <= 1.0 + 1e-9                          # the crossover rule's score is bounded: no leverage on one ticker
+    weekly = r["exposure"]
+    assert len(weekly["dates"]) == len(weekly["gross"]) == len(weekly["net"]) > 50 and all(v is not None for v in weekly["net"]) and all(abs(n) <= g + 1e-3 for n, g in zip(weekly["net"], weekly["gross"]))   # the net line was empty while it was looked up on Sundays
     assert e["benchmarks"]["equal_weight"]["pnl"] == pytest.approx(250_000 * (r["benchmarks"]["equal_weight"][-1] - 1.0), rel=2e-4)
     json.dumps(r, allow_nan=False)
 

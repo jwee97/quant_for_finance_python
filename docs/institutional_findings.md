@@ -190,6 +190,11 @@ Net Sharpe on three independent draws of a **simulated** universe (commodity fut
 | tsmom | -0.353 | 0.493 | -0.645 | -0.169 |
 | basis_momentum | -0.642 | 0.524 | 0.108 | -0.003 |
 | long_term_reversal | 0.513 | -1.415 | 0.420 | -0.161 |
+| momentum_carry | -0.412 | 0.654 | 0.034 | 0.092 |
+| carver_ewmac | 0.192 | 0.162 | -0.397 | -0.014 |
+| tstat_momentum | -0.292 | 0.550 | -0.192 | 0.022 |
+| skew_premium | 0.640 | 0.409 | -0.180 | 0.290 |
+| variance_ratio_switch | -0.246 | -1.090 | -0.098 | -0.478 |
 
 
 ## 8. Option strategies on the synthetic option market (simulated)

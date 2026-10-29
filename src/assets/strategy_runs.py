@@ -15,6 +15,7 @@ import pandas as pd
 
 from ..framework import Pipeline, PipelineSpec
 from ..framework.data import MarketBundle
+from ..risk import performance
 
 FREQUENCIES = ("daily", "weekly", "monthly")
 
@@ -61,10 +62,30 @@ def compact_result(result, top_weights: int = 8) -> dict:
     if metrics["gross_exposure_mean"] < 1e-9:
         warnings.append("The strategy held no position on any evaluated day: its signal never fired for this universe (a cross-sectional rule needs at least two assets of the same asset class, and a rule that needs "
                         "history needs more days than the data has).")
-    return {"start": str(net.index[0].date()), "end": str(net.index[-1].date()), "n_days": int(len(net)), "metrics": metrics,
-            "dates": [str(d.date()) for d in idx], "equity": [round(float(v), 5) for v in equity.reindex(idx).to_numpy()], "drawdown": [round(float(v), 5) for v in dd.reindex(idx).to_numpy()],
-            "benchmarks": benches, "years": years, "weights": {str(k): round(float(v), 4) for k, v in last.items()},
-            "deflated_sharpe_probability": result.validation.get("deflated_sharpe_probability"), "n_trials": result.validation.get("n_trials"), "warnings": warnings}
+    out = {"start": str(net.index[0].date()), "end": str(net.index[-1].date()), "n_days": int(len(net)), "metrics": metrics,
+           "dates": [str(d.date()) for d in idx], "equity": [round(float(v), 5) for v in equity.reindex(idx).to_numpy()], "drawdown": [round(float(v), 5) for v in dd.reindex(idx).to_numpy()],
+           "benchmarks": benches, "years": years, "weights": {str(k): round(float(v), 4) for k, v in last.items()},
+           "deflated_sharpe_probability": result.validation.get("deflated_sharpe_probability"), "n_trials": result.validation.get("n_trials"), "warnings": warnings}
+    out.update(_risk_views(result, net, idx))
+    return out
+
+
+def _risk_views(result, net: pd.Series, idx: pd.Index) -> dict:
+    """What the Backtest page shows beside the equity curve, for a pipeline result: the risk measures, the deepest falls, the volatility through time, the months and the distribution of days, the
+    benchmark's beta and alpha, what each asset earned, and how the book was spread through time."""
+    rolling = performance.rolling_volatility(net, 63).reindex(idx)
+    bench_returns = {name: ret.reindex(net.index) for name, ret in (result.benchmarks or {}).items() if ret.reindex(net.index).notna().sum() > 20}
+    table = result.tables.get("attribution_by_asset") if getattr(result, "tables", None) else None
+    contribution = [] if table is None else [{"asset": str(a), "contribution_pct": float(r.contribution_pct), "average_weight": float(r.average_weight), "asset_class": str(r.asset_class)} for a, r in table.iterrows()]
+    weights = result.weights.reindex(net.index).fillna(0.0)
+    weekly = weights.abs().sum(axis=1).resample("W").last().dropna()
+    monthly = weights.resample("MS").mean().tail(60)
+    order = weights.abs().mean().sort_values(ascending=False).index[:12]
+    return {"risk": performance.risk_metrics(net), "drawdown_episodes": performance.drawdown_episodes(net, 5), "rolling_vol": [None if not np.isfinite(v) else round(float(v), 4) for v in rolling.to_numpy()],
+            "calendar_months": performance.calendar_month_profile(net), "monthly": performance.monthly_returns(net), "distribution": performance.return_distribution(net),
+            "benchmark_relative": {name: performance.benchmark_relative(net, b) for name, b in bench_returns.items()}, "contribution": contribution,
+            "exposure": {"dates": [str(d.date()) for d in weekly.index], "gross": [round(float(v), 3) for v in weekly.to_numpy()], "net": [round(float(v), 3) for v in weights.sum(axis=1).resample("W").last().reindex(weekly.index).to_numpy()]},
+            "positions": {"months": [d.strftime("%Y-%m") for d in monthly.index], "assets": [str(a) for a in order], "values": [[round(float(v), 4) for v in monthly[a].to_numpy()] for a in order]}}
 
 
 def run_strategy(bundle: MarketBundle, config, model: str, params: dict | None = None, rebalance: str | None = None, target_vol: float | None = None, regime: str | None = None,
@@ -94,4 +115,53 @@ def run_strategy(bundle: MarketBundle, config, model: str, params: dict | None =
     out = compact_result(result)
     out["spec"] = {k: spec[k] for k in ("models", "execution", "risk", "regime", "allocation") if k in spec}
     out["universe"] = list(bundle.prices.columns)
+    out["correlation"] = correlation_view(bundle.returns.loc[out["start"]:out["end"]])
     return out
+
+
+def correlation_view(returns: pd.DataFrame, min_days: int = 60) -> dict | None:
+    """The correlation of the assets' daily returns over the days both have one (``None`` for the pair with fewer than ``min_days`` such days), and each asset's annualised volatility, for the matrix that
+    shows how alike the markets a book trades are. ``None`` for a single asset."""
+    if returns.shape[1] < 2:
+        return None
+    corr = returns.corr(min_periods=min_days)
+    return {"assets": [str(c) for c in returns.columns], "values": [[None if not np.isfinite(v) else round(float(v), 3) for v in row] for row in corr.to_numpy()],
+            "volatility": [None if not np.isfinite(v) else round(float(v), 4) for v in (returns.std(ddof=1) * np.sqrt(252.0)).to_numpy()]}
+
+
+STRONG = 0.25                                                                 # a signal this far from zero, in units of its own typical size, counts as a view
+
+
+def signals_board(bundle: MarketBundle, rules: tuple, window: int = 504) -> dict:
+    """What each rule of ``rules`` (``(label, model, settings)``) says about each asset of ``bundle`` on the last day: the rule's score, and the score over the average size of its own absolute score in the
+    last ``window`` days (its *strength*: 1 is a typical position, the sign is the side, capped at 3). A rule that cannot be computed for this bundle (a cross-sectional rule on one asset, a signal that
+    needs more history than there is, or series the bundle lacks) says why instead. ``agreement`` counts, for each asset, the rules that are long, short or without a view beyond ``STRONG``."""
+    from ..framework import MODELS, load_library
+
+    load_library()
+    assets = list(bundle.prices.columns)
+    rows = []
+    for label, name, params in rules:
+        row = {"id": name, "label": label}
+        try:
+            score = MODELS.create(name, **params).score(bundle).where(bundle.investable)
+        except (KeyError, ValueError) as error:
+            rows.append({**row, "error": str(error).strip("'\"")[:240]})
+            continue
+        live = score.dropna(how="all")
+        if live.empty:
+            rows.append({**row, "error": "no signal yet: the rule needs more history than these prices have, or more assets"})
+            continue
+        last = live.iloc[-1]
+        typical = score.abs().tail(window).mean().replace(0.0, np.nan)
+        strength = (last / typical).clip(-3.0, 3.0)
+        rows.append({**row, "date": str(live.index[-1].date()), "score": {a: None if not np.isfinite(last[a]) else float(last[a]) for a in assets},
+                     "strength": {a: None if not np.isfinite(strength[a]) else round(float(strength[a]), 3) for a in assets}})
+    return {"assets": assets, "signals": rows, "agreement": signal_agreement(rows, assets), "window": int(window), "strong": STRONG, "last_day": str(bundle.index[-1].date())}
+
+
+def signal_agreement(rows: list[dict], assets: list[str]) -> dict:
+    """For each asset, how many of the rules that were computed are long, short or without a view (a strength within ``STRONG`` of zero, or none)."""
+    shown = [r for r in rows if "strength" in r]
+    return {a: {"long": sum(1 for r in shown if (r["strength"][a] or 0.0) > STRONG), "short": sum(1 for r in shown if (r["strength"][a] or 0.0) < -STRONG),
+                "flat": sum(1 for r in shown if r["strength"][a] is None or abs(r["strength"][a]) <= STRONG)} for a in assets}

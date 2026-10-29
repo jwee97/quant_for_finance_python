@@ -7,6 +7,7 @@ error rather than inventing a signal. All are causal: the signal on date ``t`` i
 ``carry_ts``            time series: long an asset whose carry is positive, short if negative, sized by carry over volatility
 ``basis_momentum``      commodities: long where the front of the curve has been outperforming the back (Boons & Prado 2019), within the class
 ``long_term_reversal``  value proxy (Asness, Moskowitz & Pedersen 2013): fade the 5-year return, within each asset class
+``momentum_carry``      trend and carry together (Carver 2015; Fuertes, Miffre & Rallis 2010): the weighted average of a bounded trend signal and a bounded carry signal for each instrument
 """
 
 from __future__ import annotations
@@ -97,6 +98,39 @@ class BasisMomentum(ForecastModel):
         if len(members) >= 2:
             out[members] = _within_class_z(sig[members], data, 2)
         return out.where(data.investable)
+
+
+@register_model("momentum_carry", "carry", "Trend and carry together: the weighted average of a volatility-scaled trend signal and a carry signal for each instrument")
+class MomentumCarry(ForecastModel):
+    """Trend pays after a move has started and carry pays while the curve stays as it is, so a book of both is smoother than either (Carver 2015 combines the two as separate forecasts; Fuertes, Miffre and
+    Rallis 2010 sort commodities on momentum and on the slope of the curve together). Each instrument's signal is ``trend_weight * tanh(z / trend_scale) + (1 - trend_weight) * tanh(carry / (volatility *
+    carry_scale))``, where ``z`` is the log return from ``lookback`` days ago to ``skip`` days ago over the volatility it should have had (``volatility * sqrt((lookback - skip) / 252)``): both parts lie in
+    (-1, 1), so the signal does too, and a day on which either part is missing has no signal."""
+
+    name, family, position_mode = "momentum_carry", "carry", "time_series"
+    rebalance = "weekly"
+    book = "sleeves"
+
+    def __init__(self, lookback: int = 252, skip: int = 21, trend_weight: float = 0.5, vol_halflife: float = 60.0, trend_scale: float = 1.0, carry_scale: float = 0.5, smooth: int = 21):
+        if lookback <= skip + 20 or skip < 0:
+            raise ValueError("lookback must exceed skip + 20 and skip must not be negative")
+        if not 0.0 <= trend_weight <= 1.0:
+            raise ValueError("trend_weight must be between 0 and 1")
+        if vol_halflife <= 0 or trend_scale <= 0 or carry_scale <= 0 or smooth < 1:
+            raise ValueError("vol_halflife, trend_scale and carry_scale must be positive, smooth >= 1")
+        self.lookback, self.skip, self.trend_weight, self.vol_halflife, self.trend_scale, self.carry_scale, self.smooth = lookback, skip, trend_weight, vol_halflife, trend_scale, carry_scale, smooth
+
+    def components(self, data) -> tuple[pd.DataFrame, pd.DataFrame]:
+        """The bounded trend signal and the bounded carry signal, each in (-1, 1)."""
+        carry = _signal_frame(data, "CARRY").rolling(self.smooth, min_periods=1).mean()
+        vol = daily_vol(data.returns, self.vol_halflife).mul(np.sqrt(252.0)).replace(0.0, np.nan)
+        past = np.log(data.prices.shift(self.skip) / data.prices.shift(self.lookback))
+        trend = np.tanh(past / (vol * np.sqrt((self.lookback - self.skip) / 252.0)) / self.trend_scale)
+        return trend, np.tanh(carry / vol / self.carry_scale)
+
+    def score(self, data):
+        trend, carry = self.components(data)
+        return (self.trend_weight * trend + (1.0 - self.trend_weight) * carry).where(data.investable)
 
 
 @register_model("long_term_reversal", "cross-sectional", "Long-term reversal (value proxy): within each asset class, buy what has fallen over five years and sell what has risen")

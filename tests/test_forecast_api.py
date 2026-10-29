@@ -68,7 +68,7 @@ def test_the_plan_lists_the_methods_with_what_each_assumes_and_the_choices_of_th
 
 
 def test_the_api_version_says_the_forecast_tab_is_there(app):
-    assert app.catalog()["api_version"] == api.API_VERSION == 11
+    assert app.catalog()["api_version"] == api.API_VERSION == 12
     assert "forecasting" in api.DOC_ROOT_FILES
 
 

@@ -175,7 +175,7 @@ def stand_in(classes: dict) -> dict:
 def test_a_strategy_is_refused_the_roots_it_cannot_rank_and_run_with_the_parameters_its_description_gives(monkeypatch):
     calls = Calls(monkeypatch)
     config = load_config()
-    with pytest.raises(ValueError, match=r"unknown futures strategy 'vote'; choose from \['basis_momentum', 'carry_ts', 'carry_xs', 'donchian', 'tsmom', 'xs_momentum'\]"):
+    with pytest.raises(ValueError, match=r"unknown futures strategy 'vote'; choose from \['basis_momentum', 'carry_ts', 'carry_xs', 'donchian', 'ewmac', 'kama', 'ma_ensemble', 'momentum_carry', 'ou', 'skew', 'tsmom', 'tsmom_multi', 'tstat', 'vr_switch', 'xs_momentum'\]"):
         fa.run_futures_strategy(config, "vote", curves=stand_in({"A": "commodity"}))
     for strategy in ("carry_xs", "xs_momentum"):
         with pytest.raises(ValueError, match="a cross-sectional strategy needs at least two roots"):

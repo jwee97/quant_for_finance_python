@@ -936,7 +936,12 @@
     if (spec.kind === "bool") { input = h("input", "", wrap); input.type = "checkbox"; input.checked = !!state[spec.key]; wrap.appendChild(document.createTextNode(spec.label)); }
     else {
       wrap.appendChild(document.createTextNode(spec.label));
-      if (spec.kind === "choice") { input = h("select", "", wrap); for (const [value, text] of spec.options) { const o = h("option", "", input, text); o.value = value; if (value === state[spec.key]) o.selected = true; } }
+      if (spec.kind === "choice") {                                                              // an option may name a group as a third item: the choices of a long list under their headings
+        input = h("select", "", wrap); const groups = {};
+        for (const [value, text, group] of spec.options) {
+          const parent = group ? (groups[group] = groups[group] || Object.assign(h("optgroup", "", input), { label: group })) : input, o = h("option", "", parent, text); o.value = value; if (value === state[spec.key]) o.selected = true;
+        }
+      }
       else {
         input = h("input", "", wrap); input.type = spec.kind === "number" ? "number" : "text"; input.value = state[spec.key]; if (spec.placeholder) input.placeholder = spec.placeholder;
         if (spec.kind === "number") { input.step = spec.step || "any"; if (spec.min !== undefined) input.min = spec.min; if (spec.max !== undefined) input.max = spec.max; }
@@ -1555,6 +1560,6 @@
   }
   window.QL = { C, h, fmt, $, api, css, store, toast, copy, download, num, pct, money, smoney, axisMoney, bad, bps, grouped, plain, unsign, colorOf, SLOTS, tile, chartCard, simpleTable, sampleRows, keepScroll, labField, checkList, numbers,
     labHead, labBanner, labEmpty, labOld, syncLab, renderLab, drawLab, openGuide, serverApi, RESTART, notice, registerWorkspace, labelPx, running, S, setupGuide, waitJob, keyHistory,
-    universeBody, pickAllocator, useStrategy, setTrials, showTab, refsLine };
+    universeBody, pickAllocator, useStrategy, setTrials, showTab, refsLine, fieldFor };
   boot();
 })();

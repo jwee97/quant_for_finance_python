@@ -85,6 +85,31 @@ def risk_metrics(net: pd.Series) -> dict:
     return out
 
 
+def monthly_returns(net: pd.Series) -> list[dict]:
+    """Each calendar month's compounded return, oldest first: the cells of the monthly heatmap."""
+    r = _clean(net)
+    grouped = (1.0 + r).groupby([r.index.year, r.index.month]).prod() - 1.0
+    return [{"year": int(y), "month": int(m), "value": round(float(v), 5)} for (y, m), v in grouped.items()]
+
+
+def return_distribution(net: pd.Series, bins: int = 41) -> dict:
+    """The central 99% of the daily returns (from the 0.5th to the 99.5th percentile) in ``bins`` equal bands, and the count a normal distribution with the same mean and standard deviation would put in each
+    band: where the strategy's counts are higher at the centre and in the tails, its days are more extreme than a bell curve says. Empty when there are fewer than 60 returns."""
+    r = _clean(net).to_numpy(dtype=float)
+    n = len(r)
+    if n < 60:
+        return {}
+    srt = np.sort(r)
+    lo, hi = (float(srt[min(n - 1, max(0, int(math.floor(p * (n - 1) + 0.5))))]) for p in (0.005, 0.995))
+    step = (hi - lo) / bins or 1e-6
+    edges = lo + step * np.arange(bins + 1)
+    inside = r[(r >= lo) & (r <= hi)]
+    counts = np.bincount(np.minimum(bins - 1, np.floor((inside - lo) / step).astype(int)), minlength=bins)
+    mean, sd = float(r.mean()), float(r.std(ddof=1))
+    normal = n * np.diff(norm.cdf((edges - mean) / sd)) if sd > 0 else np.zeros(bins)
+    return {"edges": [float(v) for v in edges], "counts": [int(v) for v in counts], "normal": [round(float(v), 3) for v in normal], "mean": mean, "sd": sd, "n": int(n)}
+
+
 def drawdown_episodes(net: pd.Series, limit: int = 5) -> list[dict]:
     """The ``limit`` deepest falls from a peak, each from the peak to the day the peak was regained (``recovered`` is ``None`` for a fall still open). Episodes do not overlap: a new one starts only after
     the previous peak is regained. ``days`` count calendar days; ``depth`` is negative."""

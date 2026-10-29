@@ -64,6 +64,26 @@ ASNESS_MP = paper("Asness, Moskowitz and Pedersen", 2013, "Value and momentum ev
 DE_BONDT = paper("De Bondt and Thaler", 1985, "Does the stock market overreact?", "Journal of Finance 40(3)", "10.1111/j.1540-6261.1985.tb05004.x")
 KOIJEN = paper("Koijen, Moskowitz, Pedersen and Vrugt", 2018, "Carry", "Journal of Financial Economics 127(2)", "10.1016/j.jfineco.2017.11.002")
 BOONS_PRADO = paper("Boons and Prado", 2019, "Basis-momentum", "Journal of Finance 74(1)", "10.1111/jofi.12738")
+GORTON_ROUWENHORST = paper("Gorton and Rouwenhorst", 2006, "Facts and fantasies about commodity futures", "Financial Analysts Journal 62(2)", "10.2469/faj.v62.n2.4083")
+ERB_HARVEY = paper("Erb and Harvey", 2006, "The strategic and tactical value of commodity futures", "Financial Analysts Journal 62(2)", "10.2469/faj.v62.n2.4084")
+GORTON_HAYASHI_ROUWENHORST = paper("Gorton, Hayashi and Rouwenhorst", 2013, "The fundamentals of commodity futures returns", "Review of Finance 17(1)", "10.1093/rof/rfs019")
+MIFFRE_RALLIS = paper("Miffre and Rallis", 2007, "Momentum strategies in commodity futures markets", "Journal of Banking & Finance 31(6)", "10.1016/j.jbankfin.2006.12.005")
+SZAKMARY = paper("Szakmary, Shen and Sharma", 2010, "Trend-following trading strategies in commodity futures: a re-examination", "Journal of Banking & Finance 34(2)", "10.1016/j.jbankfin.2009.08.004")
+FAMA_FRENCH_87 = paper("Fama and French", 1987, "Commodity futures prices: some evidence on forecast power, premiums, and the theory of storage", "Journal of Business 60(1)", "10.1086/296385")
+KALDOR = paper("Kaldor", 1939, "Speculation and economic stability", "Review of Economic Studies 7(1)", "10.2307/2967593")
+BASU_MIFFRE = paper("Basu and Miffre", 2013, "Capturing the risk premium of commodity futures: the role of hedging pressure", "Journal of Banking & Finance 37(7)", "10.1016/j.jbankfin.2013.02.031")
+FUERTES = paper("Fuertes, Miffre and Rallis", 2010, "Tactical allocation in commodity futures markets: combining momentum and term structure signals", "Journal of Banking & Finance 34(10)", "10.1016/j.jbankfin.2010.04.009")
+BAKSHI_GAO_ROSSI = paper("Bakshi, Gao and Rossi", 2019, "Understanding the sources of risk underlying the cross section of commodity returns", "Management Science 65(2)", "10.1287/mnsc.2017.2840")
+TOLMASKY_HINDANOV = paper("Tolmasky and Hindanov", 2002, "Principal components analysis for correlated curves and seasonal commodities: the case of the petroleum market", "Journal of Futures Markets 22(11)", "10.1002/fut.10046")
+ROUTLEDGE_SEPPI_SPATT = paper("Routledge, Seppi and Spatt", 2000, "Equilibrium forward curves for commodities", "Journal of Finance 55(3)", "10.1111/0022-1082.00248")
+GIBSON_SCHWARTZ = paper("Gibson and Schwartz", 1990, "Stochastic convenience yield and the pricing of oil contingent claims", "Journal of Finance 45(3)", "10.1111/j.1540-6261.1990.tb05114.x")
+SCHWARTZ_SMITH = paper("Schwartz and Smith", 2000, "Short-term variations and long-term dynamics in commodity prices", "Management Science 46(7)", "10.1287/mnsc.46.7.893.12034")
+BROCK = paper("Brock, Lakonishok and LeBaron", 1992, "Simple technical trading rules and the stochastic properties of stock returns", "Journal of Finance 47(5)", "10.1111/j.1540-6261.1992.tb04681.x")
+GERRITSEN = paper("Gerritsen, Bouri, Ramezanifar and Roubaud", 2020, "The profitability of technical trading rules in the Bitcoin market", "Finance Research Letters 34", "10.1016/j.frl.2019.08.011")
+DETZEL = paper("Detzel, Liu, Strauss, Zhou and Zhu", 2021, "Learning and predictability via technical analysis: evidence from bitcoin and stocks with hard-to-value fundamentals", "Financial Management 50(1)", "10.1111/fima.12310")
+MAKAROV_SCHOAR = paper("Makarov and Schoar", 2020, "Trading and arbitrage in cryptocurrency markets", "Journal of Financial Economics 135(2)", "10.1016/j.jfineco.2019.07.001")
+GRIFFIN_SHAMS = paper("Griffin and Shams", 2020, "Is Bitcoin really untethered?", "Journal of Finance 75(4)", "10.1111/jofi.12903")
+BURGHARDT_LANE = paper("Burghardt and Lane", 1990, "How to tell if options are cheap", "Journal of Portfolio Management 16(3)", "10.3905/jpm.1990.409259")
 MOREIRA_MUIR = paper("Moreira and Muir", 2017, "Volatility-managed portfolios", "Journal of Finance 72(4)", "10.1111/jofi.12513")
 BOLLERSLEV_86 = paper("Bollerslev", 1986, "Generalized autoregressive conditional heteroskedasticity", "Journal of Econometrics 31(3)", "10.1016/0304-4076(86)90063-1")
 MCNEIL_FREY = paper("McNeil and Frey", 2000, "Estimation of tail-related risk measures for heteroscedastic financial time series: an extreme value approach", "Journal of Empirical Finance 7(3-4)", "10.1016/s0927-5398(00)00012-8")
@@ -170,14 +190,14 @@ GOYAL_WELCH = paper("Goyal and Welch", 2008, "A comprehensive look at the empiri
 # ------------------------------------------------------------------------------------------------------------------ method -> sources
 MODELS: dict[str, tuple[Ref, ...]] = {
     "tsmom": (MOSKOWITZ, HURST), "tsmom_multi": (HURST, MOSKOWITZ), "ma_ensemble": (BAZ,), "donchian": (FAITH, CLENOW_FTT), "kama_trend": (KAUFMAN,),
-    "adx_trend": (WILDER,), "kalman_trend": (HARVEY_KF,),
+    "adx_trend": (WILDER,), "kalman_trend": (HARVEY_KF,), "mayer_multiple": (BROCK, GERRITSEN, DETZEL),
     "carver_ewmac": (CARVER_ST, CARVER_LT, CARVER_AFTS), "clenow_momentum": (CLENOW_SOTM,), "tstat_momentum": (BALTAS_2020, BALTAS_2013),
     "variance_ratio_switch": (LO_MACKINLAY_88, LO_MACKINLAY_89, CLM, CHAN_AT), "connors_rsi": (CONNORS,), "rsi2": (CONNORS,), "double_seven": (CONNORS,),
     "consecutive_down": (CONNORS,), "skew_premium": (AMAYA, FERNANDEZ_PEREZ), "cppi": (BLACK_JONES, PEROLD_SHARPE, BLACK_PEROLD, ESTEP_KRITZMAN),
     "momentum": (JEGADEESH_TITMAN,), "xs_momentum": (JEGADEESH_TITMAN,), "momentum_13612w": (KELLER_VAA, KELLER_DAA), "short_term_reversal": (JEGADEESH_90, LEHMANN),
     "low_volatility": (ANG,), "low_idio_vol": (ANG,), "bab": (FRAZZINI_PEDERSEN,), "defensive_beta": (FRAZZINI_PEDERSEN,), "high_52w": (GEORGE_HWANG,), "residual_momentum": (BLITZ,),
     "smooth_momentum": (DA_GURUN_WARACHKA,), "max_effect": (BALI,), "amihud_illiquidity": (AMIHUD,), "value_momentum": (ASNESS_MP,), "long_term_reversal": (DE_BONDT, ASNESS_MP),
-    "value_proxy": (DE_BONDT, ASNESS_MP), "carry": (KOIJEN,), "carry_xs": (KOIJEN,), "carry_ts": (KOIJEN,), "basis_momentum": (BOONS_PRADO,), "vol_managed_long": (MOREIRA_MUIR,),
+    "value_proxy": (DE_BONDT, ASNESS_MP), "carry": (KOIJEN,), "carry_xs": (KOIJEN,), "carry_ts": (KOIJEN,), "basis_momentum": (BOONS_PRADO,), "momentum_carry": (CARVER_ST, FUERTES, KOIJEN, MOSKOWITZ), "vol_managed_long": (MOREIRA_MUIR,),
     "garch_vol_managed": (BOLLERSLEV_86, MOREIRA_MUIR), "evt_risk_managed": (MCNEIL_FREY,), "faber_gtaa": (FABER,), "dual_momentum": (ANTONACCI,), "accelerating_dual_momentum": (ANTONACCI,),
     "paa": (KELLER_PAA,), "vaa": (KELLER_VAA,), "daa": (KELLER_DAA,), "adaptive_asset_allocation": (BUTLER,), "model_portfolio": (BROWNE,), "policy_portfolio": (PEROLD_SHARPE,),
     "turn_of_month": (LAKONISHOK_SMIDT, MCCONNELL_XU), "sell_in_may": (BOUMAN_JACOBSEN,), "seasonal_rank": (KELOHARJU,), "vrp_timing": (BOLLERSLEV_TZ, CARR_WU),
@@ -186,7 +206,7 @@ MODELS: dict[str, tuple[Ref, ...]] = {
     "ml_ridge": (GU_KELLY_XIU,), "ml_trees": (GU_KELLY_XIU, LOPEZ_AFML), "ml_factor_model": (GU_KELLY_XIU,), "gp_factor_model": (RASMUSSEN,),
     "fundamental_value": (FAMA_FRENCH_93, NOVY_MARX), "fundamental_quality": (NOVY_MARX, PIOTROSKI, SLOAN, AFP_QMJ), "fundamental_dcf": (DAMODARAN,),
     "fundamental_alpha": (GRINOLD_KAHN,), "curve_steepener": (LITTERMAN_SCHEINKMAN, ILMANEN), "butterfly": (LITTERMAN_SCHEINKMAN,),
-    "carry_rolldown": (ILMANEN,), "duration_timing": (ILMANEN,), "cftc_positioning": (BESSEMBINDER,), "funding_carry": (SCHMELING, HE_MANELA), "basis_reversion": (SCHMELING, HE_MANELA),
+    "carry_rolldown": (ILMANEN,), "duration_timing": (ILMANEN,), "cftc_positioning": (BESSEMBINDER, BASU_MIFFRE), "funding_carry": (SCHMELING, HE_MANELA), "basis_reversion": (SCHMELING, HE_MANELA),
 }
 ALLOCATORS: dict[str, tuple[Ref, ...]] = {
     "static": (MARKOWITZ, MAILLARD, RONCALLI, LOPEZ_HRP, RAFFINOT), "min_variance": (CLARKE_MINVAR,), "max_diversification": (CHOUEIFATY,), "black_litterman": (BLACK_LITTERMAN,),
@@ -213,4 +233,13 @@ def references(kind: str, name: str) -> list[dict]:
     return [r.view() for r in table.get(name, ())]
 
 
-EXTRA: dict[str, dict[str, tuple[Ref, ...]]] = {"forecaster": FORECASTERS}                 # tables of the other tabs (forecasters, option strategies, ...)
+FUTURES_VIEWS: dict[str, tuple[Ref, ...]] = {
+    "curve": (GORTON_ROUWENHORST, ERB_HARVEY, FAMA_FRENCH_87, KALDOR), "convenience": (GIBSON_SCHWARTZ, SCHWARTZ_SMITH), "pca": (LITTERMAN_SCHEINKMAN, TOLMASKY_HINDANOV),
+    "carry": (KOIJEN, GORTON_HAYASHI_ROUWENHORST, ERB_HARVEY), "seasonality": (ROUTLEDGE_SEPPI_SPATT,), "signals": (MOSKOWITZ, HURST, CARVER_ST, KOIJEN),
+    "trend": (MOSKOWITZ, HURST, MIFFRE_RALLIS, SZAKMARY), "term_structure": (FUERTES, BAKSHI_GAO_ROSSI, BOONS_PRADO),
+}
+CRYPTO_VIEWS: dict[str, tuple[Ref, ...]] = {
+    "trend": (BROCK, GERRITSEN, DETZEL, LIU_TSYVINSKI, LIU_TSYVINSKI_WU), "volatility": (BURGHARDT_LANE, MOREIRA_MUIR), "relative": (MAKAROV_SCHOAR, GRIFFIN_SHAMS, LIU_TSYVINSKI_WU), "carry": (SCHMELING, HE_MANELA, MAKAROV_SCHOAR),
+    "signals": (LIU_TSYVINSKI, LIU_TSYVINSKI_WU, SCHMELING, MOSKOWITZ),
+}
+EXTRA: dict[str, dict[str, tuple[Ref, ...]]] = {"forecaster": FORECASTERS, "futures": FUTURES_VIEWS, "crypto": CRYPTO_VIEWS}                 # tables of the other tabs (forecasters, futures views, option strategies, ...)

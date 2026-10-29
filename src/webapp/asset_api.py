@@ -27,7 +27,9 @@ from ..assets import futures_analytics as fa
 from ..assets import options_analytics as oa
 from ..assets.free_data.store import SAFE_NAME as DOWNLOAD_NAME
 from ..assets.free_data.store import DownloadStore
-from .api import ApiError, _choice, _number
+from ..framework import MODELS, load_library
+from ..references import references
+from .api import ApiError, _choice, _number, parameters
 from .payload import clean
 
 SAFE_NAME = re.compile(r"^[A-Za-z0-9_-]{1,40}$")
@@ -86,7 +88,7 @@ class AssetApi:
 
     def post_routes(self) -> dict:
         return {"/api/options/portfolio-risk": self.options_portfolio_risk, "/api/options/strategy/payoff": self.options_strategy_payoff, "/api/options/strategy/backtest": self.options_strategy_backtest,
-                "/api/futures/margin": self.futures_margin, "/api/futures/strategy/backtest": self.futures_strategy_backtest, "/api/crypto/strategy/backtest": self.crypto_strategy_backtest}
+                "/api/futures/margin": self.futures_margin, "/api/futures/strategy/backtest": self.futures_strategy_backtest, "/api/futures/signals": self.futures_signals, "/api/crypto/signals": self.crypto_signals, "/api/crypto/strategy/backtest": self.crypto_strategy_backtest}
 
     # ------------------------------------------------------------------------------------------------------------ user files
     def _user_files(self, folder: str) -> dict[str, Path]:
@@ -127,9 +129,28 @@ class AssetApi:
         symbols += [{"id": s, "source": "user_file"} for s in cry_files if s not in ca.REAL_SYMBOLS and s not in ca.SIMULATED_ALTS and s not in dl_coins]
         return clean({"underlyings": underlyings, "option_strategies": [{"id": k, "text": v} for k, v in oa.STRATEGY_INFO.items()], "option_backtests": [{"id": k, "text": oa.BACKTEST_TEXT[k], "params": oa.backtest_params(k)} for k in oa.BACKTEST_STRATEGIES],
                       "defaults": {"rate": oa.DEFAULT_RATE, "premium": 0.15, "dividend_yields": oa.DIVIDEND_YIELDS}, "futures_roots": roots, "futures_series": dl_series,
-                      "futures_strategies": [{"id": k, "label": v["label"], "text": v["text"]} for k, v in fa.FUTURES_STRATEGIES.items()],
-                      "crypto_symbols": symbols, "crypto_strategies": [{"id": k, "label": v["label"], "text": v["text"], "available": v["model"] is not None} for k, v in ca.CRYPTO_STRATEGIES.items()],
+                      "futures_strategies": [self._futures_strategy_info(k, v) for k, v in fa.FUTURES_STRATEGIES.items()],
+                      "crypto_symbols": symbols, "crypto_strategies": [self._crypto_strategy_info(k, v) for k, v in ca.CRYPTO_STRATEGIES.items()],
                       "venues": list(ca.VENUE_ORDER), "data_dir": "data/user/", "as_of": str(b.index[-1].date())})
+
+    @staticmethod
+    def _futures_strategy_info(key: str, spec: dict) -> dict:
+        """One futures strategy as the page lists it: its words, its group, what it needs of the roots, the settings of the strategy behind it and where its rule comes from."""
+        load_library()
+        entry = next(e for e in MODELS.entries() if e.name == spec["model"])
+        return {"id": key, "label": spec["label"], "text": spec["text"], "group": spec.get("group", "Other"), "needs": spec.get("needs"), "model": spec["model"], "params": parameters("model", spec["model"], entry.factory),
+                "references": references("model", spec["model"])}
+
+    @staticmethod
+    def _crypto_strategy_info(key: str, spec: dict) -> dict:
+        """One crypto strategy as the page lists it: its words and group, whether the platform has the data for it, the settings of the strategy behind it (with this strategy's own defaults) and its sources."""
+        info = {"id": key, "label": spec["label"], "text": spec["text"], "group": spec.get("group", "Other"), "available": spec["model"] is not None, "model": spec["model"], "params": [], "references": []}
+        if spec["model"] is not None:
+            load_library()
+            entry = next(e for e in MODELS.entries() if e.name == spec["model"])
+            info["params"] = [{**p, "default": spec["params"].get(p["name"], p["default"])} for p in parameters("model", spec["model"], entry.factory)]
+            info["references"] = references("model", spec["model"])
+        return info
 
     # ------------------------------------------------------------------------------------------------------------ options
     def _downloaded_chain(self, name: str, rate: float | None, dividend: float | None):
@@ -438,17 +459,29 @@ class AssetApi:
         return parts
 
     def futures_curve(self, q: dict) -> dict:
-        """``GET /api/futures/curve?root=CL``: the curve, how it moved, carry, basis and the one-line snapshot."""
+        """``GET /api/futures/curve?root=CL&spacing=21&dates=3``: the curve now and ``spacing`` trading days ago (``dates`` of them), the shape of the curve through time, its principal components, carry, basis
+        and the one-line snapshot."""
         data = self._curve(str(q.get("root") or "CL"))
+        spacing, dates = _number(q, "spacing", 21, 1, 504, integer=True), _number(q, "dates", 3, 2, 6, integer=True)
         try:
             snap = fa.curve_snapshot(data)
-            out = {"root": data.root, "curve": snap, "history": fa.curve_history(data), "carry": fa.carry_dashboard(data), "basis": fa.basis_dashboard(data), "snapshot": fa.futures_snapshot(data).to_dict(),
+            out = {"root": data.root, "curve": snap, "history": fa.curve_history(data, dates, spacing), "shape": fa.curve_shape_history(data), "pca": self._optional(fa.term_structure_pca, data), "carry": fa.carry_dashboard(data),
+                   "basis": fa.basis_dashboard(data), "snapshot": fa.futures_snapshot(data).to_dict(),
                    "spec": {"name": data.spec.name, "exchange": data.spec.exchange, "multiplier": data.spec.multiplier, "tick_size": data.spec.tick_size, "tick_value": data.spec.tick_value,
                             "initial_margin": data.spec.initial_margin, "maintenance_margin": data.spec.maintenance_margin}}
         except ValueError as exc:
             raise ApiError(str(exc)) from None
+        out["references"] = {name: references("futures", name) for name in ("curve", "convenience", "pca", "carry", "seasonality")}
         flags = list(out["snapshot"]["risk_flags"])
         return _wrap("futures_curve", out, self._curve_parts(data, margins=True), flags, data.as_of, data.notes)
+
+    @staticmethod
+    def _optional(fn, *args) -> dict | None:
+        """The result of an analysis that needs more history than a short curve may have: ``None`` instead of an error, so that the rest of the page still draws."""
+        try:
+            return fn(*args)
+        except ValueError:
+            return None
 
     def futures_roll(self, q: dict) -> dict:
         """``GET /api/futures/roll?root=CL&roll_days=5``: the contract held and the next, the suggested roll date, the open-interest crossover, the cost of the roll and its histories."""
@@ -492,18 +525,10 @@ class AssetApi:
         return _wrap("futures_margin", out, {"prices": common.overall_source({r: c.source for r, c in curves.items()}), "margins": "simulated"}, out["risk_flags"],
                                      self._bundle().index[-1])
 
-    def futures_strategy_backtest(self, body: dict) -> dict:
-        """``POST /api/futures/strategy/backtest``: a strategy through the platform pipeline, as a job: on the simulated roots (``data`` "simulated", the default) or on the curves downloaded or uploaded
-        for the roots chosen (``data`` "real")."""
-        name = str(body.get("strategy") or "carry_ts")
-        if name not in fa.FUTURES_STRATEGIES:
-            raise ApiError(f"strategy must be one of {sorted(fa.FUTURES_STRATEGIES)}")
+    def _futures_inputs(self, body: dict) -> tuple[bool, list, dict | None, pd.Timestamp]:
+        """What the strategy backtest and the signals board share: whether they run on the real curves (``data`` "real") or the simulated roots, the roots chosen, the curves of the real ones and the last day."""
         real = _choice(body, "data", "simulated", ("simulated", "real")) == "real"
         roots = _list(body.get("roots") or ([] if real else list(fa.ROOTS)))
-        lookback = None if body.get("lookback") in (None, "") else _number(body, "lookback", 63, 5, 756, integer=True)
-        target = None if body.get("target_vol") in (None, "") else _number(body, "target_vol", 0.1, 0.01, 1.0)
-        freq = _choice(body, "frequency", "weekly", ("daily", "weekly", "monthly"))
-        cost = _number(body, "cost_bps", 2.0, 0.0, 200.0)
         as_of = self._bundle().index[-1]
         curves = None
         if real:
@@ -516,14 +541,50 @@ class AssetApi:
                     raise ApiError(f"{curve.root} has no real curve to backtest: download it with the Free data card on this tab (Cboe's VX and Deribit's history keep expired contracts), or put {curve.root}.csv in data/user/futures/")
                 curves[curve.root] = curve
             as_of = max(c.as_of for c in curves.values())
+        return real, roots, curves, as_of
+
+    @staticmethod
+    def _settings(body: dict) -> dict:
+        """The strategy's own settings from a request (``params``): a dictionary of constructor arguments, checked when the strategy is built."""
+        params = body.get("params") or {}
+        if not isinstance(params, dict) or len(params) > 20 or any(not isinstance(k, str) or len(k) > 40 for k in params):
+            raise ApiError("params must be an object of the strategy's settings")
+        return dict(params)
+
+    def futures_strategy_backtest(self, body: dict) -> dict:
+        """``POST /api/futures/strategy/backtest``: a strategy through the platform pipeline, as a job: on the simulated roots (``data`` "simulated", the default) or on the curves downloaded or uploaded
+        for the roots chosen (``data`` "real"). ``params`` are the strategy's own settings (what the page lists under the strategy); ``lookback`` is the older single setting and ``params`` win over it."""
+        name = str(body.get("strategy") or "carry_ts")
+        if name not in fa.FUTURES_STRATEGIES:
+            raise ApiError(f"strategy must be one of {sorted(fa.FUTURES_STRATEGIES)}")
+        real, roots, curves, as_of = self._futures_inputs(body)
+        lookback = None if body.get("lookback") in (None, "") else _number(body, "lookback", 63, 5, 756, integer=True)
+        target = None if body.get("target_vol") in (None, "") else _number(body, "target_vol", 0.1, 0.01, 1.0)
+        freq = _choice(body, "frequency", "weekly", ("daily", "weekly", "monthly"))
+        cost = _number(body, "cost_bps", 2.0, 0.0, 200.0)
+        settings = self._settings(body)
 
         def work(progress):
             progress("building the front-month series from the contract tables (several seconds per root the first time)" if real else "building the simulated futures (the first run takes up to half a minute)")
-            out = fa.run_futures_strategy(self.app.config, name, roots, freq, lookback, target, cost, as_of, curves)
+            out = fa.run_futures_strategy(self.app.config, name, roots, freq, lookback, target, cost, as_of, curves, settings)
             parts = {"prices": common.overall_source({r: c.source for r, c in curves.items()}) if real else "simulated"}
             return _wrap("futures_backtest", out, parts, [], as_of, out.pop("notes"))
 
         return self.app.submit_task(f"futures: {name}", work)
+
+    def futures_signals(self, body: dict) -> dict:
+        """``POST /api/futures/signals``: what each rule says about each root on the last day, as a job (it builds the same bundle as a backtest): on the simulated roots or the real curves chosen."""
+        real, roots, curves, as_of = self._futures_inputs(body)
+
+        def work(progress):
+            progress("building the front-month series from the contract tables (several seconds per root the first time)" if real else "building the simulated futures (the first run takes up to half a minute)")
+            out = fa.run_signals(roots, as_of, curves)
+            out["references"] = references("futures", "signals")
+            parts = {"prices": common.overall_source({r: c.source for r, c in curves.items()}) if real else "simulated"}
+            return _wrap("futures_signals", out, parts, [], as_of, ["Each rule's score is divided by the average size of its own absolute score over the last two years, so a strength of 1 is a typical position and the sign is the side.",
+                                                                    "The rules are the platform's strategies, run on the excess return of holding the nearest contract of each root; a rule that cannot be computed for this selection says why."])
+
+        return self.app.submit_task("futures: signals", work)
 
     # ------------------------------------------------------------------------------------------------------------ crypto
     def _crypto_frames(self) -> dict:
@@ -578,6 +639,13 @@ class AssetApi:
         raise ApiError(f"unknown symbol '{symbol}'; the platform has {list(ca.REAL_SYMBOLS)}, can simulate {sorted(ca.SIMULATED_ALTS)}, and downloads others with the Free data card "
                        f"(or put {symbol}.csv in data/user/crypto/)")
 
+    def _other_coin(self, symbol: str) -> ca.CryptoSeries | None:
+        """The coin a coin is compared with on the overview (ETH for BTC, BTC for every other): ``None`` when the platform's Deribit data, which holds both, is not there to compare with."""
+        try:
+            return self._series("ETH" if symbol == "BTC" else "BTC")
+        except ApiError:
+            return None
+
     def _snapshot(self, symbol: str) -> dict | None:
         """The downloaded snapshot of a coin's quotes and order books on several venues, if there is one."""
         snap = self.downloads.read_json("crypto", f"venues_{symbol.upper()}")
@@ -607,6 +675,8 @@ class AssetApi:
             ov = ca.overview(s, self._stable(), book)
             data = {"symbol": s.symbol, "overview": ov, "spot_perp": ca.spot_perp_view(s, _number(q, "days", 365, 60, 2000, integer=True)) if s.perp is not None else None,
                     "basis": ca.basis_dashboard(s, _number(q, "fee_bps", 5.0, 0.0, 100.0)) if s.perp is not None and s.funding is not None else None, "books": books,
+                    "technical": ca.technical_view(s, self._other_coin(s.symbol)),
+                    "references": {name: references("crypto", name) for name in ("trend", "volatility", "relative", "carry")},
                     "snapshot": None if snap is None else {"fetched_at": snap.get("fetched_at"), "venues": [v["venue"] for v in snap["venues"]], "failed": snap.get("failed", {})}}
         except ValueError as exc:
             raise ApiError(str(exc)) from None
@@ -655,11 +725,25 @@ class AssetApi:
         freq = _choice(body, "frequency", "weekly", ("daily", "weekly", "monthly"))
         fees, slip = _number(body, "fees_bps", 5.0, 0.0, 200.0), _number(body, "slippage_bps", 2.0, 0.0, 200.0)
         regime = None if body.get("regime") in (None, "", "none") else _choice(body, "regime", "vol_state", ("vol_state", "hmm", "gmm"))
+        settings = self._settings(body)
         self._crypto_frames()
 
         def work(progress):
             progress("running the strategy through the pipeline")
-            out = ca.run_crypto_strategy(self.app.config, name, assets, freq, lookback, target, fees, slip, regime)
+            out = ca.run_crypto_strategy(self.app.config, name, assets, freq, lookback, target, fees, slip, regime, settings)
             return _wrap("crypto_backtest", out, {"prices": "platform"}, [], out["end"], out.pop("notes"))
 
         return self.app.submit_task(f"crypto: {name}", work)
+
+    def crypto_signals(self, body: dict) -> dict:
+        """``POST /api/crypto/signals``: what each rule says about BTC and ETH on the last day, from the platform's Deribit data, as a job."""
+        self._crypto_frames()
+
+        def work(progress):
+            progress("reading every rule on the Deribit data")
+            out = ca.run_crypto_signals(self.app.config)
+            out["references"] = references("crypto", "signals")
+            return _wrap("crypto_signals", out, {"prices": "platform"}, [], out["last_day"], ["Each rule's score is divided by the average size of its own absolute score over the last two years, so a strength of 1 is a typical position and the sign is the side.",
+                                                                                           "The funding and basis rules are read on the coin's long-spot, short-perpetual index and shown under the coin; the rest on its spot price."])
+
+        return self.app.submit_task("crypto: signals", work)

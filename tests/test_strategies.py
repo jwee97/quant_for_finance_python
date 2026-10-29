@@ -14,7 +14,7 @@ from src.strategies.statarb import kalman_spread, simulate_nav_arbitrage
 
 load_library()
 FOUNDATION = {"chronos", "timesfm"}                                                                         # optional pre-trained models: slow on CPU, tested in tests/test_deep_models.py
-NEEDS_ASSET_BUNDLE = {"carry_xs", "carry_ts", "basis_momentum"}                                               # read CARRY_<asset> signals: tested on the multi-asset bundle in tests/test_assets.py
+NEEDS_ASSET_BUNDLE = {"carry_xs", "carry_ts", "basis_momentum", "momentum_carry"}                                               # read CARRY_<asset> signals: tested on the multi-asset bundle in tests/test_assets.py
 NEEDS_PLANTED_STATES = {"credit_cycle_rotation"}                                                               # learn what each credit phase has paid: the generic bundle's spread is stuck at a floor; tested with planted phases in tests/test_economic_outlook.py
 NEEDS_DATA_FILE = {"news_sentiment", "panel_signal", "fundamental_value", "fundamental_quality", "fundamental_dcf", "fundamental_alpha", "fundamental_nonlinear",
                    "earnings_season_premium"}           # read a file you supply (data/user/), or for this one find announcements in the volume of companies: tested with synthetic files and worlds in tests/test_alpha_styles.py, tests/test_fundamental_models.py and tests/test_factor_timing.py

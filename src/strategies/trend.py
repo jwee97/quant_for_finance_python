@@ -85,6 +85,31 @@ class MovingAverageEnsemble(ForecastModel):
         return _valid(sum(out) / len(out), data)
 
 
+@register_model("mayer_multiple", "time-series", "Mayer multiple: hold while the price is under 2.4 times its 200-day average (an exit from euphoria); with a floor of 1 it is a trend filter with an exit")
+class MayerMultiple(ForecastModel):
+    """The price over its 200-day average, the measure Trace Mayer popularised for Bitcoin: a multiple above about 2.4 has been called overheated and one below 1 cheap. The rule holds the asset (score 1)
+    while the multiple is at least ``floor`` and under ``cap`` and sits out (score 0) otherwise: ``floor = 0`` (the default) is buy and hold with an exit from euphoria, ``floor = 1`` also requires the
+    price to be above its average, a trend filter with an exit. The thresholds are a practitioner's, not tested in a paper; moving-average rules themselves have been (Brock, Lakonishok and LeBaron 1992
+    for stocks, Gerritsen et al. 2020 and Detzel et al. 2021 for Bitcoin)."""
+
+    name, family, position_mode = "mayer_multiple", "trend", "time_series"
+    rebalance = "weekly"
+    book = "sleeves"
+
+    def __init__(self, window: int = 200, cap: float = 2.4, floor: float = 0.0):
+        if window < 20 or floor < 0 or cap <= floor:
+            raise ValueError("window >= 20, floor >= 0 and cap > floor")
+        self.window, self.cap, self.floor = window, cap, floor
+
+    def multiple(self, data) -> pd.DataFrame:
+        """The price over its average of the last ``window`` days (NaN until there are that many)."""
+        return data.prices / data.prices.rolling(self.window, min_periods=self.window).mean()
+
+    def score(self, data):
+        m = self.multiple(data)
+        return ((m >= self.floor) & (m < self.cap)).astype(float).where(m.notna() & data.investable)
+
+
 @register_model("breakout_ensemble", "time-series", "Breakout ensemble (Carver): where the price sits in its 10- to 320-day range, smoothed and averaged across horizons")
 class BreakoutEnsemble(ForecastModel):
     """Price near the top of a long range is a trend in progress; averaging many range lengths gives a smooth, low-turnover signal."""

@@ -81,7 +81,7 @@ def test_the_routes_are_in_the_app_and_the_api_version_says_so(app):
         assert path in app.extra_get
     for path in ("/api/fund/sync", "/api/fund/coverage/plan", "/api/fund/coverage/fetch", "/api/fund/simulate", "/api/fund/scan", "/api/fund/discover", "/api/fund/backtest", "/api/fund/stop", "/api/fund/ml"):
         assert path in app.extra_post
-    assert api.API_VERSION == 11 and app.catalog()["api_version"] == 11
+    assert api.API_VERSION == 12 and app.catalog()["api_version"] == 12
     assert (Path(api.__file__).resolve().parents[2] / "docs" / api.DOC_ROOT_FILES["fundamentals"]).is_file()      # the guides viewer can open the chapter
 
 
