@@ -40,6 +40,10 @@ def check_symbol(symbol: str) -> str:
     return s
 
 
+class NoLiveOffers(FetchError):
+    """A chain came back in the shape the parser reads and not one option in it had an offer: the delayed quotes are empty while the market is closed. The feed is answering; there is nothing to price."""
+
+
 # ------------------------------------------------------------------------------------------------------------------ the forward
 def implied_carry(rows: pd.DataFrame, spot: float, quote_date: pd.Timestamp, rate: float, min_days: int = 7, band: float = 0.06, k: int = 7) -> tuple[pd.Series, dict]:
     """The dividend yield of each expiry implied by put-call parity, as ``(series indexed by expiry, info)``.
@@ -115,7 +119,10 @@ def build_chain(rows: pd.DataFrame, spot: float, quote_date, rate: float = DEFAU
     before = len(df)
     df = df.sort_values("open_interest", ascending=False).drop_duplicates(["expiry", "strike", "right"]).sort_values(["expiry", "strike", "right"])
     if df.empty:
-        raise FetchError("the source returned no option with a live offer in the requested range")
+        message = "the source returned no option with a live offer in the requested range"
+        if n_raw and bool(no_offer.all()):
+            raise NoLiveOffers(f"{message}: it sent {n_raw:,} options and not one had an offer. Delayed quotes carry none before the open, after the close, at weekends and on holidays, so try again in the session")
+        raise FetchError(message)
     q, info = implied_carry(df, float(spot), quote_date, rate)
     df["date"] = quote_date
     df["underlying"] = float(spot)

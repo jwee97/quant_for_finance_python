@@ -7,7 +7,8 @@ when the SEC refuses a program the ticker file), checks sizes and dates rather t
 ``ok``       it answered and looked right;
 ``refused``  the server would not talk to this address (HTTP 403, 429 or 451: a shared cloud address is often refused; nothing is known about the feed);
 ``broken``   it answered with something the parsers cannot use, or did not answer: the feed changed or is down;
-``skipped``  it needs something that is not set (the SEC wants a contact).
+``skipped``  it cannot be judged now: it needs something that is not set (the SEC wants a contact), or the options market is closed and Cboe's delayed quotes carry no offers (it answered in the
+             shape the parser reads, so nothing is known against the feed).
 
 The exit code is 1 if anything is ``broken`` (with ``--strict``, ``refused`` too), so a scheduled workflow fails exactly when a feed changed. iTick is not checked: it needs a key, and the author has
 never had a working one.
@@ -194,6 +195,8 @@ def classify(error: BaseException) -> tuple[str, str]:
     """``(status, detail)`` for a check that raised: a refusal to this address is told apart from a feed that changed."""
     if isinstance(error, Skipped):
         return "skipped", str(error)
+    if isinstance(error, options.NoLiveOffers):                            # a chain with no offer at all is a closed market, not a feed that changed (the scheduled run of 26 October met it before the open)
+        return "skipped", f"the options market is closed, so there is nothing to judge: {error}"
     if isinstance(error, FetchError):
         return ("refused" if error.status in REFUSED_STATUS or error.blocked else "broken"), str(error)
     if isinstance(error, RateLimited):

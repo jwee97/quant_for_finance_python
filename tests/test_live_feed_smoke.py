@@ -9,6 +9,7 @@ import pandas as pd
 import pytest
 
 from experiments import live_feed_smoke as smoke
+from src.assets.free_data import options
 from src.assets.free_data.http import FetchError
 from src.fundamentals.errors import NotFound, ProviderError, RateLimited
 from src.fundamentals.providers.sec_edgar import NameList
@@ -51,6 +52,17 @@ def test_a_refusal_to_this_address_is_told_apart_from_a_feed_that_changed():
     for error, expected in cases:
         assert smoke.classify(error)[0] == expected, error
     assert "does not look right" in smoke.classify(smoke.Broken("0 rows"))[1] and "KeyError" in smoke.classify(KeyError("strike"))[1]
+
+
+def test_a_chain_with_no_offers_is_a_closed_market_and_does_not_fail_the_scheduled_run():
+    """The first scheduled run (26 October, before the New York open) called the Cboe feed broken because every quote it sent had no offer; that is what delayed quotes look like while the market is shut."""
+    closed = options.NoLiveOffers("the source returned no option with a live offer in the requested range: it sent 9,000 options and not one had an offer")
+    status, detail = smoke.classify(closed)
+    assert status == "skipped" and "market is closed" in detail and "9,000 options" in detail
+    results = [smoke.Result("cboe", status, detail, 0.6), smoke.Result("yahoo", "ok", "SPY", 0.2)]
+    assert smoke.exit_code(results) == 0 and smoke.exit_code(results, strict=True) == 0 and smoke.annotations(results) == []
+    other = FetchError("the source returned no option with a live offer in the requested range")
+    assert smoke.classify(other)[0] == "broken", "an empty answer that is not a closed market is still a feed that changed"
 
 
 def test_a_run_reports_every_check_whatever_happens_in_it_and_fails_only_for_a_feed_that_changed():

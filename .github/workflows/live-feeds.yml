@@ -6,7 +6,7 @@ name: live feeds
 # and an email address, which the SEC asks every program to give); without it they are skipped, and nothing is sent to the SEC in anyone's name.
 on:
   schedule:
-    - cron: "43 5 * * 1"
+    - cron: "17 16 * * 3"          # Wednesday in the US session (12:17 New York in summer, 11:17 in winter): Cboe's delayed quotes carry no offers before the open, at weekends or on a Monday holiday
   workflow_dispatch:
     inputs:
       strict:

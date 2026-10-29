@@ -52,6 +52,11 @@ def test_unusable_rows_are_dropped_and_counted():
     assert not df.duplicated(["expiry", "strike", "right"]).any() and (df["bid"] <= df["ask"]).all() and (df["ask"] > 0).all()
     with pytest.raises(FetchError, match="no option with a live offer"):
         fo.build_chain(rows.assign(ask=0.0), spot, qd)
+    with pytest.raises(fo.NoLiveOffers, match=f"sent {len(rows):,} options and not one had an offer.*try again in the session"):
+        fo.build_chain(rows.assign(ask=0.0), spot, qd)                                  # a chain with no offer at all is a closed market: it says so
+    with pytest.raises(FetchError, match="no option with a live offer") as other:
+        fo.build_chain(rows.assign(bid=5.0, ask=1.0), spot, qd)                         # every market crossed: something else is wrong, and it is not called a closed market
+    assert not isinstance(other.value, fo.NoLiveOffers)
 
 
 def test_the_dividend_yield_implied_by_parity_recovers_the_one_that_priced_the_chain():
