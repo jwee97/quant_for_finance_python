@@ -24,7 +24,7 @@ from pathlib import Path
 
 import numpy as np
 
-from src.forecast import BASELINE, BLEND, METHODS, History
+from src.forecast import BASELINE, BLEND, BLEND_WEIGHTED, METHODS, History
 from src.forecast import evaluate as ev
 from src.forecast.verdict import judge
 from src.framework import load_default_bundle
@@ -67,14 +67,14 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--tickers", nargs="*", default=list(TICKERS))
     ap.add_argument("--horizons", nargs="*", type=int, default=[21])
-    ap.add_argument("--methods", nargs="*", help="method ids (default: every method and the blend)")
+    ap.add_argument("--methods", nargs="*", help="method ids (default: every method and the two blends)")
     ap.add_argument("--effort", choices=list(ev.EFFORTS), default="standard")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--cache", type=Path, help="a folder to save each finished evaluation in, and to reuse the ones already there")
     args = ap.parse_args(argv)
     warnings.filterwarnings("ignore")
     bundle = load_default_bundle(load_config(), with_macro=False)
-    names = args.methods or [n for n in METHODS if n != BASELINE] + [BLEND]
+    names = args.methods or [n for n in METHODS if n != BASELINE] + [BLEND, BLEND_WEIGHTED]
     results: dict[tuple[str, int], dict] = {}
     for hz in args.horizons:
         for ticker in args.tickers:

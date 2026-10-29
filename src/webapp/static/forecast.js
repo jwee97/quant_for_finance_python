@@ -215,6 +215,10 @@
     fanCard(root, d);
     nowCard(root, d);
     scoreboard(root, d);
+    skillMatrix(root, d);
+    gainCard(root, d);
+    pairCard(root, d);
+    densityCard(root, d);
     calibrationCard(root, d);
     meanCard(root, d);
     assumptionsCard(root, d);
@@ -227,20 +231,24 @@
     const ul = h("ul", "", card); for (const r of v.reasons) h("li", "", ul, r);
   }
 
-  /* The fan: the last 120 days of the price, then the range of where it may go, for the chosen method, with the random walk's 90% range beside it. */
+  const RANGES = { "80": ["0.1", "0.9"], "90": ["0.05", "0.95"], "98": ["0.01", "0.99"] };                   // the outer range of the fan: which two quantiles bound it
+  /* The fan: the last 120 days of the price, then the range of where it may go, for the chosen method, with the random walk's range beside it. The outer range is 80%, 90% or 98%. */
   function fanCard(root, d) {
     const ids = Object.keys(d.now.methods);
     if (!F.show.method || !ids.includes(F.show.method)) F.show.method = bestMethod(d);
     const dates = d.history.dates.slice(-120).concat(d.future_dates), closes = d.history.close.slice(-120), nh = closes.length, last = closes[nh - 1];
     const wrap = (arr) => Array(nh - 1).fill(null).concat([last], arr);
     const mk = (id) => { const f = d.now.methods[id].fan; return { q: (k) => wrap(f[k].slice(0, d.horizon)) }; };
+    const ranges = Object.keys(RANGES).filter((r) => RANGES[r].every((k) => ids.every((id) => k in d.now.methods[id].fan)));        // a run made before the wider levels existed has only 90%
+    if (!F.show.range || !ranges.includes(F.show.range)) F.show.range = ranges.includes("90") ? "90" : ranges[0];
     const card = chartCard(root, `Where the price may go in the next ${d.horizon} trading days`, "", {
       wide: true,
       draw: (b) => {
         const id = F.show.method, m = mk(id), bands = [];
         const rw = d.now.methods[d.evaluation.baseline];
-        if (rw && id !== d.evaluation.baseline) bands.push({ name: "Random walk, 90% range", color: css("--muted"), opacity: 0.1, lo: mk(d.evaluation.baseline).q("0.05"), hi: mk(d.evaluation.baseline).q("0.95") });
-        bands.push({ name: "90% range", color: css("--s1"), opacity: 0.14, lo: m.q("0.05"), hi: m.q("0.95") }, { name: "Middle 50%", color: css("--s1"), opacity: 0.26, lo: m.q("0.25"), hi: m.q("0.75") });
+        const [lowQ, highQ] = RANGES[F.show.range];
+        if (rw && id !== d.evaluation.baseline) bands.push({ name: `Random walk, ${F.show.range}% range`, color: css("--muted"), opacity: 0.1, lo: mk(d.evaluation.baseline).q(lowQ), hi: mk(d.evaluation.baseline).q(highQ) });
+        bands.push({ name: `${F.show.range}% range`, color: css("--s1"), opacity: 0.14, lo: m.q(lowQ), hi: m.q(highQ) }, { name: "Middle 50%", color: css("--s1"), opacity: 0.26, lo: m.q("0.25"), hi: m.q("0.75") });
         C.line(b, { dates, series: [{ name: "Price", color: css("--ink"), values: closes.concat(Array(d.horizon).fill(null)) }, { name: "Median forecast", color: css("--s1"), values: m.q("0.5") }], bands,
           vlines: [{ x: d.asof, label: "today" }], yFormat: money, tipFormat: money, height: 330, label: `${d.ticker} price and the forecast range of ${shortOf(id, d)}`, legend: true });
       },
@@ -251,6 +259,10 @@
           { label: "Median", num: true, get: (n) => money(f["0.5"][n - 1]) }, { label: "75%", num: true, get: (n) => money(f["0.75"][n - 1]) }, { label: "95%", num: true, get: (n) => money(f["0.95"][n - 1]) }], steps);
       } });
     card.dataset.role = "forecast-fan";
+    if (ranges.length > 1) {
+      const rbox = h("div", "seg", card._extra); rbox.setAttribute("role", "group"); rbox.setAttribute("aria-label", "outer range of the fan");
+      for (const r of ranges) { const b = h("button", "", rbox, r + "%"); b.type = "button"; b.dataset.range = r; b.title = `Draw the outer band so that ${r}% of the simulated futures fall inside it`; b.setAttribute("aria-pressed", String(r === F.show.range)); b.addEventListener("click", () => { F.show.range = r; for (const x of rbox.querySelectorAll("button")) x.setAttribute("aria-pressed", String(x.dataset.range === r)); card._draw(); }); }
+    }
     const box = h("div", "tabsmall", card._extra); box.setAttribute("role", "group"); box.setAttribute("aria-label", "method shown");
     const paint = () => { for (const b of box.querySelectorAll("button")) b.setAttribute("aria-pressed", String(b.dataset.value === F.show.method)); noteEl.textContent = describe(); };
     for (const id of ids) {
@@ -274,6 +286,8 @@
     table(card, [{ label: "Method", get: (m) => shortOf(m.id, d), title: "The method" }, { label: "Average return", num: true, get: (m) => spct(m.summary[hz].mean, 1) }, { label: "Middle", num: true, get: (m) => spct(m.summary[hz].median, 1), title: "The median return" },
       { label: "5% worst case", num: true, get: (m) => spct(m.summary[hz].q05, 1) }, { label: "95% best case", num: true, get: (m) => spct(m.summary[hz].q95, 1) }, { label: "Chance of a rise", num: true, get: (m) => pct(m.summary[hz].p_up, 0) },
       { label: "Chance of losing 5%+", num: true, get: (m) => pct(m.summary[hz].p_loss_5, 0) },
+      { label: "Worst-5% average", num: true, get: (m) => (m.summary[hz].es_05 === undefined ? "n/a" : spct(m.summary[hz].es_05, 1)), title: "Expected shortfall: the average return in the worst 5% of the method's simulated futures" },
+      { label: "Volatility (year)", num: true, get: (m) => (m.summary[hz].vol_annual === undefined ? "n/a" : pct(m.summary[hz].vol_annual, 0)), title: "The spread of the method's simulated returns over this horizon, scaled to a year" },
       { label: "Past record", num: true, title: "How far below the random walk's average CRPS this method's was over the tested forecasts; a tick means it held up after allowing for the number of methods compared", get: (m) => { const s = scores(d, m.id, d.horizon); return m.id === d.evaluation.baseline ? "yardstick" : Q.bad(s.skill) ? "n/a" : spct(s.skill, 1) + (s.beats_baseline ? " ✓" : ""); } }], rows);
   }
 
@@ -297,6 +311,69 @@
     card.dataset.role = "forecast-scoreboard";
   }
 
+  /* Skill by horizon: every method and every horizon scored, at a glance. */
+  function skillMatrix(root, d) {
+    const hs = d.evaluation.horizons, ms = evaluated(d).filter((m) => hs.some((n) => !Q.bad(scores(d, m.id, n).skill))).sort((a, b) => (scores(d, b.id, d.horizon).skill ?? -9) - (scores(d, a.id, d.horizon).skill ?? -9));
+    if (ms.length < 2) return;
+    const ch = h("div", "charts", root), head = (n) => `${n} day${n === 1 ? "" : "s"}`;
+    const card = chartCard(ch, "Skill against the random walk, by method and horizon", "Each cell is how far below the random walk's average CRPS the method's was: blue is better, red is worse. An outlined cell held up after allowing for the number of methods compared. A method that only helps at one horizon is probably luck.", { wide: true,
+      draw: (b) => C.matrix(b, { rows: ms.map((m) => shortOf(m.id, d)), cols: hs.map(head), values: ms.map((m) => hs.map((n) => { const s = scores(d, m.id, n); return Q.bad(s.skill) ? null : s.skill; })), diverging: true, mid: 0, format: (v) => spct(v, 0), tipFormat: (v) => spct(v, 1), name: "Skill",
+        rowTitle: "Method", colTitle: "Horizon", cellHeight: 24, mark: (i, j) => !!scores(d, ms[i].id, hs[j]).beats_baseline, label: "Forecast skill against the random walk, by method and horizon",
+        tipRows: (i, j) => { const s = scores(d, ms[i].id, hs[j]); return [["p-value, adjusted", pval(s.p_adjusted)], ["Forecasts scored", String(s.n || 0)]]; } }),
+      table: (b) => table(b, [{ label: "Method", get: (m) => shortOf(m.id, d) }, ...hs.map((n) => ({ label: head(n), num: true, get: (m) => { const s = scores(d, m.id, n); return Q.bad(s.skill) ? "n/a" : spct(s.skill, 1) + (s.beats_baseline ? " ✓" : ""); } }))], ms) });
+    card.dataset.role = "forecast-skill-matrix";
+  }
+
+  /* The cumulative loss differential over the forecast origins (Goyal and Welch 2008): a line that climbs is a method that kept beating the random walk. */
+  function gainCard(root, d) {
+    const gain = d.evaluation.gain || {}, dates = d.evaluation.origin_dates || [], ids = Object.keys(gain).filter((id) => gain[id].some((v) => v !== null));
+    if (!ids.length || dates.length < 20) return;
+    const last = (id) => { const v = gain[id].filter((x) => x !== null); return v.length ? v[v.length - 1] : 0; };
+    const order = ids.slice().sort((a, b) => last(b) - last(a)), shown = order.length > 6 ? order.slice(0, 5).concat(order.slice(-1)) : order;
+    const ch = h("div", "charts", root);
+    const card = chartCard(ch, "Has each method kept beating the random walk?", `The running total, over the forecasts made from ${dates[0]} to ${dates[dates.length - 1]}, of how much lower the method's CRPS was than the random walk's, in units of the random walk's average. A line that climbs is a method that kept helping; one that climbs and goes flat stopped; one below zero has cost accuracy. ${order.length > 6 ? "The five best and the worst are drawn; the Table view lists all." : ""}`, { wide: true,
+      draw: (b) => C.line(b, { dates, series: shown.map((id, k) => ({ name: shortOf(id, d), color: Q.colorOf(k), values: gain[id] })), baseline: 0, include: 0, yFormat: (v) => v.toFixed(1), tipFormat: (v) => v.toFixed(2), height: 280, label: "Cumulative CRPS gain over the random walk", legend: true }),
+      table: (b) => table(b, [{ label: "Method", get: (id) => shortOf(id, d) }, { label: "Total gain over the random walk", num: true, get: (id) => last(id).toFixed(2), title: "In units of the random walk's average CRPS: 10 means ten forecasts' worth of its typical loss was saved" }], order) });
+    card.dataset.role = "forecast-gain";
+  }
+
+  /* Method against method: the skill of the row over the column and the Diebold-Mariano test of it. */
+  function pairCard(root, d) {
+    const pw = d.evaluation.pairwise;
+    if (!pw || pw.ids.length < 3) return;
+    const hz = pw.horizon, base = d.evaluation.baseline, rank = (k) => (pw.ids[k] === base ? 0 : scores(d, pw.ids[k], hz).skill ?? -9);
+    const order = pw.ids.map((_, k) => k).sort((a, b) => rank(b) - rank(a)), names = order.map((k) => shortOf(pw.ids[k], d)), ch = h("div", "charts", root), bi = pw.ids.indexOf(base);
+    const card = chartCard(ch, `Method against method, ${hz}-day forecasts`, "Each cell is how far below the column method's average CRPS the row method's was: blue means the row method was better. An outlined cell is one where the Diebold-Mariano test says the row method is better, at 5% with no allowance for the number of pairs, so with this many pairs some outlined cells are chance.", { wide: true,
+      draw: (b) => C.matrix(b, { rows: names.map((n, k) => `${k + 1}. ${n}`), cols: names.map((n, k) => String(k + 1)), values: order.map((a) => order.map((c) => pw.skill[a][c])), diverging: true, mid: 0, format: (v) => spct(v, 0), tipFormat: (v) => spct(v, 1), name: "Row against column",
+        rowTitle: "Row beats column by", colTitle: "Column (the number of the method)", cellHeight: 22, mark: (i, j) => pw.p[order[i]][order[j]] !== null && pw.p[order[i]][order[j]] < 0.05, label: "Pairwise forecast skill",
+        tipRows: (i, j) => [["One-sided p-value", pval(pw.p[order[i]][order[j]])]] }),
+      table: (b) => table(b, [{ label: "Method", get: (k) => shortOf(pw.ids[k], d) }, { label: "Better than the random walk by", num: true, get: (k) => (k === bi ? "" : spct(pw.skill[k][bi], 1)) },
+        { label: "Methods it beats at 5%", num: true, get: (k) => String(pw.p[k].filter((p) => p !== null && p < 0.05).length) }, { label: "Methods that beat it at 5%", num: true, get: (k) => String(pw.p.filter((row) => row[k] !== null && row[k] < 0.05).length) }], order) });
+    card.dataset.role = "forecast-pairs";
+  }
+
+  /* Where each method puts the return at the horizon: the same bins for all, so the shapes can be compared. */
+  function densityCard(root, d) {
+    const hist = d.now.hist;
+    if (!hist || !hist.counts) return;
+    const ids = Object.keys(hist.counts);
+    if (!F.show.dens || !ids.includes(F.show.dens)) F.show.dens = F.show.method && ids.includes(F.show.method) ? F.show.method : ids.find((id) => id !== d.evaluation.baseline) || ids[0];
+    const ch = h("div", "charts", root);
+    const card = chartCard(ch, `How the methods see the return in ${hist.horizon} trading days`, "The share of each method's simulated futures in each band of return. The random walk is drawn for comparison: a method that moves the middle left or right has a view on direction; one with a fatter or thinner tail has a view on risk. The markers are the chosen method's 5% worst case and its median.", { wide: true,
+      draw: (b) => {
+        const id = F.show.dens, sm = d.now.methods[id].summary[String(hist.horizon)], series = [{ name: shortOf(id, d), edges: hist.edges, counts: hist.counts[id], color: css("--s1") }];
+        if (id !== d.evaluation.baseline && hist.counts[d.evaluation.baseline]) series.push({ name: shortOf(d.evaluation.baseline, d), edges: hist.edges, counts: hist.counts[d.evaluation.baseline], color: css("--muted") });
+        C.histogram(b, { series, markers: [{ x: sm.q05, label: "5% worst" }, { x: sm.median, label: "median" }], xFormat: (v) => (v * 100).toFixed(0) + "%", unit: hist.edges[1] - hist.edges[0], yFormat: (v) => (v * 100).toFixed(0) + "%", height: 260, label: `Distribution of the ${hist.horizon}-day return` });
+      },
+      table: (b) => table(b, [{ label: "Method", get: (id) => shortOf(id, d) }, { label: "Chance of a rise", num: true, get: (id) => pct(d.now.methods[id].summary[String(hist.horizon)].p_up, 0) }, { label: "Chance of losing 5%+", num: true, get: (id) => pct(d.now.methods[id].summary[String(hist.horizon)].p_loss_5, 0) },
+        { label: "Chance of gaining 5%+", num: true, get: (id) => pct(d.now.methods[id].summary[String(hist.horizon)].p_gain_5, 0) }], ids) });
+    card.dataset.role = "forecast-density";
+    const box = h("div", "tabsmall", card._extra); box.setAttribute("role", "group"); box.setAttribute("aria-label", "method whose distribution is shown");
+    const paint = () => { for (const x of box.querySelectorAll("button")) x.setAttribute("aria-pressed", String(x.dataset.value === F.show.dens)); };
+    for (const id of ids) { const x = h("button", "", box, shortOf(id, d)); x.type = "button"; x.dataset.value = id; x.addEventListener("click", () => { F.show.dens = id; paint(); card._draw(); }); }
+    paint();
+  }
+
   /* Calibration: where the outcome fell among the forecast's own range. */
   function calibrationCard(root, d) {
     const ms = evaluated(d).filter((m) => scores(d, m.id, d.horizon).pit), hz = d.horizon;
@@ -304,9 +381,22 @@
     if (!F.show.pit || !ms.some((m) => m.id === F.show.pit)) F.show.pit = ms.some((m) => m.id === F.show.method) ? F.show.method : ms[0].id;
     const card = chartCard(root, "Were the ranges the right size?", "Where the outcome fell within each forecast's own range (0 to 10% is the lowest tenth of the simulated futures). A flat chart means the ranges were the right size. A hump in the middle means they were too wide, a U means too narrow, a slope means the forecasts were biased.", {
       draw: (b) => { const s = scores(d, F.show.pit, hz), labels = s.pit.map((_, i) => `${i * 10}–${i * 10 + 10}%`);
+        if (F.show.pitView === "curve") {                                                                  // the cumulative version: share of outcomes at or below each nominal probability, against the diagonal
+          const xs = [0], ys = [0]; let acc = 0; s.pit.forEach((v, i) => { acc += v; xs.push((i + 1) / s.pit.length); ys.push(acc); });
+          const n = s.n_independent || 0, band = n > 0 ? 1.36 / Math.sqrt(n) : null;                           // the 5% critical distance of the Kolmogorov-Smirnov test for that many independent forecasts
+          C.line(b, { xs, xLabel: "Forecast probability (the share of the simulated futures at or below the outcome)", series: [{ name: shortOf(F.show.pit, d), color: css("--s1"), values: ys, dots: true, dotSize: 3 }, { name: "Calibrated", color: css("--muted"), dash: "5 4", width: 1.25, values: xs }],
+            bands: band === null ? [] : [{ name: "95% band if calibrated", color: css("--muted"), opacity: 0.14, lo: xs.map((x) => Math.max(0, x - band)), hi: xs.map((x) => Math.min(1, x + band)) }], xFormat: (v) => (v * 100).toFixed(0) + "%", yFormat: (v) => (v * 100).toFixed(0) + "%", tipFormat: (v) => (v * 100).toFixed(1) + "%",
+            height: 260, label: `Calibration curve of ${shortOf(F.show.pit, d)}` });
+          return;
+        }
         C.columns(b, { labels, values: s.pit, yFormat: (v) => (v * 100).toFixed(0) + "%", name: "Share of outcomes", label: `Calibration of ${shortOf(F.show.pit, d)}`, height: 230, colors: () => css("--s1"), tipLabel: (i) => `Outcome in the ${labels[i]} slice of the forecast` }); },
       table: (b) => { const s = scores(d, F.show.pit, hz); table(b, [{ label: "Slice of the forecast", get: (i) => `${i * 10}–${i * 10 + 10}%` }, { label: "Share of outcomes", num: true, get: (i) => pct(s.pit[i], 1) }, { label: "Calibrated would be", num: true, get: () => "10.0%" }], s.pit.map((_, i) => i)); } });
     card.dataset.role = "forecast-calibration";
+    const vbox = h("div", "seg", card._extra); vbox.setAttribute("role", "group"); vbox.setAttribute("aria-label", "calibration view");
+    for (const [v, label, tip] of [["bars", "Bars", "The share of outcomes in each tenth of the forecast's range"], ["curve", "Curve", "The cumulative share against the diagonal of a perfectly calibrated forecast, with the band the Kolmogorov-Smirnov test allows"]]) {
+      const b = h("button", "", vbox, label); b.type = "button"; b.dataset.view = v; b.title = tip; b.setAttribute("aria-pressed", String((F.show.pitView || "bars") === v));
+      b.addEventListener("click", () => { F.show.pitView = v; for (const x of vbox.querySelectorAll("button")) x.setAttribute("aria-pressed", String(x.dataset.view === v)); card._draw(); });
+    }
     const box = h("div", "tabsmall", card._extra); box.setAttribute("role", "group"); box.setAttribute("aria-label", "method whose calibration is shown");
     const paint = () => { for (const b of box.querySelectorAll("button")) b.setAttribute("aria-pressed", String(b.dataset.value === F.show.pit)); facts(); };
     const k = h("div", "earnrow", card);
@@ -337,6 +427,7 @@
     for (const m of [{ id: d.evaluation.baseline }, ...evaluated(d)]) {
       const info = methodOf(m.id) || d.evaluation.methods.find((x) => x.id === m.id); if (!info) continue;
       const det = h("details", "how", card); h("summary", "", det, info.label); h("p", "", det, info.text); const ul = h("ul", "", det); h("li", "", ul, "Assumes: " + info.assumes); h("li", "", ul, "Breaks when: " + info.fails);
+      Q.refsLine(det, info.references);
     }
   }
   function learnedCard(root, d) {
@@ -353,7 +444,9 @@
     const card = W.card(root, "Read before relying on it"); const ul = h("ul", "", card);
     for (const t of d.notes) h("li", "", ul, t);
     h("li", "", ul, `Tested on ${d.history_days.toLocaleString("en-US")} days of prices from ${d.first_date}; the ranking could be different in another period or for another stock.`);
+    h("li", "", ul, "How the forecasts are scored and compared (CRPS, Diebold-Mariano, Clark-West, the probability integral transform, the coverage test of Kupiec, the cumulative gain plot): the sources are listed below.");
     h("li", "", ul, "A forecast is a statement about a range, not an instruction to trade. How good a forecast is and how much money a rule built on it makes are different questions; the Backtest tab answers the second.");
+    if (F.plan && F.plan.evaluation_references) Q.refsLine(card, F.plan.evaluation_references);
   }
   function downloadCsv(d) {
     const rows = [["method", "step", "date", "q05", "q25", "median", "q75", "q95"]];

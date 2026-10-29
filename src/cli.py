@@ -230,7 +230,7 @@ def cmd_forecast(args, config) -> int:
     import json
     import time
 
-    from .forecast import BASELINE, BLEND, DEFAULT, METHODS, History, catalog
+    from .forecast import BASELINE, BLENDS, DEFAULT, METHODS, History, catalog
     from .forecast import evaluate as ev
     from .forecast.base import ForecastError
     from .forecast.report import format_report
@@ -246,10 +246,10 @@ def cmd_forecast(args, config) -> int:
         print(f"choose a ticker from {', '.join(bundle.prices.columns)}" + (f" ('{args.ticker}' is not in the data)" if args.ticker else ""), file=sys.stderr)
         return 2
     ticker = columns[args.ticker.upper()]
-    names = list(METHODS) + [BLEND] if args.all else (args.methods or list(DEFAULT))
-    unknown = [n for n in names if n not in METHODS and n != BLEND]
+    names = list(METHODS) + list(BLENDS) if args.all else (args.methods or list(DEFAULT))
+    unknown = [n for n in names if n not in METHODS and n not in BLENDS]
     if unknown:
-        print(f"unknown forecasting method '{unknown[0]}'; choose from {', '.join(list(METHODS) + [BLEND])}", file=sys.stderr)
+        print(f"unknown forecasting method '{unknown[0]}'; choose from {', '.join(list(METHODS) + list(BLENDS))}", file=sys.stderr)
         return 2
     chosen = [n for n in dict.fromkeys(names) if n != BASELINE]
     if not chosen:

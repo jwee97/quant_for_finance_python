@@ -40,7 +40,9 @@ def test_every_reference_is_a_citation_with_a_year_and_an_https_link_or_none():
 
 
 def test_no_method_lists_the_same_source_twice_and_every_method_exists():
-    registries = {"model": {e.name for e in MODELS.entries()}, "allocator": {e.name for e in ALLOCATORS.entries()}}
+    from src.forecast import BLENDS, METHODS
+
+    registries = {"model": {e.name for e in MODELS.entries()}, "allocator": {e.name for e in ALLOCATORS.entries()}, "forecaster": set(METHODS) | set(BLENDS)}
     for kind, table in TABLES.items():
         for name, items in table.items():
             assert len({r.cite for r in items}) == len(items), (kind, name)
@@ -53,6 +55,14 @@ def test_the_new_book_rules_cite_their_sources():
     for name, must in {"carver_ewmac": "Carver", "clenow_momentum": "Clenow", "tstat_momentum": "Baltas", "variance_ratio_switch": "MacKinlay", "connors_rsi": "Connors", "double_seven": "Connors",
                        "skew_premium": "Amaya", "cppi": "Black"}.items():
         assert any(must in r.cite for r in refs.MODELS[name]), name
+
+
+def test_every_forecasting_method_but_the_two_plain_baselines_cites_its_source():
+    from src.forecast import BLENDS, METHODS
+
+    bare = set(METHODS) | set(BLENDS)
+    assert bare - set(refs.FORECASTERS) == {"random_walk", "historical"}                         # a zero-mean random walk and the empirical distribution need no citation
+    assert len(refs.FORECAST_EVALUATION) >= 6 and all(r.url for r in refs.FORECAST_EVALUATION)
 
 
 def test_lookup_returns_plain_dictionaries_and_an_empty_list_for_a_method_with_none():

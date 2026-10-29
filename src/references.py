@@ -131,6 +131,42 @@ LIU_TSYVINSKI = paper("Liu and Tsyvinski", 2021, "Risks and returns of cryptocur
 LIU_TSYVINSKI_WU = paper("Liu, Tsyvinski and Wu", 2022, "Common risk factors in cryptocurrency", "Journal of Finance 77(2)", "10.1111/jofi.13119")
 
 
+# ---- forecasting
+HANSEN_LUNDE = paper("Hansen and Lunde", 2005, "A forecast comparison of volatility models: does anything beat a GARCH(1,1)?", "Journal of Applied Econometrics 20(7)", "10.1002/jae.800")
+GJR = paper("Glosten, Jagannathan and Runkle", 1993, "On the relation between the expected value and the volatility of the nominal excess return on stocks", "Journal of Finance 48(5)", "10.1111/j.1540-6261.1993.tb05128.x")
+NELSON = paper("Nelson", 1991, "Conditional heteroskedasticity in asset returns: a new approach", "Econometrica 59(2)", "10.2307/2938260")
+BGV = paper("Barone-Adesi, Giannopoulos and Vosper", 1999, "VaR without correlations for portfolios of derivative securities", "Journal of Futures Markets 19(5)")
+BARONE_ADESI = paper("Barone-Adesi, Engle and Mancini", 2008, "A GARCH option pricing model with filtered historical simulation", "Review of Financial Studies 21(3)", "10.1093/rfs/hhn031")
+MCNEIL_QRM = book("McNeil, Frey and Embrechts", 2015, "Quantitative Risk Management: Concepts, Techniques and Tools, revised edition", "Princeton University Press")
+POLITIS_ROMANO = paper("Politis and Romano", 1994, "The stationary bootstrap", "Journal of the American Statistical Association 89(428)", "10.1080/01621459.1994.10476870")
+HULL_WHITE_98 = paper("Hull and White", 1998, "Incorporating volatility updating into the historical simulation method for value-at-risk", "Journal of Risk 1(1)", "10.21314/jor.1998.001")
+BLACK_SCHOLES = paper("Black and Scholes", 1973, "The pricing of options and corporate liabilities", "Journal of Political Economy 81(3)", "10.1086/260062")
+RISKMETRICS = book("J.P. Morgan and Reuters", 1996, "RiskMetrics: Technical Document, 4th edition", "J.P. Morgan")
+MADAN_CARR_CHANG = paper("Madan, Carr and Chang", 1998, "The variance gamma process and option pricing", "Review of Finance 2(1)", "10.1023/a:1009703431535")
+BARNDORFF_NIELSEN = paper("Barndorff-Nielsen", 1997, "Normal inverse Gaussian distributions and stochastic volatility modelling", "Scandinavian Journal of Statistics 24(1)", "10.1111/1467-9469.00045")
+HESTON = paper("Heston", 1993, "A closed-form solution for options with stochastic volatility with applications to bond and currency options", "Review of Financial Studies 6(2)", "10.1093/rfs/6.2.327")
+MERTON_76 = paper("Merton", 1976, "Option pricing when underlying stock returns are discontinuous", "Journal of Financial Economics 3(1-2)", "10.1016/0304-405x(76)90022-2")
+HARVEY_RUIZ_SHEPHARD = paper("Harvey, Ruiz and Shephard", 1994, "Multivariate stochastic variance models", "Review of Economic Studies 61(2)")
+CORSI = paper("Corsi", 2009, "A simple approximate long-memory model of realized volatility", "Journal of Financial Econometrics 7(2)", "10.1093/jjfinec/nbp001")
+PARKINSON = paper("Parkinson", 1980, "The extreme value method for estimating the variance of the rate of return", "Journal of Business 53(1)", "10.1086/296071")
+HAMILTON = paper("Hamilton", 1989, "A new approach to the economic analysis of nonstationary time series and the business cycle", "Econometrica 57(2)", "10.2307/1912559")
+BOX_JENKINS = book("Box and Jenkins", 1970, "Time Series Analysis: Forecasting and Control", "Holden-Day")
+FARMER_SIDOROWICH = paper("Farmer and Sidorowich", 1987, "Predicting chaotic time series", "Physical Review Letters 59(8)", "10.1103/physrevlett.59.845")
+ASSIMAKOPOULOS = paper("Assimakopoulos and Nikolopoulos", 2000, "The theta model: a decomposition approach to forecasting", "International Journal of Forecasting 16(4)", "10.1016/s0169-2070(00)00066-2")
+HYNDMAN_BILLAH = paper("Hyndman and Billah", 2003, "Unmasking the Theta method", "International Journal of Forecasting 19(2)", "10.1016/s0169-2070(01)00143-1")
+FPP3 = paper("Hyndman and Athanasopoulos", 2021, "Forecasting: Principles and Practice, 3rd edition", "OTexts", url="https://otexts.com/fpp3/")
+BATES_GRANGER = paper("Bates and Granger", 1969, "The combination of forecasts", "Journal of the Operational Research Society 20(4)", "10.1057/jors.1969.103")
+TIMMERMANN = paper("Timmermann", 2006, "Forecast combinations", "Handbook of Economic Forecasting, vol. 1", "10.1016/s1574-0706(05)01004-9")
+SMITH_WALLIS = paper("Smith and Wallis", 2009, "A simple explanation of the forecast combination puzzle", "Oxford Bulletin of Economics and Statistics 71(3)", "10.1111/j.1468-0084.2008.00541.x")
+GNEITING_RAFTERY = paper("Gneiting and Raftery", 2007, "Strictly proper scoring rules, prediction, and estimation", "Journal of the American Statistical Association 102(477)", "10.1198/016214506000001437")
+FERRO = paper("Ferro", 2014, "Fair scores for ensemble forecasts", "Quarterly Journal of the Royal Meteorological Society 140(683)", "10.1002/qj.2270")
+DIEBOLD_MARIANO = paper("Diebold and Mariano", 1995, "Comparing predictive accuracy", "Journal of Business & Economic Statistics 13(3)", "10.1080/07350015.1995.10524599")
+CLARK_WEST = paper("Clark and West", 2007, "Approximately normal tests for equal predictive accuracy in nested models", "Journal of Econometrics 138(1)", "10.1016/j.jeconom.2006.05.023")
+DIEBOLD_GUNTHER_TAY = paper("Diebold, Gunther and Tay", 1998, "Evaluating density forecasts with applications to financial risk management", "International Economic Review 39(4)", "10.2307/2527342")
+KUPIEC = paper("Kupiec", 1995, "Techniques for verifying the accuracy of risk measurement models", "Journal of Derivatives 3(2)", "10.3905/jod.1995.407942")
+GOYAL_WELCH = paper("Goyal and Welch", 2008, "A comprehensive look at the empirical performance of equity premium prediction", "Review of Financial Studies 21(4)", "10.1093/rfs/hhm014")
+
+
 # ------------------------------------------------------------------------------------------------------------------ method -> sources
 MODELS: dict[str, tuple[Ref, ...]] = {
     "tsmom": (MOSKOWITZ, HURST), "tsmom_multi": (HURST, MOSKOWITZ), "ma_ensemble": (BAZ,), "donchian": (FAITH, CLENOW_FTT), "kama_trend": (KAUFMAN,),
@@ -156,8 +192,19 @@ ALLOCATORS: dict[str, tuple[Ref, ...]] = {
     "static": (MARKOWITZ, MAILLARD, RONCALLI, LOPEZ_HRP, RAFFINOT), "min_variance": (CLARKE_MINVAR,), "max_diversification": (CHOUEIFATY,), "black_litterman": (BLACK_LITTERMAN,),
     "kelly": (KELLY, MACLEAN_THORP_ZIEMBA), "tangency_cml": (MARKOWITZ, SHARPE_64), "mv_cvar": (ROCKAFELLAR,), "dynamic_cov": (ENGLE_DCC,), "bayesian": (JORION,),
     "hierarchical_sensitivity_parity": (LOPEZ_HRP,), "graph_centrality": (POZZI,), "multi_period": (GARLEANU_PEDERSEN,), "tca_mvo": (GARLEANU_PEDERSEN,), "es_policy": (SALIMANS,),
-    "qubo_select": (LUCAS,), "constrained_long_short": (GRINOLD_KAHN,),
+    "qubo_select": (LUCAS,), "constrained_long_short": (GRINOLD_KAHN,), "risk_budget": (RONCALLI, MAILLARD), "resampled_mv": (MICHAUD,),
 }
+
+
+FORECASTERS: dict[str, tuple[Ref, ...]] = {
+    "riskmetrics": (RISKMETRICS,), "hull_white": (HULL_WHITE_98,), "gbm": (BLACK_SCHOLES,), "bootstrap": (POLITIS_ROMANO,), "garch11": (BOLLERSLEV_86, HANSEN_LUNDE), "garch": (GJR, BOLLERSLEV_86, HANSEN_LUNDE),
+    "egarch": (NELSON, HANSEN_LUNDE), "fhs": (BGV, BARONE_ADESI), "evt": (MCNEIL_FREY, MCNEIL_QRM), "garch_vg": (MADAN_CARR_CHANG,), "garch_nig": (BARNDORFF_NIELSEN,), "heston": (HESTON,), "jump": (MERTON_76,),
+    "sv_kalman": (HARVEY_RUIZ_SHEPHARD,), "har": (CORSI, PARKINSON), "markov_returns": (HAMILTON,), "markov_volatility": (HAMILTON,), "hmm": (HAMILTON,), "gp_returns": (RASMUSSEN,), "gp_drift": (RASMUSSEN,),
+    "gp_price": (RASMUSSEN,), "kalman": (HARVEY_KF,), "theta": (ASSIMAKOPOULOS, HYNDMAN_BILLAH, FPP3), "arma": (BOX_JENKINS,), "analog": (FARMER_SIDOROWICH,),
+    "blend": (BATES_GRANGER, TIMMERMANN, SMITH_WALLIS), "blend_weighted": (BATES_GRANGER, TIMMERMANN, SMITH_WALLIS),
+}
+# How a forecast distribution is scored and compared (the Forecast tab's evaluation), shown once for the whole page.
+FORECAST_EVALUATION: tuple[Ref, ...] = (GNEITING_RAFTERY, FERRO, DIEBOLD_MARIANO, CLARK_WEST, DIEBOLD_GUNTHER_TAY, KUPIEC, GOYAL_WELCH)
 
 
 def references(kind: str, name: str) -> list[dict]:
@@ -166,4 +213,4 @@ def references(kind: str, name: str) -> list[dict]:
     return [r.view() for r in table.get(name, ())]
 
 
-EXTRA: dict[str, dict[str, tuple[Ref, ...]]] = {}                 # tables of the other tabs (forecasters, option strategies, ...), filled by their modules
+EXTRA: dict[str, dict[str, tuple[Ref, ...]]] = {"forecaster": FORECASTERS}                 # tables of the other tabs (forecasters, option strategies, ...)

@@ -7,18 +7,27 @@ from .baselines import GBM, Historical, HullWhite, RandomWalk, RiskMetrics
 from .gp import GPDrift, GPPrice, GPReturns
 from .markov import HiddenMarkov, MarkovReturns, MarkovVolatility
 from .montecarlo import FilteredHistorical, GarchMC, JumpDiffusion
+from .more import EGarchMC, EVTFilteredHistorical, Garch11MC, StationaryBootstrap, Theta
 from .others import HAR, Analogues, ARMAReturns, KalmanTrend
 from .stochvol import GarchNIG, GarchVG, HestonMC, SVKalman
 
 BASELINE = "random_walk"
 BLEND = "blend"
-CLASSES = (RandomWalk, RiskMetrics, Historical, HullWhite, GBM, GarchMC, FilteredHistorical, GarchVG, GarchNIG, HestonMC, JumpDiffusion, SVKalman, HAR, MarkovReturns, MarkovVolatility, HiddenMarkov, GPReturns, GPDrift, GPPrice, KalmanTrend, ARMAReturns, Analogues)
+BLEND_WEIGHTED = "blend_weighted"
+BLENDS = (BLEND, BLEND_WEIGHTED)
+CLASSES = (RandomWalk, RiskMetrics, Historical, HullWhite, GBM, StationaryBootstrap, Garch11MC, GarchMC, EGarchMC, FilteredHistorical, EVTFilteredHistorical, GarchVG, GarchNIG, HestonMC, JumpDiffusion, SVKalman, HAR, MarkovReturns, MarkovVolatility,
+           HiddenMarkov, GPReturns, GPDrift, GPPrice, KalmanTrend, Theta, ARMAReturns, Analogues)
 METHODS: dict[str, Forecaster] = {c.name: c() for c in CLASSES}
 FAMILIES = ("baseline", "Monte Carlo", "Volatility", "Markov", "Gaussian process", "State space", "Time series", "Pattern matching", "Combination")
 DEFAULT = ("random_walk", "riskmetrics", "hull_white", "garch", "fhs", "har", "markov_volatility", "hmm", "gp_returns", "gp_drift", "kalman", "analog")
 BLEND_VIEW = {"id": BLEND, "label": "Equal-weight blend of the other methods", "short": "Blend (equal weight)", "family": "Combination", "mean_signal": True, "heavy": False, "min_history": 0,
               "text": "Pools the forecasts of every other method you chose, drawing equally from each. Combining forecasts is the most dependable way to improve on the best of them, and an equal-weight pool is hard to beat.",
               "assumes": "No method is reliably best, so each is trusted equally.", "fails": "It inherits the errors the methods share, and a bad member drags it down by its share."}
+BLEND_WEIGHTED_VIEW = {"id": BLEND_WEIGHTED, "label": "Blend weighted by past accuracy (Bates-Granger)", "short": "Blend (by past CRPS)", "family": "Combination", "mean_signal": True, "heavy": False, "min_history": 0,
+                       "text": "Pools the forecasts of the other methods you chose, drawing from each in proportion to the inverse of its average CRPS over the forecasts whose outcome was already known: the Bates-Granger weights for whole forecast distributions.",
+                       "assumes": "A method that has been more accurate will keep being more accurate, and the past scores measure that well enough to weight by.",
+                       "fails": "The weights are estimated from a short and noisy record: the forecast-combination puzzle (Smith and Wallis 2009) is that estimated weights often do worse than equal ones."}
+VIEWS = {BLEND: BLEND_VIEW, BLEND_WEIGHTED: BLEND_WEIGHTED_VIEW}
 
 
 def create(name: str) -> Forecaster:
@@ -29,4 +38,4 @@ def create(name: str) -> Forecaster:
 
 def catalog() -> list[dict]:
     """Every method for the form (the baseline first), with its blend last."""
-    return [m.view() for m in METHODS.values()] + [BLEND_VIEW]
+    return [m.view() for m in METHODS.values()] + [BLEND_VIEW, BLEND_WEIGHTED_VIEW]

@@ -59,7 +59,8 @@ def finished(app):
 def test_the_plan_lists_the_methods_with_what_each_assumes_and_the_choices_of_the_form(app):
     plan = app.extra_get["/api/forecast/plan"]({})
     ids = [m["id"] for m in plan["methods"]]
-    assert ids == list(METHODS) + ["blend"] and plan["baseline"] == "random_walk" and plan["blend"] == "blend" and set(plan["default"]) <= set(ids)
+    assert all(isinstance(m["references"], list) for m in plan["methods"]) and plan["evaluation_references"] and {m["id"]: m for m in plan["methods"]}["theta"]["references"][0]["cite"].startswith("Assimakopoulos")
+    assert ids == list(METHODS) + ["blend", "blend_weighted"] and plan["baseline"] == "random_walk" and plan["blend"] == "blend" and plan["blends"] == ["blend", "blend_weighted"] and set(plan["default"]) <= set(ids)
     assert all(m["label"] and m["short"] and m["text"] and m["assumes"] and m["fails"] for m in plan["methods"])
     assert plan["horizons"] == [5, 10, 21, 63] and plan["default_horizon"] == 21 and [e["id"] for e in plan["efforts"]] == ["quick", "standard", "thorough"]
     assert set(m["family"] for m in plan["methods"]) <= set(plan["families"]) and plan["scored_horizons"] == [1, 5, 21] and plan["min_days"] == 800

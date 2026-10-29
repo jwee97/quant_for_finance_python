@@ -76,11 +76,11 @@ def test_the_form_lists_the_methods_by_family_with_the_yardstick_fixed_and_the_p
         assert families[:4] == ["Monte Carlo", "Volatility", "Markov", "Gaussian process"] and "Combination" in families
         fixed = page.locator("#forecast label.f.inline input[disabled]")
         assert fixed.count() == 1 and fixed.is_checked()
-        assert page.locator("#forecast .checks input[type=checkbox]").count() == len(METHODS) - 1 + 1       # every method but the yardstick, and the blend
+        assert page.locator("#forecast .checks input[type=checkbox]").count() == len(METHODS) - 1 + 2       # every method but the yardstick, and the two blends
         ticked = lambda: page.evaluate("[...document.querySelectorAll('#forecast .checks input[type=checkbox]')].filter((c) => c.checked).map((c) => c.dataset.value)")   # noqa: E731
         assert "garch" in ticked() and "gp_price" not in ticked() and "random_walk" not in ticked()
         page.click("#forecast button:has-text('All of them')")
-        assert len(ticked()) == len(METHODS)                                       # all methods but the yardstick (which has no box) plus the blend
+        assert len(ticked()) == len(METHODS) + 1                                   # all methods but the yardstick (which has no box) plus the two blends
         page.click("#forecast button:has-text('Fast ones only')")
         assert "hmm" not in ticked() and "riskmetrics" in ticked() and "gp_returns" not in ticked()
         page.click("#forecast button:has-text('Recommended')")
@@ -138,6 +138,46 @@ def test_a_forecast_reads_in_words_draws_the_fan_and_leaves_a_table_behind_every
         assert cal.locator(".tabsmall button[data-value=garch]").get_attribute("aria-pressed") == "true"
         assert "What each method assumes" in page.inner_text("#forecast-results") and "What the methods learned" in page.inner_text("#forecast-results")
         assert page.locator("#forecast-results details.how").count() >= 4
+        assert not page.problems, page.problems
+    finally:
+        page.close()
+
+
+def test_the_forecast_page_compares_methods_with_a_skill_matrix_a_cumulative_gain_pairwise_tests_and_the_shape_of_each_distribution(browser, live_forecast):  # noqa: F811
+    page = _page(browser, live_forecast)
+    try:
+        _run(page, ids=("riskmetrics", "garch", "egarch", "bootstrap", "blend_weighted"), horizon="21")
+        matrix = page.locator("[data-role=forecast-skill-matrix]")
+        assert matrix.locator("svg.chart rect").count() >= 3 * 5 and "Horizon" in matrix.inner_text() and matrix.locator("button:has-text('Table')").count() == 1
+        gain = page.locator("[data-role=forecast-gain]")
+        assert gain.locator("svg.chart path").count() >= 4 and "kept beating the random walk" in gain.inner_text()
+        gain.locator(".seg button:has-text('Table')").click()
+        assert gain.locator("table.data tbody tr").count() == 5 and "Total gain over the random walk" in gain.inner_text()
+        pairs = page.locator("[data-role=forecast-pairs]")
+        assert pairs.locator("svg.chart rect").count() >= 6 * 6 and "Diebold-Mariano" in pairs.inner_text()
+        pairs.locator(".seg button:has-text('Table')").click()
+        assert pairs.locator("table.data tbody tr").count() == 6 and "Methods it beats at 5%" in pairs.inner_text()
+        density = page.locator("[data-role=forecast-density]")
+        assert density.locator("svg.chart path").count() >= 3 and density.locator(".tabsmall button").count() == 6
+        before = density.locator("svg.chart").inner_html()
+        density.locator(".tabsmall button[data-value=egarch]").click()
+        assert density.locator("svg.chart").inner_html() != before and density.locator(".tabsmall button[data-value=egarch]").get_attribute("aria-pressed") == "true"
+        fan = page.locator("[data-role=forecast-fan]")
+        ranges = fan.locator(".seg button[data-range]")
+        assert ranges.all_inner_texts() == ["80%", "90%", "98%"] and fan.locator(".seg button[data-range='90']").get_attribute("aria-pressed") == "true"
+        narrow = fan.locator("svg.chart").inner_html()
+        fan.locator(".seg button[data-range='98']").click()
+        assert fan.locator("svg.chart").inner_html() != narrow and "98% range" in fan.inner_text()
+        cal = page.locator("[data-role=forecast-calibration]")
+        bars = cal.locator("svg.chart").inner_html()
+        cal.locator(".seg button[data-view=curve]").click()
+        assert cal.locator("svg.chart").inner_html() != bars and "Calibrated" in cal.inner_text() and cal.locator(".seg button[data-view=curve]").get_attribute("aria-pressed") == "true"
+        now = page.locator("[data-role=forecast-now] table.data")
+        assert "Worst-5% average" in now.inner_text() and "Volatility (year)" in now.inner_text()
+        assert "Blend (by past CRPS)" in page.inner_text("#forecast-results")
+        learned = page.locator("#forecast-results details.how:has(summary:text-is('Blend (by past CRPS)'))").last
+        learned.locator("summary").click()
+        assert "Weights:" in learned.inner_text() and "garch: 0." in learned.inner_text()                       # what the pool drew from each member, learned from the past scores
         assert not page.problems, page.problems
     finally:
         page.close()

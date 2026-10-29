@@ -191,6 +191,50 @@ class MaximumDiversification(_RollingRiskBook):
         return maximum_diversification_weights(cov, constraints)
 
 
+def class_budget(assets, asset_class: dict, budgets: dict | None) -> pd.Series:
+    """The risk budget of each asset: the budget of its asset class shared equally by the class's members present (equal for every asset when ``budgets`` is ``None``). A class that ``budgets`` does not
+    name gets the smallest named budget, so that no asset is left with none."""
+    assets = list(assets)
+    if budgets is None:
+        return pd.Series(1.0 / len(assets), index=assets)
+    floor = min(v for v in budgets.values() if v > 0)
+    classes = pd.Series({a: asset_class.get(a, "unknown") for a in assets})
+    count = classes.value_counts()
+    share = classes.map(lambda c: float(budgets.get(c, floor))) / classes.map(count)
+    return share / share.sum()
+
+
+@register_allocator("risk_budget", "Risk budgeting (Roncalli): weights whose risk contributions follow a budget set by asset class (equal risk per asset when none is given), on a trailing shrinkage covariance, rebalanced monthly")
+class RiskBudget(_RollingRiskBook):
+    """Equal risk contribution is the case where every asset has the same budget. A budget such as ``{"equity": 0.4, "rates": 0.4, "commodity": 0.2}`` gives each class that share of the portfolio's
+    risk, spread equally over the class's assets; a class not named gets the smallest budget named."""
+
+    def __init__(self, budgets: dict | None = None, lookback: int = 252, min_assets: int = 3):
+        super().__init__(lookback, min_assets)
+        if budgets is not None and (not isinstance(budgets, dict) or not budgets or any(v < 0 for v in budgets.values()) or not any(v > 0 for v in budgets.values())):
+            raise ValueError("budgets must map asset classes to non-negative shares, at least one above zero")
+        self.budgets = budgets
+
+    def build(self, ctx: Context) -> pd.DataFrame:
+        from ..portfolio.covariance import estimate_covariance
+        from ..portfolio.risk_parity import risk_parity_weights
+
+        bundle, constraints = ctx.bundle, ctx.constraints()
+        out = pd.DataFrame(np.nan, index=bundle.index, columns=bundle.assets)
+        for origin in month_end_dates(bundle.index):
+            position = bundle.index.get_loc(origin)
+            if position < self.lookback:
+                continue
+            window = bundle.returns.iloc[position - self.lookback + 1:position + 1]
+            live = [a for a in bundle.assets if bool(bundle.investable.loc[origin, a]) and window[a].notna().mean() > 0.9]
+            if len(live) < self.min_assets:
+                continue
+            cov = estimate_covariance(window[live].fillna(0.0), "shrinkage", self.lookback, annualise=True)
+            weights = risk_parity_weights(cov, class_budget(live, bundle.asset_class, self.budgets), constraints=constraints)
+            out.loc[origin, live] = weights.reindex(live).to_numpy()
+        return out.ffill().fillna(0.0)
+
+
 class _ForecastBook(Allocator):
     """Month-end weights built from the forecast panel and a trailing shrinkage covariance; the forecast row at the origin uses data through the origin."""
 
@@ -220,7 +264,8 @@ class _ForecastBook(Allocator):
             if len(live) < self.min_assets:
                 continue
             cov = estimate_covariance(window[live].fillna(0.0), "shrinkage", self.lookback, annualise=True)
-            w = self.solve(mu_row[live] * scale, cov, fc.confidence.loc[origin, live].fillna(0.5), ctx)
+            extra = {"window": window[live]} if getattr(self, "uses_window", False) else {}
+            w = self.solve(mu_row[live] * scale, cov, fc.confidence.loc[origin, live].fillna(0.5), ctx, **extra)
             if w is not None:
                 out.loc[origin, live] = w.reindex(live).to_numpy()
         return out.ffill().fillna(0.0)
@@ -247,6 +292,28 @@ class FractionalKelly(_ForecastBook):
         w = w.clip(-ctx.constraints().max_weight, ctx.constraints().max_weight)
         gross = w.abs().sum()
         return w * (self.max_gross / gross) if gross > self.max_gross else w
+
+
+@register_allocator("resampled_mv", "Resampled mean-variance (Michaud): the average of the optimal books of many bootstrap samples of the return history, with the forecast perturbed in each, which is far more stable than one optimisation")
+class ResampledMeanVariance(_ForecastBook):
+    """Optimising once on a point estimate treats the inputs as known and puts the biggest bets where the estimation error is largest (Michaud 1998). Averaging the optimal books of many resamples
+    averages over that uncertainty. The forecast is the model's, scaled to a year; the covariance is re-estimated by shrinkage on each bootstrap sample."""
+
+    uses_window = True
+
+    def __init__(self, risk_aversion: float = 5.0, n_resamples: int = 100, lookback: int = 252, seed: int = 7):
+        super().__init__(lookback)
+        if risk_aversion <= 0 or n_resamples < 10:
+            raise ValueError("risk_aversion > 0 and n_resamples >= 10")
+        self.risk_aversion, self.n_resamples, self.seed = risk_aversion, int(n_resamples), int(seed)
+
+    def solve(self, mu, cov, confidence, ctx, window=None):
+        from ..portfolio.mean_variance import resampled_weights
+
+        try:
+            return resampled_weights(mu, window.fillna(0.0), self.risk_aversion, self.n_resamples, ctx.constraints(), "shrinkage", self.seed)
+        except (ValueError, RuntimeError, np.linalg.LinAlgError):
+            return None
 
 
 @register_allocator("black_litterman", "Black-Litterman with the model forecasts as absolute views on an equilibrium prior; view uncertainty from the forecast confidence (Idzorek); constrained mean-variance")

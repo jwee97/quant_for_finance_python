@@ -14,7 +14,8 @@ import threading
 import numpy as np
 import pandas as pd
 
-from ..forecast import BASELINE, BLEND, DEFAULT, METHODS, catalog
+from ..forecast import BASELINE, BLEND, BLENDS, DEFAULT, METHODS, catalog
+from ..references import FORECAST_EVALUATION, references
 from ..forecast import evaluate as ev
 from ..forecast.base import ForecastError, History
 from ..forecast.registry import FAMILIES
@@ -50,7 +51,7 @@ class ForecastApi:
 
     def plan(self, q: dict | None = None) -> dict:
         """``GET /api/forecast/plan``: the methods, grouped as the form shows them, and what the form chooses among."""
-        return {"methods": catalog(), "families": list(FAMILIES), "default": list(DEFAULT), "baseline": BASELINE, "blend": BLEND, "horizons": list(HORIZONS), "default_horizon": 21,
+        return {"methods": [{**m, "references": references("forecaster", m["id"])} for m in catalog()], "evaluation_references": [r.view() for r in FORECAST_EVALUATION], "families": list(FAMILIES), "default": list(DEFAULT), "baseline": BASELINE, "blend": BLEND, "blends": list(BLENDS), "horizons": list(HORIZONS), "default_horizon": 21,
                 "efforts": [{"id": k, "label": v["label"], "text": v["text"]} for k, v in ev.EFFORTS.items()], "default_effort": "standard", "scored_horizons": list(ev.HORIZONS), "min_days": MIN_DAYS}
 
     def run(self, body: dict) -> dict:
@@ -68,9 +69,9 @@ class ForecastApi:
         methods = body.get("methods", list(DEFAULT))
         if not isinstance(methods, list) or not all(isinstance(m, str) for m in methods):
             raise ApiError("methods must be a list of method names")
-        unknown = [m for m in methods if m not in METHODS and m != BLEND]
+        unknown = [m for m in methods if m not in METHODS and m not in BLENDS]
         if unknown:
-            raise ApiError(f"unknown forecasting method {unknown[0]!r}; choose from {', '.join(list(METHODS) + [BLEND])}")
+            raise ApiError(f"unknown forecasting method {unknown[0]!r}; choose from {', '.join(list(METHODS) + list(BLENDS))}")
         chosen = [m for m in dict.fromkeys(methods) if m != BASELINE]
         if not chosen:
             raise ApiError("choose at least one method besides the random walk, which is always run as the yardstick")
@@ -100,7 +101,7 @@ class ForecastApi:
             try:
                 evaluation = ev.evaluate(history, chosen, horizon, effort, seed, progress, stop.is_set)
                 progress("forecasting from the last day")
-                now = ev.forecast_now(history, [BASELINE] + chosen, horizon, seed=seed, progress=progress)
+                now = ev.forecast_now(history, [BASELINE] + chosen, horizon, seed=seed, progress=progress, blend_weights=evaluation.get("blend_weights"))
             except ForecastError as error:
                 raise ApiError(str(error)) from None
             verdict = judge(evaluation, horizon)

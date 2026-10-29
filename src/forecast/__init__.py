@@ -12,6 +12,6 @@
 """
 
 from .base import Forecast, ForecastError, Forecaster, History
-from .registry import BASELINE, BLEND, DEFAULT, METHODS, catalog, create
+from .registry import BASELINE, BLEND, BLEND_WEIGHTED, BLENDS, DEFAULT, METHODS, catalog, create
 
-__all__ = ["Forecast", "ForecastError", "Forecaster", "History", "METHODS", "BASELINE", "BLEND", "DEFAULT", "catalog", "create"]
+__all__ = ["Forecast", "ForecastError", "Forecaster", "History", "METHODS", "BASELINE", "BLEND", "BLEND_WEIGHTED", "BLENDS", "DEFAULT", "catalog", "create"]

@@ -11,7 +11,7 @@ import pytest
 from src.forecast import baselines, gp, markov, montecarlo, others
 from src.forecast.base import ForecastError, History
 from src.forecast.evaluate import _plain, combine
-from src.forecast.registry import BASELINE, BLEND, DEFAULT, METHODS, catalog, create
+from src.forecast.registry import BASELINE, BLEND, BLEND_WEIGHTED, DEFAULT, METHODS, catalog, create
 from tests import forecast_worlds as W
 
 HS = (1, 5, 21)
@@ -31,7 +31,7 @@ def forecast(method, history, n=400, seed=0, horizons=HS):
 # ---------------------------------------------------------------------------------------------------------------------------------- the contract
 def test_the_registry_lists_every_method_once_with_what_the_form_shows():
     ids = [m["id"] for m in catalog()]
-    assert ids == list(METHODS) + [BLEND] and len(set(ids)) == len(ids) and ids[0] == BASELINE
+    assert ids == list(METHODS) + [BLEND, BLEND_WEIGHTED] and len(set(ids)) == len(ids) and ids[0] == BASELINE
     for m in catalog():
         assert m["label"] and m["short"] and m["text"] and m["assumes"] and m["fails"] and m["family"], m["id"]
     assert set(DEFAULT) <= set(METHODS) and BASELINE in DEFAULT and create("garch") is METHODS["garch"]

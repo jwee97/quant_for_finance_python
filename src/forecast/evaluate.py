@@ -20,12 +20,13 @@ import numpy as np
 
 from . import scoring as S
 from .base import Forecast, ForecastError, History
-from .registry import BASELINE, BLEND, BLEND_VIEW, METHODS
+from .registry import BASELINE, BLEND, BLEND_WEIGHTED, BLENDS, METHODS, VIEWS
 
 LEVELS = S.LEVELS
 COVERAGES = S.COVERAGES
 MAX_HORIZON = 63
 MIN_ORIGINS = 30
+TRADING_DAYS = 252
 HORIZONS = (1, 5, 21)
 EFFORTS = {
     "quick": {"label": "Quick", "years": 4, "step": 21, "refit_days": 126, "n_paths": 500, "text": "Four years of forecasts, one every month, 500 simulated futures each: under a minute."},
@@ -35,7 +36,8 @@ EFFORTS = {
 CONTROLS = {"gp_returns": "hull_white", "analog": "hull_white", "fhs": "garch", "hmm": "garch"}     # method -> the simpler method it must beat to have added anything
 BENCH_DAYS = 1260                                  # the historical average each method's mean is compared with: five years of returns
 FAN_PATHS = 4000
-FAN_LEVELS = (0.05, 0.25, 0.5, 0.75, 0.95)
+FAN_LEVELS = (0.01, 0.05, 0.10, 0.25, 0.5, 0.75, 0.90, 0.95, 0.99)
+HIST_BINS = 41
 
 
 def scored_horizons(horizon: int) -> tuple[int, ...]:
@@ -71,6 +73,30 @@ def combine(members: list[np.ndarray], rng: np.random.Generator, n: int) -> np.n
     return np.concatenate([m[rng.choice(len(m), take, replace=len(m) < take)] for m in members])
 
 
+def combine_weighted(members: dict[str, np.ndarray], weights: dict[str, float], rng: np.random.Generator, n: int) -> np.ndarray:
+    """A linear opinion pool with unequal weights: from each member a number of draws proportional to its weight (at least one)."""
+    parts = []
+    for name, draws in members.items():
+        take = max(1, int(round(n * weights[name])))
+        parts.append(draws[rng.choice(len(draws), take, replace=len(draws) < take)])
+    return np.concatenate(parts)
+
+
+def inverse_loss_weights(losses: dict[str, np.ndarray], min_obs: int = 10) -> dict[str, float] | None:
+    """Bates and Granger's (1969) weights from the average losses of each member: proportional to the inverse of the mean loss. ``None`` (so: equal weights) when a member has too few scored forecasts or a
+    mean loss of zero."""
+    means = {}
+    for name, v in losses.items():
+        v = np.asarray(v, dtype=float)
+        v = v[np.isfinite(v)]
+        if len(v) < min_obs or v.mean() <= 0:
+            return None
+        means[name] = float(v.mean())
+    inverse = {n: 1.0 / m for n, m in means.items()}
+    total = sum(inverse.values())
+    return {n: w / total for n, w in inverse.items()}
+
+
 def settings_for(effort: str, history: History, names: list[str], horizon: int, *, years: float | None = None, step: int | None = None, refit_days: int | None = None, n_paths: int | None = None) -> dict:
     if effort not in EFFORTS:
         raise ForecastError(f"effort must be one of {', '.join(EFFORTS)}")
@@ -98,7 +124,7 @@ def evaluate(history: History, names: list[str], horizon: int = 21, effort: str 
     """Walk-forward evaluation of ``names`` (method ids, and ``blend``) on ``history``. ``progress(text)`` is told where it is; ``stop()`` ends it after the origin it is on (what is done is scored and returned)."""
     names = [n for n in dict.fromkeys(names) if n != BASELINE]
     for n in names:
-        if n not in METHODS and n != BLEND:
+        if n not in METHODS and n not in BLENDS:
             raise ForecastError(f"unknown forecasting method '{n}'")
     run = [BASELINE] + names
     members = [n for n in run if n in METHODS]
@@ -106,6 +132,7 @@ def evaluate(history: History, names: list[str], horizon: int = 21, effort: str 
     hs, origins, n_paths = cfg["horizons"], _origins(history, cfg), cfg["n_paths"]
     hmax = max(hs)
     n_h = len(hs)
+    j_head = hs.index(int(horizon))
     close = history.close
     realised = np.full((len(origins), n_h), np.nan)
     for oi, i in enumerate(origins):
@@ -146,7 +173,7 @@ def evaluate(history: History, names: list[str], horizon: int = 21, effort: str 
         past = history.upto(i)
         got: dict[str, np.ndarray] = {}
         for name in run:
-            if name == BLEND:
+            if name in BLENDS:
                 continue
             m, t = METHODS[name], tapes[name]
             t0 = time.perf_counter()
@@ -167,14 +194,20 @@ def evaluate(history: History, names: list[str], horizon: int = 21, effort: str 
                 t.last_error = str(error)
                 states.pop(name, None)                                       # try a fresh fit at the next origin
             t.seconds += time.perf_counter() - t0
-        if BLEND in run:
-            pool = [v for k, v in got.items() if k != BASELINE]
-            if len(pool) >= 2:
-                t0 = time.perf_counter()
-                score(BLEND, oi, Forecast(combine(pool, _rng(seed, BLEND, i), n_paths)))
-                tapes[BLEND].seconds += time.perf_counter() - t0
-            else:
-                tapes[BLEND].failures += 1
+        pool = {k: v for k, v in got.items() if k != BASELINE}
+        for blend in (b for b in BLENDS if b in run):
+            if len(pool) < 2:
+                tapes[blend].failures += 1
+                continue
+            t0 = time.perf_counter()
+            if blend == BLEND:
+                draws = combine(list(pool.values()), _rng(seed, blend, i), n_paths)
+            else:                                                            # weights from the forecasts whose outcome was already known at this origin
+                known = [k for k in range(oi) if origins[k] + int(horizon) <= i]
+                w = inverse_loss_weights({k: tapes[k].crps[known, j_head] for k in pool}) if known else None
+                draws = combine_weighted(pool, w or {k: 1.0 / len(pool) for k in pool}, _rng(seed, blend, i), n_paths)
+            score(blend, oi, Forecast(draws))
+            tapes[blend].seconds += time.perf_counter() - t0
         done = oi + 1
         if progress is not None:
             progress(f"forecast {done} of {len(origins)} ({history.index[i].date() if history.index is not None else i}) · {time.perf_counter() - t_start:.0f} s")
@@ -209,7 +242,7 @@ def _summarize(history: History, run: list[str], tapes: dict[str, _Tape], realis
                 e["pit"] = [_f(v) for v in S.pit_histogram(t.pit[:done, j][ok])]
                 e["pit_p"] = _f(S.pit_p(t.pit[:done, j][ok], stride))
                 e["pinball"] = {str(q): _f(np.nanmean(t.pinball[:done, j, k][ok])) for k, q in enumerate(LEVELS)}
-                if name in METHODS and METHODS[name].mean_signal or name == BLEND:
+                if name in METHODS and METHODS[name].mean_signal or name in BLENDS:
                     y = realised[:, j][ok]
                     ms = S.mean_skill(y, t.mean[:done, j][ok], bench[:, j][ok], lag)
                     ds = S.direction_skill(y, t.p_up[:done, j][ok], lag)
@@ -235,12 +268,50 @@ def _summarize(history: History, run: list[str], tapes: dict[str, _Tape], realis
     out_methods = []
     for name in run:
         t = tapes[name]
-        view = METHODS[name].view() if name in METHODS else BLEND_VIEW
+        view = METHODS[name].view() if name in METHODS else VIEWS[name]
         out_methods.append({**view, "scores": rows[name]["scores"], "failures": t.failures, "last_error": t.last_error, "fits": t.fits, "seconds": round(t.seconds, 1), "info": _plain(t.last_info)})
     dates = history.index
-    return {"horizons": list(hs), "headline": int(horizon), "baseline": BASELINE, "controls": controls, "methods": out_methods,
+    j = hs.index(int(horizon))
+    members = [n for n in run if n in METHODS and n != BASELINE]
+    weights = inverse_loss_weights({n: tapes[n].crps[:done, j] for n in members}) if len(members) >= 2 else None
+    gain, gain_scale = _cumulative_gain(run, tapes, done, j)
+    return {"horizons": list(hs), "headline": int(horizon), "baseline": BASELINE, "controls": controls, "methods": out_methods, "blend_weights": weights,
+            "pairwise": _pairwise(run, tapes, done, j, S.stride_for(int(horizon), step) - 1, int(horizon)), "gain": gain, "gain_scale": gain_scale,
+            "origin_dates": [str(dates[i].date()) if dates is not None else i for i in origins],
             "origins": {"count": done, "first": str(dates[origins[0]].date()) if dates is not None else origins[0], "last": str(dates[origins[-1]].date()) if dates is not None else origins[-1], "step_days": step,
                         "refit_days": cfg["refit_days"], "years": round(cfg["span_days"] / 252.0, 1), "paths": cfg["n_paths"], "history_days": history.n, "effort": cfg["effort"]}}
+
+
+def _pairwise(run: list[str], tapes: dict[str, _Tape], done: int, j: int, lag: int, horizon: int) -> dict:
+    """Every method against every other at the headline horizon: ``skill[a][b]`` is how far below ``b``'s average CRPS ``a``'s was (positive: ``a`` was better), ``p[a][b]`` the one-sided Diebold-Mariano
+    p-value that ``a`` is better (Newey-West lag for the overlap of the forecasts). Unadjusted for the number of pairs: the page says so."""
+    skill = [[None] * len(run) for _ in run]
+    p = [[None] * len(run) for _ in run]
+    for a, na in enumerate(run):
+        for b, nb in enumerate(run):
+            if a == b:
+                continue
+            x, y = tapes[na].crps[:done, j], tapes[nb].crps[:done, j]
+            ok = np.isfinite(x) & np.isfinite(y)
+            if ok.sum() >= 10:
+                skill[a][b] = _f(S.skill(x[ok], y[ok]))
+                p[a][b] = _f(S.better_than(x[ok], y[ok], lag)["p"])
+    return {"ids": list(run), "horizon": horizon, "skill": skill, "p": p}
+
+
+def _cumulative_gain(run: list[str], tapes: dict[str, _Tape], done: int, j: int) -> tuple[dict, float | None]:
+    """For each method the running sum, over the forecast origins, of how far its CRPS was below the random walk's, as a share of the random walk's average CRPS (the cumulative loss differential of
+    Goyal and Welch 2008): a line that climbs is a method that kept beating the random walk, one that falls has been worse, and a line that rises and then goes flat stopped helping. An origin whose outcome
+    is not yet known adds nothing. Returns the lines and the random walk's average CRPS they are measured in."""
+    base = tapes[BASELINE].crps[:done, j]
+    scale = float(np.nanmean(base)) if np.isfinite(base).any() else float("nan")
+    out = {}
+    for name in run:
+        if name == BASELINE or not math.isfinite(scale) or scale <= 0:
+            continue
+        diff = base - tapes[name].crps[:done, j]
+        out[name] = [_f(v) for v in np.cumsum(np.where(np.isfinite(diff), diff, 0.0)) / scale]
+    return out, (scale if math.isfinite(scale) and scale > 0 else None)
 
 
 def _plain(obj):
@@ -256,7 +327,17 @@ def _plain(obj):
     return obj
 
 
-def forecast_now(history: History, names: list[str], horizon: int, n_paths: int = FAN_PATHS, seed: int = 0, progress: Callable[[str], None] | None = None) -> dict:
+def _terminal_histogram(samples: dict[str, np.ndarray], horizon: int) -> dict:
+    """The distribution of the ``horizon``-day return of every method on common bins (the central 99.8% of all the draws pooled), as counts, so that the methods can be drawn on one axis."""
+    ends = {name: x[:, horizon - 1] for name, x in samples.items()}
+    pooled = np.concatenate(list(ends.values()))
+    lo, hi = np.quantile(pooled, [0.001, 0.999])
+    edges = np.linspace(lo, hi, HIST_BINS + 1)
+    return {"horizon": int(horizon), "edges": [_f(e) for e in edges], "counts": {name: [int(c) for c in np.histogram(v, bins=edges)[0]] for name, v in ends.items()},
+            "draws": {name: int(len(v)) for name, v in ends.items()}}
+
+
+def forecast_now(history: History, names: list[str], horizon: int, n_paths: int = FAN_PATHS, seed: int = 0, progress: Callable[[str], None] | None = None, blend_weights: dict | None = None) -> dict:
     """Fit every method on the latest data and forecast from the last day: the fan of the price for each step up to ``horizon``, and a summary at each scored horizon."""
     names = [n for n in dict.fromkeys(names)]
     run = names if BASELINE in names else [BASELINE] + names
@@ -266,10 +347,10 @@ def forecast_now(history: History, names: list[str], horizon: int, n_paths: int 
     samples: dict[str, np.ndarray] = {}
     infos: dict[str, dict] = {}
     errors: dict[str, str] = {}
-    for k, name in enumerate(n for n in run if n != BLEND):
+    for k, name in enumerate(n for n in run if n not in BLENDS):
         m = METHODS[name]
         if progress is not None:
-            progress(f"forecasting from {history.index[-1].date() if history.index is not None else 'the last day'}: {m.label} ({k + 1} of {len([n for n in run if n != BLEND])})")
+            progress(f"forecasting from {history.index[-1].date() if history.index is not None else 'the last day'}: {m.label} ({k + 1} of {len([n for n in run if n not in BLENDS])})")
         try:
             with np.errstate(all="ignore"), warnings.catch_warnings():
                 warnings.simplefilter("ignore")
@@ -278,22 +359,29 @@ def forecast_now(history: History, names: list[str], horizon: int, n_paths: int 
             samples[name], infos[name] = fc.samples[:, :steps], _plain(fc.info)
         except (ForecastError, np.linalg.LinAlgError, FloatingPointError, ValueError) as error:
             errors[name] = str(error)
-    if BLEND in run:
-        pool = [v for k, v in samples.items() if k != BASELINE]
-        if len(pool) >= 2:
-            samples[BLEND] = combine(pool, _rng(seed, BLEND, history.n), n_paths)
-            infos[BLEND] = {"members": [k for k in samples if k not in (BASELINE, BLEND)]}
+    pool = {k: v for k, v in samples.items() if k != BASELINE}
+    for blend in (b for b in BLENDS if b in run):
+        if len(pool) < 2:
+            errors[blend] = "needs at least two other methods that could forecast"
+            continue
+        w = {k: blend_weights[k] for k in pool if blend_weights and k in blend_weights} if blend == BLEND_WEIGHTED else {}
+        weighted = len(w) == len(pool) and abs(sum(w.values()) - 1.0) < 1e-6
+        if blend == BLEND or not weighted:
+            samples[blend] = combine(list(pool.values()), _rng(seed, blend, history.n), n_paths)
+            infos[blend] = {"members": list(pool)} if blend == BLEND else {"members": list(pool), "weights": "equal: the evaluation had too few scored forecasts to weight by"}
         else:
-            errors[BLEND] = "needs at least two other methods that could forecast"
+            samples[blend] = combine_weighted(pool, w, _rng(seed, blend, history.n), n_paths)
+            infos[blend] = {"members": list(pool), "weights": {k: round(v, 4) for k, v in w.items()}}
     out = {}
     for name, x in samples.items():
         q = np.quantile(x[:, :horizon], FAN_LEVELS, axis=0)
-        view = METHODS[name].view() if name in METHODS else BLEND_VIEW
+        view = METHODS[name].view() if name in METHODS else VIEWS[name]
         summary = {}
         for hz in hs:
             r = x[:, hz - 1]
             lo, md, hi = np.quantile(r, [0.05, 0.5, 0.95])
+            tail = r[r <= lo]
             summary[str(hz)] = {"mean": _f(r.mean()), "median": _f(md), "q05": _f(lo), "q95": _f(hi), "p_up": _f((r > 0).mean()), "p_loss_5": _f((r < math.log(0.95)).mean()), "p_gain_5": _f((r > math.log(1.05)).mean()),
-                                "sd": _f(r.std())}
+                                "sd": _f(r.std()), "vol_annual": _f(r.std() * math.sqrt(TRADING_DAYS / hz)), "es_05": _f(tail.mean()) if len(tail) else None}
         out[name] = {"id": name, "label": view["label"], "fan": {str(lv): [_f(last * math.exp(v)) for v in q[k]] for k, lv in enumerate(FAN_LEVELS)}, "summary": summary, "info": infos.get(name, {})}
-    return {"last_price": last, "horizons": list(hs), "horizon": int(horizon), "methods": out, "errors": errors}
+    return {"last_price": last, "horizons": list(hs), "horizon": int(horizon), "methods": out, "errors": errors, "hist": _terminal_histogram(samples, horizon)}
