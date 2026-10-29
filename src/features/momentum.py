@@ -78,8 +78,8 @@ def moving_average_crossover(prices: pd.DataFrame, fast: int = 50, slow: int = 2
     binary signal so that it can be standardised like the other features."""
     if fast >= slow:
         raise ValueError("fast window must be shorter than slow window")
-    fast_ma = prices.rolling(fast, min_periods=max(fast // 2, 5)).mean()
-    slow_ma = prices.rolling(slow, min_periods=max(slow // 2, 10)).mean()
+    fast_ma = prices.rolling(fast, min_periods=min(fast, max(fast // 2, 5))).mean()
+    slow_ma = prices.rolling(slow, min_periods=min(slow, max(slow // 2, 10))).mean()
     return fast_ma / slow_ma - 1.0
 
 

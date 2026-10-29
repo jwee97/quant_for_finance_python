@@ -14,7 +14,6 @@ import numpy as np
 import pandas as pd
 
 TRADING_DAYS_PER_YEAR = 252
-MONTHS_PER_YEAR = 12
 
 
 def ann_factor(periods_per_year: int = TRADING_DAYS_PER_YEAR) -> float:

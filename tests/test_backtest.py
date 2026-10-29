@@ -7,7 +7,7 @@ import pandas as pd
 import pytest
 
 from src.backtest.costs import LinearCostModel, breakeven_cost, cost_sensitivity
-from src.backtest.engine import BacktestEngine, buy_and_hold
+from src.backtest.engine import BacktestEngine, buy_and_hold, stop_at_ruin
 from src.backtest.execution import apply_execution_lag, build_held_weights, drift_weights
 from src.backtest.metrics import (
     cagr,
@@ -221,3 +221,38 @@ def test_a_rebalance_trades_against_the_book_as_drifted_through_that_days_return
     assert traded["A"].iloc[5] == pytest.approx(0.5 - weight, abs=1e-12)
     assert traded["B"].iloc[5] == pytest.approx(-(0.5 - weight), abs=1e-12)
     assert traded.iloc[2:5].abs().to_numpy().max() == 0.0                           # nothing trades between rebalances
+
+
+def test_losing_more_than_the_account_holds_ends_the_account_at_minus_100_percent_and_zeros_what_follows():
+    r = pd.Series([0.01, -0.02, np.nan, -1.5, 0.30, 0.10, np.nan], index=pd.bdate_range("2024-01-02", periods=7))
+    out, when = stop_at_ruin(r)
+    assert when == r.index[3] and out.iloc[3] == -1.0 and out.iloc[4] == 0.0 and out.iloc[5] == 0.0 and out.isna().tolist() == [False, False, True, False, False, False, True]
+    assert out.iloc[:3].equals(r.iloc[:3]), "what came before is untouched"
+    assert (1.0 + out.fillna(0.0)).cumprod().iloc[-1] == 0.0
+    exact, when = stop_at_ruin(pd.Series([0.1, -1.0, 0.5], index=pd.bdate_range("2024-01-02", periods=3)))
+    assert when == exact.index[1] and exact.iloc[2] == 0.0, "a loss of exactly 100% is also the end"
+    safe = pd.Series([0.5, -0.9, 3.0], index=pd.bdate_range("2024-01-02", periods=3))
+    same, when = stop_at_ruin(safe)
+    assert when is None and same.equals(safe), "a deep loss that leaves something is not ruin"
+
+
+def test_a_short_position_through_a_doubling_ruins_the_account_and_every_measure_agrees():
+    idx = pd.bdate_range("2024-01-02", periods=60)
+    ret = pd.DataFrame({"VOL": np.where(np.arange(60) == 30, 1.0, 0.002)}, index=idx)         # one day on which the asset doubles
+    weights = pd.DataFrame({"VOL": -1.5}, index=idx)                                          # short 1.5 times the account
+    engine = BacktestEngine(rebalance="daily", min_assets=1, cost_model=LinearCostModel(cost_bps=1.0))
+    res = engine.run(weights, ret, "short_vol", pd.DataFrame(True, index=idx, columns=["VOL"]))
+    day = idx[30]
+    assert res.config["ruined_on"] == str(day.date()) and res.net_returns[day] == -1.0 and res.gross_returns[day] == -1.0
+    assert (res.net_returns[res.net_returns.index > day] == 0.0).all() and res.equity_curve.iloc[-1] == 0.0 and (res.weights.loc[res.weights.index > day] == 0.0).all().all()
+    assert (res.turnover[res.turnover.index > day] == 0.0).all() and (res.costs[res.costs.index > day] == 0.0).all()
+    summary = res.summary()
+    assert summary["cagr"] == -1.0 and summary["max_drawdown"] == -1.0 and np.isfinite(summary["ann_vol"])
+    tame = engine.run(weights.mul(0.2), ret.where(np.arange(60)[:, None] != 30, 0.01), "ok", pd.DataFrame(True, index=idx, columns=["VOL"]))
+    assert tame.config["ruined_on"] is None and (tame.net_returns > -1.0).all()
+
+
+def test_cagr_of_a_lost_account_is_minus_100_percent_and_not_a_number_raised_to_a_power():
+    yearly = pd.to_datetime(["2020-01-02", "2021-01-04", "2022-01-03"])
+    assert cagr(pd.Series([0.1, -1.4, 0.2], index=yearly)) == -1.0
+    assert cagr(pd.Series([0.1, -0.5, 0.2], index=yearly)) == pytest.approx(0.66 ** (1.0 / 2.0) - 1.0, abs=0.01)

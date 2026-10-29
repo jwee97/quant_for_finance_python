@@ -51,7 +51,8 @@ def cross_sectional_demean(signal: pd.DataFrame, weights: pd.DataFrame | None = 
     """
     if weights is None:
         return signal.sub(signal.mean(axis=1), axis=0)
-    weighted = (signal * weights).sum(axis=1) / weights.sum(axis=1)
+    present = weights.reindex_like(signal).where(signal.notna())                           # an asset with no signal is not part of the average, so its weight is not either
+    weighted = (signal * present).sum(axis=1) / present.sum(axis=1)
     return signal.sub(weighted, axis=0)
 
 
@@ -163,9 +164,13 @@ def apply_weight_cap(weights: pd.DataFrame, max_abs: float = 0.25, gross: float 
         # Rows with no room left (everything at the cap, or nothing to scale)
         # are infeasible: leave them capped rather than breaching.
         scalable = (free_sum > 1e-12) & (target_free > 0.0)
+        # The names at the cap already hold the whole gross, or more: nothing is left for the others to
+        # absorb, so the whole row is scaled down to the gross, which cannot push any name over its cap.
+        over = (target_free <= 0.0) & (total > gross + tolerance)
         factor = np.ones_like(free_sum)
         factor[scalable] = target_free[scalable] / free_sum[scalable]
-        values = np.where(at_cap, values, values * factor[:, None])
+        factor[over] = gross / total[over]
+        values = np.where(at_cap & ~over[:, None], values, values * factor[:, None])
         values = np.clip(values, -max_abs, max_abs)
 
     out = pd.DataFrame(values, index=weights.index, columns=weights.columns)
@@ -224,9 +229,8 @@ def signal_to_positions(
         work = risk_scale(work, volatility, target_vol)
 
     if long_only_book:
-        work = long_only(work)
-        work = apply_weight_cap(work, max_abs_weight, gross=None)
-        work = normalise_net(work, 1.0)
+        work = long_only(work)                                                              # the longs, summing to one
+        work = apply_weight_cap(work, max_abs_weight, gross=1.0)                            # capped, the excess handed to the names under the cap; below one only if the cap leaves no room
     else:
         work = normalise_gross(work, gross_leverage)
         work = apply_weight_cap(work, max_abs_weight, gross_leverage)
@@ -242,4 +246,4 @@ def turnover(weights: pd.DataFrame) -> pd.Series:
 def effective_number_of_positions(weights: pd.DataFrame) -> pd.Series:
     """Inverse Herfindahl of the weight vector: how concentrated is the book?"""
     normalised = weights.abs().div(weights.abs().sum(axis=1).replace(0.0, np.nan), axis=0)
-    return 1.0 / (normalised ** 2).sum(axis=1)
+    return 1.0 / (normalised ** 2).sum(axis=1, min_count=1)                                 # a flat book holds no positions: not-a-number, and not 1 / 0

@@ -27,6 +27,8 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
+from ..features.returns import FLAT
+
 ANN = 252.0
 
 
@@ -42,8 +44,8 @@ def market_state(close: pd.DataFrame, volume: pd.DataFrame, returns: pd.DataFram
     columns = returns.columns
     dollar = (close.reindex(returns.index).reindex(columns=columns)
               * volume.reindex(returns.index).reindex(columns=columns))
-    adv = dollar.rolling(adv_window, min_periods=max(adv_window // 2, 10)).mean().shift(1)
-    sigma = returns.rolling(vol_window, min_periods=max(vol_window // 2, 10)).std(ddof=1).shift(1)
+    adv = dollar.rolling(adv_window, min_periods=min(adv_window, max(adv_window // 2, 10))).mean().shift(1)         # half the window and at least ten days, never more than the window
+    sigma = returns.rolling(vol_window, min_periods=min(vol_window, max(vol_window // 2, 10))).std(ddof=1).shift(1)
     return sigma, adv
 
 
@@ -62,7 +64,8 @@ def impact_cost_frame(trades: pd.DataFrame, aum: float, sigma: pd.DataFrame, adv
 
     Returns ``(cost, participation)`` where participation is the UNCAPPED ``|dw| * AUM / ADV``.
     Missing volatility or volume is filled by the day's cross-sectional median (counted by
-    ``fill_counts``), so a gap never makes a trade free.
+    ``fill_counts``), so a gap in one asset never makes its trade free. A day on which every asset is
+    missing has nothing to fill from, and its impact term is zero (the first weeks of history).
     """
     abs_trades = trades.abs()
     linear = abs_trades * linear_rates.reindex(trades.columns).to_numpy()[None, :]
@@ -93,7 +96,7 @@ def impact_net_returns(gross: pd.Series, trades: pd.DataFrame, aum: float, sigma
     cost, participation = impact_cost_frame(trades, aum, sigma, adv, linear_rates, settings)
     daily = cost.sum(axis=1).reindex(gross.index).fillna(0.0)
     traded = trades.abs() > 1e-12
-    part = participation.where(traded).stack()
+    part = pd.Series(participation.to_numpy()[traded.reindex_like(participation).to_numpy()])         # the traded asset-days only (``stack`` keeps the empty cells in newer pandas)
     stats = {
         "mean_participation": float(part.mean()) if len(part) else 0.0,
         "p95_participation": float(part.quantile(0.95)) if len(part) else 0.0,
@@ -107,7 +110,7 @@ def impact_net_returns(gross: pd.Series, trades: pd.DataFrame, aum: float, sigma
 def sharpe(returns: pd.Series) -> float:
     clean = returns.dropna()
     sd = clean.std(ddof=1)
-    return float(ANN ** 0.5 * clean.mean() / sd) if len(clean) > 2 and sd > 0 else float("nan")
+    return float(ANN ** 0.5 * clean.mean() / sd) if len(clean) > 2 and sd > FLAT else float("nan")      # a series that never moves has no Sharpe ratio
 
 
 def capacity_curve(gross: pd.Series, trades: pd.DataFrame, grid, sigma: pd.DataFrame, adv: pd.DataFrame,
@@ -189,9 +192,9 @@ def scheduling_table(trade_weight: float, aum: float, sigma: float, adv: float, 
     """Almgren-Chriss style comparison for one trade of ``trade_weight`` (fraction of capital) in one asset.
 
     Spreading the order evenly over ``k`` days cuts the per-day participation by ``k``, so temporary impact
-    per dollar falls by ``sqrt(k)``; the cost is timing risk, ``sigma * sqrt(k) * |trade| / sqrt(3)`` as the
-    one-standard-deviation price move on the unexecuted part under even slicing (a standard small-trade
-    approximation). Descriptive only.
+    per dollar falls by ``sqrt(k)``; the cost is timing risk: the one-standard-deviation price move on the
+    part not yet executed, under even slicing, ``sigma * sqrt((k - 1)(2k - 1) / (6k))`` per unit of trade (the
+    exact sum of the unexecuted shares, which tends to ``sigma * sqrt(k / 3)``). Descriptive only.
     """
     rows = []
     for k in days:

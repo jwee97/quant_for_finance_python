@@ -17,11 +17,10 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 
-from ..features.returns import cumulative_returns, drawdown, max_drawdown
+from ..features.returns import FLAT, cumulative_returns, drawdown, max_drawdown
 from ..utils.dates import TRADING_DAYS_PER_YEAR, year_fraction
 
 ANN = TRADING_DAYS_PER_YEAR
-FLAT = 1e-12          # a per-period spread below this is rounding noise, not volatility: the variance of a constant series is about 1e-37, not zero, and dividing by it gave a Sharpe ratio of 1e16
 
 
 def cagr(returns: pd.Series, periods_per_year: int = ANN) -> float:
@@ -32,6 +31,8 @@ def cagr(returns: pd.Series, periods_per_year: int = ANN) -> float:
     years = year_fraction(clean.index)
     if not np.isfinite(years) or years <= 0:
         years = len(clean) / periods_per_year
+    if curve.iloc[-1] <= 0.0:                                                    # the account was lost: -100% a year, not the NaN of a negative number to a fractional power
+        return -1.0
     return float(curve.iloc[-1] ** (1.0 / years) - 1.0)
 
 

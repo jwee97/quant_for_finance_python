@@ -21,6 +21,8 @@ from scipy import stats
 
 from ..utils.dates import TRADING_DAYS_PER_YEAR
 
+FLAT = 1e-12          # a per-period spread below this is rounding noise, not volatility: the variance of a constant series is about 1e-37, not zero, and dividing by it gave a Sharpe ratio of 1e16
+
 
 def simple_returns(prices: pd.DataFrame | pd.Series, periods: int = 1) -> pd.DataFrame | pd.Series:
     """``P_t / P_{t-k} - 1``."""
@@ -109,7 +111,8 @@ def annualised_return(returns: pd.Series, periods_per_year: int = TRADING_DAYS_P
 
 
 def annualised_volatility(returns: pd.Series, periods_per_year: int = TRADING_DAYS_PER_YEAR) -> float:
-    return float(returns.std(ddof=1) * np.sqrt(periods_per_year))
+    spread = returns.std(ddof=1)
+    return 0.0 if spread <= FLAT else float(spread * np.sqrt(periods_per_year))                 # a series that never moves has no volatility, not 1e-17
 
 
 def describe_returns(returns: pd.DataFrame, periods_per_year: int = TRADING_DAYS_PER_YEAR) -> pd.DataFrame:
@@ -125,7 +128,8 @@ def describe_returns(returns: pd.DataFrame, periods_per_year: int = TRADING_DAYS
         if len(series) < 30:
             continue
         curve = cumulative_returns(series)
-        jb_stat, jb_p = stats.jarque_bera(series.to_numpy())
+        dispersed = float(series.std(ddof=1)) > FLAT                                            # the third and fourth moments of a series that never moves are undefined: not-a-number, not a warning
+        jb_stat, jb_p = stats.jarque_bera(series.to_numpy()) if dispersed else (np.nan, np.nan)
         ann_vol = annualised_volatility(series, periods_per_year)
         ann_ret = annualised_return(series, periods_per_year)
         downside = series[series < 0.0]
@@ -135,8 +139,8 @@ def describe_returns(returns: pd.DataFrame, periods_per_year: int = TRADING_DAYS
             "cagr": ann_ret,
             "vol_ann": ann_vol,
             "sharpe_naive": ann_ret / ann_vol if ann_vol > 0 else np.nan,
-            "skew": float(stats.skew(series, bias=False)),
-            "excess_kurtosis": float(stats.kurtosis(series, bias=False)),
+            "skew": float(stats.skew(series, bias=False)) if dispersed else np.nan,
+            "excess_kurtosis": float(stats.kurtosis(series, bias=False)) if dispersed else np.nan,
             "jarque_bera": float(jb_stat),
             "jb_pvalue": float(jb_p),
             "min": float(series.min()),
@@ -147,7 +151,7 @@ def describe_returns(returns: pd.DataFrame, periods_per_year: int = TRADING_DAYS
             "downside_vol_ann": float(downside.std(ddof=1) * np.sqrt(periods_per_year)) if len(downside) > 2 else np.nan,
             "max_drawdown": max_drawdown(curve),
             "hit_rate": float((series > 0).mean()),
-            "autocorr_lag1": float(series.autocorr(1)) if len(series) > 3 else np.nan,
+            "autocorr_lag1": float(series.autocorr(1)) if dispersed else np.nan,                  # no correlation to speak of when nothing moves (older pandas warns about the division by zero)
         }
     return pd.DataFrame(rows).T
 
@@ -162,7 +166,8 @@ def autocorrelation(returns: pd.DataFrame, lags: int = 21) -> pd.DataFrame:
     out = {}
     for column in returns.columns:
         series = returns[column].dropna()
-        out[column] = [series.autocorr(lag) for lag in range(1, lags + 1)]
+        moving = len(series) > 1 and float(series.std(ddof=1)) > FLAT                           # a series that never moves has no autocorrelation: not-a-number, not a warning
+        out[column] = [series.autocorr(lag) if moving else np.nan for lag in range(1, lags + 1)]
     frame = pd.DataFrame(out, index=pd.RangeIndex(1, lags + 1, name="lag"))
     return frame
 

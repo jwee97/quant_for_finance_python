@@ -1,6 +1,6 @@
 """Adaptive risk: a volatility target that depends on the regime.
 
-``vol_target_series`` is the same arithmetic as the engine's volatility targeting (``vol_target_scaling``) with the
+``vol_target_series`` is the engine's volatility targeting (``vol_target_scaling``, one implementation) with the
 target allowed to change through time. With a constant target it reproduces the engine's scalar exactly (a tested identity).
 ``RegimeRiskPolicy`` sets the target as the probability-weighted average of per-regime targets, so risk is cut smoothly as a
 crisis becomes more probable rather than flipped by a threshold.
@@ -10,19 +10,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-import numpy as np
 import pandas as pd
+
+from ..backtest.execution import vol_target_scaling
 
 
 def vol_target_series(weights: pd.DataFrame, returns: pd.DataFrame, target: float | pd.Series, lookback: int = 63,
                       max_leverage: float = 1.5, periods_per_year: int = 252) -> tuple[pd.DataFrame, pd.Series]:
-    aligned = returns.reindex(weights.index).reindex(columns=weights.columns)
-    portfolio = (weights.shift(1) * aligned).sum(axis=1)
-    realised = portfolio.rolling(lookback, min_periods=max(lookback // 2, 20)).std(ddof=1) * np.sqrt(periods_per_year)
-    target_series = target if isinstance(target, pd.Series) else pd.Series(float(target), index=weights.index)
-    scalar = (target_series.reindex(weights.index) / realised.replace(0.0, np.nan)).clip(upper=max_leverage).shift(1)
-    scalar = scalar.fillna(1.0)
-    return weights.mul(scalar, axis=0), scalar
+    return vol_target_scaling(weights, returns, target, lookback, max_leverage, periods_per_year)
 
 
 @dataclass

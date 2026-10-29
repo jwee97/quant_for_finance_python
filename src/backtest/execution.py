@@ -136,20 +136,25 @@ def build_held_weights(targets: pd.DataFrame, returns: pd.DataFrame, frequency: 
     return held, traded
 
 
-def vol_target_scaling(weights: pd.DataFrame, returns: pd.DataFrame, target_vol: float = 0.10,
+def vol_target_scaling(weights: pd.DataFrame, returns: pd.DataFrame, target_vol: float | pd.Series = 0.10,
                        lookback: int = 63, max_leverage: float = 1.5,
                        periods_per_year: int = 252) -> tuple[pd.DataFrame, pd.Series]:
-    """Scale the whole book so its forecast volatility matches a target.
+    """Scale the whole book so its forecast volatility matches a target (a number, or a series with one level for each date, as a regime policy gives).
 
     The forecast uses the covariance of returns up to and including ``t``
     only, applied to the weights held at ``t``; the scalar is then lagged by
     one day before use, so nothing here can see the volatility of the day it
-    is sizing.
+    is sizing. The scalar is the target over the realised volatility of the
+    book's last ``lookback`` daily returns, at most ``max_leverage`` and 1
+    until there are enough of them (half the window, at least twenty, and
+    never more than the window). A day on which the book earned nothing known
+    is left out of the window and does not count as a day of zero return.
     """
     aligned = returns.reindex(weights.index).reindex(columns=weights.columns)
-    portfolio = (weights.shift(1) * aligned).sum(axis=1)
-    realised = portfolio.rolling(lookback, min_periods=max(lookback // 2, 20)).std(ddof=1) \
+    portfolio = (weights.shift(1) * aligned).sum(axis=1, min_count=1)                    # a day on which the book earned nothing known is not a day of zero return: it is left out of the window
+    realised = portfolio.rolling(lookback, min_periods=min(lookback, max(lookback // 2, 20))).std(ddof=1) \
         * np.sqrt(periods_per_year)
-    scalar = (target_vol / realised.replace(0.0, np.nan)).clip(upper=max_leverage).shift(1)
+    target = target_vol.reindex(weights.index) if isinstance(target_vol, pd.Series) else target_vol
+    scalar = (target / realised.replace(0.0, np.nan)).clip(upper=max_leverage).shift(1)
     scalar = scalar.fillna(1.0)
     return weights.mul(scalar, axis=0), scalar

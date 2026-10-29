@@ -36,7 +36,7 @@ ANN = TRADING_DAYS_PER_YEAR
 def rolling_volatility(returns: pd.DataFrame, window: int = 63, annualise: bool = True,
                        min_periods: int | None = None) -> pd.DataFrame:
     """Equally weighted rolling standard deviation."""
-    min_periods = min_periods or max(int(window * 0.6), 10)
+    min_periods = min_periods or min(window, max(int(window * 0.6), 10))                # 60% of the window and at least ten days, never more than the window
     vol = returns.rolling(window, min_periods=min_periods).std(ddof=1)
     return vol * np.sqrt(ANN) if annualise else vol
 
@@ -73,7 +73,7 @@ def parkinson_volatility(high: pd.DataFrame, low: pd.DataFrame, window: int = 21
     """
     log_range = np.log(high / low) ** 2
     factor = 1.0 / (4.0 * np.log(2.0))
-    variance = factor * log_range.rolling(window, min_periods=max(window // 2, 5)).mean()
+    variance = factor * log_range.rolling(window, min_periods=min(window, max(window // 2, 5))).mean()
     vol = np.sqrt(variance)
     return vol * np.sqrt(ANN) if annualise else vol
 
@@ -84,14 +84,14 @@ def garman_klass_volatility(open_: pd.DataFrame, high: pd.DataFrame, low: pd.Dat
     log_hl = np.log(high / low) ** 2
     log_co = np.log(close / open_) ** 2
     daily = 0.5 * log_hl - (2.0 * np.log(2.0) - 1.0) * log_co
-    variance = daily.rolling(window, min_periods=max(window // 2, 5)).mean().clip(lower=0.0)
+    variance = daily.rolling(window, min_periods=min(window, max(window // 2, 5))).mean().clip(lower=0.0)
     vol = np.sqrt(variance)
     return vol * np.sqrt(ANN) if annualise else vol
 
 
 def realised_volatility(returns: pd.DataFrame, window: int = 21, annualise: bool = True) -> pd.DataFrame:
     """Backward-looking realised volatility -- the *target* in forecast tests."""
-    variance = (returns ** 2).rolling(window, min_periods=max(window // 2, 5)).mean()
+    variance = (returns ** 2).rolling(window, min_periods=min(window, max(window // 2, 5))).mean()
     vol = np.sqrt(variance)
     return vol * np.sqrt(ANN) if annualise else vol
 

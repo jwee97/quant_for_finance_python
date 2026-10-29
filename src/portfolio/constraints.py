@@ -135,7 +135,7 @@ class Constraints:
         exposure equality, repeated to convergence.
         """
         w = weights.astype(float).copy()
-        target = self.net_exposure if self.net_exposure is not None else float(w.sum())
+        target = self.net_exposure
 
         for _ in range(iterations):
             before = w.copy()
@@ -188,7 +188,7 @@ def project_frame(weights: pd.DataFrame, constraints: "Constraints",
     if not active.any():
         return weights.copy()
 
-    target = constraints.net_exposure if constraints.net_exposure is not None else None
+    target = constraints.net_exposure                                                          # None: the net is not constrained, as in ``Constraints.project``
     lo, hi = constraints.min_weight, constraints.max_weight
     group_index = {
         key: np.array([assets.index(a) for a in assets if constraints.group_map.get(a) == key])
@@ -197,7 +197,6 @@ def project_frame(weights: pd.DataFrame, constraints: "Constraints",
     group_index = {k: v for k, v in group_index.items() if len(v)}
 
     work = values[active]
-    row_target = np.full(len(work), target) if target is not None else work.sum(axis=1)
 
     for _ in range(iterations):
         before = work.copy()
@@ -212,24 +211,24 @@ def project_frame(weights: pd.DataFrame, constraints: "Constraints",
                 scale[breach] = limit / exposure[breach]
                 work[:, columns] *= scale[:, None]
 
-        total = work.sum(axis=1)
-        deficit = row_target - total
-        headroom = np.clip(hi - work, 0.0, None)
-        room = np.clip(work - lo, 0.0, None)
+        if target is not None:
+            deficit = target - work.sum(axis=1)
+            headroom = np.clip(hi - work, 0.0, None)
+            room = np.clip(work - lo, 0.0, None)
 
-        add = deficit > 1e-12
-        if add.any():
-            capacity = headroom.sum(axis=1)
-            usable = add & (capacity > 1e-12)
-            if usable.any():
-                work[usable] += headroom[usable] * (deficit[usable] / capacity[usable])[:, None]
+            add = deficit > 1e-12
+            if add.any():
+                capacity = headroom.sum(axis=1)
+                usable = add & (capacity > 1e-12)
+                if usable.any():
+                    work[usable] += headroom[usable] * (deficit[usable] / capacity[usable])[:, None]
 
-        remove = deficit < -1e-12
-        if remove.any():
-            capacity = room.sum(axis=1)
-            usable = remove & (capacity > 1e-12)
-            if usable.any():
-                work[usable] += room[usable] * (deficit[usable] / capacity[usable])[:, None]
+            remove = deficit < -1e-12
+            if remove.any():
+                capacity = room.sum(axis=1)
+                usable = remove & (capacity > 1e-12)
+                if usable.any():
+                    work[usable] += room[usable] * (deficit[usable] / capacity[usable])[:, None]
 
         if np.max(np.abs(work - before)) < tolerance:
             break

@@ -22,6 +22,7 @@ from typing import Callable, Iterator
 import numpy as np
 import pandas as pd
 
+from ..features.returns import FLAT
 from ..utils.logging import get_logger
 
 LOGGER = get_logger(__name__)
@@ -89,7 +90,8 @@ class WalkForwardSplitter:
                            index[-1])
             train_end = test_start - pd.Timedelta(days=self.embargo_days + 1)
             train_start = (start if self.scheme == "expanding"
-                           else max(start, train_end - pd.DateOffset(years=int(self.rolling_train_years))))
+                           else max(start, train_end - pd.DateOffset(years=int(self.rolling_train_years),
+                                                                     months=int((self.rolling_train_years % 1) * 12))))
             if train_end <= train_start:
                 test_start = test_end + pd.Timedelta(days=1)
                 continue
@@ -168,7 +170,8 @@ def run_walk_forward(
             weight_parts.append(weights)
 
         clean = net.dropna()
-        vol = float(clean.std(ddof=1) * np.sqrt(periods_per_year))
+        spread = clean.std(ddof=1)
+        vol = float(spread * np.sqrt(periods_per_year))
         rows.append(
             {
                 **fold.describe(),
@@ -176,7 +179,7 @@ def run_walk_forward(
                 "test_days": int(len(clean)),
                 "test_return": float((1.0 + clean).prod() - 1.0),
                 "test_vol": vol,
-                "test_sharpe": float(clean.mean() * periods_per_year / vol) if vol > 0 else np.nan,
+                "test_sharpe": float(clean.mean() * periods_per_year / vol) if spread > FLAT else np.nan,       # a fold that never moves has no Sharpe ratio, not 1e16 from rounding noise
                 "test_max_drawdown": float(
                     (lambda c: (c / c.cummax() - 1.0).min())((1.0 + clean).cumprod())
                 ),
@@ -187,11 +190,11 @@ def run_walk_forward(
     if not net_parts:
         raise RuntimeError(f"walk-forward for '{name}' produced no out-of-sample returns")
 
-    oos_gross = pd.concat(gross_parts).sort_index()
-    oos_net = pd.concat(net_parts).sort_index()
+    oos_gross = pd.concat(gross_parts).sort_index(kind="stable")                  # stable, so that where two folds report the same day the earlier fold's value is the one kept
+    oos_net = pd.concat(net_parts).sort_index(kind="stable")
     oos_gross = oos_gross[~oos_gross.index.duplicated(keep="first")]
     oos_net = oos_net[~oos_net.index.duplicated(keep="first")]
-    weights = pd.concat(weight_parts).sort_index() if weight_parts else pd.DataFrame()
+    weights = pd.concat(weight_parts).sort_index(kind="stable") if weight_parts else pd.DataFrame()
     if len(weights):
         weights = weights[~weights.index.duplicated(keep="first")]
 

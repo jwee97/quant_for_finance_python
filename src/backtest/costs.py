@@ -26,6 +26,8 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 
+from .metrics import FLAT
+
 
 @dataclass
 class LinearCostModel:
@@ -106,13 +108,14 @@ def cost_sensitivity(gross_returns: pd.Series, trades: pd.DataFrame, levels=(0.0
             model = LinearCostModel(level)
         net, costs = model.apply(gross_returns, trades)
         clean = net.dropna()
-        vol = clean.std(ddof=1) * np.sqrt(periods_per_year)
+        spread = clean.std(ddof=1)
+        vol = spread * np.sqrt(periods_per_year)
         rows.append(
             {
                 "cost_bps": level,
                 "net_ann_return": float(clean.mean() * periods_per_year),
                 "net_vol": float(vol),
-                "net_sharpe": float(clean.mean() * periods_per_year / vol) if vol > 0 else np.nan,
+                "net_sharpe": float(clean.mean() * periods_per_year / vol) if spread > FLAT else np.nan,       # a series that never moves has no Sharpe ratio, not 1e16 from rounding noise
                 "annual_cost_drag": float(costs.mean() * periods_per_year),
                 "cost_share_of_gross": float(
                     costs.mean() / gross_returns.mean()) if gross_returns.mean() > 0 else np.nan,
@@ -121,8 +124,7 @@ def cost_sensitivity(gross_returns: pd.Series, trades: pd.DataFrame, levels=(0.0
     return pd.DataFrame(rows).set_index("cost_bps")
 
 
-def breakeven_cost(gross_returns: pd.Series, trades: pd.DataFrame,
-                   periods_per_year: int = 252) -> float:
+def breakeven_cost(gross_returns: pd.Series, trades: pd.DataFrame) -> float:
     """Cost in bps at which the net return is exactly zero.
 
     ``breakeven = mean gross return / mean turnover``, in basis points. The

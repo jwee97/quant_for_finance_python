@@ -30,6 +30,22 @@ from .metrics import performance_summary
 LOGGER = get_logger(__name__)
 
 
+def stop_at_ruin(returns: pd.Series) -> tuple[pd.Series, pd.Timestamp | None]:
+    """The returns of an account that cannot lose more than it has. On the first day the compounded wealth would reach zero or below (a return of -100% or worse, which a leveraged short position can
+    have in one day: a short volatility book lost 3 x 96% when VIX futures doubled in a day) the loss is capped at -100% and every later return is zero, since an account with nothing cannot trade.
+    Returns the stream and that date (``None`` when it never happens, in which case the stream is returned as it was)."""
+    wealth = (1.0 + returns.fillna(0.0)).cumprod()
+    dead = wealth <= 0.0
+    if not dead.any():
+        return returns, None
+    first = dead.idxmax()
+    out = returns.copy()
+    later = out.index > first
+    out.loc[first] = -1.0
+    out.loc[later & out.notna().to_numpy()] = 0.0
+    return out, first
+
+
 @dataclass
 class BacktestResult:
     """Everything produced by one backtest run."""
@@ -181,6 +197,13 @@ class BacktestEngine:
         gross = gross.where(valid)
 
         net, costs = self.cost_model.apply(gross, traded)
+        gross, _ = stop_at_ruin(gross)
+        net, ruined_on = stop_at_ruin(net)
+        if ruined_on is not None:                                                # nothing is traded, held or paid for after the account is gone
+            after = held.index > ruined_on
+            held, traded = held.copy(), traded.copy()
+            held.loc[after], traded.loc[after] = 0.0, 0.0
+            costs = costs.where(costs.index <= ruined_on, 0.0)
         turnover = traded.abs().sum(axis=1)
 
         if start is not None or end is not None:
@@ -198,6 +221,7 @@ class BacktestEngine:
                 "rebalance": self.rebalance,
                 "weight_drift": self.weight_drift,
                 "target_vol": self.target_vol,
+                "ruined_on": None if ruined_on is None else str(ruined_on.date()),
                 **self.cost_model.describe(),
             },
         )
