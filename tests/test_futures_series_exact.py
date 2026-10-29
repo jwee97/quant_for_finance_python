@@ -22,9 +22,9 @@ def table() -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def curve(days: pd.DatetimeIndex) -> pd.DataFrame:
-    """Four monthly contracts (expiring 12 February, 12 March, 16 April and 14 May 2021), each listed from the first day to its expiry, 2 above the one before."""
-    expiries = {"A": "2021-02-12", "B": "2021-03-12", "C": "2021-04-16", "D": "2021-05-14"}
+def curve(days: pd.DatetimeIndex, contracts: int = 4) -> pd.DataFrame:
+    """Monthly contracts (expiring 12 February, 12 March, 16 April, 14 May, 11 June and 16 July 2021), each listed from the first day to its expiry, 2 above the one before."""
+    expiries = dict(list({"A": "2021-02-12", "B": "2021-03-12", "C": "2021-04-16", "D": "2021-05-14", "E": "2021-06-11", "F": "2021-07-16"}.items())[:contracts])
     return pd.DataFrame([{"date": d, "contract": c, "expiry": pd.Timestamp(e), "price": 100.0 + 2.0 * k + 0.1 * i} for k, (c, e) in enumerate(expiries.items()) for i, d in enumerate(days) if d <= pd.Timestamp(e)])
 
 
@@ -149,6 +149,8 @@ def test_the_term_structure_ranks_the_unexpired_contracts_by_expiry_and_keeps_th
     after = term_structure(curve(pd.bdate_range("2021-02-10", "2021-02-16")))
     assert after["contract"].loc["2021-02-15"].tolist()[:3] == ["B", "C", "D"] and pd.isna(after["contract"].at[pd.Timestamp("2021-02-15"), "F4"]), "the day after, A has gone and only three contracts are left"
     assert list(term_structure(long, depth=2)["price"].columns) == ["F1", "F2"]
+    six = term_structure(curve(days, contracts=6))
+    assert list(six["price"].columns) == ["F1", "F2", "F3", "F4"] and list(term_structure(curve(days, contracts=6), depth=5)["price"].columns) == ["F1", "F2", "F3", "F4", "F5"], "four of six by default"
 
 
 def test_the_return_of_a_rank_is_that_of_the_contract_that_held_the_rank_the_day_before():

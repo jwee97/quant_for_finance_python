@@ -96,6 +96,15 @@ def test_a_closed_exchange_is_held_for_five_days_and_not_for_a_sixth():
     assert report["A"]["front_days"] > report["B"]["front_days"] > 1000
 
 
+def test_the_roll_days_are_five_unless_given_and_are_handed_to_the_front_month_and_the_bundle(monkeypatch):
+    seen = []
+    monkeypatch.setattr(fa, "front_month_dates", lambda long, roll_days: seen.append(("front", roll_days)) or pd.Series(True, index=pd.DatetimeIndex(long["date"].unique())))
+    monkeypatch.setattr(bundles, "futures_bundle", lambda used, classes, roll_days, name, hold_days: seen.append(("bundle", roll_days, hold_days)) or "bundle")
+    table = monthly_table("2021-01-04", "2022-12-30", seed=14)
+    assert fa.real_futures_bundle({"X": curve_of("X", table)})[0] == "bundle" and fa.real_futures_bundle({"X": curve_of("X", table)}, roll_days=3)[0] == "bundle"
+    assert seen == [("front", 5), ("bundle", 5, 5), ("front", 3), ("bundle", 3, 5)], "the roll rule that picks the front is the one the index is built with, and a closed exchange is held for five days"
+
+
 def test_a_root_needs_a_year_of_front_months_to_the_day():
     table = monthly_table("2021-01-04", "2022-12-30", seed=13)
     days = front_month_dates(table[table["date"].dt.day_of_week < 5])

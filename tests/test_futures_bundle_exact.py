@@ -12,7 +12,7 @@ import pytest
 
 from src.assets.bundles import _hold_through_closures, _index, futures_bundle
 
-EXPIRIES = {"A": "2021-02-12", "B": "2021-03-12", "C": "2021-04-16", "D": "2021-05-14"}
+EXPIRIES = {"A": "2021-02-10", "B": "2021-03-10", "C": "2021-04-14", "D": "2021-05-12"}                       # Wednesdays: a business day is exactly five days, and exactly six, before each
 
 
 def curve(days: pd.DatetimeIndex) -> pd.DataFrame:
@@ -74,6 +74,7 @@ def test_each_root_becomes_an_index_of_the_excess_return_of_the_contract_held_an
     named = futures_bundle({"X": long}, asset_class={"X": "energy"}, roll_days=3, name="mine")
     assert named.name == "mine" and named.asset_class == {"X": "energy"} and not named.prices["X"].equals(bundle.prices["X"]), "a different roll rule is a different index"
     assert named.prices["X"].tolist() == pytest.approx((100.0 * (1.0 + oracle(long, 3)).cumprod()).tolist(), rel=1e-12)
+    assert not futures_bundle({"X": long}, roll_days=6).prices["X"].equals(bundle.prices["X"]) and bundle.prices["X"].tolist() == pytest.approx((100.0 * (1.0 + oracle(long, 5)).cumprod()).tolist(), rel=1e-12), "five days by default"
 
 
 def test_roots_on_different_calendars_are_joined_on_the_union_of_their_dates_and_carried_over_a_holiday_only_when_asked():

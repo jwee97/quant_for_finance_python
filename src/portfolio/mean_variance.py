@@ -243,11 +243,13 @@ def resampled_weights(mu: pd.Series, returns: pd.DataFrame, risk_aversion: float
                       covariance_method: str = "shrinkage", seed: int = 7) -> pd.Series:
     """Michaud resampling -- Extension B (Ch. 19 §19.6).
 
-    Bootstrap the return history, re-estimate mu and Sigma on each sample,
-    optimise, and average the resulting weights. Averaging over the
-    *estimation uncertainty* rather than optimising once on a point estimate
-    produces a far more stable book at the cost of a slightly worse in-sample
-    objective.
+    Bootstrap the return history, re-estimate Sigma on each sample, perturb
+    the expected returns handed in by a random ten per cent each (they are
+    forecasts, not an average of this history, so there is nothing in a sample
+    to re-estimate them from), optimise, and average the resulting weights.
+    Averaging over the *estimation uncertainty* rather than optimising once on
+    a point estimate produces a far more stable book at the cost of a slightly
+    worse in-sample objective.
     """
     from .covariance import estimate_covariance
 

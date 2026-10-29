@@ -20,6 +20,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from ..features.returns import FLAT
 from ..utils.dates import TRADING_DAYS_PER_YEAR
 
 ANN = TRADING_DAYS_PER_YEAR
@@ -60,10 +61,12 @@ def constant_correlation_target(returns: pd.DataFrame) -> pd.DataFrame:
     clean = returns.dropna(how="any")
     cov = clean.cov(ddof=1)
     vol = np.sqrt(np.diag(cov.to_numpy()))
-    corr = cov.to_numpy() / np.outer(vol, vol)
     n = len(vol)
-    off_diagonal = corr[~np.eye(n, dtype=bool)]
-    average = float(np.mean(off_diagonal))
+    moving = vol > FLAT                                                        # an asset that never moved has no correlation with anything: it keeps a variance of zero
+    both = np.outer(moving, moving)
+    corr = np.divide(cov.to_numpy(), np.outer(vol, vol), out=np.zeros((n, n)), where=both)
+    pairs = both & ~np.eye(n, dtype=bool)
+    average = float(corr[pairs].mean()) if pairs.any() else 0.0
     target_corr = np.full((n, n), average)
     np.fill_diagonal(target_corr, 1.0)
     target = target_corr * np.outer(vol, vol)
@@ -149,7 +152,8 @@ def pca_denoised_covariance(returns: pd.DataFrame, n_components: int | None = No
     clean = returns.dropna(how="any")
     cov = clean.cov(ddof=1)
     vol = np.sqrt(np.diag(cov.to_numpy()))
-    corr = cov.to_numpy() / np.outer(vol, vol)
+    moving = vol > FLAT                                                        # an asset that never moved is uncorrelated with the others and keeps a variance of zero
+    corr = np.divide(cov.to_numpy(), np.outer(vol, vol), out=np.eye(len(vol)), where=np.outer(moving, moving))
 
     values, vectors = np.linalg.eigh(corr)
     order = np.argsort(values)[::-1]

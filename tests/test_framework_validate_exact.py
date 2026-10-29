@@ -6,6 +6,7 @@ forecasts, whether a model looks at the future, and the tables of an evaluation 
 
 from __future__ import annotations
 
+import contextlib
 from types import SimpleNamespace
 
 import numpy as np
@@ -115,6 +116,34 @@ def test_a_calibrated_probability_replaces_the_gaussian_one_in_the_score_and_the
     row = out["reliability"].iloc[0]
     assert row["predicted"] == pytest.approx(0.9) and row["realised"] == pytest.approx(4 / 6) and row["n"] == 270
     assert out["mean_confidence"] == pytest.approx(np.abs(2.0 * norm.cdf(RETURNS * HORIZON / 0.02) - 1.0).mean()), "the confidence is the forecast's own"
+
+
+def test_a_rank_correlation_needs_five_assets_with_different_forecasts_and_a_flat_forward_return_is_not_a_rise():
+    forecasts, returns, index = panel()
+    five = ForecastPanel.from_mean_std(forecasts.mean.iloc[:, :5], forecasts.std.iloc[:, :5], horizon=HORIZON)
+    four = ForecastPanel.from_mean_std(forecasts.mean.iloc[:, :4], forecasts.std.iloc[:, :4], horizon=HORIZON)
+    assert forecast_quality(five, returns.iloc[:, :5], index[10])["ic_observations"] == 9 and forecast_quality(four, returns.iloc[:, :4], index[10])["ic_observations"] == 0, "four assets rank nothing"
+    same = ForecastPanel.from_mean_std(forecasts.mean * 0.0 + 0.01, forecasts.std, horizon=HORIZON)
+    assert forecast_quality(same, returns, index[10])["ic_observations"] == 0, "the same forecast for every asset ranks nothing"
+    flat_returns = returns.copy()
+    flat_returns["B"] = 0.0
+    out = forecast_quality(forecasts, flat_returns, index[10])
+    assert out["brier_climatology"] == pytest.approx((4 / 6) * (2 / 6)), "an asset that did not move did not rise: four of the six rose, not five"
+
+
+def test_the_reliability_table_is_in_tenths_of_a_probability_and_a_probability_of_zero_is_in_the_first():
+    forecasts, returns, index = panel()
+    calibrated = forecasts.mean * 0.0 + 0.0
+    calibrated["A"] = 0.04
+    calibrated["B"] = 0.25
+    calibrated["C"] = 0.45
+    calibrated["D"] = 0.55
+    calibrated["E"] = 0.95
+    forecasts.p_up = calibrated
+    table = forecast_quality(forecasts, returns, index[10])["reliability"]
+    assert [interval.right for interval in table.index] == pytest.approx([0.1, 0.3, 0.5, 0.6, 1.0]), "tenths; a probability of exactly zero (asset F) falls in the first with the 0.04 (asset A)"
+    assert table["n"].tolist() == [90, 45, 45, 45, 45] and table["predicted"].tolist() == pytest.approx([0.02, 0.25, 0.45, 0.55, 0.95])
+    assert table["realised"].tolist() == pytest.approx([0.5, 0.0, 1.0, 1.0, 1.0]), "A fell and F rose in the first; B fell; C, D and E rose"
 
 
 # ------------------------------------------------------------------------------------------------------------------ the look-ahead test
@@ -270,3 +299,107 @@ def test_each_benchmark_is_run_by_its_name_and_a_name_that_is_not_one_or_a_book_
     assert four.tables["benchmarks"].iloc[0]["error"] == "the benchmark held nothing on these dates (the portfolio builders need at least five investable assets)" and four.benchmarks == {}
     default = Pipeline({"name": "t", "models": [{"name": "test_validate_trend"}], "evaluation": {"causality": False, "brinson": False, "model_attribution": False}}, Overrides(config, {"framework.tearsheet.benchmarks": ["inverse_vol"], **bootstrap}), market).run(validate=False)
     assert default.tables["benchmarks"]["benchmark"].tolist() == ["inverse_vol"], "the platform's list when the specification names none"
+
+
+def test_the_headline_figures_are_those_of_the_window_from_the_start_of_the_evaluation(market, config):
+    out = run(market, config)
+    net, gross = out.net_returns.loc[out.start:].dropna(), out.gross_returns.loc[out.start:].dropna()
+    m = out.metrics
+    assert m["n_days"] == len(net) and m["start"] == str(net.index[0].date()) and m["end"] == str(net.index[-1].date()) and m["start"] == str(out.start.date())
+    assert m["sharpe"] == pytest.approx(np.sqrt(252.0) * net.mean() / net.std(ddof=1)) and m["ann_vol"] == pytest.approx(net.std(ddof=1) * np.sqrt(252.0))
+    assert m["cagr"] == pytest.approx((1.0 + net).prod() ** (365.25 / (net.index[-1] - net.index[0]).days) - 1.0), "compounded over the calendar years the window spans"
+    assert m["gross_sharpe"] == pytest.approx(np.sqrt(252.0) * gross.mean() / gross.std(ddof=1)) and m["gross_sharpe"] > m["sharpe"], "before costs it is better"
+    assert m["ann_cost_bps"] == pytest.approx(1e4 * out.costs.loc[out.start:].mean() * 252.0) and m["mean_ann_turnover"] == pytest.approx(out.turnover.loc[out.start:].mean() * 252.0)
+    assert {"sortino", "calmar", "max_drawdown", "ann_turnover"} <= set(m)
+
+
+def test_the_return_by_regime_is_each_regime_s_share_of_the_days_and_its_own_annual_figures_for_a_regime_of_more_than_five_days(market, config):
+    index = market.index
+    labels = pd.Series("Calm", index=index)
+    labels.iloc[1000:1100] = "Wild"
+    labels.iloc[1200:1205] = "Brief"                                                                      # five days
+    labels.iloc[1250:1256] = "Longer"                                                                     # six
+    probabilities = pd.DataFrame({name: (labels == name).astype(float) for name in ("Calm", "Wild", "Brief", "Longer")})
+    with fixed_regime(probabilities) as detector:
+        spec = {"name": "t", "models": [{"name": "test_validate_trend"}], "regime": {"detector": detector}, "evaluation": {"benchmarks": [], "causality": False, "brinson": False, "model_attribution": False}}
+        out = Pipeline(spec, config, market).run(validate=False)
+    table = out.tables["by_regime"]
+    net = out.net_returns.loc[out.start:].dropna()
+    assert table.index.tolist() == ["Calm", "Longer", "Wild"], "five days are too few to describe; six are not"
+    assert list(table.columns) == ["share_of_days", "ann_return", "ann_vol", "sharpe"]
+    for name in table.index:
+        r = net[labels.reindex(net.index) == name]
+        assert table.loc[name, "share_of_days"] == pytest.approx(len(r) / len(net)) and table.loc[name, "ann_return"] == pytest.approx(r.mean() * 252.0)
+        assert table.loc[name, "ann_vol"] == pytest.approx(r.std(ddof=1) * np.sqrt(252.0)) and table.loc[name, "sharpe"] == pytest.approx(np.sqrt(252.0) * r.mean() / r.std(ddof=1))
+    assert table.loc["Wild", "share_of_days"] == pytest.approx(100 / len(net))
+
+
+@contextlib.contextmanager
+def fixed_regime(probabilities: pd.DataFrame):
+    from src.framework.registry import DETECTORS, register_detector
+    from src.framework.types import RegimeSeries
+
+    @register_detector("test_validate_regime")
+    class Fixed:
+        def detect(self, data):
+            return RegimeSeries(probabilities.reindex(data.index), "fixed")
+
+    try:
+        yield "test_validate_regime"
+    finally:
+        DETECTORS.unregister("test_validate_regime")
+
+
+def test_a_sample_window_is_described_from_the_twenty_first_day(market, config):
+    samples = {"twenty": {"start": "2021-11-01", "end": "2021-11-26"}, "twenty_one": {"start": "2021-11-01", "end": "2021-11-29"}}
+    table = run(market, Overrides(config, {"backtest.samples": samples})).tables["by_sample"]
+    assert table.index.tolist() == ["twenty_one"] and table.loc["twenty_one", "days"] == 21, "twenty business days are not enough, twenty-one are"
+
+
+def test_the_comparison_with_a_benchmark_is_bootstrapped_with_the_configured_blocks_on_more_than_a_year_of_shared_days(monkeypatch, market, config):
+    spy = Spy({"sharpe_a": 1.0, "sharpe_b": 0.5, "difference": 0.5, "p_value": 0.04})
+    monkeypatch.setattr(validate, "paired_sharpe_test", spy)
+    out = run(market, config, benchmarks=["equal_weight"])
+    ((net, bench), kwargs), = spy.calls
+    assert kwargs == {"n_samples": 2000, "block_length": 21, "seed": 7}, "two thousand draws in blocks of a month, by default"
+    assert net.index.equals(bench.index) and len(net) == len(out.net_returns.loc[out.start:]) and out.tables["benchmarks"].iloc[0].to_dict() == {"benchmark": "equal_weight", "sharpe_strategy": 1.0, "sharpe_benchmark": 0.5, "difference": 0.5, "p_value": 0.04}
+    assert out.benchmarks["equal_weight"].std(ddof=1) * np.sqrt(252.0) < 0.085, "the benchmark book is held as built, not scaled to the strategy's volatility target"
+    run(market, Overrides(config, {"framework.tearsheet.bootstrap": {"n_samples": 50, "block_length": 5, "seed": 3}}), benchmarks=["equal_weight"])
+    assert spy.calls[-1][1] == {"n_samples": 50, "block_length": 5, "seed": 3}
+    run(market, Overrides(config, {"framework.tearsheet.bootstrap": None}), benchmarks=["equal_weight"])
+    assert spy.calls[-1][1] == {"n_samples": 2000, "block_length": 21, "seed": 7}, "the same when the configuration says nothing"
+    spy.calls.clear()
+    index = market.index
+    run(market, config, benchmarks=["equal_weight"], start=str(index[-250].date()))
+    assert spy.calls == [], "250 shared days are not more than a year"
+    run(market, config, benchmarks=["equal_weight"], start=str(index[-251].date()))
+    assert len(spy.calls) == 1 and len(spy.calls[0][0][0]) == 251, "251 are"
+
+
+def test_the_look_ahead_test_is_run_on_every_model_and_on_the_regime_detector_of_a_validated_run(market, config):
+    probabilities = pd.DataFrame({"Calm": 1.0, "Wild": 0.0}, index=market.index)
+    with fixed_regime(probabilities) as detector:
+        spec = {"name": "t", "models": [{"name": "test_validate_trend"}], "regime": {"detector": detector}, "evaluation": {"benchmarks": [], "brinson": False, "model_attribution": False}}
+        out = Pipeline(spec, config, market).run()
+        assert list(out.validation["causality"]) == ["test_validate_trend", f"regime:{detector}"] and all(v["ok"] for v in out.validation["causality"].values())
+        quiet = Pipeline({**spec, "evaluation": {**spec["evaluation"], "causality": False}}, config, market).run()
+        assert "causality" not in quiet.validation
+    assert out.validation["n_trials"] == 1 and 0.0 <= out.validation["deflated_sharpe_probability"] <= 1.0
+    many = run(market, config, n_trials=20)
+    assert many.validation["n_trials"] == 20 and many.validation["deflated_sharpe_probability"] < run(market, config).validation["deflated_sharpe_probability"], "the more ideas tried, the less a good result proves"
+
+
+def test_a_difference_of_exactly_the_tolerance_passes_and_the_tolerance_is_a_billionth_by_default():
+    bundle = bundle_of()
+
+    class Scaled:
+        def __init__(self, scale):
+            self.scale = scale
+
+        def forecast(self, data):
+            return SimpleNamespace(mean=data.returns.shift(-1) * self.scale)
+
+    unit = check_causality(Scaled(1.0), bundle)["max_abs_difference"]
+    assert unit > 0.0
+    assert check_causality(Scaled(0.8e-9 / unit), bundle)["ok"] is True and check_causality(Scaled(1.2e-9 / unit), bundle)["ok"] is False, "a billionth by default"
+    assert check_causality(Scaled(1.0), bundle, tolerance=unit)["ok"] is True, "a difference of exactly the tolerance is within it"
