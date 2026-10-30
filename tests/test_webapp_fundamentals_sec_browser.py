@@ -74,6 +74,16 @@ def _provider(page, name):
     page.select_option("select[data-key=provider]", name)
 
 
+def _search_the_directory(page, text):
+    """Type a name, press Enter (that searches the database, which is free) and then ask the provider's directory. The page does one thing at a time: a click that arrives while the database search is
+    still running gets the toast "Still working" and sends nothing (seen on a loaded machine, where the button in the results card is not locked as the one in the form is), so the click waits until the
+    form's own buttons are unlocked, which is when the first search has answered."""
+    page.fill("input[data-key=q]", text)
+    page.press("input[data-key=q]", "Enter")
+    page.wait_for_selector("#fundamentals .panel [data-action=search-provider]:not([data-busy-lock])")
+    page.click("[data-role=fund-remote] [data-action=search-provider]")
+
+
 # ------------------------------------------------------------------------------------------------------ nothing set up
 def test_the_data_manager_says_how_to_give_the_sec_its_contact_in_a_secret_and_takes_none(browser, live_unset):  # noqa: F811
     page = _page(browser, live_unset)
@@ -119,9 +129,7 @@ def test_a_company_is_found_in_the_sec_list_added_for_nothing_and_fetched_for_tw
         _provider(page, "sec_edgar")
         page.wait_for_selector("#fundamentals .panel [data-action=search-provider]:has-text('Search SEC EDGAR (free)')")
         assert "Search the SEC's list of US-listed companies" in page.inner_text("#fundamentals .panel") and page.locator("#fundamentals .panel [role=img]").count() == 0       # no allowance meter: it is free
-        page.fill("input[data-key=q]", "Apple")
-        page.press("input[data-key=q]", "Enter")
-        page.click("[data-role=fund-remote] [data-action=search-provider]")
+        _search_the_directory(page, "Apple")
         page.wait_for_selector("[data-role=fund-remote] tr[data-symbol='us:AAPL']")
         remote = page.inner_text("[data-role=fund-remote]")
         assert "SEC EDGAR: “Apple”" in remote and "read as a company name" in remote and "nothing spent" in remote and "Apple Inc." in remote and "about 2 free requests" in remote
@@ -153,9 +161,7 @@ def test_a_company_two_providers_know_shows_whose_statements_are_on_view_and_eac
     try:
         _open(page, "companies", demo=False)
         page.wait_for_selector("[data-role=fund-remote]")
-        page.fill("input[data-key=q]", "Apple")                                                       # OpenFilings first (its default), for 11 credits
-        page.press("input[data-key=q]", "Enter")
-        page.click("[data-role=fund-remote] [data-action=search-provider]")
+        _search_the_directory(page, "Apple")                                                          # OpenFilings first (its default), for 11 credits
         page.wait_for_selector("[data-role=fund-remote] tr[data-symbol='us:AAPL']")
         page.click("[data-role=fund-remote] [data-action=add-fetch-found]")
         page.wait_for_selector("[data-role=fund-fetch-report]", timeout=LONG)

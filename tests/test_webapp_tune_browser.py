@@ -109,7 +109,7 @@ def test_the_tab_lists_a_strategys_settings_with_help_ranges_and_a_reason_when_i
         page.select_option("[data-role=tune-strategy]", "momentum_13612w")                                       # a strategy that compares tickers, with one setting
         page.wait_for_selector(".tuneset[data-name=month]")
         page.select_option("[data-role=tune-strategy]", "basis_momentum")                                        # nothing to tune
-        page.wait_for_selector("#tune .runbar .guard:not([hidden])")
+        page.wait_for_selector("#tune .runbar .guard:has-text('no numeric or yes/no settings')")                                  # the guard first says that it is loading
         assert "no numeric or yes/no settings" in page.inner_text("#tune .runbar .guard") and page.locator(".tuneset").count() == 0
         assert not page.problems, page.problems
     finally:

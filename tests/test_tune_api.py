@@ -38,6 +38,17 @@ def _wait(app, job, timeout=180):
     raise AssertionError("the job did not end")
 
 
+def _written(app, job, timeout=60):
+    """The job says it is done as soon as the run ends, and its record and result are written to disk a moment after, so a test that starts a new app on the same root waits for them."""
+    t0 = time.time()
+    while time.time() - t0 < timeout:
+        kept = app.joblog.get(job)
+        if kept and kept["status"] == "done" and kept["result"] is not None:
+            return kept
+        time.sleep(0.05)
+    raise AssertionError("the finished job was not written to disk")
+
+
 def _run(app, **body):
     return app.extra_post["/api/tune/run"](body)
 
@@ -111,6 +122,7 @@ def test_a_search_runs_as_a_job_on_the_real_pipeline_and_is_kept_across_a_restar
     assert {t["ticker"] for t in r["tickers"]} == set(r["universe"]["tickers"]) and r["benchmark"]["holdout"]["sharpe"] is not None and len(r["curves"]["dates"]) <= 500
     listed = [j for j in app.jobs_list()["jobs"] if j["id"] == job][0]
     assert listed["kind"] == "tune" and listed["status"] == "done" and listed["label"].startswith("tune: kalman_trend on 8 tickers")
+    _written(app, job)
     again = App(app.config, builder=app.builder, root=tmp_path)                                        # a restarted app finds the finished search again
     assert again.job(job)["result"]["use"] == r["use"]
 
