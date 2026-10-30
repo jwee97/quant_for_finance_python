@@ -10,6 +10,7 @@ the market-wide level has to come from the returns themselves). States are numbe
 
 from __future__ import annotations
 
+import inspect
 import warnings
 
 import numpy as np
@@ -21,6 +22,7 @@ from .models import Model
 
 STATE_COLUMNS = ("mkt_ret", "log_vol", "log_disp")
 MIN_DAYS = 250
+FIT_ATTEMPTS = 3                                             # a Markov-switching fit starts from random parameters; a start that fails is replaced by the next seed's
 
 
 def market_state(ds) -> pd.DataFrame:
@@ -99,15 +101,28 @@ class MarkovSwitchingEngine:
 
         return MarkovRegression(y, k_regimes=self.k, trend="c", switching_variance=self.switching_variance)
 
+    def _fit_once(self, y: np.ndarray, seed: int):
+        model = self._model(y)
+        options = {"disp": False, "maxiter": 200, "search_reps": 5, "search_iter": 10}
+        if "rng" in inspect.signature(model.fit).parameters:
+            options["rng"] = seed                                                       # newer statsmodels draws its random starts from this, not from numpy's global generator
+        else:
+            np.random.seed(seed)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            return model.fit(**options)
+
     def fit(self, Z: np.ndarray) -> "MarkovSwitchingEngine":
         y = Z[:, STATE_COLUMNS.index("mkt_ret")]
-        np.random.seed(self.seed)                                                       # statsmodels draws its starting values with numpy's global generator
-        try:
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore")
-                res = self._model(y).fit(disp=False, maxiter=200, search_reps=5, search_iter=10)
-        except (ValueError, np.linalg.LinAlgError, FloatingPointError) as exc:
-            raise ValueError(f"the Markov-switching model could not be fitted: {exc}") from None
+        last = None
+        for attempt in range(FIT_ATTEMPTS):                                             # a random start can land on a transition matrix with no steady state; the next seed is another start
+            try:
+                res = self._fit_once(y, self.seed + attempt)
+                break
+            except (ValueError, RuntimeError, np.linalg.LinAlgError, FloatingPointError) as exc:
+                last = exc
+        else:
+            raise ValueError(f"the Markov-switching model could not be fitted: {last}") from None
         self.params_ = np.asarray(res.params, dtype=float)
         names = list(res.model.param_names)
         key = "sigma2" if self.switching_variance else "const"

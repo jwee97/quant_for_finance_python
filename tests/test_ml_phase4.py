@@ -82,7 +82,7 @@ def test_a_graph_model_trains_scores_every_asset_and_reports_its_graph(ds, kind,
     assert np.allclose(again.predict(test), pred, atol=1e-5)
     # a day's graph holds the features of that day only: scrambling every later day changes nothing
     pos_all = ds.positions()
-    X2 = ds.X.copy()
+    X2 = ds.X.astype("float64")                                                          # pandas 3 refuses to put float64 noise into float32 columns
     later = pos_all > 860
     X2.loc[later] = np.random.default_rng(0).normal(size=(int(later.sum()), X2.shape[1]))
     model.bind(dataclasses.replace(ds, X=X2))

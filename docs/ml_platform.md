@@ -107,11 +107,10 @@ The search spaces of the new kinds are in the catalogue (`tune_spaces`). The Sea
 | install | adds |
 |---|---|
 | `pip install -r requirements-ml-extras.txt` (or `pip install ".[ml-extras]"`) | everything below |
-| `pip install ".[ml-probabilistic]"` | NGBoost |
-| `pip install ".[ml-tuning]"` | the Optuna engine |
-| `pip install ".[ml-rl]"` | Gymnasium, Stable-Baselines3, sb3-contrib (and PyTorch) |
+| `pip install -r requirements-ml-no-ngboost.txt` (or `pip install ".[ml-rl,ml-tuning]"`) | the Optuna engine and the reinforcement-learning agents (Gymnasium, Stable-Baselines3, sb3-contrib), without NGBoost |
+| `pip install ".[ml-probabilistic]"` | NGBoost alone |
 
-The CI `ml-base` job runs the tab on the base install alone; the others install the extras and run every test.
+**NGBoost and pandas 3.** NGBoost depends on `lifelines`, which requires pandas below 3.0. On Python 3.11 or later, installing NGBoost therefore replaces pandas 3 with the last pandas 2 (the platform runs on both, and on Python 3.10 pandas 2 is all there is). If you want pandas 3, install `requirements-ml-no-ngboost.txt` and leave the `ngboost` model unavailable. CI follows the same rule: the Python 3.11 jobs and the Docker image install the file without NGBoost, so that they keep testing pandas 3; the Python 3.10 job installs everything and is the only one that runs the NGBoost tests; and the `ml-base` job installs none of them and checks that the tab, the pipeline and the endpoints work as before.
 
 ### Limits worth knowing
 

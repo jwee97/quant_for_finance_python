@@ -1,0 +1,12 @@
+# The optional packages of the Machine learning tab that leave pandas alone: the Optuna search engine and the reinforcement-learning agents (Gymnasium, Stable-Baselines3, sb3-contrib).
+# Install with:  pip install -r requirements-ml-no-ngboost.txt      (or:  pip install ".[ml-rl,ml-tuning]")
+# requirements-ml-extras.txt adds NGBoost, whose dependency lifelines keeps pandas below 3.0, so installing it replaces pandas 3 with the last pandas 2. CI and the Docker image use this file for that reason.
+-r requirements.txt
+
+# Optuna: a second search engine for the Tune and Search views
+optuna>=3.5
+
+# Reinforcement learning: the Gymnasium environment and the PPO, SAC and recurrent-PPO agents
+gymnasium>=0.29
+stable-baselines3>=2.3
+sb3-contrib>=2.3

@@ -153,7 +153,7 @@ def test_an_agent_scores_a_day_from_the_rows_up_to_that_day_only(ds):
     rows = ds.X.iloc[np.flatnonzero((pos >= 620) & (pos < 700))]
     before = model.predict(rows)
     cut = ds.dates[660]
-    X2 = rows.copy()
+    X2 = rows.astype("float64")                                                                          # pandas 3 refuses to put float64 noise into float32 columns
     later = rows.index.get_level_values(0) > cut
     X2.loc[later] = np.random.default_rng(0).normal(size=(int(later.sum()), X2.shape[1]))
     after = model.predict(X2)

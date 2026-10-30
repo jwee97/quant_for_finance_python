@@ -30,7 +30,7 @@ def build_adjacency(returns: pd.DataFrame, groups: dict, mode: str = "both", nei
     n = len(names)
     A = np.zeros((n, n))
     if mode in ("both", "correlation"):
-        corr = returns.corr(min_periods=60).fillna(0.0).to_numpy()
+        corr = returns.corr(min_periods=60).fillna(0.0).to_numpy(dtype=float, copy=True)          # a copy: pandas 3 returns a read-only view, and the diagonal is set below
         np.fill_diagonal(corr, -np.inf)
         k = max(1, min(int(neighbors), n - 1))
         for i in range(n):

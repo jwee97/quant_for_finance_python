@@ -201,7 +201,7 @@ def test_a_bound_network_scores_a_day_from_the_features_up_to_that_day_only(ds, 
     cut = 760
     rows = ds.X.iloc[np.flatnonzero((pos >= 740) & (pos <= cut))]
     before = model.predict(rows)
-    X2 = ds.X.copy()
+    X2 = ds.X.astype("float64")                                                                         # pandas 3 refuses to put float64 noise into float32 columns
     later = pos > cut
     X2.loc[later] = np.random.default_rng(0).normal(size=(int(later.sum()), X2.shape[1]))              # every feature after the cut is scrambled
     model.bind(dataclasses.replace(ds, X=X2))

@@ -148,6 +148,29 @@ def test_a_regime_model_never_uses_a_later_day_than_the_one_it_scores(ds, cfg, k
     assert not np.allclose(model.probabilities(ds.dates[-1]).iloc[-50:].to_numpy(), model.bind(ds).probabilities(ds.dates[-1]).iloc[-50:].to_numpy())      # the later days do change later beliefs
 
 
+def test_a_markov_switching_fit_repeats_exactly_and_a_start_that_fails_is_replaced_then_the_fit_is_refused(ds, monkeypatch):
+    """statsmodels draws the random starts of its search from the ``rng`` it is given (newer versions ignore numpy's global seed), so the fit must pass its seed on: the same data gives the same parameters."""
+    from src.ml import regimes as rg
+
+    Z = rg.market_state(ds).dropna().to_numpy()[:600]
+    a, b = rg.MarkovSwitchingEngine(2, seed=3).fit(Z), rg.MarkovSwitchingEngine(2, seed=3).fit(Z)
+    assert np.array_equal(a.params_, b.params_) and np.array_equal(a.trans_, b.trans_)
+    calls = []
+
+    def fails_twice(self, y, seed):
+        calls.append(seed)
+        if len(calls) < 3:
+            raise RuntimeError("Steady-state probabilities could not be constructed.")
+        return real(self, y, seed)
+
+    real = rg.MarkovSwitchingEngine._fit_once
+    monkeypatch.setattr(rg.MarkovSwitchingEngine, "_fit_once", fails_twice)
+    assert rg.MarkovSwitchingEngine(2, seed=3).fit(Z).params_.shape == a.params_.shape and calls == [3, 4, 5], "each attempt starts from the next seed"
+    monkeypatch.setattr(rg.MarkovSwitchingEngine, "_fit_once", lambda self, y, seed: (_ for _ in ()).throw(RuntimeError("Steady-state probabilities could not be constructed.")))
+    with pytest.raises(ValueError, match="could not be fitted: Steady-state"):
+        rg.MarkovSwitchingEngine(2, seed=3).fit(Z)
+
+
 def test_the_regime_models_need_a_dataset_and_enough_history(ds):
     with pytest.raises(ValueError, match="bound to a dataset"):
         md.make_model("hmm_regime").fit(ds.X.iloc[:500], ds.Y[ds.target].iloc[:500])

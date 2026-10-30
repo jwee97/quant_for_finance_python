@@ -20,10 +20,10 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
 
 # Dependencies first, so a code change does not invalidate the layer that holds them.
-# requirements-ml-extras.txt adds the optional model families of the machine-learning tab (NGBoost, Optuna, the reinforcement-learning agents) to requirements.txt.
-COPY requirements.txt requirements-ml-extras.txt ./
+# requirements-ml-no-ngboost.txt adds Optuna and the reinforcement-learning agents of the machine-learning tab to requirements.txt. NGBoost is left out: its dependency lifelines would replace pandas 3 with pandas 2.
+COPY requirements.txt requirements-ml-no-ngboost.txt ./
 RUN pip install --index-url https://download.pytorch.org/whl/cpu "torch>=2.2" \
- && pip install -r requirements-ml-extras.txt
+ && pip install -r requirements-ml-no-ngboost.txt
 
 # The test suite reads the documentation, the example specifications, the notebooks and the mkdocs configuration, so they belong in the image.
 COPY pyproject.toml README.md mkdocs.yml ./

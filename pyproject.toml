@@ -35,7 +35,7 @@ llm = ["anthropic>=0.40"]
 dev = ["pytest>=7.4", "pytest-cov>=5.0", "pytest-xdist>=3.5", "ruff>=0.5", "pre-commit>=3.7"]
 docs = ["mkdocs>=1.6", "mkdocs-material>=9.5", "nbclient>=0.10", "ipykernel>=6.29"]
 boosting = ["lightgbm>=4.0", "xgboost>=2.0", "catboost>=1.2"]
-# The model families of the machine-learning tab beyond the base install (see requirements-ml-extras.txt): NGBoost's predictive distributions, Optuna as a search engine, and the reinforcement-learning agents.
+# The model families of the machine-learning tab beyond the base install (see requirements-ml-extras.txt): NGBoost's predictive distributions, Optuna as a search engine, and the reinforcement-learning agents. NGBoost needs lifelines, which keeps pandas below 3.0.
 ml-probabilistic = ["ngboost>=0.5"]
 ml-tuning = ["optuna>=3.5"]
 ml-rl = ["torch>=2.2", "gymnasium>=0.29", "stable-baselines3>=2.3", "sb3-contrib>=2.3"]
