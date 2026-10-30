@@ -13,6 +13,9 @@ Methods (``build_weights(method=...)``):
 ``threshold``              long above ``+threshold``, short below ``-threshold``, flat in between
 ``regime_filtered``        ``top_n_long_short`` that is switched off when the regime says so
 ``confidence_weighted``    ``proportional`` times the prediction's confidence
+``uncertainty_weighted``   each score shrunk toward zero by ``kappa`` times the asset's excess predictive uncertainty, then weighted by score over std ** ``uncertainty_power``
+``uncertainty_mean_variance``  those views through the inverse of the (Ledoit-Wolf) covariance of trailing returns: the covariance-aware version of the same idea
+``target_weights``         the scores ARE the target weights (a reinforcement-learning policy's output), only clipped to the gross exposure
 
 Controls: ``cap_weights`` (a maximum per position, redistributing the excess), ``group_caps`` (a maximum gross per sector or asset class), ``holding_period`` (the average of the last ``H`` daily books, i.e. staggered
 tranches that each stay for ``H`` days) and ``extra_lag`` (a delay on top of the engine's own).
@@ -23,7 +26,8 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-METHODS = ("top_n_long_short", "long_only_top_quantile", "proportional", "vol_scaled", "rank_normalised", "threshold", "regime_filtered", "confidence_weighted")
+UNCERTAINTY_METHODS = ("uncertainty_weighted", "uncertainty_mean_variance")
+METHODS = ("top_n_long_short", "long_only_top_quantile", "proportional", "vol_scaled", "rank_normalised", "threshold", "regime_filtered", "confidence_weighted", *UNCERTAINTY_METHODS, "target_weights")
 
 
 def _scale_sides(raw: np.ndarray, gross: float, net: float) -> np.ndarray:
@@ -152,8 +156,66 @@ def extra_lag(w: pd.DataFrame, days: int) -> pd.DataFrame:
     return w if days <= 0 else w.shift(days).fillna(0.0)
 
 
+def _floor_std(std: pd.DataFrame, like: pd.DataFrame) -> pd.DataFrame:
+    """The predictive standard deviations aligned to ``like``, never below a quarter of the day's median (a near-zero spread would give one asset all the weight)."""
+    sd = std.reindex_like(like).where(lambda d: d > 0)
+    return sd.clip(lower=0.25 * sd.median(axis=1), axis=0)
+
+
+def shrink_by_uncertainty(score: pd.DataFrame, std: pd.DataFrame, kappa: float) -> pd.DataFrame:
+    """The demeaned score moved toward zero by ``kappa`` times the asset's EXCESS uncertainty (its standard deviation above the day's median): an asset the model is unusually unsure about loses
+    conviction, one of typical uncertainty keeps it. (A model's own spread is usually many times its scores, so shrinking by the whole standard deviation would remove every view.)"""
+    mu = score.sub(score.mean(axis=1), axis=0)
+    excess = std.sub(std.median(axis=1), axis=0).clip(lower=0.0)
+    return np.sign(mu) * (mu.abs() - float(kappa) * excess).clip(lower=0.0)
+
+
+def uncertainty_weighted(score: pd.DataFrame, std: pd.DataFrame, gross: float = 1.0, net: float = 0.0, kappa: float = 0.0, power: float = 1.0) -> pd.DataFrame:
+    """Weight proportional to the shrunk score divided by ``std ** power``: conviction per unit of the model's own uncertainty."""
+    sd = _floor_std(std, score)
+    raw = (shrink_by_uncertainty(score, sd, kappa) * sd ** (-float(power))).fillna(0.0)
+    return pd.DataFrame(_scale_sides(_wide(raw), gross, net), index=score.index, columns=score.columns)
+
+
+def uncertainty_mean_variance(score: pd.DataFrame, std: pd.DataFrame, returns: pd.DataFrame, gross: float = 1.0, net: float = 0.0, kappa: float = 0.0, power: float = 1.0, lookback: int = 126,
+                              rebalance: int = 5) -> pd.DataFrame:
+    """The views (shrunk scores divided by ``std ** power``) through the inverse covariance of the trailing ``lookback`` days of returns (Ledoit-Wolf), re-solved every ``rebalance`` days and held between. The book is made dollar neutral along
+    the covariance-weighted direction, scaled to ``gross``, and a non-zero ``net`` is added as the minimum-variance portfolio. Each solve uses the returns up to and including the day."""
+    from sklearn.covariance import LedoitWolf
+
+    sd = _floor_std(std, score)
+    mu = shrink_by_uncertainty(score, sd, kappa) * sd ** (-float(power))
+    R = returns.reindex(columns=score.columns)
+    where = R.index.get_indexer(score.index)
+    out, last = np.zeros(score.shape), np.zeros(score.shape[1])
+    for i in range(len(score)):
+        if i % max(int(rebalance), 1) == 0:
+            m = mu.iloc[i].to_numpy()
+            ok = np.isfinite(m) & (where[i] >= 0)
+            window = R.iloc[max(0, where[i] - int(lookback) + 1): where[i] + 1].loc[:, ok]
+            keep = window.notna().mean() > 0.8
+            last = np.zeros(score.shape[1])
+            if ok.sum() >= 3 and keep.sum() >= 3 and len(window) >= 40 and np.abs(m[ok]).sum() > 0:
+                idx = np.flatnonzero(ok)[keep.to_numpy()]
+                cov = LedoitWolf().fit(window.loc[:, keep].fillna(0.0)).covariance_ * 252.0 + 1e-8 * np.eye(len(idx))
+                inv_mu, inv_one = np.linalg.solve(cov, m[idx]), np.linalg.solve(cov, np.ones(len(idx)))
+                w = inv_mu - inv_mu.sum() / inv_one.sum() * inv_one                          # dollar neutral along the covariance-weighted direction
+                if np.abs(w).sum() > 0:
+                    w = w / np.abs(w).sum() * gross + net * inv_one / inv_one.sum()
+                    last[idx] = w
+        out[i] = last
+    return pd.DataFrame(out, index=score.index, columns=score.columns)
+
+
+def target_weights(score: pd.DataFrame, gross: float = 1.0) -> pd.DataFrame:
+    """The scores read as weights (a policy's output): missing values are flat and a book above ``gross`` is scaled down to it."""
+    w = score.fillna(0.0)
+    total = w.abs().sum(axis=1)
+    return w.mul(np.where(total > gross, gross / total.replace(0.0, np.nan), 1.0), axis=0).fillna(0.0)
+
+
 def build_weights(score: pd.DataFrame, cfg: dict, vol: pd.DataFrame | None = None, confidence: pd.DataFrame | None = None, regime_on: pd.Series | None = None, groups: dict | None = None,
-                  investable: pd.DataFrame | None = None) -> pd.DataFrame:
+                  investable: pd.DataFrame | None = None, uncertainty: pd.DataFrame | None = None, returns: pd.DataFrame | None = None) -> pd.DataFrame:
     """Target weights for a panel of scores according to the ``signal`` section of an experiment configuration (method and its settings, ``max_weight``, ``sector_cap``, ``holding_period``)."""
     method = cfg["method"]
     if method not in METHODS:
@@ -178,6 +240,18 @@ def build_weights(score: pd.DataFrame, cfg: dict, vol: pd.DataFrame | None = Non
         if regime_on is None:
             raise ValueError("the regime_filtered method needs a regime series (set dataset.regime_detector)")
         w = regime_filter(top_n_long_short(s, int(cfg.get("n", 3)), gross, net), regime_on)
+    elif method in UNCERTAINTY_METHODS:
+        if uncertainty is None:
+            raise ValueError(f"the {method} method needs a model that reports its own uncertainty (quantile LightGBM, NGBoost, the Temporal Fusion Transformer or a model ensemble)")
+        if method == "uncertainty_weighted":
+            w = uncertainty_weighted(s, uncertainty, gross, net, float(cfg.get("kappa", 0.0)), float(cfg.get("uncertainty_power", 1.0)))
+        else:
+            if returns is None:
+                raise ValueError("the uncertainty_mean_variance method needs the assets' returns")
+            w = uncertainty_mean_variance(s, uncertainty, returns, gross, net, float(cfg.get("kappa", 0.0)), float(cfg.get("uncertainty_power", 1.0)), int(cfg.get("mv_lookback", 126)),
+                                          int(cfg.get("mv_rebalance", 5)))
+    elif method == "target_weights":
+        w = target_weights(s, gross)
     else:
         if confidence is None:
             raise ValueError("the confidence_weighted method needs prediction confidences")

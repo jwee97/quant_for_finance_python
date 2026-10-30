@@ -19,11 +19,14 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
-          cache-dependency-path: requirements.txt
+          cache-dependency-path: |
+            requirements.txt
+            requirements-ml-extras.txt
       - name: Install (CPU-only PyTorch)
         run: |
           pip install --index-url https://download.pytorch.org/whl/cpu "torch>=2.2"
           pip install -r requirements.txt
+          pip install -r requirements-ml-extras.txt
           pip install -e . --no-deps
           pip install pytest-cov pytest-xdist nbclient ipykernel
       - name: Test with coverage
@@ -69,6 +72,30 @@ jobs:
         with:
           python-version: "3.10"
           cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-ml-extras.txt
+      - name: Install (CPU-only PyTorch)
+        run: |
+          pip install --index-url https://download.pytorch.org/whl/cpu "torch>=2.2"
+          pip install -r requirements.txt
+          pip install -r requirements-ml-extras.txt
+          pip install -e . --no-deps
+          pip install pytest
+      - name: Dashboard, iTick, Finzdata, tuning, forecasting, fundamentals and machine learning
+        run: python -m pytest tests/test_webapp.py tests/test_webapp_data.py tests/test_webapp_data_itick.py tests/test_webapp_data_yahoo.py tests/test_webapp_assets_ml.py tests/test_webapp_labs.py tests/test_server_hardening.py tests/test_tuning.py tests/test_tune_api.py tests/test_tune_study.py tests/test_hpo_search.py tests/test_forecast_scoring.py tests/test_forecast_base.py tests/test_forecast_methods.py tests/test_forecast_evaluate.py tests/test_forecast_verdict.py tests/test_forecast_cli.py tests/test_forecast_api.py tests/test_models_api.py tests/test_fund_api.py tests/test_fund_key_choice.py tests/test_fund_sec_edgar.py tests/test_job_lanes.py tests/test_server_tls.py tests/test_live_feed_smoke.py tests/test_itick_access.py tests/test_itick_catalog.py tests/test_itick_history.py tests/test_jobs.py tests/test_yahoo_futures.py tests/test_free_data_core.py tests/test_free_data_crypto.py tests/test_free_data_futures.py tests/test_free_data_options.py tests/test_free_data_finzdata.py tests/test_free_data_finzdata_catalog.py tests/test_webapp_finzdata.py tests/test_webapp_data_finzdata.py tests/test_finzdata_update_script.py tests/test_futures_all_contracts.py tests/test_ml_data.py tests/test_ml_search.py tests/test_ml_integration.py tests/test_ml_phase1.py tests/test_ml_deep.py tests/test_ml_optuna.py tests/test_ml_phase4.py tests/test_ml_rl.py tests/test_ml_pipeline.py tests/test_ml_additions.py tests/test_ml_cli.py
+
+  ml-base:
+    # The machine-learning tab on the base install alone (no requirements-ml-extras.txt): a model whose package is missing is listed as unavailable with the reason, and every other model, the pipeline and the endpoints work as before.
+    # The tests that need an extra package skip themselves; the ones that simulate its absence, and that importing the modules loads none of them, run.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
           cache-dependency-path: requirements.txt
       - name: Install (CPU-only PyTorch)
         run: |
@@ -76,8 +103,8 @@ jobs:
           pip install -r requirements.txt
           pip install -e . --no-deps
           pip install pytest
-      - name: Dashboard, iTick, Finzdata, tuning, forecasting, fundamentals and machine learning
-        run: python -m pytest tests/test_webapp.py tests/test_webapp_data.py tests/test_webapp_data_itick.py tests/test_webapp_data_yahoo.py tests/test_webapp_assets_ml.py tests/test_webapp_labs.py tests/test_server_hardening.py tests/test_tuning.py tests/test_tune_api.py tests/test_tune_study.py tests/test_hpo_search.py tests/test_forecast_scoring.py tests/test_forecast_base.py tests/test_forecast_methods.py tests/test_forecast_evaluate.py tests/test_forecast_verdict.py tests/test_forecast_cli.py tests/test_forecast_api.py tests/test_models_api.py tests/test_fund_api.py tests/test_fund_key_choice.py tests/test_fund_sec_edgar.py tests/test_job_lanes.py tests/test_server_tls.py tests/test_live_feed_smoke.py tests/test_itick_access.py tests/test_itick_catalog.py tests/test_itick_history.py tests/test_jobs.py tests/test_yahoo_futures.py tests/test_free_data_core.py tests/test_free_data_crypto.py tests/test_free_data_futures.py tests/test_free_data_options.py tests/test_free_data_finzdata.py tests/test_free_data_finzdata_catalog.py tests/test_webapp_finzdata.py tests/test_webapp_data_finzdata.py tests/test_finzdata_update_script.py tests/test_futures_all_contracts.py tests/test_ml_data.py tests/test_ml_search.py tests/test_ml_pipeline.py tests/test_ml_additions.py tests/test_ml_cli.py
+      - name: Machine learning without the optional packages
+        run: python -m pytest tests/test_ml_integration.py tests/test_ml_pipeline.py tests/test_ml_additions.py tests/test_ml_phase1.py tests/test_ml_phase4.py tests/test_ml_rl.py tests/test_ml_optuna.py tests/test_optional_packages.py -q
 
   browser:
     # The tests that drive the dashboard in a real Chromium (tabs, charts, keyboard, accessibility). Without Playwright they are skipped, which is how they went unrun in the Tests job.
@@ -89,16 +116,19 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
-          cache-dependency-path: requirements.txt
+          cache-dependency-path: |
+            requirements.txt
+            requirements-ml-extras.txt
       - name: Install (CPU-only PyTorch) and Chromium
         run: |
           pip install --index-url https://download.pytorch.org/whl/cpu "torch>=2.2"
           pip install -r requirements.txt
+          pip install -r requirements-ml-extras.txt
           pip install -e . --no-deps
           pip install pytest playwright
           playwright install --with-deps chromium
       - name: Dashboard in a browser
-        run: python -m pytest tests/test_dashboard.py tests/test_webapp_browser.py tests/test_webapp_itick_browser.py tests/test_webapp_finzdata_browser.py tests/test_webapp_runs_browser.py tests/test_webapp_tune_browser.py tests/test_webapp_forecast_browser.py tests/test_webapp_workspaces_browser.py tests/test_webapp_models_browser.py tests/test_webapp_fundamentals_browser.py tests/test_webapp_fundamentals_sec_browser.py tests/test_webapp_accessibility.py
+        run: python -m pytest tests/test_dashboard.py tests/test_webapp_browser.py tests/test_webapp_itick_browser.py tests/test_webapp_finzdata_browser.py tests/test_webapp_runs_browser.py tests/test_webapp_tune_browser.py tests/test_webapp_forecast_browser.py tests/test_webapp_workspaces_browser.py tests/test_webapp_models_browser.py tests/test_webapp_ml_models_browser.py tests/test_webapp_fundamentals_browser.py tests/test_webapp_fundamentals_sec_browser.py tests/test_webapp_accessibility.py
 
   docs:
     # The documentation site must build with no broken link or missing page.

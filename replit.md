@@ -152,7 +152,9 @@ a log, a file or a page.
 
 Python 3.10 is configured, and works, but it is the older of the two choices: the newest Pillow and filelock that install on it (12.3.0 and 4.1.0) have published advisories whose fixes need Python 3.11 (the weekly dependency audit lists them in `.github/pip-audit-ignore.txt`, and finds none on 3.11). None of them can be reached by the app, which opens no image and shares no lock directory with another account; but a workspace on 3.11 needs no such reasoning. Replit offers 3.11 as a module: the version is the `modules` line of `.replit`, and changing it makes Replit rebuild the environment, after which the packages are installed again (a long step for PyTorch), so it is your choice and nothing here does it for you. Project dependencies are declared in
 `pyproject.toml`; `requirements.txt` additionally includes deep-learning,
-boosting, and testing dependencies. Install project packages through Replit's
+boosting, and testing dependencies. Three optional additions to the Machine learning tab (NGBoost, the Optuna search engine and the
+reinforcement-learning agents) need `pip install -r requirements-ml-extras.txt` in the Shell; until then the tab lists them as not available, with the
+reason, and everything else works. Install project packages through Replit's
 package tools. No Docker or virtual environment is needed. Run installs `timesfm` if it is missing (the
 `timesfm` model needs it, and PyTorch); if the model still reports an import error, the error names the
 missing package and the exact `pip` command for the interpreter the app runs on.

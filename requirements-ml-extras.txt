@@ -1,0 +1,15 @@
+# Optional packages for the model families of the Machine learning tab that need more than the base install (requirements.txt already has PyTorch, LightGBM, XGBoost, hmmlearn and statsmodels).
+# Install with:  pip install -r requirements-ml-extras.txt      (or:  pip install ".[ml-extras]")
+# Each group can be installed alone (pip install ".[ml-probabilistic]", ".[ml-tuning]", ".[ml-rl]"); a model whose package is missing is listed as unavailable with the reason, and the rest of the tab is unaffected.
+-r requirements.txt
+
+# NGBoost: natural-gradient boosting of a predictive distribution (the `ngboost` model)
+ngboost>=0.5
+
+# Optuna: a second search engine for the Tune and Search views
+optuna>=3.5
+
+# Reinforcement learning: the Gymnasium environment and the PPO, SAC and recurrent-PPO agents
+gymnasium>=0.29
+stable-baselines3>=2.3
+sb3-contrib>=2.3

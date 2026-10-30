@@ -82,6 +82,22 @@ class Model:
     def importance(self) -> pd.Series:
         return pd.Series(0.0, index=self.features_)
 
+    # Optional capabilities. A model overrides what it supports; the trainer asks every model and keeps whatever comes back.
+    needs_dataset = False                                   # True: ``bind(ds)`` is called before ``fit`` and before a restored model predicts
+
+    def bind(self, ds) -> "Model":
+        """Give the model read access to the dataset it is trained on (feature history, returns, groups). A model that uses it must look only at dates up to the one it predicts."""
+        return self
+
+    def predict_extras(self, X: pd.DataFrame) -> dict:
+        """Named frames aligned to ``X.index`` (or to its dates): ``distribution`` (mean, std, lower, upper, quantile columns), ``regimes`` (one probability column per regime, indexed by date), ``heads``
+        (one column per forecast horizon). Empty for a model that has none of these."""
+        return {}
+
+    def diagnostics(self) -> dict:
+        """JSON-friendly facts about the last fit: training history, device, parameter count, regime statistics, member weights."""
+        return {}
+
     def to_bytes(self) -> bytes:
         buf = io.BytesIO()
         joblib.dump(self, buf, compress=3)
@@ -443,6 +459,9 @@ class ModelInfo:
     params: dict                         # name -> default
     refit_every: int = 21                # a sensible refit period (trees are slow, so they refit less often)
     optional_package: str | None = None
+    specs: dict = field(default_factory=dict)       # setting -> {"type": "choice" | "int" | "float" | "bool" | "text", "choices": [...], "help": "..."} for the form (a number needs none)
+    needs: tuple = ()                                # packages beyond the base install that the model imports (all must load for it to be available)
+    outputs: tuple = ()                              # what it adds to a report: distribution, regimes, heads, training, weights
 
 
 MODEL_INFO = [
@@ -462,15 +481,23 @@ MODEL_INFO = [
     ModelInfo("online_logistic", "Online logistic", "time series", ("classification",), "Stochastic-gradient logistic regression updated date by date", {"eta": 0.05, "l2": 1e-3, "epochs": 2}, 21),
     ModelInfo("regime_ridge", "Regime ridge", "regime", ("regression",), "A ridge per regime state (needs dataset.regime_detector)", {"alpha": 10.0, "min_rows": 500}, 21),
 ]
+from .catalog_extra import EXTRA_INFO, EXTRA_MODULE, EXTRA_SPACES   # noqa: E402  (they need ModelInfo, defined above)
+
+MODEL_INFO.extend(EXTRA_INFO)
 _INFO = {m.kind: m for m in MODEL_INFO}
 
 
 def model_catalog() -> list[dict]:
     """Every model kind with its tasks, defaults and whether it can be used here. A model whose package is missing, or installed but unable to load (no libgomp.so.1 for LightGBM and XGBoost), is
     listed as unavailable with the reason; it never takes the catalogue down."""
-    reasons = {pkg: unavailable_reason(pkg) for pkg in sorted({m.optional_package for m in MODEL_INFO if m.optional_package})}
+    packages = sorted({p for m in MODEL_INFO for p in ([m.optional_package] if m.optional_package else []) + list(m.needs)})
+    reasons = {pkg: unavailable_reason(pkg) for pkg in packages}
+
+    def why(m: ModelInfo) -> str | None:
+        return next((reasons[p] for p in ([m.optional_package] if m.optional_package else []) + list(m.needs) if reasons.get(p)), None)
+
     return [{"kind": m.kind, "label": m.label, "family": m.family, "tasks": list(m.tasks), "description": m.description, "params": dict(m.params), "refit_every": m.refit_every,
-             "available": reasons.get(m.optional_package) is None, "reason": reasons.get(m.optional_package)} for m in MODEL_INFO]
+             "available": why(m) is None, "reason": why(m), "specs": dict(m.specs), "needs": list(m.needs), "outputs": list(m.outputs)} for m in MODEL_INFO]
 
 
 def default_refit(kind: str) -> int:
@@ -499,6 +526,14 @@ def make_model(kind: str, params: dict | None = None, task: str = "regression", 
         return OnlineLogistic(kind, task, merged, seed)
     if kind == "regime_ridge":
         return RegimeRidge(kind, task, merged, seed)
+    if kind in EXTRA_MODULE:
+        for pkg in info.needs:
+            reason = unavailable_reason(pkg)
+            if reason:
+                raise ModelUnavailable(f"{info.label} needs {pkg}: {reason}")
+        import importlib
+
+        return importlib.import_module(f".{EXTRA_MODULE[kind]}", __package__).build(kind, task, merged, seed)
     return _build_sklearn(kind, task, merged, seed)
 
 
@@ -514,6 +549,7 @@ def search_space(kind: str) -> dict:
         "kalman": {"q": LogFloat(1e-7, 1e-3), "max_features": Int(4, 20)}, "online_ridge": {"alpha": LogFloat(0.1, 1000.0), "forgetting": Float(0.99, 0.9999)},
         "online_logistic": {"eta": LogFloat(0.005, 0.2), "l2": LogFloat(1e-5, 1e-1)}, "regime_ridge": {"alpha": LogFloat(0.1, 1000.0)},
     }
+    spaces.update(EXTRA_SPACES)
     if kind not in spaces:
         raise ValueError(f"no search space for '{kind}'")
     return spaces[kind]

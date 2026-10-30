@@ -41,6 +41,8 @@ class TrainResult:
     probabilities: pd.Series | None = None         # for a classifier: P(positive class) out of sample
     seconds: float = 0.0
     skipped: list = field(default_factory=list)
+    diagnostics: list = field(default_factory=list)  # one dict per fitted fold: what the model reports about its own fit (training history, device, regimes, member weights)
+    extras: dict = field(default_factory=dict)       # out-of-sample frames some models add: distribution (mean, std, intervals), regimes (probabilities by date), heads (one column per horizon)
 
     def scores_wide(self, dataset: Dataset, which: str = "predictions") -> pd.DataFrame:
         """The predictions as a wide frame (date x asset) on the dataset's date axis."""
@@ -64,8 +66,20 @@ def plan_for(ds: Dataset, split_cfg: dict, target: str | None = None) -> tuple[S
     return plan, pos
 
 
-def _fit(kind: str, params: dict, task: str, seed: int, X: pd.DataFrame, y: pd.Series, dates: np.ndarray) -> Model:
-    return make_model(kind, params, task, seed).fit(X, y, dates)
+def _fit(kind: str, params: dict, task: str, seed: int, X: pd.DataFrame, y: pd.Series, dates: np.ndarray, ds: Dataset | None = None) -> Model:
+    model = make_model(kind, params, task, seed)
+    if ds is not None and model.needs_dataset:
+        model.bind(ds)                                                           # read access to the history; a bound model must look only at dates up to the one it predicts
+    return model.fit(X, y, dates)
+
+
+def collect_extras(parts: list[dict]) -> dict:
+    """The per-fold ``predict_extras`` frames laid end to end (a date that appears in two folds keeps its first row)."""
+    out = {}
+    for name in sorted({k for part in parts for k in part}):
+        frame = pd.concat([part[name] for part in parts if name in part]).sort_index()
+        out[name] = frame[~frame.index.duplicated(keep="first")]
+    return out
 
 
 def walk_forward_train(ds: Dataset, model_cfg: dict, split_cfg: dict, seed: int = 0, target: str | None = None, progress=None, stop_after: str | None = None) -> TrainResult:
@@ -91,6 +105,7 @@ def walk_forward_train(ds: Dataset, model_cfg: dict, split_cfg: dict, seed: int 
     has_y = ds.Y[tgt].notna().to_numpy()
     y_all = ds.Y[tgt]
     preds, probs, folds, models, fold_rows, imps, skipped = [], [], [], [], [], [], []
+    extras_parts, diagnostics = [], []
     features = list(ds.features)
     for sp in splits:
         f0 = time.perf_counter()
@@ -107,7 +122,7 @@ def walk_forward_train(ds: Dataset, model_cfg: dict, split_cfg: dict, seed: int 
             continue
         Xtr, ytr = ds.X.iloc[tr_idx], y_all.iloc[tr_idx]
         try:
-            model = _fit(kind, params, task, seed, Xtr, ytr, lab[tr_idx])
+            model = _fit(kind, params, task, seed, Xtr, ytr, lab[tr_idx], ds)
         except ValueError as exc:                                                 # e.g. a single class in a short window: record and move on
             skipped.append(sp.fold)
             models.append(None)
@@ -121,6 +136,8 @@ def walk_forward_train(ds: Dataset, model_cfg: dict, split_cfg: dict, seed: int 
             probs.append(pd.Series(model.predict_proba(Xte), index=Xte.index))
         imp = model.importance()
         imps.append(imp.reindex(features).rename(sp.fold))
+        extras_parts.append(model.predict_extras(Xte))
+        diagnostics.append({"fold": sp.fold, **model.diagnostics()})
         models.append(model)
         fold_rows.append(test_rows)
         folds.append({**info, "skipped": False, "seconds": round(time.perf_counter() - f0, 3)})
@@ -133,7 +150,7 @@ def walk_forward_train(ds: Dataset, model_cfg: dict, split_cfg: dict, seed: int 
     warm = np.flatnonzero((lab >= 0) & (lab < plan.bounds["train"][1]) & (lab <= splits[first_idx].train[-1]))                 # what the first model was fitted to
     insample = pd.Series(first_model.predict(ds.X.iloc[warm]), index=ds.X.index[warm]) if len(warm) else pd.Series(dtype=float)
     return TrainResult(pd.concat(preds).sort_index(), insample.sort_index(), folds, models, fold_rows, pd.DataFrame(imps), plan, tgt, task, kind, features,
-                       pd.concat(probs).sort_index() if probs else None, time.perf_counter() - t0, skipped)
+                       pd.concat(probs).sort_index() if probs else None, time.perf_counter() - t0, skipped, diagnostics, collect_extras(extras_parts))
 
 
 def fit_final(ds: Dataset, model_cfg: dict, seed: int = 0, target: str | None = None) -> Model:
@@ -142,11 +159,13 @@ def fit_final(ds: Dataset, model_cfg: dict, seed: int = 0, target: str | None = 
     task = task_for(is_classification(tgt))
     mask = ds.Y[tgt].notna().to_numpy()
     idx = np.flatnonzero(mask)
-    return _fit(model_cfg["kind"], dict(model_cfg.get("params") or {}), task, seed, ds.X.iloc[idx], ds.Y[tgt].iloc[idx], ds.positions()[idx])
+    return _fit(model_cfg["kind"], dict(model_cfg.get("params") or {}), task, seed, ds.X.iloc[idx], ds.Y[tgt].iloc[idx], ds.positions()[idx], ds)
 
 
 def predict_latest(model: Model, ds: Dataset, date=None) -> pd.Series:
     """The model's score for each asset on ``date`` (default the last date of the dataset, which has features but no label yet)."""
     d = pd.Timestamp(date) if date is not None else ds.dates[-1]
+    if model.needs_dataset:
+        model.bind(ds)
     rows = ds.X.xs(d, level=0, drop_level=False)
     return pd.Series(model.predict(rows), index=rows.index.get_level_values(1), name=str(d.date()))

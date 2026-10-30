@@ -49,6 +49,7 @@ class Context:
     vol: pd.DataFrame | None = None
     confidence: pd.DataFrame | None = None
     regime_on: pd.Series | None = None
+    uncertainty: pd.DataFrame | None = None
 
 
 def _row(name: str, net: pd.Series, **extra) -> dict:
@@ -64,7 +65,7 @@ def _verdict(passed: bool, warned: bool) -> str:
 
 def _weights(ctx: Context, scores: pd.DataFrame | None = None, signal_overrides: dict | None = None) -> pd.DataFrame:
     sig = {**ctx.cfg["signal"], **(signal_overrides or {})}
-    return build_weights(ctx.scores if scores is None else scores, sig, ctx.vol, ctx.confidence, ctx.regime_on, ctx.dataset.group or ctx.dataset.asset_class, ctx.dataset.investable)
+    return build_weights(ctx.scores if scores is None else scores, sig, ctx.vol, ctx.confidence, ctx.regime_on, ctx.dataset.group or ctx.dataset.asset_class, ctx.dataset.investable, ctx.uncertainty, ctx.dataset.returns)
 
 
 def _run(ctx: Context, weights: pd.DataFrame, cost_multiple: float = 1.0, extra_lag: int | None = None, bt_overrides: dict | None = None) -> pd.Series:

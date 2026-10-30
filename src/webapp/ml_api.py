@@ -26,7 +26,7 @@ from ..ml import optimization as opt
 from ..ml import strategy_search as ss
 from ..ml.config import build_key, experiment_config, load_ml_config
 from ..ml.datasets import UNIVERSES, build_dataset, feature_catalog, resolve_bundle
-from ..ml.experiments import load_run, rebacktest, run_experiment
+from ..ml.experiments import RL_KINDS, load_run, rebacktest, run_experiment
 from ..ml.features import GROUPS
 from ..ml.models import Model, ModelUnavailable, default_refit, model_catalog
 from ..ml.registry import STAGES, Registry
@@ -35,6 +35,7 @@ from ..ml.targets import CLASSIFICATION
 from ..ml.targets import KINDS as TARGET_KINDS
 from ..ml.training import plan_for
 from ..ml.visualization import jsonable, leaderboard_payload, render_html, shap_payload
+from ..utils.optional import unavailable_reason
 from . import tuning
 from .api import ApiError
 from .payload import clean
@@ -63,7 +64,10 @@ GROUP_TEXT = {"price": "Trailing returns, distance from highs and lows, moving-a
 SIGNAL_TEXT = {"top_n_long_short": "Long the n highest scores, short the n lowest, dollar neutral", "long_only_top_quantile": "Long the top quantile of scores, equal weight", "proportional": "Weight each asset in proportion to its score",
                "vol_scaled": "Proportional to score divided by volatility, so each position carries similar risk", "rank_normalised": "Weight by the cross-sectional rank of the score (robust to outliers)",
                "threshold": "Long above the threshold, short below its negative", "regime_filtered": "Trade the book only in the calm regime of the dataset's regime detector",
-               "confidence_weighted": "Proportional to score times the model's confidence (for a classifier, |2p - 1|)"}
+               "confidence_weighted": "Proportional to score times the model's confidence (for a classifier, |2p - 1|)",
+               "uncertainty_weighted": "Score divided by the model's own predictive standard deviation (needs a model that reports one), with views on unusually uncertain assets shrunk by kappa",
+               "uncertainty_mean_variance": "The same uncertainty-adjusted views through the inverse covariance of trailing returns: the covariance-aware version",
+               "target_weights": "The scores ARE the target weights (for the reinforcement-learning agents, which size their own positions)"}
 ENSEMBLE_TEXT = {"equal": "One over N", "inverse_vol": "Weight by one over trailing volatility", "risk_parity": "Equal risk contributions from a shrunk covariance matrix", "mean_variance": "Long-only mean-variance with means shrunk halfway to their average",
                  "bayesian": "Mean-variance with Bayes-Stein shrunk means", "regime_conditioned": "Mean-variance on the days in the same volatility regime as today", "online_learning": "Multiplicative weights (Hedge): winners gain weight",
                  "bandit": "Thompson sampling: the chance, under the posterior, that each strategy is the best one", "best_trailing": "All in the strategy with the best trailing Sharpe ratio",
@@ -76,7 +80,8 @@ SPEC = {
     "split": {"scheme": ("choice", ("walk_forward", "expanding", "rolling")), "window": ("choice", ("expanding", "rolling")), "rolling_days": ("int", 252, 5000), "min_train_days": ("int", 126, 4000), "refit_every": ("int", 1, 252),
               "embargo": ("int", 0, 60), "validation_fraction": ("float", 0.05, 0.4), "test_fraction": ("float", 0.05, 0.4), "forward_fraction": ("float", 0.05, 0.4)},
     "signal": {"method": ("choice", SIGNAL_METHODS), "n": ("int", 1, 20), "quantile": ("float", 0.05, 0.5), "threshold": ("float", -10.0, 10.0), "gross": ("float", 0.1, 3.0), "net": ("float", -1.0, 1.0), "max_weight": ("float", 0.02, 1.0),
-               "sector_cap": ("float", 0.05, 1.0), "holding_period": ("int", 1, 60), "regime_on_states": ("states",)},
+               "sector_cap": ("float", 0.05, 1.0), "holding_period": ("int", 1, 60), "regime_on_states": ("states",), "kappa": ("float", 0.0, 10.0), "uncertainty_power": ("float", 0.0, 3.0), "mv_lookback": ("int", 40, 504),
+               "mv_rebalance": ("int", 1, 60)},
     "backtest": {"rebalance": ("choice", ("daily", "weekly", "monthly")), "cost_bps": ("float", 0.0, 250.0), "slippage_bps": ("float", 0.0, 250.0), "target_vol": ("float", 0.01, 1.0), "max_leverage": ("float", 0.5, 5.0),
                  "extra_lag": ("int", 0, 20)},
 }
@@ -265,6 +270,10 @@ class MlApi:
                 raise ApiError(f"the {known[kind]['label']} model cannot be used here: {known[kind]['reason']}")      # refused before a job is queued, with the reason
             if kind in known and "refit_every" not in over.get("split", {}):
                 over.setdefault("split", {})["refit_every"] = default_refit(kind)           # trees refit every quarter, linear models every month: the platform's own default per kind
+            if kind in RL_KINDS:                                                          # an agent sizes its own book, and trains against the costs the backtest will charge
+                over.setdefault("signal", {}).setdefault("method", "target_weights")
+                bt = {**load_ml_config()["backtest"], **over.get("backtest", {})}
+                over["model"]["params"].setdefault("cost_bps", float(bt["cost_bps"]) + float(bt["slippage_bps"]))
         elif need_model:
             over["model"] = {"kind": "ridge", "params": {}}
         if body.get("name"):
@@ -306,6 +315,8 @@ class MlApi:
                           {"id": "futures", "text": "Simulated futures roots (a Schwartz-Smith model; checks the machinery, not a market)", "source": "simulated"}],
             "tune_spaces": {m["kind"]: self._space_rows(m["kind"]) for m in model_catalog() if m["available"] and m["params"]}, "tune_efforts": [{"id": k, "trials": n, "text": t} for k, (n, t) in TUNE_EFFORT.items()],
             "defaults": {k: cfg[k] for k in ("dataset", "split", "model", "signal", "backtest", "robustness", "search")}, "stages": list(STAGES), "limits": LIMITS,
+            "engines": [{"id": "builtin", "text": "The platform's own random, TPE and Bayesian searches", "available": True, "reason": None},
+                        {"id": "optuna", "text": "Optuna's multivariate TPE sampler", "available": unavailable_reason("optuna") is None, "reason": unavailable_reason("optuna")}],
             "registry": {"root": str(Path(cfg["registry"]["root"])), **counts}, "as_of": str(self.app.builder.default_bundle().index[-1].date()),
             "timing": {"decision": "the close of day t", "trade": "lag days later (the engine's signal lag, 1)", "target": "from the close of t + lag to the close of t + lag + horizon",
                        "purge": "training rows whose label window overlaps a test day are dropped (lag + horizon + embargo)", "segments": "train (warm-up) / validation (selection) / test and forward (reserved, reported once)"}})
@@ -472,6 +483,14 @@ class MlApi:
             if method not in ("random", "tpe", "bayes"):
                 raise ApiError("method must be random, tpe or bayes")
             trials = _int(body, "n_trials", 12, 4, LIMITS["tune_trials"])
+        engine = str(body.get("engine") or "builtin")
+        if engine not in ("builtin", "optuna"):
+            raise ApiError("engine must be builtin or optuna")
+        if engine == "optuna":
+            why = unavailable_reason("optuna")
+            if why:
+                raise ApiError(f"the Optuna engine is not available here: {why}")
+            method = "optuna"
         if kind not in {m["kind"] for m in model_catalog() if m["available"]}:
             raise ApiError(f"the {kind} model is not available here")
         space = ss.kind_space(kind)

@@ -171,5 +171,5 @@ def test_the_centroid_is_the_middle_of_the_best_tries_in_the_units_each_kind_of_
 
 
 def test_every_search_method_is_named_when_one_is_not_known():
-    with pytest.raises(ValueError, match="random, grid, tpe, bayes or halving"):
+    with pytest.raises(ValueError, match="random, grid, tpe, bayes, optuna or halving"):
         Study({"x": Float(0, 1)}).optimize(lambda p: p["x"], 3, "nope")

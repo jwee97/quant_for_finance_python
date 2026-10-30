@@ -126,12 +126,17 @@ class ForwardTracker:
         h = max(int(sig_cfg.get("holding_period", 1)), 1)
         dates = ds.dates[-h:]
         rows = ds.X[ds.X.index.get_level_values(0).isin(dates)]
+        if self.model.needs_dataset:
+            self.model.bind(ds)
         scores = pd.Series(self.model.predict(rows), index=rows.index).unstack("asset").reindex(index=dates, columns=ds.assets)
         prob = None
         if self.model.task == "classification":
             prob = pd.Series(self.model.predict_proba(rows), index=rows.index).unstack("asset").reindex(index=dates, columns=ds.assets)
         vol = trailing_vol(ds.returns).reindex(dates)
-        weights = build_weights(scores, sig_cfg, vol, confidence_from_scores(scores, prob), regime_series(ds, sig_cfg.get("regime_on_states", [0])), ds.group or ds.asset_class, ds.investable)
+        dist = self.model.predict_extras(rows).get("distribution")
+        unc = None if dist is None else dist["std"].unstack("asset").reindex(index=dates, columns=ds.assets)
+        weights = build_weights(scores, sig_cfg, vol, confidence_from_scores(scores, prob), regime_series(ds, sig_cfg.get("regime_on_states", [0])), ds.group or ds.asset_class, ds.investable, unc,
+                                ds.returns.loc[:date])
         target = weights.iloc[-1]
         past = self.registry.forward_signals(self.id)
         held = pd.Series(past[-1]["weights"], dtype=float).reindex(ds.assets).fillna(0.0) if past else pd.Series(0.0, index=ds.assets)

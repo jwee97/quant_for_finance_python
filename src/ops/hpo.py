@@ -415,9 +415,36 @@ class Study:
                     break
         elif method == "halving":
             self._halving(objective, n_trials, rng, **kwargs)
+        elif method == "optuna":
+            self._optuna(objective, n_trials, callback, **kwargs)
         else:
-            raise ValueError("method must be random, grid, tpe, bayes or halving")
+            raise ValueError("method must be random, grid, tpe, bayes, optuna or halving")
         return self
+
+    def _optuna(self, objective: Callable, n_trials: int, callback: Callable | None = None, n_startup: int = 8, **_) -> None:
+        """A multivariate TPE search run by Optuna. Trials already in the study (a first trial run by hand) are shown to it, a failed trial is told to it as failed, and ``callback`` can stop the search."""
+        try:
+            import optuna
+        except ImportError:
+            raise ValueError("the optuna engine needs the optuna package: pip install optuna") from None
+        optuna.logging.set_verbosity(optuna.logging.WARNING)
+        dists = {}
+        for key, p in self.space.items():
+            dists[key] = (optuna.distributions.CategoricalDistribution(list(p.choices)) if p.kind == "categorical" else optuna.distributions.IntDistribution(int(p.low), int(p.high)) if p.kind == "int"
+                          else optuna.distributions.FloatDistribution(float(p.low), float(p.high), log=p.kind == "log"))
+        study = optuna.create_study(direction=self.direction, sampler=optuna.samplers.TPESampler(seed=self.seed + len(self.trials), multivariate=True, n_startup_trials=int(n_startup)))
+        for t in self.trials:
+            if t.error is None and np.isfinite(t.value) and all(k in t.params for k in dists):
+                study.add_trial(optuna.trial.create_trial(params={k: t.params[k] for k in dists}, distributions=dists, value=float(t.value)))
+        for _ in range(n_trials):
+            asked = study.ask(dists)
+            trial = self._run(objective, {k: asked.params[k] for k in dists})
+            if trial.error is None and np.isfinite(trial.value):
+                study.tell(asked, float(trial.value))
+            else:
+                study.tell(asked, state=optuna.trial.TrialState.FAIL)
+            if callback is not None and callback(self, trial):
+                break
 
     def _halving(self, objective, n_configs, rng, min_budget: float = 0.2, max_budget: float = 1.0, eta: int = 3):
         configs = [self._random(rng) for _ in range(n_configs)]

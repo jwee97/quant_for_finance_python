@@ -12,8 +12,12 @@
 | `datasets.py` | a market bundle in, a `Dataset` indexed by `(date, asset)` out; universes `etf`, `crypto`, `futures` (simulated); skipped features are listed with their reason |
 | `splitters.py` | walk-forward and purged k-fold splits on the date axis, purge (`lag + horizon`) and embargo, and the segment plan (train, validation, test, forward) |
 | `models.py` | the model zoo behind one `Model` interface (`fit`, `predict`, `importance`, `to_bytes`); optional packages are reported as unavailable with a reason |
+| `catalog_extra.py`, `boosting.py`, `regimes.py`, `graph.py`, `ensemble_models.py` | the 21 kinds added to the zoo ([below](#the-model-families)): catalogue entries, default settings, form specs and search spaces; rankers and probabilistic boosters; regime models; graph networks; the member ensemble. Each is built lazily, so importing the platform loads none of their packages |
+| `deep/` | the reusable PyTorch infrastructure: windows without look-ahead (`data`), nine networks (`nets`), one training loop (`trainer`), the `Model` wrappers with serialization (`model`) |
+| `rl/` | `PortfolioEnv`, a Gymnasium environment with the backtest engine's timing and costs (`env`), and the PPO, SAC and recurrent-PPO agents (`agent`) |
+| `model_report.py` | the `model_extras` section of a report: training curves, ranking quality, prediction intervals, regime probabilities, ensemble weights, the asset graph, an agent's rewards, and the cost and provenance of the run |
 | `training.py` | walk-forward training: each refit uses only rows whose labels were complete, predicts the next block, and the blocks laid end to end are the forecasts |
-| `signals.py` | eight ways to turn scores into target weights, with gross, net, position and sector caps |
+| `signals.py` | eleven ways to turn scores into target weights, with gross, net, position and sector caps (three of them read a model's uncertainty or an agent's own weights) |
 | `backtest.py` | hands the weights to `backtest.engine.BacktestEngine` (lag, rebalance schedule, drift, costs, volatility target) and cuts the returns into segments by the day the profit was realised |
 | `evaluation.py` | rank IC and its decay, return by score bucket, Sharpe by segment, the generalisation score, the probabilistic and deflated Sharpe ratios |
 | `explainability.py` | model importance across refits, permutation importance, per-feature IC, Monte Carlo Shapley values for one prediction |
@@ -31,6 +35,7 @@
 ```
 artifacts/ml/registry.sqlite            experiments, trials, metrics, artifacts, models, feature_sets, predictions, forward_signals
 artifacts/ml/experiments/<id>/          config.yaml, metrics.json, predictions.parquet, positions.parquet, returns.parquet, model.pkl, report.json, report.html
+                                        + extra_<name>.parquet (what a model reported beside its scores) and diagnostics.json (the final fit's facts), where it has them
 artifacts/ml/features/<key>/            a built dataset, reused when the dataset section is unchanged
 ```
 The directory is git-ignored. Deleting an experiment from the dashboard (or `Registry.delete_experiment`) removes its rows and its folder.
@@ -38,6 +43,83 @@ The directory is git-ignored. Deleting an experiment from the dashboard (or `Reg
 ## Settings
 
 `config/ml_research.yaml` holds the defaults for the dataset, split, model, signal, backtest, robustness, search and forward sections. Anything can be overridden per experiment by the command line (`--param alpha=10`, `--cost-bps 10`), by a YAML file (`ml-train --config my.yaml`) or by the dashboard form; the merged configuration is validated and saved beside the result, and its hash identifies the experiment. The file is read by the ML package only: it is not part of the platform's fingerprinted configuration namespaces.
+
+## The model families
+
+Twenty-one kinds sit beside the base zoo. All of them are selectable in the Train form with their own settings (a menu, a switch or text where a number is the wrong control), tunable in the Search and Tune forms, comparable on the leaderboard, and trained only through `run_experiment`, so every one is walk-forward, purged, costed and counted like a ridge regression.
+
+| phase | kinds | package | what the report adds |
+|---|---|---|---|
+| 1 ranking | `lgbm_ranker` (LambdaMART), `xgb_ranker` (`rank:ndcg`, `rank:pairwise`, `rank:map`) | LightGBM, XGBoost | **Ranking quality**: NDCG@k of the daily ordering against a random one, by segment |
+| 1 distributions | `lgbm_quantile` (low, median and high quantile regressions), `ngboost` (a Normal distribution by natural-gradient boosting) | LightGBM, NGBoost | **Prediction intervals** and their coverage, and **whether the spread predicts the error** |
+| 1 regimes | `hmm_regime` (Gaussian HMM), `markov_switching` | hmmlearn, statsmodels | **Regime probabilities** through time and the time spent in each regime |
+| 2 sequences | `lstm`, `gru`, `tcn` | PyTorch | **Training curves** (loss by epoch) and rank IC by forecast horizon (`horizons`) |
+| 3 forecasting, representation | `patchtst`, `nbeats`, `nhits`, `tft` (quantile outputs and attention), `autoencoder`, `vae` | PyTorch | the same, plus attention over the window, intervals (`tft`), and the **rank IC of each latent factor** |
+| 4 graph, ensemble | `gcn`, `gat`, `model_ensemble` | PyTorch | **The asset graph** and a portfolio-level forecast; **ensemble weights** through time and a mixture distribution |
+| 5 reinforcement learning | `ppo`, `sac`, `recurrent_ppo` | Stable-Baselines3, sb3-contrib | **Agent reward while training** and the agent on its own training days |
+
+Every report also carries **Compute and provenance**: training time, device, parameter count, peak memory, the configuration hash, the data fingerprint, the git commit, the versions of the libraries the run imported, and the size and SHA-256 of the saved model. Each chart has a table behind it (the Chart / Table switch on the card).
+
+### What a model can do beyond scoring a row
+
+The `Model` interface gained three optional hooks, so the pipeline did not need a second path for the new families:
+
+- `bind(ds)` gives a model read access to the dataset's history. A model that needs it (`needs_dataset`: the sequence networks, the graph and regime models, the ensemble, the agents) is bound by the trainer before every fit, and by `fit_final` and `predict_latest`; a model restored from the registry says so if it is asked to predict unbound. It may read **only dates up to the date it predicts**.
+- `predict_extras(X)` returns named frames beside the scores: `distribution` (mean, standard deviation, lower, upper), `regimes`, `heads` (one score per forecast horizon), `weights`, `latent` and `portfolio`. The trainer lays them end to end like the predictions; they are saved as `extra_<name>.parquet` and restored by `load_run`, so a re-backtest reports them again.
+- `diagnostics()` returns the facts of one fit (loss curves, device, parameters, memory, the graph, rewards).
+
+The catalogue says, per kind, which `outputs` it produces, which `needs` packages it imports, and the `specs` the form draws its controls from. A kind whose package is missing is listed as unavailable with the reason and the `pip` command, the request to train it is refused before any job is queued, and every other kind works as before (`tests/test_ml_integration.py` simulates the absence of each optional package).
+
+### No look-ahead, family by family
+
+- **Rankers, quantile models, NGBoost.** A prediction is a function of the row alone. A ranker's scores are standardised with the mean and spread of its *training* scores, not of the day's scores, so a row's score does not depend on which other rows are scored with it.
+- **Regime models.** The probabilities used on a day are *filtered*: P(regime on day t | market data to day t), a forward recursion with the parameters fitted on the training window. They are never smoothed (the forward-backward `predict_proba` lets tomorrow change today's probability, which is right for describing history and wrong for trading). The market state is built from the dataset's returns, because the asset features are standardised across assets and so carry no market-wide level.
+- **Networks.** A row's window holds the asset's features on that day and the days before it. The scaler and the target statistics come from the training rows. Early stopping uses the *last* `val_fraction` of the training dates, separated from the rest by `lag + horizon` days (the walk-forward's own purge). Extra forecast horizons must be shorter than the dataset's, so their labels are complete whenever the primary label is.
+- **Graph networks.** The edges (the most correlated assets over the *training* window, and assets of one sector or class) are fixed per fit; a layer reads neighbours' features **on the same day**, all known by that close.
+- **Ensembles.** Members are fitted on the first part of the training window and scored on the held-out tail; each is calibrated to the target's units there. A dynamic weight on a day uses only outcomes realised by that day (`position + lag + horizon <= day`), so the days still in flight never vote.
+- **Agents.** An agent trains in the environment on the training window only and then plays the next block one day at a time from a flat book, with its own previous book in the observation. A fold boundary therefore costs one round of turnover.
+- **Tests.** `tests/test_ml_phase1.py`, `test_ml_deep.py`, `test_ml_phase4.py` and `test_ml_rl.py` replace everything after a cutoff with noise and assert that nothing at or before it changes.
+
+### Position rules that read a model's uncertainty
+
+| rule | what it does | needs |
+|---|---|---|
+| `uncertainty_weighted` | weight proportional to the (demeaned) score, moved towards zero by `kappa` times the asset's *excess* uncertainty over the day's median, then divided by `std ** uncertainty_power`: conviction per unit of the model's own uncertainty | a model with a `distribution` (quantile LightGBM, NGBoost, `tft`, `model_ensemble`) |
+| `uncertainty_mean_variance` | the same views through the inverse of a Ledoit-Wolf covariance of the trailing `mv_lookback` days of returns (up to the day), re-solved every rebalance and held between; dollar neutral, scaled to `gross` | the same |
+| `target_weights` | the scores are read as weights and traded as sized; the agents' default | an agent (any model works) |
+
+`kappa` defaults to 0 because a model's own spread is usually many times its scores: shrinking by the whole standard deviation removes every view. When the rule is `top_n_long_short` and the model is an agent, the report warns that the rule re-ranks the agent's weights.
+
+### Reinforcement learning
+
+`PortfolioEnv` is a Gymnasium environment on the dataset's panel. The observation is the day's scaled features, the agent's current weights and its drawdown. The action is a vector per asset: long-short books are centred (dollar neutral) and scaled to `gross`; `long_only` uses a softmax with a cash slot. Both are capped at `max_weight` and, with `max_turnover`, the trade is shortened to that one-way turnover (`project_weights` is the one place these constraints live, shared by training and the out-of-sample rollout). A book decided on day *t* is held from *t + lag* and earns the return of day *t + lag + 1*, like the backtest engine.
+
+Costs are one-way turnover times `cost_bps` (the form fills in the backtest's commission plus slippage) and an optional quadratic `impact` term. Rewards, in percent per day: `return`; `risk_adjusted` (the net return less `risk_aversion / 2` times its squared deviation from a running mean, less `drawdown_penalty` and `turnover_penalty` terms); or `dsr`, the differential Sharpe ratio of Moody and Saffell. The algorithms are Stable-Baselines3's PPO and SAC and sb3-contrib's recurrent PPO.
+
+### Searching and tuning
+
+The search spaces of the new kinds are in the catalogue (`tune_spaces`). The Search and Tune forms have an **engine** menu: the platform's own random, TPE and Bayesian searches, or **Optuna** (a multivariate TPE sampler, fed the trials already run); both count every trial against the dataset's looks and score on the validation segment only.
+
+### Optional packages
+
+`requirements.txt` already has PyTorch, LightGBM, XGBoost, hmmlearn and statsmodels. The rest is optional:
+
+| install | adds |
+|---|---|
+| `pip install -r requirements-ml-extras.txt` (or `pip install ".[ml-extras]"`) | everything below |
+| `pip install ".[ml-probabilistic]"` | NGBoost |
+| `pip install ".[ml-tuning]"` | the Optuna engine |
+| `pip install ".[ml-rl]"` | Gymnasium, Stable-Baselines3, sb3-contrib (and PyTorch) |
+
+The CI `ml-base` job runs the tab on the base install alone; the others install the extras and run every test.
+
+### Limits worth knowing
+
+- The agents are trained for the number of steps in the form (a few thousand by default). With so little experience they usually learn little; the reward curve says whether they did, and the equity curve (out of sample) is the evidence, not the in-sample panel.
+- The networks, the graph models and the agents are compact implementations written for this platform (PatchTST, N-HiTS and the Temporal Fusion Transformer follow the papers' main ideas; they are not ports of the reference code), and a graph is dense, static per fit, and meant for a few dozen assets.
+- The regime models fit the *market's* regimes (from the equal-weight return, its volatility and the cross-sectional dispersion) and then one ridge per regime; a Markov-switching fit can fail to converge on a short window, and that refit is then skipped, with the reason, like any other fit that raises an error (the report lists the skipped fits).
+- A re-backtest restores the intervals, regime probabilities and weights (saved with the predictions) but not the training curves, which belong to the fits.
+- All of this runs on CPU unless a GPU is visible; `device: auto` picks CUDA when there is one and says which it used.
 
 ## If LightGBM or XGBoost shows as "not available"
 
@@ -51,12 +133,12 @@ Served by `src/webapp/ml_api.py`; JSON in, JSON out. Anything slow returns `{"jo
 
 | route | what |
 |---|---|
-| `GET /api/ml/catalog` | models and their settings, feature groups, targets, position rules, combination methods, defaults, limits, and what tuning each model varies (`tune_spaces`, `tune_efforts`) |
+| `GET /api/ml/catalog` | models and their settings (`family`, `specs`, `needs`, `outputs`, `available` with the reason), feature groups, targets, position rules, combination methods, search `engines`, defaults, limits, and what tuning each model varies (`tune_spaces`, `tune_efforts`) |
 | `POST /api/ml/dataset/build` (job) | build and describe a dataset |
 | `POST /api/ml/train` (job) | the whole experiment; returns the id and the report |
 | `POST /api/ml/rebacktest` (job) | saved predictions under other signal, backtest or robustness settings |
 | `POST /api/ml/meta-label` (job) | size an experiment's bets by a second classifier |
-| `POST /api/ml/search`, `/api/ml/tune` (jobs), `POST /api/ml/tune/stop` | strategy search; tuning one model (with `effort`: from the form's own settings, with a verdict); end a tuning early |
+| `POST /api/ml/search`, `/api/ml/tune` (jobs), `POST /api/ml/tune/stop` | strategy search; tuning one model (with `effort`: from the form's own settings, with a verdict; with `engine: optuna`: Optuna's sampler); end a tuning early |
 | `GET /api/ml/experiments`, `/api/ml/experiment`, `/api/ml/models`, `/api/ml/trials`, `/api/ml/feature-sets` | the registry |
 | `GET /api/ml/compare`, `/api/ml/explain`, `POST /api/ml/combine` | comparison, one prediction explained, strategy combination |
 | `GET /api/ml/forward`, `POST /api/ml/forward/step` (job) | forward-test signals and the daily step |
@@ -92,6 +174,7 @@ Whether the run outlives *you* depends on whether the app does. Your own compute
 ## Extending it
 
 - **A model:** add a class with the `Model` interface to `models.py` and an entry to its catalog (`kind`, `family`, `tasks`, default `params`); it appears in the Train form, the search space needs a line in `strategy_search.kind_space`.
+- **A model from a package that is not in `requirements.txt`:** put its entry in `catalog_extra.py` with `needs=("package",)` and a module in `EXTRA_MODULE` whose `build(kind, task, params, seed)` imports the package lazily; the catalogue lists it as unavailable, with the reason, where the package is missing. Give it `specs` for any setting that is not a number, and `outputs` for what its report shows.
 - **A feature:** write a function of `Inputs` returning a date by asset frame, register it in a group of `features.py` with a description; the causality test in `tests/test_ml_data.py` picks it up and fails if it looks ahead.
 - **A position rule:** add it to `signals.build_weights` and `METHODS`; give it a line in `webapp/ml_api.SIGNAL_TEXT` and `static/ml.js`.
 - **A universe:** teach `datasets.resolve_bundle` to return a `MarketBundle` for it.

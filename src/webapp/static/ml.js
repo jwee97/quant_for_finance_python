@@ -10,8 +10,10 @@
   const SEG_NAME = { train: "Train (in-sample)", validation: "Validation", test: "Test", forward: "Forward" };
   const SORTS = [["validation.sharpe", "Validation Sharpe"], ["test.sharpe", "Test Sharpe"], ["forward.sharpe", "Forward Sharpe"], ["oos.sharpe", "Sharpe over all out-of-sample days"], ["ic.mean", "Rank IC"], ["ic.ir", "Rank IC information ratio"], ["overfit.generalization_score", "Generalization score"]];
   const SIGNAL_NAME = { top_n_long_short: "Long the top n, short the bottom n", long_only_top_quantile: "Long only: the top quantile", proportional: "Proportional to the score", vol_scaled: "Score divided by volatility", rank_normalised: "Weighted by rank",
-    threshold: "Long above, short below a threshold", regime_filtered: "Only in the calm regime", confidence_weighted: "Score times the model's confidence" };
-  const SIGNAL_FIELDS = { top_n_long_short: ["n"], long_only_top_quantile: ["quantile"], threshold: ["threshold"] };
+    threshold: "Long above, short below a threshold", regime_filtered: "Only in the calm regime", confidence_weighted: "Score times the model's confidence",
+    uncertainty_weighted: "Score over the model's own uncertainty", uncertainty_mean_variance: "Uncertainty-adjusted views through the covariance", target_weights: "The scores are the weights (the agents)" };
+  const SIGNAL_FIELDS = { top_n_long_short: ["n"], long_only_top_quantile: ["quantile"], threshold: ["threshold"], uncertainty_weighted: ["kappa", "uncertainty_power"], uncertainty_mean_variance: ["kappa", "uncertainty_power", "mv_lookback"] };
+  const RL_KINDS = new Set(["ppo", "sac", "recurrent_ppo"]), SLOW = new Set(["deep sequence", "forecasting", "representation", "graph", "reinforcement"]);
   const METHOD_NAME = { equal: "Equal weight", inverse_vol: "Inverse volatility", risk_parity: "Risk parity", mean_variance: "Mean-variance", bayesian: "Bayes-Stein", regime_conditioned: "Regime-conditioned", online_learning: "Online learning (Hedge)",
     bandit: "Bandit (Thompson)", best_trailing: "Best trailing Sharpe", regime_selector: "Best in this regime" };
   const STAGE_COLOR = { random: "--s1", bayes: "--s2", genetic: "--s3" };
@@ -48,8 +50,8 @@
       window: "expanding", rollingDays: "1260", minTrain: "756", refit: "", embargo: "0", valFrac: "20", testFrac: "15", fwdFrac: "15", model: "ridge", params: {},
       signal: "top_n_long_short", n: "3", quantile: "30", threshold: "0", gross: "1", net: "0", maxWeight: "35", holding: "5", rebalance: "weekly", cost: "5", slippage: "2", targetVol: "10", maxLev: "1.5",
       explain: true, robust: false, seed: "0", sort: "validation.sharpe", fModel: "", fStage: "", fUniverse: "", exp: "", asset: "", date: "", perms: "40",
-      searchKind: "search", kinds: new Set(), nRandom: "8", nBayes: "6", generations: "2", population: "6", topK: "2", tuneEffort: "standard",
-      methods: new Set(), lookback: "252", every: "21", riskAversion: "5", capital: "100000", asOf: "" },
+      searchKind: "search", engine: "builtin", kinds: new Set(), nRandom: "8", nBayes: "6", generations: "2", population: "6", topK: "2", tuneEffort: "standard",
+      methods: new Set(), lookback: "252", every: "21", riskAversion: "5", capital: "100000", asOf: "", kappa: "0", uncertainty_power: "1", mv_lookback: "126" },
   };
 
   /* ---------- what the server offers, and the list of experiments ---------- */
@@ -145,15 +147,29 @@
     Q.labField(b, { key: "window", label: "Training window", kind: "choice", options: [["expanding", "Expanding: everything before"], ["rolling", "Rolling: the last days only"]] }, f, () => Q.renderLab(M));
     if (f.window === "rolling") Q.labField(b, { key: "rollingDays", label: "Rolling window (days)", kind: "number", step: 21, min: 252, max: 5000 }, f, after);
   }
+  const paramSpec = (info, key) => { const d = info.params[key], sp = (info.specs || {})[key] || {}; return { type: sp.type || (typeof d === "number" ? "number" : "text"), choices: sp.choices || [], help: sp.help || "" }; };
   function modelBlock(b) {
     const f = M.form, cat = M.catalog, kinds = modelKinds(), usable = kinds.filter((k) => k.available);
     fixModel();
-    Q.labField(b, { key: "model", label: "Model", kind: "choice", options: usable.map((k) => [k.kind, `${k.label} (${k.family})`]) }, f, () => Q.renderLab(M));
+    Q.labField(b, { key: "model", label: "Model", kind: "choice", options: usable.map((k) => [k.kind, `${k.label} (${k.family})`]) }, f, () => {
+      if (RL_KINDS.has(f.model) && f.signal !== "target_weights") f.signal = "target_weights";               // an agent sizes its own book
+      else if (!RL_KINDS.has(f.model) && f.signal === "target_weights") f.signal = "top_n_long_short";
+      Q.renderLab(M);
+    });
     const info = cat.models.find((k) => k.kind === f.model);
     if (info) {
       h("p", "hint", b, info.description);
-      const own = (f.params[f.model] = f.params[f.model] || Object.fromEntries(Object.entries(info.params).filter(([, v]) => typeof v === "number").map(([k, v]) => [k, String(v)])));
-      for (const k of Object.keys(own)) Q.labField(b, { key: k, label: k.replace(/_/g, " "), kind: "number", step: "any" }, own, () => Q.syncLab(M));
+      if (SLOW.has(info.family)) h("p", "hint", b, "This model trains a network or an agent at every refit, which takes minutes rather than seconds on a CPU. Raise Refit every (days) or lower the epochs or timesteps while exploring.");
+      const own = (f.params[f.model] = f.params[f.model] || Object.fromEntries(Object.entries(info.params).map(([k, v]) => [k, paramSpec(info, k).type === "bool" ? !!Number(v) : String(v)])));
+      for (const k of Object.keys(own)) {
+        const sp = paramSpec(info, k), label = k.replace(/_/g, " "), after = () => Q.syncLab(M);
+        if (sp.type === "choice") Q.labField(b, { key: k, label, kind: "choice", options: sp.choices.map((c) => [c, c]), help: sp.help }, own, after);
+        else if (sp.type === "bool") Q.labField(b, { key: k, label, kind: "bool", help: sp.help }, own, after);
+        else if (sp.type === "text") Q.labField(b, { key: k, label, kind: "text", help: sp.help }, own, after);
+        else Q.labField(b, { key: k, label, kind: "number", step: "any", help: sp.help }, own, after);
+      }
+      const says = { distribution: "prediction intervals", regimes: "regime probabilities", heads: "forecasts by horizon", training: "training curves", weights: "member weights", ranking: "ranking metrics", attention: "attention", rewards: "reward curves" };
+      if ((info.outputs || []).length) h("p", "hint", b, "Besides its scores this model reports: " + info.outputs.map((o) => says[o] || o).join(", ") + ".");
     }
     const missing = kinds.filter((k) => !k.available);
     if (missing.length) h("p", "hint", b, "Not available here: " + missing.map((k) => `${k.label} (${k.reason})`).join("; ") + ".");
@@ -162,7 +178,9 @@
     const f = M.form, cat = M.catalog, after = () => Q.syncLab(M);
     Q.labField(b, { key: "signal", label: "Turn scores into positions", kind: "choice", options: cat.signals.map((s) => [s.id, SIGNAL_NAME[s.id] || s.id]) }, f, () => Q.renderLab(M));
     const info = cat.signals.find((s) => s.id === f.signal); if (info) h("p", "hint", b, info.text + ".");
-    const spec = { n: { label: "n (assets on each side)", step: 1, min: 1, max: 20 }, quantile: { label: "Top quantile (%)", step: 5, min: 5, max: 50 }, threshold: { label: "Threshold (in score units)", step: "any" } };
+    const spec = { n: { label: "n (assets on each side)", step: 1, min: 1, max: 20 }, quantile: { label: "Top quantile (%)", step: 5, min: 5, max: 50 }, threshold: { label: "Threshold (in score units)", step: "any" },
+      kappa: { label: "Shrink views on unusually uncertain assets (kappa)", step: 0.1, min: 0, max: 10 }, uncertainty_power: { label: "Divide the view by uncertainty to the power", step: 0.25, min: 0, max: 3 },
+      mv_lookback: { label: "Covariance window (days)", step: 21, min: 40, max: 504 } };
     for (const k of SIGNAL_FIELDS[f.signal] || []) Q.labField(b, { key: k, kind: "number", ...spec[k] }, f, after);
     Q.labField(b, { key: "gross", label: "Gross exposure", kind: "number", step: 0.1, min: 0.1, max: 3 }, f, after);
     Q.labField(b, { key: "maxWeight", label: "Largest position (% of the book)", kind: "number", step: 1, min: 2, max: 100 }, f, after);
@@ -276,6 +294,8 @@
         h("span", "hint", box, "How long to look:");
         const how = W.seg(box, efforts.map((e) => [e.id, cap(e.id)]), f.tuneEffort, (v) => { f.tuneEffort = v; paintEffort(); });
         how.dataset.role = "tune-effort";
+        const engines = (cat.engines || []).filter((e) => e.available);
+        if (engines.length > 1) Q.labField(box, { key: "engine", label: "Search engine", kind: "choice", options: engines.map((e) => [e.id, e.text]) }, f, after);
         const effort = h("p", "hint", box, "");
         function paintEffort() { effort.textContent = ((efforts.find((e) => e.id === f.tuneEffort) || {}).text || "") + ". Each try is a walk-forward experiment on the validation segment, which takes seconds to a minute."; }
         paintVary(); paintEffort();
@@ -311,8 +331,14 @@
     return { rebalance: f.rebalance, cost_bps: needNumber(f.cost, "Commission"), slippage_bps: needNumber(f.slippage, "Slippage"), target_vol: tv === undefined ? "" : tv / 100, max_leverage: needNumber(f.maxLev, "Largest leverage") };
   }
   function modelBody(f) {
-    const own = f.params[f.model] || {}, params = {};
-    for (const [k, v] of Object.entries(own)) if (String(v).trim() !== "") params[k] = needNumber(v, k.replace(/_/g, " "));
+    const info = (M.catalog.models.find((k) => k.kind === f.model)) || { params: {}, specs: {} }, own = f.params[f.model] || {}, params = {};
+    for (const [k, v] of Object.entries(own)) {
+      const sp = paramSpec(info, k);
+      if (sp.type === "bool") params[k] = v ? 1 : 0;
+      else if (sp.type === "choice" || sp.type === "text") params[k] = String(v).trim();
+      else if (k === "cost_bps" && RL_KINDS.has(f.model) && String(v) === String(info.params[k])) continue;       // left at its default, the server follows the Backtest section's costs
+      else if (String(v).trim() !== "") params[k] = needNumber(v, k.replace(/_/g, " "));
+    }
     return { kind: f.model, params };
   }
   const baseBody = (f) => ({ dataset: datasetBody(f), split: splitBody(f), signal: signalBody(f), backtest: backtestBody(f) });
@@ -338,7 +364,7 @@
     if (m === "search") {
       const tune = f.searchKind === "tune", before = M.results.search;
       await W.request(M, () => (tune
-        ? [{ modes: ["search"], job: true, path: "/api/ml/tune", body: { ...baseBody(f), model: modelBody(f), effort: f.tuneEffort, finalize: true } }]
+        ? [{ modes: ["search"], job: true, path: "/api/ml/tune", body: { ...baseBody(f), model: modelBody(f), effort: f.tuneEffort, engine: f.engine, finalize: true } }]
         : [{ modes: ["search"], job: true, path: "/api/ml/search", body: { ...baseBody(f), kinds: [...f.kinds], n_random: needNumber(f.nRandom, "Random trials"), n_bayes: needNumber(f.nBayes, "Bayesian trials"), generations: needNumber(f.generations, "Generations"),
           population: needNumber(f.population, "Population"), top_k: needNumber(f.topK, "Finalists") } }]), tune ? "Tuning…" : "Searching…");
       if (M.results.search !== before) invalidate();
@@ -558,6 +584,105 @@
       draw: (b) => C.hbars(b, { rows: perm.map((x) => ({ label: x.feature, value: x.mean_drop, tip: [["Spread across refits", sct(x.std_drop)], ["Refits tested", String(x.n)]] })), format: (v) => v.toFixed(3), name: "Drop in rank IC", label: "Permutation importance", labelWidth: 112 }),
       table: (b) => table(b, [{ label: "Feature", get: (x) => x.feature }, { label: "Drop in rank IC", num: true, get: (x) => num(x.mean_drop, 4) }, { label: "Spread", num: true, get: (x) => num(x.std_drop, 4) }, { label: "Refits", num: true, get: (x) => String(x.n) }], perm) });
   }
+  /* ---------- what a model reports beside its scores (r.model_extras) ---------- */
+  const COLORS = ["--s1", "--s2", "--s3", "--s4", "--s5", "--s6"];
+  const padTo = (a, n) => a.concat(Array(Math.max(0, n - a.length)).fill(null));
+  function modelCards(ch, r) {
+    const x = r.model_extras || {};
+    if (x.training) {
+      const t = x.training, longest = Math.max(...t.folds.map((f) => f.train_loss.length)), xs = Array.from({ length: longest }, (_, i) => i + 1), series = [];
+      t.folds.forEach((f, i) => {
+        const tag = t.folds.length > 1 ? ` (fit ${f.fold + 1})` : "";
+        series.push({ name: "Training loss" + tag, color: css(COLORS[i % 6]), values: padTo(f.train_loss, longest), width: 1.5 });
+        series.push({ name: "Validation loss" + tag, color: css(COLORS[i % 6]), values: padTo(f.val_loss, longest), dash: "4 3" });
+      });
+      chartCard(ch, "Training curves", `The loss on the rows the network trains on (solid) and on the later validation tail it stops on (dashed), epoch by epoch, for the first, middle and last refit. Validation that turns up while training keeps falling is overfitting, and the best epoch is the one kept. ${t.n_fits} fits, a median of ${sig(t.epochs_median, 0)} epochs, ${pct(t.stopped_early_share, 0)} stopped early.`, {
+        draw: (b) => C.line(b, { xs, series, xLabel: "epoch", yFormat: (v) => String(+v.toPrecision(2)), tipFormat: (v) => String(+v.toPrecision(3)), height: 260, label: "Training and validation loss by epoch" }),
+        table: (b) => table(b, [{ label: "Epoch", get: (n) => String(xs[n]) }, ...series.map((s) => ({ label: s.name, num: true, get: (n) => (Q.bad(s.values[n]) ? "" : num(s.values[n], 5)) }))], xs.map((_, n) => n)) });
+    }
+    if (x.ranking) {
+      const k = x.ranking, sr = k.series;
+      chartCard(ch, "Ranking quality", `NDCG@${k.k}: how close the daily ordering of the assets comes to the best possible, gains from the realised return fifths, out of sample. ${sig(k.ndcg, 3)} against ${sig(k.ndcg_random, 3)} for a random ordering; ${pct(k.precision_top, 0)} of the ${k.k} top-scored assets landed in the best two fifths (${pct(k.precision_random, 0)} by chance). The line is the 63-day average.`, {
+        draw: (b) => C.line(b, { dates: sr.dates, series: [{ name: `NDCG@${k.k}, 63-day average`, color: css("--s1"), values: sr.ndcg }], baseline: sr.random, yFormat: (v) => v.toFixed(2), tipFormat: (v) => v.toFixed(3), height: 230, label: "Rolling NDCG against a random ordering" }),
+        table: (b) => table(b, [{ label: "Segment", get: (s) => SEG_NAME[s] || s }, { label: "NDCG", num: true, get: (s) => sig(k.by_segment[s].ndcg, 3) }, { label: "Top-scored in the best two fifths", num: true, get: (s) => pct(k.by_segment[s].precision, 0) },
+          { label: "Days", num: true, get: (s) => String(k.by_segment[s].n_days) }], Object.keys(k.by_segment || {})) });
+    }
+    if (x.intervals) {
+      const iv = x.intervals, names = Object.keys(iv.series), pick = { asset: names[0] };
+      const card = chartCard(ch, "Prediction intervals", `The model's ${pct(iv.nominal, 0)} interval around its forecast of ${r.dataset.target}, with what happened, out of sample. The realised value fell inside the interval ${pct(iv.coverage, 0)} of the time (${pct(iv.nominal, 0)} if the intervals were calibrated); the average width is ${spct(iv.mean_width, 2)}.`, {
+        draw: (b) => { const s = iv.series[pick.asset]; C.line(b, { dates: s.dates, series: [{ name: "Forecast", color: css("--s1"), values: s.mean }, { name: "Realised", color: css("--muted"), values: s.actual, width: 1 }],
+          bands: [{ lo: s.lower, hi: s.upper, color: css("--s1"), opacity: 0.18, name: `${pct(iv.nominal, 0)} interval` }], baseline: 0, yFormat: pctTick, tipFormat: (v) => spct(v, 2), height: 260, label: `Forecast interval and outcome for ${pick.asset}` }); },
+        table: (b) => { const s = iv.series[pick.asset]; table(b, [{ label: "Date", get: (n) => s.dates[n] }, { label: "Lower", num: true, get: (n) => spct(s.lower[n], 2) }, { label: "Forecast", num: true, get: (n) => spct(s.mean[n], 2) },
+          { label: "Upper", num: true, get: (n) => spct(s.upper[n], 2) }, { label: "Realised", num: true, get: (n) => spct(s.actual[n], 2) }], s.dates.map((_, n) => n)); } });
+      const sel = h("select", "", card._extra); sel.setAttribute("aria-label", "asset"); names.forEach((a) => { const o = h("option", "", sel, a); o.value = a; });
+      sel.addEventListener("change", () => { pick.asset = sel.value; card._draw(); });
+      const u = iv.by_uncertainty;
+      chartCard(ch, "Does the uncertainty mean anything?", `The predictions cut into fifths by the model's own predicted spread, lowest to highest: the realised error should grow with it. Coverage by fifth: ${u.map((v) => pct(v.coverage, 0)).join(", ")}.`, {
+        draw: (b) => C.columns(b, { labels: u.map((v) => "Q" + v.bucket), values: u.map((v) => v.rmse), yFormat: pctTick, tipFormat: (v) => spct(v, 2), name: "Root mean squared error", height: 220, label: "Error by predicted uncertainty", tipLabel: (i) => `Fifth ${u[i].bucket}: predicted spread ${spct(u[i].mean_std, 2)}` }),
+        table: (b) => table(b, [{ label: "Fifth", get: (v) => String(v.bucket) }, { label: "Predicted spread", num: true, get: (v) => spct(v.mean_std, 2) }, { label: "Realised error", num: true, get: (v) => spct(v.rmse, 2) }, { label: "Coverage", num: true, get: (v) => pct(v.coverage, 0) }], u) });
+    }
+    if (x.regimes) {
+      const g = x.regimes, cols = g.columns.map((_, i) => i);
+      chartCard(ch, "Regime probabilities", `The probability of each regime on each day, FILTERED: from the market's data up to that day only, never smoothed with the days after it. State 0 is the calmest. Time in each regime: ${g.share.map((v, i) => `${i}: ${pct(v, 0)}`).join(", ")}${g.mean_run_days ? `; a stretch lasts ${sig(g.mean_run_days, 0)} days on average` : ""}.`, {
+        draw: (b) => C.line(b, { dates: g.dates, series: cols.map((i) => ({ name: `Regime ${i}`, color: css(COLORS[i % 6]), values: g.probabilities.map((row) => row[i]) })), yFormat: (v) => v.toFixed(1), tipFormat: (v) => v.toFixed(2), height: 240, include: 1, label: "Regime probabilities through time" }),
+        table: (b) => table(b, [{ label: "Regime", get: (i) => String(i) }, { label: "Time in it", num: true, get: (i) => pct(g.share[i], 0) }, { label: "Market return a year", num: true, get: (i) => (g.regimes && g.regimes[i] ? spct(g.regimes[i].ann_return, 1) : "") },
+          { label: "Volatility", num: true, get: (i) => (g.regimes && g.regimes[i] && !Q.bad(g.regimes[i].ann_vol) ? pct(g.regimes[i].ann_vol, 1) : "") }], cols) });
+    }
+    if (x.heads) {
+      const hz = x.heads.horizons;
+      chartCard(ch, "Rank IC by forecast horizon", "The network has one output for each horizon; each is scored against the return over its own horizon. The one for the dataset's horizon is the score that is traded.", {
+        draw: (b) => C.columns(b, { labels: hz.map((v) => v.horizon + "d"), values: hz.map((v) => v.mean_ic), yFormat: (v) => v.toFixed(2), tipFormat: (v) => v.toFixed(3), name: "Mean rank IC", height: 220, label: "Rank IC by forecast horizon", colors: (v, i) => (hz[i].primary ? css("--s1") : css("--muted")) }),
+        table: (b) => table(b, [{ label: "Horizon", get: (v) => v.horizon + " days" + (v.primary ? " (traded)" : "") }, { label: "Mean rank IC", num: true, get: (v) => num(v.mean_ic, 4) }, { label: "t-statistic", num: true, get: (v) => sig(v.t, 2) }, { label: "Days", num: true, get: (v) => String(v.n_days) }], hz) });
+    }
+    if (x.weights) {
+      const w = x.weights, cols = w.members.map((_, i) => i);
+      chartCard(ch, "Ensemble weights", `The weight of each member on each day (${w.weighting} weighting). A weight on a day uses only outcomes already known that day. Average weights: ${w.members.map((m) => `${m} ${pct(w.mean[m], 0)}`).join(", ")}.`, {
+        draw: (b) => C.line(b, { dates: w.dates, series: cols.map((i) => ({ name: w.members[i], color: css(COLORS[i % 6]), values: w.weights.map((row) => row[i]) })), yFormat: (v) => v.toFixed(1), tipFormat: (v) => v.toFixed(2), height: 240, include: 0, label: "Ensemble member weights through time" }),
+        table: (b) => table(b, [{ label: "Member", get: (i) => w.members[i] }, { label: "Average weight", num: true, get: (i) => pct(w.mean[w.members[i]], 1) }, { label: "Slope", num: true, get: (i) => (w.calibration ? sig(w.calibration[i].slope, 3) : "") },
+          { label: "Residual spread", num: true, get: (i) => (w.calibration ? spct(w.calibration[i].residual_std, 2) : "") }, { label: "Held-out rank IC", num: true, get: (i) => (w.calibration ? sig(w.calibration[i].heldout_ic, 3) : "") }], cols) });
+    }
+    if (x.latent) {
+      const f = x.latent.factors;
+      chartCard(ch, "What each latent factor predicts", "The autoencoder learned these codes without seeing returns. Each bar is a code's own rank IC with the forward return, out of sample: the factors that carry signal, and their sign.", {
+        draw: (b) => C.hbars(b, { rows: f.map((v) => ({ label: v.factor, value: v.mean_ic || 0, tip: [["Spread of the code", sct(v.std)], ["Days", String(v.n_days)]] })), format: (v) => v.toFixed(3), name: "Rank IC", label: "Rank IC of each latent factor" }),
+        table: (b) => table(b, [{ label: "Factor", get: (v) => v.factor }, { label: "Rank IC", num: true, get: (v) => num(v.mean_ic, 4) }, { label: "Spread", num: true, get: (v) => sct(v.std) }], f) });
+    }
+    if (x.portfolio) {
+      const p = x.portfolio, s = p.series;
+      chartCard(ch, "Portfolio-level forecast", `The graph network's forecast of the day's average target against what it was, out of sample (correlation ${sig(p.correlation, 2)} over ${p.n_days} days): the market-wide part of its view, beside the asset-by-asset one.`, {
+        draw: (b) => C.line(b, { dates: s.dates, series: [{ name: "Forecast", color: css("--s1"), values: s.predicted }, { name: "Realised", color: css("--muted"), values: s.actual, width: 1 }], baseline: 0, yFormat: pctTick, tipFormat: (v) => spct(v, 2), height: 230, label: "Portfolio-level forecast and outcome" }),
+        table: (b) => table(b, [{ label: "Date", get: (n) => s.dates[n] }, { label: "Forecast", num: true, get: (n) => spct(s.predicted[n], 2) }, { label: "Realised", num: true, get: (n) => spct(s.actual[n], 2) }], s.dates.map((_, n) => n)) });
+    }
+    if (x.graph) {
+      const g = x.graph.graph, att = x.graph.attention;
+      chartCard(ch, "The asset graph", `Edges the network passes information along (${g.n_edges} in all, ${sig(g.mean_degree, 1)} per asset, built from ${g.mode === "both" ? "correlation and shared sector or class" : g.mode}); the strongest are listed${att ? ", then the strongest attention weights of the last fit" : ""}.`, {
+        draw: (b) => table(b, [{ label: "Asset", get: (e) => e[0] }, { label: "Neighbour", get: (e) => e[1] }, { label: "Edge weight", num: true, get: (e) => num(e[2], 3) }], g.edges),
+        table: (b) => table(b, [{ label: "Asset", get: (e) => e[0] }, { label: "Neighbour", get: (e) => e[1] }, { label: "Weight", num: true, get: (e) => num(e[2], 3) }], g.edges.concat(att || [])) });
+    }
+    if (x.attention) {
+      const a = x.attention.steps;
+      chartCard(ch, "Attention over the window", "How much weight the transformer's last step gives each day of its lookback window (the right-hand bar is the day being forecast).", {
+        draw: (b) => C.columns(b, { labels: a.map((_, i) => (i - a.length + 1 === 0 ? "t" : String(i - a.length + 1))), values: a, yFormat: (v) => v.toFixed(2), tipFormat: (v) => v.toFixed(3), name: "Attention", height: 200, label: "Attention weight by day in the window" }),
+        table: (b) => table(b, [{ label: "Day", get: (i) => (i - a.length + 1 === 0 ? "t" : String(i - a.length + 1)) }, { label: "Attention", num: true, get: (i) => num(a[i], 4) }], a.map((_, i) => i)) });
+    }
+    if (x.rewards) {
+      const w = x.rewards, c = w.curve, e = w.in_sample;
+      chartCard(ch, "Agent reward while training", `The ${w.algo === "recurrent_ppo" ? "recurrent PPO" : w.algo.toUpperCase()} agent's average reward per episode (${w.reward} reward, in percent per day) over its ${w.timesteps.toLocaleString("en-US")} training steps, last refit. A curve that rises and flattens is learning; a flat one has found nothing in these returns. The positions are limited to gross ${num(w.constraints.gross, 2)}, ${pct(w.constraints.max_weight, 0)} per asset${w.constraints.long_only ? ", long only" : ", dollar neutral"}.`, {
+        draw: (b) => (c.timesteps.length ? C.line(b, { xs: c.timesteps, series: [{ name: "Mean episode reward", color: css("--s1"), values: c.mean_reward }], xLabel: "training steps", baseline: 0, yFormat: (v) => v.toFixed(1), tipFormat: (v) => v.toFixed(2), height: 230, label: "Mean episode reward during training" }) : h("p", "hint", b, "The run was too short to complete an episode.")),
+        table: (b) => table(b, [{ label: "Steps", num: true, get: (n) => String(c.timesteps[n]) }, { label: "Mean episode reward", num: true, get: (n) => num(c.mean_reward[n], 4) }], c.timesteps.map((_, n) => n)) });
+      chartCard(ch, "Agent on its own training days", `What the final policy earns on the days it trained on, with costs (Sharpe ${sig(e.sharpe, 2)}). This is in-sample and flatters; the equity curve above is the evidence.`, {
+        draw: (b) => C.line(b, { dates: e.dates, series: [{ name: "Training window (in-sample)", color: css("--muted"), values: e.equity, dash: "4 3" }], baseline: 1, yFormat: (v) => v.toFixed(2), tipFormat: (v) => v.toFixed(3), height: 200, label: "Equity on the training window" }),
+        table: (b) => table(b, [{ label: "Date", get: (n) => e.dates[n] }, { label: "Equity", num: true, get: (n) => num(e.equity[n], 4) }], e.dates.map((_, n) => n)) });
+    }
+  }
+  function provenanceRows(r) {
+    const e = r.model_extras || {}, res = e.resources || {}, rep = e.reproducibility || {};
+    if (!e.resources) return [];
+    return [["Training time", `${num(res.train_seconds, 1)} s of ${num(res.total_seconds, 1)} s for the run`], ["Device", (res.devices || []).join(", ") + ((res.notes || []).length ? ` (${res.notes.join("; ")})` : "") + (res.cuda === false ? ", no GPU visible" : "")],
+      ["Parameters", res.n_params ? res.n_params.toLocaleString("en-US") : "not a parametric network"], ["Peak memory", res.peak_memory_mb ? `${num(res.peak_memory_mb, 0)} MB (the process's peak)` : "not measured"],
+      ["Configuration hash", String(rep.config_hash || "").slice(0, 16)], ["Data fingerprint", String(rep.data_fingerprint || "n/a").slice(0, 16)], ["Code", rep.git_commit || "not a git checkout"],
+      ["Libraries", Object.entries(rep.versions || {}).map(([k, v]) => `${k} ${v}`).join(", ")], ["Model file", rep.model_artifact ? `${rep.model_artifact.bytes.toLocaleString("en-US")} bytes, SHA-256 ${rep.model_artifact.sha256.slice(0, 16)}…` : "none kept"]];
+  }
   function reportView(root, d, opts) {
     const r = d.report, cfg = r.config, ds = r.dataset, st = r.segments.stats, ov = r.overfit, oos = r.metrics.oos, ic = r.ic, prov = r.provenance, parent = (d.record || {}).parent_id;
     header(root, r.name, `${cfg.model.kind} · ${ds.universe} · ${ds.target} · ${ds.start} to ${ds.end} · ${ds.n_assets} assets, ${ds.n_features} features · ran in ${r.seconds} s${parent ? " · child of " + shortId(parent) : ""}`);
@@ -599,12 +724,15 @@
       draw: (b) => C.histogram(b, { series: parts.map((s, i) => ({ name: SEG_NAME[s], edges: dist[s].edges, counts: dist[s].counts, color: css(["--s1", "--s2", "--s3"][i]) })), markers: [{ x: 0, label: "0" }], xFormat: sct, height: 240, label: "Prediction distribution" }),
       table: (b) => table(b, [{ label: "Segment", get: (s) => SEG_NAME[s] }, { label: "Predictions", num: true, get: (s) => String(dist[s].n) }, { label: "Mean", num: true, get: (s) => sct(dist[s].mean) }, { label: "Standard deviation", num: true, get: (s) => sct(dist[s].std) }], parts) });
     importanceCards(ch, r);
+    modelCards(ch, r);
     const card = h("div", "card", root); h("h3", "", card, "What ran");
     const plan = r.segments.plan, own = cfg.model.params || {};
     W.kv(card, "Settings", [["Model", cfg.model.kind + (Object.keys(own).length ? " " + Object.entries(own).map(([a, v]) => `${a}=${v}`).join(", ") : "")], ["Target", ds.target], ["Features", `${ds.n_features} (${(r.features.names || []).length ? r.features.names.slice(0, 6).join(", ") + (r.features.names.length > 6 ? ", …" : "") : ""})`],
       ["Position rule", SIGNAL_NAME[cfg.signal.method] || cfg.signal.method], ["Rebalance", cfg.backtest.rebalance], ["Costs, one way", `${num(cfg.backtest.cost_bps, 1)} bps commission + ${num(cfg.backtest.slippage_bps, 1)} bps slippage`],
       ["Volatility target", cfg.backtest.target_vol ? pct(cfg.backtest.target_vol, 0) : "none"], ["Refits", `${r.folds.n} walk-forward fits, every ${cfg.split.refit_every} days${r.folds.n_skipped ? `, ${r.folds.n_skipped} skipped` : ""}`], ["Training window", cfg.split.window + (cfg.split.window === "rolling" ? ` (${cfg.split.rolling_days} days)` : "")],
       ["Seed", String(cfg.seed)], ["Experiment", d.id]]);
+    const how = provenanceRows(r);
+    if (how.length) W.kv(card, "Compute and provenance", how);
     const segRows = SEGMENTS.filter((k) => plan[k]);
     W.kv(card, "Segments", segRows.map((k) => [SEG_NAME[k], `${plan[k].start} to ${plan[k].end} (${plan[k].n_days} days)`]));
     const skipped = Object.entries(r.features.skipped || {});

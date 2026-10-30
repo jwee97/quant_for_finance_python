@@ -108,7 +108,10 @@ def test_every_model_kind_fits_predicts_and_reports_importance(dataset):
     for info in md.model_catalog():
         if not info["available"] or "regression" not in info["tasks"] or info["kind"] == "regime_ridge":
             continue
-        m = md.make_model(info["kind"], None, "regression", 0).fit(X, y, dates)
+        m = md.make_model(info["kind"], None, "regression", 0)
+        if m.needs_dataset:                                                                       # regimes, networks, graphs, ensembles and agents read the dataset's history: their own tests bind them
+            continue
+        m = m.fit(X, y, dates)
         p = m.predict(X)
         assert p.shape == (len(X),) and np.isfinite(p).all(), info["kind"]
         assert len(m.importance()) == len(m.features_) and m.n_train_ == len(X)

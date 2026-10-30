@@ -383,6 +383,7 @@ Dockerfile, docker-compose.yml, Makefile, .github/workflows/ci.yml and benchmark
 
 ```bash
 pip install -r requirements.txt
+pip install -r requirements-ml-extras.txt   # optional: NGBoost, Optuna and the reinforcement-learning agents for the Machine learning tab
 
 python -m experiments.run_all --download      # all 40 stages
 python -m experiments.run_all --generation 2  # Generation 2 only (stages 15-20)

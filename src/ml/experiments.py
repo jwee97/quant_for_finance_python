@@ -9,6 +9,7 @@ tests that need them: explanations, robustness, forward testing.
 
 from __future__ import annotations
 
+import json
 import time
 from dataclasses import dataclass, field
 
@@ -17,16 +18,20 @@ import pandas as pd
 
 from . import evaluation as ev
 from . import explainability as xp
+from . import model_report as mr
 from . import robustness as rb
 from .backtest import equal_weight_benchmark, label_days, run_backtest, trim_to_signal
 from .config import DEFAULTS, build_key, config_hash, dataset_key, experiment_config, merge
 from .datasets import Dataset, build_dataset, resolve_bundle
 from .models import Model
 from .registry import Registry
-from .signals import build_weights
+from .signals import UNCERTAINTY_METHODS, build_weights
 from .targets import forward_return, is_classification
 from .training import TrainResult, fit_final, walk_forward_train
 from .visualization import equity_payload, importance_bars, ic_series_payload, jsonable, prediction_distribution, render_html
+
+
+RL_KINDS = ("ppo", "sac", "recurrent_ppo")
 
 
 class ExperimentError(ValueError):
@@ -157,9 +162,11 @@ def evaluate_run(cfg: dict, ds: Dataset, train: TrainResult, info: dict, registr
     conf = confidence_from_scores(scores, prob_wide)
     regime_on = regime_series(ds, cfg["signal"].get("regime_on_states", [0]))
     groups = ds.group or ds.asset_class
+    dist = train.extras.get("distribution")
+    unc_wide = None if dist is None else dist["std"].unstack("asset").reindex(index=ds.dates, columns=ds.assets)          # the model's own predictive standard deviation, for the uncertainty-aware rules
     progress("building positions and backtesting")
     try:
-        weights = build_weights(scores, cfg["signal"], vol, conf, regime_on, groups, ds.investable)
+        weights = build_weights(scores, cfg["signal"], vol, conf, regime_on, groups, ds.investable, unc_wide, ds.returns)
     except ValueError as exc:
         raise ExperimentError(str(exc)) from None
     result = run_backtest(weights, ds.returns, ds.investable, cfg["backtest"], lag, cfg["name"])
@@ -175,7 +182,8 @@ def evaluate_run(cfg: dict, ds: Dataset, train: TrainResult, info: dict, registr
     insample_net = None
     s_in = train.scores_wide(ds, "insample")
     if s_in.notna().any().any():
-        w_in = build_weights(s_in, cfg["signal"], vol, confidence_from_scores(s_in, None), regime_on, groups, ds.investable)
+        sig_in = {**cfg["signal"], "method": "proportional"} if cfg["signal"]["method"] in UNCERTAINTY_METHODS else cfg["signal"]               # no predictive distribution in sample
+        w_in = build_weights(s_in, sig_in, vol, confidence_from_scores(s_in, None), regime_on, groups, ds.investable)
         r_in = trim_to_signal(run_backtest(w_in, ds.returns, ds.investable, cfg["backtest"], lag, cfg["name"] + "_in_sample"), s_in.dropna(how="all").index[0], lag)["net"]
         last_in = s_in.dropna(how="all").index[-1]
         insample_net = r_in.iloc[: r_in.index.searchsorted(last_in) + 1]
@@ -222,7 +230,7 @@ def evaluate_run(cfg: dict, ds: Dataset, train: TrainResult, info: dict, registr
         except ValueError:
             fmodel = None
     exp_id = experiment_id or (registry.new_id(cfg["name"]) if registry is not None else "unsaved")
-    ctx = rb.Context(ds, train, cfg, scores, first_signal, net, labels, vol, conf, regime_on)
+    ctx = rb.Context(ds, train, cfg, scores, first_signal, net, labels, vol, conf, regime_on, unc_wide)
     rob = None
     if (cfg["robustness"]["enabled"] if robustness is None else robustness):
         rob = rb.run_all(ctx, progress=progress)
@@ -246,12 +254,21 @@ def evaluate_run(cfg: dict, ds: Dataset, train: TrainResult, info: dict, registr
         "trials": {"dataset_trials": n_trials, "note": "Every experiment and search trial on this dataset is counted; the deflated Sharpe probability deflates the validation Sharpe by this number."},
         "warnings": list(over["warnings"]), "seconds": round(time.perf_counter() - t0, 2), "created": time.strftime("%Y-%m-%d %H:%M:%S"),
     })
+    if train.kind in RL_KINDS and cfg["signal"]["method"] != "target_weights":
+        report["warnings"].append(f"The {train.kind} agent sizes its own positions, but the position rule '{cfg['signal']['method']}' re-ranks its weights; choose target_weights to trade them as the agent sized them.")
+    try:
+        report["model_extras"] = jsonable(mr.build_report(train, ds, cfg, scores, fwd, train.plan.labels(), None, time.perf_counter() - t0, chash, fmodel.to_bytes() if fmodel is not None else None))
+    except Exception:                                                              # the extras are an addition to the report; if they cannot be built the experiment still stands
+        report["model_extras"] = {"kind": train.kind, "outputs": []}
     metrics = {"oos": {k: oos_summary.get(k) for k in ("sharpe", "cagr", "ann_vol", "max_drawdown", "hit_rate", "ann_turnover", "ann_cost_drag", "gross_sharpe", "total_return", "sortino", "calmar", "n_obs")},
                "ic": {k: ic_all[k] for k in ("mean", "std", "ir", "t", "hit_rate", "n")}, "overfit": {"generalization_score": over["generalization_score"], "psr_test_forward": over["psr_test_forward"],
                                                                                                  "deflated_sharpe_probability": over["deflated_sharpe_probability"], "n_trials": n_trials},
                "robustness": {} if rob is None else {"score": rob["score"], "n_pass": rob["n_pass"], "n_warn": rob["n_warn"], "n_fail": rob["n_fail"]}}
     for seg, s in seg_stats.items():
         metrics[seg] = {k: s[k] for k in ("sharpe", "ann_return", "ann_vol", "max_drawdown", "n_days", "hit_rate", "total_return")}
+    res = report["model_extras"].get("resources", {})
+    metrics["run"] = {k: v for k, v in {"train_seconds": res.get("train_seconds"), "total_seconds": res.get("total_seconds"), "n_params": res.get("n_params"), "peak_memory_mb": res.get("peak_memory_mb"),
+                                         "n_fits": float(len(train.diagnostics))}.items() if v is not None}
     exp = Experiment(exp_id, cfg, ds, train, scores, weights, net, gross, costs, turnover, bench, insample_net, labels, first_signal, fmodel, report, ctx, metrics)
     if registry is not None and save:
         progress("saving")
@@ -280,6 +297,12 @@ def save_experiment(registry: Registry, exp: Experiment, info: dict, parent_id: 
     if len(tr.insample):
         tr.insample.rename("score").to_frame().to_parquet(d / "predictions_insample.parquet")
     files = {"predictions": d / "predictions.parquet", "positions": d / "positions.parquet", "returns": d / "returns.parquet", "config": d / "config.yaml"}
+    for name, frame in tr.extras.items():                                           # distribution, regimes, heads, weights, latent, portfolio: what the model reported beside its scores
+        frame.to_parquet(d / f"extra_{name}.parquet")
+        files[f"extra_{name}"] = d / f"extra_{name}.parquet"
+    if exp.final_model is not None and exp.final_model.diagnostics():
+        (d / "diagnostics.json").write_text(json.dumps(jsonable(exp.final_model.diagnostics()), allow_nan=False))
+        files["diagnostics"] = d / "diagnostics.json"
     if exp.final_model is not None:
         (d / "model.pkl").write_bytes(exp.final_model.to_bytes())
         files["model"] = d / "model.pkl"
@@ -329,8 +352,9 @@ def load_run(registry: Registry, exp_id: str) -> tuple[dict, Dataset, TrainResul
     plan, _ = plan_for(ds, cfg["split"], cfg["dataset"]["target"])
     insample = pd.read_parquet(d / "predictions_insample.parquet")["score"] if (d / "predictions_insample.parquet").exists() else pd.Series(dtype=float)
     folds = [dict(f, skipped=bool(f.get("skipped"))) for f in report["folds"].get("list", [])]
+    extras = {p.stem[len("extra_"):]: pd.read_parquet(p) for p in sorted(d.glob("extra_*.parquet"))}
     train = TrainResult(preds["score"], insample, folds, [], [], pd.DataFrame(), plan, cfg["dataset"]["target"], "classification" if "prob" in preds.columns else "regression", cfg["model"]["kind"],
-                        list(ds.features), preds["prob"] if "prob" in preds.columns else None, 0.0, [])
+                        list(ds.features), preds["prob"] if "prob" in preds.columns else None, 0.0, [], [], extras)
     return cfg, ds, train, {"source": rec.get("source") or "platform", "label": report["provenance"].get("label", "")}
 
 

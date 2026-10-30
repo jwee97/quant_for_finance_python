@@ -142,7 +142,7 @@ def include(space: dict, start: dict) -> dict:
 
 def tune(base_overrides: dict, space: dict, n_trials: int = 20, method: str = "random", seed: int = 0, bundle=None, config=None, builder=None, registry: Registry | None = None,
          study_name: str = "tune", objective_weights: dict | None = None, progress=None, start: dict | None = None, stop=None) -> dict:
-    """Search ``space`` (dotted path -> ``ops.hpo`` distribution) with ``method`` (random, tpe or bayes; grid and halving are not supported here) for ``n_trials`` candidates. Returns the trials, the best
+    """Search ``space`` (dotted path -> ``ops.hpo`` distribution) with ``method`` (random, tpe, bayes or optuna; grid and halving are not supported here) for ``n_trials`` candidates. Returns the trials, the best
     parameters, and the selection report that deflates the best one by the number of trials.
 
     ``start`` (a value for every path of the space, inside it: see ``include``) is run first as trial 0 and counts as one of the ``n_trials``; no configuration is then run twice, a TPE or Gaussian
@@ -169,7 +169,7 @@ def tune(base_overrides: dict, space: dict, n_trials: int = 20, method: str = "r
         st.optimize(objective, n_trials=n_trials, method=method, callback=callback if stop is not None else None)
     else:
         st._run(objective, dict(start))
-        extra = {"n_startup": max(4, n_trials // 3), "quasi_start": True} if method in ("tpe", "bayes") else {}
+        extra = {"n_startup": max(4, n_trials // 3), "quasi_start": True} if method in ("tpe", "bayes", "optuna") else {}
         st.optimize(objective, n_trials=max(0, n_trials - 1), method=method, callback=callback if stop is not None else None, unique=True, **extra)
     out = finish(st, runner)
     out["start_number"] = None if start is None else 0
