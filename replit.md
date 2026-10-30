@@ -64,6 +64,17 @@ says its code is wrong or it is not in your plan; the test then also tries NQ, i
 example, to tell a plan without futures from one missing product, and the search marks what
 your key could and could not get.
 
+**Finzdata** is the optional third source of the Futures card (*Finzdata: every contract*). It
+gives the daily price, volume and **open interest of every contract month** of 139 markets, so
+the curve, the roll and the open-interest views work on markets Yahoo does not have, and a
+finder searches the 139 markets by name or symbol with no call. Its free plan (a key for an
+email address, see below) shows **only the last 30 days**, so each download is merged into the
+file of the last one and the history grows from the day you start: download again within three
+weeks, or run `python experiments/finzdata_update.py` every day (a Replit scheduled
+deployment will do). The stored files stay in `data/user/`, which git ignores: Finzdata's terms
+forbid publishing its data. The author could not call it with a working key; see the section
+below.
+
 The public feeds rate-limit shared cloud addresses, and a Repl's address is shared. If a
 provider answers *HTTP 403* or *HTTP 429* the card says which one and the app waits before
 asking that host again: try again in a few minutes, download fewer items at a time (Yahoo
@@ -161,6 +172,26 @@ it needs network access and is subject to provider availability/rate limits) or
 iTick (it needs an API key; see below). Core dashboard use needs no API keys.
 Optional Anthropic assistant features need their separate dependency and
 `ANTHROPIC_API_KEY`; they are not configured as part of this setup.
+
+## Using Finzdata: the key, the 30-day window and the allowance
+
+1. Get a free key at [finzdata.com](https://finzdata.com/docs) (it asks only for an email address;
+   it begins `fz_`). In the Replit workspace open **Tools**, then **Secrets**, choose **New Secret**,
+   enter the key `FINZDATA_API_KEY` and your key as the value, and **Add Secret**. Stop the app and
+   press **Run** again. (For the weekly check on GitHub, add a repository secret of the same name.)
+2. In the Futures tab choose **Finzdata: every contract**, search a market, press **Download real
+   data**. A market costs two calls of the 1,000 a day the free plan allows; the app sends at most 900
+   (`FINZDATA_DAILY_CALLS`) and counts them in `data/user/finzdata_calls.json`.
+3. The card lists what is stored with the days left before the plan's 30-day window passes each
+   market's newest bar. Update before that, or schedule `python experiments/finzdata_update.py`
+   (`--status` shows the table and makes no call).
+
+The same rules as for the iTick key apply: it lives only in Secrets, is sent in one request header
+to `api.finzdata.com` over HTTPS and never put in a page, a log line or a file, and Finzdata's
+terms give a key to one person to be used from one place at a time (do not run the app and a second
+program on the same key at once). **Run the Actions workflow *live feeds* once after adding the
+secret**: it is the first time anything calls the service with a key, and it prints the columns
+the service really sends.
 
 ## Using iTick: keeping the API key safe
 

@@ -138,7 +138,7 @@
   /* ---------- running ---------- */
   X.run = (fromForm) => {
     const m = X.mode, f = X.form;
-    if (!fromForm) X.cache.clear();
+    if (!fromForm) W.dropCache(X);
     if (OVERVIEW_MODES.has(m)) return W.request(X, () => { const q = { symbol: f.symbol, days: Number(f.days), fee_bps: Number(f.fee) }; return [{ modes: ["overview", "basis", "liquidity"], path: "/api/crypto/overview", query: q, cacheKey: key("overview", q) }]; }, "Reading the coin…");
     if (m === "funding") return W.request(X, () => { const q = { symbols: [...f.symbols], days: Number(f.fundDays) }; return [{ modes: ["funding"], path: "/api/crypto/funding", query: q, cacheKey: key("funding", q) }]; }, "Reading funding…");
     if (m === "cross") return W.request(X, () => { const q = { symbol: f.symbol, slippage_bps: Number(f.slippage), notional: Number(f.notional) }; return [{ modes: ["cross"], path: "/api/crypto/cross-exchange", query: q, cacheKey: key("cross", q) }]; }, "Comparing venues…");

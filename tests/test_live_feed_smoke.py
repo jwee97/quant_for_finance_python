@@ -257,3 +257,125 @@ def test_the_yahoo_and_deribit_futures_checks_want_enough_contracts_and_a_recent
     assert run(smoke.deribit_futures, smoke.futures, "fetch_deribit_history", Fake(4, 400, today, expired=4)).status == "broken"
     assert run(smoke.deribit_futures, smoke.futures, "fetch_deribit_history", Fake(10, 400, old, expired=6)).status == "broken"
     assert {"cboe_vx", "yahoo_futures", "deribit_futures"} <= set(smoke.CHECKS) and {r.name for r in smoke.run_checks({k: v for k, v in smoke.CHECKS.items() if k.startswith("cboe")}, {"http": StubCboe()}, only=["cboe_vx"])} == {"cboe_vx"}
+
+
+# ------------------------------------------------------------------------------------------------------------------ Finzdata
+def _finz_ctx(fake, key="fz_TESTKEY0123456789abcdefABCDEF"):
+    return {"finzdata_key": key, "finzdata_transport": fake, "finzdata_sleep": lambda s: None, "finzdata_pause": 0.0}
+
+
+def _finz_fake(**kwargs):
+    from tests.fake_finzdata import FakeFinzdata
+
+    kwargs.setdefault("full_list", True)
+    kwargs.setdefault("today", str(pd.Timestamp.now(tz="UTC").date()))
+    return FakeFinzdata(**kwargs)
+
+
+def _finz(ctx):
+    return smoke.run_checks({"finzdata": smoke.finzdata}, ctx)[0]
+
+
+def test_finzdata_is_skipped_without_its_key_and_nothing_is_sent(monkeypatch):
+    monkeypatch.delenv("FINZDATA_API_KEY", raising=False)
+    fake = _finz_fake()
+    r = _finz(_finz_ctx(fake, key=""))
+    assert r.status == "skipped" and "FINZDATA_API_KEY" in r.detail and fake.urls == []
+    assert smoke.exit_code([r]) == 0 and smoke.exit_code([r], strict=True) == 0                  # nothing was judged
+    results = smoke.run_checks(smoke.CHECKS, {"http": None, "sec_contact": "", "finzdata_key": ""}, ["finzdata"])
+    assert [(x.name, x.status) for x in results] == [("finzdata", "skipped"), ("finzdata_reach", "skipped")]
+
+
+def test_finzdata_reports_the_columns_the_service_sends_the_contracts_it_lists_and_that_the_tab_lists_them_all():
+    fake = _finz_fake()
+    r = _finz(_finz_ctx(fake))
+    assert r.status == "ok", r.detail
+    assert r.detail.startswith("columns - markets: root,name,exchange,asset_class,first_date,last_date,contracts | contracts: contract,root,expiry,first_date,last_date | daily: date,contract,open,high,low,close,volume,open_interest")
+    assert "ES: 24 listed (service)" in r.detail and "CL: 72 listed (service)" in r.detail and "every contract in one call, oi yes" in r.detail and "plan: " not in r.detail
+    assert [p for p, _ in fake.requests].count("/v1/futures/roots") == 1 and len(fake.requests) == 1 + 2 * 2                          # the list of markets, then for two roots the contract list and the bars of every contract
+    assert set(fake.keys) == {"fz_TESTKEY0123456789abcdefABCDEF"}
+
+
+def test_finzdata_survives_other_spellings_and_a_service_that_wants_one_contract_at_a_time():
+    for kwargs in ({"alt_names": True}, {"per_contract_only": True}, {"no_expiry": True}):
+        r = _finz(_finz_ctx(_finz_fake(**kwargs)))
+        assert r.status == "ok", (kwargs, r.detail)
+    assert "one call per contract" in _finz(_finz_ctx(_finz_fake(per_contract_only=True))).detail
+
+
+def test_a_shape_the_parsers_do_not_know_is_broken_and_names_the_columns_that_came():
+    fake = _finz_fake()
+    fake.script = [(200, {}, b'{"data": [{"label": "E-mini S&P 500", "venue": "CME"}]}')]
+    r = _finz(_finz_ctx(fake))
+    assert r.status == "broken" and "no symbol" in r.detail and "the columns it sent are: label, venue" in r.detail
+    fake, wrong = _finz_fake(), "fz_" + "x" * 30
+    r = _finz(_finz_ctx(fake, key=wrong))
+    assert r.status == "broken" and "does not accept the key" in r.detail and wrong not in r.detail
+    assert fake.keys == [wrong] and all(wrong not in url for url in fake.urls)                      # the key travels in a header, never in the address, and one refusal ends the check
+
+
+@pytest.mark.parametrize("kwargs, status", [({"forbidden": ("ES",)}, "refused"), ({"quota": 0}, "refused")])
+def test_a_plan_without_the_data_or_a_used_up_day_is_a_refusal_not_a_changed_feed(kwargs, status):
+    r = _finz(_finz_ctx(_finz_fake(**kwargs)))
+    assert r.status == status and ("does not include" in r.detail or "limit of calls" in r.detail)
+    assert smoke.exit_code([r]) == 0 and smoke.exit_code([r], strict=True) == 1
+
+
+def test_a_market_that_lists_too_few_contracts_is_broken():
+    fake = _finz_fake()
+    original = fake.contracts
+    fake.contracts = lambda root: [c for c in original(root) if c["expiry"] >= fake.today][:3]       # the service lists three contracts of each market, the nearest, and no more
+    r = _finz(_finz_ctx(fake))
+    assert r.status == "broken" and "contracts listed" in r.detail
+
+
+def test_a_short_list_of_markets_and_bars_that_stopped_nine_days_ago_are_each_broken():
+    few = _finz(_finz_ctx(_finz_fake(full_list=False)))
+    assert few.status == "broken" and "4 markets; ES, CL and ZN must be among them" in few.detail
+    old = _finz(_finz_ctx(_finz_fake(today=str((pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=9)).date()))))
+    assert old.status == "broken" and "Finzdata's ES bars end" in old.detail and "days ago" in old.detail
+
+
+def test_a_live_contract_the_service_dates_before_its_last_bar_is_broken_but_an_estimated_date_is_not():
+    fake = _finz_fake()
+    original = fake._contract_rows
+    fake._contract_rows = lambda root: [dict(row, expiry=str((pd.Timestamp(row["expiry"]) - pd.Timedelta(days=400)).date())) for row in original(root)]      # every date a year early
+    given = _finz(_finz_ctx(fake))
+    assert given.status == "broken", given.detail
+    assert _finz(_finz_ctx(_finz_fake(no_expiry=True))).status == "ok"
+
+
+# ------------------------------------------------------------------------------------------------------------------ what else the key can read
+def _reach(ctx):
+    return smoke.run_checks({"finzdata_reach": smoke.finzdata_reach}, ctx)[0]
+
+
+def test_the_reach_check_names_the_plan_the_datasets_and_the_columns_of_each_endpoint_and_nothing_private():
+    fake = _finz_fake()
+    r = _reach(_finz_ctx(fake))
+    assert r.status == "ok" and r.detail.startswith("reach (not judged) - plan: ")
+    assert "plan=free" in r.detail and "history_days=30" in r.detail and "daily_limit=1000" in r.detail and "calls_today=7" in r.detail
+    assert not any(secret in r.detail for secret in ("someone@example.com", "fz_TEST", "cus_123", "A Person", "email"))        # a plan is told, a person is not
+    assert "datasets: futures,prices,crypto,gex" in r.detail and "prices: 2 rows (date,open,high,low,close,volume)" in r.detail
+    assert "cot: 1 rows (report_date,market,noncomm_long,noncomm_short)" in r.detail and "options: 1 rows (date,expiry,right,strike,bid,ask,iv)" in r.detail
+    asked = [(path, query.get("symbol") or query.get("ticker")) for path, query in fake.requests]
+    assert ("/v1/crypto/bars", "BTCUSDT") in asked and len(asked) == 9                                                    # the pair is taken from the list, and nine calls are all it costs
+    assert set(fake.keys) == {"fz_TESTKEY0123456789abcdefABCDEF"}
+
+
+def test_a_dataset_the_plan_leaves_out_is_a_line_and_not_a_failure():
+    r = _reach(_finz_ctx(_finz_fake(plan_excludes=("/v1/crypto", "/v1/options"))))
+    assert r.status == "ok", r.detail
+    assert "crypto pairs: not in the plan" in r.detail and "crypto bars: no pair to ask for" in r.detail and "options: not in the plan" in r.detail and "prices: 2 rows" in r.detail
+
+
+def test_an_answer_that_is_not_a_table_is_told_by_its_keys_and_a_refused_key_or_used_up_day_ends_the_check():
+    fake = _finz_fake()
+    fake.script = [(200, {}, b'{"plan": "free"}'), (200, {}, b'["futures", "prices"]'), (200, {}, b'{"unexpected": 1, "other": 2}'), (200, {}, b'{"data": []}')]
+    r = _reach(_finz_ctx(fake))
+    assert r.status == "ok" and "plan: plan=free" in r.detail and "datasets: futures,prices" in r.detail
+    assert "prices: a document with keys other,unexpected" in r.detail and "crypto pairs: no rows" in r.detail
+    key = _reach(_finz_ctx(_finz_fake(), key="fz_" + "y" * 30))
+    assert key.status == "broken" and "does not accept the key" in key.detail
+    quota = _reach(_finz_ctx(_finz_fake(quota=3)))
+    assert quota.status == "refused" and "limit of calls" in quota.detail

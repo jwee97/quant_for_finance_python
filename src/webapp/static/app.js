@@ -197,16 +197,19 @@
     if (hist.accepted && hist.refused && hist.refused.at > hist.accepted.at) out += hist.same_key === false ? " The key in the secret is not the one that last worked." : " It is the same key that last worked: look for an ended trial, a reset key or a limit to certain addresses in the iTick dashboard.";
     return out;
   }
-  function setupGuide(box, last) {                                                            // ``last``: the final step, when the guide is shown somewhere other than the Backtest tab
+  const ITICK_GUIDE = { product: "iTick", name: KEY_NAME, get: "Copy your API key from your iTick account.",
+                        last: "Choose iTick here and press Test the iTick connection (it spends one call, or two if the first iTick host does not recognise the key)." };
+  function setupGuide(box, last, who) {                                                       // ``last``: the final step, when the guide is shown somewhere other than the Backtest tab; ``who``: another service's key (name, product, where to get it)
+    who = who || ITICK_GUIDE;
     const guide = h("div", "setup", box);
-    const lead = h("p", "", guide, "iTick is not set up yet. It takes about two minutes, and the key never goes through this page."); lead.style.color = css("--warn");
+    const lead = h("p", "", guide, `${who.product} is not set up yet. It takes about two minutes, and the key never goes through this page.`); lead.style.color = css("--warn");
     const steps = h("ol", "steps", guide);
-    h("li", "", steps, "Copy your API key from your iTick account.");
-    const two = h("li", "", steps, "In Replit open Tools, then Secrets, then New Secret. Name it "); h("code", "", two, KEY_NAME); two.appendChild(document.createTextNode(", paste the key as its value and click Add Secret."));
+    h("li", "", steps, who.get);
+    const two = h("li", "", steps, "In Replit open Tools, then Secrets, then New Secret. Name it "); h("code", "", two, who.name); two.appendChild(document.createTextNode(", paste the key as its value and click Add Secret."));
     h("li", "", steps, "Press Stop and then Run: an app only sees the secrets that existed when it started. Then reload this page.");
-    h("li", "", steps, last || "Choose iTick here and press Test the iTick connection (it spends one call, or two if the first iTick host does not recognise the key).");
+    h("li", "", steps, last || who.last);
     const row = h("div", "row tight", guide);
-    const name = h("button", "btn", row, "Copy the secret name"); name.addEventListener("click", () => copy(KEY_NAME, "The secret name"));
+    const name = h("button", "btn", row, "Copy the secret name"); name.addEventListener("click", () => copy(who.name, "The secret name"));
     const again = h("button", "btn", row, "I added it and restarted: reload"); again.addEventListener("click", () => location.reload());
     h("p", "hint", guide, "The key is read by the server only and is never sent to this page. Do not paste it into a chat or a file; people you add to the Repl can see its secrets.");
   }

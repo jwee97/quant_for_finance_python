@@ -317,7 +317,7 @@
   O.run = (fromForm) => {
     const m = O.mode, f = O.form;
     if (ANALYTIC.has(m)) {
-      if (!fromForm) O.cache.clear();                                                                       // the Refresh button asks again; a change in the form asks only for what it changed
+      if (!fromForm) W.dropCache(O);                                                                       // the Refresh button asks again; a change in the form asks only for what it changed
       return W.request(O, () => {
         if (m === "distribution" || m === "positioning") { const a = { ...settings(), expiry: f.expiry || undefined }; return [{ modes: [m], path: "/api/options/" + m, query: a, cacheKey: key(m, a) }]; }
         const q = chainQuery(), steps = [];

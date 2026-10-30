@@ -1,0 +1,140 @@
+root,name,exchange,group,history_from
+BFX,Bel 20,Euronext,Equity index,2008
+ES,E-mini S&P 500,CME,Equity index,2008
+ESG,E-Mini S&P 500 ESG,CME,Equity index,2019
+EW,E-Mini S&P 400 Midcap,CME,Equity index,2008
+FCE,CAC40,Euronext,Equity index,2008
+FDAX,DAX,Eurex,Equity index,2008
+FDIV,Divdax,Eurex,Equity index,2013
+FDXM,Mini-DAX,Eurex,Equity index,2015
+FDXS,Micro-DAX,Eurex,Equity index,2021
+FESX,Euro Stoxx 50,Eurex,Equity index,2008
+FID,SGX FTSE Indonesia Index,SGX,Equity index,2020
+FMWO,MSCI World Index,Eurex,Equity index,2013
+FSMX,Mini-Mdax,Eurex,Equity index,2021
+FTDX,Tecdax,Eurex,Equity index,2008
+FTI,Amsterdam Index,Euronext,Equity index,2008
+FTUK,FTSE 100,ICE,Equity index,2008
+FXXP,Stoxx Europe 600 Index,Eurex,Equity index,2010
+GSCI,S&P GSCI,CME,Equity index,2008
+M2K,Micro E-mini Russell 2000,CME,Equity index,2019
+MAX,Aex Mini,Euronext,Equity index,2022
+MES,Micro E-mini S&P 500,CME,Equity index,2019
+MFC,Cac 40 Mini,Euronext,Equity index,2014
+MFS,Mini MSCI Eafe,ICE,Equity index,2009
+MME,MSCI Emerging Markets Index,ICE,Equity index,2009
+MNQ,Micro E-mini Nasdaq-100,CME,Equity index,2019
+MURA,MSCI China,Eurex,Equity index,2021
+NIY,Nikkei 225 (Yen),CME,Equity index,2008
+NK,SGX Nikkei 225 Index,SGX,Equity index,2008
+NKD,Nikkei 225 (USD),CME,Equity index,2008
+NQ,E-mini Nasdaq-100,CME,Equity index,2008
+PSI,Psi 20,Euronext,Equity index,2008
+RTY,E-mini Russell 2000,CME,Equity index,2008
+ST,SGX Straits Times Index,SGX,Equity index,2008
+XAE,E-Mini Energy Select Sector,CME,Equity index,2011
+XAF,E-Mini Financial Select Sector,CME,Equity index,2011
+XAI,E-Mini Industrial Select Sector,CME,Equity index,2011
+YM,E-mini Dow ($5),CBOT,Equity index,2008
+ZRPA,MSCI Europe,Eurex,Equity index,2018
+ZTWA,MSCI Emerging Markets Asia,Eurex,Equity index,2014
+ER,3-Month Euribor,ICE,Interest rate,2023
+FBON,Euro-Bono,Eurex,Interest rate,2015
+FBTM,Mid-Term Euro-BTP,Eurex,Interest rate,2011
+FBTP,Long-Term Euro-BTP,Eurex,Interest rate,2009
+FBTS,Short-Term Euro-BTP,Eurex,Interest rate,2011
+FEU3,Three-Month Euribor,Eurex,Interest rate,2008
+FGBL,Euro-Bund,Eurex,Interest rate,2008
+FGBM,Euro-Bobl,Eurex,Interest rate,2008
+FGBS,Euro-Schatz,Eurex,Interest rate,2008
+FGBX,Euro-Buxl,Eurex,Interest rate,2008
+FOAM,Mid-Term Euro-OAT,Eurex,Interest rate,2013
+FOAT,Euro-OAT,Eurex,Interest rate,2012
+JB,SGX Mini JGB,SGX,Interest rate,2023
+SO3,3-Month Sonia,ICE,Interest rate,2018
+SR1,One-Month SOFR,CME,Interest rate,2018
+SR3,Three-Month SOFR,CME,Interest rate,2018
+TN,Ultra 10-Year US Treasury Note,CBOT,Interest rate,2016
+UB,Ultra US Treasury Bond,CBOT,Interest rate,2010
+US,US Treasury Bond,CBOT,Interest rate,2008
+ZF,5-Year US Treasury Note,CBOT,Interest rate,2008
+ZN,10-Year US Treasury Note,CBOT,Interest rate,2008
+ZQ,30-Day Federal Funds,CBOT,Interest rate,2008
+ZT,2-Year US Treasury Note,CBOT,Interest rate,2008
+B,Brent Crude,ICE Europe,Energy,2008
+BZ,Brent Crude Oil (last day financial),NYMEX,Energy,2008
+CL,WTI Crude Oil,NYMEX,Energy,2008
+G,Low Sulphur Gasoil,ICE Europe,Energy,2008
+HH,Natural Gas,NYMEX,Energy,2010
+HO,NY Harbor ULSD (Heating Oil),NYMEX,Energy,2008
+MCL,Micro WTI Crude Oil,NYMEX,Energy,2021
+NG,Henry Hub Natural Gas,NYMEX,Energy,2008
+QG,E-mini Natural Gas,NYMEX,Energy,2008
+RB,RBOB Gasoline,NYMEX,Energy,2008
+TTF,Dutch TTF Natural Gas,ICE Europe,Energy,2010
+ZK,Ethanol,CBOT,Energy,2007
+ALI,Aluminum,COMEX,Metals,2009
+GC,Gold,COMEX,Metals,2008
+HG,Copper,COMEX,Metals,2008
+HRC,US Midwest Hot-Rolled Coil Steel,COMEX,Metals,2022
+MGC,Micro Gold,COMEX,Metals,2010
+PA,Palladium,NYMEX,Metals,2008
+PL,Platinum,NYMEX,Metals,2008
+SI,Silver,COMEX,Metals,2008
+SIL,Micro Silver,COMEX,Metals,2013
+C,Cocoa Futures,ICE,Agricultural,2008
+CB,Cash-Settled Butter,CME,Agricultural,2008
+CC,Cocoa,ICE US,Agricultural,2008
+CPO,USD Malaysian Crude Palm Oil,CME,Agricultural,2021
+CSC,Cash-Settled Cheese,CME,Agricultural,2010
+CT,Cotton No. 2,ICE US,Agricultural,2008
+DC,Class III Milk,CME,Agricultural,2008
+EBM,Milling Wheat,Eurex,Agricultural,2008
+GF,Feeder Cattle,CME,Agricultural,2008
+HE,Lean Hogs,CME,Agricultural,2008
+KC,Coffee C,ICE US,Agricultural,2008
+KE,KC HRW Wheat,CBOT,Agricultural,2010
+LBS,Lumber,CME,Agricultural,2008
+LE,Live Cattle,CME,Agricultural,2008
+OJ,Frozen Concentrated Orange Juice,ICE US,Agricultural,2008
+PRK,Pork Cutout,CME,Agricultural,2020
+RM,Robusta Coffee,ICE,Agricultural,2008
+RS,Canola,ICE,Agricultural,2008
+SB,Sugar No. 11,ICE US,Agricultural,2008
+XC,Corn Mini,CBOT,Agricultural,2008
+ZC,Corn,CBOT,Agricultural,2008
+ZL,Soybean Oil,CBOT,Agricultural,2008
+ZM,Soybean Meal,CBOT,Agricultural,2008
+ZO,Oats,CBOT,Agricultural,2008
+ZR,Rough Rice,CBOT,Agricultural,2008
+ZS,Soybeans,CBOT,Agricultural,2008
+ZW,Chicago SRW Wheat,CBOT,Agricultural,2008
+A6,Australian Dollar,CME,Currency,2008
+AD,Canadian Dollar,CME,Currency,2008
+B6,British Pound,CME,Currency,2008
+BR,Brazilian Real,CME,Currency,2008
+CNH,Standard-Size USD/Offshore RMB,CME,Currency,2013
+DX,US Dollar Index,ICE US,Currency,2008
+E1,Swiss Franc,CME,Currency,2008
+E6,Euro FX,CME,Currency,2008
+E7,E-Mini Euro Fx,CME,Currency,2008
+J1,Japanese Yen,CME,Currency,2008
+J7,E-Mini Japanese Yen,CME,Currency,2008
+KRW,Krw/USD,CME,Currency,2009
+L,3 Month Sterling,ICE,Currency,2008
+MP,Mexican Peso,CME,Currency,2008
+N6,New Zealand Dollar,CME,Currency,2008
+NOK,Norwegian Krone,CME,Currency,2008
+PJY,Pound / Yen,CME,Currency,2010
+RP,Euro-British Pound,CME,Currency,2008
+RU,Russian Ruble,CME,Currency,2007
+RY,Euro / Yen,CME,Currency,2010
+SEK,Swedish Krona,CME,Currency,2009
+SIR,Inr/USD,CME,Currency,2013
+T6,South African Rand,CME,Currency,2008
+FVSA,Vstoxx Futures,Eurex,Volatility,2011
+VX,Cboe Volatility Index (VIX),Cboe Futures,Volatility,2008
+VXM,Mini VIX,Cboe Futures,Volatility,2020
+BTC,Bitcoin,CME,Crypto,2017
+MBT,Micro Bitcoin,CME,Crypto,2021
+MET,Micro Ether,CME,Crypto,2021

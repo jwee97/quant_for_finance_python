@@ -15,7 +15,7 @@
     --page: #0d0d0d; --surface: #1a1a19; --ink: #ffffff; --ink-2: #c3c2b7; --muted: #a09e96; --grid: #2c2c2a; --axis: #383835;
     --border: rgba(255, 255, 255, 0.10); --ghost: rgba(255, 255, 255, 0.06); --accent: #3987e5; --accent-ink: #0b0b0b;
     --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181; --s6: #008300; --s7: #9085e9; --s8: #e66767;
-    --pos: #3987e5; --neg: #e66767; --mid: #383835; --good-text: #0ca30c; --crit: #e66767; --warn: #fab219; --shadow: none;
+    --pos: #3987e5; --neg: #e66767; --mid: #383835; --good-text: #10ac10; --crit: #e66767; --warn: #fab219; --shadow: none;
     --scale-lo: #0d366b; --scale-mid: #3987e5; --scale-hi: #cde2fb;
   }
 }
@@ -24,7 +24,7 @@
   --page: #0d0d0d; --surface: #1a1a19; --ink: #ffffff; --ink-2: #c3c2b7; --muted: #a09e96; --grid: #2c2c2a; --axis: #383835;
   --border: rgba(255, 255, 255, 0.10); --ghost: rgba(255, 255, 255, 0.06); --accent: #3987e5; --accent-ink: #0b0b0b;
   --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181; --s6: #008300; --s7: #9085e9; --s8: #e66767;
-  --pos: #3987e5; --neg: #e66767; --mid: #383835; --good-text: #0ca30c; --crit: #e66767; --warn: #fab219; --shadow: none;
+  --pos: #3987e5; --neg: #e66767; --mid: #383835; --good-text: #10ac10; --crit: #e66767; --warn: #fab219; --shadow: none;
   --scale-lo: #0d366b; --scale-mid: #3987e5; --scale-hi: #cde2fb;
 }
 * { box-sizing: border-box; }
@@ -374,7 +374,7 @@ ul.plain { margin: 0 0 6px; padding-left: 20px; display: grid; gap: 2px; font-si
 .fdres ul, .fdlist ul.dl { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 4px; font-size: 12.5px; color: var(--ink-2); }
 .fdres li b { color: var(--good-text); }
 .fdres li.fail b { color: var(--crit); }
-.fdlist h4.subhead { margin: 4px 0 6px; }
+.fdlist h4.subhead, .fdlist h3.subhead { margin: 4px 0 6px; }
 .fdlist ul.dl { margin: 0; gap: 6px; }
 .fdlist ul.dl li { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
 .fdlist .main { flex: 1 1 150px; min-width: 0; display: grid; }

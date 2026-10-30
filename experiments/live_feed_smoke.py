@@ -15,7 +15,10 @@ never had a working one.
 
     python experiments/live_feed_smoke.py [--only cboe,sec] [--json FILE] [--strict]
 
-The SEC contact is read from ``SEC_EDGAR_USER_AGENT`` and from nowhere else: nothing is invented, so without it the SEC checks are ``skipped``.
+The SEC contact is read from ``SEC_EDGAR_USER_AGENT`` and from nowhere else: nothing is invented, so without it the SEC checks are ``skipped``. Finzdata's key is read from ``FINZDATA_API_KEY`` and from
+nowhere else, and without it the ``finzdata`` check is ``skipped``; with it the ``finzdata`` check spends about five of the 1,000 calls a day, none of its data is kept, and its answer names the columns the service
+really sends (its OpenAPI document leaves them undefined), so that a parser which guessed a name wrongly can be corrected from one run. ``finzdata_reach`` spends about nine more to say what the plan is
+and, for the prices, crypto, options, fundamentals and positioning endpoints that no tab reads yet, which columns their rows have; it judges nothing and fails only when the key is refused.
 """
 
 from __future__ import annotations
@@ -23,7 +26,9 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
+import tempfile
 import time
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, timezone
@@ -33,10 +38,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import pandas as pd                                                     # noqa: E402
 
-from src.assets.free_data import cboe_futures, crypto, futures, options   # noqa: E402
+from src.assets import futures_analytics as fa                         # noqa: E402
+from src.assets.free_data import cboe_futures, crypto, finzdata as fz, futures, options   # noqa: E402
 from src.assets.free_data.http import FetchError, Http                 # noqa: E402
 from src.fundamentals.errors import FundamentalsError, NotFound, ProviderError, RateLimited   # noqa: E402
 from src.fundamentals.providers.sec_edgar import SecEdgarProvider      # noqa: E402
+from src.webapp.finzdata import FinzdataClient, FinzdataError          # noqa: E402
 
 REFUSED_STATUS = (403, 429, 451)
 STATUSES = ("ok", "refused", "broken", "skipped")
@@ -186,8 +193,119 @@ def sec_filers(ctx) -> str:
     return f"{len(names.rows)} companies reported assets in {names.period}; Apple Inc. is CIK {hit[1][0]}"
 
 
+def _finzdata_client(ctx) -> FinzdataClient:
+    key = ctx.get("finzdata_key")
+    if not key:
+        raise Skipped("no key for Finzdata: set the FINZDATA_API_KEY secret")
+    return FinzdataClient(key=key, transport=ctx.get("finzdata_transport"), sleep=ctx.get("finzdata_sleep", time.sleep), pause=ctx.get("finzdata_pause", 0.2))
+
+
+def finzdata(ctx) -> str:
+    """Finzdata's futures: the list of markets, then for the E-mini S&P 500 and crude oil the contract list and the daily bars of every contract (the same path as a download), and that the Futures tab
+    can list every contract it got. Judged on counts and dates, not values; the answer names the columns the rows really have."""
+    client = _finzdata_client(ctx)
+    today = pd.Timestamp(datetime.now(timezone.utc).date())
+    roots_answer = client.roots()
+    roots = fz.normalise_roots(roots_answer)
+    expect(len(roots) >= 100 and {"ES", "CL", "ZN"} <= {r["root"] for r in roots}, f"{len(roots)} markets; ES, CL and ZN must be among them (its page lists 139)")
+    seen, said, columns = [], [], {"roots": ",".join(dict.fromkeys(k for r in fz.rows_of(roots_answer, "the markets")[:20] for k in r))}
+    for root, floor in (("ES", 8), ("CL", 20)):
+        d = fz.fetch_curve(client, root, start=today - pd.Timedelta(days=12), today=today)       # the contract list, then the bars of every contract: the path of a download
+        frame, meta = d.frame, d.meta
+        unread = next((n for n in meta["notes"] if "could not be read" in n), "")
+        expect(meta["contracts_listed"] >= floor, f"{root}: {meta['contracts_listed']} contracts listed (a market with a contract every {'quarter' if root == 'ES' else 'month'} has at least {floor}) {unread}".strip())
+        expect(frame["contract"].nunique() >= 2 and len(frame) >= 10, f"{root}: {frame['contract'].nunique()} contracts and {len(frame)} rows of bars in the last 12 days")
+        fresh(frame["date"].max(), 8, f"Finzdata's {root} bars")
+        expect(bool((frame["price"] > 0).all()) and bool((frame["expiry"] >= frame["date"]).all()), f"{root}: a price that is not positive, or a bar after its contract's expiry")
+        with tempfile.TemporaryDirectory() as tmp:                                      # the table is read back the way the Futures tab reads a download, and not kept
+            path = Path(tmp) / f"{root}.csv"
+            frame.to_csv(path, index=False)
+            data = fa.load_curve_file(path, root, source="downloaded")
+        every = fa.curve_snapshot(data, None)
+        columns["contracts"], columns["daily"] = ",".join(meta["columns"]["contracts"]), ",".join(meta["columns"]["daily"])
+        expect(len(every["rows"]) == every["listed"] == int((frame["date"] == frame["date"].max()).sum()), f"{root}: the Futures tab lists {len(every['rows'])} of {every['listed']} contracts on {every['date']}")
+        seen.append(f"{root}: {meta['contracts_listed']} listed ({','.join(meta['expiry_basis'])}), {frame['contract'].nunique()} with bars, {every['listed']} on {every['date']}, {meta['mode']}, oi {'yes' if meta['has_open_interest'] else 'no'}")
+        said += [n for n in meta["notes"] if "plan" in n.lower() or "30 days" in n][:1]
+    return "; ".join([f"columns - markets: {columns['roots']} | contracts: {columns['contracts']} | daily: {columns['daily']}", *seen, *(["plan: " + said[0]] if said else [])])
+
+
+# What the key can read besides futures, for the tabs Finzdata could feed next. The service's OpenAPI document leaves every row undefined, so the columns are only known by asking; the answer of this check
+# is how they are found out. Nothing here is judged: a dataset the plan leaves out, or a request the service does not understand, is told in a line and the run goes on.
+REACH = (("prices", "/v1/prices/daily", {"symbol": "SPY", "limit": 3, "format": "json"}),
+         ("crypto pairs", "/v1/crypto/pairs", {}),
+         ("crypto bars", "/v1/crypto/bars", {"symbol": None, "limit": 3, "format": "json"}),
+         ("gex", "/v1/gex/daily", {"ticker": "SPY", "limit": 3, "format": "json"}),
+         ("options", "/v1/options/eod", {"ticker": "SPY", "limit": 3, "format": "json"}),
+         ("fundamentals", "/v1/fundamentals", {"ticker": "AAPL", "limit": 3, "format": "json"}),
+         ("cot", "/v1/cot", {"limit": 3, "format": "json"}))
+PLAN_KEY = re.compile(r"plan|tier|limit|quota|remain|window|history|calls|rate|days", re.I)
+PRIVATE_KEY = re.compile(r"mail|key|token|secret|user|owner|customer|account|address|^ip", re.I)
+
+
+def plan_fields(answer) -> str:
+    """The plan and the allowance out of ``/v1/me``, and nothing that names a person: numbers and short words under keys that talk about the plan, never an address, a key or an id."""
+    flat: dict[str, object] = {}
+    for k, v in (answer.items() if isinstance(answer, dict) else []):
+        if isinstance(v, dict):
+            flat.update({f"{k}.{kk}": vv for kk, vv in v.items()})
+        else:
+            flat[str(k)] = v
+    kept = []
+    for k, v in flat.items():
+        text = str(v)
+        if v is None or isinstance(v, (dict, list)) or not PLAN_KEY.search(k) or PRIVATE_KEY.search(k) or "@" in text or text.startswith("fz_") or len(text) > 40:
+            continue
+        kept.append(f"{k}={text}")
+    return ", ".join(kept[:8]) or "no plan fields recognised"
+
+
+def dataset_names(answer) -> list[str]:
+    if isinstance(answer, dict):
+        listed = answer["data"] if isinstance(answer.get("data"), list) else next((v for v in answer.values() if isinstance(v, list)), None)
+        if listed is None:
+            return [str(k)[:24] for k in answer if k not in ("history_note", "upgrade")][:14]
+    else:
+        listed = answer if isinstance(answer, list) else []
+    return [str((r.get("key") or r.get("id") or r.get("name") or r.get("dataset") or "?") if isinstance(r, dict) else r)[:24] for r in listed][:14]
+
+
+def _look(client: FinzdataClient, name: str, path: str, params: dict):
+    """``(line, rows)`` for one request: the number of rows and their columns, or a sentence on why there are none. A refused key or an used-up day is raised: it ends the check."""
+    try:
+        answer = client.get(path, params)
+    except FinzdataError as exc:
+        if exc.kind in ("key", "quota", "budget"):
+            raise
+        return f"{name}: " + ("not in the plan" if exc.kind == "plan" else f"HTTP {exc.status}" if exc.status else exc.kind), []
+    try:
+        rows = fz.rows_of(answer, name)
+    except fz.ShapeError:
+        return f"{name}: a document with keys {','.join(sorted(answer)[:8]) if isinstance(answer, dict) else type(answer).__name__}", []
+    if not rows:
+        return f"{name}: no rows", []
+    return f"{name}: {len(rows)} rows ({','.join(list(dict.fromkeys(k for r in rows[:20] for k in r))[:10])})", rows
+
+
+def finzdata_reach(ctx) -> str:
+    """The plan, the datasets, and for each tab that Finzdata might feed one call that shows the columns of its rows (nothing is kept, nothing is judged)."""
+    client = _finzdata_client(ctx)
+    me = client.me()
+    lines = [f"plan: {plan_fields(me)}", f"datasets: {','.join(dataset_names(client.get('/v1/datasets'))) or 'none listed'}"]
+    pair = None
+    for name, path, params in REACH:
+        if name == "crypto bars" and pair is None:
+            lines.append("crypto bars: no pair to ask for")
+            continue
+        line, rows = _look(client, name, path, {**params, "symbol": pair} if name == "crypto bars" else params)
+        lines.append(line)
+        if name == "crypto pairs" and rows:
+            names = [str(v) for r in rows for k, v in r.items() if str(k).lower() in ("symbol", "pair", "id", "name") and isinstance(v, str)]
+            pair = next((n for n in names if "BTC" in n.upper()), names[0] if names else None)
+    return "reach (not judged) - " + " | ".join(lines)
+
+
 CHECKS = {"cboe": cboe, "deribit": deribit, "exchanges": exchanges, "crypto_history": crypto_history, "okx_funding": okx_funding, "yahoo": yahoo, "cboe_vx": cboe_vx, "yahoo_futures": yahoo_futures,
-          "deribit_futures": deribit_futures, "sec_facts": sec_facts, "sec_record": sec_record, "sec_tickers": sec_tickers, "sec_filers": sec_filers}
+          "deribit_futures": deribit_futures, "finzdata": finzdata, "finzdata_reach": finzdata_reach, "sec_facts": sec_facts, "sec_record": sec_record, "sec_tickers": sec_tickers, "sec_filers": sec_filers}
 
 
 # ------------------------------------------------------------------------------------------------------------------ running them
@@ -218,7 +336,7 @@ def run_checks(checks: dict, ctx: dict, only: list[str] | None = None, clock=tim
             status, detail = "ok", check(ctx)
         except Exception as error:                                          # a check that fails for any reason is a result, never a crash of the run
             status, detail = classify(error)
-        out.append(Result(name, status, str(detail)[:400], round(clock() - started, 2)))
+        out.append(Result(name, status, str(detail)[:900], round(clock() - started, 2)))
     return out
 
 
@@ -251,7 +369,7 @@ def main(argv=None, transport=None, checks: dict | None = None) -> int:
     parser.add_argument("--strict", action="store_true", help="a refusal fails the run too")
     args = parser.parse_args(argv)
     contact = os.environ.get("SEC_EDGAR_USER_AGENT", "").strip()
-    ctx = {"http": Http(transport=transport, timeout=30.0), "sec_contact": contact}
+    ctx = {"http": Http(transport=transport, timeout=30.0), "sec_contact": contact, "finzdata_key": os.environ.get("FINZDATA_API_KEY", "").strip()}
     results = run_checks(checks or CHECKS, ctx, [x.strip() for x in args.only.split(",")] if args.only else None)
     print(render(results))
     if args.json:

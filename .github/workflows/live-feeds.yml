@@ -3,7 +3,10 @@ name: live feeds
 # Weekly (and on demand) check that every public data feed the application reads still answers, and still in the shape the parsers expect. The test suite never touches the network, so a feed that
 # changes a field, moves an address or goes away would pass every test and break the app; this run is the one that notices. It fails when a feed answered with something unusable ("broken"), and only
 # warns when a server refused this address ("refused": shared cloud addresses are often turned away). iTick needs a key and is not checked. The SEC checks need the repository secret SEC_EDGAR_USER_AGENT (a name
-# and an email address, which the SEC asks every program to give); without it they are skipped, and nothing is sent to the SEC in anyone's name.
+# and an email address, which the SEC asks every program to give); without it they are skipped, and nothing is sent to the SEC in anyone's name. The Finzdata check needs the repository secret
+# FINZDATA_API_KEY and is skipped without it: it spends about five of the key's 1,000 calls a day (a second check, finzdata_reach, about nine more, to say which plan the key is on and which columns the
+# endpoints no tab reads yet send), keeps none of the data (Finzdata's terms forbid passing it on, so the uploaded file holds counts, dates and column names only), and says which columns the service
+# really sends. Finzdata asks that a key be used from one place at a time; a run of a few calls a week beside the app is no concern.
 on:
   schedule:
     - cron: "17 16 * * 3"          # Wednesday in the US session (12:17 New York in summer, 11:17 in winter): Cboe's delayed quotes carry no offers before the open, at weekends or on a Monday holiday
@@ -33,6 +36,7 @@ jobs:
       - name: Check every feed
         env:
           SEC_EDGAR_USER_AGENT: ${{ secrets.SEC_EDGAR_USER_AGENT }}
+          FINZDATA_API_KEY: ${{ secrets.FINZDATA_API_KEY }}
         run: python experiments/live_feed_smoke.py --json live_feeds.json ${{ inputs.strict && '--strict' || '' }}
       - uses: actions/upload-artifact@v4
         if: always()

@@ -25,17 +25,19 @@
   }
   /* Run the requests of a plan one after the other and file each answer under the modes that draw from it. A step is { modes, path, query | body, job, cacheKey }: a GET with a query string, or a POST
      (a job when ``job`` is set); an answer kept under ``cacheKey`` in ``lab.cache`` is not asked for twice. Whatever goes wrong is shown on the mode that was open when the request was made. */
+  /* Forget the answers kept for a workspace (the data changed, or Refresh was pressed). An answer still on its way was asked for before this, so it is shown when it arrives but not kept. */
+  function dropCache(lab) { if (lab.cache) lab.cache.clear(); lab.gen = (lab.gen || 0) + 1; }
   async function request(lab, build, message) {
     if (lab.busy) { lab.queued = () => request(lab, build, message); return; }             // a control changed while a request was running: ask again, with what the form says now, when it ends
     let steps; try { steps = build(); } catch (e) { Q.toast(e.message); return; }
-    const mode = lab.mode; lab.busy = message; Q.syncLab(lab);
+    const mode = lab.mode, gen = lab.gen || 0; lab.busy = message; Q.syncLab(lab);
     try {
       for (const st of steps) {
         let data = st.cacheKey && lab.cache ? lab.cache.get(st.cacheKey) : undefined;
         if (data === undefined) {
           if (st.job) data = await poll(lab, (await api(st.path, st.body)).job, message);
           else data = st.body ? await api(st.path, st.body) : await api(st.path + qs(st.query));
-          if (st.cacheKey && lab.cache) lab.cache.set(st.cacheKey, data);
+          if (st.cacheKey && lab.cache && (lab.gen || 0) === gen) lab.cache.set(st.cacheKey, data);        // not if the cache was dropped while this was on its way: it was asked for before the data changed
         }
         for (const m of st.modes) { lab.results[m] = { data, body: st.body || st.query || {} }; lab.errors[m] = null; }
       }
@@ -292,11 +294,60 @@
     });
     return box;
   }
+  /* Finzdata in a card: the steps that turn it on (the key is never typed into this page), or the day's calls and the markets already stored with how long each has before a window of 30 days slides past
+     its newest bar. ``info`` is the server's Finzdata status (GET /api/data/status); ``hooks.choose(roots)`` adds the stored markets to the choice. */
+  const FINZ_GUIDE = { product: "Finzdata", name: "FINZDATA_API_KEY", get: "Get a free API key at finzdata.com (it asks only for an email) and copy it.", last: "Come back to this card, choose Finzdata and press Download real data." };
+  function finzdataBox(parent, info, hooks) {
+    const box = h("div", "finzdata", parent); box.dataset.role = "finzdata-box";
+    if (!info || !info.configured) {
+      if (info && info.setup === "key") Q.setupGuide(box, undefined, FINZ_GUIDE);
+      else { const w = h("p", "hint", box, (info && info.problem) || "Finzdata is not available."); w.style.color = Q.css("--warn"); }
+      return box;
+    }
+    h("p", "hint", box, `Your Finzdata key is set. ${info.calls_today.toLocaleString("en-US")} of the ${info.budget.toLocaleString("en-US")} calls this app sends in a day have been used today (the free plan allows ${info.daily_allowance.toLocaleString("en-US")}); a market costs two.`);
+    for (const note of info.key_notes || []) { const w = h("p", "hint", box, "The key: " + note + "."); w.style.color = Q.css("--warn"); }
+    if (!(info.stored || []).length) { h("p", "hint", box, `Nothing is stored from Finzdata yet. The free plan shows only the last ${info.window_days} days, so download a market now and again later: each download is merged into the stored file and the history grows.`); return box; }
+    h("h3", "subhead", box, "Stored from Finzdata");
+    Q.simpleTable(box, [{ label: "Market", get: (r) => `${r.root} · ${r.name}` }, { label: "Stored", get: (r) => `${r.stored_from} to ${r.stored_to}` }, { label: "Days", num: true, get: (r) => String(r.days) },
+      { label: "Contracts", num: true, get: (r) => String(r.contracts) }, { label: "Open interest", get: (r) => (r.has_open_interest ? "yes" : "no") },
+      { label: "Last bar", num: true, get: (r) => `${r.age} days ago` }, { label: "Window left", num: true, title: "Days before the plan's window slides past the newest stored bar", get: (r) => (r.left === null ? "full history" : r.urgent ? `${Math.max(r.left, 0)} days: update now` : `${r.left} days`) },
+      { label: "Gaps", num: true, get: (r) => (r.gap_count ? `${r.gap_count}: ${r.gaps.slice(0, 2).map((g) => g.from + " to " + g.to).join(", ")}${r.gap_count > 2 ? " …" : ""}` : "none") }], info.stored);
+    if (hooks && hooks.choose) {
+      const row = h("div", "row tight", box), all = h("button", "btn small", row, `Choose the ${info.stored.length} stored market${info.stored.length === 1 ? "" : "s"} to update`); all.type = "button"; all.dataset.action = "choose-stored";
+      all.addEventListener("click", () => hooks.choose(info.stored));
+      h("span", "hint", row, "then press Download real data");
+    }
+    h("p", "hint", box, info.terms);
+    return box;
+  }
+  /* Every contract Finzdata lists for one market (GET /api/data/contracts): a table with each contract's expiry, whether it still trades, its first and last bar and what is stored of it. */
+  function finzdataContracts(parent, getRoot) {
+    const box = h("div", "finzcontracts", parent), row = h("div", "row tight", box), go = h("button", "btn small", row, "List every contract of the market chosen above"), out = h("div", "", box);
+    go.type = "button"; go.dataset.action = "list-contracts"; out.setAttribute("aria-live", "polite");
+    const show = async (refresh) => {
+      const root = getRoot(); if (!root) { out.textContent = "Choose a market above first."; return; }
+      go.disabled = true; out.textContent = `Asking Finzdata for the contracts of ${root}…`;
+      try {
+        const r = await api("/api/data/contracts" + qs({ root, refresh: refresh ? 1 : "" }));
+        out.replaceChildren();
+        h("p", "hint", out, `${r.root} · ${r.name}: ${r.listed} contracts (${r.live} still trading, ${r.expired} expired); ${r.stored} stored here. ${r.called ? "Fetched just now" : "From the list kept " + ago(r.fetched_at)}.` +
+          (Object.keys(r.basis).some((k) => k !== "service") ? ` Expiry dates: ${Object.entries(r.basis).map(([k, n]) => n + " from " + (k === "service" ? "Finzdata" : k === "last bar" ? "the last bar" : k === "rule" ? "the exchange's rule" : "an estimate (the 15th)")).join(", ")}.` : ""));
+        Q.simpleTable(out, [{ label: "Contract", get: (c) => c.contract }, { label: "Code", get: (c) => c.code }, { label: "Expiry", get: (c) => c.expiry + (c.expiry_basis === "service" ? "" : " ~") }, { label: "Status", get: (c) => c.status },
+          { label: "First bar", get: (c) => c.first_date || "" }, { label: "Last bar", get: (c) => c.last_date || "" }, { label: "Stored", num: true, get: (c) => (c.stored_rows ? `${c.stored_rows} rows` : "") }], r.contracts);
+        const again = h("button", "link", out, "Fetch the list again"); again.type = "button"; again.addEventListener("click", () => show(true));
+      } catch (e) { out.textContent = e.status === 404 ? "The app behind this page cannot list contracts: it is older than the page. " + Q.RESTART : e.message; }
+      go.disabled = false;
+    };
+    go.addEventListener("click", () => show(false));
+    return box;
+  }
   /* A search over the products iTick lists (the list is bundled with the app: searching costs no call). ``chosen`` is a Set of items such as "US:NQ" and ``names`` an object that remembers the name of each,
      so a chosen product keeps its label when the search moves on. ``opts``: kind ("futures" or "crypto"), regions [{id, name}] and groups for the futures filters, ``after`` (called when the choice changes). */
   function finder(parent, chosen, names, opts) {
     const box = h("div", "finder", parent), chips = h("div", "picks chosen", box), bar = h("div", "finderbar", box), q = h("input", "", bar), hits = h("div", "hits", box), note = h("p", "hint", box);
-    q.type = "search"; q.placeholder = opts.kind === "crypto" ? "Search a coin: sol, doge, avalanche" : "Search a product: nasdaq, crude, gold, hang seng, rebar"; q.spellcheck = false; q.setAttribute("aria-label", "search iTick products");
+    const finz = opts.source === "finzdata";
+    q.type = "search"; q.placeholder = opts.kind === "crypto" ? "Search a coin: sol, doge, avalanche" : finz ? "Search a market: nasdaq, crude, gold, euro, dax" : "Search a product: nasdaq, crude, gold, hang seng, rebar"; q.spellcheck = false;
+    q.setAttribute("aria-label", finz ? "search Finzdata markets" : "search iTick products");
     q.dataset.role = "finder-search";
     const state = { region: "", group: "" };
     const select = (label, key, options) => {
@@ -322,7 +373,8 @@
       if (!res) return;
       for (const r of res.results) {
         const b = h("button", "hit", hits); b.type = "button"; b.dataset.value = r.item; b.setAttribute("aria-pressed", String(chosen.has(r.item)));
-        h("b", "", b, r.item); h("span", "", b, r.name + (r.exchange ? " · " + r.exchange : "") + (r.kind === "contract" ? " · one contract" : ""));
+        h("b", "", b, r.item); h("span", "", b, r.name + (r.exchange ? " · " + r.exchange : "") + (r.kind === "contract" ? " · one contract" : "") + (finz ? ` · ${r.group}${r.history_from ? " · since " + r.history_from : ""}${r.contracts ? " · " + r.contracts + " contracts" : ""}` : ""));
+        if (finz && r.stored_to) { const tag = h("span", "access ok", b, "✓ stored to " + r.stored_to); tag.title = `${r.stored_days} days are stored here`; }
         if (r.access) {                                                                      // what iTick gave this key when it was asked: the list is iTick's, the plan is yours
           const tag = h("span", "access " + (r.access.ok ? "ok" : "no"), b, r.access.ok ? "✓ worked" : "✗ not for your key");
           tag.title = (r.access.ok ? "iTick returned this product for your key" : "iTick did not return this product for your key") + " on " + r.access.at + (r.access.why ? ": " + r.access.why : "") + ". It may have changed since.";
@@ -334,9 +386,14 @@
       }
       const typed = String(q.value).trim();
       if (!res.results.length) {
-        note.textContent = opts.kind === "crypto" ? "iTick's list has no such coin." : opts.source === "yahoo" ? "No future in the bundled list matches: ask Yahoo, below." : "No product in the list matches.";
+        note.textContent = opts.kind === "crypto" ? "iTick's list has no such coin." : opts.source === "yahoo" ? "No future in the bundled list matches: ask Yahoo, below." : finz ? "No market in Finzdata's list matches: try the symbol, or refresh the list from Finzdata below." : "No product in the list matches.";
         if (opts.source === "yahoo") {
           if (/^[A-Za-z0-9]{1,9}=F$/.test(typed)) {
+            const item = typed.toUpperCase(), use = h("button", "link", note, ` Try ${item} anyway`); use.type = "button";
+            use.addEventListener("click", () => { chosen.add(item); names[item] = ""; paintChosen(); if (opts.after) opts.after(); });
+          }
+        } else if (finz) {
+          if (/^[A-Za-z0-9]{1,6}$/.test(typed)) {
             const item = typed.toUpperCase(), use = h("button", "link", note, ` Try ${item} anyway`); use.type = "button";
             use.addEventListener("click", () => { chosen.add(item); names[item] = ""; paintChosen(); if (opts.after) opts.after(); });
           }
@@ -344,7 +401,7 @@
           const item = /:/.test(typed) ? typed.toUpperCase() : "US:" + typed.toUpperCase(), use = h("button", "link", note, `Try ${item} anyway`); use.type = "button";
           use.addEventListener("click", () => { chosen.add(item); names[item] = ""; paintChosen(); if (opts.after) opts.after(); });
         }
-      } else if (!typed && !state.region && !state.group) note.textContent = opts.source === "yahoo" ? `${res.shown} of the ${res.total} futures in the list, the best known first. Type a name to search them all.` : `The ${res.shown} products people look for most${res.total > res.shown ? " (of " + res.total + ")" : ""}. Type to search all of iTick's list.`;
+      } else if (!typed && !state.region && !state.group) note.textContent = opts.source === "yahoo" ? `${res.shown} of the ${res.total} futures in the list, the best known first. Type a name to search them all.` : finz ? `The ${res.total} markets people look for most, of the ${(opts.markets || 139)} Finzdata lists. Type a name to search them all, or choose an asset class.` : `The ${res.shown} products people look for most${res.total > res.shown ? " (of " + res.total + ")" : ""}. Type to search all of iTick's list.`;
       else if (res.total > res.shown) note.textContent = `${res.shown} of ${res.total} shown: type more to narrow the list.`;
     };
     let ask = null;
@@ -359,6 +416,16 @@
           note.textContent = res.found ? `Yahoo found ${res.found} future${res.found === 1 ? "" : "s"} for “${typed}”${res.new ? ` (${res.new} new to the list, kept)` : ""}.${res.incomplete ? " It stopped answering part-way." : ""}` : `Yahoo has no future for “${typed}”.`;
         } catch (e) { note.textContent = e.status === 404 ? "The app behind this page cannot ask Yahoo: it is older than the page. " + Q.RESTART : e.message; }
         ask.disabled = false;
+      });
+    }
+    if (finz) {                                                                              // Finzdata's own list of markets replaces the copy that ships with the app (one call)
+      const fresh = h("button", "btn small", box, "Refresh the list from Finzdata (1 call)"); fresh.type = "button"; fresh.dataset.role = "finder-refresh";
+      fresh.title = "Asks Finzdata for the markets it lists now and keeps the answer, so the search shows its names and contract counts.";
+      fresh.addEventListener("click", async () => {
+        fresh.disabled = true; note.textContent = "Asking Finzdata…";
+        try { const res = await api("/api/data/lookup", { kind: "futures", source: "finzdata", q: q.value }); paintHits(res); note.textContent = `Finzdata lists ${res.markets} markets${res.new.length ? `; new to this app: ${res.new.slice(0, 8).join(", ")}` : ""}${res.missing_count ? `; ${res.missing_count} of the bundled list are no longer sent` : ""}.`; }
+        catch (e) { note.textContent = e.message; }
+        fresh.disabled = false;
       });
     }
     const look = async () => {
@@ -431,7 +498,7 @@
     const st = lab.free, el = st.el && st.el.list; if (!el || !el.isConnected) return;
     const items = status.kinds[spec.kind].downloads; el.replaceChildren();
     if (!items.length) { h("p", "hint", el, "Nothing is downloaded yet: until it is, this tab shows a model."); return; }
-    h("h4", "subhead", el, "Downloaded");
+    h("h3", "subhead", el, "Downloaded");
     const ul = h("ul", "dl", el);
     for (const rec of items) {
       const li = h("li", "", ul); li.dataset.name = rec.name; const [headline, detail] = spec.describe(rec);
@@ -449,7 +516,7 @@
   async function changed(lab, spec) {                                                        // the downloads changed: ask again what exists, so the menus and the views follow
     const st = lab.free; await dataStatus(true);
     spec.setCatalog(await refreshCatalog());
-    lab.cache.clear(); lab.results = {}; lab.errors = {};
+    dropCache(lab); lab.results = {}; lab.errors = {};
     if (!Q.$(lab.view).hidden) Q.renderLab(lab); else if (st.el) paintList(lab, spec, statusCache);
   }
   async function submit(lab, spec, body) {
@@ -465,5 +532,5 @@
     st.busy = ""; paintLive(lab);
   }
 
-  window.WS = { pipelineResult, riskCharts, riskGrid, pctAxis, request, catalog, refreshCatalog, dataCard, picks, finder, itickBox, ago, provenance, flags, seg, pills, meter, palette, kv, sub, hint, card, signed, points, shortDate, dayMonth, percentList, csvDownload, qs, sourceText };
+  window.WS = { pipelineResult, riskCharts, riskGrid, pctAxis, request, dropCache, catalog, refreshCatalog, dataCard, picks, finder, itickBox, finzdataBox, finzdataContracts, ago, provenance, flags, seg, pills, meter, palette, kv, sub, hint, card, signed, points, shortDate, dayMonth, percentList, csvDownload, qs, sourceText };
 })();

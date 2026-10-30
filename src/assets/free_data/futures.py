@@ -260,7 +260,8 @@ def yahoo_history(payload: dict) -> pd.DataFrame:
 
 
 def merge_history(old: pd.DataFrame | None, new: pd.DataFrame, keys=("date", "contract")) -> pd.DataFrame:
-    """The union of an earlier download and a new one: where both have a row for the same key the new one wins; the rows of contracts the new download no longer has are kept."""
+    """The union of an earlier download and a new one: where both have a row for the same key the new one wins; the rows of contracts the new download no longer has are kept. A value the new row
+    lacks (a column only the earlier download had, such as the open interest of another source, or a missing number) is taken from the earlier row it replaces."""
     if old is None or old.empty:
         return new
     old = old.copy()
@@ -269,7 +270,12 @@ def merge_history(old: pd.DataFrame | None, new: pd.DataFrame, keys=("date", "co
         frame["date"] = pd.to_datetime(frame["date"])
         if "expiry" in frame:
             frame["expiry"] = pd.to_datetime(frame["expiry"])
-    merged = pd.concat([old[~old.set_index(list(keys)).index.isin(new.set_index(list(keys)).index)], new], ignore_index=True)
+    keys = list(keys)
+    old_index, new_index = old.set_index(keys), new.set_index(keys)
+    replaced = old_index.index.intersection(new_index.index)
+    if len(replaced):
+        new = new_index.combine_first(old_index.loc[replaced]).reset_index()[list(dict.fromkeys(list(new.columns) + [c for c in old.columns if c not in new.columns]))]
+    merged = pd.concat([old[~old_index.index.isin(new_index.index)], new], ignore_index=True)
     return merged.sort_values(["date", "expiry", "contract"]).reset_index(drop=True)
 
 

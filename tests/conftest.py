@@ -17,6 +17,12 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 
 
+@pytest.fixture(autouse=True)
+def _no_finzdata_key(monkeypatch):
+    """A developer's own Finzdata key must never make a test call the real service: a test that needs a key sets one itself and gives the client a fake transport."""
+    monkeypatch.delenv("FINZDATA_API_KEY", raising=False)
+
+
 @pytest.fixture(scope="session")
 def rng():
     return np.random.default_rng(20240101)

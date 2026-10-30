@@ -193,10 +193,12 @@ def curve_state(roll_yields: np.ndarray, log_slope: float, tol: float = 0.005) -
     return "mixed"
 
 
-def curve_snapshot(data: CurveData, depth: int = 12, date=None) -> dict:
-    """The curve on one date (default the latest): each contract's expiry, days to expiry, price, open interest, annualised roll yield against the next contract, and the curve's state, slope and curvature."""
+def curve_snapshot(data: CurveData, depth: int | None = 12, date=None) -> dict:
+    """The curve on one date (default the latest): each contract's expiry, days to expiry, price, open interest, annualised roll yield against the next contract, and the curve's state, slope and curvature.
+    ``depth`` is how many of the nearest contracts to list (``None``: every contract the table has on that date); ``listed`` says how many there are."""
     d = pd.Timestamp(date) if date is not None else data.as_of
-    g = data.long[pd.to_datetime(data.long["date"]) == d].sort_values("expiry").head(depth)
+    everything = data.long[pd.to_datetime(data.long["date"]) == d].sort_values("expiry")
+    g = everything if depth is None else everything.head(depth)
     if len(g) < 2:
         raise ValueError(f"fewer than two contracts on {d.date()}")
     price, ttm = g["price"].to_numpy(dtype=float), g["ttm"].to_numpy(dtype=float)
@@ -212,20 +214,20 @@ def curve_snapshot(data: CurveData, depth: int = 12, date=None) -> dict:
                      "change_vs_front": float(r.price / price[0] - 1.0), "roll_yield": None if not np.isfinite(ry[i]) else float(ry[i]),
                      "open_interest": None if not np.isfinite(r.open_interest) else float(r.open_interest), "volume": None if not np.isfinite(r.volume) else float(r.volume)})
     spec = data.spec
-    return {"date": str(d.date()), "root": data.root, "name": spec.name, "rows": rows, "state": state, "annualised_carry": float(ry[0]), "log_slope": slope, "curvature": curv,
+    return {"date": str(d.date()), "root": data.root, "name": spec.name, "rows": rows, "listed": int(len(everything)), "state": state, "annualised_carry": float(ry[0]), "log_slope": slope, "curvature": curv,
             "front": rows[0]["contract"], "front_price": float(price[0]), "multiplier": spec.multiplier, "tick_size": spec.tick_size, "tick_value": spec.tick_value,
             "notional": float(price[0] * spec.multiplier)}
 
 
-def curve_history(data: CurveData, dates: int = 3, spacing: int = 21) -> list[dict]:
-    """The curve now and ``spacing`` trading days ago, twice more, for the chart that shows how it moved."""
+def curve_history(data: CurveData, dates: int = 3, spacing: int = 21, depth: int | None = 12) -> list[dict]:
+    """The curve now and ``spacing`` trading days ago, twice more, for the chart that shows how it moved; ``depth`` as in :func:`curve_snapshot`."""
     idx = pd.DatetimeIndex(sorted(pd.to_datetime(data.long["date"]).unique()))
     out = []
     for i in range(dates):
         pos = len(idx) - 1 - i * spacing
         if pos < 0:
             break
-        snap = curve_snapshot(data, 12, idx[pos])
+        snap = curve_snapshot(data, depth, idx[pos])
         out.append({"date": snap["date"], "points": [{"dte": r["dte"], "price": r["price"], "contract": r["contract"]} for r in snap["rows"]]})
     return out
 

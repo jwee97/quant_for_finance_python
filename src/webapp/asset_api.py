@@ -564,13 +564,17 @@ class AssetApi:
         return parts
 
     def futures_curve(self, q: dict) -> dict:
-        """``GET /api/futures/curve?root=CL&spacing=21&dates=3``: the curve now and ``spacing`` trading days ago (``dates`` of them), the shape of the curve through time, its principal components, carry, basis
-        and the one-line snapshot."""
+        """``GET /api/futures/curve?root=CL&spacing=21&dates=3&contracts=12``: the curve now and ``spacing`` trading days ago (``dates`` of them), the shape of the curve through time, its principal components,
+        carry, basis and the one-line snapshot. ``contracts`` is how many of the nearest contracts the curve lists (2 to 400, or ``all``/``0`` for every contract the table has); above twelve, the shape of
+        the curve through time follows it up to 24 contract months (it is eight otherwise), and the principal components stay on the nearest eight, where the daily changes are well observed."""
         data = self._curve(str(q.get("root") or "CL"))
         spacing, dates = _number(q, "spacing", 21, 1, 504, integer=True), _number(q, "dates", 3, 2, 6, integer=True)
+        every = str(q.get("contracts") or "12").strip().lower() in ("0", "all")
+        depth = None if every else _number(q, "contracts", 12, 2, 400, integer=True)
         try:
-            snap = fa.curve_snapshot(data)
-            out = {"root": data.root, "curve": snap, "history": fa.curve_history(data, dates, spacing), "shape": fa.curve_shape_history(data), "pca": self._optional(fa.term_structure_pca, data), "carry": fa.carry_dashboard(data),
+            snap = fa.curve_snapshot(data, depth)
+            out = {"root": data.root, "curve": snap, "history": fa.curve_history(data, dates, spacing, depth), "shape": fa.curve_shape_history(data, 8 if depth is not None and depth <= 12 else min(depth or 24, 24)),
+                   "pca": self._optional(fa.term_structure_pca, data), "carry": fa.carry_dashboard(data),
                    "basis": fa.basis_dashboard(data), "snapshot": fa.futures_snapshot(data).to_dict(),
                    "spec": {"name": data.spec.name, "exchange": data.spec.exchange, "multiplier": data.spec.multiplier, "tick_size": data.spec.tick_size, "tick_value": data.spec.tick_value,
                             "initial_margin": data.spec.initial_margin, "maintenance_margin": data.spec.maintenance_margin}}
