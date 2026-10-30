@@ -16,7 +16,7 @@ from src.fundamentals.errors import FundamentalsError
 from src.fundamentals.research import UniverseSpec
 from src.fundamentals.service import FundamentalsService
 from src.fundamentals.store import CompanyProfile
-from src.fundamentals.workbench import Workbench, eval_spec, pit_settings, universe_spec
+from src.fundamentals.workbench import MAX_SCAN, Workbench, eval_spec, pit_settings, universe_spec
 
 FAKE_KEYS = {"OPENFILINGS_API_KEY_1": "of_zzzzSECRETzzzz_key_one_0123456789", "OPENFILINGS_API_KEY_2": "of_zzzzSECRETzzzz_key_two_9876543210"}
 PARTS = [{"kind": "factor", "name": "fcf_yield"}, {"kind": "factor", "name": "d_roic"}, {"kind": "technical", "name": "mom_12_1"}]
@@ -106,6 +106,29 @@ def test_one_company_shows_its_figures_ratios_decomposition_and_screens_with_the
         world.company(10_000_000)
 
 
+def test_the_company_view_carries_the_distress_scores_with_their_parts_and_the_graham_tests_year_by_year(world):
+    sid = int(world.store.securities().iloc[3]["security_id"])
+    c = world.company(sid)
+    json_safe(c)
+    models = {m["key"]: m for m in c["distress"]["models"]}
+    assert list(models) == ["double_prime", "prime"] and models["double_prime"]["zones"] == {"distress": 1.10, "safe": 2.60} and models["prime"]["zones"] == {"distress": 1.23, "safe": 2.90}
+    assert [w["weight"] for w in models["double_prime"]["weights"]] == [6.56, 3.26, 6.72, 1.05] and [w["weight"] for w in models["prime"]["weights"]] == [0.717, 0.847, 3.107, 0.420, 0.998]
+    for model in models.values():
+        assert len(model["series"]) == 11 and [s["fiscal_year"] for s in model["series"]] == [r["fiscal_year"] for r in c["annual"]]
+        last = model["series"][-1]
+        assert last["score"] == pytest.approx(sum(last["contributions"].values()), abs=1e-6) and set(last["ratios"]) == {w["key"] for w in model["weights"]}
+        low, high = model["zones"]["distress"], model["zones"]["safe"]
+        assert last["zone"] == ("distress" if last["score"] < low else "safe" if last["score"] > high else "grey")
+    assert c["series"]["altman_z_double_prime"][-1] == pytest.approx(models["double_prime"]["series"][-1]["score"]) and len(c["series"]["sustainable_growth"]) == 11 and "retained_earnings" in c["series"]
+    graham = c["graham"]
+    assert [t["key"] for t in graham["tests"]] == ["graham_current_ratio_ok", "graham_debt_ok", "graham_earnings_ok", "graham_dividends_ok", "graham_growth_ok"] and len(graham["rows"]) == 11
+    assert all(0 < len(t["short"]) <= 22 and len(t["label"]) > len(t["short"]) for t in graham["tests"])                        # a short name for a narrow chart, the whole of it for the text
+    last = graham["rows"][-1]
+    assert last["judged"] == sum(last[t["key"]] is not None for t in graham["tests"]) and last["met"] == sum(1 for t in graham["tests"] if last[t["key"]] == 1.0)
+    assert set(c["references"]) >= {"distress", "graham", "valuation", "growth", "dupont"} and all(r["cite"] for r in c["references"]["distress"])
+    assert last["judged"] >= 4 and graham["rules"]["multiplier"] == 22.5 and graham["rows"][0]["judged"] <= 2                  # eleven years judge the ten-year tests; the first year judges only the balance-sheet ones
+
+
 # ------------------------------------------------------------------------------------------------------------------------ the catalogue and the checks
 def test_the_catalogue_lists_every_choice_the_forms_offer(world):
     c = world.catalogue()
@@ -175,8 +198,8 @@ def test_a_scan_sets_many_factors_side_by_side_and_says_how_many_were_looked_at(
     assert stop["rows"] == []
     with pytest.raises(FundamentalsError, match="no factor called"):
         world.scan(ctx, ["not_a_factor"], eval_spec({}))
-    with pytest.raises(FundamentalsError, match="between 1 and"):
-        world.scan(ctx, ["roic"] * 200, eval_spec({}))
+    with pytest.raises(FundamentalsError, match=f"between 1 and {MAX_SCAN}"):
+        world.scan(ctx, ["roic"] * (MAX_SCAN + 1), eval_spec({}))
 
 
 def test_one_factor_is_studied_in_full_and_the_look_ahead_audit_runs(world):

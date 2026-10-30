@@ -21,8 +21,10 @@ from typing import Callable
 import numpy as np
 import pandas as pd
 
+from ..references import references
 from .errors import FundamentalsError
 from .research import ResearchContext
+from .scores import ALTMAN_ORIGINAL
 
 FAMILIES = ("value", "quality", "profitability", "growth", "investment", "leverage", "liquidity", "efficiency", "earnings_quality", "fundamental_momentum", "price_momentum", "risk", "size")
 
@@ -190,6 +192,79 @@ _metric("d_debt_to_assets", "Change in leverage", "fundamental_momentum", -1, "D
 _metric("d_accruals_ratio", "Change in accruals", "fundamental_momentum", -1, "Accruals ratio this year less last year's.")
 
 
+# ------------------------------------------------------------------------------------------------------------------ the books on reading statements (scores.py)
+# distress: a higher score is safer, and the evidence is that the firms the models call distressed have not been paid for the risk (Dichev 1998; Campbell, Hilscher and Szilagyi 2008), so the prior is "safer earns more"
+_metric("altman_z_double_prime", "Altman Z″-score", "leverage", 1, "Altman's score for non-manufacturers: 6.56 working capital, 3.26 retained earnings, 6.72 EBIT over assets, 1.05 book equity over liabilities.")
+_metric("altman_z_prime", "Altman Z′-score", "leverage", 1, "Altman's score for private manufacturers: the Z″ ratios with other weights, and sales over assets.")
+_metric("retained_earnings_to_assets", "Retained earnings to assets", "leverage", 1, "Profit kept in the business since it began, over total assets (negative for a company with an accumulated deficit).")
+
+
+@factor("altman_z_original", "Altman Z-score (public manufacturers)", "leverage", 1, ("working_capital_to_assets", "retained_earnings_to_assets", "ebit_to_assets", "total_liabilities", "asset_turnover"),
+        "Altman's 1968 score: 1.2 working capital, 1.4 retained earnings, 3.3 EBIT over assets, 0.6 market value of equity over liabilities, 1.0 sales over assets. The only version of the family that reads the share price.")
+def _altman_original(ctx):
+    w = ALTMAN_ORIGINAL
+    equity_to_liabilities = ctx.market_cap() / _positive(ctx.to_trading(ctx.panel("total_liabilities")))
+    return (w[0] * ctx.panel("working_capital_to_assets") + w[1] * ctx.panel("retained_earnings_to_assets") + w[2] * ctx.panel("ebit_to_assets") + w[3] * equity_to_liabilities
+            + w[4] * ctx.panel("asset_turnover"))
+
+
+@factor("naive_distance_to_default", "Distance to default (Merton, naive)", "risk", 1, ("short_term_debt", "long_term_debt"),
+        "How many standard deviations of asset value the firm stands above its debt in a year (Bharath and Shumway 2008): debt is short-term debt plus half the long-term debt, equity volatility is that of the last year and the "
+        "drift is the last year's return. Higher is further from default.")
+def _naive_dd(ctx):
+    equity = _positive(ctx.market_cap())
+    short, long = ctx.panel("short_term_debt"), ctx.panel("long_term_debt")
+    face = ctx.to_trading(short.fillna(0.0) + 0.5 * long.fillna(0.0)).where(short.notna() | long.notna())
+    face = _positive(face)
+    sigma_e = ctx.volatility(252)
+    sigma_d = 0.05 + 0.25 * sigma_e
+    total = equity + face
+    sigma_v = equity / total * sigma_e + face / total * sigma_d
+    return (np.log(total / face) + ctx.past(252, 0) - 0.5 * sigma_v ** 2) / sigma_v
+
+
+# return on capital, owner earnings, and the growth a company can pay for itself
+_metric("greenblatt_roc", "Return on capital (Magic Formula)", "profitability", 1, "Operating income over working capital without cash and borrowings, plus fixed assets (Greenblatt 2005).")
+_metric("owner_earnings_margin", "Owner earnings margin", "profitability", 1, "Net income plus depreciation less capital spending, over revenue (Buffett 1986).")
+_metric("sustainable_growth", "Sustainable growth rate", "growth", 1, "Growth the profit kept can finance with no new shares: retention times return on equity, compounded (Higgins 1977).")
+_metric("internal_growth", "Internal growth rate", "growth", 1, "Growth the profit kept can finance with no new shares and no new borrowing: retention times return on assets, compounded.")
+_metric("eps_cagr_3y", "EPS growth, 3 years", "growth", 1, "Three-year compound growth in diluted earnings per share (missing unless both ends are positive).")
+
+
+@factor("owner_earnings_yield", "Owner earnings yield", "value", 1, ("owner_earnings",), "Trailing net income plus depreciation less capital spending, over market capitalisation (Buffett's owner earnings).")
+def _owner_earnings_yield(ctx): return _per_price(ctx, "owner_earnings")
+
+
+@factor("peg_inverse", "Growth to P/E (inverse PEG)", "value", 1, ("net_income", "eps_cagr_3y"),
+        "Lynch's PEG ratio turned over so that more is better: the three-year growth in earnings per share, in per cent, times the earnings yield. 1 is a P/E equal to the growth rate (his fair price); missing unless both are positive.")
+def _peg_inverse(ctx):
+    growth, earnings_yield = ctx.panel("eps_cagr_3y"), _per_price(ctx, "net_income")
+    return (100.0 * growth * earnings_yield).where((growth > 0) & (earnings_yield > 0))
+
+
+@factor("graham_number_to_price", "Graham number to price", "value", 1, ("graham_number",), "The Graham number (the root of 22.5 times average earnings per share times book value per share) over the price: above 1 is inside Graham's limit.")
+def _graham_to_price(ctx): return ctx.to_trading(ctx.panel("graham_number")) / _positive(ctx.price())
+
+
+@factor("ncav_to_price", "Net current asset value to price", "value", 1, ("ncav_per_share",), "Current assets less all liabilities, per share, over the price: Graham bought at 1.5 or more (a price of two-thirds or less).")
+def _ncav_to_price(ctx): return ctx.to_trading(ctx.panel("ncav_per_share")) / _positive(ctx.price())
+
+
+@factor("magic_formula", "Magic Formula (Greenblatt)", "value", 1, ("operating_income", "greenblatt_roc"),
+        "The average of a company's percentile rank on operating income over enterprise value and on return on capital, among the companies of the date (Greenblatt's sum of two ranks). He leaves out financial companies and "
+        "utilities: restrict the universe by sector for his version.")
+def _magic_formula(ctx):
+    from .transforms import apply
+    cheap = apply(_per_ev(ctx, "operating_income"), [{"op": "percentile"}], ctx)
+    good = apply(ctx.panel("greenblatt_roc"), [{"op": "percentile"}], ctx)
+    return (cheap + good) / 2.0
+
+
+# the balance sheet that has grown faster than the cash behind it
+_metric("noa_to_assets", "Net operating assets", "investment", -1, "Debt plus equity less cash, over last year's assets: the operations the investors have paid for (Hirshleifer, Hou, Teoh and Zhang 2004).")
+_metric("noa_change", "Change in net operating assets", "investment", -1, "The year's change in net operating assets over last year's assets: the balance-sheet accrual.")
+
+
 # ------------------------------------------------------------------------------------------------------------------ price
 @factor("mom_12_1", "Momentum, 12 minus 1 months", "price_momentum", 1, (), "Return from twelve months ago to one month ago (the most recent month is left out: it tends to reverse).")
 def _mom_12_1(ctx): return ctx.past(252, 21)
@@ -251,7 +326,7 @@ def get(name: str) -> FactorDef:
 
 
 def catalogue() -> list[dict]:
-    return [{"name": f.name, "label": f.label, "family": f.family, "direction": f.direction, "needs": list(f.needs), "text": f.text} for f in FACTORS.values()]
+    return [{"name": f.name, "label": f.label, "family": f.family, "direction": f.direction, "needs": list(f.needs), "text": f.text, "sources": references("factor", f.name)} for f in FACTORS.values()]
 
 
 def available(ctx: ResearchContext) -> dict[str, bool]:
@@ -303,6 +378,17 @@ COMPOSITES = {
     "quality_composite": ("Quality composite", "quality", [("roic", 1), ("gross_profitability", 1), ("accruals_ratio", 1), ("debt_to_assets", 1), ("margin_stability", 1)], 3),
     "growth_composite": ("Growth composite", "growth", [("revenue_growth", 1), ("gross_profit_growth", 1), ("operating_income_growth", 1), ("revenue_cagr_3y", 1)], 2),
     "momentum_composite": ("Fundamental momentum composite", "fundamental_momentum", [("d_operating_margin", 1), ("d_roic", 1), ("d_asset_turnover", 1), ("d_gross_margin", 1)], 2),
+    # three published combinations, built from the library's own parts (so they are the idea of the paper, not its exact sort)
+    "qmj_style_composite": ("Quality-minus-junk style composite", "quality", [("gross_profitability", 1), ("roa", 1), ("cash_return_on_assets", 1), ("accruals_ratio", 1), ("debt_to_assets", 1), ("beta", 1),
+                                                                              ("earnings_stability", 1), ("share_growth", 1)], 5),
+    "contrarian_value_composite": ("Contrarian value composite", "value", [("cfo_yield", 1), ("earnings_yield", 1), ("book_to_price", 1), ("revenue_cagr_3y", -1)], 3),
+    "piotroski_value_composite": ("Cheap and improving (Piotroski)", "value", [("book_to_price", 1), ("piotroski_f", 1)], 2),
+}
+COMPOSITE_TEXT = {
+    "qmj_style_composite": "Asness, Frazzini and Pedersen's idea of quality as profitable, safe and conservatively financed, from the library's parts: gross profitability, return on assets, cash return on assets, low accruals, "
+                           "low leverage, low beta, stable earnings and low net share issuance. Not their exact sort (they add growth, payout and an Ohlson score).",
+    "contrarian_value_composite": "Lakonishok, Shleifer and Vishny's contrarian value: cheap on cash flow, earnings and book value, and with low growth in sales over the last three years (the growth leg is subtracted).",
+    "piotroski_value_composite": "Piotroski's idea of buying cheap companies whose finances are improving: book to price and the F-score together.",
 }
 
 
@@ -310,7 +396,8 @@ def _register_composites():
     for name, (label, family, parts, minimum) in COMPOSITES.items():
         needs = tuple(dict.fromkeys(need for part, _ in parts for need in FACTORS[part].needs))             # what the parts read, not the parts themselves
         FACTORS[name] = FactorDef(name, label, family, 1, needs, (lambda ctx, p=parts, m=minimum: composite(ctx, p, m)),
-                                  "Equal-weighted average of standardised, direction-signed factors: " + ", ".join(n for n, _ in parts) + ".")
+                                  (COMPOSITE_TEXT[name] + " " if name in COMPOSITE_TEXT else "") + "Equal-weighted average of standardised, direction-signed factors: "
+                                  + ", ".join(("minus " if w < 0 else "") + n for n, w in parts) + ".")
 
 
 _register_composites()

@@ -280,6 +280,8 @@ def catalogue(ctx: ResearchContext) -> dict[str, Field]:
     if ctx.has("shares_outstanding"):
         out["shares_outstanding"] = Field("shares_outstanding", "count", "shares outstanding", "statement")
     for m in metric_module.catalogue():
+        if m["unit"] == "per_share":                                                   # an amount per share is not scale-free and has no price to be set against here: the price-based factors use it
+            continue
         if ctx.has(m["name"]) and m["name"] not in out:
             out[m["name"]] = Field(m["name"], "amount_rep" if m["unit"] == "currency" else "ratio", m["label"], "metric")
     for name in MARKET_AMOUNTS:

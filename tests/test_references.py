@@ -88,3 +88,23 @@ def test_the_catalogue_the_page_reads_carries_the_sources_of_strategies_and_allo
     assert models["carver_ewmac"]["book"] == "sleeves" and models["clenow_momentum"]["min_assets"] >= 2
     names = {p["name"] for p in models["carver_ewmac"]["params"]}
     assert {"fast_spans", "slow_multiple", "vol_span", "target_abs", "cap", "min_history", "diversification", "fdm_cap"} <= names
+
+
+def test_the_factors_and_scores_of_the_books_name_their_sources_and_the_catalogue_carries_them():
+    from src.fundamentals import factors
+
+    assert set(refs.FACTOR_SOURCES) <= set(factors.FACTORS)
+    new = ("altman_z_double_prime", "altman_z_prime", "altman_z_original", "retained_earnings_to_assets", "naive_distance_to_default", "greenblatt_roc", "magic_formula", "owner_earnings_yield",
+           "owner_earnings_margin", "sustainable_growth", "internal_growth", "peg_inverse", "eps_cagr_3y", "graham_number_to_price", "ncav_to_price", "noa_to_assets", "noa_change", "qmj_style_composite",
+           "contrarian_value_composite", "piotroski_value_composite")
+    assert all(n in refs.FACTOR_SOURCES for n in new)
+    by_name = {c["name"]: c for c in factors.catalogue()}
+    assert by_name["magic_formula"]["sources"][0]["cite"].startswith("Greenblatt (2005)") and by_name["magic_formula"]["sources"][0]["url"] is None             # a book has no link
+    assert by_name["naive_distance_to_default"]["sources"][0]["url"] == "https://doi.org/10.1093/rfs/hhn044"
+    assert by_name["volatility_63"]["sources"] == []                                                                                                 # a factor with no source on record says so, not a guess
+    assert any("Buffett (1986)" in r["cite"] and r["url"] == "https://www.berkshirehathaway.com/letters/1986.html" for r in by_name["owner_earnings_yield"]["sources"])
+
+
+def test_the_company_cards_of_the_fundamentals_tab_each_have_sources():
+    assert set(refs.FUNDAMENTALS_VIEWS) == {"distress", "graham", "valuation", "growth", "owner_earnings", "return_on_capital", "net_operating_assets", "dupont", "anomaly", "piotroski"}
+    assert refs.references("fundamentals", "growth")[0]["url"] == "https://doi.org/10.2307/3665251" and refs.references("fundamentals", "nothing") == []

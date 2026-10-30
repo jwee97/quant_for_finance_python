@@ -19,10 +19,12 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 
-from . import analytics, bridge, calibration, combine, metrics, prices, transforms
+from . import analytics, bridge, calibration, combine, metrics, prices, scores, transforms
+from . import valuation as yardsticks
 from . import expr as X
 from . import factors as factor_library
 from .discovery import DEFAULT_STRICTNESS, FITNESS, PRESETS, STAGES, STRICTNESS, Discovery, DiscoverySpec, Thresholds, default_seeds, splits
+from ..references import FUNDAMENTALS_VIEWS, references
 from .errors import FundamentalsError
 from .evaluate import CONTROLS, PERIODS_PER_YEAR, TYPICAL_IC, EvalSpec, detectable_effect, evaluate, evaluate_factor, ic_stats, look_ahead_audit, rank_ic
 from .jsonutil import clean, series_points
@@ -35,7 +37,7 @@ from .service import FundamentalsService
 
 KEEP_CONTEXTS = 2
 MAX_SYMBOLS = 200
-MAX_SCAN = 120
+MAX_SCAN = 200
 DIRECTIONS = ("theory", "auto", 1, -1)
 POLICY = ("OpenFilings' usage policy does not allow rotating accounts or API keys to get past its quotas, and several keys of one account share one allowance. The first working key is used unless you "
           "choose another (a choice, never a rotation: it is refused while the key in use has spent its allowance); a later key also takes over if the key in use is rejected as invalid. When the allowance is spent "
@@ -268,9 +270,12 @@ class Workbench:
         return clean({"total": total, "offset": offset, "limit": limit, "companies": [dict(r) for r in rows], "countries": countries, "sectors": sectors})
 
     FIGURES = ("revenue", "gross_profit", "operating_income", "net_income", "operating_cash_flow", "capital_expenditure", "free_cash_flow", "total_assets", "total_debt", "shareholders_equity",
-               "cash", "shares_outstanding")
+               "cash", "retained_earnings", "shares_outstanding")
     RATIOS = ("gross_margin", "operating_margin", "net_margin", "roe", "roa", "roic", "revenue_growth", "fcf_margin", "debt_to_equity", "interest_coverage", "accruals_ratio", "asset_turnover",
               "piotroski_f", "accounting_anomaly_score")
+    SCORES = ("altman_z_double_prime", "altman_z_prime", "retained_earnings_to_assets", "working_capital_to_assets", "ebit_to_assets", "equity_to_liabilities", "greenblatt_roc", "owner_earnings",
+              "owner_earnings_margin", "retention_ratio", "sustainable_growth", "internal_growth", "eps_cagr_3y", "eps_avg_3y", "book_value_per_share", "graham_number", "ncav_per_share",
+              "net_operating_assets", "noa_to_assets", "noa_change", "graham_criteria_met", "graham_criteria_judged")
 
     def company(self, security_id: int, years: int = 12) -> dict:
         """One company as the database holds it: the profile, what was fetched and when, the annual figures with the date each became public, the ratios built from them, the DuPont decomposition of
@@ -285,6 +290,7 @@ class Workbench:
         fy = fy[fy["security_id"] == sid].sort_values("period_end").tail(int(years)).copy()
         keep_figures = [c for c in self.FIGURES if c in fy.columns]
         keep_ratios = [c for c in self.RATIOS if c in fy.columns]
+        keep_scores = [c for c in self.SCORES if c in fy.columns]
         annual = []
         for _, r in fy.iterrows():
             annual.append({"fiscal_year": int(r["fiscal_year"]), "period_end": r["period_end"], "available": r["available_date"], "estimated": bool(r["pit_estimated"]), "quality": r["pit_quality"],
@@ -301,7 +307,7 @@ class Workbench:
         flagged = self.store.inspect(sid)
         flagged = flagged[flagged["quality_flag"] != "ok"].head(40)
         dates = [str(d.date()) for d in fy["period_end"]]
-        series = {name: [None if pd.isna(v) else float(v) for v in fy[name]] for name in keep_figures + keep_ratios if name in fy.columns and not str(fy[name].dtype).startswith("object")}
+        series = {name: [None if pd.isna(v) else float(v) for v in fy[name]] for name in keep_figures + keep_ratios + keep_scores if name in fy.columns and not str(fy[name].dtype).startswith("object")}
         return clean({
             "profile": info, "identifiers": ids.to_dict("records"), "sync": sync, "summary": self.store.period_summary(sid),
             "prices": None if price.empty else {"first": str(price.index[0].date()), "last": str(price.index[-1].date()), "days": int(len(price)),
@@ -312,9 +318,27 @@ class Workbench:
             "piotroski": [{"fiscal_year": int(y), **row.to_dict()} for y, (_, row) in zip(fy["fiscal_year"], sig.iterrows())], "piotroski_signals": [{"key": k, "label": label} for k, label in analytics.PIOTROSKI],
             "anomaly": [{"fiscal_year": int(y), **row.to_dict()} for y, (_, row) in zip(fy["fiscal_year"], parts.iterrows())],
             "anomaly_reading": None if latest_anomaly is None else analytics.interpret_anomaly(float(latest_anomaly)),
-            "flagged": flagged.to_dict("records"),
+            "flagged": flagged.to_dict("records"), **scores.company_view(tables, fy), "references": {key: references("fundamentals", key) for key in FUNDAMENTALS_VIEWS},
             "notes": ["Each row appears in research from the day the figures were public (the 'available' date), never from its period end.",
-                      "The Piotroski F-score and the anomaly score are screens, not verdicts: a high anomaly score means 'look closer' and is never evidence of fraud."]})
+                      "The Piotroski F-score and the anomaly score are screens, not verdicts: a high anomaly score means 'look closer' and is never evidence of fraud.",
+                      "The Altman scores and the Graham tests are screens too: they say where the company stands next to the rule's own sample, not what will happen to it."]})
+
+    def valuation(self, security_id: int, rate: float = yardsticks.DEFAULT_RATE, growth: float = yardsticks.DEFAULT_GROWTH) -> dict:
+        """The yardsticks of :mod:`valuation` for one company, beside its last close: Graham's number and net current asset value, the earnings power value, owner earnings and free cash flow capitalised at
+        ``rate`` with perpetual ``growth``, the Lynch line and book value, each a range per share, and Graham's price tests. Nothing here is a forecast: each bar is what the share would be worth if one rule held."""
+        info = self.store.get_security(int(security_id))
+        if info is None:
+            raise FundamentalsError(f"no company with id {security_id}")
+        yardsticks.check_inputs(float(rate), float(growth))
+        sid = int(security_id)
+        tables = PeriodTables(self.store, [sid], PitSettings())
+        metrics.compute(tables, "fy")
+        fy = tables.table("fy")
+        fy = fy[fy["security_id"] == sid].sort_values("period_end")
+        close = self.store.closes([sid])
+        price = None if close.empty or pd.isna(close.iloc[-1, 0]) else float(close.iloc[-1, 0])
+        when = None if close.empty else str(close.index[-1].date())
+        return clean({**yardsticks.build(fy, price, when, info.get("currency"), float(rate), float(growth)), "references": references("fundamentals", "valuation")})
 
     def set_price_symbol(self, security_id: int, symbol: str) -> dict:
         if self.store.get_security(int(security_id)) is None:

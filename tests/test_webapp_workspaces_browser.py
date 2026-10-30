@@ -518,9 +518,9 @@ def test_an_app_without_the_data_routes_explains_the_card_instead_of_leaving_it_
 
 
 def test_an_app_behind_the_page_asks_for_a_restart_on_the_tabs_that_need_more_and_keeps_the_others(browser, live_ws):  # noqa: F811
-    """Each tab needs the API version it was written for: iTick arrived with 6, the Futures tab's Yahoo search with 7, the signals board and strategy settings of the Futures and Crypto tabs with 12, the implied-distribution and open-interest views of the Options tab with 13, the Tune tab and the Machine learning tab's beginner tuning with 8, the Forecast tab with 9. An older app
+    """Each tab needs the API version it was written for: iTick arrived with 6, the Futures tab's Yahoo search with 7, the signals board and strategy settings of the Futures and Crypto tabs with 12, the implied-distribution and open-interest views of the Options tab and the valuation bars of the Fundamentals tab with 13, the Tune tab and the Machine learning tab's beginner tuning with 8, the Forecast tab with 9. An older app
     says so on exactly the tabs that need a newer one, and the Backtest tab keeps working."""
-    needs = {"options": 13, "futures": 12, "crypto": 12, "ml": 8, "tune": 8, "forecast": 9}
+    needs = {"options": 13, "fundamentals": 13, "futures": 12, "crypto": 12, "ml": 8, "tune": 8, "forecast": 9}
     for served in (5, 6, 7, 8, 9, 11, 12, 13):
         pg = _page_with(browser, live_ws, rewrite=lambda catalog, served=served: catalog.update(api_version=served))
         try:

@@ -288,6 +288,113 @@ def test_a_company_page_prints_the_day_each_figure_became_public_and_every_chart
         page.close()
 
 
+def _open_the_first_company(page):
+    _open(page, "companies")
+    page.wait_for_selector("[data-role=fund-companies] tbody tr")
+    page.locator("[data-role=fund-companies] tbody tr").first.locator("[data-action=open-company]").click()
+    page.wait_for_selector("[data-role=fund-football] svg", timeout=60_000)
+
+
+def _table_cells(locator, column: int) -> list[str]:
+    return [r.locator("td").nth(column).inner_text() for r in locator.locator("tbody tr").all()]
+
+
+def test_a_company_page_shows_distress_scores_with_their_zones_graham_tests_and_what_the_share_might_be_worth(browser, live_fund):  # noqa: F811
+    page = _page(browser, live_fund)
+    try:
+        _open_the_first_company(page)
+        assert _tile(page, "Altman Z″ distress score") and re.search(r"of \d", _tile(page, "Graham's tests"))                     # a score and the tests passed of those judged
+        assert page.locator("#fundamentals-results .tile", has_text="Altman Z″").first.locator(".delta").inner_text() in ("safe zone", "grey zone", "distress zone")
+        for role in ("fund-distress-double_prime", "fund-distress-prime"):                                                         # each score by year, with its three zones named
+            card = page.locator(f"[data-role={role}]")
+            assert card.count() == 1 and card.locator("svg.chart").count() == 1
+            legend = card.locator(".legend").inner_text()
+            assert "distress zone" in legend and "grey zone" in legend and "safe zone" in legend
+            card.locator(".seg button:has-text('Table')").click()
+            assert card.locator("thead th").all_inner_texts()[:3] == ["Year", "Score", "Zone"] and card.locator("tbody tr").count() >= 8
+        drivers = page.locator("[data-role=fund-distress-drivers]")                                                                 # the four ratios of Z″ with the points each supplied
+        assert "Retained earnings to assets" in drivers.inner_text() and drivers.locator("svg.chart").count() == 1
+        drivers.locator(".seg button:has-text('Table')").click()
+        pts = [float(v.replace("−", "-")) for v in _table_cells(drivers, 3)]
+        total = float(page.locator("[data-role=fund-distress-double_prime] .seg button:has-text('Table')").evaluate("b => b.closest('.chartcard').querySelector('tbody tr td:nth-child(2)') ? b.closest('.chartcard').querySelector('tbody tr td:nth-child(2)').textContent : 'nan'"))
+        assert len(pts) == 4 and abs(sum(pts) - total) < 0.06                                                                       # the points add up to the latest score (to the rounding of four numbers)
+        dupont = page.locator("[data-role=fund-dupont-chart]")
+        assert dupont.locator("svg.chart rect").count() > 10 and "Change in return on equity" in dupont.locator(".legend").inner_text()
+        graham = page.locator("[data-role=fund-graham]")
+        assert graham.locator("svg.chart").count() == 1 and "Tests met by year" in graham.inner_text() and "Profit every year" in graham.inner_text()
+        assert page.locator("[data-role=fund-graham] a[href^='https://']").count() >= 2 and page.problems == []
+    finally:
+        page.close()
+
+
+def test_the_valuation_bars_follow_the_two_inputs_say_why_a_bar_is_missing_and_refuse_a_growth_the_rate_cannot_carry(browser, live_fund):  # noqa: F811
+    page = _page(browser, live_fund)
+    try:
+        _open_the_first_company(page)
+        card = page.locator("[data-role=fund-valuation]")
+        table = page.locator("[data-role=fund-valuation-table]")
+        rules = _table_cells(table, 0)
+        assert rules == ["Graham number", "Net current asset value", "Earnings power value", "Owner earnings, capitalised", "Free cash flow, capitalised", "The Lynch line", "Book value per share"]
+        assert card.locator("[data-role=fund-football] svg.chart").count() == 1 and "Last close" in card.locator("[data-role=fund-football]").inner_text()
+        middle = dict(zip(rules, _table_cells(table, 2)))
+        assert middle["Owner earnings, capitalised"] != "n/a" and middle["Book value per share"] != "n/a"
+        why = dict(zip(rules, _table_cells(table, 5)))
+        assert all(why[r] for r in rules if middle[r] == "n/a")                                                                     # a bar that is not drawn says why in the table
+        assert len(_table_cells(page.locator("[data-role=fund-graham-price]"), 0)) == 3 and "Price to three-year average earnings" in page.inner_text("[data-role=fund-graham-price]")
+        before = float(middle["Owner earnings, capitalised"].replace(",", ""))
+        page.fill("[data-role=fund-valuation] input[data-key=rate]", "12")                                                          # a higher rate is worth less
+        _wait_until(page, "(() => { const t = document.querySelector('[data-role=fund-valuation-table]'); return !!t && t.querySelectorAll('tbody tr').length === 7 && t.querySelectorAll('tbody tr')[3].querySelectorAll('td')[2].textContent.trim() !== arguments[0]; })()".replace("arguments[0]", repr(middle["Owner earnings, capitalised"])), 30)
+        after = float(_table_cells(page.locator("[data-role=fund-valuation-table]"), 2)[3].replace(",", ""))
+        assert after < before
+        page.fill("[data-role=fund-valuation] input[data-key=rate]", "5")
+        page.fill("[data-role=fund-valuation] input[data-key=growth]", "4")                                                         # 5% against 4%: no finite value
+        _wait_until(page, "document.querySelector('[data-role=fund-valuation] .banner') !== null", 30)
+        assert "at least 2 points above" in page.inner_text("[data-role=fund-valuation] .banner") and page.locator("[data-role=fund-valuation-table]").count() == 0
+        page.fill("[data-role=fund-valuation] input[data-key=growth]", "2")
+        _wait_until(page, "document.querySelector('[data-role=fund-valuation-table]') !== null", 30)
+        assert page.locator("[data-role=fund-valuation] .banner").count() == 0
+        assert page.problems == ["console error: Failed to load resource: the server responded with a status of 400 (Bad Request)"]          # the one refusal asked for, and nothing else
+    finally:
+        page.close()
+
+
+def test_the_new_cards_fit_a_phone_and_every_new_chart_has_a_table(browser, live_fund):  # noqa: F811
+    page = _page(browser, live_fund, width=390)
+    try:
+        _open_the_first_company(page)
+        assert page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1")
+        for role in ("fund-valuation", "fund-distress-double_prime", "fund-distress-drivers", "fund-dupont-chart", "fund-graham"):
+            box = page.locator(f"[data-role={role}]").first.bounding_box()
+            assert box and box["x"] >= -1 and box["x"] + box["width"] <= 391, role                                                  # no card is wider than the screen
+        for role in ("fund-distress-double_prime", "fund-distress-prime", "fund-distress-drivers", "fund-dupont-chart"):
+            card = page.locator(f"[data-role={role}]")
+            card.locator(".seg button:has-text('Table')").click()
+            assert card.locator("table tbody tr").count() >= 2, role
+        assert page.problems == []
+    finally:
+        page.close()
+
+
+def test_a_factor_names_the_book_or_paper_it_comes_from_in_the_factor_lab(browser, live_fund):  # noqa: F811
+    page = _page(browser, live_fund)
+    try:
+        _open(page, "factors")
+        page.wait_for_selector("select[data-role=fund-factor]")
+        page.select_option("select[data-role=fund-factor]", "magic_formula")
+        panel = page.locator("#fundamentals .panel")
+        panel.locator("p.refs").first.wait_for()
+        assert "Greenblatt (2005), The Little Book That Beats the Market" in panel.inner_text() and "Magic Formula" in panel.inner_text()
+        page.select_option("select[data-role=fund-factor]", "naive_distance_to_default")
+        _wait_until(page, "document.querySelector('#fundamentals .panel p.refs') && document.querySelector('#fundamentals .panel p.refs').textContent.includes('Bharath and Shumway (2008)')", 15)
+        link = page.locator("#fundamentals .panel p.refs a").first
+        assert link.get_attribute("href").startswith("https://doi.org/10.1093/rfs/hhn044") and link.get_attribute("rel") == "noopener noreferrer"
+        page.select_option("select[data-role=fund-factor]", "volatility_63")                                                         # no source on record: no line, not a guess
+        _wait_until(page, "!document.querySelector('#fundamentals .panel p.refs')", 15)
+        assert page.problems == []
+    finally:
+        page.close()
+
+
 def test_a_company_is_found_by_name_in_openfilings_added_for_nothing_and_fetched_for_the_cost_the_button_states(browser, live_real):  # noqa: F811
     page = _page(browser, live_real)
     fake = live_real.fake
@@ -402,6 +509,12 @@ def test_a_scan_an_audit_and_a_formula_of_your_own(browser, live_fund):  # noqa:
         page.wait_for_selector("[data-role=fund-scan]", timeout=LONG)
         assert page.locator("#fundamentals-results .banner:has-text('Many factors looked at')").count() == 1 and page.locator("[data-role=fund-scan] tbody tr").count() >= 20
         assert page.locator("[data-role=fund-scan] tbody tr[data-factor=fcf_yield]").count() == 1 and _tables_have_names(page) == []
+        assert page.locator("[data-role=fund-scan] tbody tr[data-factor=magic_formula]").count() == 1 and page.locator("[data-role=fund-scan] tbody tr").count() >= 100        # the factors of the books are in the scan too
+        fam = page.locator("[data-role=fund-scan-families]")                                                                  # and the families are summed up in a chart with a table
+        assert fam.count() == 1 and fam.locator("svg.chart").count() == 1
+        fam.locator(".seg button:has-text('Table')").click()
+        assert fam.locator("thead th").all_inner_texts()[:2] == ["Family", "Factors"] and fam.locator("tbody tr").count() >= 8
+        assert sum(int(c) for c in _table_cells(fam, 1)) == page.locator("[data-role=fund-scan] tbody tr").count()
         page.click("[data-action=audit-factor]")
         page.wait_for_selector("[data-role=fund-audit]", timeout=LONG)
         assert page.locator("[data-role=fund-audit] table").first.locator("tbody tr").count() == 2 and "from the day it was public" in page.inner_text("[data-role=fund-audit]")
@@ -784,7 +897,7 @@ def test_an_app_older_than_the_tab_says_so(browser, live_fund):  # noqa: F811
         page.click("#tab-fundamentals")
         page.wait_for_selector("#fundamentals .card")
         text = page.inner_text("#fundamentals")
-        assert "needs a newer app" in text and "reports version 10; this tab needs 11" in text and "Stop the app" in text
+        assert "needs a newer app" in text and "reports version 10; this tab needs 13" in text and "Stop the app" in text
         assert page.locator("#fundamentals .labtop [role=tab]").count() == 0
     finally:
         page.close()

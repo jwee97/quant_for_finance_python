@@ -193,7 +193,8 @@ class SimulatedWorld:
         s = {"cash": cash + 0.02 * assets, "cash_and_equivalents": cash, "accounts_receivable": receivables, "inventory": inventory, "current_assets": current_assets, "total_assets": assets,
              "ppe": ppe, "goodwill": goodwill, "intangible_assets": intangibles, "accounts_payable": payables, "current_liabilities": current_liab, "short_term_debt": short_debt,
              "long_term_debt": debt - short_debt, "total_debt": debt, "total_liabilities": liabilities, "shareholders_equity": equity, "shares_outstanding": shares,
-             "weighted_avg_shares_diluted": shares * 1.015, "minority_interest": 0.01 * equity, "preferred_equity": np.zeros((n, y))}
+             "weighted_avg_shares_diluted": shares * 1.015, "minority_interest": 0.01 * equity, "preferred_equity": np.zeros((n, y)),
+             "retained_earnings": equity - 0.35 * equity[:, :1]}                # the capital paid in stays at 35% of the first year's equity, so retained earnings move with equity
         self.annual, self.stocks = a, s
         self.latent = {"roic": (ebit * (1 - tax)) / np.maximum(debt + equity - cash, 0.05 * assets), "asset_growth": np.concatenate([np.full((n, 1), np.nan), assets[:, 1:] / assets[:, :-1] - 1], axis=1),
                        "gross_profitability": gross_profit / assets}

@@ -23,11 +23,11 @@
     ["kr", "Korea"], ["tw", "Taiwan"], ["in", "India"], ["cn", "China"], ["br", "Brazil"], ["mx", "Mexico"], ["ch", "Switzerland"], ["il", "Israel"]];
 
   const FD = {
-    id: "fundamentals", root: "#fundamentals", view: "#view-fundamentals", title: "Fundamentals", api: 11, mode: "overview", busyBy: {}, jobs: {}, epoch: 0, results: {}, errors: {}, cache: new Map(), guard: null, go: null, progress: null,
+    id: "fundamentals", root: "#fundamentals", view: "#view-fundamentals", title: "Fundamentals", api: 13, mode: "overview", busyBy: {}, jobs: {}, epoch: 0, results: {}, errors: {}, cache: new Map(), guard: null, go: null, progress: null,
     about: "Company fundamentals from around the world in a local database, tested as factors and searched for alphas, with the evidence counted honestly.",
     modes: [["overview", "Overview"], ["companies", "Company explorer"], ["factors", "Factor lab"], ["discovery", "Alpha discovery"], ["library", "Alpha library"], ["monitor", "Alpha monitor"], ["data", "Data manager"]],
     db: Q.store("fund.db") === "demo" ? "demo" : "real", facets: {}, views: {},
-    co: { q: "", country: "", sector: "", market: "", provider: "openfilings", offset: 0, limit: 25, id: null, found: null, report: null },
+    co: { q: "", country: "", sector: "", market: "", provider: "openfilings", offset: 0, limit: 25, id: null, found: null, report: null, val: { rate: "9", growth: "2" } },
     dm: { symbols: "", market: "us", provider: "openfilings", start_year: "2000", budget: "", plan: null, report: null, prices: null, price_start: "2010-01-01", price_refresh: false, price_note: "", companies: "120", from: "2009", to: "2022", seed: "7",
           strong: false, tested: null },
     uni: { countries: new Set(), sectors: new Set(), min_cap: "", min_vol: "", developed: false, delisted: true, freq: "M", lag: "1", start: "", end: "", info_lag: "1" },
@@ -645,6 +645,101 @@
     paintPlan();
     if (FD.cov.picked.size && !FD.cov.plan) syncPicks();
   };
+  /* ---------- the scores of the books on a company page ---------- */
+  const ZONE = { safe: ["safe zone", "up"], grey: ["grey zone", ""], distress: ["distress zone", "down"] };
+  const SERIES_NAME = { greenblatt_roc: "Return on capital (Greenblatt)", sustainable_growth: "Sustainable growth", internal_growth: "Internal growth", owner_earnings: "Owner earnings", free_cash_flow: "Free cash flow",
+    retained_earnings: "Retained earnings", revenue_growth: "Revenue growth", roic: "Return on invested capital", roe: "Return on equity", roa: "Return on assets" };
+  CO.latestZone = (d) => {
+    const m = ((d.distress || {}).models || []).find((x) => x.key === "double_prime"), last = m && [...m.series].reverse().find((x) => !Q.bad(x.score));
+    return last && last.zone ? last : null;
+  };
+  /* The change in return on equity, split into the five steps of the DuPont identity, year by year. */
+  CO.dupontChart = (ch, d) => {
+    const rows = d.dupont.filter((r) => !Q.bad(r.c_total)), steps = d.dupont_steps; if (rows.length < 2) return;
+    const c = chartCard(ch, "What moved the return on equity", "Each column splits the change in return on equity from the year before into the five steps of the DuPont identity (the log-mean Divisia method, which adds up exactly). A step that pulled the return down is drawn below the line; the dot is the total change.", {
+      draw: (b) => C.stack(b, { labels: rows.map((r) => String(r.fiscal_year)), series: steps.map((s, i) => ({ name: s.label, color: Q.colorOf(i), values: rows.map((r) => (Q.bad(r["c_" + s.key]) ? null : r["c_" + s.key])) })),
+        total: { name: "Change in return on equity", values: rows.map((r) => (Q.bad(r.d_roe) ? null : r.d_roe)) }, yFormat: (v) => pct(v, 0), tipFormat: (v) => spct(v, 2), label: "What moved the return on equity, by year" }),
+      table: (b) => table(b, [{ label: "Year", get: (r) => String(r.fiscal_year) }].concat(steps.map((s) => ({ label: s.label, num: true, get: (r) => spct(r["c_" + s.key], 2) }))).concat([{ label: "Total change", num: true, get: (r) => spct(r.d_roe, 2) }]), rows.slice().reverse()) });
+    c.dataset.role = "fund-dupont-chart";
+  };
+  /* Altman's scores year by year with the zones behind them, and what drives the latest one. */
+  CO.distress = (ch, d) => {
+    const models = (d.distress || {}).models || [], refs = (d.references || {}).distress, scored = (m) => m.series.some((x) => !Q.bad(x.score));
+    if (!models.some(scored)) {
+      const c = W.card(ch, "Distress scores (Altman)", "Altman's Z-scores weigh a few ratios of the balance sheet and the income statement to say which side of a fitted line a company stands on."); c.dataset.role = "fund-distress";
+      h("p", "hint", c, "Not available for this company: its statements have no retained earnings (the figure was added after they were fetched, or the company does not report it) or no current assets. Fetching the statements again brings retained earnings for the years in the answer.");
+      Q.refsLine(c, refs); return;
+    }
+    for (const m of models.filter(scored)) {
+      const vals = m.series.map((x) => (Q.bad(x.score) ? null : x.score)), real = vals.filter((v) => v !== null), z = m.zones;
+      const lo = Math.min(...real, z.distress) - 0.5, hi = Math.max(...real, z.safe) + 0.5, flat = (v) => d.dates.map(() => v);
+      const bands = [{ lo: flat(lo), hi: flat(z.distress), color: css("--crit"), opacity: 0.1, name: `distress zone (below ${z.distress})`, noTip: true }, { lo: flat(z.distress), hi: flat(z.safe), color: css("--warn"), opacity: 0.1, name: "grey zone", noTip: true },
+        { lo: flat(z.safe), hi: flat(hi), color: css("--s3"), opacity: 0.1, name: `safe zone (above ${z.safe})`, noTip: true }];
+      const card = chartCard(ch, m.label + " score", m.key === "double_prime" ? "6.56 working capital, 3.26 retained earnings and 6.72 EBIT over assets, plus 1.05 book equity over liabilities (Altman, Hartzell and Peck). It leaves out sales to assets so that the industry matters less. A screen next to the sample it was fitted on, not a forecast of failure."
+        : "0.717 working capital, 0.847 retained earnings and 3.107 EBIT over assets, 0.420 book equity over liabilities and 0.998 sales over assets. Fitted on manufacturers: it flatters companies that turn their assets over fast.", {
+        draw: (b) => C.line(b, { dates: d.dates, series: [{ name: m.label, color: Q.colorOf(0), values: vals, dots: true }], bands, yFormat: (v) => num(v, 1), tipFormat: (v) => num(v, 2), height: 240, label: m.label + " by year", legend: true,
+          tipExtra: (i) => (m.series[i] && m.series[i].zone ? [["Zone", ZONE[m.series[i].zone][0]]] : []) }),
+        table: (b) => table(b, [{ label: "Year", get: (r) => String(r.fiscal_year) }, { label: "Score", num: true, get: (r) => num(r.score, 2) }, { label: "Zone", get: (r) => (r.zone ? ZONE[r.zone][0] : "n/a") }]
+          .concat(m.weights.map((w) => ({ label: w.label, num: true, get: (r) => num(r.ratios[w.key], 3) }))), m.series.slice().reverse()) });
+      card.dataset.role = "fund-distress-" + m.key;
+      if (m.key === "double_prime") Q.refsLine(card, refs);
+    }
+    const m = models.find((x) => x.key === "double_prime"), last = m && [...m.series].reverse().find((x) => !Q.bad(x.score));
+    if (last) {
+      const c = chartCard(ch, `What drives the ${m.label} score (${last.fiscal_year})`, "Each ratio times its weight: how many points of the score it supplied. A ratio below zero (retained earnings of a company with an accumulated deficit, a negative equity) takes points away.", {
+        draw: (b) => C.hbars(b, { rows: m.weights.map((w) => ({ label: w.label, value: last.contributions[w.key], text: `${w.weight} × ${num(last.ratios[w.key], 3)} = ${sgn(last.contributions[w.key], 2)}` })), format: (v) => num(v, 1), labelWidth: 190, valueWidth: 150, label: "Points each ratio supplied" }),
+        table: (b) => table(b, [{ label: "Ratio", get: (w) => w.label }, { label: "Value", num: true, get: (w) => num(last.ratios[w.key], 3) }, { label: "Weight", num: true, get: (w) => String(w.weight) }, { label: "Points", num: true, get: (w) => sgn(last.contributions[w.key], 2) }], m.weights) });
+      c.dataset.role = "fund-distress-drivers";
+    }
+  };
+  /* Graham's tests, year by year. */
+  CO.graham = (root, d) => {
+    const g = d.graham; if (!g || !g.rows.some((r) => r.judged > 0)) return;
+    const card = W.card(root, "Graham's tests for the defensive investor", `Five tests from The Intelligent Investor: current assets at least twice current liabilities, long-term debt within working capital, a profit in every year held, a dividend in every year held, and earnings per share up by a third over ten years (three-year averages at each end). Graham asked for ten years of profits and twenty of dividends; these tests look at the years the database holds, up to ten, and are not judged on fewer than ${g.rules.min_years}.`);
+    card.dataset.role = "fund-graham"; card.classList.add("roomy");
+    C.matrix(h("div", "", card), { rows: g.tests.map((t) => t.short), cols: g.rows.map((r) => String(r.fiscal_year)), values: g.tests.map((t) => g.rows.map((r) => (Q.bad(r[t.key]) ? null : r[t.key]))), format: (v) => (v >= 0.5 ? "yes" : "no"), min: 0, max: 1, name: "Test",
+      label: "Graham's tests by year", labelWidth: 150, cellHeight: 20, tipFormat: (v) => (v >= 0.5 ? "yes" : "no") });
+    h("p", "hint", card, "Tests met by year: " + g.rows.map((r) => `${r.fiscal_year}: ${r.judged > 0 ? Math.round(r.met) + " of " + Math.round(r.judged) : "n/a"}`).join(" · "));
+    h("p", "hint", card, "Graham's two price tests, on the last close, are under \"What might the share be worth?\". An empty cell is a test the history is too short to judge, not a failure.");
+    Q.refsLine(card, (d.references || {}).graham);
+  };
+  /* What the share might be worth under each of a handful of published rules, with the two inputs a reader may change. */
+  CO.valuation = (root, p) => {
+    const card = W.card(root, "What might the share be worth?", "Rules from the value-investing books applied to this company's own statements: Graham's number and net current asset value, Greenwald's earnings power value, owner earnings and free cash flow capitalised, Lynch's line and book value. Each bar is what the share would be worth if one rule's assumption held. They are not forecasts, and they disagree on purpose.");
+    card.dataset.role = "fund-valuation"; card.classList.add("roomy");
+    const st = FD.co.val, inputs = h("div", "row tight", card), body = h("div", "stack", card);
+    let seq = 0, timer = null;
+    const load = () => {
+      if (!card.isConnected) return;
+      const mine = ++seq, db = FD.db;
+      body.replaceChildren(); h("p", "hint", body, "Working out the bars…");
+      FD.read("/api/fund/valuation", { id: p.security_id, rate: Number(st.rate) / 100, growth: Number(st.growth) / 100 })
+        .then((v) => { if (mine !== seq || !body.isConnected || FD.db !== db) return; body.replaceChildren(); CO.valuationBody(body, v); })
+        .catch((e) => { if (mine !== seq || !body.isConnected) return; body.replaceChildren(); Q.labBanner(body, "That could not be worked out. ", e.message, true); });
+    };
+    const after = () => { clearTimeout(timer); timer = setTimeout(load, 350); };
+    Q.labField(inputs, { key: "rate", label: "Discount rate (% a year)", kind: "number", step: 0.5, min: 3, max: 25, help: "What the owner asks of the money: the bars of the perpetuities and of the earnings power value move this rate one point either way" }, st, after);
+    Q.labField(inputs, { key: "growth", label: "Growth for ever (% a year)", kind: "number", step: 0.5, min: -5, max: 8, help: "How fast owner earnings and free cash flow are assumed to grow after this year; it must stay two points under the rate" }, st, after);
+    load();
+  };
+  CO.valuationBody = (body, v) => {
+    const ref = v.price ? { value: v.price.value, label: `Last close ${num(v.price.value, 2)}${v.price.date ? " (" + day(v.price.date) + ")" : ""}` } : null;
+    const rows = v.rows.map((r) => ({ label: r.label, low: r.low, high: r.high, point: r.point, text: r.text + (r.inputs && r.inputs.length ? " Used: " + r.inputs.join("; ") + "." : ""), missing: r.missing ? "not available: " + r.missing : null }));
+    const host = h("div", "", body); host.dataset.role = "fund-football";
+    C.ranges(host, { rows, ref, format: (x) => num(x, 2), labelWidth: Math.max(120, Math.min(200, Math.round(host.getBoundingClientRect().width * 0.3))), label: "What the share might be worth under each rule, per share in " + (v.currency || "the reporting currency") });
+    if (v.price_note) h("p", "hint tone-warn", body, "No price is shown against the bars: " + v.price_note + ".");
+    const against = (r) => (ref && r.point ? spct(ref.value / r.point - 1, 0) : "");
+    const tableHost = h("div", "", body); tableHost.dataset.role = "fund-valuation-table";
+    table(tableHost, [{ label: "Rule", get: (r) => r.label }, { label: "Low", num: true, get: (r) => (Q.bad(r.low) ? "n/a" : num(r.low, 2)) }, { label: "Middle", num: true, get: (r) => (Q.bad(r.point) ? "n/a" : num(r.point, 2)) },
+      { label: "High", num: true, get: (r) => (Q.bad(r.high) ? "n/a" : num(r.high, 2)) }, { label: "Last close against the middle", num: true, get: (r) => against(r) }, { label: "Why it is missing", get: (r) => r.missing || "" }], v.rows);
+    if (v.graham_tests && v.graham_tests.length) {
+      h("h4", "", body, "Graham's price tests, on the last close");
+      const t = h("div", "", body); t.dataset.role = "fund-graham-price";
+      table(t, [{ label: "Test", get: (x) => x.label }, { label: "Value", num: true, get: (x) => (Q.bad(x.value) ? "n/a" : num(x.value, 1)) }, { label: "Limit", num: true, get: (x) => num(x.limit, 1) }, { label: "Passed", get: (x) => (x.ok === null || x.ok === undefined ? "n/a" : x.ok ? ICON.good + " yes" : ICON.bad + " no") }], v.graham_tests);
+    }
+    for (const n of v.notes || []) h("p", "hint", body, n);
+    Q.refsLine(body, v.references);
+  };
   CO.view = (root, d) => {
     const p = d.profile;
     Q.labHead(root, `${p.company_name || p.ticker} (${p.ticker}${p.exchange ? ", " + p.exchange : ""})`, [p.country, p.sector, p.industry, p.currency].filter(Boolean).join(" · "), GUIDE);
@@ -654,10 +749,13 @@
     tile(k, "Last filed", day(d.summary.last_filed) || "n/a", { text: p.source ? "from " + p.source : "" });
     tile(k, "Prices", d.prices ? d.prices.days.toLocaleString("en-US") + " days" : "none", { text: d.prices ? `${d.prices.first} to ${d.prices.last}` : "load them in the Data manager" });
     tile(k, "Last close", d.prices && !Q.bad(d.prices.last_close) ? num(d.prices.last_close) : "n/a", { text: p.currency || "" });
+    const zone = CO.latestZone(d), tests = ((d.graham || {}).rows || []).slice(-1)[0];
+    if (zone) tile(k, "Altman Z″ distress score", num(zone.score, 2), { text: ZONE[zone.zone][0], dir: ZONE[zone.zone][1] }, "", "Altman's score for non-manufacturers: below 1.10 is the distress zone, above 2.60 the safe zone. A screen next to the sample it was fitted on, not a forecast of failure.");
+    if (tests && tests.judged > 0) tile(k, "Graham's tests", `${Math.round(tests.met)} of ${Math.round(tests.judged)}`, { text: "of those the history can judge" }, "", "The defensive investor's tests of the balance sheet, the earnings record and the dividends.");
     if (d.anomaly_reading) tile(k, "Accounting-anomaly screen", d.annual.length && !Q.bad(d.annual[d.annual.length - 1].accounting_anomaly_score) ? num(d.annual[d.annual.length - 1].accounting_anomaly_score, 2) : "n/a", { text: d.anomaly_reading }, "", "A screen to look closer, never evidence of fraud");
     CO.coverage(root, p);
     const rows = d.annual;
-    const series = (names) => names.filter((n) => d.series[n]).map((n, i) => ({ name: human(n), color: Q.colorOf(i), values: d.series[n] }));
+    const series = (names) => names.filter((n) => d.series[n] && d.series[n].some((v) => v !== null)).map((n, i) => ({ name: SERIES_NAME[n] || human(n), color: Q.colorOf(i), values: d.series[n] }));
     const ch = h("div", "charts", root);
     const money = (v) => compact(v);
     const lineCard = (title, note, names, fmtY) => {
@@ -668,8 +766,13 @@
     lineCard("Revenue and profit", `In the company's reporting currency (${rows.length ? rows[rows.length - 1].currency || "" : ""}), as filed.`, ["revenue", "gross_profit", "operating_income", "net_income"], money);
     lineCard("Cash", "Cash from operations, capital spending and free cash flow.", ["operating_cash_flow", "capital_expenditure", "free_cash_flow"], money);
     lineCard("Margins", "Profit as a share of revenue.", ["gross_margin", "operating_margin", "net_margin", "fcf_margin"], (v) => pct(v, 0));
-    lineCard("Returns", "Profit as a share of equity, assets and invested capital.", ["roe", "roa", "roic"], (v) => pct(v, 0));
-    lineCard("Balance sheet", "Assets, debt and equity.", ["total_assets", "total_debt", "shareholders_equity", "cash"], money);
+    lineCard("Returns", "Profit as a share of equity, assets and invested capital, and operating profit over Greenblatt's capital (working capital without cash and debt, plus fixed assets).", ["roe", "roa", "roic", "greenblatt_roc"], (v) => pct(v, 0));
+    lineCard("Balance sheet", "Assets, debt, equity and the profit kept in the business.", ["total_assets", "total_debt", "shareholders_equity", "retained_earnings", "cash"], money);
+    lineCard("Growth the profit kept can pay for", "Revenue growth against the growth that the profit kept could finance with no new shares (sustainable) and with no new borrowing either (internal), after Higgins (1977). Above the lines the company grew by selling shares, by borrowing more or by getting more from its assets.", ["revenue_growth", "sustainable_growth", "internal_growth"], (v) => pct(v, 0));
+    lineCard("Owner earnings", "Net income, owner earnings (net income plus depreciation less capital spending: Buffett's measure, with all spending counted as the spending needed to stay where the business is) and free cash flow.", ["net_income", "owner_earnings", "free_cash_flow"], money);
+    CO.dupontChart(ch, d);
+    CO.distress(ch, d);
+    CO.valuation(root, p);
     const fig = W.card(root, "The statements, with the day each became public", "A figure enters research on its 'public from' date plus the lag you choose, never on its period end. 'Estimated' means the filing date was not known and a lag was assumed.");
     fig.dataset.role = "fund-statements"; fig.classList.add("roomy");
     const cols = [{ label: "Year", get: (r) => String(r.fiscal_year) }, { label: "Period end", get: (r) => day(r.period_end) }, { label: "Public from", get: (r) => day(r.available) + (r.estimated ? " (estimated)" : "") }];
@@ -678,6 +781,7 @@
     const ratios = W.card(root, "Ratios"); table(ratios, [{ label: "Year", get: (r) => String(r.fiscal_year) }].concat(d.ratios.map((name) => ({ label: human(name), num: true, get: (r) => (name.startsWith("piotroski") ? (Q.bad(r[name]) ? "n/a" : String(Math.round(r[name]))) : Math.abs(r[name]) > 100 ? compact(r[name]) : num(r[name], 3)) }))), rows.slice().reverse());
     const dup = W.card(root, "What moved the return on equity (DuPont)", "Return on equity is the product of five steps. The columns on the right split the change from the year before exactly into what each step contributed (the log-mean Divisia method); they need every step positive in both years.");
     dup.dataset.role = "fund-dupont";
+    Q.refsLine(dup, (d.references || {}).dupont);
     table(dup, [{ label: "Year", get: (r) => String(r.fiscal_year) }, { label: "Return on equity", num: true, get: (r) => pct(r.roe, 1) }, { label: "Change", num: true, get: (r) => spct(r.d_roe, 1) }]
       .concat(d.dupont_steps.map((s) => ({ label: s.label + " effect", num: true, title: "Contribution to the change in return on equity", get: (r) => spct(r["c_" + s.key], 2) }))).concat([{ label: "Method", get: (r) => r.method }]), d.dupont.slice().reverse());
     const pio = W.card(root, "Piotroski F-score", "Nine yes-or-no signs of improving financial health (Piotroski 2000); the score is how many are yes. It is a screen, not a verdict.");
@@ -685,10 +789,12 @@
     const sig = d.piotroski_signals, yrs = d.piotroski.map((r) => String(r.fiscal_year));
     C.matrix(h("div", "", pio), { rows: sig.map((s) => s.label), cols: yrs, values: sig.map((s) => d.piotroski.map((r) => (Q.bad(r[s.key]) ? null : r[s.key]))), format: (v) => (v >= 0.5 ? "yes" : "no"), min: 0, max: 1, name: "Signal", label: "Piotroski signals by year", labelWidth: 210, cellHeight: 20, tipFormat: (v) => (v >= 0.5 ? "yes" : "no") });
     h("p", "hint", pio, "Score by year: " + d.piotroski.map((r) => `${r.fiscal_year}: ${Q.bad(r.piotroski_f) ? "n/a" : Math.round(r.piotroski_f)}`).join(" · "));
+    Q.refsLine(pio, (d.references || {}).piotroski);
     const an = W.card(root, "Accounting-anomaly screen (Beneish-type)", d.anomaly_reading || "Eight ratios that compare this year with last, combined as in Beneish (1999). A high value means the accounts changed in ways that were common among companies later found to have manipulated earnings. It is fitted on old United States data and is never evidence of fraud.");
     an.dataset.role = "fund-anomaly";
     const parts = ["dsri", "gmi", "aqi", "sgi", "depi", "sgai", "lvgi", "tata"];
     table(an, [{ label: "Year", get: (r) => String(r.fiscal_year) }].concat(parts.map((k) => ({ label: k.toUpperCase(), num: true, get: (r) => num(r[k], 2) }))), d.anomaly.slice().reverse());
+    Q.refsLine(an, (d.references || {}).anomaly);
     if (d.flagged.length) {
       const fl = W.card(root, "Figures the quality checks flagged", "A flagged figure is treated as missing in research. Check it against the filing.");
       table(fl, [{ label: "Year", get: (r) => String(r.fiscal_year) }, { label: "Figure", get: (r) => r.metric_code }, { label: "Value", num: true, get: (r) => compact(r.value) }, { label: "Flag", get: (r) => r.quality_flag.replace(/_/g, " ") }], d.flagged);
@@ -704,6 +810,7 @@
     const idl = h("details", "how", root); h("summary", "", idl, "Identifiers and sync state"); const ul = h("ul", "", idl);
     for (const x of d.identifiers) h("li", "", ul, `${x.provider} ${x.id_type.replace(/_/g, " ")}: ${x.provider_id}`);
     for (const [k2, v] of Object.entries(d.sync || {})) if (v) h("li", "", ul, `${k2} statements: last checked ${day(v.last_checked)}, status ${v.status || "n/a"}${v.error ? " (" + v.error + ")" : ""}`);
+    CO.graham(root, d);
     FD.notes(root, "Read before relying on it", d.notes);
   };
 

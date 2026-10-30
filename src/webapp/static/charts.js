@@ -1,4 +1,4 @@
-/* Small SVG chart kit: line, area, columns, mirrored columns, horizontal bars (and waterfalls), month heat map, matrix, scatter, histogram. No dependencies; labels are inserted with textContent only. */
+/* Small SVG chart kit: line, area, columns, mirrored columns, stacked columns with a sign, horizontal bars (and waterfalls), ranges (a football field), month heat map, matrix, scatter, histogram. No dependencies; labels are inserted with textContent only. */
 (function () {
   "use strict";
   const NS = "http://www.w3.org/2000/svg";
@@ -89,7 +89,7 @@
   /* ---------- line / area over dates, or over numbers ----------
      Dates by default (o.dates). With o.xs (numbers, ascending) the horizontal axis is numeric: o.xFormat writes a tick or a hover title, o.xLabel names the axis, o.xWhole puts the ticks on whole numbers. A series may be drawn dashed
      (dash), with a dot at every point (dots, dotSize; a series of one point shows as a dot, and pointLabel names it) and may skip over missing values instead of breaking (connect). o.bands shades the space between two
-     arrays ({ lo, hi, color, name }), which is how a range of outcomes (a fan of wealth paths) is drawn behind its median. o.tipExtra(i) adds [label, text] rows to the hover.
+     arrays ({ lo, hi, color, name }, and noTip to keep the band out of the hover), which is how a range of outcomes (a fan of wealth paths) or the zones of a score are drawn behind its line. o.tipExtra(i) adds [label, text] rows to the hover.
    o.regions shades stretches of the horizontal axis behind the lines ({ from, to, name }, in the axis' own units: date strings, or numbers) and names them above the plot: the training, validation, test and
    forward sections of a machine-learning equity curve. o.vlines marks single positions ({ x, label }): today's price and the break-evens on a payoff chart. o.signFill shades the first series against
    the baseline, blue where it is above and red where it is below (profit and loss). o.ylim = [low, high] fixes the vertical range and cuts every line and band off at the edges of the plot, so that one series that runs
@@ -200,7 +200,7 @@
         html("b", "", r, (o.tipFormat || o.yFormat || fmt.num)(v));
       });
       for (const b of bands) {
-        if (!b.name || b.lo[i] === null || b.hi[i] === null || !isFinite(b.lo[i]) || !isFinite(b.hi[i])) continue;
+        if (!b.name || b.noTip || b.lo[i] === null || b.hi[i] === null || !isFinite(b.lo[i]) || !isFinite(b.hi[i])) continue;
         const r = html("div", "r", tip), kk = html("span", "k", r), sw = html("i", "", kk); sw.style.setProperty("--c", b.color); kk.appendChild(document.createTextNode(b.name));
         html("b", "", r, `${(o.tipFormat || o.yFormat || fmt.num)(b.lo[i])} to ${(o.tipFormat || o.yFormat || fmt.num)(b.hi[i])}`);
       }
@@ -301,6 +301,99 @@
       hit.addEventListener("pointermove", (e) => { bar.setAttribute("opacity", 0.75); tip.replaceChildren(); html("div", "t", tip, r.label); const r2 = html("div", "r", tip); html("span", "k", r2, o.name || "Value"); html("b", "", r2, r.text !== undefined ? r.text : (o.tipFormat || o.format)(r.value));
         for (const [k, v] of r.tip || []) { const r3 = html("div", "r", tip); html("span", "k", r3, k); html("b", "", r3, v); } const rect = svg.getBoundingClientRect(); place(tip, host, e.clientX - rect.left, y + 6); });
       hit.addEventListener("pointerleave", () => { bar.setAttribute("opacity", 1); tip.hidden = true; });
+    });
+  }
+
+  /* ---------- ranges: one floating bar per row, a mark inside it, and a reference line (a football field) ----------
+     o.rows = [{ label, low, high, point, text, missing }]: a bar from low to high with a tick at point (a row whose low and high are equal is drawn as a diamond), o.ref = { value, label } is the line every row
+     is read against (today's price). A row with no value (row.missing names why) is written out in muted ink instead of a bar. o.format writes a value, o.labelWidth makes room for the labels. */
+  function ranges(host, o) {
+    const W = width(host);
+    host.replaceChildren();
+    const rows = o.rows, rowH = 30, m = { l: o.labelWidth || 150, r: 16, t: o.ref ? 22 : 8, b: 22 }, H = m.t + rows.length * rowH + m.b, iw = W - m.l - m.r;
+    const svg = el("svg", { class: "chart", viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": o.label || "range chart" }, host), tip = tooltip(host), fm = o.format || fmt.num;
+    const have = rows.filter((r) => r.low !== null && r.low !== undefined && r.high !== null && r.high !== undefined && isFinite(r.low) && isFinite(r.high));
+    const values = have.flatMap((r) => [r.low, r.high]).concat(o.ref ? [o.ref.value] : []);
+    if (!values.length) { el("text", { x: W / 2, y: H / 2, "text-anchor": "middle" }, svg, "Nothing to show"); return; }
+    const lo = Math.min(0, ...values), hi = Math.max(0, ...values), ticks = niceTicks(lo, hi * 1.04, 5), min = Math.min(lo, ticks[0]), max = Math.max(hi, ticks[ticks.length - 1]);
+    const X = (v) => m.l + ((v - min) / (max - min || 1)) * iw;
+    for (const v of ticks) { el("line", { x1: X(v), x2: X(v), y1: m.t, y2: H - m.b, class: "grid" }, svg); el("text", { x: X(v), y: H - 6, "text-anchor": "middle" }, svg, fm(v)); }
+    el("line", { x1: X(0), x2: X(0), y1: m.t, y2: H - m.b, class: "axis" }, svg);
+    if (o.ref) {
+      el("line", { x1: X(o.ref.value), x2: X(o.ref.value), y1: m.t - 4, y2: H - m.b, class: "ref" }, svg);
+      el("text", { x: Math.min(W - m.r - 4, Math.max(m.l, X(o.ref.value))), y: m.t - 9, "text-anchor": X(o.ref.value) > W - 120 ? "end" : "middle", class: "ink" }, svg, o.ref.label || fm(o.ref.value));
+    }
+    rows.forEach((r, i) => {
+      const y = m.t + i * rowH + 5, h = 18, mid = y + h / 2, shown = have.includes(r);
+      const fit = Math.floor((m.l - 12) / 6.2), name = r.label.length > fit ? r.label.slice(0, Math.max(1, fit - 1)) + "…" : r.label;                                  // about 6 px a letter at this size
+      const text = el("text", { x: m.l - 8, y: mid + 4, "text-anchor": "end", class: "ink" }, svg, name);
+      if (name !== r.label) el("title", {}, text, r.label);
+      if (!shown) {
+        const why = r.missing || "n/a", room = Math.floor((iw - 8) / 6.0), t = el("text", { x: m.l + 6, y: mid + 4, "text-anchor": "start" }, svg, why.length > room ? why.slice(0, Math.max(1, room - 1)) + "…" : why);
+        if (why.length > room) el("title", {}, t, why);
+        return;
+      }
+      const x0 = X(r.low), x1 = X(r.high), color = o.color ? o.color(r, i) : css("--s1"), point = r.point !== null && r.point !== undefined && isFinite(r.point) ? r.point : (r.low + r.high) / 2;
+      let mark;
+      if (x1 - x0 < 3) mark = el("path", { d: `M${x0},${mid - 8}L${x0 + 7},${mid}L${x0},${mid + 8}L${x0 - 7},${mid}Z`, fill: color, stroke: css("--surface"), "stroke-width": 1.5 }, svg);
+      else {
+        mark = el("rect", { x: x0, y, width: x1 - x0, height: h, rx: 4, fill: color, "fill-opacity": 0.28, stroke: color, "stroke-width": 1.5 }, svg);
+        el("line", { x1: X(point), x2: X(point), y1: y - 2, y2: y + h + 2, stroke: color, "stroke-width": 3, "stroke-linecap": "round" }, svg);
+      }
+      const hit = el("rect", { x: 0, y: y - 4, width: W, height: rowH, fill: "transparent" }, svg);
+      hit.addEventListener("pointermove", (e) => {
+        mark.setAttribute("opacity", 0.8); tip.replaceChildren(); html("div", "t", tip, r.label);
+        const rows2 = r.low === r.high ? [["Value", fm(r.low)]] : [["Low", fm(r.low)], ["Middle", fm(point)], ["High", fm(r.high)]];
+        if (o.ref) rows2.push(["Price against the middle", (o.ref.value / point - 1 >= 0 ? "+" : "−") + Math.abs((o.ref.value / point - 1) * 100).toFixed(0) + "%"]);
+        for (const [k, v] of rows2) { const r2 = html("div", "r", tip); html("span", "k", r2, k); html("b", "", r2, v); }
+        if (r.text) html("div", "n", tip, r.text);
+        const rect = svg.getBoundingClientRect(); place(tip, host, e.clientX - rect.left, y + 6);
+      });
+      hit.addEventListener("pointerleave", () => { mark.setAttribute("opacity", 1); tip.hidden = true; });
+    });
+  }
+
+  /* ---------- stacked columns with a sign: what each part added to a total, year by year ----------
+     o.labels names the columns, o.series = [{ name, color, values }]: positive values stack up from zero and negative ones down, so a part that pulled the total down is drawn below the line. o.total = { name, values }
+     marks the sum of each column with a dot (the change that the parts add up to). o.yFormat writes an axis value and o.tipFormat a hover value. */
+  function stack(host, o) {
+    const W = width(host);
+    host.replaceChildren();
+    legend(host, o.series.map((s) => ({ name: s.name, color: s.color, box: true, opacity: 0.4 })).concat(o.total ? [{ name: o.total.name, color: css("--ink") }] : []));
+    const H = o.height || 260, m = { l: 52, r: 10, t: 14, b: 26 }, iw = W - m.l - m.r, ih = H - m.t - m.b, n = o.labels.length, ok = (v) => v !== null && v !== undefined && isFinite(v);
+    const svg = el("svg", { class: "chart", viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": o.label || "stacked column chart" }, host), tip = tooltip(host), fy = o.yFormat || fmt.num;
+    let top = 0, bottom = 0;
+    for (let i = 0; i < n; i++) {
+      let up = 0, down = 0;
+      for (const s of o.series) { const v = s.values[i]; if (ok(v)) { if (v >= 0) up += v; else down += v; } }
+      top = Math.max(top, up); bottom = Math.min(bottom, down);
+      if (o.total && ok(o.total.values[i])) { top = Math.max(top, o.total.values[i]); bottom = Math.min(bottom, o.total.values[i]); }
+    }
+    if (!(top || bottom)) { el("text", { x: W / 2, y: H / 2, "text-anchor": "middle" }, svg, "No data"); return; }
+    const ticks = niceTicks(bottom * 1.08, top * 1.08, 5), min = Math.min(ticks[0], bottom), max = Math.max(ticks[ticks.length - 1], top), Y = (v) => m.t + ih - ((v - min) / (max - min || 1)) * ih;
+    for (const v of ticks) { el("line", { x1: m.l, x2: W - m.r, y1: Y(v), y2: Y(v), class: "grid" }, svg); el("text", { x: m.l - 6, y: Y(v) + 4, "text-anchor": "end" }, svg, fy(v)); }
+    el("line", { x1: m.l, x2: W - m.r, y1: Y(0), y2: Y(0), class: "axis" }, svg);
+    const slot = iw / n, bw = Math.max(2, Math.min(34, slot - 4));
+    o.labels.forEach((lab, i) => {
+      const cx = m.l + slot * (i + 0.5), x = cx - bw / 2;
+      let up = 0, down = 0;
+      for (const s of o.series) {
+        const v = s.values[i]; if (!ok(v) || v === 0) continue;
+        const from = v >= 0 ? up : down, to = from + v;
+        if (v >= 0) up = to; else down = to;
+        const y0 = Y(Math.min(from, to)), y1 = Y(Math.max(from, to));
+        el("rect", { x, y: y1, width: bw, height: Math.max(1, y0 - y1), fill: s.color, stroke: css("--surface"), "stroke-width": 1 }, svg);                  // a hair of surface between parts
+      }
+      if (iw / n > 28 || i % 2 === 0) el("text", { x: cx, y: H - 8, "text-anchor": "middle" }, svg, String(lab));
+      if (o.total && ok(o.total.values[i])) el("circle", { cx, cy: Y(o.total.values[i]), r: 4, fill: css("--ink"), stroke: css("--surface"), "stroke-width": 1.5 }, svg);
+      const hit = el("rect", { x: cx - slot / 2, y: m.t, width: slot, height: ih, fill: "transparent" }, svg);
+      hit.addEventListener("pointermove", () => {
+        tip.replaceChildren(); html("div", "t", tip, String(lab));
+        for (const s of o.series) { if (!ok(s.values[i])) continue; const r = html("div", "r", tip), kk = html("span", "k", r), sw = html("i", "", kk); sw.style.setProperty("--c", s.color); kk.appendChild(document.createTextNode(s.name)); html("b", "", r, (o.tipFormat || fy)(s.values[i])); }
+        if (o.total && ok(o.total.values[i])) { const r = html("div", "r", tip); html("span", "k", r, o.total.name); html("b", "", r, (o.tipFormat || fy)(o.total.values[i])); }
+        place(tip, host, cx, m.t + 20);
+      });
+      hit.addEventListener("pointerleave", () => { tip.hidden = true; });
     });
   }
 
@@ -480,5 +573,5 @@
     overlay.addEventListener("focus", () => show(svg.getBoundingClientRect().left + svg.getBoundingClientRect().width * 0.5)); overlay.addEventListener("blur", hide);
   }
 
-  window.Charts = { line, columns, mirror, hbars, heatmap, matrix, scatter, histogram, fmt, html, el, niceTicks };
+  window.Charts = { line, columns, mirror, hbars, ranges, stack, heatmap, matrix, scatter, histogram, fmt, html, el, niceTicks };
 })();

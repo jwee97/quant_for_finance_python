@@ -64,6 +64,7 @@ METRICS: dict[str, Metric] = {m.code: m for m in [
     _m("minority_interest", "Minority interest", "balance", "stock", False, "Equity held by minority shareholders of subsidiaries."),
     _m("preferred_equity", "Preferred equity", "balance", "stock", True, "Preferred stock."),
     _m("temporary_equity", "Redeemable (temporary) equity", "balance", "stock", True, "Redeemable preferred stock and redeemable minority interests, shown between liabilities and equity because the holders can require the company to buy them back."),
+    _m("retained_earnings", "Retained earnings", "balance", "stock", False, "Profit kept in the business since it began (negative: an accumulated deficit)."),
     # cash flow (flows)
     _m("operating_cash_flow", "Operating cash flow", "cashflow", "flow", False, "Net cash from operating activities."),
     _m("capital_expenditure", "Capital expenditure", "cashflow", "flow", True, "Cash spent on property, plant and equipment (positive)."),
@@ -104,6 +105,7 @@ OPENFILINGS_MAP: dict[str, list[tuple[str, str]]] = {
     "current_liabilities": [("current_liabilities", "as_is")], "short_term_debt": [("short_term_debt", "as_is"), ("ibd_current", "as_is")],
     "long_term_debt": [("long_term_debt", "as_is"), ("ibd_noncurrent", "as_is")], "total_debt": [("total_debt", "as_is")], "total_liabilities": [("total_liabilities", "as_is")],
     "shareholders_equity": [("equity", "as_is")], "minority_interest": [("noncontrolling_interest", "as_is")], "preferred_equity": [("preferred_stock", "as_is")],
+    "retained_earnings": [("retained_earnings", "as_is")],             # OpenFilings also lists ``accumulated_deficit``; its sign convention is not documented, so it is not read
     # cash flow statement
     "operating_cash_flow": [("operating_cash_flow", "as_is")], "capital_expenditure": [("capex", "abs")], "free_cash_flow": [("free_cash_flow", "as_is")],
     "depreciation_amortization": [("depreciation_amortization", "as_is"), ("da_supplemental", "as_is")], "stock_based_compensation": [("stock_based_comp", "as_is")],
@@ -176,6 +178,7 @@ SEC_MAP: dict[str, list[tuple[str, str]]] = {
     "shareholders_equity": _gaap("StockholdersEquity") + [(SEC_PARENT_EQUITY, "as_is")] + _gaap("StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest") + _ifrs("EquityAttributableToOwnersOfParent", "Equity"),
     "minority_interest": _gaap("MinorityInterest") + _ifrs("NoncontrollingInterests"),
     "preferred_equity": _gaap("PreferredStockValue", "PreferredStockValueOutstanding"),
+    "retained_earnings": _gaap("RetainedEarningsAccumulatedDeficit") + _ifrs("RetainedEarnings"),
     # cash flow statement
     "operating_cash_flow": _gaap("NetCashProvidedByUsedInOperatingActivities", "NetCashProvidedByUsedInOperatingActivitiesContinuingOperations") + _ifrs("CashFlowsFromUsedInOperatingActivities"),
     "capital_expenditure": _gaap("PaymentsToAcquirePropertyPlantAndEquipment", "PaymentsToAcquireProductiveAssets", "PaymentsForCapitalImprovements", transform="abs")

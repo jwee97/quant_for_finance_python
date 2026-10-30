@@ -129,7 +129,7 @@ MARKOWITZ = paper("Markowitz", 1952, "Portfolio selection", "Journal of Finance 
 SHARPE_64 = paper("Sharpe", 1964, "Capital asset prices: a theory of market equilibrium under conditions of risk", "Journal of Finance 19(3)", "10.1111/j.1540-6261.1964.tb02865.x")
 MAILLARD = paper("Maillard, Roncalli and Teiletche", 2010, "The properties of equally weighted risk contribution portfolios", "Journal of Portfolio Management 36(4)", "10.3905/jpm.2010.36.4.060")
 RONCALLI = book("Roncalli", 2013, "Introduction to Risk Parity and Budgeting", "Chapman & Hall/CRC")
-LOPEZ_HRP = paper("Lopez de Prado", 2016, "Building diversified portfolios that outperform out of sample", "Journal of Portfolio Management 42(4); SSRN 2708678", "10.2139/ssrn.2708678")
+LOPEZ_HRP = paper("Lopez de Prado", 2016, "Building diversified portfolios that outperform out of sample", "Journal of Portfolio Management 42(4)", "10.3905/jpm.2016.42.4.059")
 RAFFINOT = paper("Raffinot", 2017, "Hierarchical clustering-based asset allocation", "Journal of Portfolio Management 44(2)", "10.3905/jpm.2018.44.2.089")
 CLARKE_MINVAR = paper("Clarke, de Silva and Thorley", 2006, "Minimum-variance portfolios in the U.S. equity market", "Journal of Portfolio Management 33(1)", "10.3905/jpm.2006.661366")
 CHOUEIFATY = paper("Choueifaty and Coignard", 2008, "Toward maximum diversification", "Journal of Portfolio Management 35(1)", "10.3905/jpm.2008.35.1.40")
@@ -223,6 +223,36 @@ NI_PEARSON_POTESHMAN_WHITE = paper("Ni, Pearson, Poteshman and White", 2021, "Do
 BARBON_BURASCHI = paper("Barbon and Buraschi", 2020, "Gamma fragility", "SSRN 3725454", "10.2139/ssrn.3725454")
 
 
+# ---- fundamentals
+ALTMAN_68 = paper("Altman", 1968, "Financial ratios, discriminant analysis and the prediction of corporate bankruptcy", "Journal of Finance 23(4)", "10.1111/j.1540-6261.1968.tb00843.x")
+ALTMAN_05 = paper("Altman", 2005, "An emerging market credit scoring system for corporate bonds", "Emerging Markets Review 6(4)", "10.1016/j.ememar.2005.09.007")
+ALTMAN_HOTCHKISS = book("Altman and Hotchkiss", 2006, "Corporate Financial Distress and Bankruptcy, 3rd edition", "Wiley")
+DICHEV = paper("Dichev", 1998, "Is the risk of bankruptcy a systematic risk?", "Journal of Finance 53(3)", "10.1111/0022-1082.00046")
+CAMPBELL_HILSCHER_SZILAGYI = paper("Campbell, Hilscher and Szilagyi", 2008, "In search of distress risk", "Journal of Finance 63(6)", "10.1111/j.1540-6261.2008.01416.x")
+BHARATH_SHUMWAY = paper("Bharath and Shumway", 2008, "Forecasting default with the Merton distance to default model", "Review of Financial Studies 21(3)", "10.1093/rfs/hhn044")
+MERTON_74 = paper("Merton", 1974, "On the pricing of corporate debt: the risk structure of interest rates", "Journal of Finance 29(2)", "10.1111/j.1540-6261.1974.tb03058.x")
+BENEISH = paper("Beneish", 1999, "The detection of earnings manipulation", "Financial Analysts Journal 55(5)", "10.2469/faj.v55.n5.2296")
+GRAHAM_IIN = book("Graham", 1973, "The Intelligent Investor, 4th revised edition (chapter 14)", "Harper & Row")
+GRAHAM_DODD = book("Graham and Dodd", 1934, "Security Analysis", "McGraw-Hill")
+OPPENHEIMER_84 = paper("Oppenheimer", 1984, "A test of Ben Graham's stock selection criteria", "Financial Analysts Journal 40(5)", "10.2469/faj.v40.n5.68")
+OPPENHEIMER_86 = paper("Oppenheimer", 1986, "Ben Graham's net current asset values: a performance update", "Financial Analysts Journal 42(6)", "10.2469/faj.v42.n6.40")
+GREENBLATT = book("Greenblatt", 2005, "The Little Book That Beats the Market", "Wiley")
+BUFFETT_86 = Ref("Buffett (1986), Chairman's letter to the shareholders, Berkshire Hathaway Inc. annual report (the passage on owner earnings)", "https://www.berkshirehathaway.com/letters/1986.html")
+LYNCH = book("Lynch with Rothchild", 1989, "One Up on Wall Street", "Simon & Schuster")
+GREENWALD = book("Greenwald, Kahn, Sonkin and van Biema", 2001, "Value Investing: From Graham to Buffett and Beyond", "Wiley")
+GORDON_SHAPIRO = paper("Gordon and Shapiro", 1956, "Capital equipment analysis: the required rate of profit", "Management Science 3(1)", "10.1287/mnsc.3.1.102")
+HIGGINS = paper("Higgins", 1977, "How much growth can a firm afford?", "Financial Management 6(3)", "10.2307/3665251")
+HIRSHLEIFER_HOU_TEOH_ZHANG = paper("Hirshleifer, Hou, Teoh and Zhang", 2004, "Do investors overvalue firms with bloated balance sheets?", "Journal of Accounting and Economics 38", "10.1016/j.jacceco.2004.10.002")
+LAKONISHOK_SHLEIFER_VISHNY = paper("Lakonishok, Shleifer and Vishny", 1994, "Contrarian investment, extrapolation, and risk", "Journal of Finance 49(5)", "10.1111/j.1540-6261.1994.tb04772.x")
+BASU = paper("Basu", 1977, "Investment performance of common stocks in relation to their price-earnings ratios: a test of the efficient market hypothesis", "Journal of Finance 32(3)", "10.1111/j.1540-6261.1977.tb01979.x")
+COOPER_GULEN_SCHILL = paper("Cooper, Gulen and Schill", 2008, "Asset growth and the cross-section of stock returns", "Journal of Finance 63(4)", "10.1111/j.1540-6261.2008.01370.x")
+PONTIFF_WOODGATE = paper("Pontiff and Woodgate", 2008, "Share issuance and cross-sectional returns", "Journal of Finance 63(2)", "10.1111/j.1540-6261.2008.01335.x")
+BALL_GERAKOS = paper("Ball, Gerakos, Linnainmaa and Nikolaev", 2016, "Accruals, cash flows, and operating profitability in the cross section of stock returns", "Journal of Financial Economics 121(1)", "10.1016/j.jfineco.2016.03.002")
+FAMA_FRENCH_15 = paper("Fama and French", 2015, "A five-factor asset pricing model", "Journal of Financial Economics 116(1)", "10.1016/j.jfineco.2014.10.010")
+BHANDARI = paper("Bhandari", 1988, "Debt/equity ratio and expected common stock returns: empirical evidence", "Journal of Finance 43(2)", "10.1111/j.1540-6261.1988.tb03952.x")
+SOLIMAN = paper("Soliman", 2008, "The use of DuPont analysis by market participants", "The Accounting Review 83(3)", "10.2308/accr.2008.83.3.823")
+
+
 # ------------------------------------------------------------------------------------------------------------------ method -> sources
 MODELS: dict[str, tuple[Ref, ...]] = {
     "tsmom": (MOSKOWITZ, HURST), "tsmom_multi": (HURST, MOSKOWITZ), "ma_ensemble": (BAZ,), "donchian": (FAITH, CLENOW_FTT), "kama_trend": (KAUFMAN,),
@@ -295,4 +325,31 @@ OPTIONS: dict[str, tuple[Ref, ...]] = {
     "positioning": (GARLEANU_PEDERSEN_POTESHMAN, BOLLEN_WHALEY, NI_PEARSON_POTESHMAN, NI_PEARSON_POTESHMAN_WHITE, BARBON_BURASCHI), "cone": (BURGHARDT_LANE, NATENBERG, SINCLAIR),
     "timing": (BOLLERSLEV_TZ, CARR_WU, SINCLAIR),
 }
-EXTRA: dict[str, dict[str, tuple[Ref, ...]]] = {"forecaster": FORECASTERS, "futures": FUTURES_VIEWS, "crypto": CRYPTO_VIEWS, "options": OPTIONS}   # tables of the other tabs (forecasters, futures views, option structures, ...)
+# What the company page of the Fundamentals tab shows, by card.
+FUNDAMENTALS_VIEWS: dict[str, tuple[Ref, ...]] = {
+    "distress": (ALTMAN_68, ALTMAN_05, ALTMAN_HOTCHKISS, DICHEV, CAMPBELL_HILSCHER_SZILAGYI),
+    "graham": (GRAHAM_IIN, GRAHAM_DODD, OPPENHEIMER_84, OPPENHEIMER_86),
+    "valuation": (GRAHAM_IIN, GRAHAM_DODD, OPPENHEIMER_86, GREENWALD, BUFFETT_86, GORDON_SHAPIRO, LYNCH),
+    "growth": (HIGGINS,),
+    "owner_earnings": (BUFFETT_86,),
+    "return_on_capital": (GREENBLATT,),
+    "net_operating_assets": (HIRSHLEIFER_HOU_TEOH_ZHANG, SLOAN),
+    "dupont": (SOLIMAN,),
+    "anomaly": (BENEISH,),
+    "piotroski": (PIOTROSKI,),
+}
+# The factors and scores of the library, by name: where the rule comes from (only the ones a paper or a book defines).
+FACTOR_SOURCES: dict[str, tuple[Ref, ...]] = {
+    "altman_z_double_prime": (ALTMAN_05, ALTMAN_HOTCHKISS, DICHEV, CAMPBELL_HILSCHER_SZILAGYI), "altman_z_prime": (ALTMAN_68, ALTMAN_HOTCHKISS, DICHEV, CAMPBELL_HILSCHER_SZILAGYI),
+    "altman_z_original": (ALTMAN_68, DICHEV, CAMPBELL_HILSCHER_SZILAGYI), "retained_earnings_to_assets": (ALTMAN_68,),
+    "naive_distance_to_default": (BHARATH_SHUMWAY, MERTON_74, CAMPBELL_HILSCHER_SZILAGYI), "greenblatt_roc": (GREENBLATT,), "magic_formula": (GREENBLATT,),
+    "owner_earnings_yield": (BUFFETT_86,), "owner_earnings_margin": (BUFFETT_86,), "sustainable_growth": (HIGGINS,), "internal_growth": (HIGGINS,),
+    "peg_inverse": (LYNCH,), "eps_cagr_3y": (LYNCH,), "graham_number_to_price": (GRAHAM_IIN,), "ncav_to_price": (GRAHAM_DODD, GRAHAM_IIN, OPPENHEIMER_86),
+    "noa_to_assets": (HIRSHLEIFER_HOU_TEOH_ZHANG,), "noa_change": (HIRSHLEIFER_HOU_TEOH_ZHANG,),
+    "qmj_style_composite": (AFP_QMJ,), "contrarian_value_composite": (LAKONISHOK_SHLEIFER_VISHNY,), "piotroski_value_composite": (PIOTROSKI,),
+    "earnings_yield": (BASU,), "book_to_price": (FAMA_FRENCH_93, LAKONISHOK_SHLEIFER_VISHNY), "cfo_yield": (LAKONISHOK_SHLEIFER_VISHNY,), "gross_profitability": (NOVY_MARX,),
+    "operating_profitability": (FAMA_FRENCH_15,), "cash_return_on_assets": (BALL_GERAKOS,), "piotroski_f": (PIOTROSKI,), "accruals_ratio": (SLOAN,), "sloan_accruals": (SLOAN,),
+    "accounting_anomaly_score": (BENEISH,), "asset_growth": (COOPER_GULEN_SCHILL, FAMA_FRENCH_15), "share_growth": (PONTIFF_WOODGATE,), "debt_to_equity": (BHANDARI,),
+    "value_composite": (FAMA_FRENCH_93, LAKONISHOK_SHLEIFER_VISHNY), "quality_composite": (AFP_QMJ, NOVY_MARX),
+}
+EXTRA: dict[str, dict[str, tuple[Ref, ...]]] = {"forecaster": FORECASTERS, "futures": FUTURES_VIEWS, "crypto": CRYPTO_VIEWS, "options": OPTIONS, "fundamentals": FUNDAMENTALS_VIEWS, "factor": FACTOR_SOURCES}   # tables of the other tabs (forecasters, futures views, option structures, ...)

@@ -25,6 +25,7 @@ from ..fundamentals import coverage as coverage_module
 from ..fundamentals import prices as price_module
 from ..fundamentals.calibration import MAX_REPEATS
 from ..fundamentals.discovery import Discovery, DiscoverySpec
+from ..fundamentals import valuation as yardsticks
 from ..fundamentals.errors import FundamentalsError
 from ..fundamentals.jsonutil import clean
 from ..fundamentals.library import STATUSES
@@ -121,7 +122,7 @@ class FundamentalsApi:
     # ------------------------------------------------------------------------------------------------------------ routes
     def get_routes(self) -> dict:
         return self._clean({"/api/fund/status": self.status, "/api/fund/overview": self.overview, "/api/fund/catalogue": self.catalogue, "/api/fund/companies": self.companies,
-                            "/api/fund/company": self.company, "/api/fund/coverage": self.coverage, "/api/fund/quality": self.quality, "/api/fund/library": self.library, "/api/fund/alpha": self.alpha,
+                            "/api/fund/company": self.company, "/api/fund/valuation": self.valuation, "/api/fund/coverage": self.coverage, "/api/fund/quality": self.quality, "/api/fund/library": self.library, "/api/fund/alpha": self.alpha,
                             "/api/fund/graveyard": self.graveyard, "/api/fund/runs": self.runs, "/api/fund/run": self.run_summary, "/api/fund/experiments": self.experiments})
 
     def post_routes(self) -> dict:
@@ -257,6 +258,20 @@ class FundamentalsApi:
         except (TypeError, ValueError):
             raise ApiError("say which company: ?id=<security id>") from None
         return self._guard(self.bench(db, create=db == "real").company, sid)
+
+    def valuation(self, q: dict | None = None) -> dict:
+        """``GET /api/fund/valuation?db=&id=&rate=&growth=``: what the share might be worth under each of a handful of published rules (Graham's number and net current asset value, Greenwald's earnings power
+        value, owner earnings and free cash flow capitalised at ``rate`` with perpetual ``growth``, the Lynch line, book value), as ranges per share in the statements' currency, beside the last close when it is
+        quoted in that currency. ``rate`` (default 9%) and ``growth`` (default 2%) are fractions; the rate must exceed the growth by two points. Nothing is fetched and nothing is a forecast."""
+        q = q or {}
+        db = _db(q)
+        try:
+            sid = int(q.get("id"))
+        except (TypeError, ValueError):
+            raise ApiError("say which company: ?id=<security id>") from None
+        rate = _number(q.get("rate", yardsticks.DEFAULT_RATE), "the discount rate", *yardsticks.RATE_RANGE)
+        growth = _number(q.get("growth", yardsticks.DEFAULT_GROWTH), "the perpetual growth", *yardsticks.GROWTH_RANGE)
+        return self._guard(self.bench(db, create=db == "real").valuation, sid, rate, growth)
 
     def coverage(self, q: dict | None = None) -> dict:
         """``GET /api/fund/coverage?db=&id=``: the fiscal years of one company, each held, missing, found empty when asked for, due or not yet due; the quarterly statements held; the last request in words

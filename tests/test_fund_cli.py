@@ -221,7 +221,7 @@ def test_a_company_is_looked_up_by_name_and_the_command_says_what_it_cost_and_wh
 # ------------------------------------------------------------------------------------------------------------ the research
 def test_the_factor_library_is_listed_and_a_scan_sets_factors_side_by_side(home, capsys):
     code, out, _ = run(capsys, "factors", "--demo")
-    assert code == 0 and "fcf_yield" in out and "d_roic" in out and re.search(r"\b\d\d factors\b", out)
+    assert code == 0 and "fcf_yield" in out and "d_roic" in out and re.search(r"\b\d{2,3} factors\b", out)
     code, out, _ = run(capsys, "factors", "--scan", "fcf_yield", "roic", "--demo")
     assert code == 0 and "2 factors under one set of conditions" in out and "map of where to look" in out and out.index("fcf_yield") < out.index("roic")
 

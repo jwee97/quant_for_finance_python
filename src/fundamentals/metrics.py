@@ -384,7 +384,7 @@ def register_scores(definitions: list[Derived]) -> None:
 
 def compute(tables: PeriodTables, basis: str = "fy") -> pd.DataFrame:
     """Every derived metric for every row of the ``basis`` table, index-aligned with it. The columns are also attached to the table, so later stages (and the factor engine) can look back a year."""
-    from . import analytics  # noqa: F401  (registers the Piotroski and anomaly scores)
+    from . import analytics, scores  # noqa: F401  (register the Piotroski and anomaly scores, and the distress, Graham and growth scores)
     table = tables.table(basis)
     if table.empty:
         return pd.DataFrame(index=table.index, columns=[d.name for d in DEFINITIONS], dtype=float)
@@ -403,7 +403,7 @@ def compute(tables: PeriodTables, basis: str = "fy") -> pd.DataFrame:
 
 
 def catalogue() -> list[dict]:
-    from . import analytics  # noqa: F401  (registers the Piotroski and anomaly scores)
+    from . import analytics, scores  # noqa: F401  (register the Piotroski and anomaly scores, and the distress, Graham and growth scores)
     return [{"name": d.name, "label": d.label, "family": d.family, "unit": d.unit, "text": d.text} for d in DEFINITIONS]
 
 

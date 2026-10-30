@@ -166,7 +166,10 @@
           const g = h("optgroup", "", sel); g.label = human(fam);
           for (const f of list) { const o = h("option", "", g, f.label); o.value = f.name; if (f.name === s.factor) o.selected = true; }
         }
-        const note = h("p", "hint", holder, ""), paint = () => { const f = cat.factors.find((x) => x.name === s.factor); note.textContent = f ? `${f.text} Expected direction: ${f.direction > 0 ? "higher is better" : "lower is better"}. Reads: ${f.needs.join(", ") || "prices only"}.` : ""; };
+        const note = h("p", "hint", holder, ""), sources = h("div", "", holder), paint = () => {
+          const f = cat.factors.find((x) => x.name === s.factor); note.textContent = f ? `${f.text} Expected direction: ${f.direction > 0 ? "higher is better" : "lower is better"}. Reads: ${f.needs.join(", ") || "prices only"}.` : "";
+          sources.replaceChildren(); if (f) Q.refsLine(sources, f.sources);
+        };
         sel.addEventListener("change", () => { s.factor = sel.value; paint(); after(); }); paint();
       }).catch((e) => h("p", "hint", holder, e.message));
     } else {
@@ -260,6 +263,20 @@
       wide: true,
       draw: (b) => C.hbars(b, { rows: rows.slice(0, 24).map((r) => ({ label: r.label, value: r.t_stat, text: `t ${num(r.t_stat, 1)}`, tip: [["Mean IC", sgn(r.mean_ic)], ["Net Sharpe", num(r.net_sharpe, 2)], ["Coverage", pct(r.coverage, 0)]] })), format: (v) => v.toFixed(0), name: "t-statistic", label: "t-statistics of the factors", labelWidth: 200, valueWidth: 60 }),
       table: (b) => table(b, [{ label: "Factor", get: (r) => r.label }, { label: "t", num: true, get: (r) => num(r.t_stat, 1) }], rows) });
+    const byFamily = {};
+    for (const r of rows) (byFamily[r.family] = byFamily[r.family] || []).push(r);
+    const families = Object.entries(byFamily).map(([family, list]) => {
+      const best = list.reduce((a, b) => (Math.abs(b.t_stat) > Math.abs(a.t_stat) ? b : a)), mean = list.reduce((sum, r) => sum + r.t_stat, 0) / list.length;
+      return { family, label: human(family), n: list.length, mean, beyond: list.filter((r) => Math.abs(r.t_stat) > 2).length, best };
+    }).sort((a, b) => Math.abs(b.mean) - Math.abs(a.mean));
+    if (families.length > 1) {
+      const fc = chartCard(root, "How each family did", "The mean t-statistic of the factors in each family, with how many there are, how many are beyond ±2 and the strongest. Factors of a family that divide by the same market value move together: a family with many strong factors is often one idea seen many times, which the correlation view shows.", {
+        draw: (b) => C.hbars(b, { rows: families.map((f) => ({ label: f.label, value: f.mean, text: `mean t ${num(f.mean, 1)} · ${f.n} factors`, tip: [["Factors", String(f.n)], ["Beyond ±2", String(f.beyond)], ["Strongest", `${f.best.label} (t ${num(f.best.t_stat, 1)})`]] })), format: (v) => v.toFixed(0),
+          name: "mean t-statistic", label: "mean t-statistic of the factors in each family", labelWidth: 150, valueWidth: 150 }),
+        table: (b) => table(b, [{ label: "Family", get: (f) => f.label }, { label: "Factors", num: true, get: (f) => String(f.n) }, { label: "Mean t", num: true, get: (f) => num(f.mean, 1) }, { label: "Beyond ±2", num: true, get: (f) => String(f.beyond) },
+          { label: "Strongest", get: (f) => `${f.best.label} (t ${num(f.best.t_stat, 1)})` }], families) });
+      fc.dataset.role = "fund-scan-families";
+    }
     const card = W.card(root, "The table", "Click a factor to study it in full."); card.dataset.role = "fund-scan";
     csvButton(card, "Download the table (CSV)", "factor_scan.csv", ["factor", "family", "coverage", "mean_ic", "t_stat", "icir", "positive_share", "top_minus_bottom", "monotonicity", "net_sharpe", "turnover"],
       sc.rows.filter((r) => !r.error).map((r) => [r.name, r.family, r.coverage, r.mean_ic, r.t_stat, r.icir, r.positive_share, r.spread, r.monotonicity, r.net_sharpe, r.turnover]));
