@@ -315,7 +315,7 @@ def test_a_resize_redraws_the_charts_at_the_new_width_and_keeps_what_the_reader_
     assert drawdown.locator("table.data").count() == 1, "the table the reader opened is still open"
     assert page.locator(".chartcard .seg button:text-is('Log')").get_attribute("aria-pressed") == "true"
     assert page.locator(".tabsmall button").nth(2).get_attribute("aria-selected") == "true"
-    assert abs(_scroll_y(page) - y) < 250, "the reader stays near where they were (a narrower page re-flows the rows of tiles above, so not to the pixel; the bug sent them to 0)"
+    assert abs(_scroll_y(page) - y) < 450, "the reader stays near where they were (a narrower page re-flows the rows of tiles and the charts above, so not to the pixel; the bug sent them to 0, four thousand pixels away)"
     page.click("#theme")                                                            # a theme change redraws too, and keeps the same choices
     page.wait_for_timeout(SETTLE_MS)
     assert drawdown.locator("table.data").count() == 1 and page.locator(".tabsmall button").nth(2).get_attribute("aria-selected") == "true"
@@ -418,7 +418,7 @@ def test_a_strategy_that_ranks_tickers_cannot_be_run_on_one_ticker_and_one_that_
     assert "Works on each ticker alone" in page.inner_text("#s-body") and "Trades tab" in page.inner_text("#s-body")
     _run_and_wait(page)
     assert "1 ticker ·" in page.inner_text(".head .sub") and "buy and hold" in page.inner_text(".kpis")
-    assert page.locator(".kpis .tile").count() == 6 and page.locator(".earnrow .tile").count() == 6
+    assert page.locator(".kpis .tile").count() == 12 and page.locator(".earnrow .tile").count() == 6          # six headline tiles and six more measures of risk; the earnings row is the other six
 
 
 def test_the_earnings_and_trades_tabs_show_dollars_round_trips_and_buys_and_sells(page):

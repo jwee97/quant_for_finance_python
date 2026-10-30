@@ -132,6 +132,12 @@ CURATED = {
     "online_ridge": {"forgetting": _r(0.9, 0.999), "ridge": _r(1.0, 1000.0, "log"), "step": _r(0.005, 0.5, "log"), "process_to_observation": _r(1e-5, 1e-1, "log")},
     "ml_ridge": {"alpha": _r(1.0, 10000.0, "log")},
     "ml_trees": {"n_estimators": _r(50, 400), "max_depth": _r(2, 6), "learning_rate": _r(0.01, 0.3, "log"), "min_samples_leaf": _r(20, 400, "log")},
+    # the rules of the practitioner books: the target forecast stays under its cap, the diversification multiplier is at least one, a streak or an RSI is at least two long, an RSI exit stays under 100 and above its entry,
+    # the short side's cover level stays under its sell level, and a floor is a share of the account
+    "carver_ewmac": {"target_abs": _r(5.0, 15.0), "cap": _r(16.0, 40.0), "fdm_cap": _r(1.0, 4.0), "vol_span": _r(15, 90), "slow_multiple": _r(2.0, 8.0)},
+    "connors_rsi": {"rsi_len": _r(2, 10), "streak_len": _r(2, 6), "rank_len": _r(50, 250), "buy_below": _r(3.0, 30.0), "exit_above": _r(50.0, 90.0), "trend_len": _r(100, 300), "sell_above": _r(75.0, 98.0),
+                    "cover_below": _r(5.0, 50.0)},
+    "cppi": {"multiplier": _r(1.0, 8.0), "floor": _r(0.5, 0.95), "max_exposure": _r(0.5, 2.0)},
     # the ones whose constructors refuse a range centred on the default (a probability below one, a count of at most five, a month of the year)
     "consecutive_down": {"days": _r(2, 8)},
     "earnings_season_premium": {"volume_multiple": _r(1.5, 8.0)},
