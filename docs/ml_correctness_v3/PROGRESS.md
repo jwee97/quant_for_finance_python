@@ -47,7 +47,9 @@ Updated: 2026-11-01.
 | the same two commands on pandas 2.3.3 (the default interpreter of the development container, not what CI uses) | Python 3.11.17, pandas 2.3.3 | 0 | 23 of 23 `pass`, and 728 passed with the same 2 skips, on earlier trees of this release | | kept for the record; the pandas 3 runs above are the ones that count, and the pandas 2 runs are the ones that missed the datetime-unit defect |
 
 CI results are recorded when a run completes. Run 100 (Release 1): every job green. Run 101 (Release 2 part 1, `dad795e`): the `test` job reported 7 failed, 5,277 passed, 7 skipped (coverage 93.66%, floor 88%) and the `docker` job failed in the same tests; all
-seven are `tests/test_ml_pit_sessions.py`, below. The result for the closing commit of this release is not claimed here.
+seven are `tests/test_ml_pit_sessions.py`, below. Run 102 (`9658b52`) was cancelled by the next push (the workflow cancels a superseded run). **Run 103 (`31e5cd7`, the closing commit of Release 2): all 10 jobs succeeded** — `lint`, `docs`,
+`ml-correctness`, `ml-base`, `replit-python`, `browser`, `compat (3.10)`, `compat (3.12)`, `docker` and `test`. The `test` job: 5,371 passed, 7 skipped, 0 failed in 42 min 32 s, coverage 93.71% (floor 88%). This is a CI result for the whole suite;
+what it shows about Release 2 is that the new checks pass on the CI environment (Python 3.11.17, pandas 3.1) as they did locally, not that the requirements hold beyond those tests.
 
 ### What running the checks found (and fixed)
 
