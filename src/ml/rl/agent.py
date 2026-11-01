@@ -18,7 +18,7 @@ import pandas as pd
 
 from ..deep.data import FeatureScaler, SeqAccessor
 from ..models import Model
-from .env import PortfolioEnv, forward_returns, rollout
+from .env import STATE_SCHEMA_VERSION, PortfolioEnv, rollout
 
 RECURRENT = "recurrent_ppo"
 MIN_DAYS = 120
@@ -59,7 +59,8 @@ class RLAgent(Model):
         p = self.params
         return {"cost_bps": float(p["cost_bps"]), "impact": float(p["impact"]), "gross": float(p["gross"]), "max_weight": float(p["max_weight"]),
                 "long_only": bool(int(p["long_only"])), "max_turnover": float(p["max_turnover"]), "reward": str(p["reward"]), "risk_aversion": float(p["risk_aversion"]),
-                "turnover_penalty": float(p["turnover_penalty"]), "drawdown_penalty": float(p["drawdown_penalty"]), "episode_days": int(p["episode_days"]), "seed": self.seed}
+                "turnover_penalty": float(p["turnover_penalty"]), "drawdown_penalty": float(p["drawdown_penalty"]), "episode_days": int(p["episode_days"]), "seed": self.seed,
+                "lag": int(self._ds.lag) if self._ds is not None else 1}
 
     def _arrays(self, dates: pd.DatetimeIndex, X: pd.DataFrame):
         """Scaled features ``[days, assets, features]`` for ``dates`` (the rows of ``X`` over the dataset's own history), and which assets are present."""
@@ -93,9 +94,9 @@ class RLAgent(Model):
             raise ValueError(f"{len(days)} training days are too few to train an agent (at least {MIN_DAYS})")
         self.scaler_ = FeatureScaler().fit(Xs.to_numpy(dtype=np.float32))
         feats, present = self._arrays(days, Xs)
-        fwd = forward_returns(ds.returns[ds.assets].to_numpy(dtype=np.float64), ds.lag)[lo:hi + 1]
+        rets = ds.returns[ds.assets].to_numpy(dtype=np.float64)[lo:hi + 1]                 # the returns of the training window, day by day: the environment advances its clock through them
         mask = present & ds.investable[ds.assets].to_numpy()[lo:hi + 1]
-        env = PortfolioEnv(feats, fwd, mask, **self._env_kwargs())
+        env = PortfolioEnv(feats, rets, mask, **self._env_kwargs())
         algo = _classes(self.kind)
         steps, seed = int(p["total_timesteps"]), self.seed
         common = {"learning_rate": float(p["learning_rate"]), "gamma": float(p["gamma"]), "batch_size": int(p["batch_size"]), "seed": seed, "device": str(p["device"]), "verbose": 0}
@@ -128,10 +129,13 @@ class RLAgent(Model):
         self.train_days_ = int(len(days))
         self.obs_dim_ = int(env.observation_space.shape[0])
         self.n_assets_ = env.n_assets
-        books = self._play(feats, mask)
-        net = (books * np.nan_to_num(fwd)).sum(axis=1) - self._env_kwargs()["cost_bps"] / 1e4 * np.abs(np.diff(books, axis=0, prepend=0.0)).sum(axis=1)
-        self.train_curve_ = {"dates": [str(x.date()) for x in days[::max(1, len(days) // 200)]], "equity": [float(v) for v in np.cumprod(1.0 + net)[::max(1, len(days) // 200)]],
-                             "sharpe": float(net.mean() / net.std(ddof=1) * np.sqrt(252.0)) if net.std(ddof=1) > 0 else 0.0}
+        self.train_lo_, self.train_hi_, self.schema_version_ = int(lo), int(hi), STATE_SCHEMA_VERSION
+        _, trace = rollout(self._policy(), feats, rets, mask, self._env_kwargs(), self.kind == RECURRENT)
+        eq = trace["equity"]
+        net = np.diff(eq) / np.where(eq[:-1] > 0, eq[:-1], 1.0)
+        step = max(1, len(days) // 200)
+        self.train_curve_ = {"dates": [str(x.date()) for x in days[::step]], "equity": [float(v) for v in eq[::step]],
+                             "sharpe": float(net.mean() / net.std(ddof=1) * np.sqrt(252.0)) if len(net) > 1 and net.std(ddof=1) > 0 else 0.0}
         return self
 
     # ------------------------------------------------------------------------------------------------------------ playing
@@ -146,20 +150,36 @@ class RLAgent(Model):
             return a, state
         return act
 
-    def _play(self, feats: np.ndarray, mask: np.ndarray) -> np.ndarray:
-        return rollout(self._policy(), feats, mask, self._env_kwargs(), self.kind == RECURRENT)
+    def _chain(self, start: int, end: int, X: pd.DataFrame) -> np.ndarray:
+        """The books decided on days ``start .. end`` by playing the policy forward from a flat account on day ``start``, one session after another, with the ledger the policy was trained in. The result for a
+        day does not depend on how many days are asked for after it, or in how many calls: every call replays from the start of the chain."""
+        ds = self._ds
+        days = ds.dates[start:end + 1]
+        feats, present = self._arrays(days, X)
+        mask = present & ds.investable[ds.assets].to_numpy()[start:end + 1]
+        rets = ds.returns[ds.assets].to_numpy(dtype=np.float64)[start:end + 1]
+        books, _ = rollout(self._policy(), feats, rets, mask, self._env_kwargs(), self.kind == RECURRENT)
+        return books
 
     def raw_predict(self, X: pd.DataFrame) -> np.ndarray:
+        """Each day's target weights. Two chains, both starting flat: the training window (in-sample) from its first day, and everything after it from the first day after it (a refit starts a new account)."""
         ds = self._ds
         if ds is None:
             raise ValueError("the agent must be bound to a dataset before it predicts")
-        days = pd.DatetimeIndex(sorted(set(X.index.get_level_values(0))))
-        feats, present = self._arrays(days, X)
-        mask = present & ds.investable[ds.assets].to_numpy()[ds.dates.get_indexer(days)]
-        books = self._play(feats, mask)
-        t = days.get_indexer(X.index.get_level_values(0))
-        a = pd.Index(ds.assets).get_indexer(X.index.get_level_values(1))
-        return books[t, a]
+        if getattr(self, "schema_version_", 1) != STATE_SCHEMA_VERSION:
+            raise ValueError(f"this {self.kind} agent was trained with state schema {getattr(self, 'schema_version_', 1)}, the environment is at {STATE_SCHEMA_VERSION}: retrain it")
+        t_row = ds.dates.get_indexer(X.index.get_level_values(0))
+        a_row = pd.Index(ds.assets).get_indexer(X.index.get_level_values(1))
+        if (t_row < 0).any() or (a_row < 0).any():
+            raise ValueError("some rows are on a date or for an asset that is not in the dataset the agent is bound to")
+        out = np.full(len(X), np.nan)
+        for first, sel in ((self.train_lo_, t_row <= self.train_hi_), (self.train_hi_ + 1, t_row > self.train_hi_)):
+            if not sel.any():
+                continue
+            start, end = min(first, int(t_row[sel].min())), int(t_row[sel].max())
+            books = self._chain(start, end, X)
+            out[sel] = books[t_row[sel] - start, a_row[sel]]
+        return out
 
     def importance(self) -> pd.Series:
         """The size of the first layer's weights on each feature (all assets together): a rough guide to what the policy reads, not an attribution."""
@@ -174,7 +194,7 @@ class RLAgent(Model):
 
     def diagnostics(self) -> dict:
         return {"algo": self.kind, "timesteps": int(self.params["total_timesteps"]), "rewards": self.rewards_, "reward": self.params["reward"], "n_params": self.n_params_, "device": str(self.params["device"]),
-                "seconds": self.train_seconds_, "train_days": self.train_days_, "train_curve": self.train_curve_, "constraints": {"gross": float(self.params["gross"]), "max_weight": float(self.params["max_weight"]),
+                "seconds": self.train_seconds_, "train_days": self.train_days_, "train_curve": self.train_curve_, "state_schema": getattr(self, "schema_version_", 1), "constraints": {"gross": float(self.params["gross"]), "max_weight": float(self.params["max_weight"]),
                 "long_only": bool(int(self.params["long_only"])), "max_turnover": float(self.params["max_turnover"]), "cost_bps": float(self.params["cost_bps"])}}
 
     # ------------------------------------------------------------------------------------------------------------ serialization

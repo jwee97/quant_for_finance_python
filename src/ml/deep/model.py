@@ -23,6 +23,7 @@ import torch
 from scipy import stats
 from sklearn.linear_model import Ridge
 
+from ..contracts import validate_distribution, validate_quantiles
 from ..models import Model
 from ..targets import forward_return
 from .data import FeatureScaler, SeqAccessor
@@ -246,6 +247,7 @@ class DeepModel(Model):
         return out
 
     def predict(self, X: pd.DataFrame, context: pd.DataFrame | None = None) -> np.ndarray:
+        self.check_schema(X)
         return self.raw_predict(X, context)
 
     def raw_predict(self, X: pd.DataFrame, context: pd.DataFrame | None = None) -> np.ndarray:
@@ -256,9 +258,10 @@ class DeepModel(Model):
         if "heads" in out and out["heads"].shape[1] > 1:
             frames["heads"] = pd.DataFrame(out["heads"], index=X.index, columns=[f"h{h}" for h in self.heads_])
         if "quantiles" in out:
-            lo, mid, hi = out["quantiles"].T
+            sorted_q, self.quantile_crossing_rate_ = validate_quantiles([float(self.params["alpha_low"]), 0.5, float(self.params["alpha_high"])], out["quantiles"])
+            lo, mid, hi = sorted_q.T
             z = stats.norm.ppf(float(self.params["alpha_high"])) - stats.norm.ppf(float(self.params["alpha_low"]))
-            frames["distribution"] = pd.DataFrame({"mean": mid, "std": (hi - lo) / z, "lower": lo, "upper": hi}, index=X.index)
+            frames["distribution"] = validate_distribution(pd.DataFrame({"mean": mid, "std": np.maximum((hi - lo) / z, 1e-12), "lower": lo, "upper": hi}, index=X.index))
         if "latent" in out:
             frames["latent"] = pd.DataFrame(out["latent"], index=X.index, columns=[f"z{i}" for i in range(out["latent"].shape[1])])
         return frames
@@ -297,6 +300,7 @@ class DeepModel(Model):
             "train_loss", "val_loss", "lr", "grad_norm", "best_epoch", "stopped_early", "device", "device_note", "n_params", "seconds", "peak_memory_mb", "epochs_run")}}
         if self.arch == "tft":
             d["interval_level"] = float(self.params["alpha_high"]) - float(self.params["alpha_low"])
+            d["raw_quantile_crossing_rate"] = getattr(self, "quantile_crossing_rate_", None)
             if getattr(self.net_, "last_attention", None) is not None:
                 d["attention"] = [float(v) for v in self.net_.last_attention.cpu()]
         if self.arch in AUTOENCODERS:

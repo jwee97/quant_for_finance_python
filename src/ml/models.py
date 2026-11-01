@@ -14,6 +14,7 @@ Nothing here knows about the future: the models see only the rows they are given
 
 from __future__ import annotations
 
+import hashlib
 import io
 import math
 import warnings
@@ -31,6 +32,17 @@ from sklearn.preprocessing import StandardScaler
 
 from ..ops.hpo import Categorical, Float, Int, LogFloat
 from ..utils.optional import OptionalPackageError, import_optional, unavailable_reason
+
+
+ARTIFACT_MAGIC = b"QFM1"
+
+
+class ModelArtifactError(ValueError):
+    """A saved model that is damaged, altered or not a model."""
+
+
+class ModelSchemaError(ValueError):
+    """Data that does not have the features a fitted model needs."""
 
 
 class ModelUnavailable(RuntimeError):
@@ -74,7 +86,16 @@ class Model:
         raise NotImplementedError
 
     def predict(self, X: pd.DataFrame) -> np.ndarray:
+        self.check_schema(X)
         return self.raw_predict(X)
+
+    def check_schema(self, X: pd.DataFrame) -> None:
+        """The features the model was fitted on must all be present: a missing one is named, instead of surfacing as a KeyError from inside the model. Extra columns are ignored by the models that select by name."""
+        have = getattr(self, "features_", None)
+        if have:
+            missing = [c for c in have if c not in X.columns]
+            if missing:
+                raise ModelSchemaError(f"the {self.kind} model was fitted on {len(have)} features and the data lacks {missing[:6]}{'...' if len(missing) > 6 else ''}")
 
     def predict_proba(self, X: pd.DataFrame) -> np.ndarray | None:
         return None
@@ -99,13 +120,28 @@ class Model:
         return {}
 
     def to_bytes(self) -> bytes:
+        """The model as a versioned envelope: ``QFM1``, the SHA-256 of the payload, then the payload. A truncated or altered artifact is refused on load instead of failing somewhere inside a model."""
         buf = io.BytesIO()
         joblib.dump(self, buf, compress=3)
-        return buf.getvalue()
+        body = buf.getvalue()
+        return ARTIFACT_MAGIC + hashlib.sha256(body).digest() + body
 
     @staticmethod
     def from_bytes(blob: bytes) -> "Model":
-        return joblib.load(io.BytesIO(blob))
+        """Read a model back. Artifacts saved before the envelope existed (no ``QFM1`` header) are read as they are, without a checksum."""
+        if bytes(blob[:4]) == ARTIFACT_MAGIC:
+            digest, body = bytes(blob[4:36]), bytes(blob[36:])
+            if len(blob) < 37 or hashlib.sha256(body).digest() != digest:
+                raise ModelArtifactError("the saved model is corrupted: its checksum does not match its contents")
+        else:
+            body = bytes(blob)
+        try:
+            model = joblib.load(io.BytesIO(body))
+        except Exception as exc:                                                                       # noqa: BLE001 - whatever a damaged or foreign file raises, it is not a readable model
+            raise ModelArtifactError(f"the saved model cannot be read ({type(exc).__name__}: {exc}); retrain it") from None
+        if not isinstance(model, Model):
+            raise ModelArtifactError(f"the file holds a {type(model).__name__}, not a model")
+        return model
 
     # shared helpers
     def _select(self, X: pd.DataFrame) -> pd.DataFrame:

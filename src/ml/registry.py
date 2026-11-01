@@ -46,6 +46,15 @@ CREATE TABLE IF NOT EXISTS feature_sets (id TEXT PRIMARY KEY, dataset_key TEXT, 
 CREATE TABLE IF NOT EXISTS predictions (experiment_id TEXT, segment TEXT, n INTEGER, path TEXT, ic REAL, PRIMARY KEY (experiment_id, segment));
 CREATE TABLE IF NOT EXISTS forward_signals (id INTEGER PRIMARY KEY AUTOINCREMENT, experiment_id TEXT, signal_date TEXT, created TEXT, weights TEXT, scores TEXT, turnover REAL, realised REAL, realised_date TEXT);
 """
+MIGRATIONS = [                                                  # additive and versioned: a migration is applied once, in order, inside one transaction; nothing here drops or rewrites an existing table
+    (1, "verification_checks", """
+CREATE TABLE IF NOT EXISTS verification_checks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, requirement_id TEXT NOT NULL, check_id TEXT NOT NULL, check_version INTEGER NOT NULL, subject_hash TEXT, status TEXT NOT NULL, tolerances TEXT, observed TEXT,
+    environment TEXT, artifact_hash TEXT, artifact_path TEXT, reason TEXT, created TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_verification_requirement ON verification_checks (requirement_id, created);
+"""),
+]
+CHECK_STATUSES = ("pass", "fail", "not_run", "blocked", "not_applicable")
 STAGES = ("none", "candidate", "staging", "production", "archived")
 SUBDIRS = ("experiments", "models", "features", "predictions", "reports")
 
@@ -63,6 +72,49 @@ class Registry:
         self._lock = threading.Lock()
         with self._conn() as c:
             c.executescript(SCHEMA)
+            self._migrate(c)
+
+    @staticmethod
+    def _migrate(c) -> None:
+        c.execute("CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, name TEXT, applied TEXT)")
+        done = {r[0] for r in c.execute("SELECT version FROM schema_migrations")}
+        for version, name, script in MIGRATIONS:
+            if version in done:
+                continue
+            c.execute("BEGIN")
+            try:
+                for statement in [x.strip() for x in script.split(";") if x.strip()]:
+                    c.execute(statement)
+                c.execute("INSERT INTO schema_migrations VALUES (?,?,?)", (version, name, time.strftime("%Y-%m-%d %H:%M:%S")))
+                c.execute("COMMIT")
+            except Exception:
+                c.execute("ROLLBACK")
+                raise
+
+    def schema_version(self) -> int:
+        with self._conn() as c:
+            return int(c.execute("SELECT COALESCE(MAX(version), 0) FROM schema_migrations").fetchone()[0])
+
+    # ------------------------------------------------------------------------------------------------------------ verification evidence
+    def log_check(self, requirement_id: str, check_id: str, status: str, check_version: int = 1, subject_hash: str | None = None, tolerances: dict | None = None, observed: dict | None = None,
+                  environment: dict | None = None, artifact_hash: str | None = None, artifact_path: str | None = None, reason: str | None = None) -> int:
+        """Record one check result. Evidence is appended, never updated: a later run is another row."""
+        if status not in CHECK_STATUSES:
+            raise RegistryError(f"a check status is one of {', '.join(CHECK_STATUSES)}")
+        with self._lock, self._conn() as c:
+            cur = c.execute("INSERT INTO verification_checks (requirement_id, check_id, check_version, subject_hash, status, tolerances, observed, environment, artifact_hash, artifact_path, reason, created) "
+                            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", (requirement_id, check_id, int(check_version), subject_hash, status, json.dumps(tolerances or {}), json.dumps(observed or {}, default=str),
+                                                                  json.dumps(environment or {}, default=str), artifact_hash, artifact_path, reason, time.strftime("%Y-%m-%d %H:%M:%S")))
+            return int(cur.lastrowid)
+
+    def list_checks(self, requirement_id: str | None = None, limit: int = 500) -> list[dict]:
+        sql, args = "SELECT * FROM verification_checks" + (" WHERE requirement_id=?" if requirement_id else "") + " ORDER BY id DESC LIMIT ?", ([requirement_id] if requirement_id else []) + [int(limit)]
+        with self._conn() as c:
+            rows = [dict(r) for r in c.execute(sql, args)]
+        for r in rows:
+            for k in ("tolerances", "observed", "environment"):
+                r[k] = json.loads(r[k]) if r[k] else {}
+        return rows
 
     @contextmanager
     def _conn(self):

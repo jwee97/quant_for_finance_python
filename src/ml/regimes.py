@@ -18,6 +18,7 @@ import pandas as pd
 from scipy.stats import multivariate_normal
 from sklearn.linear_model import Ridge
 
+from .contracts import validate_probabilities
 from .models import Model
 
 STATE_COLUMNS = ("mkt_ret", "log_vol", "log_disp")
@@ -241,7 +242,9 @@ class RegimeMixture(Model):
     def predict_extras(self, X: pd.DataFrame) -> dict:
         dates = pd.DatetimeIndex(sorted(set(X.index.get_level_values(0))))
         P = self.probabilities(dates.max()).reindex(dates)
-        return {"regimes": P.fillna(1.0 / self.k)}
+        P = P.fillna(1.0 / self.k)
+        validate_probabilities(P.to_numpy(), "regime probabilities")
+        return {"regimes": P}
 
     def importance(self) -> pd.Series:
         coef = np.array([np.abs(m.coef_) for m in self.models_])

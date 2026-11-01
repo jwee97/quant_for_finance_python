@@ -28,6 +28,11 @@ nav:
   - Technique guides: techniques/index.md
   - Architecture: architecture.md
   - The machine-learning platform: ml_platform.md
+  - ML correctness programme (spec v3):
+      - Progress: ml_correctness_v3/PROGRESS.md
+      - Requirement traceability: ml_correctness_v3/TRACEABILITY.md
+      - Architecture: ml_correctness_v3/ARCHITECTURE.md
+      - Assumptions and limitations: ml_correctness_v3/ASSUMPTIONS_AND_LIMITATIONS.md
   - Research survey: research_survey.md
   - Capability matrix: capability_matrix.md
   - Institutional findings: institutional_findings.md

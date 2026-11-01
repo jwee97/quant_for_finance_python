@@ -80,7 +80,7 @@ SPEC = {
     "split": {"scheme": ("choice", ("walk_forward", "expanding", "rolling")), "window": ("choice", ("expanding", "rolling")), "rolling_days": ("int", 252, 5000), "min_train_days": ("int", 126, 4000), "refit_every": ("int", 1, 252),
               "embargo": ("int", 0, 60), "validation_fraction": ("float", 0.05, 0.4), "test_fraction": ("float", 0.05, 0.4), "forward_fraction": ("float", 0.05, 0.4)},
     "signal": {"method": ("choice", SIGNAL_METHODS), "n": ("int", 1, 20), "quantile": ("float", 0.05, 0.5), "threshold": ("float", -10.0, 10.0), "gross": ("float", 0.1, 3.0), "net": ("float", -1.0, 1.0), "max_weight": ("float", 0.02, 1.0),
-               "sector_cap": ("float", 0.05, 1.0), "holding_period": ("int", 1, 60), "regime_on_states": ("states",), "kappa": ("float", 0.0, 10.0), "uncertainty_power": ("float", 0.0, 3.0), "mv_lookback": ("int", 40, 504),
+               "sector_cap": ("float", 0.05, 1.0), "holding_period": ("int", 1, 60), "regime_on_states": ("states",), "reinterpret_outputs": ("bool",), "kappa": ("float", 0.0, 10.0), "uncertainty_power": ("float", 0.0, 3.0), "mv_lookback": ("int", 40, 504),
                "mv_rebalance": ("int", 1, 60)},
     "backtest": {"rebalance": ("choice", ("daily", "weekly", "monthly")), "cost_bps": ("float", 0.0, 250.0), "slippage_bps": ("float", 0.0, 250.0), "target_vol": ("float", 0.01, 1.0), "max_leverage": ("float", 0.5, 5.0),
                  "extra_lag": ("int", 0, 20)},
@@ -161,11 +161,11 @@ class MlApi:
     # ------------------------------------------------------------------------------------------------------------ routes
     def get_routes(self) -> dict:
         return {"/api/ml/catalog": self.catalog, "/api/ml/experiments": self.experiments, "/api/ml/experiment": self.experiment, "/api/ml/compare": self.compare, "/api/ml/explain": self.explain,
-                "/api/ml/feature-sets": self.feature_sets, "/api/ml/models": self.models, "/api/ml/trials": self.trials, "/api/ml/forward": self.forward, "/api/ml/report-html": self.report_html}
+                "/api/ml/feature-sets": self.feature_sets, "/api/ml/verification": self.verification, "/api/ml/models": self.models, "/api/ml/trials": self.trials, "/api/ml/forward": self.forward, "/api/ml/report-html": self.report_html}
 
     def post_routes(self) -> dict:
         return {"/api/ml/dataset/build": self.dataset_build, "/api/ml/train": self.train, "/api/ml/rebacktest": self.rebacktest, "/api/ml/search": self.search, "/api/ml/tune": self.tune, "/api/ml/tune/stop": self.tune_stop,
-                "/api/ml/combine": self.combine, "/api/ml/meta-label": self.meta_label, "/api/ml/forward/step": self.forward_step, "/api/ml/promote": self.promote, "/api/ml/delete": self.delete}
+                "/api/ml/combine": self.combine, "/api/ml/meta-label": self.meta_label, "/api/ml/forward/step": self.forward_step, "/api/ml/promote": self.promote, "/api/ml/verification/run": self.verification_run, "/api/ml/delete": self.delete}
 
     # ------------------------------------------------------------------------------------------------------------ plumbing
     @property
@@ -563,6 +563,26 @@ class MlApi:
         return tuning.judge("sharpe", start, best, "", "", same, selection, out["n_trials"], 0, None, benchmark, ("the validation segment", "the test and forward segments", "those segments"), hold_t=hold_t)
 
     # ------------------------------------------------------------------------------------------------------------ the registry
+    def verification(self, q: dict | None = None) -> dict:
+        """``GET /api/ml/verification[?id=P0-01]``: the latest persisted check of each model-correctness requirement, whether the source it checked has changed since (``stale``), and every status in the evidence
+        record. Nothing here computes a status: only a run (``POST /api/ml/verification/run``) writes one."""
+        from . import ml_verify as mv
+        return clean(mv.report(self.registry if (self.registry_root / "registry.sqlite").exists() else None, (q or {}).get("id")))
+
+    def verification_run(self, body: dict) -> dict:
+        """``POST /api/ml/verification/run {"requirements": ["P0-01", ...]}`` (a job): run the tests behind the requirements and record the result."""
+        from . import ml_verify as mv
+        requirements = body.get("requirements")
+        if requirements is not None and (not isinstance(requirements, list) or len(requirements) > 40 or not all(isinstance(r, str) for r in requirements)):
+            raise ApiError("requirements must be a list of requirement ids")
+        mv.validate(requirements)
+
+        def work(progress):
+            with _user_errors():
+                return clean({"checks": mv.run(self.registry, requirements, progress)})
+
+        return self._submit("ml: verification", work)
+
     def experiments(self, q: dict) -> dict:
         """``GET /api/ml/experiments?sort=validation.sharpe&limit=50&universe=&model=&stage=``: the leaderboard, with the number of looks at the data when each result was produced."""
         sort = str(q.get("sort") or "validation.sharpe")

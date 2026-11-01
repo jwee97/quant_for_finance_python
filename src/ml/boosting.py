@@ -16,6 +16,7 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 
+from .contracts import validate_distribution, validate_quantiles
 from .models import Model, _import
 
 MIN_QUERY = 3                                                # a date with fewer assets than this teaches a ranker nothing
@@ -76,16 +77,29 @@ class RankerModel(_Tabular):
         self.features_ = list(self._select(X).columns)
         self.n_train_ = len(values)
         keys, target = _date_keys(X, dates), y.to_numpy(dtype=float)
-        sizes = pd.Series(keys).map(pd.Series(keys).value_counts()).to_numpy()
-        keep = np.isfinite(target) & (sizes >= MIN_QUERY)
-        if keep.sum() < 50:
-            raise ValueError("too few dates with enough assets to train a ranker")
+        finite = np.isfinite(target)
         levels = 2 if self.task == "classification" else int(self.params["relevance_levels"])
         if not 2 <= levels <= 10:
             raise ValueError("relevance_levels must be between 2 and 10")
-        rel = target[keep].astype(int) if self.task == "classification" else relevance_buckets(target[keep], keys[keep], levels)
-        order, counts = query_order(keys[keep])
-        Xk, rel = values[keep][order], rel[order]
+        # group sizes and relevance variation are computed AFTER the label filter: a date that keeps two finite labels out of ten is a group of two, not ten
+        sizes = pd.Series(np.where(finite, 1, 0)).groupby(keys).transform("sum").to_numpy()
+        keep = finite & (sizes >= MIN_QUERY)
+        rel_all = np.full(len(target), -1, dtype=int)
+        if keep.any():
+            rel_all[keep] = target[keep].astype(int) if self.task == "classification" else relevance_buckets(target[keep], keys[keep], levels)
+        spread = pd.Series(rel_all).where(keep).groupby(keys).transform("nunique").to_numpy()
+        flat = keep & (spread < 2)                                                             # every asset of the date has the same relevance: nothing to rank
+        final = keep & ~flat
+        day = lambda m: [str(pd.Timestamp(d).date()) for d in np.unique(keys[m])[:50]]                    # noqa: E731
+        self.excluded_ = {"non_finite_label_rows": int((~finite).sum()), "small_group_dates": int(len(np.unique(keys[finite & (sizes < MIN_QUERY)]))),
+                          "single_relevance_dates": int(len(np.unique(keys[flat]))), "rows_used": int(final.sum()), "dates_used": int(len(np.unique(keys[final]))),
+                          "dates": {"fewer_than_%d_finite_labels" % MIN_QUERY: day(finite & (sizes < MIN_QUERY)), "no_finite_label": day(~pd.Series(finite).groupby(keys).transform("any").to_numpy()),
+                                    "one_relevance_level": day(flat)}}
+        if final.sum() < 50:
+            raise ValueError("too few dates with enough assets to train a ranker")
+        order, counts = query_order(keys[final])
+        Xk, rel = values[final][order], rel_all[final][order]
+        assert counts.sum() == len(rel)
         self.est_ = self._estimator(levels)
         if self.kind == "lgbm_ranker":
             self.est_.fit(Xk, rel, group=counts)
@@ -103,7 +117,7 @@ class RankerModel(_Tabular):
         return pd.Series(np.asarray(self.est_.feature_importances_, dtype=float), index=self.features_)
 
     def diagnostics(self) -> dict:
-        return {"relevance_levels": getattr(self, "levels_", None), "n_estimators": int(self.params["n_estimators"])}
+        return {"relevance_levels": getattr(self, "levels_", None), "n_estimators": int(self.params["n_estimators"]), "excluded": getattr(self, "excluded_", None)}
 
 
 class QuantileLGBM(_Tabular):
@@ -135,7 +149,7 @@ class QuantileLGBM(_Tabular):
 
     def _quantiles(self, X: pd.DataFrame) -> np.ndarray:
         values = self._values(X)
-        q = np.sort(np.column_stack([e.predict(values) for e in self.ests_]), axis=1)               # quantiles may cross; sorting is the standard repair
+        q, self.crossing_rate_ = validate_quantiles(self.alphas_, np.column_stack([e.predict(values) for e in self.ests_]))      # quantiles may cross; sorting is the standard repair, and the share of rows it touched is kept
         return q * self.y_std_ + self.y_mean_
 
     def raw_predict(self, X: pd.DataFrame) -> np.ndarray:
@@ -144,13 +158,13 @@ class QuantileLGBM(_Tabular):
     def predict_extras(self, X: pd.DataFrame) -> dict:
         q = self._quantiles(X)
         z = stats.norm.ppf(self.alphas_[2]) - stats.norm.ppf(self.alphas_[0])
-        return {"distribution": pd.DataFrame({"mean": q[:, 1], "std": (q[:, 2] - q[:, 0]) / z, "lower": q[:, 0], "upper": q[:, 2]}, index=X.index)}
+        return {"distribution": validate_distribution(pd.DataFrame({"mean": q[:, 1], "std": np.maximum((q[:, 2] - q[:, 0]) / z, 1e-12), "lower": q[:, 0], "upper": q[:, 2]}, index=X.index))}
 
     def importance(self) -> pd.Series:
         return pd.Series(np.mean([e.feature_importances_ for e in self.ests_], axis=0), index=self.features_)
 
     def diagnostics(self) -> dict:
-        return {"quantiles": list(self.alphas_), "interval_level": self.alphas_[2] - self.alphas_[0]}
+        return {"quantiles": list(self.alphas_), "interval_level": self.alphas_[2] - self.alphas_[0], "raw_quantile_crossing_rate": getattr(self, "crossing_rate_", None)}
 
 
 class NGBoostModel(_Tabular):
@@ -191,7 +205,7 @@ class NGBoostModel(_Tabular):
     def predict_extras(self, X: pd.DataFrame) -> dict:
         mean, std = self._dist(X)
         z = stats.norm.ppf(0.5 + float(self.params["level"]) / 2.0)
-        return {"distribution": pd.DataFrame({"mean": mean, "std": std, "lower": mean - z * std, "upper": mean + z * std}, index=X.index)}
+        return {"distribution": validate_distribution(pd.DataFrame({"mean": mean, "std": std, "lower": mean - z * std, "upper": mean + z * std}, index=X.index))}
 
     def importance(self) -> pd.Series:
         imp = np.asarray(self.est_.feature_importances_, dtype=float)

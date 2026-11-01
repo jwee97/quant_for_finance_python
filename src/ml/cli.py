@@ -226,6 +226,31 @@ def cmd_report(args, config) -> int:
     return 0
 
 
+def cmd_verify(args, config) -> int:
+    """Show the persisted verification evidence of the model-correctness requirements, or run the tests behind them and record the result."""
+    from . import verification as vf
+
+    registry = Registry(args.registry)
+    try:
+        if args.run:
+            rows = vf.run_verification(registry, args.requirement or None, progress=lambda msg: print(msg, file=sys.stderr))
+            rows = [{"requirement_id": r["requirement_id"], "status": r["status"], "reason": r["reason"]} for r in rows]
+        else:
+            rows = vf.current(registry, args.requirement[0] if args.requirement else None)
+    except vf.VerificationError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    if args.json:
+        print(json.dumps(jsonable(rows), indent=1))
+    else:
+        for r in rows:
+            flag = " (stale)" if r.get("stale") else ""
+            print(f"{r['requirement_id']:7s} {r['status']:9s}{flag}  {str(r.get('reason') or '')[:110]}")
+    if args.require_pass:
+        return 0 if all(r["status"] == "pass" and not r.get("stale") for r in rows) else 1
+    return 1 if any(r["status"] == "fail" for r in rows) else 0
+
+
 def register(sub) -> None:
     """Add the four commands to a ``quant`` sub-parser collection."""
     def common(q, data: bool = True):
@@ -260,3 +285,7 @@ def register(sub) -> None:
     p = sub.add_parser("ml-report", help="the leaderboard, or one experiment in full")
     p.add_argument("experiment", nargs="?"); common(p, data=False); p.add_argument("--list", action="store_true"); p.add_argument("--sort", default="validation.sharpe"); p.add_argument("--limit", type=int, default=20)
     p.add_argument("--json", action="store_true"); p.add_argument("--html", nargs="?", const="-", help="print the path of the HTML report, or copy it to a file"); p.set_defaults(func=cmd_report)
+    p = sub.add_parser("ml-verify", help="the persisted verification evidence of the model-correctness requirements; --run runs the tests behind them and records the result")
+    common(p, data=False); p.add_argument("--requirement", action="append", help="a requirement id such as P0-01 (repeatable)"); p.add_argument("--run", action="store_true"); p.add_argument("--json", action="store_true")
+    p.add_argument("--require-pass", action="store_true", help="exit 1 unless every requirement shown is `pass` and current (what CI asks)")
+    p.set_defaults(func=cmd_verify)

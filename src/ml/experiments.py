@@ -26,6 +26,8 @@ from .datasets import Dataset, build_dataset, resolve_bundle
 from .models import Model
 from .registry import Registry
 from .signals import UNCERTAINTY_METHODS, build_weights
+from .models import task_for
+from .contracts import OutputContractError, build_contract, check_signal_use
 from .targets import forward_return, is_classification
 from .training import TrainResult, fit_final, walk_forward_train
 from .visualization import equity_payload, importance_bars, ic_series_payload, jsonable, prediction_distribution, render_html
@@ -139,6 +141,10 @@ def run_experiment(overrides: dict | None = None, bundle=None, config=None, buil
     t0 = time.perf_counter()
     cfg = experiment_config(overrides)
     progress = progress or (lambda msg: None)
+    try:
+        check_signal_use(cfg["model"]["kind"], task_for(is_classification(cfg["dataset"]["target"])), cfg["dataset"]["target"], cfg["signal"])        # refused before any training, not after it
+    except OutputContractError as exc:
+        raise ExperimentError(str(exc)) from None
     ds, info = prepare(cfg, bundle, config, builder, dataset, info, progress)
     progress("training walk-forward")
     try:
@@ -155,6 +161,10 @@ def evaluate_run(cfg: dict, ds: Dataset, train: TrainResult, info: dict, registr
     t0 = time.perf_counter() if t0 is None else t0
     progress = progress or (lambda msg: None)
     dkey, chash = dataset_key(cfg), config_hash(cfg)
+    try:
+        output_kind = check_signal_use(train.kind, train.task, train.target, cfg["signal"])               # what the model's number means, and whether the position rule may read it as that
+    except OutputContractError as exc:
+        raise ExperimentError(str(exc)) from None
     lag, horizon = ds.lag, ds.horizon
     scores = train.scores_wide(ds)
     prob_wide = train.probabilities.unstack("asset").reindex(index=ds.dates, columns=ds.assets) if train.probabilities is not None else None
@@ -254,8 +264,9 @@ def evaluate_run(cfg: dict, ds: Dataset, train: TrainResult, info: dict, registr
         "trials": {"dataset_trials": n_trials, "note": "Every experiment and search trial on this dataset is counted; the deflated Sharpe probability deflates the validation Sharpe by this number."},
         "warnings": list(over["warnings"]), "seconds": round(time.perf_counter() - t0, 2), "created": time.strftime("%Y-%m-%d %H:%M:%S"),
     })
-    if train.kind in RL_KINDS and cfg["signal"]["method"] != "target_weights":
-        report["warnings"].append(f"The {train.kind} agent sizes its own positions, but the position rule '{cfg['signal']['method']}' re-ranks its weights; choose target_weights to trade them as the agent sized them.")
+    report["output_contract"] = build_contract(train.kind, train.task, train.target, ds, cfg, chash)
+    if cfg["signal"].get("reinterpret_outputs") and output_kind != "expected_return":
+        report["warnings"].append(f"The {train.kind} output is a {output_kind.replace('_', ' ')}, and signal.reinterpret_outputs reads it as a score for the position rule: that reading is yours, not the model's.")
     try:
         report["model_extras"] = jsonable(mr.build_report(train, ds, cfg, scores, fwd, train.plan.labels(), None, time.perf_counter() - t0, chash, fmodel.to_bytes() if fmodel is not None else None))
     except Exception:                                                              # the extras are an addition to the report; if they cannot be built the experiment still stands

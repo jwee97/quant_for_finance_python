@@ -134,15 +134,18 @@ def test_a_ranker_and_a_regime_experiment_report_ranking_quality_and_filtered_re
     assert x["family"] == "regime" and probs.shape[1] == 2 and (probs.sum(axis=1) - 1).abs().max() < 1e-6 and sum(x["regimes"]["share"]) == pytest.approx(1.0, abs=1e-6)
 
 
-def test_an_agent_that_is_ranked_by_another_rule_is_warned_and_one_that_trades_its_weights_is_not(bundle):
+def test_an_agent_ranked_by_another_rule_is_refused_unless_you_say_so_and_one_that_trades_its_weights_runs_clean(bundle):
     _need("gymnasium", "stable_baselines3")
     agent = {"kind": "ppo", "params": {"total_timesteps": 256, "n_steps": 64, "batch_size": 32, "episode_days": 80, "hidden": 8}}
-    ranked = xe.run_experiment({**BASE, "model": agent, "signal": {"method": "top_n_long_short", "n": 2}}, bundle=bundle, final_model=False, explain=False)
+    with pytest.raises(xe.ExperimentError, match="sizes its own positions"):
+        xe.run_experiment({**BASE, "model": agent, "signal": {"method": "top_n_long_short", "n": 2}}, bundle=bundle, final_model=False, explain=False)
+    ranked = xe.run_experiment({**BASE, "model": agent, "signal": {"method": "top_n_long_short", "n": 2, "reinterpret_outputs": True}}, bundle=bundle, final_model=False, explain=False)
     own = xe.run_experiment({**BASE, "model": agent, "signal": {"method": "target_weights"}}, bundle=bundle, final_model=False, explain=False)
-    assert any("sizes its own positions" in w for w in ranked.report["warnings"]) and not any("sizes its own positions" in w for w in own.report["warnings"])
+    assert any("reinterpret_outputs" in w for w in ranked.report["warnings"]) and not any("reinterpret_outputs" in w for w in own.report["warnings"])
     x = _checked(own.report)
     assert x["family"] == "reinforcement" and x["rewards"]["algo"] == "ppo" and x["rewards"]["curve"]["timesteps"] and len(x["rewards"]["in_sample"]["dates"]) > 100
     assert x["resources"]["devices"] == ["cpu"] or "cuda" in x["resources"]["devices"]
+    assert own.report["output_contract"]["output_kind"] == "portfolio_weights" and own.report["output_contract"]["state_schema_version"] == 2
 
 
 # ------------------------------------------------------------------------------------------------------------ the endpoints

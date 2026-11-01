@@ -10,6 +10,9 @@ sum, in the target's units like every other model, and the portfolio forecast is
 
 from __future__ import annotations
 
+import hashlib
+import json
+
 import numpy as np
 import pandas as pd
 import torch
@@ -56,8 +59,7 @@ class GraphNet(nn.Module):
         super().__init__()
         self.kind = kind
         A = torch.tensor(adjacency, dtype=torch.float32) + torch.eye(len(adjacency))
-        deg = A.sum(1)
-        self.register_buffer("norm", A / torch.sqrt(deg[:, None] * deg[None, :]))              # D^-1/2 (A + I) D^-1/2
+        self.register_buffer("A_hat", A)                                                       # A + I, before any normalisation: a day's degrees depend on which nodes exist that day
         self.register_buffer("mask", A > 0)
         self.inp = nn.Linear(n_features, hidden)
         self.heads = int(heads) if kind == "gat" else 1
@@ -71,23 +73,33 @@ class GraphNet(nn.Module):
         self.portfolio = nn.Linear(hidden, 1)
         self.last_attention = None
 
-    def _gcn(self, h: torch.Tensor, i: int) -> torch.Tensor:
-        return torch.einsum("ij,bjh->bih", self.norm, self.lin[i](h))
+    def _gcn(self, h: torch.Tensor, i: int, v: torch.Tensor) -> torch.Tensor:
+        """D^-1/2 (A + I) D^-1/2 over the nodes present that day: an absent node is removed from both ends of every edge and from the degrees."""
+        edges = self.A_hat[None] * v[:, :, None] * v[:, None, :]                              # [batch, i, j]
+        deg = edges.sum(-1).clamp(min=1e-12)
+        norm = edges / torch.sqrt(deg[:, :, None] * deg[:, None, :])
+        return torch.einsum("bij,bjh->bih", norm, self.lin[i](h))
 
-    def _gat(self, h: torch.Tensor, i: int) -> torch.Tensor:
+    def _gat(self, h: torch.Tensor, i: int, v: torch.Tensor) -> torch.Tensor:
         b, n, _ = h.shape
         wh = self.lin[i](h).view(b, n, self.heads, -1)
         e = F.leaky_relu((wh * self.att_src[i]).sum(-1)[:, :, None, :] + (wh * self.att_dst[i]).sum(-1)[:, None, :, :], 0.2)          # [batch, i, j, head]
-        e = e.masked_fill(~self.mask[None, :, :, None], float("-inf"))
-        alpha = torch.softmax(e, dim=2)
+        allowed = self.mask[None] & (v[:, :, None] > 0) & (v[:, None, :] > 0)                                                        # neither the query nor the key may be absent
+        allowed = allowed[..., None]
+        alpha = torch.softmax(e.masked_fill(~allowed, -1e9), dim=2) * allowed
+        alpha = alpha / alpha.sum(2, keepdim=True).clamp(min=1e-12)                                                                  # an absent query attends to nothing: zeros, not NaN
         self.last_attention = alpha.detach().mean(dim=(0, 3))
         return torch.einsum("bijh,bjhd->bihd", alpha, wh).reshape(b, n, -1)
 
     def forward(self, x: torch.Tensor, valid: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        h = F.relu(self.inp(x))
+        v = valid.to(x.dtype)
+        keep = v.unsqueeze(-1)
+        x = torch.where(keep > 0, x, torch.zeros_like(x))                                         # what an absent node's slot holds (zeros, NaN, anything) never gets near the network
+        h = F.relu(self.inp(x)) * keep                                                          # the input layer's bias must not give an absent node an embedding
         for i in range(len(self.lin)):
-            h = h + self.drop(F.elu(self._gcn(h, i) if self.kind == "gcn" else self._gat(h, i)))
-        pooled = (h * valid.unsqueeze(-1)).sum(1) / valid.sum(1, keepdim=True).clamp(min=1.0)
+            m = self._gcn(h, i, v) if self.kind == "gcn" else self._gat(h, i, v)
+            h = (h + self.drop(F.elu(m))) * keep                                                # and the residual and ELU must not either
+        pooled = (h * keep).sum(1) / v.sum(1, keepdim=True).clamp(min=1.0)
         return self.node(h).squeeze(-1), self.portfolio(pooled).squeeze(-1)
 
 
@@ -154,6 +166,9 @@ class GraphModel(Model):
         returns = self._ds.returns[self.assets_].loc[:end].tail(504)
         groups = {a: (self._ds.group.get(a) or self._ds.asset_class.get(a)) for a in self.assets_}
         self.adjacency_ = build_adjacency(returns, groups, str(p["graph"]), int(p["neighbors"]), float(p["corr_weight"]), float(p["sector_weight"]))
+        self.graph_info_ = {"cutoff": str(pd.Timestamp(end).date()), "fit_window": [str(returns.index[0].date()), str(returns.index[-1].date())], "asset_order": list(self.assets_),
+                            "relationship_version": "static_group_map:" + hashlib.sha256(json.dumps(sorted((a, str(g)) for a, g in groups.items())).encode()).hexdigest()[:12],
+                            "relationship_quality": "current classification, not point in time"}
         target = self._prepare_y(y).astype(np.float32)
         sub, present, local, a_row, ds_dates = self._graphs(Xs, rows_only=True)
         n_t, n_a = present.shape
@@ -248,7 +263,7 @@ class GraphModel(Model):
         A = self.adjacency_
         iu = np.dstack(np.unravel_index(np.argsort(-np.triu(A), axis=None)[:30], A.shape))[0]
         edges = [[self.assets_[i], self.assets_[j], float(A[i, j])] for i, j in iu if A[i, j] > 0]
-        d = {"arch": self.kind, "graph": {"assets": self.assets_, "edges": edges, "mode": self.params["graph"], "n_edges": int((np.triu(A) > 0).sum()), "mean_degree": float((A > 0).sum(1).mean())},
+        d = {"arch": self.kind, "graph": {**getattr(self, "graph_info_", {}), "assets": self.assets_, "edges": edges, "mode": self.params["graph"], "n_edges": int((np.triu(A) > 0).sum()), "mean_degree": float((A > 0).sum(1).mean())},
              "graphs": list(self.n_graphs_), **{k: h[k] for k in ("train_loss", "val_loss", "lr", "grad_norm", "best_epoch", "stopped_early", "device", "device_note", "n_params", "seconds", "peak_memory_mb", "epochs_run")}}
         att = getattr(self.net_, "last_attention", None)
         if att is not None:

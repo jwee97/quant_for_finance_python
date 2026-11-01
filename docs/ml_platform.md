@@ -120,6 +120,17 @@ The search spaces of the new kinds are in the catalogue (`tune_spaces`). The Sea
 - A re-backtest restores the intervals, regime probabilities and weights (saved with the predictions) but not the training curves, which belong to the fits.
 - All of this runs on CPU unless a GPU is visible; `device: auto` picks CUDA when there is one and says which it used.
 
+## Correctness checks and what a number means
+
+The correctness programme of spec v3 (progress, requirement-by-requirement traceability, architecture and limitations in [ml_correctness_v3](ml_correctness_v3/PROGRESS.md)) adds three things you will meet in the tab and the API:
+
+- **Output contracts.** Each model's primary score has a kind (`expected_return`, `ranking_score`, `class_probability`, `quantile_forecast`, `portfolio_weights`, `volatility_forecast`, `drawdown_forecast`), and a position rule that would misread it is refused before training starts, with
+  the rule to use instead: an agent's weights go through `target_weights` and are not ranked again, a ranker's score is not a return forecast, a volatility forecast is not how attractive an asset is. `signal.reinterpret_outputs` is the explicit override and is
+  written to the report. Every report carries `output_contract` (schema, kind, units, horizon, asset order, feature-schema hash, state schema).
+- **Checked, not assumed.** `python -m src.cli ml-verify --run` (or `POST /api/ml/verification/run`) runs the tests behind each model-correctness requirement and records the result in the registry; `GET /api/ml/verification` shows the latest status of each,
+  and marks it `stale` when the source it checked has changed. A status is written only by a run. `blocked` means tests were skipped (a package is missing), which is not a pass.
+- **Safer artifacts.** A saved model carries a checksum; a damaged file is refused with a message, a missing feature is named, and an agent trained under an older state schema says it must be retrained.
+
 ## If LightGBM or XGBoost shows as "not available"
 
 The two boosting libraries are optional and need the OpenMP runtime of the operating system (`libgomp.so.1` on Linux). Where the library is missing, importing them fails with `OSError: libgomp.so.1: cannot open shared object file`. The Machine learning tab does not fail with it: the model list shows LightGBM and XGBoost as not available, with the reason, and every other model (linear, ridge, lasso, elastic net, logistic, random forest, scikit-learn's histogram gradient boosting, autoregression, Kalman, online and regime models) works as before. Scikit-learn's histogram gradient boosting is the same family of model as LightGBM and needs nothing extra.

@@ -1,4 +1,5 @@
-"""Phase 5: the Gymnasium environment (timing, constraints, costs, rewards) and the PPO, SAC and recurrent-PPO agents behind the model interface."""
+"""Phase 5: the Gymnasium environment (timing, constraints, costs, rewards) and the PPO, SAC and recurrent-PPO agents behind the model interface. The accounting itself is checked against an independent
+shadow ledger in test_ml_rl_accounting_reference.py."""
 
 import dataclasses
 import warnings
@@ -47,8 +48,8 @@ def test_a_book_decided_on_day_t_earns_the_return_of_day_t_plus_lag_plus_one():
 def _env(**kw):
     rng = np.random.default_rng(0)
     feats = rng.normal(size=(300, 5, 4)).astype(np.float32)
-    fwd = 0.01 * rng.normal(size=(300, 5))
-    return PortfolioEnv(feats, fwd, None, **{"episode_days": 50, "seed": 1, **kw})
+    rets = 0.01 * rng.normal(size=(300, 5))
+    return PortfolioEnv(feats, rets, None, **{"episode_days": 50, "seed": 1, **kw})
 
 
 def test_the_environment_follows_the_gymnasium_api():
@@ -57,28 +58,28 @@ def test_the_environment_follows_the_gymnasium_api():
     env = _env()
     obs, _ = env.reset(seed=3)
     again, _ = _env().reset(seed=3)
-    assert obs.shape == env.observation_space.shape == (5 * 4 + 5 + 1,) and np.allclose(obs, again)
+    assert obs.shape == env.observation_space.shape == (5 * 4 + 2 * 5 + 1,) and np.allclose(obs, again)
     steps, done = 0, False
     while not done:
         obs, reward, terminated, truncated, info = env.step(env.action_space.sample())
         steps += 1
         done = terminated or truncated
-        assert np.isfinite(reward) and {"net_return", "cost", "turnover", "drawdown"} <= set(info)
+        assert np.isfinite(reward) and {"net_return", "cost", "turnover", "drawdown", "equity", "events"} <= set(info)
     assert steps == 50
 
 
-def test_costs_are_the_turnover_times_the_rate_and_a_held_book_costs_nothing():
+def test_costs_are_the_turnover_times_the_rate_and_a_book_that_is_already_held_costs_only_its_drift():
     env = _env(cost_bps=10.0, reward="return", gross=1.0, max_weight=0.5)
     env.reset(seed=0)
     a = np.array([1.0, -1.0, 0.5, -0.5, 0.0], dtype=np.float32)
     _, _, _, _, first = env.step(a)
-    assert first["cost"] == pytest.approx(first["turnover"] * 1e-3) and first["turnover"] == pytest.approx(np.abs(env.w).sum())
+    assert first["cost"] == pytest.approx(first["turnover"] * 1e-3) and first["turnover"] == pytest.approx(np.abs(env.w).sum(), rel=2e-3)
     _, _, _, _, again = env.step(a)
-    assert again["turnover"] == pytest.approx(0.0, abs=1e-9) and again["cost"] == pytest.approx(0.0, abs=1e-12)
+    assert again["turnover"] < 0.2 * first["turnover"] and again["cost"] == pytest.approx(again["turnover"] * 1e-3), "only the drift of the weights is traded back"
     impact = _env(cost_bps=0.0, impact=2.0, reward="return")
     impact.reset(seed=0)
     _, _, _, _, info = impact.step(a)
-    assert info["cost"] == pytest.approx(2.0 * float((impact.w ** 2).sum()))
+    assert info["cost"] == pytest.approx(2.0 * float(((impact.w * (1.0 - info["cost"])) ** 2).sum()), rel=1e-9), "the impact term is paid out of the equity the target weights are of"
 
 
 def test_each_reward_is_finite_and_the_penalties_bite():
@@ -98,15 +99,17 @@ def test_each_reward_is_finite_and_the_penalties_bite():
 
 def test_a_rollout_is_causal_and_starts_flat():
     feats = np.random.default_rng(0).normal(size=(60, 4, 3)).astype(np.float32)
+    rets = 0.01 * np.random.default_rng(1).normal(size=(60, 4))
     seen = []
 
     def policy(obs, state, first):
-        seen.append((first, obs[:12].copy()))
+        seen.append((first, obs.copy()))
         return np.array([1.0, -1.0, 0.5, -0.5], dtype=np.float32), state
 
-    books = rollout(policy, feats, np.ones((60, 4), bool), {"gross": 1.0, "max_weight": 0.5, "cost_bps": 0.0})
-    assert seen[0][0] is True and not any(f for f, _ in seen[1:]) and np.allclose(seen[10][1], feats[10].ravel()) and books.shape == (60, 4)
-    assert np.allclose(books[0], books[1])                                                       # the same action asked every day gives the same book
+    books, trace = rollout(policy, feats, rets, np.ones((60, 4), bool), {"gross": 1.0, "max_weight": 0.5, "cost_bps": 0.0})
+    assert seen[0][0] is True and not any(f for f, _ in seen[1:]) and np.allclose(seen[10][1][:12], feats[10].ravel()) and books.shape == (60, 4)
+    assert not seen[0][1][12:16].any(), "the first observation shows an empty account"
+    assert np.allclose(books[0], books[1]) and trace["equity"][0] == 1.0         # the same action asked every day gives the same book
 
 
 # ------------------------------------------------------------------------------------------------------------ the agents
@@ -145,6 +148,29 @@ def test_an_agent_trains_plays_within_its_constraints_and_survives_serialization
     assert model.importance().sum() == pytest.approx(1.0, abs=1e-3) or model.importance().sum() == 0.0
     again = md.Model.from_bytes(model.to_bytes()).bind(ds)
     assert np.allclose(again.predict(test), model.predict(test), atol=1e-6)
+
+
+def test_an_agents_books_do_not_depend_on_how_many_rows_are_asked_for_or_in_how_many_calls(ds):
+    """Whole block, two halves, and one day at a time all replay from the same flat account at the same first day, so they agree."""
+    model = _fit(ds, "ppo")
+    pos = ds.positions()
+    rows = ds.X.iloc[np.flatnonzero((pos >= 620) & (pos < 680))]
+    whole = pd.Series(model.predict(rows), index=rows.index)
+    days = sorted(set(rows.index.get_level_values(0)))
+    halves = pd.concat([pd.Series(model.predict(rows.loc[rows.index.get_level_values(0).isin(part)]), index=rows.index[rows.index.get_level_values(0).isin(part)])
+                        for part in (days[:25], days[25:])])
+    single = pd.concat([pd.Series(model.predict(rows.loc[[d]] if False else rows[rows.index.get_level_values(0) == d]), index=rows.index[rows.index.get_level_values(0) == d]) for d in days[::10]])
+    assert np.allclose(whole.loc[halves.index], halves, atol=1e-9) and np.allclose(whole.loc[single.index], single, atol=1e-9)
+    assert model.diagnostics()["state_schema"] == 2
+
+
+def test_an_agent_from_before_the_state_schema_changed_says_it_must_be_retrained(ds):
+    model = _fit(ds, "ppo")
+    legacy = md.Model.from_bytes(model.to_bytes())
+    del legacy.schema_version_
+    legacy.bind(ds)
+    with pytest.raises(ValueError, match="retrain it"):
+        legacy.predict(ds.X.iloc[np.flatnonzero((ds.positions() >= 620) & (ds.positions() < 625))])
 
 
 def test_an_agent_scores_a_day_from_the_rows_up_to_that_day_only(ds):

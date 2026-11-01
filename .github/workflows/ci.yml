@@ -84,7 +84,7 @@ jobs:
           pip install -e . --no-deps
           pip install pytest
       - name: Dashboard, iTick, Finzdata, tuning, forecasting, fundamentals and machine learning
-        run: python -m pytest tests/test_webapp.py tests/test_webapp_data.py tests/test_webapp_data_itick.py tests/test_webapp_data_yahoo.py tests/test_webapp_assets_ml.py tests/test_webapp_labs.py tests/test_server_hardening.py tests/test_tuning.py tests/test_tune_api.py tests/test_tune_study.py tests/test_hpo_search.py tests/test_forecast_scoring.py tests/test_forecast_base.py tests/test_forecast_methods.py tests/test_forecast_evaluate.py tests/test_forecast_verdict.py tests/test_forecast_cli.py tests/test_forecast_api.py tests/test_models_api.py tests/test_fund_api.py tests/test_fund_key_choice.py tests/test_fund_sec_edgar.py tests/test_job_lanes.py tests/test_server_tls.py tests/test_live_feed_smoke.py tests/test_itick_access.py tests/test_itick_catalog.py tests/test_itick_history.py tests/test_jobs.py tests/test_yahoo_futures.py tests/test_free_data_core.py tests/test_free_data_crypto.py tests/test_free_data_futures.py tests/test_free_data_options.py tests/test_free_data_finzdata.py tests/test_free_data_finzdata_catalog.py tests/test_webapp_finzdata.py tests/test_webapp_data_finzdata.py tests/test_finzdata_update_script.py tests/test_futures_all_contracts.py tests/test_ml_data.py tests/test_ml_search.py tests/test_ml_integration.py tests/test_ml_phase1.py tests/test_ml_deep.py tests/test_ml_optuna.py tests/test_ml_phase4.py tests/test_ml_rl.py tests/test_ml_pipeline.py tests/test_ml_additions.py tests/test_ml_cli.py
+        run: python -m pytest tests/test_webapp.py tests/test_webapp_data.py tests/test_webapp_data_itick.py tests/test_webapp_data_yahoo.py tests/test_webapp_assets_ml.py tests/test_webapp_labs.py tests/test_server_hardening.py tests/test_tuning.py tests/test_tune_api.py tests/test_tune_study.py tests/test_hpo_search.py tests/test_forecast_scoring.py tests/test_forecast_base.py tests/test_forecast_methods.py tests/test_forecast_evaluate.py tests/test_forecast_verdict.py tests/test_forecast_cli.py tests/test_forecast_api.py tests/test_models_api.py tests/test_fund_api.py tests/test_fund_key_choice.py tests/test_fund_sec_edgar.py tests/test_job_lanes.py tests/test_server_tls.py tests/test_live_feed_smoke.py tests/test_itick_access.py tests/test_itick_catalog.py tests/test_itick_history.py tests/test_jobs.py tests/test_yahoo_futures.py tests/test_free_data_core.py tests/test_free_data_crypto.py tests/test_free_data_futures.py tests/test_free_data_options.py tests/test_free_data_finzdata.py tests/test_free_data_finzdata_catalog.py tests/test_webapp_finzdata.py tests/test_webapp_data_finzdata.py tests/test_finzdata_update_script.py tests/test_futures_all_contracts.py tests/test_ml_data.py tests/test_ml_search.py tests/test_ml_integration.py tests/test_ml_phase1.py tests/test_ml_deep.py tests/test_ml_optuna.py tests/test_ml_phase4.py tests/test_ml_rl.py tests/test_ml_rl_accounting_reference.py tests/test_ml_ranker_groups.py tests/test_ml_hmm_reference.py tests/test_ml_graph_masks.py tests/test_ml_output_contracts.py tests/test_ml_serialization_matrix.py tests/test_ml_architecture_contracts.py tests/test_ml_registry_migrations.py tests/test_ml_pipeline.py tests/test_ml_additions.py tests/test_ml_cli.py
 
   ml-base:
     # The machine-learning tab on the base install alone (no optional package): a model whose package is missing is listed as unavailable with the reason, and every other model, the pipeline and the endpoints work as before.
@@ -105,7 +105,40 @@ jobs:
           pip install -e . --no-deps
           pip install pytest
       - name: Machine learning without the optional packages
-        run: python -m pytest tests/test_ml_integration.py tests/test_ml_pipeline.py tests/test_ml_additions.py tests/test_ml_phase1.py tests/test_ml_phase4.py tests/test_ml_rl.py tests/test_ml_optuna.py tests/test_optional_packages.py -q
+        run: python -m pytest tests/test_ml_integration.py tests/test_ml_pipeline.py tests/test_ml_additions.py tests/test_ml_phase1.py tests/test_ml_phase4.py tests/test_ml_rl.py tests/test_ml_optuna.py tests/test_optional_packages.py tests/test_ml_rl_accounting_reference.py tests/test_ml_ranker_groups.py tests/test_ml_hmm_reference.py tests/test_ml_graph_masks.py tests/test_ml_output_contracts.py tests/test_ml_serialization_matrix.py tests/test_ml_architecture_contracts.py tests/test_ml_registry_migrations.py -q
+
+  ml-correctness:
+    # The blocking lane for the model-correctness requirements (docs/ml_correctness_v3): the numerical, causal-view, contract and serialization checks, run through `ml-verify` so that the result is recorded
+    # as evidence, and required to be `pass` and current. A skipped family is `blocked`, not a pass. NGBoost is left out (it needs pandas below 3); the Python 3.10 job covers it.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-ml-no-ngboost.txt
+      - name: Install (CPU-only PyTorch)
+        run: |
+          pip install --index-url https://download.pytorch.org/whl/cpu "torch>=2.2"
+          pip install -r requirements-ml-no-ngboost.txt
+          pip install -e . --no-deps
+          pip install pytest
+      - name: Model-correctness requirements
+        run: python -m src.cli ml-verify --run --require-pass --registry artifacts/ml-ci
+      - name: Evidence
+        if: always()
+        run: python -m src.cli ml-verify --json --registry artifacts/ml-ci > ml-verification.json || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ml-verification
+          path: |
+            ml-verification.json
+            artifacts/ml-ci/verification/
 
   browser:
     # The tests that drive the dashboard in a real Chromium (tabs, charts, keyboard, accessibility). Without Playwright they are skipped, which is how they went unrun in the Tests job.
