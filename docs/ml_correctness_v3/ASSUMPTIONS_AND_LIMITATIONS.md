@@ -50,6 +50,9 @@ strategy-improvement experiments and the advanced modules (Releases 6 to 8). Gat
 - Sessions are a fixed table with daily bars. A ticker with no suffix, index symbol or asset class hint is assumed to trade US equity hours, and the report lists those assets. The macro loader applies release lags in days; release instants exist (`sessions.release_instant`) but it does not use them.
 - Tokyo's close is modelled at 15:30 JST (the time since 5 November 2024). Before that the exchange closed at 15:00, so the model treats the bar as final half an hour later than it was: conservative, never early.
 
+- **Returns at a missing price depend on the pandas version.** `bundle_from_prices` and `MarketData.returns()` use `DataFrame.pct_change()`. For prices `[1, NaN, 3, 4]` pandas 2.3 returns `[NaN, 0, 2, 1/3]` (it pads, so the day after a gap carries the whole move) and pandas 3.1 returns `[NaN, NaN, NaN, 1/3]` (that move is dropped). On prices without gaps the two agree, which is the case for every fixture of this release and for
+  the platform's own cleaned data (small gaps are filled when it is built); a user-supplied series with a missing day inside it would differ between the two versions. This is a platform-wide definition, outside this release, and is listed as a next action; the features of this release name `fill_method=None` explicitly.
+
 ## Training and inference
 
 - Perturbation checks run through six kinds (ridge, hmm_regime, lstm, gcn, model_ensemble, ppo). The other kinds of each family share the class and the binding but are not each run through the whole-walk-forward comparison.

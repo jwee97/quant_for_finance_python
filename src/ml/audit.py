@@ -237,3 +237,23 @@ def dataset_audit(prices: pd.DataFrame, features: dict, kept: np.ndarray, causes
     return {"label": label, "cells": n_cells, "rows_kept": int(kept.sum()), "excluded": {k: int(v) for k, v in causes.items()}, "features": rows,
             "stale": {"assets": [str(a) for a in stale.index[stale["stale"].astype(bool)]], "longest_run": int(stale["longest_repeat_run"].max()) if len(stale) else 0, "rule": "a price that repeats the previous one for 5 or more sessions in a row"},
             "pit": pit or {}, "sessions": sessions or {}, "imputation": "none in the feature layer: values the data lack stay missing; each model learns its fill values (median) from its own eligible training rows", "backward_fill": "none"}
+
+
+def audit_lines(audit: dict | None) -> list[str]:
+    """The dataset audit as plain lines: label cutoffs, what was left out, stale series, point-in-time quality and the session policy."""
+    if not audit:
+        return ["audit: not recorded (the panel was built before dataset audits existed)"]
+    lab, ex = audit["label"], audit["excluded"]
+    out = [f"labels: entry {lab['convention']['entry']}, exit {lab['convention']['exit']}; the last decision with a label is {lab['last_labelled_decision']} ({lab['unlabelled_tail_dates']} later dates have none yet); {lab['labelled_rows']:,} of {lab['rows']:,} rows labelled",
+           f"rows: {audit['rows_kept']:,} kept of {audit['cells']:,} date-asset cells; left out: " + ", ".join(f"{k.replace('_', ' ')} {v:,}" for k, v in ex.items() if v) if any(ex.values()) else f"rows: {audit['rows_kept']:,} kept of {audit['cells']:,} cells; none left out"]
+    stale = audit["stale"]
+    out.append(f"stale prices: {', '.join(stale['assets']) if stale['assets'] else 'none'} (longest repeat {stale['longest_run']} sessions)")
+    if audit.get("marks", {}).get("carried_cells"):
+        out.append(f"closed-market marks: {audit['marks']['carried_cells']:,} carried values are not tradable prices")
+    pit = audit.get("pit") or {}
+    out.append(f"point-in-time: {pit.get('statement', 'not recorded')}")
+    sess = audit.get("sessions") or {}
+    if sess:
+        out.append(f"sessions: decision at the {sess['decision']} close; policy {sess['policy']}" + (f"; {len(sess['applied_to'])} later-closing asset(s) read as of the decision" if sess.get("applied_to") else "")
+                   + (f"; WARNING {sess['warning']}" if sess.get("warning") else "") + (f"; US equity hours assumed for {len(sess['assumed_us_equity_hours'])} asset(s)" if sess.get("assumed_us_equity_hours") else ""))
+    return out

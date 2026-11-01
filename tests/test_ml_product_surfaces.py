@@ -97,3 +97,17 @@ def test_an_experiment_saved_without_a_bundle_still_tracks_forward_through_its_m
     tracker = mon.ForwardTracker(rg.Registry(copy), exp.id)
     assert tracker.bundle is None and tracker.seen_through == str(cut.date())
     assert tracker.step(market, as_of=market.index[802])["replay"] is False
+
+
+def test_the_html_report_shows_the_audit_the_dependence_treatment_and_the_fold_lineage(saved):
+    from src.ml.visualization import render_html
+
+    reg, exp, _ = saved
+    page = render_html(reg.report(exp.id))
+    for needle in ("Data and training integrity", "labels: entry close of day t + lag", "point-in-time:", "Overlapping labels: mean uniqueness", "<b>uniqueness_weights</b>", "Fold lineage", "rows hash"):
+        assert needle in page, needle
+    first = reg.report(exp.id)["folds"]["list"][0]
+    assert first["fit_cutoff"] in page and first["train_rows_hash"] in page
+    legacy = {**reg.report(exp.id), "audit": None, "dependence": None, "folds": {"list": [{"fold": 0, "skipped": False, "test_start": "2020-01-01", "test_end": "2020-02-01"}]}}
+    old = render_html(legacy)
+    assert "audit: not recorded" in old and "Fold lineage: not recorded" in old
