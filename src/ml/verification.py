@@ -1,4 +1,4 @@
-"""Persisted verification evidence for the model-correctness requirements (spec v3, Release 1).
+"""Persisted verification evidence for the model-correctness requirements (spec v3, Releases 1 and 2).
 
 A requirement is verified by the test files that check it. ``run_verification`` runs them (pytest in a subprocess, so a crash cannot take the app down), reads the JUnit report, and records one row per
 requirement in the registry: the status, the counts, the environment, a hash of the source files the requirement concerns, and the hash and path of the report that proves it. The status rules are strict:
@@ -30,6 +30,15 @@ CHECK_VERSION = 1
 SOURCES = {
     "rl": ["src/ml/rl", "src/ml/signals.py"], "ranker": ["src/ml/boosting.py"], "graph": ["src/ml/graph.py"], "arch": ["src/ml/deep"], "contracts": ["src/ml/contracts.py", "src/ml/boosting.py", "src/ml/regimes.py"],
     "hmm": ["src/ml/regimes.py"], "serialization": ["src/ml/models.py", "src/ml/deep/model.py", "src/ml/graph.py", "src/ml/rl/agent.py", "src/ml/ensemble_models.py"],
+    # Release 2: causal data and training integrity
+    "intervals": ["src/ml/intervals.py", "src/ml/training.py", "src/ml/splitters.py", "src/ml/datasets.py", "src/ml/experiments.py", "src/ml/cli.py"],
+    "features": ["src/ml/features.py", "src/ml/audit.py", "src/ml/datasets.py", "src/ml/ensembles.py", "src/ml/backtest.py", "src/framework/data.py", "src/assets/bundles.py"],
+    "pit": ["src/ml/pit.py", "src/ml/sessions.py", "src/ml/datasets.py", "src/framework/data.py"],
+    "causal": ["src/ml/causal.py", "src/ml/training.py", "src/ml/regimes.py", "src/ml/graph.py", "src/ml/rl/agent.py", "src/ml/deep/model.py", "src/ml/ensemble_models.py", "src/ml/models.py"],
+    "lineage": ["src/ml/ensemble_models.py", "src/ml/ensembles.py", "src/ml/training.py"],
+    "sequences": ["src/ml/deep", "src/ml/graph.py", "src/ml/rl/agent.py", "src/ml/regimes.py", "src/ml/ensemble_models.py", "src/ml/causal.py"],
+    "dependence": ["src/ml/intervals.py", "src/ml/training.py", "src/ml/models.py", "src/ml/datasets.py"],
+    "bundle": ["src/ml/bundle.py", "src/ml/models.py", "src/ml/causal.py", "src/ml/monitoring.py", "src/ml/experiments.py"],
 }
 REQUIREMENTS = {                                                # requirement id -> (test files, source group)
     "P0-01": (["tests/test_ml_rl_accounting_reference.py"], "rl"),
@@ -45,6 +54,16 @@ REQUIREMENTS = {                                                # requirement id
     "P0-11": (["tests/test_ml_output_contracts.py"], "contracts"),
     "P0-12": (["tests/test_ml_serialization_matrix.py"], "serialization"),
     "P0-30": (["tests/test_ml_rl_accounting_reference.py"], "rl"),
+    "P0-13": (["tests/test_ml_interval_splits.py", "tests/test_ml_dependence.py", "tests/test_ml_product_surfaces.py"], "intervals"),
+    "P0-14": (["tests/test_ml_feature_audit.py"], "features"),
+    "P0-15": (["tests/test_ml_pit_sessions.py"], "pit"),
+    "P0-16": (["tests/test_ml_pit_sessions.py"], "pit"),
+    "P0-17": (["tests/test_ml_interval_splits.py"], "intervals"),
+    "P0-18": (["tests/test_ml_training_isolation.py", "tests/test_ml_causal_views.py"], "causal"),
+    "P0-19": (["tests/test_ml_oof_lineage.py"], "lineage"),
+    "P0-20": (["tests/test_ml_inference_parity.py"], "sequences"),
+    "P0-21": (["tests/test_ml_dependence.py", "tests/test_ml_interval_splits.py"], "dependence"),
+    "P0-22": (["tests/test_ml_inference_bundle.py", "tests/test_ml_product_surfaces.py"], "bundle"),
 }
 
 

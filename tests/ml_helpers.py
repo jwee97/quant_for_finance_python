@@ -33,6 +33,17 @@ def make_bundle(n_assets: int = 10, n: int = 1400, seed: int = 0, alpha: float =
     return bundle_from_prices(prices, volume=vol, high=high, low=low, asset_class=classes, macro=levels, name=f"synthetic{seed}", min_history=60)
 
 
+def rename_assets(bundle, mapping: dict):
+    """The same bundle with some assets called something else (a ticker's suffix or name is what tells a session or a macro series which market it is)."""
+    bundle.prices, bundle.returns, bundle.investable = bundle.prices.rename(columns=mapping), bundle.returns.rename(columns=mapping), bundle.investable.rename(columns=mapping)
+    for field in ("volume", "high", "low"):
+        if getattr(bundle, field) is not None:
+            setattr(bundle, field, getattr(bundle, field).rename(columns=mapping))
+    bundle.asset_class = {mapping.get(k, k): v for k, v in (bundle.asset_class or {}).items()}
+    bundle.group = {mapping.get(k, k): v for k, v in (bundle.group or {}).items()}
+    return bundle
+
+
 def probe_inputs(n: int = 620, seed: int = 5):
     """The inputs of every feature group at once: volume, high and low, an unadjusted close, a macro panel with the series the macro, futures, options and crypto features read, and assets named so that the
     implied-volatility and funding features have something to read. For the feature audit, which needs every feature to be computable."""
@@ -40,11 +51,7 @@ def probe_inputs(n: int = 620, seed: int = 5):
 
     from src.ml import features as feat
 
-    b = make_bundle(8, n, seed=seed)
-    ren = {"A00": "SPY", "A01": "GLD", "A02": "BTC"}
-    b.prices, b.returns, b.investable = b.prices.rename(columns=ren), b.returns.rename(columns=ren), b.investable.rename(columns=ren)
-    for field in ("volume", "high", "low"):
-        setattr(b, field, getattr(b, field).rename(columns=ren))
+    b = rename_assets(make_bundle(8, n, seed=seed), {"A00": "SPY", "A01": "GLD", "A02": "BTC"})
     macro, rng = b.macro.copy(), np.random.default_rng(1)
     for a in ("SPY", "GLD", "A03"):
         macro[f"CARRY_{a}"] = 0.02 * np.sin(np.arange(n) / 40.0 + len(a))

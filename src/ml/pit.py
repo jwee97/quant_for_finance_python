@@ -15,7 +15,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from .sessions import decision_instants
+from .sessions import decision_instants, ns
 
 QUALITIES = ("observed", "estimated", "unavailable")
 # Market prints that exist at the close of their date and are not revised afterwards (the release lag of the platform's loader covers their publication). Everything else the platform serves from FRED is the
@@ -53,7 +53,7 @@ def vintage_asof(records: pd.DataFrame, decision, decision_dates, latency_minute
     from ..fundamentals.pit import step_panel
 
     dates = pd.DatetimeIndex(decision_dates)
-    when = decision_instants(decision, dates, latency_minutes).asi8
+    when = ns(decision_instants(decision, dates, latency_minutes))
     available = _instants(records["available_at"])
     vintage = records["vintage"].to_numpy(dtype=int) if "vintage" in records.columns else np.zeros(len(records), dtype=int)
     order = np.lexsort((vintage, available))                                                         # by when public, then by vintage: the later of two on the same decision wins

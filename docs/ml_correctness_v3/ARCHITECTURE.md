@@ -1,4 +1,4 @@
-# Architecture: how Release 1 fits the existing platform
+# Architecture: how Releases 1 and 2 fit the existing platform
 
 ## What was reused
 
@@ -47,3 +47,53 @@ files that check it and the source files it hashes; `run_verification` runs them
 | Architecture manifest | 1 |
 | Registry schema | migration 1 (`verification_checks`) |
 | Verification check | version 1 |
+
+
+# Release 2: causal data and training integrity
+
+## What was reused
+
+`datasets.build_dataset`, `training.walk_forward_train` and `fit_final`, `splitters`, the model classes' existing `bind` hook, the fundamentals point-in-time engine (`src/fundamentals/pit.step_panel`), the registry's report JSON, `experiments.run_experiment`
+and the forward tracker. No second trainer, splitter, registry or job queue was added. New modules: `intervals.py`, `causal.py`, `audit.py`, `sessions.py`, `pit.py`, `bundle.py`.
+
+## The order of events at one closing timestamp
+
+```
+close of day D:   prices print
+                  labels whose last day is D settle  (label_end <= D, less the embargo, are eligible)
+                  a model due for refit is fitted on the eligible rows, bound to a CausalView that ends at D
+                  features of day D are computed from data to D (session-aware: bars that closed after the decision are read as of it)
+                  the decision for D is made; the order executes at the close of D + lag; it earns the return of D + lag + 1
+```
+
+## The causal view
+
+`CausalView(ds, until)` copies nothing it should not have: `X` is the prefix of the dataset's rows up to `until`, `prices`, `returns` and `investable` are cut at `until`, `dates` ends there, and `Y` is not reachable (`CausalAccessError`).
+`walk_forward_train` binds a fit view that ends at the first decision of a block and a predict view that ends at the block's last day; `predict_latest` binds a view that ends at the decision date and refuses (`ReplayError`)
+to decide a date before the last day the model's labels reach. A raw dataset handed to `bind` is wrapped in a view whose cutoff is its last date.
+
+## Label intervals
+
+`intervals.py` holds the label convention (`CONVENTION`: close of `t + lag` to close of `t + lag + horizon`, adjusted close, date resolution), `label_frame` (start, end, availability per decision date, persisted as `label_intervals.parquet`), `eligible_for_fit`,
+`concurrency`, `average_uniqueness`, `uniqueness_weights`, and the interval forms of purged K-fold and CPCV. The trainer takes the horizon of the target it trains.
+
+## Audit, point in time and sessions
+
+`audit.feature_dependencies` is a measurement, run by the tests over `FEATURES`; `audit.dataset_audit` is stored with every dataset (`meta['audit']`) and copied into the report. `pit.vintage_asof` reuses the fundamentals engine's value selection
+with availability resolved to the decision instant by `sessions.decision_instants`. `sessions.asof_panel` gives each asset's latest final bar and its age; `datasets._session_inputs` applies it to the features of assets that close after the
+decision session and leaves the labels on the real prices.
+
+## Lineage and the bundle
+
+`fit_info_` on every model (cutoff, last label day, row hash, feature schema); `TrainResult.producers()`; `MemberEnsemble.lineage_`; `meta_label_scores(...)['lineage']`; the fold list of the report. `bundle.InferenceBundle` (`QFB1`: SHA-256, a JSON header, the
+model's own `QFM1` bytes) checks schema drift strictly and applies declared adapters.
+
+## Version changes (Release 2)
+
+| Item | Version |
+| --- | --- |
+| Label convention | `close_to_close` (recorded in `meta['label_convention']`) |
+| Inference bundle | `QFB1`, version 1 |
+| Verification registry | 23 requirements (P0-01 to P0-22 and P0-30) |
+| Changed semantics | training rows are chosen by label interval (the position rule it replaces was at least as strict on regular calendars: results are identical there); the strategy combination `online_learning` no longer back-fills early volatility (`params.volatility_fill` says `causal_v2`); `idio_vol_63` declares a window of 126; the regime model's diagnostics describe the fit window, not the block it predicts |
+| New optional settings (absent from the defaults, so no existing configuration hash changes) | `dataset.sessions`, `split.sample_weighting` |

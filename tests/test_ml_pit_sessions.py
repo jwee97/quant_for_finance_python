@@ -13,7 +13,7 @@ import pandas as pd
 import pytest
 
 from src.ml import audit as A, config as mc, datasets as dsm, pit, sessions as S
-from tests.ml_helpers import make_bundle, probe_inputs
+from tests.ml_helpers import make_bundle, probe_inputs, rename_assets
 
 
 def utc(text):
@@ -154,20 +154,27 @@ def cpi():
         "vintage": [0, 0, 0, 1, 0]})
 
 
+def one_ns(stamp):
+    """A timestamp in UTC nanoseconds, one at a time (the oracle shares no vectorised conversion with the code it checks)."""
+    t = pd.Timestamp(stamp)
+    return (t.tz_localize("UTC") if t.tzinfo is None else t.tz_convert("UTC")).value
+
+
 def oracle(records, decision, dates):
     """The brute-force definition: among the records public at the decision instant, the latest reference period, and of that the latest vintage."""
-    inst = S.decision_instants(decision, dates).asi8
-    avail = pit._instants(records["available_at"])
-    ref = pd.to_datetime(records["reference_date"]).to_numpy("datetime64[ns]").astype("int64")
-    vint = records["vintage"].to_numpy(dtype=int)
+    inst = [S.get(decision).close_utc([d])[0].value for d in dates]
+    avail = [one_ns(a) for a in records["available_at"]]
+    ref = [pd.Timestamp(r).value for r in records["reference_date"]]
+    vint = records["vintage"].tolist()
     out = []
     for t in inst:
-        ok = np.flatnonzero(avail <= t)
-        if not len(ok):
+        ok = [i for i in range(len(avail)) if avail[i] <= t]
+        if not ok:
             out.append(np.nan)
             continue
-        top = ok[ref[ok] == ref[ok].max()]
-        pick = top[np.lexsort((vint[top], avail[top]))[-1]]
+        newest = max(ref[i] for i in ok)
+        top = [i for i in ok if ref[i] == newest]
+        pick = max(top, key=lambda i: (avail[i], vint[i]))
         out.append(float(records["value"].iloc[pick]))
     return np.array(out)
 
@@ -275,3 +282,90 @@ def test_a_dataset_reports_the_point_in_time_quality_of_the_macro_series_its_fea
 
 def test_the_audit_module_still_measures_every_feature_after_the_additions():
     assert A.violations(A.feature_dependencies(probe_inputs(), names=["macro_VIX_z", "carry", "ret_21"])) == []
+
+
+# ------------------------------------------------------------------------------------------------------------------ through the dataset
+MIXED = {"A00": "AAA", "A01": "BBB.T", "A02": "CCC.L", "A03": "BTC-USD", "A04": "DDD"}
+
+
+def mixed(n=520, seed=4):
+    return rename_assets(make_bundle(5, n, seed=seed), dict(MIXED))
+
+
+def mixed_cfg(sessions=None, lag=1):
+    over = {"dataset": {"feature_groups": ["price", "volatility", "relative"], "min_history": 100, "lag": lag, **({"sessions": sessions} if sessions is not None else {})}}
+    return mc.experiment_config(over, defaults=mc.DEFAULTS)["dataset"]
+
+
+def bumped(bundle, asset, from_pos, factor=1.5):
+    """The bundle with one asset's prices multiplied from ``from_pos`` on: its bar at ``from_pos`` jumps and every later bar is shifted."""
+    import dataclasses
+
+    out = dataclasses.replace(bundle, prices=bundle.prices.copy(), high=bundle.high.copy(), low=bundle.low.copy())
+    for frame in (out.prices, out.high, out.low):
+        frame.iloc[from_pos:, frame.columns.get_loc(asset)] *= factor
+    out.returns = out.prices.pct_change(fill_method=None)
+    return out
+
+
+Q = 400
+
+
+def prefix(ds, q=Q):
+    return ds.X[ds.X.index.get_level_values(0) <= ds.dates[q]]
+
+
+def test_a_crypto_bar_that_closes_after_the_us_decision_cannot_enter_that_days_features():
+    base, other = mixed(), bumped(mixed(), "BTC-USD", Q)
+    a, b = dsm.build_dataset(base, mixed_cfg(), "a"), dsm.build_dataset(other, mixed_cfg(), "b")
+    assert a.meta["audit"]["sessions"]["policy"] == "asof" and a.meta["audit"]["sessions"]["applied_to"] == ["BTC-USD"]
+    left, right = prefix(a), prefix(b).reindex(prefix(a).index)
+    assert len(left) > 1000 and np.allclose(left.to_numpy(dtype=float), right.to_numpy(dtype=float), equal_nan=True, rtol=1e-6, atol=1e-6), "a decision on or before the bar's date moved"
+    after = a.X.xs(a.dates[Q + 1], level=0)
+    moved = ~np.isclose(after.to_numpy(dtype=float), b.X.xs(b.dates[Q + 1], level=0).reindex(after.index).to_numpy(dtype=float), equal_nan=True)
+    assert moved.any(), "the next day's decision does see the bar, or the comparison proves nothing"
+
+
+def test_the_legacy_date_label_join_lets_that_bar_in_and_says_so():
+    base, other = mixed(), bumped(mixed(), "BTC-USD", Q)
+    cfg = mixed_cfg({"policy": "date_labels"})
+    a, b = dsm.build_dataset(base, cfg, "a"), dsm.build_dataset(other, cfg, "b")
+    left, right = prefix(a), prefix(b).reindex(prefix(a).index)
+    assert not np.allclose(left.to_numpy(dtype=float), right.to_numpy(dtype=float), equal_nan=True), "under the date-label join the later-closing bar leaks into the decision of its own date"
+    assert "BTC-USD" in a.meta["audit"]["sessions"]["warning"] and a.meta["audit"]["sessions"]["applied_to"] == []
+
+
+def test_a_tokyo_close_decision_cannot_see_a_us_bar_with_its_date_and_the_sessions_are_in_the_report():
+    cfg = mixed_cfg({"decision": "tokyo_equity"})
+    a, b = dsm.build_dataset(mixed(), cfg, "a"), dsm.build_dataset(bumped(mixed(), "AAA", Q), cfg, "b")
+    left, right = prefix(a), prefix(b).reindex(prefix(a).index)
+    assert np.allclose(left.to_numpy(dtype=float), right.to_numpy(dtype=float), equal_nan=True, rtol=1e-6, atol=1e-6)
+    rep = a.meta["audit"]["sessions"]
+    assert rep["decision"] == "tokyo_equity" and set(rep["applied_to"]) == {"AAA", "CCC.L", "BTC-USD", "DDD"} and rep["sessions"]["BBB.T"] == {"session": "tokyo_equity", "basis": "suffix .T", "information_lag_bars": 0}
+    assert rep["sessions"]["AAA"]["basis"] == "default" and "AAA" in rep["assumed_us_equity_hours"]
+    assert 9.0 < rep["age_hours"]["AAA"]["median"] < 11.0 and rep["age_hours"]["AAA"]["max"] > 50.0, "a Tokyo decision sees the previous US close: 9.5 or 10.5 hours old, 57 or so over a weekend"
+
+
+def test_lag_zero_is_refused_when_an_entry_price_would_precede_the_decision():
+    with pytest.raises(ValueError, match="with lag 0 the entry price of .*BBB.T"):
+        dsm.build_dataset(mixed(), mixed_cfg(lag=0), "x")
+    ok = dsm.build_dataset(mixed(), mixed_cfg({"decision": "tokyo_equity"}, lag=0), "x")
+    assert ok.meta["audit"]["sessions"]["decision"] == "tokyo_equity"
+
+
+def test_markets_that_close_together_need_no_alignment_and_the_result_is_the_old_one():
+    one = make_bundle(5, 520, seed=4)
+    a, b = dsm.build_dataset(one, mixed_cfg(), "a"), dsm.build_dataset(one, mixed_cfg({"policy": "date_labels"}), "b")
+    assert a.meta["audit"]["sessions"]["policy"] == "common_close" and a.meta["audit"]["sessions"]["applied_to"] == []
+    assert a.X.equals(b.X) and a.Y.equals(b.Y)
+    assert len(a.meta["audit"]["sessions"]["assumed_us_equity_hours"]) == 5, "every asset's session is the platform's default, and the report says it is assumed"
+
+
+def test_the_sessions_setting_is_validated_and_leaves_existing_configuration_hashes_alone():
+    plain = mc.experiment_config({"dataset": {"feature_groups": ["price"]}}, defaults=mc.DEFAULTS)
+    assert "sessions" not in plain["dataset"]
+    for bad, text in (({"decision": "mars"}, "unknown session"), ({"foo": 1}, "unknown dataset.sessions"), ({"policy": "magic"}, "policy"), ({"assets": {"X": "nowhere"}}, "unknown session")):
+        with pytest.raises(mc.MLConfigError, match=text):
+            mc.experiment_config({"dataset": {"feature_groups": ["price"], "sessions": bad}}, defaults=mc.DEFAULTS)
+    with_sessions = mc.experiment_config({"dataset": {"feature_groups": ["price"], "sessions": {"decision": "us_equity"}}}, defaults=mc.DEFAULTS)
+    assert mc.config_hash(with_sessions) != mc.config_hash(plain), "a configuration that sets a session policy is a different experiment"

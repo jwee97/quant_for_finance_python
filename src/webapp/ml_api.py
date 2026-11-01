@@ -24,6 +24,7 @@ from ..ml import explainability as xp
 from ..ml import monitoring as mon
 from ..ml import optimization as opt
 from ..ml import strategy_search as ss
+from ..ml.bundle import InferenceBundle
 from ..ml.config import build_key, experiment_config, load_ml_config
 from ..ml.datasets import UNIVERSES, build_dataset, feature_catalog, resolve_bundle
 from ..ml.experiments import RL_KINDS, load_run, rebacktest, run_experiment
@@ -389,7 +390,7 @@ class MlApi:
                "target": {"name": ds.target, "n": int(len(y)), "mean": float(y.mean()) if len(y) else None, "std": float(y.std()) if len(y) > 1 else None, "share_positive": float((y > 0).mean()) if len(y) else None,
                           "scope": scope},
                "groups": {g: int(sum(1 for r in rows if r["group"] == g)) for g in dict.fromkeys(r["group"] for r in rows)}, "provenance": {"source": info.get("source"), "label": info.get("label")},
-               "timing": {"lag": ds.lag, "horizon": ds.horizon, "purge": ds.lag + ds.horizon + int(cfg["split"]["embargo"])}}
+               "timing": {"lag": ds.lag, "horizon": ds.horizon, "purge": ds.lag + ds.horizon + int(cfg["split"]["embargo"])}, "audit": ds.meta.get("audit")}
         return common.envelope("ml_dataset", out, {"data": info.get("source", "platform") if info.get("source") in common.SOURCES else "mixed"},
                                ([f"{len(ds.meta.get('skipped', {}))} features could not be built from this data (see skipped)."] if ds.meta.get("skipped") else []), ds.dates[-1],
                                ["Features at the close of day t use data up to t only (every feature is tested for this); targets look forward from t + lag.", f"Information coefficients and target statistics are measured on the {scope} only."])
@@ -716,7 +717,9 @@ class MlApi:
             record = reg.get_experiment(exp_id)
             report = reg.report(exp_id)
             signals = reg.forward_signals(exp_id)
-        summary = mon.forward_record(signals, record["name"], exp_id, int(report["config"]["dataset"]["horizon"]))
+        saved = Path(reg.root) / "experiments" / exp_id / "model.qfb"
+        seen = InferenceBundle.load(saved).header.get("fit_info", {}).get("label_end_max") if saved.exists() else None             # the day the saved model's labels reach: signals up to it are replays
+        summary = mon.forward_record(signals, record["name"], exp_id, int(report["config"]["dataset"]["horizon"]), seen)
         rows = [{"id": s["id"], "date": s["signal_date"], "recorded": s["created"], "turnover": s["turnover"], "realised": s["realised"], "settled_through": s["realised_date"], "n_positions": len(s["weights"]),
                  "weights": s["weights"], "scores": s["scores"]} for s in signals]
         return clean(common.envelope("ml_forward", {"summary": summary, "signals": rows, "backtest_ic": report["ic"]["all"].get("mean"), "rebalance": report["config"]["backtest"]["rebalance"]},

@@ -1,4 +1,4 @@
-# Assumptions and limitations (Release 1)
+# Assumptions and limitations (Releases 1 and 2)
 
 ## What the RL ledger models, and what it does not
 
@@ -30,5 +30,37 @@
 
 ## What this release does not do
 
-Causal dataset views (Release 2); study lineage, holdout reservation, null controls, selection-test eligibility and the gate evaluator (Release 3); execution realism (Release 4); statistical and prospective validation (Release 5); alpha research,
+Study lineage, holdout reservation, null controls, selection-test eligibility and the gate evaluator (Release 3); execution realism (Release 4); statistical and prospective validation (Release 5); alpha research,
 strategy-improvement experiments and the advanced modules (Releases 6 to 8). Gate A, B and C are all `pending` or `not started` for every model.
+
+
+# Release 2: causal data and training integrity
+
+## Labels and calendars
+
+- The label convention is daily close to close (`CONVENTION`). Intraday bars and executable-price conventions other than the close are not implemented; the convention is recorded, not selectable.
+- Holidays are the data's own: a date with no row is not a trading day. Where a closure is carried as a price (the futures bundle with `hold_days`), the cell is a mark and is not tradable. The other loaders carry nothing over.
+- The fold plan (`segment_plan`) cuts the history by fractions of the number of labelled dates, so appending data moves the fold boundaries. Prediction causality is a statement about a fixed plan on data of fixed length; the tests change values, never the length.
+- Purged K-fold and CPCV exist as functions on label intervals. They train on later blocks and are research diagnostics (`chronological=False`); no experiment uses them yet.
+
+## Point in time and sessions
+
+- The platform has no macro vintage history: FRED serves the latest vintage, so the macro series are reported as `estimated` (a fixed release lag) except market prints and series computed from prices. Validation claims that rest on `estimated` or `unavailable` inputs are marked restricted. Nothing was backfilled or invented.
+- The ML feature library has no fundamentals group. The fundamentals engine is reused for the availability join and its quality vocabulary is mapped, but no fundamentals feature enters a model yet.
+- Sessions are a fixed table with daily bars. A ticker with no suffix, index symbol or asset class hint is assumed to trade US equity hours, and the report lists those assets. The macro loader applies release lags in days; release instants exist (`sessions.release_instant`) but it does not use them.
+- Tokyo's close is modelled at 15:30 JST (the time since 5 November 2024). Before that the exchange closed at 15:00, so the model treats the bar as final half an hour later than it was: conservative, never early.
+
+## Training and inference
+
+- Perturbation checks run through six kinds (ridge, hmm_regime, lstm, gcn, model_ensemble, ppo). The other kinds of each family share the class and the binding but are not each run through the whole-walk-forward comparison.
+- The pipeline has no data-driven feature-selection, dimensionality-reduction or probability-calibration stage. If one is added, it must fit on the eligible rows and be added to the isolation test.
+- One-row-at-a-time inference equals the batch for the models without state through a call. The ensemble's dynamic weights and the PPO account carry state through a call: for them, a prefix of the block and a live replay (a view that ends on the decision date, given the block so far) give the batch values; a single isolated row would start the account flat.
+- Sample weights are used by the linear, boosted-tree and regime models only; the others report `requested, not applied`. Sequential bootstrap is not implemented.
+- The registry's `register_model` still stores plain model bytes; the inference bundle is written beside the experiment's model file. Experiments saved before this release have no bundle, no fold lineage and no audit, and say `not recorded`.
+- A forward signal for a date the saved model had already seen is flagged as a replay and counted; it is not refused, because replaying history is a legitimate way to look at a model.
+
+## Fixed in passing (behaviour that changed)
+
+- Strategy combination by online learning back-filled the first volatility from later days and filled gaps with the whole-sample volatility; it now makes no update until 20 days of trailing volatility exist.
+- The regime model's diagnostics described the prediction block as training data; they now stop at the fit window.
+- `idio_vol_63` declared a 63-day lookback but needs 126.

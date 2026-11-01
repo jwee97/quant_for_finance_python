@@ -20,7 +20,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from . import audit as audit_mod, pit as pit_mod
+from . import audit as audit_mod, pit as pit_mod, sessions as sess_mod
 from .intervals import CONVENTION
 from .features import FEATURES, compute_features, inputs_from_bundle
 from .targets import make_targets, parse_target
@@ -139,6 +139,14 @@ class Dataset:
     def horizon(self) -> int:
         return int(self.meta["horizon"])
 
+    def label_intervals(self) -> pd.DataFrame:
+        """For every decision date: where its label starts and ends, and when it becomes available, on this dataset's own calendar (``NaT`` where that day is not in the data yet). The convention is in ``meta``."""
+        from .intervals import label_frame
+
+        frame = label_frame(self.dates, np.arange(len(self.dates)), self.lag, self.horizon)
+        frame.index = self.dates
+        return frame
+
     def positions(self) -> np.ndarray:
         """The position in ``dates`` of every row's date."""
         if self._pos is None:
@@ -183,6 +191,7 @@ class Dataset:
         self.prices.to_parquet(d / "prices.parquet")
         self.returns.to_parquet(d / "returns.parquet")
         self.investable.to_parquet(d / "investable.parquet")
+        self.label_intervals().to_parquet(d / "label_intervals.parquet")                 # the interval each label spans and when it is available: the evidence a fit cutoff is checked against
         (d / "meta.json").write_text(json.dumps({**self.meta, "asset_class": self.asset_class, "group": self.group, "name": self.name}, indent=1, default=str))
         return d
 
@@ -207,7 +216,8 @@ def build_dataset(bundle, dataset_cfg: dict, name: str = "dataset", extra_target
         sl = slice(pd.Timestamp(start) if start else None, pd.Timestamp(end) if end else None)
         bundle = _slice_bundle(bundle, sl)
     x = inputs_from_bundle(bundle)
-    fs = compute_features(x, list(c["feature_groups"]))
+    fx, session_report = _session_inputs(bundle, x, c, lag)                          # what the features may see: bars final at the decision instant (the labels still use the real prices)
+    fs = compute_features(fx, list(c["feature_groups"]))
     if c.get("regime_detector"):
         fs.frames["regime_state"] = _regime_frame(bundle, str(c["regime_detector"]), x)
         fs.broadcast.add("regime_state")
@@ -246,12 +256,64 @@ def build_dataset(bundle, dataset_cfg: dict, name: str = "dataset", extra_target
     label["labels_voided_by_marks"] = int(voided.to_numpy().sum())
     used = pit_mod.macro_columns_used(list(fs.frames), x.macro.columns, x.assets)
     audit = audit_mod.dataset_audit(x.prices, {n: (FEATURES[n].group if n in FEATURES else "derived", f) for n, f in fs.frames.items()}, keep, causes, label,
-                                    pit=pit_mod.pit_report(used, getattr(bundle, "macro_meta", None)))
+                                    pit=pit_mod.pit_report(used, getattr(bundle, "macro_meta", None)), sessions=session_report)
     audit["marks"] = {"carried_cells": int(marks.to_numpy().sum()), "policy": "a carried mark is not a tradable price: its row is excluded, its asset is not investable that day, and a label whose entry or exit price is one is void"}
     meta = {"label_convention": CONVENTION, "audit": audit, "universe": c.get("universe"), "target": target, "kind": kind, "horizon": horizon, "lag": lag, "feature_groups": list(c["feature_groups"]), "normalize": norm, "winsor": float(c.get("winsor", 0.0)),
             "benchmark": str(c.get("benchmark", "equal_weight")), "skipped": fs.skipped, "broadcast": sorted(fs.broadcast), "targets": names, "data_fingerprint": bundle_fingerprint(bundle),
             "bundle": getattr(bundle, "name", "bundle"), "min_history": int(c.get("min_history", 252)), **(source or {})}
     return Dataset(name, X, Y, x.prices, x.returns, investable & ~marks, meta, dict(bundle.asset_class or {}), dict(bundle.group or {}))
+
+
+def _session_inputs(bundle, x, c: dict, lag: int):
+    """``(inputs the features may read, session report)``. Every asset is given the session its ticker or class implies (or the setting says). If they all close together the date label means the same thing for all of them and
+    nothing changes. If some close AFTER the decision session, a bar with the decision date's label is not yet final at the decision, so those assets' inputs are replaced by the latest bar that was (``asof``), and a
+    label convention whose entry price would precede the decision is refused. ``policy: date_labels`` keeps the old join on the date label and says so in the report."""
+    from dataclasses import replace as _replace
+
+    settings = sess_mod.validate_settings(c.get("sessions"))
+    explicit = settings.get("assets") or {}
+    inferred = {a: sess_mod.session_for(a, (bundle.asset_class or {}).get(a)) for a in x.assets}
+    named = {a: (explicit[a] if a in explicit else inferred[a][0]) for a in x.assets}
+    basis = {a: ("setting" if a in explicit else inferred[a][1]) for a in x.assets}
+    distinct = sorted(set(named.values()))
+    counts = {n: list(named.values()).count(n) for n in distinct}
+    decision = settings.get("decision") or ("us_equity" if "us_equity" in distinct else max(counts, key=counts.get))
+    policy = settings.get("policy", "asof")
+    lags = sess_mod.information_lags(named, decision)
+    later = [a for a in x.assets if lags[a] >= 1]
+    report = {"decision": decision, "policy": policy, "sessions": {a: {"session": named[a], "basis": basis[a], "information_lag_bars": lags[a]} for a in x.assets}, "distinct": distinct,
+              "latency_minutes": int(settings.get("latency_minutes", 0)), "applied_to": [], "warning": None, "assumed_us_equity_hours": [a for a in x.assets if basis[a] == "default"]}
+    if len(distinct) == 1 and named[x.assets[0]] == decision:
+        report["policy"] = "common_close"
+        return x, report
+    try:
+        sess_mod.entry_check(named, decision, lag)
+    except sess_mod.SessionError as exc:
+        raise ValueError(str(exc)) from None
+    if not later:
+        return x, report
+    if policy == "date_labels":
+        report["warning"] = f"{later[:6]}{'...' if len(later) > 6 else ''} close after the {decision} decision, yet their bars with the decision date's label enter the features (the date-label join, kept to reproduce earlier results)"
+        return x, report
+    max_age = float(settings.get("max_age_hours", 120))
+    latency = int(settings.get("latency_minutes", 0))
+    ages = {}
+
+    def aligned(frame):
+        if frame is None:
+            return None
+        sub = frame[[a for a in later if a in frame.columns]]
+        values, age = sess_mod.asof_panel(sub, named, decision, frame.index, latency, max_age)
+        out = frame.copy()
+        out[values.columns] = values
+        ages.update({a: age[a] for a in values.columns})
+        return out
+
+    prices, returns = aligned(x.prices), aligned(x.returns)
+    fx = _replace(x, prices=prices, returns=returns, volume=aligned(x.volume), high=aligned(x.high), low=aligned(x.low), raw_close=aligned(x.raw_close), market=returns.mean(axis=1, skipna=True).astype(float))
+    report["applied_to"] = later
+    report["age_hours"] = {a: {"median": float(np.nanmedian(v)), "max": float(np.nanmax(v))} for a, v in ages.items() if v.notna().any()}
+    return fx, report
 
 
 def _slice_bundle(bundle, sl: slice):

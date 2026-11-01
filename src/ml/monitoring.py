@@ -22,6 +22,7 @@ import numpy as np
 import pandas as pd
 import yaml
 
+from .bundle import InferenceBundle
 from .config import DEFAULTS, experiment_config, merge
 from .datasets import build_dataset, resolve_bundle
 from .evaluation import rank_ic_wide, sharpe_of
@@ -75,18 +76,21 @@ def is_rebalance_day(date: pd.Timestamp, frequency: str) -> bool:
     return (date + pd.offsets.BDay(1)).month != date.month
 
 
-def forward_record(signals: list[dict], name: str, experiment_id: str, horizon: int) -> dict:
+def forward_record(signals: list[dict], name: str, experiment_id: str, horizon: int, seen_through: str | None = None) -> dict:
     """What the recorded forward signals say, from the registry's rows alone (no data is read): how many, how many have settled, and the realised track record of those that have. A signal is
     ``backfilled`` when it was recorded more than a day after its date (replayed history, not a live forecast)."""
     done = [s for s in signals if s["realised"] is not None]
     out = {"experiment_id": experiment_id, "name": name, "n_signals": len(signals), "n_settled": len(done), "first_signal": signals[0]["signal_date"] if signals else None,
            "last_signal": signals[-1]["signal_date"] if signals else None, "horizon": horizon, "alerts": [],
-           "n_backfilled": sum((pd.Timestamp(s["created"]).normalize() - pd.Timestamp(s["signal_date"])).days > 1 for s in signals)}
+           "n_backfilled": sum((pd.Timestamp(s["created"]).normalize() - pd.Timestamp(s["signal_date"])).days > 1 for s in signals),
+           "n_replay": sum(pd.Timestamp(s["signal_date"]) < pd.Timestamp(seen_through) for s in signals) if seen_through else None, "model_seen_through": seen_through}
     if done:
         r = pd.Series([s["realised"] for s in done], index=pd.to_datetime([s["signal_date"] for s in done]))
         per_day = r / max(horizon, 1)
         out.update({"mean_realised": float(r.mean()), "hit_rate": float((r > 0).mean()), "cumulative": float((1.0 + per_day).prod() - 1.0), "sharpe": sharpe_of(per_day),
                     "series": {"dates": [str(d.date()) for d in r.index], "realised": [float(v) for v in r], "cumulative": [float(v) for v in (1.0 + per_day).cumprod() - 1.0]}})
+    if out["n_replay"]:
+        out["alerts"].append(f"{out['n_replay']} of {len(signals)} signals are for dates the saved model had already seen (its labels reach {seen_through}): they are replays, not forecasts, and say nothing about live performance.")
     if out["n_backfilled"]:
         out["alerts"].append(f"{out['n_backfilled']} of {len(signals)} signals were recorded after their date (replayed history, not live forecasts).")
     return out
@@ -105,6 +109,9 @@ class ForwardTracker:
         if not model_path.exists():
             raise RegistryError(f"experiment '{experiment_id}' has no saved model: it was run with final_model=False")
         self.model = Model.from_bytes(model_path.read_bytes())
+        bundle_path = d / "model.qfb"
+        self.bundle = InferenceBundle.load(bundle_path) if bundle_path.exists() else None                 # experiments saved before the bundle existed have none: their schema is checked by the model alone
+        self.seen_through = (getattr(self.model, "fit_info_", None) or {}).get("label_end_max")           # the last day the final model's labels reached: it has seen the market through then
 
     # ------------------------------------------------------------------------------------------------------------ one day
     def _dataset(self, bundle, as_of):
@@ -126,6 +133,9 @@ class ForwardTracker:
         h = max(int(sig_cfg.get("holding_period", 1)), 1)
         dates = ds.dates[-h:]
         rows = ds.X[ds.X.index.get_level_values(0).isin(dates)]
+        if self.bundle is not None:
+            rows, _ = self.bundle.conform(rows)                                                             # a drifted schema is refused here, with the difference named, instead of being scored
+        replay = bool(self.seen_through and date < pd.Timestamp(self.seen_through))                     # a model fitted at the close of ``date`` may decide that close: same-close ordering
         if self.model.needs_dataset:
             self.model.bind(ds)
         scores = pd.Series(self.model.predict(rows), index=rows.index).unstack("asset").reindex(index=dates, columns=ds.assets)
@@ -151,7 +161,9 @@ class ForwardTracker:
             sid = self.registry.log_forward_signal(self.id, date, {a: float(w) for a, w in new_held.items() if abs(w) > 1e-8}, {a: float(v) for a, v in scores.iloc[-1].dropna().items()}, turnover)
         return {"experiment_id": self.id, "date": str(date.date()), "signal_id": sid, "rebalance_day": bool(rebalance), "scores": {a: float(v) for a, v in scores.iloc[-1].dropna().items()},
                 "target": {a: float(w) for a, w in target.items() if abs(w) > 1e-8}, "held_before": {a: float(w) for a, w in held.items() if abs(w) > 1e-8},
-                "weights": {a: float(w) for a, w in new_held.items() if abs(w) > 1e-8}, "turnover": turnover, "orders": orders, "capital": float(capital)}
+                "weights": {a: float(w) for a, w in new_held.items() if abs(w) > 1e-8}, "turnover": turnover, "orders": orders, "capital": float(capital),
+                "replay": replay, "model_seen_through": self.seen_through,
+                "note": (f"the model was fitted with labels that end on {self.seen_through}: a signal for {date.date()} is a replay of history it has seen, not a forecast" if replay else None)}
 
     # ------------------------------------------------------------------------------------------------------------ settling
     def settle(self, bundle=None, as_of=None) -> list[dict]:
@@ -183,7 +195,7 @@ class ForwardTracker:
         """The forward track record, the live IC against the backtest's, and drift."""
         sigs = self.registry.forward_signals(self.id)
         report = self.registry.report(self.id)
-        out = forward_record(sigs, self.cfg["name"], self.id, int(self.cfg["dataset"]["horizon"]))
+        out = forward_record(sigs, self.cfg["name"], self.id, int(self.cfg["dataset"]["horizon"]), self.seen_through)
         backtest_ic = report["ic"]["all"].get("mean")
         ds, _ = self._dataset(bundle, as_of)
         fwd = forward_return(ds.prices, ds.horizon, ds.lag).reindex(index=ds.dates, columns=ds.assets)

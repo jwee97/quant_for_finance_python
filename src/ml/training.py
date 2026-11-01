@@ -24,7 +24,7 @@ from . import intervals as iv
 from .causal import CausalView
 from .models import Model, default_refit, make_model, task_for
 from .splitters import SegmentPlan, segment_plan, walk_forward_splits
-from .targets import is_classification
+from .targets import is_classification, parse_target
 
 MIN_TRAIN_ROWS = 300
 
@@ -106,13 +106,42 @@ def row_hash(positions: np.ndarray) -> str:
     return hashlib.sha256(np.ascontiguousarray(positions, dtype=np.int64).tobytes()).hexdigest()[:16]
 
 
-def _fit(kind: str, params: dict, task: str, seed: int, X: pd.DataFrame, y: pd.Series, dates: np.ndarray, ds: Dataset | None = None, until: int | None = None, info: dict | None = None) -> Model:
+def dependence_weights(ds: Dataset, rows: np.ndarray, horizon: int | None = None) -> dict:
+    """How much the labels of the training ``rows`` overlap, and the sample weights that undo it (López de Prado, *Advances in Financial Machine Learning*, ch. 4).
+
+    A label is a statement about the returns of days ``p + lag + 1 .. p + lag + horizon``; two labels of the same asset that share days are not independent samples. For each asset the concurrency of those intervals on the real
+    calendar gives every label an average uniqueness (the mean of ``1 / concurrency`` over its days). ``weights`` are proportional to it, scaled to mean one over the rows. With a horizon of one day nothing overlaps,
+    every uniqueness is one and the weights are all one: ``needed`` says whether that is so.
+    """
+    pos = ds.positions()[rows]
+    assets = ds.X.index.get_level_values(1)[rows]
+    h = int(horizon if horizon is not None else ds.horizon)
+    start, end = iv.return_days(pos, ds.lag, h)
+    n_days = len(ds.dates)
+    uniq = np.ones(len(rows))
+    conc = np.ones(len(rows))
+    for a in pd.unique(assets):
+        take = np.flatnonzero(assets == a)
+        c = iv.concurrency(start[take], end[take], n_days)
+        uniq[take] = iv.average_uniqueness(start[take], end[take], n_days)
+        conc[take] = np.array([c[s:e + 1].mean() for s, e in zip(np.clip(start[take], 0, n_days - 1), np.clip(end[take], 0, n_days - 1))])
+    weights = uniq * len(uniq) / uniq.sum() if len(uniq) else uniq
+    return {"weights": weights, "mean_uniqueness": float(uniq.mean()) if len(uniq) else float("nan"), "mean_concurrency": float(conc.mean()) if len(conc) else float("nan"), "needed": bool(h > 1)}
+
+
+def _fit(kind: str, params: dict, task: str, seed: int, X: pd.DataFrame, y: pd.Series, dates: np.ndarray, ds: Dataset | None = None, until: int | None = None, info: dict | None = None,
+         sample_weight: np.ndarray | None = None) -> Model:
     """Fit one model. A model that reads history is bound to a causal view of the dataset that ends on ``until`` (default the last date) and holds no labels. ``info`` (what the fit used) is kept on the model
     as ``fit_info_``, with the schema of the features it was fitted on."""
     model = make_model(kind, params, task, seed)
     if ds is not None and model.needs_dataset:
         model.bind(CausalView(ds, until))
+    if sample_weight is not None:
+        model.sample_weight_, model.weights_applied_ = np.asarray(sample_weight, dtype=float), False
     model.fit(X, y, dates)
+    if sample_weight is not None:
+        info = {**(info or {}), "sample_weights_applied": bool(getattr(model, "weights_applied_", False))}
+        model.sample_weight_ = None                                                    # the weights belong to this fit; a saved model does not carry them
     model.fit_info_ = {**(info or {}), "schema": {"features": list(X.columns), "dtypes": [str(t) for t in X.dtypes], "hash": hashlib.sha256(json.dumps([list(X.columns), [str(t) for t in X.dtypes]]).encode()).hexdigest()[:16]}}
     return model
 
@@ -136,9 +165,11 @@ def walk_forward_train(ds: Dataset, model_cfg: dict, split_cfg: dict, seed: int 
     kind, params = model_cfg["kind"], dict(model_cfg.get("params") or {})
     make_model(kind, params, task, seed)                                         # an unknown model, setting or task is refused here, with its own message, not hidden as a fold that failed to fit
     plan, upos = plan_for(ds, split_cfg, tgt)                                    # plan positions index the labelled dates; upos maps them to the full axis
-    purge = ds.lag + ds.horizon
+    horizon = int(parse_target(tgt)[1])                                           # the label of THIS target ends that many days after it starts, whatever horizon the dataset was built for
+    purge = ds.lag + horizon
     refit = int(split_cfg.get("refit_every") or default_refit(kind))
     embargo = int(split_cfg.get("embargo", 0))
+    treatment = str(split_cfg.get("sample_weighting", "none"))
     last_test = plan.bounds[stop_after][1] if stop_after else None
     splits = walk_forward_splits(len(upos), plan.first_prediction(), refit, purge, embargo, str(split_cfg.get("window", "expanding")), int(split_cfg.get("rolling_days", 1260)),
                                  last_test)
@@ -156,13 +187,13 @@ def walk_forward_train(ds: Dataset, model_cfg: dict, split_cfg: dict, seed: int 
         f0 = time.perf_counter()
         t_first, t_last = int(upos[sp.test[0]]), int(upos[sp.test[-1]])                   # the first and last day the model will be asked about, on the dataset's own date axis
         in_block = (lab >= sp.train[0]) & (lab <= sp.train[-1]) & has_y                  # the walk-forward block on the list of labelled dates (what the split believed)
-        in_train = (lab >= sp.train[0]) & has_y & iv.eligible_for_fit(pos_all, ds.lag, ds.horizon, t_first, embargo)           # the rule that decides: the label ended on the real calendar by the first decision it may inform
+        in_train = (lab >= sp.train[0]) & has_y & iv.eligible_for_fit(pos_all, ds.lag, horizon, t_first, embargo)           # the rule that decides: the label ended on the real calendar by the first decision it may inform
         test_rows = np.flatnonzero((lab >= sp.test[0]) & (lab <= sp.test[-1]))
         tr_idx = np.flatnonzero(in_train)
         info = {"fold": sp.fold, "train_start": str(ds.dates[upos[sp.train[0]]].date()), "train_end": str(ds.dates[upos[sp.train[-1]]].date()), "test_start": str(ds.dates[upos[sp.test[0]]].date()),
                 "test_end": str(ds.dates[upos[sp.test[-1]]].date()), "n_train": int(len(tr_idx)), "n_test": int(len(test_rows))}
         if len(tr_idx):
-            end_max = int(iv.label_ends(pos_all[tr_idx], ds.lag, ds.horizon).max())
+            end_max = int(iv.label_ends(pos_all[tr_idx], ds.lag, horizon).max())
             info.update(fit_cutoff=str(ds.dates[t_first].date()), label_end_max=str(ds.dates[min(end_max, len(ds.dates) - 1)].date()), train_rows_hash=row_hash(tr_idx),
                         rows_removed_by_interval_rule=int((in_block & ~in_train).sum()), rows_added_by_interval_rule=int((in_train & ~in_block).sum()), purge_rule="label ended by the first decision date, less the embargo")
         if len(tr_idx) < MIN_TRAIN_ROWS or not len(test_rows):
@@ -172,8 +203,17 @@ def walk_forward_train(ds: Dataset, model_cfg: dict, split_cfg: dict, seed: int 
             folds.append({**info, "skipped": True, "seconds": 0.0})
             continue
         Xtr, ytr = ds.X.iloc[tr_idx], y_all.iloc[tr_idx]
+        dep = dependence_weights(ds, tr_idx, horizon)
+        use = treatment == "uniqueness" and dep["needed"] and not is_agent(kind)
+        info["dependence"] = {"treatment": "uniqueness_weights" if use else "none", "mean_uniqueness": round(dep["mean_uniqueness"], 4), "mean_concurrency": round(dep["mean_concurrency"], 3),
+                              "requested": treatment, "note": None if (treatment != "uniqueness" or use) else ("labels do not overlap (horizon 1): nothing to weight" if not dep["needed"] else "an agent has no labels to weight")}
         try:
-            model = _fit(kind, params, task, seed, Xtr, ytr, lab[tr_idx], ds, until=t_first, info={k: info[k] for k in info if k in ("fit_cutoff", "label_end_max", "train_rows_hash", "train_start", "train_end", "n_train")})
+            model = _fit(kind, params, task, seed, Xtr, ytr, lab[tr_idx], ds, until=t_first, sample_weight=dep["weights"] if use else None,
+                         info={k: info[k] for k in info if k in ("fit_cutoff", "label_end_max", "train_rows_hash", "train_start", "train_end", "n_train")})
+            if use:
+                info["dependence"]["applied"] = bool(model.fit_info_.get("sample_weights_applied"))
+                if not info["dependence"]["applied"]:
+                    info["dependence"]["note"] = f"the {kind} model does not use per-row weights, so the weighting was requested but not applied"
         except ValueError as exc:                                                 # e.g. a single class in a short window: record and move on
             skipped.append(sp.fold)
             models.append(None)
@@ -214,10 +254,17 @@ def fit_final(ds: Dataset, model_cfg: dict, seed: int = 0, target: str | None = 
     mask = ds.Y[tgt].notna().to_numpy()
     idx = np.flatnonzero(mask)
     pos = ds.positions()
-    end_max = int(iv.label_ends(pos[idx], ds.lag, ds.horizon).max())
+    end_max = int(iv.label_ends(pos[idx], ds.lag, int(parse_target(tgt)[1])).max())
     info = {"fit_cutoff": str(ds.dates[-1].date()), "label_end_max": str(ds.dates[min(end_max, len(ds.dates) - 1)].date()), "train_rows_hash": row_hash(idx), "n_train": int(len(idx)),
             "train_start": str(ds.dates[pos[idx].min()].date()), "train_end": str(ds.dates[pos[idx].max()].date())}
     return _fit(model_cfg["kind"], dict(model_cfg.get("params") or {}), task, seed, ds.X.iloc[idx], ds.Y[tgt].iloc[idx], pos[idx], ds, None, info)
+
+
+def is_agent(kind: str) -> bool:
+    """A reinforcement-learning agent learns from a reward, not from labelled rows."""
+    from .contracts import AGENTS
+
+    return kind in AGENTS
 
 
 class ReplayError(ValueError):

@@ -11,6 +11,8 @@ Overlapping labels are dependent samples: rows one day apart share ``h - 1`` of 
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import numpy as np
 import pandas as pd
 
@@ -18,8 +20,8 @@ CONVENTION = {"name": "close_to_close", "entry": "close of day t + lag", "exit":
 
 
 def label_ends(positions: np.ndarray, lag: int, horizon: int) -> np.ndarray:
-    """Position on the date axis of the last day each label depends on."""
-    return np.asarray(positions, dtype=np.int64) + int(lag) + int(horizon)
+    """Position on the date axis of the last day each label depends on. ``horizon`` is one number or one per row (labels of different lengths; for several heads, the longest of them)."""
+    return np.asarray(positions, dtype=np.int64) + int(lag) + np.asarray(horizon, dtype=np.int64)
 
 
 def label_frame(dates: pd.DatetimeIndex, positions: np.ndarray, lag: int, horizon: int) -> pd.DataFrame:
@@ -75,3 +77,76 @@ def uniqueness_weights(starts: np.ndarray, ends: np.ndarray, n_days: int) -> np.
     """Sample weights proportional to average uniqueness, scaled to mean one."""
     u = average_uniqueness(starts, ends, n_days)
     return u * len(u) / u.sum()
+
+
+# ------------------------------------------------------------------------------------------------------------------ research diagnostics: purged K-fold and CPCV on the real calendar
+
+
+@dataclass(frozen=True)
+class IntervalSplit:
+    """Row indices of one training/test split. ``chronological`` is False for the K-fold and CPCV splits: they train on blocks that come AFTER the ones they test, so their predictions are research diagnostics of
+    how a model generalises over blocks, never a simulation of trading forward in time."""
+
+    train: np.ndarray
+    test: np.ndarray
+    kind: str
+    fold: int
+    test_groups: tuple = ()
+    chronological: bool = False
+
+
+def _blocks(positions: np.ndarray, n_groups: int) -> list[np.ndarray]:
+    """The distinct decision positions, in order, cut into ``n_groups`` contiguous blocks of nearly equal numbers of dates."""
+    unique = np.unique(np.asarray(positions, dtype=np.int64))
+    if n_groups < 2 or n_groups > len(unique) // 10:
+        raise ValueError("need at least 2 groups and at least 10 dates in each")
+    return [b for b in np.array_split(unique, n_groups)]
+
+
+def _spans(positions: np.ndarray, lag: int, horizon) -> tuple[np.ndarray, np.ndarray]:
+    """Start and end day of each row's label: ``p + lag`` to ``p + lag + horizon``, with one horizon for all rows or one per row (irregular labels, such as ones that end at a barrier)."""
+    pos = np.asarray(positions, dtype=np.int64)
+    return pos + int(lag), pos + int(lag) + np.broadcast_to(np.asarray(horizon, dtype=np.int64), pos.shape)
+
+
+def _excluded(starts: np.ndarray, ends: np.ndarray, test: np.ndarray, groups: list[np.ndarray], positions: np.ndarray, embargo: int) -> np.ndarray:
+    """Rows to keep out of training for a test set: those whose label interval shares a day with any label of the test rows (found by marking the days the test labels cover and counting covered days inside each
+    interval), and those whose label STARTS in the ``embargo`` days after the last label of a test group ends. Everything is on the real calendar, so a missing date moves nothing, and intervals may differ in length."""
+    n_days = int(max(starts.max(), ends.max())) + 2
+    covered = concurrency(starts[test], ends[test], n_days) > 0
+    cum = np.concatenate([[0], np.cumsum(covered)])
+    drop = (cum[ends + 1] - cum[starts]) > 0
+    for g in groups:
+        last = int(ends[np.isin(positions, g)].max())
+        drop |= (starts > last) & (starts <= last + int(embargo))
+    return drop
+
+
+def purged_kfold_rows(positions: np.ndarray, horizon, n_splits: int = 5, embargo: int = 0, lag: int = 0) -> list[IntervalSplit]:
+    """``n_splits`` contiguous test blocks of the rows' decision dates. Training rows are every row outside the block except those whose label overlaps one of the block's and those in the embargo after it. ``positions``
+    are the rows' decision positions on the real calendar (one per row; dates with no row are simply absent), ``horizon`` the label length in days (one number, or one per row). A research diagnostic: see
+    ``IntervalSplit.chronological``."""
+    pos = np.asarray(positions, dtype=np.int64)
+    starts, ends = _spans(pos, lag, horizon)
+    out = []
+    for k, group in enumerate(_blocks(pos, n_splits)):
+        test = np.isin(pos, group)
+        out.append(IntervalSplit(np.flatnonzero(~test & ~_excluded(starts, ends, test, [group], pos, embargo)), np.flatnonzero(test), "purged_kfold", k))
+    return out
+
+
+def cpcv_rows(positions: np.ndarray, horizon, n_groups: int = 6, n_test_groups: int = 2, embargo: int = 0, lag: int = 0) -> list[IntervalSplit]:
+    """Every choice of ``n_test_groups`` of ``n_groups`` blocks as the test set (combinatorial purged cross-validation, López de Prado 2018, ch. 12), purged and embargoed as in ``purged_kfold_rows``."""
+    from itertools import combinations
+
+    if not 2 <= n_test_groups < n_groups <= 12:
+        raise ValueError("need 2 <= n_test_groups < n_groups <= 12")
+    pos = np.asarray(positions, dtype=np.int64)
+    starts, ends = _spans(pos, lag, horizon)
+    blocks = _blocks(pos, n_groups)
+    out = []
+    for i, chosen in enumerate(combinations(range(n_groups), n_test_groups)):
+        groups = [blocks[g] for g in chosen]
+        test = np.isin(pos, np.concatenate(groups))
+        out.append(IntervalSplit(np.flatnonzero(~test & ~_excluded(starts, ends, test, groups, pos, embargo)), np.flatnonzero(test), "cpcv", i, tuple(int(g) for g in chosen)))
+    return out

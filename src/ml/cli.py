@@ -88,12 +88,33 @@ def cmd_build_dataset(args, config) -> int:
     print(f"dataset '{ds.name}' saved as feature set {fid}")
     print(f"  {s['n_rows']:,} rows = {s['n_dates']:,} dates x up to {s['n_assets']} assets; {s['n_features']} features; {s['start']} to {s['end']}; {s['missing_share']:.1%} of feature cells missing")
     print(f"  target {s['target']} (horizon {s['horizon']} days, starts {s['lag']} day(s) after the decision); source: {info.get('source')} ({info.get('label')})")
+    print("\n".join("  " + line for line in audit_lines(ds.meta.get("audit"))))
     for name, why in sorted(ds.meta.get("skipped", {}).items())[:12]:
         print(f"  skipped {name}: {why}")
     extra = len(ds.meta.get("skipped", {})) - 12
     if extra > 0:
         print(f"  ... and {extra} more skipped features")
     return 0
+
+
+def audit_lines(audit: dict | None) -> list[str]:
+    """The dataset audit as plain lines: label cutoffs, what was left out, stale series, point-in-time quality and the session policy."""
+    if not audit:
+        return ["audit: not recorded (the panel was built before dataset audits existed)"]
+    lab, ex = audit["label"], audit["excluded"]
+    out = [f"labels: entry {lab['convention']['entry']}, exit {lab['convention']['exit']}; the last decision with a label is {lab['last_labelled_decision']} ({lab['unlabelled_tail_dates']} later dates have none yet); {lab['labelled_rows']:,} of {lab['rows']:,} rows labelled",
+           f"rows: {audit['rows_kept']:,} kept of {audit['cells']:,} date-asset cells; left out: " + ", ".join(f"{k.replace('_', ' ')} {v:,}" for k, v in ex.items() if v) if any(ex.values()) else f"rows: {audit['rows_kept']:,} kept of {audit['cells']:,} cells; none left out"]
+    stale = audit["stale"]
+    out.append(f"stale prices: {', '.join(stale['assets']) if stale['assets'] else 'none'} (longest repeat {stale['longest_run']} sessions)")
+    if audit.get("marks", {}).get("carried_cells"):
+        out.append(f"closed-market marks: {audit['marks']['carried_cells']:,} carried values are not tradable prices")
+    pit = audit.get("pit") or {}
+    out.append(f"point-in-time: {pit.get('statement', 'not recorded')}")
+    sess = audit.get("sessions") or {}
+    if sess:
+        out.append(f"sessions: decision at the {sess['decision']} close; policy {sess['policy']}" + (f"; {len(sess['applied_to'])} later-closing asset(s) read as of the decision" if sess.get("applied_to") else "")
+                   + (f"; WARNING {sess['warning']}" if sess.get("warning") else "") + (f"; US equity hours assumed for {len(sess['assumed_us_equity_hours'])} asset(s)" if sess.get("assumed_us_equity_hours") else ""))
+    return out
 
 
 def _experiment_overrides(args) -> dict:
@@ -192,6 +213,19 @@ def text_report(report: dict) -> str:
         out += ["", "top features: " + ", ".join(f"{b['feature']} ({_fmt(b['share'], 'pct')})" for b in report["importance"]["bars"][:8])]
     if report.get("robustness"):
         out += ["", f"robustness score {_fmt(report['robustness']['score'])}"] + [f"  [{t['verdict']:>4}] {t['title']}: {t['detail']}" for t in report["robustness"]["tests"]]
+    folds = [f for f in report["folds"].get("list", []) if not f.get("skipped")]
+    if folds and folds[0].get("fit_cutoff"):
+        out += ["", "fold lineage (fitted on rows whose labels had ended by the fit cutoff):"]
+        out += [f"  fold {f['fold']}: fitted {f['fit_cutoff']} on {f['n_train']:,} rows (labels end by {f['label_end_max']}, rows {f['train_rows_hash']}); predicts {f['test_start']} to {f['test_end']}" for f in folds[:12]]
+        if len(folds) > 12:
+            out.append(f"  ... {len(folds) - 12} more folds")
+    elif folds:
+        out += ["", "fold lineage: not recorded (the experiment was saved before it was kept)"]
+    dep = report.get("dependence")
+    if dep:
+        out.append(f"overlapping labels: mean uniqueness {_fmt(dep.get('mean_uniqueness'))}; treatment {dep['treatment']}" + (f" ({'; '.join(dep['notes'])})" if dep.get("notes") else ""))
+    if report.get("audit"):
+        out += ["", "dataset audit:"] + [f"  {line}" for line in audit_lines(report["audit"])]
     return "\n".join(out)
 
 

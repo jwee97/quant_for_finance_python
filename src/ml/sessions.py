@@ -21,6 +21,12 @@ import numpy as np
 import pandas as pd
 
 
+def ns(index) -> np.ndarray:
+    """UTC nanoseconds since the epoch of each instant. ``DatetimeIndex.asi8`` counts in the index's own unit, which pandas 3 chooses by what it parsed (seconds, microseconds ...), so two indexes can disagree about
+    what an integer means; everything here is compared in nanoseconds."""
+    return pd.DatetimeIndex(index).as_unit("ns").asi8
+
+
 class SessionError(ValueError):
     """A session setting, or a combination of sessions, that cannot mean what it says."""
 
@@ -94,7 +100,7 @@ def asof_panel(frame: pd.DataFrame, sessions: dict | str, decision: str | Sessio
     has no bar (a closure) is not a bar, so an older one is the latest; with ``max_age_hours`` a bar older than that is treated as no value at all (NaN), not carried.
     """
     decision_dates = pd.DatetimeIndex(frame.index if dates is None else dates)
-    instants = decision_instants(decision, decision_dates, latency_minutes).asi8
+    instants = ns(decision_instants(decision, decision_dates, latency_minutes))
     values = pd.DataFrame(np.nan, index=decision_dates, columns=frame.columns, dtype=float)
     ages = pd.DataFrame(np.nan, index=decision_dates, columns=frame.columns, dtype=float)
     dec = get(decision)
@@ -105,7 +111,7 @@ def asof_panel(frame: pd.DataFrame, sessions: dict | str, decision: str | Sessio
         if not have.any():
             continue
         bars = frame.index[have]
-        closed = sess.close_utc(bars).asi8
+        closed = ns(sess.close_utc(bars))
         k = np.searchsorted(closed, instants, side="right") - 1
         ok = k >= 0
         v = np.full(len(instants), np.nan)
@@ -124,7 +130,7 @@ def information_lag(session: str | Session, decision: str | Session, dates=None)
 
     Raises if it is sometimes one and sometimes the other (two markets whose order of closing changes with daylight saving would need a finer rule than a bar of lag)."""
     probe = pd.bdate_range("2023-01-02", "2024-12-31") if dates is None else pd.DatetimeIndex(dates)
-    final = get(session).close_utc(probe).asi8 <= decision_instants(decision, probe).asi8
+    final = ns(get(session).close_utc(probe)) <= ns(decision_instants(decision, probe))
     if final.all():
         return 0
     if not final.any():
@@ -148,10 +154,10 @@ def entry_check(sessions: dict, decision: str | Session, lag: int, dates=None) -
     """Refuse a label convention whose entry price is not in the future of the decision. A label measured from the close of day ``t + lag`` is executable only if that bar closes at or after the decision instant of
     ``t``: with ``lag = 0`` an asset whose market closed before the decision cannot be bought at the price the label assumes."""
     probe = pd.bdate_range("2023-01-02", "2024-12-31") if dates is None else pd.DatetimeIndex(dates)
-    decided = decision_instants(decision, probe).asi8
+    decided = ns(decision_instants(decision, probe))
     bad = []
     for asset, name in sessions.items():
-        entry = get(name).close_utc(probe + pd.offsets.BDay(int(lag))).asi8
+        entry = ns(get(name).close_utc(probe + pd.offsets.BDay(int(lag))))
         if (entry < decided).any():
             bad.append(f"{asset} ({get(name).name})")
     if bad:
@@ -167,15 +173,42 @@ def release_instant(dates, local_time: time, tz: str) -> pd.DatetimeIndex:
 
 def release_known(release: pd.DatetimeIndex, decision: str | Session, decision_dates, latency_minutes: int = 0) -> np.ndarray:
     """For each decision date, whether a release at the (UTC) ``release`` instant, one per decision date, was public at the decision instant."""
-    return np.asarray(release.asi8 <= decision_instants(decision, decision_dates, latency_minutes).asi8)
+    return np.asarray(ns(release) <= ns(decision_instants(decision, decision_dates, latency_minutes)))
 
 
 def known_on(release_instants: pd.DatetimeIndex, values: pd.Series, decision: str | Session, decision_dates, latency_minutes: int = 0) -> pd.Series:
     """The latest ``values`` whose release (UTC instant, aligned with ``values``) was public at each decision instant: the as-of join of a published series on availability rather than on its reference date.
     A value released after the decision instant is not there yet; a value released late is first seen on the first decision after its release."""
-    order = np.argsort(release_instants.asi8, kind="stable")
-    rel, val = release_instants.asi8[order], values.to_numpy(dtype=float)[order]
-    dec = decision_instants(decision, pd.DatetimeIndex(decision_dates), latency_minutes).asi8
+    released = ns(release_instants)
+    order = np.argsort(released, kind="stable")
+    rel, val = released[order], values.to_numpy(dtype=float)[order]
+    dec = ns(decision_instants(decision, pd.DatetimeIndex(decision_dates), latency_minutes))
     k = np.searchsorted(rel, dec, side="right") - 1
     out = np.where(k >= 0, val[np.maximum(k, 0)], np.nan)
     return pd.Series(out, index=pd.DatetimeIndex(decision_dates))
+
+
+# ------------------------------------------------------------------------------------------------------------------ the dataset setting
+SETTINGS = {"decision", "assets", "policy", "latency_minutes", "max_age_hours"}
+POLICIES = ("asof", "date_labels")
+
+
+def validate_settings(settings) -> dict:
+    """The ``dataset.sessions`` setting, checked: ``decision`` (the session whose close the strategy trades at), ``assets`` (ticker -> session overrides), ``policy`` (``asof``: a bar enters a decision only if it was final then;
+    ``date_labels``: the legacy join on the date label, kept to reproduce earlier results), ``latency_minutes`` and ``max_age_hours`` (a carried bar older than this is missing)."""
+    if settings is None:
+        return {}
+    if not isinstance(settings, dict):
+        raise SessionError("dataset.sessions must be a mapping")
+    unknown = set(settings) - SETTINGS
+    if unknown:
+        raise SessionError(f"unknown dataset.sessions setting(s) {sorted(unknown)}; allowed: {sorted(SETTINGS)}")
+    if settings.get("decision") is not None:
+        get(settings["decision"])
+    for ticker, name in (settings.get("assets") or {}).items():
+        get(name)
+    if settings.get("policy", "asof") not in POLICIES:
+        raise SessionError(f"dataset.sessions.policy must be one of {POLICIES}")
+    if int(settings.get("latency_minutes", 0)) < 0 or float(settings.get("max_age_hours", 120)) <= 0:
+        raise SessionError("dataset.sessions.latency_minutes must be >= 0 and max_age_hours > 0")
+    return dict(settings)

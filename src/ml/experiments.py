@@ -83,9 +83,24 @@ def regime_series(ds: Dataset, on_states: list) -> pd.Series | None:
     return state.isin([float(s) for s in on_states]).where(state.notna())
 
 
+def check_dataset_matches(cfg: dict, ds: Dataset) -> None:
+    """Refuse a panel that was built for another question than the configuration asks. A different target, horizon, lag, set of feature groups or scaling would make the labels and features mean something other than
+    what the report says they are."""
+    want, got = cfg["dataset"], ds.meta
+    problems = []
+    for key in ("target", "horizon", "lag", "normalize", "winsor", "benchmark", "min_history"):
+        if key in got and key in want and str(got[key]) != str(want[key]) and not (isinstance(want[key], float) and float(got[key]) == want[key]):
+            problems.append(f"{key}: the panel has {got[key]}, the configuration asks for {want[key]}")
+    if "feature_groups" in got and list(got["feature_groups"]) != list(want["feature_groups"]):
+        problems.append(f"feature_groups: the panel has {list(got['feature_groups'])}, the configuration asks for {list(want['feature_groups'])}")
+    if problems:
+        raise ExperimentError("the dataset does not match the configuration (" + "; ".join(problems) + "): rebuild it from this configuration")
+
+
 def prepare(cfg: dict, bundle=None, config=None, builder=None, dataset: Dataset | None = None, info: dict | None = None, progress=None) -> tuple[Dataset, dict]:
     """The dataset for a configuration: the one given, or built from ``bundle`` (or from the universe named in the configuration)."""
     if dataset is not None:
+        check_dataset_matches(cfg, dataset)
         return dataset, info or {"source": dataset.meta.get("source", "platform"), "label": dataset.meta.get("label", "dataset")}
     uni = cfg["dataset"]["universe"]
     if bundle is None:
@@ -260,7 +275,8 @@ def evaluate_run(cfg: dict, ds: Dataset, train: TrainResult, info: dict, registr
         "positions": _latest_positions(weights),
         "folds": {"n": len(train.folds), "n_skipped": len(train.skipped), "first": train.folds[0] if train.folds else None, "last": train.folds[-1] if train.folds else None, "refit_every": cfg["split"]["refit_every"],
                   "list": [{k: f.get(k) for k in ("fold", "test_start", "test_end", "n_train", "n_test", "skipped", "seconds", "train_start", "train_end", "fit_cutoff", "label_end_max", "train_rows_hash",
-                                                  "rows_removed_by_interval_rule", "rows_added_by_interval_rule", "purge_rule")} for f in train.folds]},
+                                                  "rows_removed_by_interval_rule", "rows_added_by_interval_rule", "purge_rule", "dependence")} for f in train.folds]},
+        "dependence": dependence_summary(train.folds, cfg["split"].get("sample_weighting", "none")), "audit": ds.meta.get("audit"),
         "features": {"n": len(ds.features), "skipped": ds.meta.get("skipped", {}), "names": ds.features}, "robustness": rob,
         "trials": {"dataset_trials": n_trials, "note": "Every experiment and search trial on this dataset is counted; the deflated Sharpe probability deflates the validation Sharpe by this number."},
         "warnings": list(over["warnings"]), "seconds": round(time.perf_counter() - t0, 2), "created": time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -318,6 +334,13 @@ def save_experiment(registry: Registry, exp: Experiment, info: dict, parent_id: 
     if exp.final_model is not None:
         (d / "model.pkl").write_bytes(exp.final_model.to_bytes())
         files["model"] = d / "model.pkl"
+        from .bundle import InferenceBundle
+
+        try:                                                                              # the same model with its schema, preprocessing description, cutoffs and label convention: what a forward run checks its data against
+            InferenceBundle.from_model(exp.final_model, ds).save(d / "model.qfb")
+            files["bundle"] = d / "model.qfb"
+        except (ValueError, TypeError) as exc:                                            # a model with no recorded fit schema keeps working through model.pkl; the lack is said, not hidden
+            (d / "bundle_error.txt").write_text(str(exc))
     report = jsonable(exp.report)
     import json as _json
 
@@ -344,6 +367,17 @@ def is_classification_target(target: str) -> bool:
     return is_classification(target)
 
 
+def dependence_summary(folds: list, requested: str) -> dict:
+    """What was done about overlapping labels, over all folds: the treatment asked for, how overlapped the labels were, and whether the model used the weights (a model that ignores per-row weights says so here)."""
+    rows = [f["dependence"] for f in folds if f.get("dependence")]
+    if not rows:
+        return {"requested": requested, "treatment": "not recorded", "folds": 0}
+    applied = [r for r in rows if r["treatment"] == "uniqueness_weights"]
+    notes = sorted({r["note"] for r in rows if r.get("note")})
+    return {"requested": requested, "treatment": "uniqueness_weights" if applied and all(r.get("applied") for r in applied) else ("none" if not applied else "requested, not fully applied"), "folds": len(rows),
+            "mean_uniqueness": round(float(np.mean([r["mean_uniqueness"] for r in rows])), 4), "mean_concurrency": round(float(np.mean([r["mean_concurrency"] for r in rows])), 3), "notes": notes}
+
+
 def load_run(registry: Registry, exp_id: str) -> tuple[dict, Dataset, TrainResult, dict]:
     """Rebuild what ``evaluate_run`` needs from a saved experiment: its configuration, the saved panel, and a ``TrainResult`` made of the saved predictions (the fitted models are not kept, so anything that
     needs them, such as permutation importance and the noisy-feature test, is unavailable for a reloaded run)."""
@@ -360,6 +394,7 @@ def load_run(registry: Registry, exp_id: str) -> tuple[dict, Dataset, TrainResul
     if not fsets:
         raise ExperimentError(f"the saved panel of experiment {exp_id} is not in the registry; re-run the experiment")
     ds = Dataset.load(fsets[0]["path"])
+    check_dataset_matches(cfg, ds)
     preds = pd.read_parquet(d / "predictions.parquet")
     plan, _ = plan_for(ds, cfg["split"], cfg["dataset"]["target"])
     insample = pd.read_parquet(d / "predictions_insample.parquet")["score"] if (d / "predictions_insample.parquet").exists() else pd.Series(dtype=float)

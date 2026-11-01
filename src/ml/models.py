@@ -96,6 +96,16 @@ class Model:
             missing = [c for c in have if c not in X.columns]
             if missing:
                 raise ModelSchemaError(f"the {self.kind} model was fitted on {len(have)} features and the data lacks {missing[:6]}{'...' if len(missing) > 6 else ''}")
+            fitted = getattr(self, "fit_info_", None) or {}
+            schema = fitted.get("schema") or {}
+            then = dict(zip(schema.get("features", []), schema.get("dtypes", [])))
+            for c in have:
+                try:
+                    was, now = pd.api.types.pandas_dtype(then[c]).kind if c in then else None, X[c].dtype.kind                       # ``kind`` exists on numpy and on pandas extension dtypes (text is 'O')
+                except (TypeError, AttributeError):
+                    continue
+                if was in ("f", "i", "u") and now not in ("f", "i", "u", "b"):
+                    raise ModelSchemaError(f"the {self.kind} model was fitted on '{c}' as {then[c]} and the data holds it as {X[c].dtype}: its schema has drifted")
 
     def predict_proba(self, X: pd.DataFrame) -> np.ndarray | None:
         return None
@@ -158,11 +168,18 @@ class Model:
         return arr.astype(int)
 
     def _weights(self, dates: np.ndarray | None) -> np.ndarray | None:
+        """Per-row fit weights: the half-life decay over ``dates`` (if the model has one), times the dependence weights the trainer attached as ``sample_weight_`` (see ``training.dependence_weights``). A model that
+        calls this has USED the attached weights and says so in ``weights_applied_``; one that never calls it has not, and the trainer reports that."""
         hl = self.params.get("halflife_days")
-        if not hl or dates is None:
-            return None
-        d = np.asarray(dates, dtype=float)
-        return np.exp(-math.log(2.0) * (d.max() - d) / float(hl))
+        base = None
+        if hl and dates is not None:
+            d = np.asarray(dates, dtype=float)
+            base = np.exp(-math.log(2.0) * (d.max() - d) / float(hl))
+        given = getattr(self, "sample_weight_", None)
+        if given is not None and dates is not None and len(given) == len(dates):
+            self.weights_applied_ = True
+            return np.asarray(given, dtype=float) if base is None else base * np.asarray(given, dtype=float)
+        return base
 
 
 # ------------------------------------------------------------------------------------------------------------------ scikit-learn and booster models

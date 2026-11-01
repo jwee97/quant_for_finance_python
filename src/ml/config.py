@@ -77,6 +77,7 @@ def validate(cfg: dict) -> dict:
     _check(bool(d["feature_groups"]), "choose at least one feature group")
     _check(s["scheme"] in SCHEMES, f"split.scheme must be one of {SCHEMES}")
     _check(s["window"] in ("expanding", "rolling"), "split.window must be expanding or rolling")
+    _check(s.get("sample_weighting", "none") in ("none", "uniqueness"), "split.sample_weighting must be none or uniqueness (absent from the defaults so that no existing configuration hash changes)")
     _check(int(s["refit_every"]) >= 1 and int(s["min_train_days"]) >= 60, "split.refit_every >= 1 and split.min_train_days >= 60")
     for k in ("validation_fraction", "test_fraction", "forward_fraction"):
         _check(0.0 <= float(s[k]) < 0.6, f"split.{k} must be in [0, 0.6)")
@@ -89,6 +90,13 @@ def validate(cfg: dict) -> dict:
     _check(0.0 < float(sig["max_weight"]) <= 1.0 and float(sig["gross"]) > 0, "signal.max_weight in (0, 1] and signal.gross > 0")
     _check(int(sig["n"]) >= 1 and 0.0 < float(sig["quantile"]) <= 0.5, "signal.n >= 1 and signal.quantile in (0, 0.5]")
     _check(d.get("regime_detector") in (None, "vol_state", "hmm", "gmm"), "dataset.regime_detector must be null, vol_state, hmm or gmm")
+    if d.get("sessions") is not None:                                                  # optional, and absent from the defaults so that no existing configuration hash changes
+        from .sessions import SessionError, validate_settings
+
+        try:
+            validate_settings(d["sessions"])
+        except SessionError as exc:
+            raise MLConfigError(str(exc)) from None
     _check(isinstance(cfg["model"].get("kind"), str) and bool(cfg["model"]["kind"]), "model.kind is required")
     _check(cfg["model"]["kind"] != "regime_ridge" or bool(d.get("regime_detector")), "the regime_ridge model needs dataset.regime_detector")
     _check(isinstance(cfg["model"].get("params", {}), dict), "model.params must be a mapping")

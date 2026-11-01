@@ -270,3 +270,53 @@ def test_a_carried_mark_is_not_a_row_not_investable_and_voids_the_labels_that_st
     assert voided == len(set(ends_on_mark + starts_on_mark)), voided
     other = [a for a in held.assets if a != asset][0]
     assert marked.Y[marked.target].xs(other, level=1).equals(base.Y[base.target].xs(other, level=1)), "no other asset is touched"
+
+
+# ------------------------------------------------------------------------------------------------------------------ fills that used to look at later data
+def old_hedge_weights(R, eta=5.0, vol_window=63):
+    """``hedge_weights`` as it was before the fix, kept here as the negative control: the first volatility is back-filled from later days and a missing one is filled from the whole sample."""
+    sig = R.rolling(vol_window, min_periods=20).std(ddof=1).shift(1).bfill().replace(0.0, np.nan).fillna(R.std(ddof=1))
+    z = (R / sig).clip(-4, 4).fillna(0.0).to_numpy()
+    n = R.shape[1]
+    w, out = np.full(n, 1.0 / n), np.empty_like(z)
+    for t in range(len(z)):
+        out[t] = w
+        w = w * np.exp(eta * 0.01 * z[t])
+        w = np.maximum(w / w.sum(), 0.01)
+        w = w / w.sum()
+    return pd.DataFrame(out, index=R.index, columns=R.columns)
+
+
+def test_hedge_weights_do_not_fill_the_first_volatility_from_later_days():
+    from src.ml import ensembles as en
+
+    rng = np.random.default_rng(3)
+    R = pd.DataFrame(rng.normal(0.0, 0.01, (300, 4)), index=pd.bdate_range("2020-01-01", periods=300), columns=list("ABCD"))
+    W = en.hedge_weights(R)
+    assert np.allclose(W.iloc[:21], 0.25) and not np.allclose(W.iloc[21], 0.25), "no update until there are 20 days of trailing volatility, and updates after"
+    later = R.copy()
+    later.iloc[10:20] = rng.normal(0.0, 0.05, (10, 4))                       # days inside the window the old code back-filled the first volatility from
+    assert np.array_equal(en.hedge_weights(later).iloc[:21].to_numpy(), W.iloc[:21].to_numpy()), "weights on those days cannot depend on days after them"
+    after = R.copy()
+    after.iloc[150:] = rng.normal(0.0, 0.05, (150, 4))
+    assert np.array_equal(en.hedge_weights(after).iloc[:151].to_numpy(), W.iloc[:151].to_numpy())
+    old, old_later = old_hedge_weights(R), old_hedge_weights(later)
+    assert not np.allclose(old.iloc[8:21].to_numpy(), old_later.iloc[8:21].to_numpy()), "the old formula let a later day move an earlier weight: the check has teeth"
+
+
+def test_a_combination_by_online_learning_records_that_its_volatility_is_not_back_filled():
+    from src.ml import ensembles as en
+
+    rng = np.random.default_rng(4)
+    R = pd.DataFrame(rng.normal(0.0004, 0.01, (500, 3)), index=pd.bdate_range("2020-01-01", periods=500), columns=list("XYZ"))
+    assert "causal_v2" in en.combine(R, "online_learning").params["volatility_fill"]
+    assert "volatility_fill" not in en.combine(R, "equal").params
+
+
+def test_the_segment_of_a_date_before_the_plan_starts_is_the_plans_first_and_nothing_is_taken_from_later_values():
+    from src.ml.backtest import label_days
+
+    index = pd.bdate_range("2020-01-01", periods=30)
+    labels = pd.Series(["validation"] * 8 + ["test"] * 6, index=index[10:24])
+    out = label_days(index, labels)
+    assert (out.iloc[:10] == "validation").all() and (out.iloc[10:18] == "validation").all() and (out.iloc[18:] == "test").all()

@@ -135,3 +135,167 @@ def test_a_target_whose_name_and_horizon_disagree_is_refused_before_a_dataset_is
 def test_the_dataset_records_its_label_convention(ds):
     data, _ = ds
     assert data.meta["label_convention"]["entry"] == "close of day t + lag" and data.lag == 1 and data.horizon == 5
+
+
+# ------------------------------------------------------------------------------------------------------------------ rolling windows, longer targets, K-fold and CPCV on a calendar with missing dates
+def test_a_rolling_window_trains_on_the_rows_inside_it_whose_labels_had_ended(ds):
+    data, cfg = ds
+    split = {**cfg["split"], "window": "rolling", "rolling_days": 250}
+    res = tr.walk_forward_train(data, {"kind": "ridge", "params": {}}, split, 0)
+    expanding = tr.walk_forward_train(data, {"kind": "ridge", "params": {}}, cfg["split"], 0)
+    ok = [f for f in res.folds if not f.get("skipped")]
+    assert len(ok) >= 3
+    for f in ok:
+        t_first = int(data.dates.get_indexer([pd.Timestamp(f["test_start"])])[0])
+        start = int(data.dates.get_indexer([pd.Timestamp(f["train_start"])])[0])
+        want = oracle_rows(data, t_first, 0, start_pos=start)
+        assert f["n_train"] == len(want) and f["train_rows_hash"] == tr.row_hash(want), "the window's rows, minus those whose labels had not ended"
+        assert pd.Timestamp(f["label_end_max"]) <= data.dates[t_first]
+    assert ok[-1]["n_train"] < [f for f in expanding.folds if not f.get("skipped")][-1]["n_train"], "a rolling window forgets the oldest rows"
+
+
+def test_a_target_with_a_longer_horizon_than_the_dataset_default_is_purged_by_its_own_interval():
+    cfg = mc.experiment_config({"dataset": {"feature_groups": ["price", "volatility"]}, "split": {"min_train_days": 300, "refit_every": 120}}, defaults=mc.DEFAULTS)
+    data = dsm.build_dataset(make_bundle(6, 900, seed=81, alpha=1.0), cfg["dataset"], "multi", extra_targets=("fwd_ret_20",))
+    res = tr.walk_forward_train(data, {"kind": "ridge", "params": {}}, cfg["split"], 0, target="fwd_ret_20")
+    for f in res.folds:
+        if f.get("skipped"):
+            continue
+        t_first = int(data.dates.get_indexer([pd.Timestamp(f["test_start"])])[0])
+        y = data.Y["fwd_ret_20"].notna().to_numpy()
+        pos = data.positions()
+        want = np.flatnonzero(y & (pos + data.lag + 20 <= t_first))
+        assert f["n_train"] == len(want) and f["train_rows_hash"] == tr.row_hash(want), "20-day labels, 20-day interval"
+        assert pd.Timestamp(f["label_end_max"]) <= data.dates[t_first]
+    model = tr.fit_final(data, {"kind": "ridge", "params": {}}, 0, target="fwd_ret_20")
+    last_labelled = int(data.positions()[data.Y["fwd_ret_20"].notna().to_numpy()].max())
+    assert pd.Timestamp(model.fit_info_["label_end_max"]) == data.dates[min(last_labelled + data.lag + 20, len(data.dates) - 1)]
+
+
+def gapped_positions(seed, n_days=260, keep=0.75, assets=3):
+    """Decision positions of rows on a calendar with missing dates: each asset has a row on a date unless the date is missing for the whole market (a holiday of the data, not of the exchange)."""
+    rng = np.random.default_rng(seed)
+    days = np.flatnonzero(rng.random(n_days) < keep)
+    return np.repeat(days, assets), days
+
+
+def brute_excluded(pos, test_rows, groups, horizon, embargo):
+    """Which rows a training set must leave out, by looking at every pair: a row whose label interval (lag cancels) intersects a test row's, and a row in the embargo after a test group's last label."""
+    out = set()
+    tests = pos[test_rows]
+    for i, p in enumerate(pos):
+        if i in set(test_rows):
+            continue
+        if any(abs(int(p) - int(t)) <= horizon for t in tests):
+            out.add(i)
+        for g in groups:
+            if g.max() + horizon < p <= g.max() + horizon + embargo:
+                out.add(i)
+    return out
+
+
+@pytest.mark.parametrize("seed", range(4))
+def test_purged_kfold_leaves_out_exactly_the_overlapping_and_embargoed_rows_on_a_calendar_with_missing_dates(seed):
+    pos, days = gapped_positions(seed)
+    lag, h, embargo = 1, 5, 4
+    splits = iv.purged_kfold_rows(pos, h, n_splits=5, embargo=embargo)
+    assert len(splits) == 5 and not any(s.chronological for s in splits) and {s.kind for s in splits} == {"purged_kfold"}
+    blocks = np.array_split(np.unique(pos), 5)
+    for s, group in zip(splits, blocks):
+        assert set(pos[s.test]) == set(group.tolist()) and not (set(s.train) & set(s.test))
+        dropped = brute_excluded(pos, s.test, [group], h, embargo)
+        assert set(s.train) == set(range(len(pos))) - set(s.test) - dropped, f"fold {s.fold}"
+        starts, ends = iv.label_ends(pos[s.train], lag, 0), iv.label_ends(pos[s.train], lag, h)
+        t_starts, t_ends = iv.label_ends(pos[s.test], lag, 0), iv.label_ends(pos[s.test], lag, h)
+        assert not any(((starts[i] <= t_ends) & (ends[i] >= t_starts)).any() for i in range(len(starts))), "no training label overlaps a test label"
+    assert max(int(pos[s.train].max()) for s in splits) > min(int(pos[s.test].min()) for s in splits[:2]), "they train on later blocks: that is why they are not chronological"
+
+
+@pytest.mark.parametrize("seed", range(3))
+def test_cpcv_leaves_out_exactly_the_overlapping_and_embargoed_rows_for_every_combination(seed):
+    pos, days = gapped_positions(seed)
+    h, embargo = 5, 3
+    splits = iv.cpcv_rows(pos, h, n_groups=6, n_test_groups=2, embargo=embargo)
+    assert len(splits) == 15 and sorted({g for s in splits for g in s.test_groups}) == list(range(6))
+    blocks = np.array_split(np.unique(pos), 6)
+    for s in splits:
+        groups = [blocks[g] for g in s.test_groups]
+        assert set(pos[s.test]) == set(np.concatenate(groups).tolist()) and not (set(s.train) & set(s.test))
+        dropped = brute_excluded(pos, s.test, groups, h, embargo)
+        assert set(s.train) == set(range(len(pos))) - set(s.test) - dropped, (s.fold, s.test_groups)
+    with pytest.raises(ValueError):
+        iv.cpcv_rows(pos, h, n_groups=3, n_test_groups=3)
+    with pytest.raises(ValueError, match="at least 10 dates"):
+        iv.purged_kfold_rows(pos[:60], h, n_splits=8)
+
+
+def test_counting_the_horizon_in_rows_of_a_list_with_missing_dates_removes_more_than_the_overlap():
+    """What the old rule did on a gapped list: it counted ``horizon`` rows, which are more than ``horizon`` calendar days apart where dates are missing. The interval rule removes exactly the overlap."""
+    pos, days = gapped_positions(3, assets=1)
+    h = 5
+    interval_train = set(iv.purged_kfold_rows(pos, h, 5, 0)[2].train.tolist())
+    n = len(pos)
+    lo, hi = np.array_split(np.arange(n), 5)[2][[0, -1]]
+    rows_rule = set(range(0, max(lo - h, 0))) | set(range(min(hi + h + 1, n), n))
+    assert rows_rule < interval_train and len(interval_train) - len(rows_rule) >= 1
+
+
+# ------------------------------------------------------------------------------------------------------------------ labels of different lengths and the longest of several heads
+def brute_pairs_excluded(pos, horizons, lag, test_rows, groups, embargo):
+    """Every pair checked: a row is out if its label interval shares a day with a test row's, or if its label starts in the embargo after a group's last label ends."""
+    out = set()
+    start = pos + lag
+    end = pos + lag + horizons
+    tests = set(test_rows.tolist())
+    for i in range(len(pos)):
+        if i in tests:
+            continue
+        if any(start[i] <= end[t] and end[i] >= start[t] for t in tests):
+            out.add(i)
+        for g in groups:
+            last = max(end[j] for j in range(len(pos)) if pos[j] in g)
+            if last < start[i] <= last + embargo:
+                out.add(i)
+    return out
+
+
+@pytest.mark.parametrize("seed", range(3))
+def test_labels_of_different_lengths_are_purged_by_their_own_intervals_in_kfold_and_cpcv(seed):
+    pos, days = gapped_positions(seed, n_days=200, assets=2)
+    rng = np.random.default_rng(100 + seed)
+    horizons = rng.integers(2, 13, len(pos))                                                       # an irregular label: some end after two days, some after twelve
+    lag, embargo = 1, 3
+    blocks5, blocks6 = np.array_split(np.unique(pos), 5), np.array_split(np.unique(pos), 6)
+    for s, group in zip(iv.purged_kfold_rows(pos, horizons, 5, embargo, lag), blocks5):
+        want = set(range(len(pos))) - set(s.test) - brute_pairs_excluded(pos, horizons, lag, s.test, [set(group.tolist())], embargo)
+        assert set(s.train) == want, f"purged k-fold {s.fold}"
+    for s in iv.cpcv_rows(pos, horizons, 6, 2, embargo, lag)[:6]:
+        groups = [set(blocks6[g].tolist()) for g in s.test_groups]
+        want = set(range(len(pos))) - set(s.test) - brute_pairs_excluded(pos, horizons, lag, s.test, groups, embargo)
+        assert set(s.train) == want, f"cpcv {s.test_groups}"
+    uniform = iv.purged_kfold_rows(pos, 5, 5, embargo, lag)
+    assert all(a.train.size > 0 for a in uniform) and iv.purged_kfold_rows(pos, np.full(len(pos), 5), 5, embargo, lag)[0].train.tolist() == uniform[0].train.tolist(), "an array of equal horizons is the same as one number"
+
+
+def test_eligibility_uses_each_rows_own_horizon_and_the_longest_of_several_heads():
+    pos = np.arange(100)
+    primary, longest = np.full(100, 5), np.full(100, 20)
+    a, b = iv.eligible_for_fit(pos, 1, primary, 60), iv.eligible_for_fit(pos, 1, np.maximum(primary, longest), 60)
+    assert a.sum() == 55 and b.sum() == 40 and (b <= a).all(), "a head that looks 20 days ahead decides which rows have a complete label at day 60"
+    mixed = np.where(pos % 2 == 0, 5, 20)
+    got = iv.eligible_for_fit(pos, 1, mixed, 60)
+    assert all(got[i] == (i + 1 + mixed[i] <= 60) for i in range(100)) and list(iv.label_ends(pos[:4], 1, mixed[:4])) == [6, 22, 8, 24]
+
+
+def test_a_panel_built_for_another_target_horizon_lag_or_scaling_is_refused_not_trained_on(ds):
+    from src.ml import experiments as xe
+
+    data, cfg = ds
+    ok = {"dataset": cfg["dataset"], "split": cfg["split"], "model": {"kind": "ridge", "params": {}}}
+    info = {"source": "test", "label": "synthetic", "universe": "synthetic"}
+    kw = dict(dataset=data, info=info, registry=None, save=False, explain=False, final_model=False, robustness=False, stop_after="validation")
+    assert xe.run_experiment(ok, **kw).report["dataset"]["target"] == data.target
+    for change, text in (({"target": "fwd_ret_10", "horizon": 10}, "target: the panel has fwd_ret_5"), ({"lag": 2}, "lag: the panel has 1"), ({"normalize": "rank"}, "normalize: the panel has cross_sectional_z"),
+                         ({"feature_groups": ["price"]}, "feature_groups"), ({"horizon": 5, "target": "fwd_ret_5", "min_history": 300}, "min_history")):
+        with pytest.raises(xe.ExperimentError, match=f"does not match the configuration.*{text}"):
+            xe.run_experiment({**ok, "dataset": {**cfg["dataset"], **change}}, **kw)
