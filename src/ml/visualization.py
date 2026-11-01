@@ -166,6 +166,14 @@ def _integrity_html(report: dict) -> str:
     audit, dep = report.get("audit"), report.get("dependence")
     folds = [f for f in report.get("folds", {}).get("list", []) if not f.get("skipped")]
     out = ["<h2>Data and training integrity</h2>"]
+    hold, repro = report.get("holdout"), report.get("reproducibility")
+    if hold:
+        out.append(f"<p><b>Protected outcomes:</b> {html.escape(str(hold.get('status')))}" + (f" (plan {html.escape(str(hold['plan_id']))})" if hold.get("plan_id") else "") + (f". {html.escape(hold['note'])}" if hold.get("note") else "") + "</p>")
+    if repro and repro.get("identity"):
+        out.append(f"<p class=\"note\">Provenance identity {html.escape(repro['identity'][:16])}: data {html.escape(repro['data_hash'][:12])}, code {html.escape(repro['code_hash'][:12])}, environment {html.escape(repro['environment_hash'][:12])}."
+                   + (f" Commit {html.escape(repro['git_commit'][:10])}." if repro.get("git_commit") else f" {html.escape(str(repro.get('git_note') or ''))}") + "</p>")
+    elif repro:
+        out.append("<p class=\"note\">Provenance: not recorded (this experiment was saved before provenance records existed).</p>")
     out.append("<ul>" + "".join(f"<li>{html.escape(line)}</li>" for line in audit_lines(audit)) + "</ul>")
     if dep:
         notes = f" ({html.escape('; '.join(dep['notes']))})" if dep.get("notes") else ""

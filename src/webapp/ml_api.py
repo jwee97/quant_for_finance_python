@@ -21,8 +21,13 @@ import pandas as pd
 from ..assets import common
 from ..ml import ensembles as en
 from ..ml import explainability as xp
+from ..ml import frozen_eval as fe
+from ..ml import gates
 from ..ml import monitoring as mon
+from ..ml import null_controls as nc
 from ..ml import optimization as opt
+from ..ml import research_controls as rc
+from ..ml import selection as sel
 from ..ml import strategy_search as ss
 from ..ml.bundle import InferenceBundle
 from ..ml.config import build_key, experiment_config, load_ml_config
@@ -45,7 +50,7 @@ from .universe import MAX_TICKERS, UniverseError, normalise
 ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,100}$")
 KEY = re.compile(r"^[a-z_]{1,20}\.[a-z_0-9]{1,30}$")
 PARAM = re.compile(r"^[a-z_][a-z_0-9]{0,30}$")
-LIMITS = {"search_random": 30, "search_bayes": 30, "search_generations": 4, "search_population": 10, "search_top_k": 4, "search_kinds": 8, "tune_trials": 40, "compare": 8, "combine": 12}
+LIMITS = {"null_replications": 1000, "null_trials": 12, "plan_candidates": 6, "search_random": 30, "search_bayes": 30, "search_generations": 4, "search_population": 10, "search_top_k": 4, "search_kinds": 8, "tune_trials": 40, "compare": 8, "combine": 12}
 # How long to look when tuning one model, for a person who does not want to choose a number of trials: each is a full walk-forward experiment, so a try takes tens of seconds, not one.
 TUNE_EFFORT = {"quick": (8, "8 tries: a first look, a few minutes"), "standard": (16, "16 tries: enough for a model with two or three settings"), "thorough": (30, "30 tries: for several settings; this can take half an hour")}
 TUNE_TEXT = {"alpha": "How strongly the model is held back from fitting noise: higher gives simpler, steadier fits", "l1_ratio": "How much of the penalty switches features off altogether (1) rather than shrinking them (0)",
@@ -94,6 +99,20 @@ def _id(q: dict, key: str = "id") -> str:
     if not ID.match(value) or ".." in value:
         raise ApiError(f"{key} is not a valid identifier")
     return value
+
+
+def _study(raw) -> str:
+    value = str(raw or "")
+    if not rc.ID.match(value):
+        raise ApiError("a study name is 1 to 80 letters, digits, '.', '_', ':' or '-'")
+    return value
+
+
+def _only(body: dict, allowed: set, route: str) -> None:
+    """Refuse a request that carries anything the route does not take: an unknown option is an error, not something to ignore."""
+    extra = set(body) - allowed
+    if extra:
+        raise ApiError(f"{route} does not take {sorted(extra)}; it takes {sorted(allowed)}")
 
 
 def _ids(q: dict, key: str = "ids", lo: int = 2, hi: int = 8) -> list[str]:
@@ -162,11 +181,15 @@ class MlApi:
     # ------------------------------------------------------------------------------------------------------------ routes
     def get_routes(self) -> dict:
         return {"/api/ml/catalog": self.catalog, "/api/ml/experiments": self.experiments, "/api/ml/experiment": self.experiment, "/api/ml/compare": self.compare, "/api/ml/explain": self.explain,
-                "/api/ml/feature-sets": self.feature_sets, "/api/ml/verification": self.verification, "/api/ml/models": self.models, "/api/ml/trials": self.trials, "/api/ml/forward": self.forward, "/api/ml/report-html": self.report_html}
+                "/api/ml/feature-sets": self.feature_sets, "/api/ml/verification": self.verification, "/api/ml/models": self.models, "/api/ml/trials": self.trials, "/api/ml/forward": self.forward, "/api/ml/report-html": self.report_html,
+                "/api/ml/lineage": self.lineage, "/api/ml/holdout": self.holdout, "/api/ml/promotion-status": self.promotion_status, "/api/ml/statistical-diagnostics": self.statistical_diagnostics,
+                "/api/ml/null-controls": self.null_controls}
 
     def post_routes(self) -> dict:
         return {"/api/ml/dataset/build": self.dataset_build, "/api/ml/train": self.train, "/api/ml/rebacktest": self.rebacktest, "/api/ml/search": self.search, "/api/ml/tune": self.tune, "/api/ml/tune/stop": self.tune_stop,
-                "/api/ml/combine": self.combine, "/api/ml/meta-label": self.meta_label, "/api/ml/forward/step": self.forward_step, "/api/ml/promote": self.promote, "/api/ml/verification/run": self.verification_run, "/api/ml/delete": self.delete}
+                "/api/ml/combine": self.combine, "/api/ml/meta-label": self.meta_label, "/api/ml/forward/step": self.forward_step, "/api/ml/promote": self.promote, "/api/ml/verification/run": self.verification_run, "/api/ml/delete": self.delete,
+                "/api/ml/evaluation-plan": self.evaluation_plan, "/api/ml/evaluation-plan/freeze": self.evaluation_plan_freeze, "/api/ml/evaluate": self.evaluate,
+                "/api/ml/null-controls/run": self.null_controls_run, "/api/ml/selection-tests/run": self.selection_tests_run}
 
     # ------------------------------------------------------------------------------------------------------------ plumbing
     @property
@@ -277,6 +300,8 @@ class MlApi:
                 over["model"]["params"].setdefault("cost_bps", float(bt["cost_bps"]) + float(bt["slippage_bps"]))
         elif need_model:
             over["model"] = {"kind": "ridge", "params": {}}
+        if body.get("study"):
+            over["study"] = _study(body["study"])
         if body.get("name"):
             over["name"] = str(body["name"])[:80]
         if body.get("notes"):
@@ -358,6 +383,10 @@ class MlApi:
 
         return self._submit(f"dataset: {name}", work)
 
+    def _register_feature_screen(self, ds, cfg: dict, fid: str, fic, until) -> dict:
+        """The look the dataset page takes at the features is adaptive feature discovery (``selection.register_screen``)."""
+        return sel.register_screen(self.registry, rc.study_of(cfg), fid, fic)
+
     def _describe_dataset(self, ds, cfg: dict, fid: str, info: dict, progress) -> dict:
         cat = {f["name"]: f for f in feature_catalog()}
         cov = ds.X.notna().mean()
@@ -374,6 +403,7 @@ class MlApi:
             fic = xp.feature_ic(ds, until=until) if until is not None else pd.DataFrame()
         except Exception:                                                                              # a diagnostic must not lose the dataset
             fic = pd.DataFrame()
+        screen = self._register_feature_screen(ds, cfg, fid, fic, until)
         rows = []
         for f in ds.features:
             c = cat.get(f, {"group": "regime", "description": "The market's regime state from the chosen detector (all assets share it)", "broadcast": True})
@@ -390,7 +420,7 @@ class MlApi:
                "target": {"name": ds.target, "n": int(len(y)), "mean": float(y.mean()) if len(y) else None, "std": float(y.std()) if len(y) > 1 else None, "share_positive": float((y > 0).mean()) if len(y) else None,
                           "scope": scope},
                "groups": {g: int(sum(1 for r in rows if r["group"] == g)) for g in dict.fromkeys(r["group"] for r in rows)}, "provenance": {"source": info.get("source"), "label": info.get("label")},
-               "timing": {"lag": ds.lag, "horizon": ds.horizon, "purge": ds.lag + ds.horizon + int(cfg["split"]["embargo"])}, "audit": ds.meta.get("audit")}
+               "timing": {"lag": ds.lag, "horizon": ds.horizon, "purge": ds.lag + ds.horizon + int(cfg["split"]["embargo"])}, "audit": ds.meta.get("audit"), "feature_screen": screen}
         return common.envelope("ml_dataset", out, {"data": info.get("source", "platform") if info.get("source") in common.SOURCES else "mixed"},
                                ([f"{len(ds.meta.get('skipped', {}))} features could not be built from this data (see skipped)."] if ds.meta.get("skipped") else []), ds.dates[-1],
                                ["Features at the close of day t use data up to t only (every feature is tested for this); targets look forward from t + lag.", f"Information coefficients and target statistics are measured on the {scope} only."])
@@ -401,17 +431,25 @@ class MlApi:
 
     # ------------------------------------------------------------------------------------------------------------ training
     def train(self, body: dict) -> dict:
-        """``POST /api/ml/train`` (a job): the whole experiment. Returns the experiment id and its report."""
+        """``POST /api/ml/train`` (a job): the whole experiment. Returns the experiment id and its report.
+
+        ``mode`` is ``full`` (the default: every segment is predicted; where no reservation protects the history this is recorded as an exposure and the report says ``exposed_exploratory``) or ``development``
+        (it stops at the end of the validation segment: the test and forward outcomes are not read, and nothing about the run can depend on them). A history that a frozen plan has reserved is refused in
+        ``full`` mode with the way forward: ``development``, or ``POST /api/ml/evaluate`` for the plan."""
+        mode = str(body.get("mode") or "full")
+        if mode not in ("full", "development"):
+            raise ApiError("mode must be full or development; a final evaluation of a reserved history goes through POST /api/ml/evaluation-plan and /api/ml/evaluate")
         over = self._overrides(body)
         explain, robust = bool(body.get("explain", True)), bool(body.get("robustness", False))
         label = over.get("name") or f"{over['model']['kind']} on {over.get('dataset', {}).get('universe', 'etf')}"
 
         def work(progress):
             with _user_errors():
-                exp = run_experiment(over, config=self.app.config, builder=self.app.builder, registry=self.registry, progress=progress, explain=explain, robustness=robust or None)
+                exp = run_experiment(over, config=self.app.config, builder=self.app.builder, registry=self.registry, progress=progress, explain=explain, robustness=robust or None,
+                                     stop_after="validation" if mode == "development" else None, entry_point="api")
             return {"id": exp.id, "report": exp.report}
 
-        return self._submit(f"ml: {label}", work)
+        return self._submit(f"ml: {label}" + (" (development)" if mode == "development" else ""), work)
 
     def rebacktest(self, body: dict) -> dict:
         """``POST /api/ml/rebacktest`` (a job): a saved experiment's predictions under different position rules, rebalancing, costs or with the stress tests, with no refit. Recorded as a child run."""
@@ -448,7 +486,8 @@ class MlApi:
     # ------------------------------------------------------------------------------------------------------------ search
     def search(self, body: dict) -> dict:
         """``POST /api/ml/search`` (a job): the staged strategy search (random, then Bayesian, then genetic) over model kinds, hyperparameters, horizon, position rule and rebalancing. Trials see only the
-        warm-up and validation segments; the best few are finalised on every segment once, at the end, and every trial counts against their deflated Sharpe ratio."""
+        warm-up and validation segments and stop there. With ``finalize: true`` (off by default) a plan is frozen from the best few and evaluated once on the test and forward segments; every trial counts against
+        their deflated Sharpe ratio."""
         over = self._overrides(body, need_model=False)
         kinds = body.get("kinds") or list(ss.DEFAULT_KINDS)
         valid = {m["kind"] for m in model_catalog() if m["available"]}
@@ -460,11 +499,18 @@ class MlApi:
         if budget["n_random"] + budget["n_bayes"] < 2:
             raise ApiError("a search needs at least two trials")
         seed = _int(body, "seed", 0, 0, 1_000_000)
+        finalise = bool(body.get("finalize", False))
+        key = str(body["idempotency_key"]) if body.get("idempotency_key") else None
+        if key is not None and not rc.ID.match(key):
+            raise ApiError("idempotency_key is 1 to 80 letters, digits, '.', '_', ':' or '-'")
 
         def work(progress):
             with _user_errors():
-                result = ss.search(over, config=self.app.config, builder=self.app.builder, registry=self.registry, kinds=tuple(kinds), seed=seed, progress=progress, **budget)
-            return jsonable({**result, "budget": budget})
+                result = ss.search(over, config=self.app.config, builder=self.app.builder, registry=self.registry, kinds=tuple(kinds), seed=seed, progress=progress, finalize_top=finalise, idempotency_key=key,
+                                   **budget)
+            return jsonable({**result, "budget": budget, "finalize": {"requested": finalise, "note": None if finalise else "the search stopped at the end of the validation segment; to evaluate the best on the test and "
+                                                                                                                       "forward segments, freeze a plan (POST /api/ml/evaluation-plan) and evaluate it (POST /api/ml/evaluate), or repeat the search with finalize: true "
+                                                                                                                       "(deprecated: it does the same, once, and records it)"}})
 
         return self._submit(f"ml: search {sum(budget[k] for k in ('n_random', 'n_bayes'))}+ trials", work)
 
@@ -497,7 +543,10 @@ class MlApi:
         space = ss.kind_space(kind)
         if not any(k.startswith("model.params.") for k in space):
             raise ApiError(f"the {kind} model has no hyperparameters to tune; tune its signal settings with a search instead")
-        finalise, seed = bool(body.get("finalize", True)), _int(body, "seed", 0, 0, 1_000_000)
+        finalise, seed = bool(body.get("finalize", False)), _int(body, "seed", 0, 0, 1_000_000)
+        key = str(body["idempotency_key"]) if body.get("idempotency_key") else None
+        if key is not None and not rc.ID.match(key):
+            raise ApiError("idempotency_key is 1 to 80 letters, digits, '.', '_', ':' or '-'")
         begin = None
         if effort:                                                                   # the settings in the form are the first trial: the space is stretched to hold them
             try:
@@ -511,23 +560,32 @@ class MlApi:
             with _user_errors():
                 out = opt.tune(over, space, trials, method, seed, config=self.app.config, builder=self.app.builder, registry=self.registry, study_name=f"tune-{kind}", progress=progress, start=begin,
                                stop=stop.is_set)
-                final = final_start = hold_t = bench = None
+                final = final_start = hold_t = bench = evaluation = None
                 if finalise and out.get("best"):
-                    progress("running the best settings on every segment")
-                    exp = opt.finalize(over, out["best"]["params"], config=self.app.config, builder=self.app.builder, registry=self.registry, trials_extra=out["n_trials"], robustness=False, progress=progress,
-                                       name=f"{kind} tuned" if begin is not None else None)
-                    final = {"id": exp.id, "report": exp.report}
-                    held_days = exp.labels.reindex(exp.net.index).isin(["test", "forward"])                              # the days no search saw
-                    bench = {"holdout": {"sharpe": tuning.metrics(exp.benchmark[held_days])["sharpe"]}}                  # holding the whole universe in equal amounts: a long-only winner may only be riding it
-                    if begin is not None and out["best"]["number"] != 0:
-                        progress("running your starting settings on every segment, for the comparison")
-                        start_exp = opt.finalize(over, begin, config=self.app.config, builder=self.app.builder, registry=self.registry, trials_extra=out["n_trials"], robustness=False, progress=progress,
-                                                 name=f"{kind} starting settings")
-                        final_start = {"id": start_exp.id, "report": start_exp.report}
-                        hold = lambda e: e.net[e.labels.reindex(e.net.index).isin(["test", "forward"])]                 # noqa: E731  the days no search saw
-                        hold_t = tuning.paired_t(hold(exp), hold(start_exp))
+                    progress("freezing an evaluation plan from the best validation settings and evaluating it once")
+                    wants_comparison = begin is not None and out["best"]["number"] != 0
+                    params_list = [out["best"]["params"]] + ([begin] if wants_comparison else [])
+                    names = [f"{kind} tuned" if begin is not None else None] + ([f"{kind} starting settings"] if wants_comparison else [])
+                    ev = fe.compat_finalize(self.registry, rc.study_of(experiment_config(over)), over, params_list, names=names, selection_adjustment="dsr_all_trials",
+                                            idempotency_key=key or f"tune-{kind}-{__import__('uuid').uuid4().hex[:12]}", actor="api", entry_point="api", config=self.app.config, builder=self.app.builder,
+                                            progress=progress)
+                    evaluation = {k: ev.get(k) for k in ("status", "plan", "deprecated", "idempotency_key", "untouched")}
+                    if ev["status"] == "evaluated":
+                        exp = ev["_experiments"][0]
+                        final = {"id": exp.id, "report": exp.report}
+                        held_days = exp.labels.reindex(exp.net.index).isin(["test", "forward"])                              # the days no search saw
+                        bench = {"holdout": {"sharpe": tuning.metrics(exp.benchmark[held_days])["sharpe"]}}                  # holding the whole universe in equal amounts: a long-only winner may only be riding it
+                        if wants_comparison:
+                            start_exp = ev["_experiments"][1]
+                            final_start = {"id": start_exp.id, "report": start_exp.report}
+                            hold = lambda e: e.net[e.labels.reindex(e.net.index).isin(["test", "forward"])]                 # noqa: E731  the days no search saw
+                            hold_t = tuning.paired_t(hold(exp), hold(start_exp))
+                    else:                                                                                                        # a retry of a finished evaluation: the stored result, no second look
+                        evaluation["result"] = ev.get("result") or ev.get("detail")
                 summary = self._tune_summary(out, final, final_start, hold_t, bench)
-            return jsonable({**out, "kind": kind, "space": sorted(space), "order": list(space), "final": final, "final_start": final_start, "summary": summary, "start": begin, "effort": effort or None,
+            return jsonable({**out, "kind": kind, "space": sorted(space), "order": list(space), "final": final, "final_start": final_start, "summary": summary, "start": begin, "effort": effort or None, "evaluation": evaluation,
+                             "finalize": {"requested": finalise, "note": None if finalise else "the tuning stopped at the end of the validation segment: the test and forward outcomes were not read. To evaluate the "
+                                                                                                "best settings, freeze a plan (POST /api/ml/evaluation-plan) and evaluate it (POST /api/ml/evaluate), or tune with finalize: true (deprecated: the same, done once and recorded)"},
                              "texts": {path: TUNE_TEXT.get(path.split(".")[-1], "") for path in space}})
 
         started = self._submit(f"ml: tune {kind}", work)
@@ -599,9 +657,11 @@ class MlApi:
         for r in rows:
             trials[r["dataset_key"]] = self.registry.trial_count(r["dataset_key"])
         payload, parents = leaderboard_payload(rows[:limit]), {r["id"]: r.get("parent_id") for r in rows}
+        labels = rc.holdout_labels(self.registry, [r["id"] for r in payload])
         for row in payload:                                                                     # a re-backtest or a meta-labelled run has no model of its own: forward tests and explanations need the parent's
             row["has_model"] = (self.registry.root / "experiments" / row["id"] / "model.pkl").exists()
             row["parent"] = parents.get(row["id"])
+            row["holdout"] = labels.get(row["id"], "development_or_unrecorded")
         data = {"rows": payload, "sort": sort, "n": len(rows), "dataset_trials": trials,
                 "note": "Sharpe ratios are net of costs. 'trials' is how many looks at the same sample (experiments and search trials) had been recorded when the run was made; the deflated Sharpe probability in each report corrects for it."}
         return clean(common.envelope("ml_experiments", data, {"experiments": "platform"}, [], None, []))
@@ -641,13 +701,21 @@ class MlApi:
         return clean({"models": [{k: v for k, v in m.items() if k not in ("path", "features")} | {"n_features": len(m["features"])} for m in self.registry.list_models(stage)], "stages": list(STAGES)})
 
     def promote(self, body: dict) -> dict:
-        """``POST /api/ml/promote``: move a registered model to a stage (at most one production model per universe; the previous one is archived)."""
+        """``POST /api/ml/promote {"model_id", "stage", "approval": {"actor", "note"}}``: move a registered model to a stage (at most one production model per universe; the previous one is archived).
+
+        The stage change is decided here from the persisted evidence, never from the request: ``staging`` needs Gate A (Algorithm Verified) and Gate B (Strategy Validated); ``production`` needs all three gates and a
+        recorded human approval. Taking a model out of use (``none``, ``archived``) needs nothing. A refusal carries the gate, its status and the first reason."""
+        _only(body, {"model_id", "stage", "approval", "note"}, "/api/ml/promote")
         model_id, stage = _id(body, "model_id"), str(body.get("stage") or "")
         if stage not in STAGES:
             raise ApiError(f"stage must be one of {list(STAGES)}")
+        approval = body.get("approval")
+        if approval is not None:
+            if not isinstance(approval, dict) or set(approval) - {"actor", "note"} or not all(isinstance(v, str) and len(v) <= 300 for v in approval.values()):
+                raise ApiError("approval is {\"actor\": ..., \"note\": ...}, two short texts")
         with _user_errors():
-            self.registry.promote(model_id, stage)
-        return {"ok": True, "model_id": model_id, "stage": stage}
+            decision = self.registry.promote(model_id, stage, actor="api", note=str(body.get("note") or "")[:300], approval=approval)
+        return {"ok": True, "model_id": model_id, "stage": stage, "decision": {k: decision.get(k) for k in ("allowed", "gate_seqs", "policy_version", "reason")}}
 
     def delete(self, body: dict) -> dict:
         """``POST /api/ml/delete`` with ``{"id": ..., "confirm": true}``: remove an experiment and its files."""
@@ -667,7 +735,191 @@ class MlApi:
                 raise ApiError("study and dataset_key are short identifiers")
         rows = self.registry.list_trials(study, key, _int(q, "limit", 200, 1, 2000))
         return clean({"trials": [{k: r[k] for k in ("study", "dataset_key", "number", "params", "value", "seconds", "created", "stage")} for r in rows],
-                      "n_total": {k: self.registry.trial_count(k) for k in {r["dataset_key"] for r in rows}}})
+                      "n_total": {k: self.registry.trial_count(k) for k in {r["dataset_key"] for r in rows}},
+                      "lineage": {"note": "Failed and cancelled tries, feature searches and derived runs are in the study's lineage (GET /api/ml/lineage), which is where the raw look counts live."}})
+
+    # ------------------------------------------------------------------------------------------------------------ research controls (Release 3)
+    def lineage(self, q: dict) -> dict:
+        """``GET /api/ml/lineage?id=<experiment>`` or ``?study=<study>``: the study's operations (every try, with its state, kind, parent and configuration), the raw look counts, the feature sets and configurations
+        tried, the evaluation plans, the holdout access history, the tombstones of deleted experiments and the selection evidence. Counts are counts of recorded tries, not estimates of independent trials."""
+        if q.get("id") and q.get("study"):
+            raise ApiError("give id or study, not both")
+        with _user_errors():
+            if q.get("id"):
+                exp_id = _id(q)
+                self.registry.get_experiment(exp_id)
+                if rc.study_of_experiment(self.registry, exp_id) is None:                      # saved before lineage was kept: say so, do not invent a study
+                    data = {"study": {"study_id": None}, "studies": [], "operations": [], "raw_looks": 0, "by_kind": {}, "by_state": {}, "failed": 0, "cancelled": 0, "feature_sets": [], "configurations": [],
+                            "plans": [], "holdout_access": [], "tombstones": [], "selection_evidence": [], "parents": [],
+                            "note": "This experiment ran before study lineage was recorded: its tries are not in any study and none is reconstructed."}
+                else:
+                    data = rc.lineage(self.registry, experiment_id=exp_id)
+            elif q.get("study"):
+                data = rc.lineage(self.registry, study_id=_study(q["study"]))
+            else:
+                raise ApiError("give id (an experiment) or study")
+        data["operations"] = data["operations"][-_int(q, "limit", 500, 1, 2000):]
+        return clean(common.envelope("ml_lineage", data, {"registry": "platform"}, [], None, [data["note"]]))
+
+    def holdout(self, q: dict) -> dict:
+        """``GET /api/ml/holdout?id=<plan id>`` or ``?study=``: the plans, their reservations (with the overlaps found and whether the history is untouched), the evaluations, and the access ledger."""
+        with _user_errors():
+            data = rc.holdout_status(self.registry, _study(q["study"]) if q.get("study") else None, _id(q) if q.get("id") else None)
+        return clean(common.envelope("ml_holdout", data, {"registry": "platform"}, [], None, ["Reading a result that was already computed is not a new look. A plan's holdout is consumed by its one evaluation event; a new evaluation is a re-use and is never untouched."]))
+
+    def evaluation_plan(self, body: dict) -> dict:
+        """``POST /api/ml/evaluation-plan`` (a job): create an evaluation plan from candidate configurations, build the data to learn which outcomes its test and forward segments reveal, reserve them in the
+        ledger (any overlap with an earlier look is reported and the plan is then not untouched) and, with ``freeze: true``, freeze it. A frozen plan can be evaluated once (``POST /api/ml/evaluate``)."""
+        _only(body, {"study", "candidates", "baseline", "selection_adjustment", "metrics", "uncertainty_method", "decision_policy", "notes", "freeze"}, "/api/ml/evaluation-plan")
+        cands = body.get("candidates")
+        if not isinstance(cands, list) or not 1 <= len(cands) <= LIMITS["plan_candidates"]:
+            raise ApiError(f"candidates is a list of 1 to {LIMITS['plan_candidates']} experiment configurations")
+        overs = [self._overrides(c) for c in cands]
+        base = self._overrides(body["baseline"]) if body.get("baseline") else None
+        study = _study(body.get("study") or rc.default_study_id(experiment_config(overs[0])))
+        adjustment = str(body.get("selection_adjustment") or "none")
+        if adjustment not in ("none", "bonferroni", "holm", "reality_check", "spa", "dsr_all_trials"):
+            raise ApiError("selection_adjustment must be none, bonferroni, holm, reality_check, spa or dsr_all_trials")
+        metrics = body.get("metrics")
+        if metrics is not None and (not isinstance(metrics, list) or len(metrics) > 12 or not all(isinstance(m, str) and PARAM.match(m) for m in metrics)):
+            raise ApiError("metrics is a short list of metric names")
+        policy = body.get("decision_policy")
+        if policy is not None and (not isinstance(policy, dict) or len(str(policy)) > 2000):
+            raise ApiError("decision_policy is a small object")
+        freeze = bool(body.get("freeze", False))
+
+        def work(progress):
+            with _user_errors():
+                progress("building the data to learn which outcomes the plan would reserve")
+                state = fe.plan_and_reserve(self.registry, study, overs, base, freeze=freeze, actor="api", config=self.app.config, builder=self.app.builder, selection_adjustment=adjustment,
+                                            metrics=metrics, uncertainty_method=str(body.get("uncertainty_method") or "not_specified")[:120], decision_policy=policy, notes=str(body.get("notes") or "")[:500])
+            return clean(state)
+
+        return self._submit(f"ml: evaluation plan ({len(overs)} candidate{'s' if len(overs) != 1 else ''})", work)
+
+    def evaluation_plan_freeze(self, body: dict) -> dict:
+        """``POST /api/ml/evaluation-plan/freeze {"plan_id"}``: the explicit transition after which a plan can be evaluated. A plan with no reservation cannot be frozen."""
+        _only(body, {"plan_id"}, "/api/ml/evaluation-plan/freeze")
+        with _user_errors():
+            return clean(rc.freeze_plan(self.registry, _id(body, "plan_id"), "api"))
+
+    def evaluate(self, body: dict) -> dict:
+        """``POST /api/ml/evaluate {"plan_id", "idempotency_key", "allow_reuse"?, "resume"?}`` (a job): the one evaluation event of a frozen plan. The same key returns the same result and reads nothing again; a
+        different key on a consumed plan is refused unless ``allow_reuse`` says it is a deliberate re-use, which is recorded as one and is never untouched. ``resume`` takes over a claim whose process died."""
+        _only(body, {"plan_id", "idempotency_key", "allow_reuse", "resume"}, "/api/ml/evaluate")
+        plan_id, key = _id(body, "plan_id"), str(body.get("idempotency_key") or "")
+        if not rc.ID.match(key):
+            raise ApiError("idempotency_key is required: 1 to 80 letters, digits, '.', '_', ':' or '-'. A retry with the same key returns the same result")
+        allow_reuse, resume = bool(body.get("allow_reuse", False)), bool(body.get("resume", False))
+
+        def work(progress):
+            with _user_errors():
+                try:
+                    out = fe.evaluate_plan(self.registry, plan_id, idempotency_key=key, actor="api", entry_point="api", allow_reuse=allow_reuse, resume=resume, config=self.app.config,
+                                           builder=self.app.builder, progress=progress)
+                except rc.ControlError as exc:
+                    raise ValueError(str(exc)) from None
+            out.pop("_experiments", None)
+            return clean(out)
+
+        return self._submit(f"ml: evaluate {plan_id[-8:]}", work)
+
+    def statistical_diagnostics(self, q: dict) -> dict:
+        """``GET /api/ml/statistical-diagnostics?id=<experiment>`` (or ``?study=``): the selection-bias evidence recorded for the study, procedure by procedure, with its status (``applied``,
+        ``not_applicable``, ``unsupported``, ``insufficient``, ``failed``), assumptions, scope, dependence treatment and limitations, and the null-control studies. A procedure that was not applied is never shown as passed."""
+        with _user_errors():
+            study = _study(q["study"]) if q.get("study") else (rc.study_of_experiment(self.registry, _id(q)) if q.get("id") else None)
+            if not q.get("study") and not q.get("id"):
+                raise ApiError("give id (an experiment) or study")
+            if not study:                                                                                   # an experiment saved before lineage: no study, no evidence, said plainly
+                return clean(common.envelope("ml_statistical_diagnostics", {"study": None, "evidence": [], "latest": [], "null_studies": [], "raw_looks": 0,
+                                                                           "statement": "this experiment is in no study (it ran before lineage was recorded), so no selection test can be attributed to it"},
+                                             {"registry": "platform"}, [], None, []))
+            family = rc.study_family(self.registry, study)
+            with self.registry._conn() as c:
+                rows = [dict(r) for r in c.execute(f"SELECT * FROM selection_evidence WHERE study_id IN ({','.join('?' * len(family))}) ORDER BY id DESC LIMIT 200", family)]
+                nulls = [dict(r) for r in c.execute("SELECT null_id, study_id, state, planned, done, spec_hash, result, created FROM null_studies WHERE study_id=? ORDER BY rowid DESC LIMIT 50", (study,))]
+        for r in rows:
+            for k in ("assumptions", "scope", "dependence", "limitations", "statistic"):
+                r[k] = __import__("json").loads(r[k]) if r[k] else None
+        for n in nulls:
+            n["result"] = __import__("json").loads(n["result"]) if n["result"] else None
+        latest = {}
+        for r in rows:
+            latest.setdefault(r["method"], r)
+        data = {"study": study, "evidence": rows, "latest": list(latest.values()), "null_studies": nulls, "raw_looks": rc.raw_looks(self.registry, study),
+                "statement": sel.statement([sel.Evidence(r["method"], r["status"], statistic=r["statistic"] or {}) for r in latest.values()]) if latest else "no selection test has been run for this study"}
+        return clean(common.envelope("ml_statistical_diagnostics", data, {"registry": "platform"}, [], None, ["A procedure with status other than applied was not applied; it is not a pass."]))
+
+    def selection_tests_run(self, body: dict) -> dict:
+        """``POST /api/ml/selection-tests/run {"study", "procedures"?, "n_boot"?}`` (a job): apply the selection-bias procedures (deflated Sharpe, PBO, Reality Check, SPA, FDR) to the study's recorded trials
+        where they apply, and persist each result or the reason it was not applied."""
+        _only(body, {"study", "procedures", "n_boot", "seed"}, "/api/ml/selection-tests/run")
+        study = _study(body.get("study"))
+        procs = body.get("procedures") or list(sel.PROCEDURES)
+        if not isinstance(procs, list) or not procs or not all(p in sel.PROCEDURES for p in procs):
+            raise ApiError(f"procedures is a non-empty list drawn from {list(sel.PROCEDURES)}")
+        n_boot, seed = _int(body, "n_boot", 500, 50, 2000), _int(body, "seed", 0, 0, 1_000_000)
+
+        def work(progress):
+            with _user_errors():
+                progress("applying the selection procedures to the study's recorded trials")
+                return clean(sel.evaluate_study(self.registry, study, procedures=tuple(procs), n_boot=n_boot, seed=seed))
+
+        return self._submit(f"ml: selection tests for {study}", work)
+
+    def null_controls(self, q: dict) -> dict:
+        """``GET /api/ml/null-controls[?id=<null id>]``: null-control studies (the design that was frozen, the replications, the false-promotion rate with its intervals and the verdict)."""
+        with _user_errors():
+            if q.get("id"):
+                data = nc.load(self.registry, _id(q))
+                data["replication_records"] = data["replication_records"][-200:]
+                return clean(common.envelope("ml_null_study", data, {"registry": "platform"}, [], None, []))
+            with self.registry._conn() as c:
+                rows = [dict(r) for r in c.execute("SELECT null_id, study_id, state, planned, done, spec_hash, result, created, finished FROM null_studies ORDER BY rowid DESC LIMIT 100")]
+        for r in rows:
+            r["result"] = __import__("json").loads(r["result"]) if r["result"] else None
+        return clean(common.envelope("ml_null_studies", {"studies": rows}, {"registry": "platform"}, [], None, ["A study with too few replications validates the plumbing only; it says nothing about the error rate."]))
+
+    def null_controls_run(self, body: dict) -> dict:
+        """``POST /api/ml/null-controls/run`` (a job): freeze the design, then run the whole search pipeline on placebo data ``replications`` times and report the false-promotion rate with its binomial
+        interval. The design (budget, kinds, generator, gate, tolerance, precision, minimum replications, seed) is hashed and stored before the first replication."""
+        _only(body, {"study", "replications", "kinds", "n_random", "n_bayes", "seed", "tolerance", "precision", "min_replications", "min_shift", "dataset", "split", "signal", "backtest", "model"}, "/api/ml/null-controls/run")
+        over = self._overrides(body, need_model=True)
+        kinds = body.get("kinds") or ["ridge", "lasso"]
+        valid = {m["kind"] for m in model_catalog() if m["available"]}
+        if not isinstance(kinds, list) or not 1 <= len(kinds) <= 4 or any(k not in valid for k in kinds):
+            raise ApiError(f"kinds must be 1 to 4 of {sorted(valid)}")
+        spec = nc.NullSpec(study_id=_study(body.get("study") or rc.default_study_id(experiment_config(over))), base=over, kinds=tuple(kinds), n_random=_int(body, "n_random", 4, 1, LIMITS["null_trials"]),
+                           n_bayes=_int(body, "n_bayes", 0, 0, LIMITS["null_trials"]), replications=_int(body, "replications", 20, 2, LIMITS["null_replications"]), seed=_int(body, "seed", 0, 0, 1_000_000),
+                           tolerance=_float(body, "tolerance", 0.10, 0.005, 0.5), precision=_float(body, "precision", 0.10, 0.005, 0.5), min_replications=_int(body, "min_replications", 100, 2, LIMITS["null_replications"]),
+                           min_shift=_int(body, "min_shift", 200, 60, 1000))
+        stop = threading.Event()
+
+        def work(progress):
+            with _user_errors():
+                made = nc.register(self.registry, spec)
+                progress("design frozen: " + made["null_id"])
+                replicate = nc.search_pipeline(spec, config=self.app.config, builder=self.app.builder)
+                out = nc.run(self.registry, made["null_id"], replicate, progress=progress, stop=stop.is_set)
+            return clean(out)
+
+        started = self._submit(f"ml: null controls ({spec.replications} replications)", work)
+        self.stops[started["job"]] = stop
+        return started
+
+    def promotion_status(self, q: dict) -> dict:
+        """``GET /api/ml/promotion-status?id=<experiment>``: the three independent gates (Algorithm Verified, Strategy Validated, Operationally Ready), each ``passed``, ``failed``, ``pending`` or ``blocked``
+        with ``stale`` when its evidence has changed since it was decided, the item-by-item reasons, the policy version and the evidence behind each. Computed here from the persisted evidence (and recorded
+        when it changes); nothing in a request can set a status."""
+        exp_id = _id(q)
+        with _user_errors():
+            res = gates.decide(self.registry, exp_id, "api")
+            models = [{"id": m["id"], "stage": m["stage"], "history": gates.stage_history(self.registry, m["id"])} for m in self.registry.list_models() if m["experiment_id"] == exp_id]
+        res["models"] = models
+        res["history"] = gates.history(self.registry, exp_id, _int(q, "history", 12, 0, 100))
+        res["next"] = {n: (g["reasons"][0] if g["reasons"] else "nothing outstanding") for n, g in res["gates"].items()}
+        return clean(common.envelope("ml_promotion_status", res, {"registry": "platform"}, [], None, [res["note"], "A gate that is not passed is shown with its reason. A stale decision is shown as pending."]))
 
     # ------------------------------------------------------------------------------------------------------------ explanation
     def explain(self, q: dict) -> dict:

@@ -1,6 +1,6 @@
 /* The Machine learning workspace. A model is trained only inside the whole pipeline: features built without look-ahead, walk-forward fits whose training rows are purged around every test day, a backtest
    with costs through the platform's engine, and a result cut into train (in-sample), validation (where choices are made), test and forward (reserved) segments, with every look at the same data counted.
-   Nine views share one form and one idea of the current experiment: Dataset, Train, Experiments, Compare, Explain, Overfitting, Search, Combine and Forward test. It talks to /api/ml/*.
+   Ten views share one form and one idea of the current experiment: Dataset, Train, Experiments, Compare, Explain, Overfitting, Search, Combine, Forward test and Research controls. It talks to /api/ml/*.
    Whatever the server sends goes in with textContent. The ETF and crypto universes are platform data; the futures universe is simulated and every payload says so, and this page prints it. */
 (function () {
   "use strict";
@@ -34,8 +34,8 @@
   const M = {
     id: "ml", root: "#ml", view: "#view-ml", title: "Machine learning", api: 8, mode: "experiments", busy: "", results: {}, errors: {}, cache: new Map(), guard: null, go: null, progress: null,
     about: "Train models only inside the whole pipeline: features without look-ahead, walk-forward fits, a backtest with costs, and results cut into train, validation, test and forward segments, with every look at the data counted.",
-    modes: [["dataset", "Dataset"], ["train", "Train"], ["experiments", "Experiments"], ["compare", "Compare"], ["explain", "Explain"], ["overfit", "Overfitting"], ["search", "Search"], ["combine", "Combine"], ["forward", "Forward test"]],
-    runLabel: { dataset: "Build the dataset", train: "Train and backtest", experiments: "Refresh", compare: "Compare", explain: "Explain", overfit: "Check again", search: "Run the search", combine: "Combine", forward: "Record today's signal" },
+    modes: [["dataset", "Dataset"], ["train", "Train"], ["experiments", "Experiments"], ["compare", "Compare"], ["explain", "Explain"], ["overfit", "Overfitting"], ["search", "Search"], ["combine", "Combine"], ["forward", "Forward test"], ["controls", "Research controls"]],
+    runLabel: { dataset: "Build the dataset", train: "Train and backtest", experiments: "Refresh", compare: "Compare", explain: "Explain", overfit: "Check again", search: "Run the search", combine: "Combine", forward: "Record today's signal", controls: "Refresh" },
     blurb: { dataset: "Causal features and forward-looking targets, with each feature's coverage and its information coefficient on the warm-up segment only.",
       train: "Walk-forward training, position rules, a backtest with costs, and the result split into train, validation, test and forward segments.",
       experiments: "Every saved experiment, ranked, with the number of looks at the same data when it ran. Open one, delete one, pick several to compare or combine.",
@@ -44,12 +44,13 @@
       overfit: "How much of the best result survives where nothing was fitted: Sharpe by segment, the deflated Sharpe ratio, stress tests and meta-labelling.",
       search: "Random trials, then Bayesian, then genetic, on validation only; the best few are run on every segment once, and every trial is counted.",
       combine: "Ten ways to weight several strategies, each estimated only from the past, side by side.",
-      forward: "Paper signals recorded as the days arrive, settled when their window ends, with the live rank IC and the drift of each feature against the backtest." },
+      forward: "Paper signals recorded as the days arrive, settled when their window ends, with the live rank IC and the drift of each feature against the backtest.",
+      controls: "The research record of one experiment: the three independent gates and why each is or is not passed, every try in its study, what was read of the protected test and forward outcomes, and which selection tests applied." },
     catalog: null, catalogError: "", board: null, boardPromise: null, picked: new Set(), cur: Q.store("ml.cur") || "",
     form: { name: "", notes: "", universe: "etf", tickers: "", groups: new Set(), kind: "fwd_ret", horizon: "5", normalize: "cross_sectional_z", winsor: "1", minHistory: "252", start: "", end: "", regime: "",
       window: "expanding", rollingDays: "1260", minTrain: "756", refit: "", embargo: "0", valFrac: "20", testFrac: "15", fwdFrac: "15", model: "ridge", params: {},
       signal: "top_n_long_short", n: "3", quantile: "30", threshold: "0", gross: "1", net: "0", maxWeight: "35", holding: "5", rebalance: "weekly", cost: "5", slippage: "2", targetVol: "10", maxLev: "1.5",
-      explain: true, robust: false, seed: "0", sort: "validation.sharpe", fModel: "", fStage: "", fUniverse: "", exp: "", asset: "", date: "", perms: "40",
+      explain: true, robust: false, finalize: false, seed: "0", sort: "validation.sharpe", fModel: "", fStage: "", fUniverse: "", exp: "", asset: "", date: "", perms: "40",
       searchKind: "search", engine: "builtin", kinds: new Set(), nRandom: "8", nBayes: "6", generations: "2", population: "6", topK: "2", tuneEffort: "standard",
       methods: new Set(), lookback: "252", every: "21", riskAversion: "5", capital: "100000", asOf: "", kappa: "0", uncertainty_power: "1", mv_lookback: "126" },
   };
@@ -259,7 +260,7 @@
         Q.labField(b, { key: "date", label: "Date (blank = the newest)", kind: "text", placeholder: "2024-06-28" }, f, after);
         Q.labField(b, { key: "perms", label: "Shuffles per feature", kind: "number", step: 10, min: 10, max: 200, help: "More shuffles give steadier Shapley values and take longer" }, f, after);
       }
-    } else if (m === "overfit" || m === "forward") {
+    } else if (m === "overfit" || m === "forward" || m === "controls") {
       const b = sec("1. The experiment");
       if (expSelect(b, m === "forward") && m === "forward") {
         Q.labField(b, { key: "capital", label: "Paper capital ($)", kind: "number", step: 1000, min: 1000 }, f, after);
@@ -269,6 +270,7 @@
     } else if (m === "search") {
       const b = sec("1. What to run");
       W.seg(b, [["search", "Search for strategies"], ["tune", "Tune one model"]], f.searchKind, (v) => { f.searchKind = v; Q.renderLab(M); });
+      Q.labField(b, { key: "finalize", label: "Also evaluate the best on the test and forward segments, once", kind: "bool", help: "Off by default: the search stops at the end of the validation segment. On: a plan is frozen from the best and evaluated once, which uses up that holdout (it is recorded, and a second look would not be untouched)." }, f, after);
       if (f.searchKind === "search") {
         const usable = cat.models.filter((k) => k.available && k.tasks.includes("regression"));
         Q.checkList(b, "Models to search over:", usable.map((k) => [k.kind, k.label]), f.kinds, after);
@@ -345,6 +347,8 @@
   const experiment = (id) => ({ modes: [], path: "/api/ml/experiment", query: { id }, cacheKey: "exp:" + id });
   const fresh = (mode) => { M.results[mode] = null; M.errors[mode] = null; };
   const JOB_MODES = new Set(["dataset", "train", "search", "forward"]);
+  const CONTROLS = (id) => [{ modes: ["controls"], path: "/api/ml/promotion-status", query: { id } }, { modes: ["controls_lineage"], path: "/api/ml/lineage", query: { id } }, { modes: ["controls_holdout"], path: "/api/ml/holdout", query: {} },
+    { modes: ["controls_stats"], path: "/api/ml/statistical-diagnostics", query: { id } }];
 
   M.run = async (fromForm) => {
     const m = M.mode, f = M.form;
@@ -361,11 +365,12 @@
     if (m === "compare") return W.request(M, () => [{ modes: ["compare"], path: "/api/ml/compare", query: { ids: [...M.picked] } }], "Comparing…");
     if (m === "explain") return W.request(M, () => [{ ...experiment(M.cur), modes: ["explain_report"] }, { modes: ["explain"], path: "/api/ml/explain", query: { id: M.cur, asset: f.asset, date: f.date.trim(), permutations: f.perms } }], "Explaining the prediction…");
     if (m === "overfit") return W.request(M, () => [{ ...experiment(M.cur), modes: ["overfit"] }], "Reading the experiment…");
+    if (m === "controls") return W.request(M, () => CONTROLS(M.cur), "Reading the research record…");
     if (m === "search") {
       const tune = f.searchKind === "tune", before = M.results.search;
       await W.request(M, () => (tune
-        ? [{ modes: ["search"], job: true, path: "/api/ml/tune", body: { ...baseBody(f), model: modelBody(f), effort: f.tuneEffort, engine: f.engine, finalize: true } }]
-        : [{ modes: ["search"], job: true, path: "/api/ml/search", body: { ...baseBody(f), kinds: [...f.kinds], n_random: needNumber(f.nRandom, "Random trials"), n_bayes: needNumber(f.nBayes, "Bayesian trials"), generations: needNumber(f.generations, "Generations"),
+        ? [{ modes: ["search"], job: true, path: "/api/ml/tune", body: { ...baseBody(f), model: modelBody(f), effort: f.tuneEffort, engine: f.engine, finalize: !!f.finalize } }]
+        : [{ modes: ["search"], job: true, path: "/api/ml/search", body: { ...baseBody(f), kinds: [...f.kinds], finalize: !!f.finalize, n_random: needNumber(f.nRandom, "Random trials"), n_bayes: needNumber(f.nBayes, "Bayesian trials"), generations: needNumber(f.generations, "Generations"),
           population: needNumber(f.population, "Population"), top_k: needNumber(f.topK, "Finalists") } }]), tune ? "Tuning…" : "Searching…");
       if (M.results.search !== before) invalidate();
       return;
@@ -381,9 +386,9 @@
     const m = M.mode;
     if (!M.catalog) { loadCatalog(); return; }
     if (m === "experiments") { M.run(true); return; }
-    if (["compare", "combine", "explain", "overfit", "forward"].includes(m)) {
+    if (["compare", "combine", "explain", "overfit", "forward", "controls"].includes(m)) {
       if (!M.board) { ensureBoard(); return; }
-      if ((m === "overfit" || m === "forward") && M.cur) M.run(true);
+      if ((m === "overfit" || m === "forward" || m === "controls") && M.cur) M.run(true);
       else if (m === "compare" && M.picked.size >= 2) M.run(true);
     }
   };
@@ -396,7 +401,8 @@
     overfit: ["Check for overfitting", ["How much of the best result survives where nothing was fitted, and whether the stress tests hold."]],
     search: ["Search for strategies", ["Random trials, then Bayesian, then genetic. Trials see only the warm-up and validation segments; the best few are run on every segment once at the end, and every trial is counted against them."]],
     combine: ["Combine strategies", ["Choose two to twelve experiments on the left: ten ways to weight them, each estimated only from the returns up to the day it is used."]],
-    forward: ["Forward test", ["Record the saved model's signal for the newest date, settle the signals whose window has passed, and watch the live rank IC and the drift of each feature against the backtest."]] };
+    forward: ["Forward test", ["Record the saved model's signal for the newest date, settle the signals whose window has passed, and watch the live rank IC and the drift of each feature against the backtest."]],
+    controls: ["Research controls", ["Choose an experiment on the left: its three independent gates (Algorithm Verified, Strategy Validated, Operationally Ready) with the reason each is not passed, every try recorded in its study, what was read of the protected test and forward outcomes, and which selection tests applied."]] };
   M.empty = (root) => Q.labEmpty(root, M, EMPTY[M.mode][0], EMPTY[M.mode][1], M.runLabel[M.mode]);
   M.draw = () => Q.drawLab(M);
   M.paint = () => paintRuns();
@@ -465,7 +471,7 @@
       }
     }
   }
-  M.build = (root, d, body) => ({ dataset: buildDataset, train: buildTrain, experiments: buildExperiments, compare: buildCompare, explain: buildExplain, overfit: buildOverfit, search: buildSearch, combine: buildCombine, forward: buildForward })[M.mode](root, d, body);
+  M.build = (root, d, body) => ({ dataset: buildDataset, train: buildTrain, experiments: buildExperiments, compare: buildCompare, explain: buildExplain, overfit: buildOverfit, search: buildSearch, combine: buildCombine, forward: buildForward, controls: buildControls })[M.mode](root, d, body);
   const header = (root, title, sub) => Q.labHead(root, title, sub, GUIDE);
 
   /* ---------- opening, deleting and re-running saved experiments ---------- */
@@ -952,6 +958,8 @@
     header(root, tune ? "Tuning one model" : "Strategy search", `${d.n_trials} trials${d.n_failed ? ` (${d.n_failed} failed)` : ""}${d.seconds ? ` · ${num(d.seconds, 1)} s` : ""}${d.stages ? " · " + Object.entries(d.stages).map(([s, n]) => `${n} ${s}`).join(", ") : ""}`);
     if (tune && d.summary) plainTune(root, d);
     W.flags(root, [d.note || "Scores are validation-only: the test and forward segments were not predicted during the search."], "Read first. ");
+    if (d.finalize && d.finalize.note) W.flags(root, [d.finalize.note], "Holdout. ");
+    if (d.evaluation && d.evaluation.deprecated) { const ev = W.card(root, "The holdout was used", d.evaluation.deprecated); W.kv(ev, "Evaluation", [["Plan", ((d.evaluation.plan || {}).plan_id) || "n/a"], ["Idempotency key", d.evaluation.idempotency_key || "n/a"], ["Untouched", d.evaluation.untouched ? "yes" : "no"]]); }
     const k = h("div", "earnrow", root);
     tile(k, "Trials", String(d.n_trials), { text: tune ? "validation only" : `${(d.kinds || []).length} model kinds` });
     tile(k, "Best validation Sharpe", sig(best && best.validation_sharpe), { text: best ? `trial ${best.number}` : "" }, "", "The best of all the trials: it is inflated by having been picked from many");
@@ -1040,6 +1048,49 @@
     if (!d.signals.length) { W.hint(c2, "No signal is recorded yet: press the button on the left to record the newest."); return; }
     table(c2, [{ label: "Date", get: (x) => x.date }, { label: "Recorded", get: (x) => x.recorded }, { label: "Positions", num: true, get: (x) => String(x.n_positions) }, { label: "Turnover", num: true, get: (x) => sig(x.turnover, 2) },
       { label: "Realised", num: true, get: (x) => (Q.bad(x.realised) ? "open" : spct(x.realised, 2)) }, { label: "Settled through", get: (x) => x.settled_through || "" }], d.signals.slice().reverse());
+  }
+
+  /* ---------- research controls: the gates, the lineage, the holdout and the selection evidence of one experiment ---------- */
+  const GATE_NAME = { A: "Algorithm Verified", B: "Strategy Validated", C: "Operationally Ready" };
+  const GATE_DIR = { passed: "up", failed: "down", blocked: "down", pending: "" };
+  const ITEM_WORD = { ok: "met", failed: "failed", missing: "not yet produced", stale: "stale", blocked: "blocked", not_applicable: "not applicable" };
+  function buildControls(root, d) {
+    const lin = (M.results.controls_lineage || {}).data, ho = (M.results.controls_holdout || {}).data, st = (M.results.controls_stats || {}).data;
+    header(root, `Research record for ${shortId(d.experiment_id)}`, `${d.model_kind} · gate policy ${d.policy_version}`);
+    W.provenance(root, d);
+    W.flags(root, [d.note, "A stale decision is shown as pending: its evidence has changed since it was decided."], "Read first. ");
+    const k = h("div", "earnrow", root);
+    for (const n of ["A", "B", "C"]) {
+      const g = d.gates[n];
+      tile(k, `Gate ${n}: ${GATE_NAME[n]}`, cap(g.status) + (g.stale ? " (stale)" : ""), { text: g.reasons.length ? g.reasons[0].slice(0, 110) : "nothing outstanding", dir: GATE_DIR[g.status] || "" }, "", "Computed on the server from the persisted evidence; nothing in a request sets it");
+    }
+    for (const n of ["A", "B", "C"]) {
+      const g = d.gates[n], c = W.card(root, `Gate ${n} · ${GATE_NAME[n]}: ${g.status}${g.stale ? " (stale)" : ""}`, g.dependencies.length ? `Needs Gate ${g.dependencies.join(" and ")} as well.` : "");
+      table(c, [{ label: "Evidence", get: (i) => i.label }, { label: "State", get: (i) => ITEM_WORD[i.status] || i.status }, { label: "Why", get: (i) => i.reason }], g.items);
+    }
+    const nl = W.card(root, "Models and stages", "A stage change is decided from the gates above; production also needs a recorded human approval.");
+    if (!(d.models || []).length) W.hint(nl, "This experiment has no registered model.");
+    else table(nl, [{ label: "Model", get: (m) => m.id }, { label: "Stage", get: (m) => m.stage }, { label: "Changes", num: true, get: (m) => String(m.history.length) }], d.models);
+    if (lin && lin.operations) {
+      const c = W.card(root, "Experiment lineage", `Study ${(lin.study || {}).study_id || "none"} · ${lin.raw_looks} tries recorded (${lin.failed} failed, ${lin.cancelled} cancelled) · ${lin.feature_sets.length} feature sets · ${lin.plans.length} evaluation plans. ${lin.note}`);
+      if (!lin.operations.length) W.hint(c, "No try of this study is recorded (the experiment ran before lineage was kept).");
+      else table(c, [{ label: "When", get: (o) => o.registered }, { label: "Kind", get: (o) => String(o.kind).replace(/_/g, " ") }, { label: "State", get: (o) => o.state }, { label: "Counted", get: (o) => (o.counts ? "yes" : "no") },
+        { label: "Experiment", get: (o) => (o.experiment_id ? shortId(o.experiment_id) : "") }], lin.operations.slice(-40).reverse());
+    }
+    if (ho) {
+      const c = W.card(root, "Holdout status", "A plan reserves the test and forward outcomes; its one evaluation consumes them. A run outside a plan is an exposure, and the history it read is no longer untouched.");
+      if (!ho.plans.length && !ho.exposures.length) W.hint(c, "No plan and no exposure is recorded.");
+      if (ho.plans.length) table(c, [{ label: "Plan", get: (p) => p.plan_id }, { label: "State", get: (p) => p.state }, { label: "Evaluations", num: true, get: (p) => String(p.evaluations) },
+        { label: "Untouched", get: (p) => (p.reservation ? (p.reservation.untouched ? "yes" : "no: " + p.reservation.overlaps.length + " earlier look(s)") : "no reservation") },
+        { label: "Dates", get: (p) => (p.reservation ? p.reservation.range.join(" to ") : "") }], ho.plans);
+      if (ho.exposures.length) { W.sub(c, "Exposures (outcomes read outside a plan)"); table(c, [{ label: "When", get: (x) => x.at }, { label: "Experiment", get: (x) => (x.result_ref ? shortId(x.result_ref) : "") }, { label: "From", get: (x) => x.range_start || "" }, { label: "To", get: (x) => x.range_end || "" }], ho.exposures.slice(0, 15)); }
+    }
+    if (st) {
+      const c = W.card(root, "Selection tests", st.statement);
+      if (!st.latest.length) W.hint(c, "No selection test has been run for this study: POST /api/ml/selection-tests/run.");
+      else table(c, [{ label: "Procedure", get: (e) => e.method }, { label: "Status", get: (e) => e.status }, { label: "Result", get: (e) => (e.status !== "applied" ? e.reason || "" : (e.statistic || {}).passes ? "criterion met: " + ((e.statistic || {}).criterion || "") : "criterion not met: " + ((e.statistic || {}).criterion || "")) }], st.latest);
+      if ((st.null_studies || []).length) { W.sub(c, "Null controls (false-promotion rate on placebo data)"); table(c, [{ label: "Study", get: (n) => shortId(n.null_id) }, { label: "Replications", num: true, get: (n) => `${n.done}/${n.planned}` }, { label: "Verdict", get: (n) => (n.result || {}).verdict || n.state }], st.null_studies.slice(0, 6)); }
+    }
   }
 
   Q.registerWorkspace("ml", M);

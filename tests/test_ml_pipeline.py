@@ -289,7 +289,9 @@ def test_importance_tables_and_permutation_importance_find_the_planted_features(
     assert -1.0 <= xp.rank_stability(out.importance) <= 1.0
     perm = xp.permutation_importance(out, dataset, max_folds=4, n_repeats=1, top=12)
     assert len(perm) == 12 and perm["mean_drop"].iloc[0] > 0.0 and perm["mean_drop"].iloc[0] >= perm["mean_drop"].iloc[-1]
-    fic = xp.feature_ic(dataset)
+    with pytest.raises(Exception, match="reads the test and forward outcomes"):               # Release 3: a diagnostic that reads every date is a look at the reserved outcomes
+        xp.feature_ic(dataset)
+    fic = xp.feature_ic(dataset, until=out.plan.dates[out.plan.bounds["train"][1] - 1])         # the warm-up segment: where features may be chosen
     assert "ret_21" in fic.index and fic["mean_ic"].abs().max() > 0.03
     expl = xp.explain_prediction(out.models[-1], dataset, dataset.dates[1500], dataset.assets[2], n_background=60, n_perm=20)
     assert expl["contributions"] and abs(sum(c["contribution"] for c in expl["contributions"]) + expl["other"] - (expl["prediction"] - expl["base"])) < 1e-9
@@ -319,8 +321,17 @@ def test_registry_records_experiments_trials_models_and_counts_looks(tmp_path):
     assert [r["id"] for r in board] == [second, eid] and board[0]["metrics"]["validation.sharpe"] == 2.0
     mid = reg.register_model(eid, b"model-bytes", "ridge", ["a", "b"], "candidate")
     mid2 = reg.register_model(second, b"other", "ridge", ["a"], "candidate")
-    reg.promote(mid, "production")
-    reg.promote(mid2, "production")                                                              # only one production model per universe
+    from src.ml import gates
+
+    with pytest.raises(gates.PromotionBlocked, match="cannot move to production"):               # Release 3: the stage is decided from persisted evidence, and there is none for these models
+        reg.promote(mid, "production", approval={"actor": "a", "note": "b"})
+    real = gates.authorize_stage
+    gates.authorize_stage = lambda *a, **k: {"allowed": True, "gate_seqs": {}}                  # the subject here is the bookkeeping of stages; the gates have their own tests (test_ml_promotion_gates.py)
+    try:
+        reg.promote(mid, "production")
+        reg.promote(mid2, "production")                                                          # only one production model per universe
+    finally:
+        gates.authorize_stage = real
     assert {m["id"]: m["stage"] for m in reg.list_models()} == {mid: "archived", mid2: "production"} and reg.load_model_bytes(mid2) == b"other"
     with pytest.raises(rg.RegistryError):
         reg.promote(mid, "launched")

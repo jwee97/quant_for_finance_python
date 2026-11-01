@@ -19,6 +19,7 @@ import time
 import numpy as np
 
 from ..ops.hpo import Categorical, Int, Study, Trial
+from . import research_controls as rc
 from .config import dataset_key
 from .models import model_catalog, search_space
 from .optimization import TrialRunner, apply_params, finalize
@@ -82,8 +83,10 @@ def crossover(a: dict, b: dict, spaces: dict, rng: np.random.Generator) -> dict:
 
 def search(base_overrides: dict, bundle=None, config=None, builder=None, registry: Registry | None = None, kinds: tuple = DEFAULT_KINDS, n_random: int = 12, n_bayes: int = 12,
            generations: int = 3, population: int = 8, top_k: int = 3, seed: int = 0, study_name: str = "search", objective_weights: dict | None = None, progress=None,
-           finalize_top: bool = True) -> dict:
-    """Run the three-stage search and (optionally) finalise the best ``top_k``. Returns the stages, the trials, the selection report over all trials and the finalists' reports."""
+           finalize_top: bool = False, idempotency_key: str | None = None) -> dict:
+    """Run the three-stage search. It stops at the end of the validation segment: the test and forward segments are not read. ``finalize_top=True`` (off by default) freezes an evaluation plan from the best
+    ``top_k`` and evaluates it once (``frozen_eval.compat_finalize``): all finalists share that one look, with the deflated Sharpe ratio over all trials as the declared selection treatment. Returns the stages, the
+    trials, the selection report over all trials and, if asked for, the finalists' reports and the evaluation record."""
     t0 = time.perf_counter()
     runner = SearchRunner(base_overrides, bundle, config, builder, registry, study_name, objective_weights)
     target = runner.base["dataset"]["target"]
@@ -145,14 +148,26 @@ def search(base_overrides: dict, bundle=None, config=None, builder=None, registr
         except (ValueError, KeyError, np.linalg.LinAlgError) as exc:
             result["selection"] = {"error": str(exc)}
     if finalize_top and good:
-        for rec in good[: max(1, top_k)]:
-            if progress:
-                progress(f"finalising trial {rec['number']}")
-            params = rec["params"]
-            cfg = apply_params(runner.base, params)
-            exp = finalize(cfg, {}, bundle, config, builder, registry, trials_extra=n_trials, parent_id=None, robustness=False)
-            result["finalists"].append({"trial": rec["number"], "experiment_id": exp.id, "name": exp.cfg["name"], "params": params, "validation_score": rec["score"], "segments": exp.report["segments"]["stats"],
-                                        "overfit": exp.report["overfit"], "trials": exp.report["trials"]["dataset_trials"]})
+        picks = good[: max(1, top_k)]
+        if progress:
+            progress(f"freezing a plan from the best {len(picks)} and evaluating it once")
+        if registry is not None:
+            import uuid
+
+            from .frozen_eval import compat_finalize
+
+            ev = compat_finalize(registry, rc.study_of(runner.base), runner.base, [r["params"] for r in picks], selection_adjustment="dsr_all_trials", idempotency_key=idempotency_key or f"search-{uuid.uuid4().hex[:12]}",
+                                 actor="search", entry_point="search", bundle=bundle, config=config, builder=builder, progress=progress)
+            result["evaluation"] = {k: ev.get(k) for k in ("status", "plan", "deprecated", "idempotency_key", "untouched")}
+            for rec, got in zip(picks, ev.get("experiments", [])):
+                report = registry.report(got["experiment_id"])
+                result["finalists"].append({"trial": rec["number"], "experiment_id": got["experiment_id"], "name": got["name"], "params": rec["params"], "validation_score": rec["score"],
+                                            "segments": report["segments"]["stats"], "overfit": report["overfit"], "trials": report["trials"]["dataset_trials"]})
+        else:
+            for rec in picks:                                                  # no registry: nothing to plan against or to record, so the runs are labelled unrecorded in their reports
+                exp = finalize(apply_params(runner.base, rec["params"]), {}, bundle, config, builder, None, trials_extra=n_trials, parent_id=None, robustness=False)
+                result["finalists"].append({"trial": rec["number"], "experiment_id": exp.id, "name": exp.cfg["name"], "params": rec["params"], "validation_score": rec["score"], "segments": exp.report["segments"]["stats"],
+                                            "overfit": exp.report["overfit"], "trials": exp.report["trials"]["dataset_trials"]})
     result["seconds"] = round(time.perf_counter() - t0, 1)
     result["dataset_key"] = dataset_key(runner.base)
     return result

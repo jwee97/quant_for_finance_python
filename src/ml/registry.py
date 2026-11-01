@@ -53,6 +53,62 @@ CREATE TABLE IF NOT EXISTS verification_checks (
     environment TEXT, artifact_hash TEXT, artifact_path TEXT, reason TEXT, created TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_verification_requirement ON verification_checks (requirement_id, created);
 """),
+    (2, "research_lineage", [
+        "CREATE TABLE IF NOT EXISTS research_studies (study_id TEXT PRIMARY KEY, name TEXT, hypothesis TEXT, parent_study TEXT, baseline_hash TEXT, candidate_family TEXT, selection_rule TEXT, metrics TEXT, "
+        "manifest_hash TEXT, plan_hash TEXT, budget TEXT, status TEXT, created TEXT NOT NULL)",
+        "CREATE TABLE IF NOT EXISTS lineage_events (seq INTEGER PRIMARY KEY AUTOINCREMENT, op_key TEXT NOT NULL, study_id TEXT NOT NULL, parent_key TEXT, kind TEXT NOT NULL, state TEXT NOT NULL, "
+        "counts INTEGER NOT NULL DEFAULT 1, config_hash TEXT, feature_hash TEXT, dataset_key TEXT, data_identity TEXT, seed INTEGER, experiment_id TEXT, detail TEXT, at TEXT NOT NULL)",
+        "CREATE INDEX IF NOT EXISTS idx_lineage_study ON lineage_events (study_id, op_key)",
+        "CREATE INDEX IF NOT EXISTS idx_lineage_op ON lineage_events (op_key, seq)",
+        "CREATE TRIGGER IF NOT EXISTS lineage_events_no_update BEFORE UPDATE ON lineage_events BEGIN SELECT RAISE(ABORT, 'lineage events are append-only'); END",
+        "CREATE TRIGGER IF NOT EXISTS lineage_events_no_delete BEFORE DELETE ON lineage_events BEGIN SELECT RAISE(ABORT, 'lineage events are append-only'); END",
+        "CREATE TABLE IF NOT EXISTS experiment_tombstones (experiment_id TEXT PRIMARY KEY, name TEXT, status TEXT, config_hash TEXT, dataset_key TEXT, study_id TEXT, stage TEXT, parent_id TEXT, report_sha256 TEXT, "
+        "deleted_at TEXT NOT NULL)",
+    ]),
+    (3, "provenance", [
+        "CREATE TABLE IF NOT EXISTS provenance (seq INTEGER PRIMARY KEY AUTOINCREMENT, experiment_id TEXT NOT NULL, identity TEXT NOT NULL, data_hash TEXT, code_hash TEXT, environment_hash TEXT, config_hash TEXT, "
+        "features_hash TEXT, folds_hash TEXT, contract_hash TEXT, seed INTEGER, record TEXT NOT NULL, created TEXT NOT NULL)",
+        "CREATE INDEX IF NOT EXISTS idx_provenance_experiment ON provenance (experiment_id, seq)",
+        "CREATE TRIGGER IF NOT EXISTS provenance_no_update BEFORE UPDATE ON provenance BEGIN SELECT RAISE(ABORT, 'provenance records are append-only'); END",
+        "CREATE TRIGGER IF NOT EXISTS provenance_no_delete BEFORE DELETE ON provenance BEGIN SELECT RAISE(ABORT, 'provenance records are append-only'); END",
+    ]),
+    (4, "holdout_controls", [
+        "CREATE TABLE IF NOT EXISTS evaluation_plans (plan_id TEXT PRIMARY KEY, study_id TEXT NOT NULL, content TEXT NOT NULL, content_hash TEXT NOT NULL, created TEXT NOT NULL)",
+        "CREATE TRIGGER IF NOT EXISTS evaluation_plans_frozen_content BEFORE UPDATE ON evaluation_plans BEGIN SELECT RAISE(ABORT, 'an evaluation plan is immutable; create a new one'); END",
+        "CREATE TRIGGER IF NOT EXISTS evaluation_plans_no_delete BEFORE DELETE ON evaluation_plans BEGIN SELECT RAISE(ABORT, 'evaluation plans are kept for audit'); END",
+        "CREATE TABLE IF NOT EXISTS plan_events (seq INTEGER PRIMARY KEY AUTOINCREMENT, plan_id TEXT NOT NULL, state TEXT NOT NULL, actor TEXT, detail TEXT, at TEXT NOT NULL)",
+        "CREATE INDEX IF NOT EXISTS idx_plan_events ON plan_events (plan_id, seq)",
+        "CREATE TRIGGER IF NOT EXISTS plan_events_no_update BEFORE UPDATE ON plan_events BEGIN SELECT RAISE(ABORT, 'plan events are append-only'); END",
+        "CREATE TRIGGER IF NOT EXISTS plan_events_no_delete BEFORE DELETE ON plan_events BEGIN SELECT RAISE(ABORT, 'plan events are append-only'); END",
+        "CREATE TABLE IF NOT EXISTS holdout_reservations (reservation_id TEXT PRIMARY KEY, plan_id TEXT NOT NULL, study_id TEXT NOT NULL, assets TEXT NOT NULL, range_start TEXT NOT NULL, range_end TEXT NOT NULL, "
+        "outcome_hash TEXT, untouched INTEGER NOT NULL, overlaps TEXT, created TEXT NOT NULL)",
+        "CREATE INDEX IF NOT EXISTS idx_reservation_plan ON holdout_reservations (plan_id)",
+        "CREATE TABLE IF NOT EXISTS holdout_access_log (seq INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL, reservation_id TEXT, plan_id TEXT, study_id TEXT, access_kind TEXT NOT NULL, purpose TEXT, "
+        "idempotency_key TEXT, actor TEXT, entry_point TEXT, status TEXT NOT NULL, result_ref TEXT, assets TEXT, range_start TEXT, range_end TEXT, detail TEXT)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_access_idempotency ON holdout_access_log (idempotency_key, status) WHERE idempotency_key IS NOT NULL",
+        "CREATE INDEX IF NOT EXISTS idx_access_reservation ON holdout_access_log (reservation_id, seq)",
+        "CREATE TRIGGER IF NOT EXISTS access_log_no_update BEFORE UPDATE ON holdout_access_log BEGIN SELECT RAISE(ABORT, 'the holdout access log is append-only'); END",
+        "CREATE TRIGGER IF NOT EXISTS access_log_no_delete BEFORE DELETE ON holdout_access_log BEGIN SELECT RAISE(ABORT, 'the holdout access log is append-only'); END",
+    ]),
+    (5, "selection_evidence_and_null_studies", [
+        "CREATE TABLE IF NOT EXISTS selection_evidence (id INTEGER PRIMARY KEY AUTOINCREMENT, study_id TEXT NOT NULL, subject TEXT, method TEXT NOT NULL, status TEXT NOT NULL, assumptions TEXT, scope TEXT, "
+        "dependence TEXT, limitations TEXT, reason TEXT, statistic TEXT, created TEXT NOT NULL)",
+        "CREATE INDEX IF NOT EXISTS idx_selection_study ON selection_evidence (study_id, id)",
+        "CREATE TRIGGER IF NOT EXISTS selection_evidence_no_update BEFORE UPDATE ON selection_evidence BEGIN SELECT RAISE(ABORT, 'selection evidence is append-only'); END",
+        "CREATE TABLE IF NOT EXISTS null_studies (null_id TEXT PRIMARY KEY, study_id TEXT NOT NULL, spec TEXT NOT NULL, spec_hash TEXT NOT NULL, state TEXT NOT NULL, planned INTEGER NOT NULL, done INTEGER NOT NULL DEFAULT 0, "
+        "result TEXT, created TEXT NOT NULL, finished TEXT)",
+        "CREATE TABLE IF NOT EXISTS null_replications (id INTEGER PRIMARY KEY AUTOINCREMENT, null_id TEXT NOT NULL, replication INTEGER NOT NULL, seed INTEGER NOT NULL, promoted INTEGER NOT NULL, "
+        "selected TEXT, statistic REAL, detail TEXT, created TEXT NOT NULL, UNIQUE (null_id, replication))",
+    ]),
+    (6, "gate_decisions", [
+        "CREATE TABLE IF NOT EXISTS gate_decisions (seq INTEGER PRIMARY KEY AUTOINCREMENT, subject_id TEXT NOT NULL, gate TEXT NOT NULL, policy_version TEXT NOT NULL, status TEXT NOT NULL, stale INTEGER NOT NULL DEFAULT 0, "
+        "evidence TEXT, reasons TEXT, actor TEXT, previous_seq INTEGER, at TEXT NOT NULL)",
+        "CREATE INDEX IF NOT EXISTS idx_gate_subject ON gate_decisions (subject_id, gate, seq)",
+        "CREATE TRIGGER IF NOT EXISTS gate_decisions_no_update BEFORE UPDATE ON gate_decisions BEGIN SELECT RAISE(ABORT, 'gate decisions are append-only'); END",
+        "CREATE TRIGGER IF NOT EXISTS gate_decisions_no_delete BEFORE DELETE ON gate_decisions BEGIN SELECT RAISE(ABORT, 'gate decisions are append-only'); END",
+        "CREATE TABLE IF NOT EXISTS stage_changes (seq INTEGER PRIMARY KEY AUTOINCREMENT, model_id TEXT NOT NULL, from_stage TEXT, to_stage TEXT NOT NULL, actor TEXT, note TEXT, gate_seq TEXT, at TEXT NOT NULL)",
+        "CREATE TRIGGER IF NOT EXISTS stage_changes_no_update BEFORE UPDATE ON stage_changes BEGIN SELECT RAISE(ABORT, 'stage changes are append-only'); END",
+    ]),
 ]
 CHECK_STATUSES = ("pass", "fail", "not_run", "blocked", "not_applicable")
 STAGES = ("none", "candidate", "staging", "production", "archived")
@@ -83,7 +139,8 @@ class Registry:
                 continue
             c.execute("BEGIN")
             try:
-                for statement in [x.strip() for x in script.split(";") if x.strip()]:
+                statements = list(script) if isinstance(script, (list, tuple)) else [x.strip() for x in script.split(";") if x.strip()]       # a trigger body has semicolons: those migrations are lists
+                for statement in statements:
                     c.execute(statement)
                 c.execute("INSERT INTO schema_migrations VALUES (?,?,?)", (version, name, time.strftime("%Y-%m-%d %H:%M:%S")))
                 c.execute("COMMIT")
@@ -125,6 +182,24 @@ class Registry:
             conn.commit()
         finally:
             conn.close()
+
+    @contextmanager
+    def transaction(self):
+        """One write transaction taken up front (``BEGIN IMMEDIATE``): concurrent writers, threads or processes, queue behind it instead of both reading the same state and both writing. Yields a connection;
+        nothing else may call the registry's own locked methods inside the block."""
+        with self._lock:
+            conn = sqlite3.connect(self.path, timeout=30, isolation_level=None)
+            conn.row_factory = sqlite3.Row
+            try:
+                conn.execute("BEGIN IMMEDIATE")
+                try:
+                    yield conn
+                    conn.execute("COMMIT")
+                except BaseException:
+                    conn.execute("ROLLBACK")
+                    raise
+            finally:
+                conn.close()
 
     # ------------------------------------------------------------------------------------------------------------ experiments
     @staticmethod
@@ -220,8 +295,16 @@ class Registry:
         return out[: int(limit)]
 
     def delete_experiment(self, exp_id: str) -> None:
-        self.get_experiment(exp_id)
+        """Remove an experiment's files and rows. What the research record needs survives it: a tombstone (its look still counts toward the trial count), the lineage events, the provenance record, the holdout
+        access log, the gate decisions and the stage history are append-only and are not touched."""
+        record = self.get_experiment(exp_id)
+        report_file = self.root / "experiments" / exp_id / "report.json"
+        digest = hashlib.sha256(report_file.read_bytes()).hexdigest() if report_file.exists() else None
         with self._lock, self._conn() as c:
+            study = c.execute("SELECT study_id FROM lineage_events WHERE experiment_id=? ORDER BY seq DESC LIMIT 1", (exp_id,)).fetchone()
+            c.execute("INSERT OR REPLACE INTO experiment_tombstones (experiment_id, name, status, config_hash, dataset_key, study_id, stage, parent_id, report_sha256, deleted_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                      (exp_id, record.get("name"), record.get("status"), record.get("config_hash"), record.get("dataset_key"), study["study_id"] if study else None, record.get("stage"), record.get("parent_id"), digest,
+                       time.strftime("%Y-%m-%d %H:%M:%S")))
             for t in ("metrics", "artifacts", "predictions"):
                 c.execute(f"DELETE FROM {t} WHERE experiment_id=?", (exp_id,))
             c.execute("DELETE FROM experiments WHERE id=?", (exp_id,))
@@ -233,7 +316,8 @@ class Registry:
         with self._conn() as c:
             n_exp = c.execute("SELECT COUNT(*) FROM experiments WHERE dataset_key=? AND status='done'", (dataset_key,)).fetchone()[0]
             n_trials = c.execute("SELECT COUNT(*) FROM trials WHERE dataset_key=?", (dataset_key,)).fetchone()[0]
-        return int(n_exp + n_trials)
+            n_gone = c.execute("SELECT COUNT(*) FROM experiment_tombstones WHERE dataset_key=? AND status='done'", (dataset_key,)).fetchone()[0]          # deleting an experiment does not un-try it
+        return int(n_exp + n_trials + n_gone)
 
     def log_trial(self, study: str, dataset_key: str, number: int, params: dict, value: float, seconds: float, stage: str = "random", experiment_id: str | None = None) -> None:
         with self._lock, self._conn() as c:
@@ -275,19 +359,30 @@ class Registry:
             raise RegistryError(f"unknown model '{model_id}'")
         return Path(row["path"]).read_bytes()
 
-    def promote(self, model_id: str, stage: str) -> None:
-        """Move a model to a stage; at most one model per experiment universe may be ``production`` (the previous one is archived)."""
+    def promote(self, model_id: str, stage: str, actor: str | None = None, note: str = "", approval: dict | None = None) -> dict:
+        """Move a registered model to a stage; at most one model per experiment universe may be ``production`` (the previous one is archived).
+
+        ``none`` and ``archived`` are always allowed (taking something out of use needs no evidence); ``candidate`` only registers; ``staging`` needs Gate B and ``production`` needs Gates A, B and C and a recorded
+        human ``approval`` (``{"actor": ..., "note": ...}``): the gates are computed here from the persisted evidence (``gates.authorize_stage``), never read from the request. Every change is appended to
+        ``stage_changes``. Returns the decision that allowed it."""
         if stage not in STAGES:
             raise RegistryError(f"stage must be one of {STAGES}")
+        with self._conn() as c:
+            row = c.execute("SELECT experiment_id, stage FROM models WHERE id=?", (model_id,)).fetchone()
+        if row is None:
+            raise RegistryError(f"unknown model '{model_id}'")
+        from . import gates
+
+        decision = gates.authorize_stage(self, model_id, row["experiment_id"], stage, approval)
         with self._lock, self._conn() as c:
-            row = c.execute("SELECT experiment_id FROM models WHERE id=?", (model_id,)).fetchone()
-            if row is None:
-                raise RegistryError(f"unknown model '{model_id}'")
             if stage == "production":
                 uni = c.execute("SELECT universe FROM experiments WHERE id=?", (row["experiment_id"],)).fetchone()["universe"]
                 c.execute("UPDATE models SET stage='archived' WHERE stage='production' AND experiment_id IN (SELECT id FROM experiments WHERE universe=?)", (uni,))
             c.execute("UPDATE models SET stage=? WHERE id=?", (stage, model_id))
             c.execute("UPDATE experiments SET stage=? WHERE id=?", (stage, row["experiment_id"]))
+            c.execute("INSERT INTO stage_changes (model_id, from_stage, to_stage, actor, note, gate_seq, at) VALUES (?,?,?,?,?,?,?)",
+                      (model_id, row["stage"], stage, (approval or {}).get("actor") or actor, note or (approval or {}).get("note", ""), json.dumps(decision.get("gate_seqs", {})), time.strftime("%Y-%m-%d %H:%M:%S")))
+        return decision
 
     # ------------------------------------------------------------------------------------------------------------ feature sets
     def register_feature_set(self, dataset, dataset_key: str) -> str:

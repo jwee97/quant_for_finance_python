@@ -19,6 +19,7 @@ import time
 import numpy as np
 
 from ..ops.hpo import Param, Study
+from . import research_controls as rc
 from .config import build_key, config_hash, dataset_key, experiment_config, merge
 from .datasets import Dataset
 from .experiments import Experiment, ExperimentError, prepare, run_experiment
@@ -83,26 +84,72 @@ class TrialRunner:
             self._datasets[key] = ds
         return self._datasets[key]
 
+    def kind_of(self, params: dict) -> str:
+        """What kind of try a candidate is, for the study's lineage: a model choice, a signal or portfolio variation, or a hyperparameter trial."""
+        keys = list(params)
+        if "model.kind" in keys:
+            return "model_choice"
+        if keys and all(k.startswith("backtest.") for k in keys):
+            return "portfolio_variation"
+        if keys and all(k.startswith(("signal.", "backtest.")) for k in keys):
+            return "signal_variation"
+        return "hpo_trial"
+
     def evaluate(self, params: dict, stage: str = "random") -> tuple[float, "object", dict]:
-        """Run one candidate; returns ``(score, validation net returns, details)``. A configuration that cannot run scores NaN (and is still counted)."""
+        """Run one candidate; returns ``(score, validation net returns, details)``. A configuration that cannot run scores NaN (and is still counted). With a registry the trial is registered in the study BEFORE it
+        runs and finished as done, failed or cancelled: a failed trial is a try, and a cancelled search leaves the trial it was on in the record."""
         t0 = time.perf_counter()
         cfg = apply_params(self.base, params)
         number = len(self.records)
+        op = None
+        if self.registry is not None:
+            op = rc.begin(self.registry, self.kind_of(params), rc.study_of(self.base), adopt=True, config_hash=config_hash(cfg), dataset_key=dataset_key(self.base), seed=int(cfg.get("seed", 0)),
+                          detail={"search": self.study, "stage": stage, "number": number, "params": params})
         try:
-            cfg = experiment_config(cfg, name=f"{self.study}-{number}")
-            exp = run_experiment(cfg, dataset=self._dataset_for(cfg), info=self.info, registry=None, save=False, explain=False, final_model=False, robustness=False, stop_after="validation")
-            score, parts = validation_score(exp.report, self.weights)
-            net = exp.net[exp.labels == "validation"]
-            detail = {"score": score, **parts, "ic": exp.report["ic"]["all"]["mean"], "config_hash": config_hash(cfg)}
-        except ExperimentError as exc:                                              # a configuration that cannot run is a result of the search, not a reason to stop it
-            score, net, detail = float("nan"), None, {"error": str(exc)}
-        except Exception as exc:                                                    # so is an unexpected failure, recorded with its type so that it is not mistaken for a bad configuration
-            score, net, detail = float("nan"), None, {"error": f"{type(exc).__name__}: {exc}"}
-        seconds = time.perf_counter() - t0
-        self.records.append({"number": number, "params": dict(params), "stage": stage, "seconds": round(seconds, 2), **detail})
+            with (op if op is not None else _NoOp()):
+                try:
+                    cfg = experiment_config(cfg, name=f"{self.study}-{number}")
+                    exp = run_experiment(cfg, dataset=self._dataset_for(cfg), info=self.info, registry=None, save=False, explain=False, final_model=False, robustness=False, stop_after="validation")
+                    score, parts = validation_score(exp.report, self.weights)
+                    net = exp.net[exp.labels == "validation"]
+                    detail = {"score": score, **parts, "ic": exp.report["ic"]["all"]["mean"], "config_hash": config_hash(cfg)}
+                    if op is not None:
+                        op.finish_detail = {"score": score if score == score else None}
+                        self._keep_stream(op, net)
+                except rc.ResearchCancelled:
+                    raise
+                except ExperimentError as exc:                                              # a configuration that cannot run is a result of the search, not a reason to stop it
+                    score, net, detail = float("nan"), None, {"error": str(exc)}
+                except Exception as exc:                                                    # so is an unexpected failure, recorded with its type so that it is not mistaken for a bad configuration
+                    score, net, detail = float("nan"), None, {"error": f"{type(exc).__name__}: {exc}"}
+                if op is not None and "error" in detail:
+                    op.fail(detail["error"])
+        finally:
+            seconds = time.perf_counter() - t0
+        self.records.append({"number": number, "params": dict(params), "stage": stage, "seconds": round(seconds, 2), "operation": None if op is None else op.op_key, **detail})
         if self.registry is not None:
             self.registry.log_trial(self.study, dataset_key(self.base), number, params, score, seconds, stage)
         return score, net, detail
+
+
+    def _keep_stream(self, op, net) -> None:
+        """The trial's validation net returns, written atomically beside the registry: the selection tests (DSR, PBO, Reality Check, SPA, FDR) need the streams of all the study's tries, and a trial that is not
+        kept cannot be tested later."""
+        import os
+
+        d = self.registry.root / "trials" / op.study_id
+        d.mkdir(parents=True, exist_ok=True)
+        tmp = d / f"{op.op_key}.parquet.tmp"
+        net.rename("net").to_frame().to_parquet(tmp)
+        os.replace(tmp, d / f"{op.op_key}.parquet")
+
+
+class _NoOp:
+    def __enter__(self):
+        return None
+
+    def __exit__(self, *exc) -> bool:
+        return False
 
 
 def current_settings(base_overrides: dict, space: dict) -> dict:
@@ -193,9 +240,15 @@ def finish(st: Study, runner: TrialRunner) -> dict:
 
 
 def finalize(base_overrides: dict, params: dict, bundle=None, config=None, builder=None, registry: Registry | None = None, trials_extra: int = 0, parent_id: str | None = None,
-             progress=None, robustness: bool | None = None, name: str | None = None) -> Experiment:
-    """Re-run a chosen parameter set on ALL segments (the first time the test and forward segments are predicted for it), save it, and count the search's trials against it."""
+             progress=None, robustness: bool | None = None, name: str | None = None, evaluation=None) -> Experiment:
+    """Re-run a chosen parameter set on ALL segments: the first time the test and forward segments are predicted for it. That is a look at protected outcomes, so with a registry it needs ``evaluation``, the
+    context of a frozen evaluation plan (``research_controls.begin_evaluation``; ``frozen_eval.compat_finalize`` makes one for the old ``finalize`` request). Without a registry nothing is recorded and the run is
+    labelled unrecorded. ``trials_extra`` counts trials that are NOT in the registry; a search that logged its trials there passes 0 (each would otherwise be counted twice)."""
+    if registry is not None and evaluation is None:
+        raise rc.HoldoutAccessError("finalising reads the test and forward outcomes, so it needs a frozen evaluation plan: create and freeze one (POST /api/ml/evaluation-plan) and evaluate it (POST /api/ml/evaluate). "
+                                    "The old finalize shortcut is routed through frozen_eval.compat_finalize, which does exactly that")
     cfg = apply_params(experiment_config(base_overrides), params)
     if name:
         cfg["name"] = str(name)[:80]
-    return run_experiment(merge(cfg, {}), bundle=bundle, config=config, builder=builder, registry=registry, progress=progress, trials_extra=trials_extra, parent_id=parent_id, robustness=robustness)
+    return run_experiment(merge(cfg, {}), bundle=bundle, config=config, builder=builder, registry=registry, progress=progress, trials_extra=trials_extra, parent_id=parent_id, robustness=robustness,
+                          evaluation=evaluation, kind="finalize")

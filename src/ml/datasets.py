@@ -20,7 +20,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from . import audit as audit_mod, pit as pit_mod, sessions as sess_mod
+from . import audit as audit_mod, pit as pit_mod, provenance as provenance_mod, sessions as sess_mod
 from .intervals import CONVENTION
 from .features import FEATURES, compute_features, inputs_from_bundle
 from .targets import make_targets, parse_target
@@ -29,7 +29,8 @@ UNIVERSES = ("etf", "crypto", "futures")
 
 
 def bundle_fingerprint(bundle) -> str:
-    """A short hash of the bundle's shape, date range, assets and the last year of prices: two bundles with the same fingerprint carry the same data for our purposes."""
+    """A short hash of the bundle's shape, date range, assets and the last year of prices. A CACHE KEY only: it does not change when an older price does. The identity of the inputs is ``provenance.input_manifest``
+    (the whole history of every input), which is stored beside it in ``meta['input_manifest']``."""
     digest = int(pd.util.hash_pandas_object(bundle.prices.tail(250).fillna(0.0), index=True).sum() % (2 ** 62))
     text = json.dumps([list(bundle.prices.columns), str(bundle.prices.index[0].date()), str(bundle.prices.index[-1].date()), bundle.prices.shape, digest])
     return hashlib.sha256(text.encode()).hexdigest()[:12]
@@ -260,6 +261,7 @@ def build_dataset(bundle, dataset_cfg: dict, name: str = "dataset", extra_target
     audit["marks"] = {"carried_cells": int(marks.to_numpy().sum()), "policy": "a carried mark is not a tradable price: its row is excluded, its asset is not investable that day, and a label whose entry or exit price is one is void"}
     meta = {"label_convention": CONVENTION, "audit": audit, "universe": c.get("universe"), "target": target, "kind": kind, "horizon": horizon, "lag": lag, "feature_groups": list(c["feature_groups"]), "normalize": norm, "winsor": float(c.get("winsor", 0.0)),
             "benchmark": str(c.get("benchmark", "equal_weight")), "skipped": fs.skipped, "broadcast": sorted(fs.broadcast), "targets": names, "data_fingerprint": bundle_fingerprint(bundle),
+            "input_manifest": provenance_mod.input_manifest(bundle),
             "bundle": getattr(bundle, "name", "bundle"), "min_history": int(c.get("min_history", 252)), **(source or {})}
     return Dataset(name, X, Y, x.prices, x.returns, investable & ~marks, meta, dict(bundle.asset_class or {}), dict(bundle.group or {}))
 

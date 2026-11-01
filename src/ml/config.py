@@ -106,8 +106,8 @@ def validate(cfg: dict) -> dict:
 def experiment_config(overrides: dict | None = None, name: str | None = None, defaults: dict | None = None) -> dict:
     """The full, validated configuration of one experiment: ``overrides`` over the platform configuration. ``name`` (else generated from the model, target and universe) labels it."""
     base = defaults if defaults is not None else load_ml_config()
-    unknown = set(overrides or {}) - set(SECTIONS) - {"name", "seed", "notes", "registry", "search", "forward"}
-    _check(not unknown, f"unknown configuration sections {sorted(unknown)}; allowed: {list(SECTIONS)} plus name, seed and notes")
+    unknown = set(overrides or {}) - set(SECTIONS) - {"name", "seed", "notes", "registry", "search", "forward", "study"}
+    _check(not unknown, f"unknown configuration sections {sorted(unknown)}; allowed: {list(SECTIONS)} plus name, seed, notes and study")
     cfg = merge(base, overrides)
     cfg["name"] = str(name or (overrides or {}).get("name") or f"{cfg['model']['kind']}_{cfg['dataset']['target']}_{_universe_label(cfg['dataset']['universe'])}")[:80]
     cfg["seed"] = int((overrides or {}).get("seed", cfg.get("seed", 0)))

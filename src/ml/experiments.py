@@ -19,6 +19,8 @@ import pandas as pd
 from . import evaluation as ev
 from . import explainability as xp
 from . import model_report as mr
+from . import provenance as pv
+from . import research_controls as rc
 from . import robustness as rb
 from .backtest import equal_weight_benchmark, label_days, run_backtest, trim_to_signal
 from .config import DEFAULTS, build_key, config_hash, dataset_key, experiment_config, merge
@@ -29,7 +31,7 @@ from .signals import UNCERTAINTY_METHODS, build_weights
 from .models import task_for
 from .contracts import OutputContractError, build_contract, check_signal_use
 from .targets import forward_return, is_classification
-from .training import TrainResult, fit_final, walk_forward_train
+from .training import TrainResult, fit_final, plan_for, walk_forward_train
 from .visualization import equity_payload, importance_bars, ic_series_payload, jsonable, prediction_distribution, render_html
 
 
@@ -147,12 +149,16 @@ def _latest_positions(weights: pd.DataFrame) -> dict:
 
 def run_experiment(overrides: dict | None = None, bundle=None, config=None, builder=None, registry: Registry | None = None, progress=None, save: bool = True, dataset: Dataset | None = None,
                    info: dict | None = None, parent_id: str | None = None, explain: bool = True, final_model: bool = True, robustness: bool | None = None, trials_extra: int = 0,
-                   experiment_id: str | None = None, stop_after: str | None = None) -> Experiment:
+                   experiment_id: str | None = None, stop_after: str | None = None, evaluation=None, study: str | None = None, entry_point: str = "python", kind: str = "experiment") -> Experiment:
     """Run one experiment. ``overrides`` is merged over the platform configuration (``ml.config.experiment_config``). With a ``registry`` and ``save`` the artifacts are written and the run recorded.
 
     ``explain`` computes permutation importance; ``final_model`` fits the model a live prediction would use; ``robustness`` overrides the configuration's switch for the stress tests;
-    ``trials_extra`` adds to the recorded trial count (a search that ran many variants passes how many). ``stop_after="validation"`` is the search mode: the test and forward segments are not
-    predicted at all, so nothing a search does can depend on them."""
+    ``trials_extra`` adds to the recorded trial count for trials that are NOT in the registry (a search run without one passes how many; a search that logged its trials there must pass 0, or each is counted
+    twice). ``stop_after="validation"`` is the development mode: the test and forward segments are not predicted at all, so nothing a development run does can depend on them.
+
+    With a ``registry`` the run is an operation of its study (``research_controls``): registered before it starts, finished as done, failed or cancelled. A run that predicts the test and forward segments is a
+    look at protected outcomes: it needs ``evaluation`` (the context of a frozen plan, from ``begin_evaluation``) when a reservation covers that history, and otherwise it is recorded as an exposure and the report
+    says ``exposed_exploratory``."""
     t0 = time.perf_counter()
     cfg = experiment_config(overrides)
     progress = progress or (lambda msg: None)
@@ -161,16 +167,45 @@ def run_experiment(overrides: dict | None = None, bundle=None, config=None, buil
     except OutputContractError as exc:
         raise ExperimentError(str(exc)) from None
     ds, info = prepare(cfg, bundle, config, builder, dataset, info, progress)
-    progress("training walk-forward")
+    exp_id = experiment_id or (registry.new_id(cfg["name"]) if registry is not None else "unsaved")
+    with rc.experiment_op(registry, cfg, kind, parent_experiment=parent_id, study=study, experiment_id=exp_id, feature_hash=pv.digest(sorted(ds.features), 16), counts=kind not in rc.NON_COUNTING) as op:
+        holdout = _holdout_block(registry, cfg, ds, stop_after, evaluation, entry_point, exp_id)
+        progress("training walk-forward")
+        try:
+            train = walk_forward_train(ds, cfg["model"], cfg["split"], cfg["seed"], progress=progress, stop_after=stop_after)
+        except ValueError as exc:
+            raise ExperimentError(str(exc)) from None
+        if stop_after == "validation":
+            rc.guard_development(train, train.plan)
+        lineage = None if op is None else {"study": op.study_id, "operation": op.op_key, "kind": op.kind, "counts": op.counts}
+        exp = evaluate_run(cfg, ds, train, info, registry, progress, save, parent_id, explain, final_model, robustness, trials_extra, exp_id, stop_after, t0, holdout=holdout, lineage=lineage)
+        if op is not None:
+            op.experiment_id = exp.id
+            op.finish_detail = {"sharpe": exp.metrics.get("oos", {}).get("sharpe"), "validation_sharpe": exp.metrics.get("validation", {}).get("sharpe"), "holdout": holdout.get("status")}
+    return exp
+
+
+def _holdout_block(registry, cfg: dict, ds: Dataset, stop_after: str | None, evaluation, entry_point: str, exp_id: str) -> dict:
+    """The ``holdout`` block of a run's report, opened BEFORE any protected outcome is predicted: ``development`` for a run that stops at the validation segment, otherwise the access the ledger recorded."""
+    if stop_after:
+        return {"status": "development", "note": "predictions stop at the end of the validation segment: the test and forward outcomes were not read"}
+    if registry is None:
+        return {"status": "unrecorded", "note": "no registry was given, so the look at the test and forward segments is not in any ledger"}
     try:
-        train = walk_forward_train(ds, cfg["model"], cfg["split"], cfg["seed"], progress=progress, stop_after=stop_after)
+        plan, _ = plan_for(ds, cfg["split"], cfg["dataset"]["target"])
     except ValueError as exc:
         raise ExperimentError(str(exc)) from None
-    return evaluate_run(cfg, ds, train, info, registry, progress, save, parent_id, explain, final_model, robustness, trials_extra, experiment_id, stop_after, t0)
+    identity = rc.identity_of(ds, plan)
+    try:
+        block = rc.open_outcome_access(registry, cfg, identity, evaluation, entry_point=entry_point, purpose="direct_experiment" if evaluation is None else "frozen_evaluation", experiment_id=exp_id)
+    except rc.HoldoutAccessError as exc:
+        raise ExperimentError(str(exc)) from None
+    return {**block, "identity": {k: identity[k] for k in ("assets", "start", "end")}}
 
 
 def evaluate_run(cfg: dict, ds: Dataset, train: TrainResult, info: dict, registry: Registry | None = None, progress=None, save: bool = True, parent_id: str | None = None, explain: bool = True,
-                 final_model: bool = True, robustness: bool | None = None, trials_extra: int = 0, experiment_id: str | None = None, stop_after: str | None = None, t0: float | None = None) -> Experiment:
+                 final_model: bool = True, robustness: bool | None = None, trials_extra: int = 0, experiment_id: str | None = None, stop_after: str | None = None, t0: float | None = None,
+                 holdout: dict | None = None, lineage: dict | None = None) -> Experiment:
     """Everything after the fitting: positions, backtest, segments, information coefficient, overfitting diagnostics, explanation, robustness, the report and (if a registry is given) the record. Separate
     from ``run_experiment`` so that the same predictions can be re-run under different signal and cost settings without refitting (``rebacktest``)."""
     t0 = time.perf_counter() if t0 is None else t0
@@ -282,6 +317,11 @@ def evaluate_run(cfg: dict, ds: Dataset, train: TrainResult, info: dict, registr
         "warnings": list(over["warnings"]), "seconds": round(time.perf_counter() - t0, 2), "created": time.strftime("%Y-%m-%d %H:%M:%S"),
     })
     report["output_contract"] = build_contract(train.kind, train.task, train.target, ds, cfg, chash)
+    report["holdout"] = jsonable(holdout if holdout is not None else {"status": "development" if stop_after else "unrecorded"})
+    report["lineage"] = jsonable(lineage if lineage is not None else {"study": rc.study_of(cfg), "operation": None, "note": "not registered as an operation (this run was made through a path that records none)"})
+    if registry is not None:
+        report["trials"]["study"] = {"study": rc.study_of(cfg), "raw_looks": rc.raw_looks(registry, rc.study_of(cfg)),
+                                     "note": "Raw look counts of the study (failed and cancelled tries included); they are counts, not estimates of independent trials."}
     if cfg["signal"].get("reinterpret_outputs") and output_kind != "expected_return":
         report["warnings"].append(f"The {train.kind} output is a {output_kind.replace('_', ' ')}, and signal.reinterpret_outputs reads it as a score for the position rule: that reading is yours, not the model's.")
     try:
@@ -300,7 +340,10 @@ def evaluate_run(cfg: dict, ds: Dataset, train: TrainResult, info: dict, registr
     exp = Experiment(exp_id, cfg, ds, train, scores, weights, net, gross, costs, turnover, bench, insample_net, labels, first_signal, fmodel, report, ctx, metrics)
     if registry is not None and save:
         progress("saving")
+        record = pv.provenance_record(cfg, ds, train, report["output_contract"], chash)
+        report["reproducibility"] = pv.summary(record)                                    # in the report that is saved, so the page and the file carry the identity
         save_experiment(registry, exp, info, parent_id, time.perf_counter() - t0)
+        pv.store(registry, exp_id, record)
     report["seconds"] = round(time.perf_counter() - t0, 2)
     return exp
 
@@ -407,10 +450,20 @@ def load_run(registry: Registry, exp_id: str) -> tuple[dict, Dataset, TrainResul
 
 def rebacktest(registry: Registry, exp_id: str, overrides: dict | None = None, progress=None, save: bool = True) -> Experiment:
     """Run a saved experiment's predictions through different positions rules, rebalancing or costs, with no refitting. ``overrides`` may change the ``signal`` and ``backtest`` sections only (anything
-    else would change the predictions). The new run is recorded as a child of the original and counts as another look at the data."""
+    else would change the predictions). The new run is recorded as a child of the original and counts as another look at the data: it is an operation of the parent's study, and it inherits what the parent
+    read (a re-analysis of outcomes a plan or an exploratory run already exposed is recorded as one and is never untouched)."""
     bad = set(overrides or {}) - {"signal", "backtest", "name", "notes", "robustness"}
     if bad:
         raise ExperimentError(f"a re-backtest can change only the signal, backtest and robustness settings, not {sorted(bad)}: they would change the predictions")
     cfg0, ds, train, info = load_run(registry, exp_id)
     cfg = experiment_config(merge(cfg0, overrides or {}), name=(overrides or {}).get("name") or f"{cfg0['name']}-rebacktest")
-    return evaluate_run(cfg, ds, train, info, registry, progress, save, exp_id, explain=False, final_model=False, robustness=None)
+    kind = "signal_variation" if "signal" in (overrides or {}) or "backtest" not in (overrides or {}) else "portfolio_variation"
+    child_id = registry.new_id(cfg["name"])
+    study = rc.study_of_experiment(registry, exp_id) or rc.study_of(cfg0)
+    with rc.experiment_op(registry, cfg, kind, parent_experiment=exp_id, study=study, experiment_id=child_id, feature_hash=pv.digest(sorted(ds.features), 16), adopt_parent=False) as op:
+        holdout = rc.inherit_holdout(registry, [exp_id], child_id, "rebacktest")
+        exp = evaluate_run(cfg, ds, train, info, registry, progress, save, exp_id, explain=False, final_model=False, robustness=None, experiment_id=child_id, holdout=holdout,
+                           lineage={"study": study, "operation": op.op_key, "kind": kind, "counts": True, "parent": exp_id})
+        op.experiment_id = exp.id
+        op.finish_detail = {"parent": exp_id, "holdout": holdout.get("status")}
+    return exp

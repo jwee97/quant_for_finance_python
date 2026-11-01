@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.ml import config as mc, datasets as ds, ensembles as en, experiments as xe, monitoring as mon, optimization as opt, registry as rg, strategy_search as ss, training as tr, visualization as viz
+from src.ml import config as mc, datasets as ds, ensembles as en, experiments as xe, frozen_eval as fe, monitoring as mon, optimization as opt, registry as rg, research_controls as rc, strategy_search as ss, training as tr, visualization as viz
 from src.ml.datasets import _slice_bundle
 from src.ops.hpo import Categorical, Float, Int, LogFloat
 from tests.ml_helpers import make_bundle
@@ -53,8 +53,12 @@ def test_a_search_never_predicts_the_reserved_segments_and_deflates_its_winner(b
     d = runner._dataset_for(cfg)
     exp = xe.run_experiment(cfg, dataset=d, save=False, explain=False, final_model=False, stop_after="validation")
     assert set(exp.report["segments"]["stats"]) == {"train", "validation"} and exp.train.predictions.index.get_level_values(0).max() <= d.dates[tr.labelled_dates(d)[exp.train.plan.bounds["validation"][1] - 1]]
-    final = opt.finalize(BASE, out["best"]["params"], bundle=bundle, registry=reg, trials_extra=out["n_trials"], robustness=False)
-    assert set(final.report["segments"]["stats"]) == {"train", "validation", "test", "forward"} and final.report["trials"]["dataset_trials"] >= 9
+    with pytest.raises(rc.HoldoutAccessError, match="frozen evaluation plan"):                        # the test and forward segments are read only inside a frozen plan's evaluation
+        opt.finalize(BASE, out["best"]["params"], bundle=bundle, registry=reg, trials_extra=out["n_trials"], robustness=False)
+    done = fe.compat_finalize(reg, rc.study_of(mc.experiment_config(BASE)), BASE, [out["best"]["params"]], idempotency_key="t1-final", bundle=bundle, robustness=False)
+    final = done["_experiments"][0]
+    assert set(final.report["segments"]["stats"]) == {"train", "validation", "test", "forward"} and final.report["trials"]["dataset_trials"] == out["n_trials"] + 1, "the 8 trials plus the experiment, none counted twice"
+    assert final.report["holdout"]["status"] == "evaluated_under_plan" and done["deprecated"].startswith("finalize=true is deprecated")
     tpe = opt.tune(BASE, {"model.params.alpha": LogFloat(0.1, 1000.0)}, n_trials=12, method="tpe", seed=1, bundle=bundle, study_name="t2")
     assert tpe["n_trials"] == 12 and tpe["best"] is not None
 
@@ -112,12 +116,15 @@ def test_a_failed_candidate_is_counted_not_hidden(bundle):
 
 def test_the_three_stage_search_counts_every_trial_and_finalises_the_best(bundle, tmp_path):
     reg = rg.Registry(tmp_path / "ml")
-    out = ss.search(BASE, bundle=bundle, registry=reg, kinds=("ridge", "lasso", "online_ridge"), n_random=6, n_bayes=3, generations=1, population=4, top_k=1, seed=2, study_name="s1")
+    stopped = ss.search(BASE, bundle=bundle, registry=reg, kinds=("ridge", "lasso"), n_random=2, n_bayes=0, generations=0, top_k=1, seed=2, study_name="s0")
+    assert stopped["finalists"] == [] and "evaluation" not in stopped and not rc.access_log(reg), "by default a search stops at the end of the validation segment and reads no protected outcome"
+    out = ss.search(BASE, bundle=bundle, registry=reg, kinds=("ridge", "lasso", "online_ridge"), n_random=6, n_bayes=3, generations=1, population=4, top_k=1, seed=2, study_name="s1", finalize_top=True)
     assert out["stages"]["random"] == 6 and out["stages"]["bayes"] == 3 and out["stages"]["genetic"] >= 1 and out["n_trials"] == sum(out["stages"].values())
     assert out["best"]["score"] >= max(r["score"] for r in out["trials"] if np.isfinite(r["score"])) - 1e-12 and set(out["kinds"]) == {"ridge", "lasso", "online_ridge"}
     assert len(out["finalists"]) == 1 and set(out["finalists"][0]["segments"]) == {"train", "validation", "test", "forward"} and out["finalists"][0]["trials"] > out["n_trials"]
+    assert out["evaluation"]["status"] == "evaluated" and out["evaluation"]["plan"]["plan_id"].startswith("plan-")
     assert "not predicted" in out["note"] and out["selection"]["n_trials"] == out["n_trials"]
-    assert reg.trial_count(out["dataset_key"]) == out["n_trials"] + 1                                      # every trial and the finalist: all are looks at the same sample, whatever horizon they used
+    assert reg.trial_count(out["dataset_key"]) == stopped["n_trials"] + out["n_trials"] + 1                # every trial of both searches and the finalist: all are looks at the same sample, whatever horizon they used
     spaces = {k: ss.kind_space(k) for k in ("ridge", "lasso")}
     rng = np.random.default_rng(0)
     a = {"model.kind": "ridge", "model.params.alpha": 3.0, "signal.n": 2, "signal.holding_period": 5, "dataset.horizon": 5}

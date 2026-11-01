@@ -67,3 +67,60 @@ strategy-improvement experiments and the advanced modules (Releases 6 to 8). Gat
 - Strategy combination by online learning back-filled the first volatility from later days and filled gaps with the whole-sample volatility; it now makes no update until 20 days of trailing volatility exist.
 - The regime model's diagnostics described the prediction block as training data; they now stop at the fit window.
 - `idio_vol_63` declared a 63-day lookback but needs 126.
+
+# Release 3: research controls, reproducibility and protected holdouts
+
+## What the controls protect, and what they do not
+
+- They govern the application's research workflow: the API, the command line and the Python functions that go through `run_experiment` and the evaluation service. An owner of a local checkout can still edit the SQLite file
+  or call lower-level model code; stronger isolation needs process and storage permissions. The append-only tables refuse updates and deletes through SQL triggers, which stop accidents and casual rewrites, not a determined owner.
+- A holdout is *reserved* only when a plan reserves it. History that no plan covers is not protected: a direct run on it is allowed, recorded as an exposure and labelled exploratory, and that exposure makes a later reservation
+  of the same history not untouched. The default of `POST /api/ml/train` stays `full` (every segment) so existing clients keep working; `mode: development` is the validation-only mode. This is a deliberate compatibility
+  choice, recorded here rather than hidden: the specification asks for development mode by default.
+- Overlap is found by shared assets and intersecting dates, and by identical outcome content. Two histories that are economically the same but share no asset name and have different returns (an index and its ETF) are not.
+- `finalize: true` (deprecated) evaluates once as a *recorded re-use* when the history was already read, so the legacy flow keeps working; such a result can never count toward Gate B.
+- A claim that crashed leaves the holdout consumed: outcomes may have been read, and nothing proves they were not. It can be resumed with the same key.
+
+## Counts
+
+- Raw look counts count recorded tries (done, failed and cancelled). They are not estimates of independent trials. The legacy `trial_count` (experiments + search trials + tombstones) is still what the deflated Sharpe ratio
+  of a report uses; the study's raw count is reported beside it (`trials.study`). They can differ: the study counts feature searches, derived runs and combinations that the legacy count does not.
+- A study is by default the universe, not the cache key. Two unrelated hypotheses on the same universe share a count unless `study` separates them; that errs towards more deflation.
+- Experiments saved before Release 3 have no lineage, provenance, holdout status or gates evidence and say `not recorded`; none is reconstructed.
+
+## Provenance
+
+- The identity proves that the recorded inputs are the ones used; it does not prove they were right. Hashing covers the bundle the dataset was built from (when it was built in this version) and the dataset's own frames;
+  a dataset built before Release 3 has no bundle manifest and its identity rests on the dataset hashes alone.
+- Repeat-run tolerance is zero for the deterministic CPU families and a stated small number for neural and reinforcement-learning ones (`provenance.TOLERANCES`); a GPU run is looser. These are policies for comparing, not guarantees.
+- The environment hash includes package versions; a different BLAS or CPU can change floating-point results without changing any version.
+
+## Selection procedures
+
+- Each procedure is applied to the validation net returns of the study's recorded trials that kept a stream (`trials/<study>/`). Trials run before Release 3, failed trials and trials of other studies have no stream; the
+  procedure says how many tries it saw against how many were recorded. A study with no streams reports every procedure `unsupported`.
+- DSR treats returns as serially independent in the standard error (no autocorrelation correction); PBO needs at least 3 candidates and 4 blocks of 8 observations; the Reality Check and SPA use a stationary bootstrap with a
+  block length of about T^(1/3); FDR uses Benjamini-Yekutieli (valid under any dependence) for the pass criterion and reports Benjamini-Hochberg beside it. All test the validation sample on which the choice was made, not the holdout.
+- The criteria (alpha 0.05, DSR probability 0.95, PBO at most 0.5) are parameters stated with each result; they are a policy and can be changed in a plan.
+- Feature screens adjust the p-values of the rank-IC t-statistics for the number of features *tested*, rejected ones included (Holm or Benjamini-Yekutieli; Benjamini-Hochberg is refused because correlated features violate its assumption).
+  Features tried in other screens of the same study are separate looks in the lineage.
+
+## Null controls
+
+- The placebo shifts the returns of all assets together against the unchanged features (circularly, with one zero-return seam). It breaks the feature-return link and nothing else; it is not a null for volatility
+  forecasts, replications share the same features and are not independent samples of the market, and the interval treats them as independent draws of the procedure given the data.
+- A study with fewer replications than its predeclared minimum, or an interval wider than its predeclared precision, validates the plumbing only. The `ml-correctness` lane runs a handful; the scheduled `ml-heavy` workflow runs 200 on
+  a simulated market with no signal. That is evidence about the machinery, not about any real strategy.
+- The default pipeline under test is the platform's staged search over a few model kinds with the DSR and SPA gate and a one-sided test on the placebo test segment. A different pipeline needs its own study.
+
+## Gates
+
+- Gate A is "implemented as specified", not "profitable". The family requirements are the `ml-verify` ones listed in `gates.family_requirements`; a requirement not registered in this checkout is `missing`, never skipped.
+- Gate B cannot pass in this release: the realistic-execution evidence (Release 4) and the statistical-diagnostics evidence (Release 5) have no providers and report `blocked`. Gate C additionally needs prospective evidence and the
+  operating controls, which no release before 8 provides. The tests exercise the logic with injected providers; no strategy has earned any gate.
+- A stale decision (the code, data or policy changed) is shown as pending. The source-tree hash invalidates the provenance item of every experiment run before the change, which is intended.
+
+## Fixed in passing
+
+- The deflated Sharpe ratio of a finalised search counted every search trial twice (the registry already held them and `trials_extra` added them again). The API and `search` now pass the trials the registry does not hold.
+- The tuning verdict's comparison of the best and starting settings needs the evaluation: without `finalize` it is not computed, and the response says why.

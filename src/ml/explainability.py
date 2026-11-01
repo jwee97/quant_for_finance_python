@@ -88,10 +88,15 @@ def permutation_importance(train: TrainResult, ds: Dataset, max_folds: int = 8, 
     return out.sort_values("mean_drop", ascending=False)
 
 
-def feature_ic(ds: Dataset, target: str | None = None, features: list[str] | None = None, until=None) -> pd.DataFrame:
-    """Each feature's mean cross-sectional rank IC with the target over the labelled dates (up to ``until`` if given), its IC information ratio and the share of positive dates. A look at the
-    features is a look at the data: restrict it to the warm-up segment (``until``) when the result will guide which features to keep."""
+def feature_ic(ds: Dataset, target: str | None = None, features: list[str] | None = None, until=None, evaluation=None) -> pd.DataFrame:
+    """Each feature's mean cross-sectional rank IC with the target over the labelled dates up to ``until``, its IC information ratio and the share of positive dates. A look at the features is a look at the
+    data: ``until`` is required (the end of the development period, the warm-up segment when the result will guide which features to keep). Reading every date, the reserved test and forward outcomes among
+    them, needs the context of an authorised evaluation (``evaluation``), or it raises ``HoldoutAccessError``."""
+    from . import research_controls as rc
     from .evaluation import ic_summary, rank_ic_wide
+
+    if until is None and evaluation is None:
+        raise rc.HoldoutAccessError("a feature diagnostic that reads every date reads the test and forward outcomes: give `until` (the end of the development period) or the context of an authorised evaluation")
 
     t = target or ds.target
     wide_y = ds.Y[t].unstack("asset").reindex(columns=ds.assets)

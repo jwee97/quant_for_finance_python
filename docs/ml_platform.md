@@ -143,6 +143,21 @@ The correctness programme of spec v3 (progress, requirement-by-requirement trace
 - **Overlapping labels.** Labels one day apart share most of their returns. `split.sample_weighting: uniqueness` weights each training row by its average uniqueness (López de Prado); the report says how overlapped the labels were and whether the model used the weights (the linear, boosted-tree and regime models do; the others say `requested, not applied`).
 - **One artifact to answer from.** Each saved experiment also writes `model.qfb`, an inference bundle: the model, the exact columns it was fitted on (names, order, dtype kinds), a description of its preprocessing, its cutoffs and label convention. The forward tracker checks new data against it and refuses drift; a declared, versioned adapter can bring a renamed or reordered input into line and is recorded when used. A signal the tracker produces for a date the saved model had already seen is flagged as a replay. The experiment's HTML report and `ml-report` show the dataset audit, the treatment of overlapping labels and the fold lineage; a run saved before they were kept says `not recorded`.
 
+### Research controls and protected holdouts (Release 3)
+
+Every way of trying something on the data is recorded in a *study* before it runs: experiments, search and tuning trials, model choices, signal and portfolio variations, ensembles, meta-labelling, feature searches. Failed
+and cancelled tries stay in the count; deleting an experiment leaves a tombstone and lowers nothing. `GET /api/ml/lineage`, `ml-lineage` and the *Research controls* view show it.
+
+The test and forward segments are protected by **evaluation plans**: `POST /api/ml/evaluation-plan` (or `ml-plan create`) stores the candidates and rules, reserves the outcomes they would reveal and reports any overlap with an
+earlier look; freezing is an explicit step; `POST /api/ml/evaluate` (or `ml-evaluate`) is the one evaluation event, idempotent by key. A search or a tuning stops at the end of the validation segment; `finalize` is off by default and,
+when asked for, freezes a plan and evaluates it once. A history that a plan reserves cannot be read by a direct run (train with `mode: development`, which stops at validation); history no plan covers is recorded as an
+exposure and the run is labelled exploratory. A result computed outside a plan, or from a re-used history, is shown as not untouched and cannot count toward Strategy Validated.
+
+`ml-selection-tests` and `POST /api/ml/selection-tests/run` apply the deflated Sharpe ratio, PBO, the Reality Check, SPA and FDR control to a study's trials *where they apply* and keep each result or the reason it was not applied
+(`not_applicable`, `unsupported`, `insufficient`, `failed`); `ml-null-controls` runs the whole search pipeline on placebo data and reports the false-promotion rate with an exact interval, labelling a small run as a check of the plumbing.
+`ml-promotion` and `GET /api/ml/promotion-status` show the three gates, each computed on the server from persisted evidence; `ml-promote` and `POST /api/ml/promote` move a model only as far as that evidence allows, and production
+also needs a recorded human approval. Nothing here places an order or deploys anything.
+
 ## If LightGBM or XGBoost shows as "not available"
 
 The two boosting libraries are optional and need the OpenMP runtime of the operating system (`libgomp.so.1` on Linux). Where the library is missing, importing them fails with `OSError: libgomp.so.1: cannot open shared object file`. The Machine learning tab does not fail with it: the model list shows LightGBM and XGBoost as not available, with the reason, and every other model (linear, ridge, lasso, elastic net, logistic, random forest, scikit-learn's histogram gradient boosting, autoregression, Kalman, online and regime models) works as before. Scikit-learn's histogram gradient boosting is the same family of model as LightGBM and needs nothing extra.

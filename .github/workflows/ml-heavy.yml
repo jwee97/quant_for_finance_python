@@ -1,0 +1,51 @@
+name: ml-heavy
+
+# The checks that are too slow for every push and that claims about error control need: a null-control study of the whole search pipeline with enough replications to say something about the false-promotion
+# rate (the `ml-correctness` lane runs the same code with a handful, which validates the plumbing only). Scheduled weekly and runnable on demand before a promotion decision. The evidence (the registry
+# with its null study and replications, and the JSON verdict) is kept as an artifact. The data is a SIMULATED market made by tests/ml_helpers.py: it checks that the pipeline controls its error rate on data
+# with a known absence of signal, not that any real strategy works; bring your own prices with --prices to ask the question of your own data.
+
+on:
+  schedule:
+    - cron: "37 3 * * 0"
+  workflow_dispatch:
+    inputs:
+      replications:
+        description: "Replications of the null study (at least 100 for evidence about the error rate)"
+        default: "200"
+
+jobs:
+  null-controls:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-ml-no-ngboost.txt
+      - name: Install (CPU-only PyTorch)
+        run: |
+          pip install --index-url https://download.pytorch.org/whl/cpu "torch>=2.2"
+          pip install -r requirements-ml-no-ngboost.txt
+          pip install -e . --no-deps
+          pip install pytest
+      - name: A simulated market with no signal to find
+        run: |
+          mkdir -p artifacts/ml-heavy
+          python -c "from tests.ml_helpers import make_bundle; make_bundle(8, 1500, seed=5, alpha=0.0).prices.to_csv('artifacts/ml-heavy/prices.csv')"
+      - name: Null-control study (the whole search pipeline on placebo returns)
+        run: >
+          python -m src.cli ml-null-controls --registry artifacts/ml-heavy --prices artifacts/ml-heavy/prices.csv --kinds ridge lasso
+          --n-random 4 --replications ${{ github.event.inputs.replications || 200 }} --min-replications 100 --tolerance 0.10 --precision 0.10 --json > artifacts/ml-heavy/null-study.json
+      - name: Evidence
+        if: always()
+        run: python -m src.cli ml-verify --registry artifacts/ml-heavy --json > artifacts/ml-heavy/verification.json || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ml-heavy-evidence
+          path: artifacts/ml-heavy

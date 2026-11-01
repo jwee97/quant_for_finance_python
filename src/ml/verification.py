@@ -1,4 +1,4 @@
-"""Persisted verification evidence for the model-correctness requirements (spec v3, Releases 1 and 2).
+"""Persisted verification evidence for the model-correctness requirements (spec v3, Releases 1 to 3).
 
 A requirement is verified by the test files that check it. ``run_verification`` runs them (pytest in a subprocess, so a crash cannot take the app down), reads the JUnit report, and records one row per
 requirement in the registry: the status, the counts, the environment, a hash of the source files the requirement concerns, and the hash and path of the report that proves it. The status rules are strict:
@@ -39,6 +39,15 @@ SOURCES = {
     "sequences": ["src/ml/deep", "src/ml/graph.py", "src/ml/rl/agent.py", "src/ml/regimes.py", "src/ml/ensemble_models.py", "src/ml/causal.py"],
     "dependence": ["src/ml/intervals.py", "src/ml/training.py", "src/ml/models.py", "src/ml/datasets.py"],
     "bundle": ["src/ml/bundle.py", "src/ml/models.py", "src/ml/causal.py", "src/ml/monitoring.py", "src/ml/experiments.py"],
+    # Release 3: research controls, reproducibility and protected holdouts
+    "controls": ["src/ml/research_controls.py", "src/ml/frozen_eval.py", "src/ml/experiments.py", "src/ml/optimization.py", "src/ml/strategy_search.py", "src/ml/ensembles.py", "src/ml/registry.py",
+                 "src/ml/explainability.py", "src/webapp/ml_api.py"],
+    "provenance": ["src/ml/provenance.py", "src/ml/datasets.py", "src/framework/data.py"],
+    "nullstudy": ["src/ml/null_controls.py", "src/ml/selection.py", "src/ml/strategy_search.py"],
+    "selection": ["src/ml/selection.py", "src/stats/inference.py", "src/validation/multiple_testing.py"],
+    "featuresearch": ["src/ml/research_controls.py", "src/ml/selection.py"],
+    "gates": ["src/ml/gates.py", "src/ml/registry.py", "src/ml/verification.py", "src/ml/research_controls.py"],
+    "ci": [".github/workflows/ci.yml", ".github/workflows/ml-heavy.yml", "src/ml/verification.py"],
 }
 REQUIREMENTS = {                                                # requirement id -> (test files, source group)
     "P0-01": (["tests/test_ml_rl_accounting_reference.py"], "rl"),
@@ -64,6 +73,14 @@ REQUIREMENTS = {                                                # requirement id
     "P0-20": (["tests/test_ml_inference_parity.py"], "sequences"),
     "P0-21": (["tests/test_ml_dependence.py", "tests/test_ml_interval_splits.py"], "dependence"),
     "P0-22": (["tests/test_ml_inference_bundle.py", "tests/test_ml_product_surfaces.py"], "bundle"),
+    "P0-23": (["tests/test_ml_holdout_controls.py", "tests/test_ml_research_api.py", "tests/test_ml_research_cli.py"], "controls"),
+    "P0-24": (["tests/test_ml_provenance.py"], "provenance"),
+    "P0-25": (["tests/test_ml_holdout_controls.py", "tests/test_ml_research_api.py", "tests/test_ml_research_cli.py"], "controls"),
+    "P0-26": (["tests/test_ml_null_pipeline.py"], "nullstudy"),
+    "P0-27": (["tests/test_ml_statistical_eligibility.py"], "selection"),
+    "P0-28": (["tests/test_ml_holdout_controls.py", "tests/test_ml_statistical_eligibility.py"], "featuresearch"),
+    "P0-29": (["tests/test_ml_ci_policy.py", "tests/test_ml_promotion_gates.py", "tests/test_ml_registry_migrations.py"], "ci"),
+    "P1-26": (["tests/test_ml_holdout_controls.py"], "controls"),
 }
 
 

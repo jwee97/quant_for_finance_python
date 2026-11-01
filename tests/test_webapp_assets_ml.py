@@ -553,12 +553,15 @@ def test_a_saved_run_can_be_rebacktested_and_meta_labelled_without_refitting(mla
 
 
 def test_a_search_counts_every_trial_and_finalises_only_its_best(mlapp):
-    out = finished(mlapp, mlapp.extra_post["/api/ml/search"]({**BASE, "kinds": ["ridge", "lasso"], "n_random": 4, "n_bayes": 2, "generations": 1, "population": 4, "top_k": 1}))
+    plain = finished(mlapp, mlapp.extra_post["/api/ml/search"]({**BASE, "kinds": ["ridge"], "n_random": 2, "n_bayes": 0, "generations": 0, "population": 2, "top_k": 1}))
+    assert plain["finalists"] == [] and plain["finalize"]["requested"] is False and "evaluation-plan" in plain["finalize"]["note"], "a search does not read the test and forward segments unless asked"
+    out = finished(mlapp, mlapp.extra_post["/api/ml/search"]({**BASE, "kinds": ["ridge", "lasso"], "n_random": 4, "n_bayes": 2, "generations": 1, "population": 4, "top_k": 1, "finalize": True}))
+    assert out["evaluation"]["deprecated"].startswith("finalize=true is deprecated") and out["evaluation"]["plan"]["plan_id"].startswith("plan-")
     assert out["n_trials"] >= 6 and out["stages"]["random"] == 4 and out["stages"]["bayes"] == 2 and len(out["finalists"]) == 1 and "validation-only" in out["note"]
     fin = out["finalists"][0]
     assert fin["trials"] >= out["n_trials"], "the finalist's deflated Sharpe counts every trial of the search"
     trials = _safe(mlapp.extra_get["/api/ml/trials"]({"study": "search"}))
-    assert len(trials["trials"]) == out["n_trials"] and max(trials["n_total"].values()) >= out["n_trials"]
+    assert len(trials["trials"]) == plain["n_trials"] + out["n_trials"] and max(trials["n_total"].values()) >= out["n_trials"]
     for bad, text in (({"kinds": ["magic"]}, "kinds must"), ({"n_random": 0, "n_bayes": 1}, "at least two trials"), ({"n_random": 500}, "between 0 and 30")):
         with pytest.raises(ApiError, match=text):
             mlapp.extra_post["/api/ml/search"]({**BASE, **bad})
@@ -567,6 +570,9 @@ def test_a_search_counts_every_trial_and_finalises_only_its_best(mlapp):
 def test_tuning_one_model_searches_its_settings_and_can_finalise_the_best(mlapp):
     out = finished(mlapp, mlapp.extra_post["/api/ml/tune"]({**BASE, "model": {"kind": "ridge"}, "n_trials": 5, "finalize": True}))
     assert out["n_trials"] == 5 and out["best"] and "model.params.alpha" in out["space"] and out["final"]["report"]["trials"]["dataset_trials"] >= 5
+    assert out["evaluation"]["status"] == "evaluated" and "deprecated" in out["evaluation"]["deprecated"] and out["final"]["report"]["holdout"]["status"] == "evaluated_under_plan"
+    default = finished(mlapp, mlapp.extra_post["/api/ml/tune"]({**BASE, "model": {"kind": "ridge"}, "n_trials": 4}))                       # the request of the old shape, without finalize: it stops at validation now
+    assert default["final"] is None and default["evaluation"] is None and default["finalize"]["requested"] is False and "evaluation-plan" in default["finalize"]["note"]
     with pytest.raises(ApiError, match="no hyperparameters"):
         mlapp.extra_post["/api/ml/tune"]({**BASE, "model": {"kind": "linear"}})
     with pytest.raises(ApiError, match="method must be random, tpe or bayes"):
@@ -581,7 +587,7 @@ def test_a_tuning_with_an_effort_starts_from_the_forms_settings_and_says_in_word
     assert [r["path"] for r in rows] == ["model.params.alpha", "dataset.horizon", "signal.method", "signal.n", "signal.holding_period", "backtest.rebalance"]
     assert rows[0]["kind"] == "log" and rows[0]["low"] == 0.1 and "held back from fitting noise" in rows[0]["text"] and rows[2]["kind"] == "categorical" and "linear" not in catalog["tune_spaces"]
     assert [e["id"] for e in catalog["tune_efforts"]] == ["quick", "standard", "thorough"] and catalog["tune_efforts"][0]["trials"] == 8
-    out = finished(mlapp, mlapp.extra_post["/api/ml/tune"]({**BASE, "model": {"kind": "ridge", "params": {"alpha": 30}}, "effort": "quick"}))
+    out = finished(mlapp, mlapp.extra_post["/api/ml/tune"]({**BASE, "model": {"kind": "ridge", "params": {"alpha": 30}}, "effort": "quick", "finalize": True}))
     assert out["n_trials"] == 8 and out["start_number"] == 0 and out["effort"] == "quick" and out["start"]["model.params.alpha"] == 30 and out["start"]["signal.n"] == 2
     assert out["trials"][0]["params"] == out["start"], "the form's own settings are the first trial"
     assert out["order"] == [r["path"] for r in rows] and out["kind"] == "ridge" and out["texts"]["model.params.alpha"].startswith("How strongly")
@@ -614,7 +620,7 @@ def test_stop_ends_a_tuning_after_the_trial_it_is_on_and_the_best_so_far_is_stil
 
     opt.TrialRunner.evaluate = slow
     try:
-        started = mlapp.extra_post["/api/ml/tune"]({**BASE, "model": {"kind": "ridge"}, "effort": "standard"})
+        started = mlapp.extra_post["/api/ml/tune"]({**BASE, "model": {"kind": "ridge"}, "effort": "standard", "finalize": True})
         t0 = time.time()
         while time.time() - t0 < 60 and "trial 3" not in mlapp.job(started["job"])["message"]:
             time.sleep(0.05)
@@ -646,8 +652,13 @@ def test_forward_testing_records_paper_signals_settles_them_and_flags_replayed_h
 def test_models_move_through_stages_and_an_experiment_can_be_deleted_only_when_confirmed(mlapp, runs):
     models = mlapp.extra_get["/api/ml/models"]({})["models"]
     mid = next(m["id"] for m in models if m["experiment_id"] == runs["hgb"]["id"])
-    assert mlapp.extra_post["/api/ml/promote"]({"model_id": mid, "stage": "production"})["stage"] == "production"
-    assert [m["id"] for m in mlapp.extra_get["/api/ml/models"]({"stage": "production"})["models"]] == [mid]
+    with pytest.raises(ApiError, match="cannot move to production: Gate A is"):                           # Release 3: the server decides from persisted evidence, and a request cannot supply it
+        mlapp.extra_post["/api/ml/promote"]({"model_id": mid, "stage": "production", "approval": {"actor": "me", "note": "ship"}})
+    with pytest.raises(ApiError, match="does not take"):
+        mlapp.extra_post["/api/ml/promote"]({"model_id": mid, "stage": "production", "gates": {"A": "passed"}})
+    assert mlapp.extra_post["/api/ml/promote"]({"model_id": mid, "stage": "candidate"})["stage"] == "candidate"
+    assert mlapp.extra_post["/api/ml/promote"]({"model_id": mid, "stage": "archived"})["stage"] == "archived"
+    assert [m["id"] for m in mlapp.extra_get["/api/ml/models"]({"stage": "archived"})["models"]] == [mid]
     with pytest.raises(ApiError, match="stage must be"):
         mlapp.extra_post["/api/ml/promote"]({"model_id": mid, "stage": "live"})
     with pytest.raises(ApiError, match="unknown model"):

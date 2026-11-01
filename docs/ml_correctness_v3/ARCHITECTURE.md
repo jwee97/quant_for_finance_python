@@ -97,3 +97,67 @@ model's own `QFM1` bytes) checks schema drift strictly and applies declared adap
 | Verification registry | 23 requirements (P0-01 to P0-22 and P0-30) |
 | Changed semantics | training rows are chosen by label interval (the position rule it replaces was at least as strict on regular calendars: results are identical there); the strategy combination `online_learning` no longer back-fills early volatility (`params.volatility_fill` says `causal_v2`); `idio_vol_63` declares a window of 126; the regime model's diagnostics describe the fit window, not the block it predicts |
 | New optional settings (absent from the defaults, so no existing configuration hash changes) | `dataset.sessions`, `split.sample_weighting` |
+
+# Release 3: research controls, reproducibility and protected holdouts
+
+## What was reused
+
+The experiment registry (`src/ml/registry.py`, SQLite with additive versioned migrations) is the only authority; no second database, job queue or registry exists. The statistical procedures are the platform's own
+(`stats/inference.py`, `validation/multiple_testing.py`, `ops/hpo.py`); the new layer decides whether each one applies and records the answer. The job mechanism, the response envelopes and the `MlApi` route tables carry the
+new endpoints; the dashboard gets one new view in the Machine Learning workspace (Research controls), not a new top-level tab.
+
+## Where the pieces live
+
+| Concern | Module | Persisted in |
+| --- | --- | --- |
+| Study lineage (every try, before it runs) | `research_controls.py` (`begin`, `experiment_op`, `lineage`, `raw_looks`) | `research_studies`, `lineage_events` (append-only), `experiment_tombstones` |
+| Provenance identity | `provenance.py` | `provenance` (append-only) and `experiments/<id>/provenance.json` |
+| Evaluation plans, reservations, the access ledger | `research_controls.py` (`create_plan`, `reserve`, `freeze_plan`, `begin_evaluation`, `open_outcome_access`), `frozen_eval.py` | `evaluation_plans` (immutable), `plan_events`, `holdout_reservations`, `holdout_access_log` (append-only) |
+| Selection-test eligibility | `selection.py` | `selection_evidence` (append-only), trial return streams in `trials/<study>/` |
+| Null-control studies | `null_controls.py` | `null_studies`, `null_replications` |
+| Gates and promotion | `gates.py`, `Registry.promote` | `gate_decisions` (append-only), `stage_changes` |
+
+## Lineage
+
+An *operation* is registered (`registered`, then `running`) before the work starts and ends as `done`, `failed` or `cancelled`; each state is an appended event. `counts=0` marks an operation that re-runs a counted try
+(the finalisation of a trial, the evaluation of a frozen plan); it has a `parent_key` and is never counted twice. An enclosing operation that *adopts* its experiments (a search trial, a finalisation) is the experiment: the
+inner `run_experiment` records the experiment id on it instead of registering another. A study is by default the universe the data comes from, not a cache key: changing the feature set, target, dates or the name of an
+experiment keeps the history; `study` in the configuration names one, and `link_study` records that one continues another. Deleting an experiment leaves a tombstone and the legacy `trial_count` includes tombstoned
+experiments, so deletion lowers no count. Raw look counts are counts of recorded tries; they are not estimates of independent trials, which the selection tests report (`effective_trials`).
+
+## Holdout lifecycle
+
+1. *Development*: `stop_after="validation"` runs predict nothing after the validation segment (`guard_development` asserts it). Search, tuning and the dataset diagnostics are development: `feature_ic` refuses to read every date without
+   an explicit horizon or an authorised context.
+2. *Plan*: `create_plan` stores the full merged configurations of the baseline and candidates, the signal/execution/retraining rules, metrics, uncertainty method, selection adjustment and decision policy. A plan with several
+   candidates must declare its selection treatment. Plans are immutable (a trigger refuses updates).
+3. *Reserve*: `reserve` binds the plan to the assets, dates and a hash of the realised returns of its test and forward segments, and records every overlap with an earlier reservation, evaluation, exposure or identical
+   outcome content (renamed assets). `untouched` is false when any overlapping look was consumed.
+4. *Freeze*: the explicit transition; refused without a reservation.
+5. *Evaluate*: `begin_evaluation` runs in one write transaction: an idempotency key returns the stored result on a retry, `in_progress` while claimed, and is takeable with `resume`; a different key on a consumed plan or a
+   history with consumed overlaps is refused unless `allow_reuse`, which is recorded as `evaluate_reuse` and reported as not untouched. A failed evaluation stays consumed.
+6. *Exposure*: a direct run that predicts the test and forward segments is refused when a reservation covers that history; otherwise it is recorded as an `exposure` and its report says `exposed_exploratory`. Derived runs
+   (re-backtest, meta-labelling) inherit what their parents read; combinations record an `ensemble` operation with their parents.
+
+The legacy `finalize: true` request on a tuning or a search is routed through the same machinery (`frozen_eval.compat_finalize`): it freezes a plan from the chosen candidates, evaluates it once as a recorded re-use where the
+history was already read, and says so in its response (`deprecated`, `evaluation`). `finalize` is now off by default.
+
+## Provenance
+
+`provenance.input_manifest` hashes the whole history of every input of a market bundle (prices, returns, mask, high, low, volume, every macro series, marks, and the descriptions of how values became public); the dataset
+manifest hashes the dataset's own frames and policies. Values are hashed as bytes and dates as UTC nanoseconds, so the identity does not depend on the datetime unit pandas chose. The identity covers data, source tree,
+configuration, seed, features, folds and output contract; the environment and hardware are recorded beside it, not in it. `datasets.bundle_fingerprint` stays a cache key and says so.
+
+## Gates
+
+`gates.evaluate` computes Gates A, B and C from the persisted evidence; `decide` appends a decision when status, staleness, policy or evidence changes. A is the family's `ml-verify` evidence (current for the source it
+hashed), provenance for the checked-out code, lineage, output contract and a loadable bundle (inherited from a parent for a re-backtest). B adds the frozen plan with an untouched evaluation, applicable and met selection
+controls, a sufficient null study, and the evidence of Releases 4 and 5 (placeholders that report `blocked` until those providers exist). C adds prospective evidence and the operating controls (placeholders). `Registry.promote`
+refuses `staging` without A and B, and `production` without A, B, C and a recorded human approval.
+
+## Version changes (Release 3)
+
+* Registry migrations 2 to 6 (additive; nothing existing is rewritten). A registry from before them opens, keeps every row and gains the tables.
+* `run_experiment(..., evaluation=, study=, entry_point=, kind=)`; `evaluate_run(..., holdout=, lineage=)`; every saved report gains `holdout`, `lineage`, `reproducibility`, `trials.study`.
+* `search(finalize_top=False)` and the API `finalize` default to off. `opt.finalize` with a registry needs an evaluation context. `explainability.feature_ic` needs `until`.
+* `Registry.promote(model_id, stage, actor=, note=, approval=)` returns the decision and can raise `PromotionBlocked`.

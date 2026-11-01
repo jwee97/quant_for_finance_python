@@ -311,6 +311,20 @@ def combine_experiments(registry, ids: list[str], methods: tuple = METHODS, look
     The regime-based methods use the volatility regime of the first experiment's universe (they are listed under ``errors`` when its saved panel is unavailable)."""
     if len(ids) < 2:
         raise ValueError("choose at least two experiments to combine")
+    from . import research_controls as rc
+
+    study = rc.study_of_experiment(registry, ids[0]) or rc.study_of(registry.report(ids[0])["config"])
+    with rc.begin(registry, "ensemble", study, parent_key=rc.op_key_of_experiment(registry, ids[0]), counts=True, seed=int(seed),
+                  detail={"experiments": list(ids), "methods": list(methods), "lookback": lookback, "rebalance": rebalance}) as op:
+        out = _combine(registry, ids, methods, lookback, rebalance, min_history, risk_aversion, eta, seed)
+        inherited = rc.inherit_holdout(registry, ids, op.op_key, "combine")
+        out["lineage"] = {"study": study, "operation": op.op_key, "parents": inherited["parents"], "holdout": inherited["status"], "untouched": inherited.get("untouched"),
+                          "note": "a combination is another look at its parents' streams: it counts in the study and inherits what they read (a combination of runs whose test and forward outcomes were read is a re-analysis of them)"}
+        op.finish_detail = {"n_methods": len(methods)}
+    return out
+
+
+def _combine(registry, ids: list[str], methods: tuple, lookback: int, rebalance: int, min_history: int, risk_aversion: float, eta: float, seed: int) -> dict:
     R, labels, names = load_streams(registry, ids)
     regimes = None
     try:
@@ -334,6 +348,7 @@ def combine_experiments(registry, ids: list[str], methods: tuple = METHODS, look
 def meta_label_experiment(registry, exp_id: str, model_kind: str = "logistic", params: dict | None = None, signal: dict | None = None, progress=None, save: bool = True, min_rows: int = 400, seed: int = 0):
     """Meta-label a saved experiment: fit the secondary model on its out-of-sample bets, size the book with it (proportional to the meta score by default: the primary's side, no bet where the secondary
     doubts it) and run the result through the same backtest, segments and diagnostics. Returns ``(experiment, meta summary)``; the new run is a child of the original and counts as another look."""
+    from . import research_controls as rc
     from .config import experiment_config, merge
     from .experiments import ExperimentError, evaluate_run, load_run
 
@@ -349,7 +364,16 @@ def meta_label_experiment(registry, exp_id: str, model_kind: str = "logistic", p
         raise ExperimentError(f"the secondary model never had {min_rows} past bets to learn from: the primary's out-of-sample run is too short for meta-labelling")
     cfg = experiment_config(merge(cfg0, {"signal": {"method": "proportional", **(signal or {})}, "notes": f"meta-labelled version of {exp_id} ({model_kind} secondary model)"}), name=f"{cfg0['name']}-meta")
     sized = replace(train, predictions=flat, insample=pd.Series(dtype=float), probabilities=None, models=[], fold_rows=[], importance=pd.DataFrame(), task="regression", kind=f"meta({train.kind})")
-    exp = evaluate_run(cfg, ds, sized, info, registry, progress, save, exp_id, explain=False, final_model=False, robustness=False)
+    from . import provenance as pv
+
+    child_id = registry.new_id(cfg["name"])
+    study = rc.study_of_experiment(registry, exp_id) or rc.study_of(cfg0)
+    with rc.experiment_op(registry, cfg, "meta_label", parent_experiment=exp_id, study=study, experiment_id=child_id, feature_hash=pv.digest(sorted(ds.features), 16), adopt_parent=False) as op:
+        holdout = rc.inherit_holdout(registry, [exp_id], child_id, "meta_label")
+        exp = evaluate_run(cfg, ds, sized, info, registry, progress, save, exp_id, explain=False, final_model=False, robustness=False, experiment_id=child_id, holdout=holdout,
+                           lineage={"study": study, "operation": op.op_key, "kind": "meta_label", "counts": True, "parent": exp_id})
+        op.experiment_id = exp.id
+        op.finish_detail = {"parent": exp_id, "holdout": holdout.get("status")}
     return exp, {k: meta[k] for k in ("auc", "n_models", "coverage", "primary_hit_rate", "meta_hit_rate")}
 
 
