@@ -143,6 +143,8 @@ def _print_run(exp, registry: Registry | None) -> None:
     h = r.get("holdout") or {}
     if h.get("status"):
         print(f"holdout: {h['status']}" + (f" - {h['note']}" if h.get("note") else ""))
+    if (r.get("execution") or {}).get("mode"):
+        print(f"execution mode: {r['execution']['mode']}")
     ic = r["ic"]["all"]
     print(f"\nrank IC {ic['mean']:.4f} (IR {_fmt(ic['ir'])}, t {_fmt(ic['t'])}, hit rate {_fmt(ic['hit_rate'], 'pct')}); turnover {_fmt(r['metrics']['oos'].get('ann_turnover'))}x a year; "
           f"generalisation score {_fmt(r['overfit']['generalization_score'])}")
@@ -196,6 +198,66 @@ def cmd_backtest(args, config) -> int:
     return 0
 
 
+def text_execution(block: dict, parent: str | None = None) -> str:
+    """The evaluation mode of a result as plain text: what it assumes, what it earned before and after costs, how it reconciles, and what qualifies the claim."""
+    lines = [f"execution mode: {block.get('mode')}" + (f" (a re-run of {parent})" if parent else "")]
+    if block.get("mode") != "realistic_cash_equity":
+        lines.append("  assumptions: " + "; ".join(f"{k} {v}" for k, v in (block.get("assumptions") or {}).items()))
+        lines.append("  not modelled: " + ", ".join(block.get("not_modelled", [])))
+        lines.append("  cannot support: " + ", ".join(block.get("cannot_support", [])) + ("" if block.get("recorded", True) else f"  [{block.get('note')}]"))
+        return "\n".join(lines)
+    t, g, rec = block["timeline"], block["gross_net"], block["reconciliation"]
+    lines += [f"  timeline: decided at the close, filled at the close {t['delay_sessions']} session(s) later ({t['convention']}, sizing {t['sizing']}); the lag is applied once, by the adapter",
+              f"  price convention: {block['price_convention']}",
+              f"  gross P&L {g['gross_pnl']:,.0f} - costs {g['costs_total']:,.0f} = net {g['net_pnl']:,.0f}  (net {g['net_return']:+.2%} of capital {block['assumptions']['capital']:,.0f}; costs {g['costs_pct_of_capital']:.2%})",
+              "  costs: " + ", ".join(f"{k} {v:,.0f}" for k, v in block["costs"].items() if v),
+              f"  reconciliation: gross less costs vs net gap {rec['gap']:.2e} ({'reconciled' if rec['reconciled'] else 'DOES NOT RECONCILE'}); ledger identities {'hold' if rec.get('ledger_ok') else 'FAIL'}",
+              f"  turnover {block['ann_turnover']:.1f}x a year; {block['n_fills']} fills; orders {block['order_states']}"]
+    cap = block.get("capacity", {})
+    if cap.get("levels"):
+        lines.append(f"  capacity (last target, {cap['date']}): " + "; ".join(f"{c['capital']:,.0f}: {c['fill_share']:.0%} filled, {c['impact_bps_of_traded']:.1f} bps impact" for c in cap["levels"]))
+    else:
+        lines.append(f"  capacity: not established ({cap.get('reason', '')})")
+    cmp = block.get("comparison_with_vectorized")
+    if cmp:
+        lines.append(f"  against the vectorized engine on the same weights: total return {cmp['vectorized_total_return']:+.2%} -> {cmp['realistic_total_return']:+.2%}, Sharpe {cmp['vectorized_sharpe']:.2f} -> {cmp['realistic_sharpe']:.2f}")
+    lines.append(f"  claim: {block['capability']['realistic_execution_claim']}" + (" - blocked by: " + "; ".join(block["capability"]["blockers"]) if block["capability"]["blockers"] else ""))
+    lines += [f"  limit: {x}" for x in block.get("limitations", [])]
+    return "\n".join(lines)
+
+
+def cmd_realistic(args, config) -> int:
+    registry = Registry(args.registry)
+    ex: dict = {"mode": "realistic_cash_equity"}
+    for key, value in (("capital", args.capital), ("commission_bps", args.commission_bps), ("half_spread_bps", args.half_spread_bps), ("slippage_bps", args.slippage_bps), ("adv_window", args.adv_window),
+                       ("sizing", args.sizing), ("expiry_sessions", args.expiry_sessions), ("cash_rate", args.cash_rate), ("financing_spread", args.financing_spread), ("shorts", args.shorts),
+                       ("min_adv_dollars", args.min_adv_dollars), ("min_listing_days", args.min_listing_days)):
+        if value is not None:
+            ex[key] = value
+    if args.participation is not None:
+        ex["max_participation"] = None if args.participation <= 0 else args.participation                      # 0 means no limit, which the report then states
+    if args.impact_coefficient is not None:
+        ex["impact"] = {"coefficient": args.impact_coefficient}
+    over: dict = {"execution": ex}
+    if args.name:
+        over["name"] = args.name
+    try:
+        bundle = None
+        if args.prices:
+            bundle, _ = _bundle_and_info(args, config)
+        exp = rebacktest(registry, args.experiment, over, save=not args.no_save, bundle=bundle, config=config)
+    except (ExperimentError, RegistryError, ValueError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    block = exp.report["execution"]
+    if args.json:
+        print(json.dumps(jsonable(block), indent=1))
+        return 0
+    print(f"experiment {exp.id}: {exp.report['name']}")
+    print(text_execution(block, args.experiment))
+    return 0
+
+
 def text_report(report: dict) -> str:
     """One experiment as plain text."""
     out = [f"{report['name']}  [{report['id']}]", f"  created {report['created']}; config {report['config_hash']}; data {report['provenance']['source']} ({report['provenance']['label']}); "
@@ -225,6 +287,7 @@ def text_report(report: dict) -> str:
     if report.get("reproducibility", {}).get("identity"):
         rp = report["reproducibility"]
         out.append(f"provenance: identity {rp['identity'][:16]}; data {rp['data_hash'][:12]}, code {rp['code_hash'][:12]} ({rp.get('git_commit') and rp['git_commit'][:8] or rp.get('git_note')}), environment {rp['environment_hash'][:12]}")
+    out += ["", text_execution(report["execution"])] if report.get("execution") else ["", "execution mode: vectorized_legacy (this experiment was saved before execution modes were recorded)"]
     dep = report.get("dependence")
     if dep:
         out.append(f"overlapping labels: mean uniqueness {_fmt(dep.get('mean_uniqueness'))}; treatment {dep['treatment']}" + (f" ({'; '.join(dep['notes'])})" if dep.get("notes") else ""))
@@ -493,6 +556,15 @@ def register(sub) -> None:
     p.add_argument("--study", help="the study this try belongs to (default: the universe)"); p.set_defaults(func=cmd_train)
     p = sub.add_parser("ml-backtest", help="re-run a saved experiment's predictions under different position rules, rebalancing or costs (no refit)")
     p.add_argument("experiment"); common(p, data=False); signal_options(p); p.add_argument("--no-save", action="store_true"); p.set_defaults(func=cmd_backtest)
+    p = sub.add_parser("ml-realistic", help="re-run a saved experiment's predictions through orders, fills and the ledger (the realistic execution mode), as a child run")
+    p.add_argument("experiment"); common(p, data=False); p.add_argument("--prices", help="a price CSV to take the volume from (default: the universe the experiment used)"); p.add_argument("--universe", default="etf")
+    p.add_argument("--capital", type=float); p.add_argument("--participation", type=float, help="the share of the prior average volume one session may trade (0 = no limit, which is then stated)")
+    p.add_argument("--commission-bps", type=float, dest="commission_bps"); p.add_argument("--half-spread-bps", type=float, dest="half_spread_bps"); p.add_argument("--slippage-bps", type=float, dest="slippage_bps")
+    p.add_argument("--impact-coefficient", type=float, dest="impact_coefficient"); p.add_argument("--adv-window", type=int, dest="adv_window"); p.add_argument("--sizing", choices=("decision_close", "fill_time"))
+    p.add_argument("--expiry-sessions", type=int, dest="expiry_sessions"); p.add_argument("--cash-rate", type=float, dest="cash_rate"); p.add_argument("--financing-spread", type=float, dest="financing_spread")
+    p.add_argument("--shorts", choices=("unconstrained", "refuse"), help="refuse: strict validation, a new short without a borrow record is refused"); p.add_argument("--min-adv-dollars", type=float, dest="min_adv_dollars")
+    p.add_argument("--min-listing-days", type=int, dest="min_listing_days")
+    p.add_argument("--name"); p.add_argument("--no-save", action="store_true", dest="no_save"); p.add_argument("--json", action="store_true"); p.set_defaults(func=cmd_realistic)
     p = sub.add_parser("ml-report", help="the leaderboard, or one experiment in full")
     p.add_argument("experiment", nargs="?"); common(p, data=False); p.add_argument("--list", action="store_true"); p.add_argument("--sort", default="validation.sharpe"); p.add_argument("--limit", type=int, default=20)
     p.add_argument("--json", action="store_true"); p.add_argument("--html", nargs="?", const="-", help="print the path of the HTML report, or copy it to a file"); p.set_defaults(func=cmd_report)

@@ -174,6 +174,14 @@ def _integrity_html(report: dict) -> str:
                    + (f" Commit {html.escape(repro['git_commit'][:10])}." if repro.get("git_commit") else f" {html.escape(str(repro.get('git_note') or ''))}") + "</p>")
     elif repro:
         out.append("<p class=\"note\">Provenance: not recorded (this experiment was saved before provenance records existed).</p>")
+    exe = report.get("execution")
+    if exe:
+        if exe.get("mode") == "realistic_cash_equity":
+            gn, rec = exe.get("gross_net", {}), exe.get("reconciliation", {})
+            out.append(f"<p><b>Execution mode:</b> realistic (orders, fills and the ledger). Gross {gn.get('gross_pnl', 0):,.0f} less costs {gn.get('costs_total', 0):,.0f} = net {gn.get('net_pnl', 0):,.0f}; "
+                       f"accounting {'reconciles' if rec.get('reconciled') else 'DOES NOT reconcile'}. " + html.escape("; ".join(exe.get("limitations", [])[:3])) + "</p>")
+        else:
+            out.append("<p><b>Execution mode:</b> vectorized legacy (a cost per unit of turnover; no orders, participation limits, cash, borrow or corporate actions). It cannot support claims about capacity or executable costs.</p>")
     out.append("<ul>" + "".join(f"<li>{html.escape(line)}</li>" for line in audit_lines(audit)) + "</ul>")
     if dep:
         notes = f" ({html.escape('; '.join(dep['notes']))})" if dep.get("notes") else ""

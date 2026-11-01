@@ -179,7 +179,7 @@ def test_gate_b_stays_blocked_while_the_later_releases_evidence_has_no_provider(
     pass_all_checks(reg)
     res = gates.evaluate(reg, exp_id)
     b = res["gates"]["B"]
-    assert item(res, "B", "realistic_net_oos")["status"] == "blocked" and "Release 4" in item(res, "B", "realistic_net_oos")["reason"]
+    assert item(res, "B", "realistic_net_oos")["status"] == "blocked" and "vectorized_legacy run" in item(res, "B", "realistic_net_oos")["reason"], "a vectorized result cannot pass what it does not model (Release 4)"
     assert item(res, "B", "statistical_diagnostics")["status"] == "blocked" and "Release 5" in item(res, "B", "statistical_diagnostics")["reason"]
     assert b["status"] == "blocked" and res["gates"]["C"]["status"] == "blocked" and any("requires Gate B" in r for r in res["gates"]["C"]["reasons"])
 

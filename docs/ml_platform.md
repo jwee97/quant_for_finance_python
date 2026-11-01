@@ -158,6 +158,20 @@ exposure and the run is labelled exploratory. A result computed outside a plan, 
 `ml-promotion` and `GET /api/ml/promotion-status` show the three gates, each computed on the server from persisted evidence; `ml-promote` and `POST /api/ml/promote` move a model only as far as that evidence allows, and production
 also needs a recorded human approval. Nothing here places an order or deploys anything.
 
+### Executable trading and reconciled accounting (Release 4)
+
+A result is evaluated in one declared mode. With no `execution` section it is **vectorized_legacy** (the platform's backtest engine: a cost per unit of turnover; no orders, capacity, cash or borrow). With `execution.mode: realistic_cash_equity` the same weights go through orders, fills and the portfolio ledger.
+A realistic result is always a child run of the experiment it re-runs:
+
+```
+quant ml-realistic <experiment> --capital 1000000 --participation 0.05 [--prices prices.csv] [--shorts refuse] [--min-adv-dollars 5e6 --min-listing-days 60]
+POST /api/ml/rebacktest {"id": "...", "execution": {"mode": "realistic_cash_equity", "capital": 1000000, "max_participation": 0.05, "impact_coefficient": 0.5}}
+GET  /api/ml/trading-diagnostics?id=...
+```
+
+The report (`report["execution"]`) carries the timeline from decision to fill (the lag is applied once), the price convention, gross and net, the itemised costs, turnover, leverage, equity before and after costs, capacity at capital levels declared before the run, the accounting reconciliation, a comparison with the vectorized engine on the same days, the
+capability report (what the data and adapter support, the blockers and the limitations) and a manifest of the order, fill and journal files with their hashes. Costs default to the backtest section's; the impact coefficient is an assumption unless calibrated, and says so. Gate B reads this evidence; a vectorized result cannot pass it.
+
 ## If LightGBM or XGBoost shows as "not available"
 
 The two boosting libraries are optional and need the OpenMP runtime of the operating system (`libgomp.so.1` on Linux). Where the library is missing, importing them fails with `OSError: libgomp.so.1: cannot open shared object file`. The Machine learning tab does not fail with it: the model list shows LightGBM and XGBoost as not available, with the reason, and every other model (linear, ridge, lasso, elastic net, logistic, random forest, scikit-learn's histogram gradient boosting, autoregression, Kalman, online and regime models) works as before. Scikit-learn's histogram gradient boosting is the same family of model as LightGBM and needs nothing extra.

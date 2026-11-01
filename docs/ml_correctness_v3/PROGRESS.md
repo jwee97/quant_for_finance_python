@@ -1,9 +1,10 @@
 # ML v3 implementation progress
 
-Current release: **3 — research controls, reproducibility and protected holdouts** (delivered in part; the traceability table says, row by row, what is and is not done). Release 1 (numerical and model correctness) and Release 2 (causal data and training
-integrity) were delivered earlier, also in part. Releases 4 to 8 are `not_started` at this commit.
-Checkout: branch `claude/multi-asset-quant-platform-uwqect`. Release 1 is commit `ae5a041` (CI run 100: every job green). Release 2 is `dad795e` and the closing `31e5cd7` (CI run 103: every job green). Release 3 is the commit that follows `d7fc4aa`, which
-recorded the Release 2 CI result; its own CI result is recorded in the next release's progress note once the run completes. Source tree hash of the code each check hashed: the `subject_hash` of the check in the registry (`ml-verify --json`).
+Current release: **4 — executable trading and reconciled accounting** (delivered in part; the traceability table says, row by row, what is and is not done). Releases 1 (numerical and model correctness), 2 (causal data and training integrity) and 3 (research controls, reproducibility
+and protected holdouts) were delivered earlier, also in part. Releases 5 to 8 are `not_started` at this commit.
+Checkout: branch `claude/multi-asset-quant-platform-uwqect`. Release 1 is commit `ae5a041` (CI run 100: every job green). Release 2 is `dad795e` and the closing `31e5cd7` (CI run 103: every job green). Release 3 is `71b77ca` (CI run 105: eight of ten jobs green; the two red
+ones are described under "What running the checks found"). Release 4 is the commit that follows `71b77ca`; its own CI result is recorded in the next release's progress note once the run completes. Source tree hash of the code each check hashed: the `subject_hash` of the check in
+the registry (`ml-verify --json`).
 Updated: 2026-11-01.
 
 ## What exists now
@@ -63,10 +64,31 @@ Updated: 2026-11-01.
   holdout state, the provenance identity and the lineage count.
 - **Verification registry**: 31 requirements (P0-01 to P0-30 and P1-26) with their test files and source groups; the Release 3 test files are in the `ml-base` and `replit-python` CI lists and run in the blocking `ml-correctness` lane.
 
+### Release 4 (executable trading and reconciled accounting)
+
+- **Two declared evaluation modes** (`execution.py`, `config.py`, `experiments.py`): `vectorized_legacy` is the *absence* of the `execution` section (so no existing configuration hash changes and every earlier experiment is read as legacy, with `recorded: false`); `realistic_cash_equity` is an explicit
+  section. A realistic evaluation of a saved experiment is a **child** experiment with a new id and its parent recorded (`rebacktest` with `execution`), counted as a portfolio variation of the same study and inheriting the parent's holdout protection. The parent is untouched.
+- **One driver loop over the existing components, not a third engine.** Every fill is booked in `src/ledger` (principal at the mid, spread, impact, slippage and fees as separate journal entries; dividends, splits and borrow as cash flows), instruments come from `src/instruments`, and the
+  impact law is `src/engine/costs.ImpactModel`. The signal lag (`dataset.lag + backtest.extra_lag`) is applied **once**, in the adapter; a setting that would lag a second time is refused. Orders are per-asset queued target-position orders that are resized to the remaining gap.
+- **Components** (`realism.py`): dated membership and delistings (`Listing`, `Membership`); corporate actions with versions (`CorporateAction`); point-in-time ADV and tradability screens; the decision/submission/fill timeline; itemised costs that reconcile (`gross less the itemised
+  costs is net`, a check and not an identity); impact with calibration provenance (an uncalibrated coefficient is reported as an assumption); order states and legal transitions; borrow availability, fees and recalls; participation limits and a capacity curve; mark policies; an FX book; futures and
+  crypto-derivative helpers (rolls, variation margin, margin calls, funding, fee tiers); and a capability report that names what the data and the mode can and cannot support.
+- **Missing inputs never become free.** No volume means capacity is *not established* (and the report says so); no borrow record means no new short (Gate B blocks, or `shorts: refuse`); simulated data is labelled and cannot validate a strategy.
+- **Artifacts and manifest**: orders, fills, the ledger journal, daily equity and costs are written with a manifest of SHA-256 hashes (`execution_manifest.json`); Gate B re-hashes them.
+- **Gate B reads the evidence** (`gates.py`, policy `gates-v2`, provider `realistic_net_oos`): a vectorized result is `blocked` (it cannot pass a requirement it does not model), a realistic one needs intact artifacts, a reconciled ledger, current `ml-verify` rows for P1-01 to P1-14 and real data.
+- **Surfaces**: `POST /api/ml/rebacktest` takes an `execution` section (validated; unknown settings are refused); `GET /api/ml/trading-diagnostics`; `quant ml-realistic`; the report (`ml-report`) and the HTML report print the execution mode; the research-record page shows the mode, gross and net, itemised costs,
+  capacity and reconciliation.
+- **Verification registry**: 45 requirements (P0-01 to P0-30, P1-01 to P1-14 and P1-26); the Release 4 test files (`test_ml_execution_ledger.py`, `_fixtures.py`, `_pipeline.py`, `_api.py`, `_cli.py`, `test_webapp_ml_execution_browser.py`) are in the `ml-base`, `replit-python` and browser CI lists.
+- **Not done, said plainly**: P1-10 is `in_progress` (stale-mark expiry and halt write-downs are classified and tested, but the adapter does not apply the write-down to the ledger); P1-12 and P1-13 are `in_progress` (multi-currency accounting, futures rolls and margin, and crypto funding are verified against independent fixtures
+  at the ledger level; they are **not** selectable modes of the experiment pipeline, which is a cash-equity, daily-bar evaluation). No real-market experiment has been run in the realistic mode.
+
 ## Actual test runs
 
 | Command | Environment | Exit code | Passed/failed/skipped | Evidence | Notes |
 | --- | --- | --- | --- | --- | --- |
+| `python -m src.cli ml-verify --run --require-pass --registry <tmp>` (Release 4, final tree, run in an isolated clone) | Python 3.11.17, pandas 3.1.0, numpy 2.4.6, torch 2.14.1 (CPU), scikit-learn 1.9.1, statsmodels 0.15.0, hmmlearn 0.3.3, Gymnasium 1.4.0, SB3 2.9.2, LightGBM 4.7.0, XGBoost 3.2.0 (a copy of the Python 3.11 CI environment) | 0 | 45 of 45 requirements `pass`; 506 tests in 32 files, 0 skipped, 0 failed, 345 s (sum of the per-file times); none stale | registry `verification/*.xml` (JUnit), `verification_checks` rows | per requirement: P1-01 26, P1-02 26, P1-03 26, P1-04 34, P1-05 34, P1-06 26, P1-07 26, P1-08 26, P1-09 34, P1-10 26, P1-11 41, P1-12 33, P1-13 33, P1-14 42 (the earlier ones as before) |
+| CI browser lane, `pytest` on the 14 files of the `browser` job | same | 0 | 167 passed, 0 failed | pytest output | includes `test_webapp_ml_execution_browser.py` and the tuning test that run 105 failed |
+| ML regression group (the files listed in the Release 2 row below, with the Release 4 test files), `-n 3 --dist loadfile` (the invocation CI uses) | same | 0 | 1,048 passed, 0 failed, 2 skipped (counted from the progress output) | pytest output | the skips are the Chronos and TimesFM foundation models |
 | `python -m src.cli ml-verify --run --require-pass --registry <tmp>` (Release 3, final tree) | Python 3.11.17, pandas 3.1.0, numpy 2.4.6, torch 2.14.1 (CPU), scikit-learn 1.9.1, statsmodels 0.15.0, hmmlearn 0.3.3, Gymnasium 1.4.0, SB3 2.9.2, LightGBM 4.7.0, XGBoost 3.2.0 (a copy of the Python 3.11 CI environment) | 0 | 31 of 31 requirements `pass`; 456 tests in 27 files, 0 skipped, 0 failed, 239 s (sum of the per-file times); none stale | registry `verification/*.xml` (JUnit), `verification_checks` rows | per requirement: P0-23 35, P0-24 9, P0-25 35, P0-26 7, P0-27 12, P0-28 34, P0-29 29, P1-26 22 (the earlier ones as before) |
 | ML regression group (the files listed in the Release 2 row below), `-n 3` | same | 0 | 1,025 passed, 0 failed, 2 skipped (counted from the progress output; the summary line is not printed under `-q` with workers) | pytest output | the skips are the Chronos and TimesFM foundation models (weights not available offline) |
 | `python -m src.cli ml-verify --run --require-pass --registry <tmp>` (Release 2, final tree) | Python 3.11.17, pandas 3.1.0, numpy 2.4.6, torch 2.14.1 (CPU), scikit-learn 1.9.1, statsmodels 0.15.0, hmmlearn 0.3.3, Gymnasium 1.4.0, SB3 2.9.2, LightGBM 4.7.0, XGBoost 3.2.0 (a copy of the Python 3.11 CI environment) | 0 | 23 of 23 requirements `pass`; 364 tests in 18 files, 0 skipped, 0 failed, 144 s; none stale | registry `verification/*.xml` (JUnit), `verification_checks` rows | per requirement: P0-13 53, P0-14 61, P0-15 and P0-16 55, P0-17 30, P0-18 33, P0-19 7, P0-20 20, P0-21 46, P0-22 27 (the Release 1 ones as before) |
@@ -77,10 +99,18 @@ Updated: 2026-11-01.
 CI results are recorded when a run completes. Run 100 (Release 1): every job green. Run 101 (Release 2 part 1, `dad795e`): the `test` job reported 7 failed, 5,277 passed, 7 skipped (coverage 93.66%, floor 88%) and the `docker` job failed in the same tests; all
 seven are `tests/test_ml_pit_sessions.py`, below. Run 102 (`9658b52`) was cancelled by the next push (the workflow cancels a superseded run). **Run 103 (`31e5cd7`, the closing commit of Release 2): all 10 jobs succeeded** — `lint`, `docs`,
 `ml-correctness`, `ml-base`, `replit-python`, `browser`, `compat (3.10)`, `compat (3.12)`, `docker` and `test`. The `test` job: 5,371 passed, 7 skipped, 0 failed in 42 min 32 s, coverage 93.71% (floor 88%). This is a CI result for the whole suite;
-what it shows about Release 2 is that the new checks pass on the CI environment (Python 3.11.17, pandas 3.1) as they did locally, not that the requirements hold beyond those tests.
+what it shows about Release 2 is that the new checks pass on the CI environment (Python 3.11.17, pandas 3.1) as they did locally, not that the requirements hold beyond those tests. **Run 105 (`71b77ca`, Release 3): eight of ten jobs succeeded** (`lint`, `docs`, `ml-correctness`, `ml-base`, `replit-python`, `compat (3.10)`, `compat (3.12)` and `test`: 5,454 passed); `browser` and `docker` failed, each in a way the other lanes could not show (below).
 
 ### What running the checks found (and fixed)
 
+- **Release 4 findings.**
+  - *Run 105, `browser` job*: `test_tuning_one_model...` expects a verdict card, and a tuning that does not evaluate the protected segments (the default since Release 3) produced none. The tuning summary now has a validation-only verdict that says what it did and did not look at.
+  - *Run 105, `docker` job*: the image has no `.github` directory, so `tests/test_ml_ci_policy.py` (which reads the workflow) failed at collection. It is skipped at module level when the directory is absent; the lane that has the workflow still runs it.
+  - *Regression group*: `tests/test_ml_data.py::test_the_yaml_defaults_load_and_agree_with_the_python_defaults` iterated the configuration sections and failed on the new optional `execution` section, which is deliberately absent from the defaults (its absence is the legacy mode). The test now says so and asserts it.
+  - *A procedure finding, not a code defect*: my first regression run used the default `-n 3` distribution, which splits a module's tests across workers; `test_ml_research_api.py` has a test that depends on state built by an earlier test of the same module and failed. CI uses `--dist loadfile`, and so does the run above.
+  - *Evidence must come from an unchanging tree*: during one `ml-verify` run, two `test_ml_promotion_gates.py` tests failed because I was creating files under `src/` meanwhile. That is the provenance item working as designed (it compares the experiment's recorded source-tree hash with the checked-out code, so editing source
+    while a test runs makes Gate A stale). The evidence above was therefore produced in an isolated clone of the final tree, and the same two tests pass there.
+  - Implementation faults found by the new tests along the way (fixed): a read-only array under pandas 3 in the liquidity screen; an order resized the wrong way when delay exceeded one session; a short that was being exited was rejected as a new buy; the capacity curve used a flat last target instead of the last decision.
 - **pandas 3 datetime units.** `DatetimeIndex.asi8` counts in the index's own unit, and pandas 3 picks that unit by what it parsed (microseconds here). The session and point-in-time code treated the integers as nanoseconds, so a bar's age came out 1,000
   times too small and the availability join saw nothing public. CI found it (the seven failures above); my first local runs used pandas 2.3.3 and missed it, and the brute-force oracle I had written for the join shared the same flaw and passed vacuously.
   Now every comparison goes through one nanosecond conversion (`sessions.ns`), the oracle is independent of it, and every local gate runs on a pandas 3.1 copy of the CI environment.
@@ -94,7 +124,7 @@ what it shows about Release 2 is that the new checks pass on the CI environment 
 
 | Model / strategy version | Algorithm Verified | Strategy Validated | Operationally Ready | Reasons |
 | --- | --- | --- | --- | --- |
-| every model kind | computed per experiment by `gates.decide` from current evidence: it can pass only with current `ml-verify` rows for the source it ran on, a provenance record, lineage, the output contract, the inference bundle, an evaluation of an untouched holdout under a frozen plan, applied selection evidence and a null-control study | `blocked` | `blocked` | Gate B needs the execution-realism evidence of Release 4 and the statistical validation of Release 5; Gate C needs the prospective evidence of Release 5, risk limits and the monitoring of Release 8. None of those providers exists yet, so the evaluator answers `blocked` rather than guessing. No real-market experiment has been evaluated: the tests exercise the evaluator on simulated data, and the 200-replication null study has not yet run. |
+| every model kind | computed per experiment by `gates.decide` from current evidence: it can pass only with current `ml-verify` rows for the source it ran on, a provenance record, lineage, the output contract, the inference bundle, an evaluation of an untouched holdout under a frozen plan, applied selection evidence and a null-control study | `blocked`: Release 4 adds the realistic-execution provider (a vectorized result is `blocked`; a realistic one needs intact artifacts, a reconciled ledger, current P1-01 to P1-14 rows and real data), but the statistical-validation provider of Release 5 does not exist yet | `blocked` | Gate B still needs the statistical diagnostics of Release 5; Gate C needs the prospective evidence and the operating controls of Release 5 and Release 8. Those providers answer `blocked` rather than guessing. No real-market experiment has been evaluated: the tests exercise the evaluator on simulated data, and the 200-replication null study has not yet run. |
 
 ## Compatibility and migration
 
@@ -109,6 +139,8 @@ what it shows about Release 2 is that the new checks pass on the CI environment 
 - **Defaults that changed** (documented in the limitations note): `finalize` is off in the API, the search and the CLI (the old behaviour is `finalize=true`, which now freezes a plan and consumes it with a deprecation text); `optimization.finalize` and `explainability.feature_ic` raise when a
   registry is in use and no horizon or evaluation context is given; `Registry.promote` blocks staging and production without gate evidence (taking a model out of production needs none); `POST /api/ml/train` defaults to `mode: full`, which records a holdout *exposure*, not to `development` — a deliberate
   deviation from "development by default", so that existing callers keep their results, with the exposure visible in the report.
+- Release 4 adds no migration. `execution` is optional and absent from the defaults, so no configuration hash changes; an experiment saved earlier is read as `vectorized_legacy` and the report says `recorded: false`. A realistic re-run has a new id and a recorded parent; `rebacktest` accepts an `execution`
+  section (and refuses a lag setting), and a tuning that does not evaluate the protected segments returns a validation-only verdict instead of none.
 - Release 1's items (RL state schema 2, output contracts, the `QFM1` envelope, the registry migrations) are as described in the Release 1 section of the architecture note.
 
 ## Data and optional dependency limitations
@@ -117,11 +149,10 @@ See `ASSUMPTIONS_AND_LIMITATIONS.md`.
 
 ## Next executable actions
 
-1. Release 4: executable trading and reconciled accounting (P1-01 to P1-14): dated membership, corporate actions, point-in-time liquidity, the decision-to-fill timeline, itemised costs, impact, order states, borrow, participation and capacity, mark policies, the shadow ledger,
-   currencies, futures and funding, and the capability report; then the provider that lets Gate B read execution evidence.
-2. Release 5: nested selection, dependence-robust inference, benchmarks, regimes, robustness, calibration, multi-seed RL, prospective commitments and the Gate C policy (P1-15 to P1-25); finish the cross-study holdout tracking (P1-26) for exports and comparison paths.
+1. Release 5: nested selection, dependence-robust inference, benchmarks, regimes, robustness, calibration, multi-seed RL, prospective commitments and the Gate C policy (P1-15 to P1-25); finish the cross-study holdout tracking (P1-26) for exports and comparison paths.
+2. Close the Release 4 gaps: apply the stale-mark and halt write-downs in the adapter (P1-10); make multi-currency, futures and funding selectable modes of the pipeline (P1-12, P1-13); run the realistic mode on real data and read its capability report.
 3. Run the 200-replication null study in Actions (`ml-heavy`) and record its verdict; until then no error-control claim is made.
 4. Finish the Release 2 gaps listed against P0-13, P0-15 and P0-16 in `TRACEABILITY.md`: intraday and non-close label conventions, a macro vintage store, macro release instants in the loader, and the per-ticker session table beyond its defaults.
 5. Give returns at a missing price one explicit definition (`pct_change()` pads on pandas 2 and drops the move on pandas 3; see the limitations note), in `data/loader.py` and `framework/data.py`, and run the whole suite on both.
 6. Finish the Release 1 gaps listed against P0-01, P0-02, P0-04, P0-06, P0-08, P0-09, P0-10, P0-11, P0-12 and P0-30.
-7. A Model Verification view and a dataset-audit / fold-lineage view in the dashboard (the API and CLI exist; the pages do not show them yet), and a promotion-gate view beyond the status line on the experiment page.
+7. A Model Verification view and a dataset-audit / fold-lineage view in the dashboard (the API and CLI exist; the pages do not show them yet).

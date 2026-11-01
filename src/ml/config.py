@@ -31,8 +31,8 @@ DEFAULTS: dict = {
     "search": {"n_random": 12, "n_bayes": 12, "generations": 3, "population": 8, "objective_weights": {"turnover": 0.5, "max_drawdown": 0.3, "instability": 0.2, "train_validation_gap": 0.5}, "top_k": 3},
     "forward": {"horizon_days": 5, "track_window": 63, "psi_alert": 0.25},
 }
-SECTIONS = ("dataset", "split", "model", "signal", "backtest", "robustness")
-HASH_SECTIONS = ("dataset", "split", "model", "signal", "backtest")                  # what decides the numbers; the robustness switch only decides which extra reports are written
+SECTIONS = ("dataset", "split", "model", "signal", "backtest", "robustness", "execution")
+HASH_SECTIONS = ("dataset", "split", "model", "signal", "backtest", "execution")      # what decides the numbers (``execution`` only when present: it is absent from the defaults, so no existing hash changes); the robustness switch only decides which extra reports are written
 NORMALIZATIONS = ("none", "cross_sectional_z", "rank")
 SCHEMES = ("walk_forward", "expanding", "rolling")
 REBALANCES = ("daily", "weekly", "monthly")
@@ -100,6 +100,17 @@ def validate(cfg: dict) -> dict:
     _check(isinstance(cfg["model"].get("kind"), str) and bool(cfg["model"]["kind"]), "model.kind is required")
     _check(cfg["model"]["kind"] != "regime_ridge" or bool(d.get("regime_detector")), "the regime_ridge model needs dataset.regime_detector")
     _check(isinstance(cfg["model"].get("params", {}), dict), "model.params must be a mapping")
+    if cfg.get("execution") is not None:                                               # optional, and absent from the defaults so that no existing configuration hash changes
+        from .execution import validate_settings
+
+        try:
+            validate_settings(cfg["execution"])
+        except ValueError as exc:
+            raise MLConfigError(str(exc)) from None
+        if cfg["execution"].get("mode", "realistic_cash_equity") == "vectorized_legacy":
+            del cfg["execution"]                                                        # the legacy mode is the absence of the section: one meaning, one hash
+        else:
+            _check(int(d["lag"]) + int(bt["extra_lag"]) >= 1, "realistic execution needs dataset.lag + backtest.extra_lag >= 1: a decision made from a close cannot trade at that close")
     return cfg
 
 

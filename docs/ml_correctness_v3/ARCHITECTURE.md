@@ -152,7 +152,7 @@ configuration, seed, features, folds and output contract; the environment and ha
 
 `gates.evaluate` computes Gates A, B and C from the persisted evidence; `decide` appends a decision when status, staleness, policy or evidence changes. A is the family's `ml-verify` evidence (current for the source it
 hashed), provenance for the checked-out code, lineage, output contract and a loadable bundle (inherited from a parent for a re-backtest). B adds the frozen plan with an untouched evaluation, applicable and met selection
-controls, a sufficient null study, and the evidence of Releases 4 and 5 (placeholders that report `blocked` until those providers exist). C adds prospective evidence and the operating controls (placeholders). `Registry.promote`
+controls, a sufficient null study, and the realistic-execution evidence of Release 4 (`gates._execution_item`) and the statistical evidence of Release 5 (a placeholder that reports `blocked` until its provider exists). C adds prospective evidence and the operating controls (placeholders). `Registry.promote`
 refuses `staging` without A and B, and `production` without A, B, C and a recorded human approval.
 
 ## Version changes (Release 3)
@@ -161,3 +161,52 @@ refuses `staging` without A and B, and `production` without A, B, C and a record
 * `run_experiment(..., evaluation=, study=, entry_point=, kind=)`; `evaluate_run(..., holdout=, lineage=)`; every saved report gains `holdout`, `lineage`, `reproducibility`, `trials.study`.
 * `search(finalize_top=False)` and the API `finalize` default to off. `opt.finalize` with a registry needs an evaluation context. `explainability.feature_ic` needs `until`.
 * `Registry.promote(model_id, stage, actor=, note=, approval=)` returns the decision and can raise `PromotionBlocked`.
+
+
+# Release 4: executable trading and reconciled accounting
+
+## What was reused
+
+The vectorized engine (`src/backtest/engine.py`) is kept as the declared mode `vectorized_legacy`. The new mode drives components that already existed: the portfolio ledger (`src/ledger`: every fill, accrual and corporate action is a journal entry that obeys the journal identity), the instrument registry and
+the futures, crypto and FX instruments, the event-driven stack's cost models (`src/engine/costs.py`, whose `ImpactModel` is the square-root law used here), and the engine's own lag, rebalance and volatility-target helpers (`src/backtest/execution.py`). No third engine, ledger or cost model was written;
+`realism.py` holds the data structures and policies that did not exist (membership, corporate-action events, orders with states, borrow, marks, FX as-of lookups, contract specifications) and `execution.py` the adapter.
+
+## Two engines, one declared mode
+
+```
+config: no `execution` section   -> vectorized_legacy   (BacktestEngine: a cost per unit of turnover, constant-gross drift between rebalances, no orders)
+config: execution.mode = realistic_cash_equity -> orders -> fills -> ledger (same weights, same lag, same schedule, same volatility target)
+```
+
+The mode is part of the configuration (hashed only when present, so no existing hash changed) and of the report (`report["execution"]`). A realistic result is a re-run: `rebacktest(execution=...)` makes a child experiment with a new id and the parent's id, a counted look at the same study that
+inherits the parent's holdout state. An experiment saved before the modes existed is read as `vectorized_legacy`.
+
+## The adapter
+
+```
+close of day d:   the target weights, already masked to the investable set, scaled to the volatility target and thinned to the rebalance dates (the engine's own helpers), are the DECISION
+                  an eligible asset's target is converted to shares at the decision close; an ineligible asset's target is zero (an addition is rejected on the record)
+session d+lag:    the order (a target POSITION) becomes active; its size is re-set to the gap to that target; it is capped at the participation limit of the PRIOR average volume, rounded
+                  to lots, filled at the close with the modelled spread, slippage and impact, and booked in the ledger: principal at the mid, each concession and the fee as separate entries
+every session:    corporate actions at the ex-date; marks; interest and borrow accrue on what was held overnight; recalls force covers; unfilled remainders expire after `expiry_sessions`
+```
+
+The lag is `dataset.lag + backtest.extra_lag` and is applied once, here: `execution.delay` is refused as a setting, and a test shows the adapter and the vectorized engine produce the same return stream at lags 1 and 2 when costs and limits are removed (`sizing: fill_time` is that agreement
+mode). Decisions that overlap in time (a lag of two sessions with a decision every day) queue per asset; a newer decision replaces what an older one left unfilled when it becomes active.
+
+## Reconciliation
+
+Gross P&L is computed independently from the share holdings and the marks, not from the ledger; gross plus the non-price flows (interest, corporate-action cash) less the itemised costs must equal the ledger's net change. The ledger's own `reconcile` (cash conservation, the identity of every entry) is run as well. In the tests a
+shadow account books only cash and shares from the reported fills, and the corporate-action, borrow, multi-currency, futures-roll and funding fixtures are compared with hand-worked or closed-form arithmetic.
+
+## Artifacts and the gate
+
+`save_experiment` writes `execution_orders`, `execution_fills`, `execution_journal` and `execution_equity` (parquet) and `execution_manifest.json`: the row count and sha256 of each file, the hashes of the weights, prices and volume the run used, the specification and the reconciliation. The report cites the manifest's
+own hash. Gate B's `realistic_net_oos` item reads it: a vectorized result is `blocked` (it cannot pass what it does not model), a realistic one is `failed` if a file no longer matches its hash or the accounting does not reconcile, `missing`/`stale` if the verification of the execution machinery (P1-01 to P1-11 and
+P1-14, plus P1-08 when shorts were held) is not current, `blocked` by the capability blockers (no volume, shorts without borrow records, simulated or unknown data) and `ok` otherwise.
+
+## Version changes (Release 4)
+
+* New modules `src/ml/realism.py` and `src/ml/execution.py`; `config` gains the optional `execution` section; `rebacktest(..., bundle=, config=, builder=, market=)` and `run_experiment(..., market=)`; `evaluate_run(..., market=)`; `Experiment.execution`.
+* Every new report gains `execution`. `GET /api/ml/trading-diagnostics`, `POST /api/ml/rebacktest` and `POST /api/ml/train` take the `execution` section; `quant ml-realistic`.
+* Gate policy `gates-v2`: Gate B reads the execution evidence. Verification requirements P1-01 to P1-14.

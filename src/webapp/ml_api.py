@@ -20,6 +20,7 @@ import pandas as pd
 
 from ..assets import common
 from ..ml import ensembles as en
+from ..ml import execution as xexec
 from ..ml import explainability as xp
 from ..ml import frozen_eval as fe
 from ..ml import gates
@@ -90,8 +91,13 @@ SPEC = {
                "mv_rebalance": ("int", 1, 60)},
     "backtest": {"rebalance": ("choice", ("daily", "weekly", "monthly")), "cost_bps": ("float", 0.0, 250.0), "slippage_bps": ("float", 0.0, 250.0), "target_vol": ("float", 0.01, 1.0), "max_leverage": ("float", 0.5, 5.0),
                  "extra_lag": ("int", 0, 20)},
+    "execution": {"mode": ("choice", ("vectorized_legacy", "realistic_cash_equity")), "capital": ("float", 1_000.0, 1e12), "max_participation": ("float", 0.001, 1.0), "adv_window": ("int", 5, 250),
+                  "commission_bps": ("float", 0.0, 250.0), "half_spread_bps": ("float", 0.0, 250.0), "slippage_bps": ("float", 0.0, 250.0), "impact_coefficient": ("float", 0.0, 5.0),
+                  "sizing": ("choice", ("decision_close", "fill_time")), "min_trade_weight": ("float", 0.0, 0.2), "expiry_sessions": ("int", 1, 20), "cash_rate": ("float", 0.0, 0.5),
+                  "financing_spread": ("float", 0.0, 0.5), "lot": ("int", 1, 100_000), "min_adv_dollars": ("float", 0.0, 1e12), "min_listing_days": ("int", 0, 5000),
+                  "shorts": ("choice", ("unconstrained", "refuse"))},
 }
-NULLABLE = {"start", "end", "regime_detector", "sector_cap", "target_vol"}                    # an explicit null means "none", not "use the default"
+NULLABLE = {"start", "end", "regime_detector", "sector_cap", "target_vol", "max_participation"}                    # an explicit null means "none", not "use the default"
 
 
 def _id(q: dict, key: str = "id") -> str:
@@ -183,7 +189,7 @@ class MlApi:
         return {"/api/ml/catalog": self.catalog, "/api/ml/experiments": self.experiments, "/api/ml/experiment": self.experiment, "/api/ml/compare": self.compare, "/api/ml/explain": self.explain,
                 "/api/ml/feature-sets": self.feature_sets, "/api/ml/verification": self.verification, "/api/ml/models": self.models, "/api/ml/trials": self.trials, "/api/ml/forward": self.forward, "/api/ml/report-html": self.report_html,
                 "/api/ml/lineage": self.lineage, "/api/ml/holdout": self.holdout, "/api/ml/promotion-status": self.promotion_status, "/api/ml/statistical-diagnostics": self.statistical_diagnostics,
-                "/api/ml/null-controls": self.null_controls}
+                "/api/ml/null-controls": self.null_controls, "/api/ml/trading-diagnostics": self.trading_diagnostics}
 
     def post_routes(self) -> dict:
         return {"/api/ml/dataset/build": self.dataset_build, "/api/ml/train": self.train, "/api/ml/rebacktest": self.rebacktest, "/api/ml/search": self.search, "/api/ml/tune": self.tune, "/api/ml/tune/stop": self.tune_stop,
@@ -277,6 +283,8 @@ class MlApi:
             clean_section = self._clean_section(section, body.get(section))
             if clean_section:
                 over[section] = clean_section
+        if "impact_coefficient" in over.get("execution", {}):                          # the one nested setting of the section, offered flat
+            over["execution"]["impact"] = {"coefficient": over["execution"].pop("impact_coefficient")}
         model = body.get("model")
         if model is not None:
             if not isinstance(model, dict):
@@ -454,15 +462,15 @@ class MlApi:
     def rebacktest(self, body: dict) -> dict:
         """``POST /api/ml/rebacktest`` (a job): a saved experiment's predictions under different position rules, rebalancing, costs or with the stress tests, with no refit. Recorded as a child run."""
         exp_id = _id(body)
-        extra = set(body) - {"id", "signal", "backtest", "name", "notes", "robustness"}
+        extra = set(body) - {"id", "signal", "backtest", "name", "notes", "robustness", "execution"}
         if extra:
-            raise ApiError(f"a re-backtest can change only the signal, backtest and robustness settings, not {sorted(extra)}: they would change the predictions (train a new model instead)")
-        over = self._overrides({k: body.get(k) for k in ("signal", "backtest", "name", "notes", "robustness")}, need_model=False)
-        over = {k: v for k, v in over.items() if k in ("signal", "backtest", "name", "notes", "robustness")}
+            raise ApiError(f"a re-backtest can change only the signal, backtest, execution and robustness settings, not {sorted(extra)}: they would change the predictions (train a new model instead)")
+        over = self._overrides({k: body.get(k) for k in ("signal", "backtest", "name", "notes", "robustness", "execution")}, need_model=False)
+        over = {k: v for k, v in over.items() if k in ("signal", "backtest", "name", "notes", "robustness", "execution")}
 
         def work(progress):
             with _user_errors():
-                exp = rebacktest(self.registry, exp_id, over, progress)
+                exp = rebacktest(self.registry, exp_id, over, progress, config=self.app.config, builder=self.app.builder)
             return {"id": exp.id, "parent": exp_id, "report": exp.report}
 
         return self._submit(f"ml: re-backtest {exp_id[-6:]}", work)
@@ -603,11 +611,34 @@ class MlApi:
         return {"ok": True}
 
     @staticmethod
+    def _validation_only_verdict(out: dict) -> dict:
+        """The verdict of a tuning that did not evaluate the test and forward segments (the default since the holdout is protected): the validation Sharpe of the starting settings and of the winner, the deflated
+        probability when there is one, and the way to find out whether the gain holds up. It never calls the gain good or overfitted: the data that could say so was not read."""
+        fmt = lambda v: "undefined" if v is None or not np.isfinite(v) else f"{v:.2f}"                      # noqa: E731
+        first = next((t for t in out["trials"] if t["number"] == 0), {})
+        d, b, tried = first.get("validation_sharpe"), out["best"].get("validation_sharpe"), out["n_trials"]
+        if out["best"]["number"] == 0:
+            level, headline = "keep", f"Keep what you have: none of the {tried - 1} other settings beat it on the validation segment"
+            reasons = ["Nothing tried did better than the starting settings on the validation segment, so there is nothing to carry over."]
+        else:
+            level, headline = "mixed", "Better on the validation segment; the test and forward segments have not been looked at"
+            reasons = [f"On the validation segment the Sharpe ratio went from {fmt(d)} to {fmt(b)}. That is the part the search could see, so some of it is luck."]
+        reasons.append("The test and forward segments were not read: they stay protected until a frozen plan evaluates them once. To find out whether the improvement holds up there, freeze a plan "
+                       "(POST /api/ml/evaluation-plan) and evaluate it (POST /api/ml/evaluate), or tick 'Also evaluate the best on the test and forward segments, once' (a deprecated shortcut that does the same and is recorded).")
+        sel = out.get("selection") if isinstance(out.get("selection"), dict) else None
+        if sel and sel.get("deflated_sharpe_probability") is not None:
+            total = sel.get("n_trials_counted", tried)
+            reasons.append(f"After {total} tries, the chance that the winner's Sharpe ratio on the validation segment is more than luck is {sel['deflated_sharpe_probability'] * 100:.0f}% (95% or more is convincing).")
+        return {"level": level, "headline": headline, "reasons": reasons}
+
+    @staticmethod
     def _tune_summary(out: dict, final: dict | None, final_start: dict | None, hold_t: float | None = None, benchmark: dict | None = None) -> dict | None:
         """The verdict of a tuning that started from the person's own settings: the validation Sharpe ratio (where the search chose) and the test and forward Sharpe ratios (days-weighted, where it did not) for
         the starting settings and for the winner, put in words by the same rules as the Tune tab."""
-        if out.get("start_number") is None or not out.get("best") or final is None:
+        if out.get("start_number") is None or not out.get("best"):
             return None
+        if final is None:                                                                                    # the protected segments were not read: the verdict says what the validation shows and what it cannot
+            return MlApi._validation_only_verdict(out)
 
         def held(report: dict):
             stats = report["segments"]["stats"]
@@ -907,6 +938,20 @@ class MlApi:
         started = self._submit(f"ml: null controls ({spec.replications} replications)", work)
         self.stops[started["job"]] = stop
         return started
+
+    def trading_diagnostics(self, q: dict) -> dict:
+        """``GET /api/ml/trading-diagnostics?id=<experiment>``: the evaluation mode of a result and what it assumes: the timeline from decision to fill, the price convention, gross and net, the itemised costs,
+        turnover, capacity at predeclared capitals, the accounting reconciliation, the comparison with the vectorized engine and the limitations that qualify the claim. An experiment saved before execution
+        modes were recorded is read as ``vectorized_legacy`` and says so."""
+        exp_id = _id(q)
+        with _user_errors():
+            reg = self.registry
+            record, report = reg.get_experiment(exp_id), reg.report(exp_id)
+        block = report.get("execution") or xexec.legacy_block(report["config"], recorded=False)
+        siblings = [r["id"] for r in reg.list_experiments(1000) if r.get("parent_id") == (record.get("parent_id") or exp_id) and r["id"] != exp_id][:20]
+        data = {"id": exp_id, "parent": record.get("parent_id"), "siblings": siblings, **block}
+        notes = ["Every realistic result is a child run: its parent is untouched and keeps its own mode.", *(block.get("limitations") or block.get("not_modelled") or [])]
+        return clean(common.envelope("ml_trading_diagnostics", data, {"registry": "platform"}, [], None, notes))
 
     def promotion_status(self, q: dict) -> dict:
         """``GET /api/ml/promotion-status?id=<experiment>``: the three independent gates (Algorithm Verified, Strategy Validated, Operationally Ready), each ``passed``, ``failed``, ``pending`` or ``blocked``

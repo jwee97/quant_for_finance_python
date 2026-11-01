@@ -11,10 +11,15 @@ from src.ml import cli, verification as vf
 from src.ml.registry import Registry
 
 ROOT = Path(__file__).resolve().parents[1]
+if not (ROOT / ".github/workflows/ci.yml").exists():                                       # the Docker image is built without `.github` (see .dockerignore): the workflows are checked where they exist
+    pytest.skip("the workflow files are not in this tree", allow_module_level=True)
 CI = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
 HEAVY = yaml.safe_load((ROOT / ".github/workflows/ml-heavy.yml").read_text())
 RELEASE_3 = ["tests/test_ml_provenance.py", "tests/test_ml_holdout_controls.py", "tests/test_ml_statistical_eligibility.py", "tests/test_ml_null_pipeline.py", "tests/test_ml_promotion_gates.py",
              "tests/test_ml_registry_migrations.py", "tests/test_ml_research_api.py", "tests/test_ml_research_cli.py", "tests/test_ml_ci_policy.py"]
+
+
+RELEASE_4 = ["tests/test_ml_execution_ledger.py", "tests/test_ml_execution_fixtures.py", "tests/test_ml_execution_pipeline.py", "tests/test_ml_execution_api.py", "tests/test_ml_execution_cli.py"]
 
 
 def steps(job: dict) -> list[str]:
@@ -45,6 +50,7 @@ def test_every_registered_requirement_names_tests_and_sources_that_exist():
         for entry in vf.SOURCES[group]:
             assert (ROOT / entry).exists(), f"the source group {group} names {entry}, which does not exist"
     assert {f"P0-{n}" for n in range(23, 30)} <= set(vf.REQUIREMENTS) and "P1-26" in vf.REQUIREMENTS
+    assert {f"P1-{n:02d}" for n in range(1, 15)} <= set(vf.REQUIREMENTS), "every requirement of Release 4 is registered"
 
 
 def test_the_release_3_tests_run_in_the_base_install_and_the_dashboard_lanes():
@@ -53,6 +59,15 @@ def test_the_release_3_tests_run_in_the_base_install_and_the_dashboard_lanes():
         for t in RELEASE_3:
             assert t in text, f"{t} is not run by the {lane} lane"
         assert "pytest" in text
+
+
+def test_the_release_4_tests_run_in_the_base_install_and_the_dashboard_lanes():
+    for lane in ("ml-base", "replit-python"):
+        text = " ".join(steps(CI["jobs"][lane]))
+        for t in RELEASE_4:
+            assert t in text, f"{t} is not run by the {lane} lane"
+    named = {t for tests, _ in vf.REQUIREMENTS.values() for t in tests}
+    assert set(RELEASE_4) <= named, "every Release 4 test file is the evidence of some requirement"
 
 
 def test_a_skipped_family_is_blocked_and_a_registry_with_no_evidence_fails_the_gate(tmp_path, capsys):

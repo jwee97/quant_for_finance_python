@@ -35,8 +35,12 @@ def test_configuration_merges_validates_and_fingerprints():
 def test_the_yaml_defaults_load_and_agree_with_the_python_defaults():
     loaded = mc.load_ml_config()
     for section in mc.SECTIONS:
+        if section == "execution":
+            assert section not in mc.DEFAULTS and section not in loaded, "the execution mode is declared by the presence of the section: absent means vectorized_legacy, and no existing configuration hash changes"
+            continue
         assert set(loaded[section]) >= set(mc.DEFAULTS[section]) - {"regime_detector"} or section == "model"
     mc.validate(mc.experiment_config({}))
+    assert "execution" not in mc.experiment_config({})
 
 
 # --------------------------------------------------------------------------------------------------------------------- features

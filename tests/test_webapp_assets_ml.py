@@ -539,7 +539,7 @@ def test_a_saved_run_can_be_rebacktested_and_meta_labelled_without_refitting(mla
     re = finished(mlapp, mlapp.extra_post["/api/ml/rebacktest"]({"id": parent, "backtest": {"cost_bps": 25, "rebalance": "monthly"}, "signal": {"holding_period": 20}}))
     assert re["parent"] == parent and re["report"]["config"]["backtest"]["cost_bps"] == 25 and re["report"]["config"]["model"] == runs["ridge"]["report"]["config"]["model"]
     assert re["report"]["trials"]["dataset_trials"] > runs["ridge"]["report"]["trials"]["dataset_trials"], "re-backtesting is another look at the data and is counted"
-    with pytest.raises(ApiError, match="only the signal, backtest and robustness"):
+    with pytest.raises(ApiError, match="only the signal, backtest, execution and robustness"):
         mlapp.extra_post["/api/ml/rebacktest"]({"id": parent, "model": {"kind": "lasso"}})
     meta = finished(mlapp, mlapp.extra_post["/api/ml/meta-label"]({"id": parent, "kind": "logistic"}))
     assert meta["parent"] == parent and 0.0 < meta["meta"]["coverage"] <= 1.0 and meta["report"]["config"]["signal"]["method"] == "proportional" and set(meta["parent_segments"]) >= {"validation", "test"}
@@ -601,6 +601,11 @@ def test_a_tuning_with_an_effort_starts_from_the_forms_settings_and_says_in_word
         assert out["final_start"]["report"]["config"]["name"] == "ridge starting settings" and out["final_start"]["id"] != out["final"]["id"]
     names = [r["name"] for r in mlapp.extra_get["/api/ml/experiments"]({"limit": 50})["rows"]]
     assert "ridge tuned" in names
+    plain = finished(mlapp, mlapp.extra_post["/api/ml/tune"]({**BASE, "model": {"kind": "ridge", "params": {"alpha": 30}}, "effort": "quick"}))      # the default: the protected segments are not read
+    verdict = plain["summary"]
+    assert plain["final"] is None and plain["evaluation"] is None and verdict["level"] in ("mixed", "keep"), "without finalize the verdict never says good or overfitted: the data that could say so was not read"
+    assert any("validation segment" in r for r in verdict["reasons"]) and any("test and forward segments were not read" in r for r in verdict["reasons"]) and any("evaluation-plan" in r for r in verdict["reasons"])
+    assert not any("held up" in verdict["headline"] for _ in [0]) and "validation segment" in verdict["headline"]
     with pytest.raises(ApiError, match="effort must be one of"):
         mlapp.extra_post["/api/ml/tune"]({**BASE, "model": {"kind": "ridge"}, "effort": "forever"})
     with pytest.raises(ApiError, match="not running in this app"):

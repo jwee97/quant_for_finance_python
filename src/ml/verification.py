@@ -1,4 +1,4 @@
-"""Persisted verification evidence for the model-correctness requirements (spec v3, Releases 1 to 3).
+"""Persisted verification evidence for the model-correctness requirements (spec v3, Releases 1 to 4).
 
 A requirement is verified by the test files that check it. ``run_verification`` runs them (pytest in a subprocess, so a crash cannot take the app down), reads the JUnit report, and records one row per
 requirement in the registry: the status, the counts, the environment, a hash of the source files the requirement concerns, and the hash and path of the report that proves it. The status rules are strict:
@@ -48,6 +48,10 @@ SOURCES = {
     "featuresearch": ["src/ml/research_controls.py", "src/ml/selection.py"],
     "gates": ["src/ml/gates.py", "src/ml/registry.py", "src/ml/verification.py", "src/ml/research_controls.py"],
     "ci": [".github/workflows/ci.yml", ".github/workflows/ml-heavy.yml", "src/ml/verification.py"],
+    # Release 4: executable trading and reconciled accounting
+    "execution": ["src/ml/realism.py", "src/ml/execution.py", "src/ml/experiments.py", "src/ml/config.py", "src/ledger", "src/instruments", "src/backtest/execution.py", "src/backtest/engine.py",
+                  "src/backtest/costs.py"],
+    "execsurface": ["src/ml/realism.py", "src/ml/execution.py", "src/ml/experiments.py", "src/ml/gates.py", "src/ml/cli.py", "src/ml/visualization.py", "src/webapp/ml_api.py", "src/ledger", "src/instruments"],
 }
 REQUIREMENTS = {                                                # requirement id -> (test files, source group)
     "P0-01": (["tests/test_ml_rl_accounting_reference.py"], "rl"),
@@ -81,6 +85,20 @@ REQUIREMENTS = {                                                # requirement id
     "P0-28": (["tests/test_ml_holdout_controls.py", "tests/test_ml_statistical_eligibility.py"], "featuresearch"),
     "P0-29": (["tests/test_ml_ci_policy.py", "tests/test_ml_promotion_gates.py", "tests/test_ml_registry_migrations.py"], "ci"),
     "P1-26": (["tests/test_ml_holdout_controls.py"], "controls"),
+    "P1-01": (["tests/test_ml_execution_ledger.py"], "execution"),
+    "P1-02": (["tests/test_ml_execution_ledger.py"], "execution"),
+    "P1-03": (["tests/test_ml_execution_ledger.py"], "execution"),
+    "P1-04": (["tests/test_ml_execution_ledger.py", "tests/test_ml_execution_pipeline.py"], "execution"),
+    "P1-05": (["tests/test_ml_execution_ledger.py", "tests/test_ml_execution_pipeline.py"], "execution"),
+    "P1-06": (["tests/test_ml_execution_ledger.py"], "execution"),
+    "P1-07": (["tests/test_ml_execution_ledger.py"], "execution"),
+    "P1-08": (["tests/test_ml_execution_ledger.py"], "execution"),
+    "P1-09": (["tests/test_ml_execution_ledger.py", "tests/test_ml_execution_pipeline.py"], "execution"),
+    "P1-10": (["tests/test_ml_execution_ledger.py"], "execution"),
+    "P1-11": (["tests/test_ml_execution_ledger.py", "tests/test_ml_execution_fixtures.py", "tests/test_ml_execution_pipeline.py"], "execution"),
+    "P1-12": (["tests/test_ml_execution_fixtures.py", "tests/test_ml_execution_ledger.py"], "execution"),
+    "P1-13": (["tests/test_ml_execution_fixtures.py", "tests/test_ml_execution_ledger.py"], "execution"),
+    "P1-14": (["tests/test_ml_execution_ledger.py", "tests/test_ml_execution_pipeline.py", "tests/test_ml_execution_api.py", "tests/test_ml_execution_cli.py"], "execsurface"),
 }
 
 

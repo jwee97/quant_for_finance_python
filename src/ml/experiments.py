@@ -17,6 +17,7 @@ import numpy as np
 import pandas as pd
 
 from . import evaluation as ev
+from . import execution as xe
 from . import explainability as xp
 from . import model_report as mr
 from . import provenance as pv
@@ -62,6 +63,7 @@ class Experiment:
     report: dict
     context: rb.Context | None = None
     metrics: dict = field(default_factory=dict)
+    execution: object | None = None                                       # the realistic run (orders, fills, ledger) when the experiment asked for that mode; None for the vectorized engine
 
 
 def trailing_vol(returns: pd.DataFrame, window: int = 63) -> pd.DataFrame:
@@ -123,6 +125,25 @@ def prepare(cfg: dict, bundle=None, config=None, builder=None, dataset: Dataset 
     return ds, info
 
 
+def realistic_requested(cfg: dict) -> bool:
+    return bool(cfg.get("execution")) and cfg["execution"].get("mode", "realistic_cash_equity") == "realistic_cash_equity"
+
+
+def _market(cfg: dict, bundle=None, config=None, builder=None, info: dict | None = None, market: dict | None = None) -> dict | None:
+    """The market data the realistic mode needs beyond the dataset (the traded volume), from the bundle given or resolved for the configuration's universe. ``None`` when the run did not ask for the mode;
+    a missing universe is an error, not a silent fall-back to the vectorized engine."""
+    if not realistic_requested(cfg):
+        return None
+    if market is not None:
+        return market
+    if bundle is None:
+        try:
+            bundle, info = resolve_bundle(config, cfg["dataset"]["universe"], builder)
+        except (FileNotFoundError, KeyError, ValueError) as exc:
+            raise ExperimentError(f"realistic execution needs the market data (volume) for universe '{cfg['dataset']['universe']}': {exc}") from None
+    return {"volume": getattr(bundle, "volume", None), "status": str((info or {}).get("source", "unknown"))}
+
+
 def _segments_ic(ic: pd.Series, labels: pd.Series, horizon: int) -> dict:
     lab = labels.reindex(ic.index)
     return {seg: ev.ic_summary(ic[lab == seg], horizon) for seg in ("validation", "test", "forward") if (lab == seg).sum() >= 5}
@@ -149,7 +170,8 @@ def _latest_positions(weights: pd.DataFrame) -> dict:
 
 def run_experiment(overrides: dict | None = None, bundle=None, config=None, builder=None, registry: Registry | None = None, progress=None, save: bool = True, dataset: Dataset | None = None,
                    info: dict | None = None, parent_id: str | None = None, explain: bool = True, final_model: bool = True, robustness: bool | None = None, trials_extra: int = 0,
-                   experiment_id: str | None = None, stop_after: str | None = None, evaluation=None, study: str | None = None, entry_point: str = "python", kind: str = "experiment") -> Experiment:
+                   experiment_id: str | None = None, stop_after: str | None = None, evaluation=None, study: str | None = None, entry_point: str = "python", kind: str = "experiment",
+                   market: dict | None = None) -> Experiment:
     """Run one experiment. ``overrides`` is merged over the platform configuration (``ml.config.experiment_config``). With a ``registry`` and ``save`` the artifacts are written and the run recorded.
 
     ``explain`` computes permutation importance; ``final_model`` fits the model a live prediction would use; ``robustness`` overrides the configuration's switch for the stress tests;
@@ -167,6 +189,7 @@ def run_experiment(overrides: dict | None = None, bundle=None, config=None, buil
     except OutputContractError as exc:
         raise ExperimentError(str(exc)) from None
     ds, info = prepare(cfg, bundle, config, builder, dataset, info, progress)
+    market = _market(cfg, bundle, config, builder, info, market)
     exp_id = experiment_id or (registry.new_id(cfg["name"]) if registry is not None else "unsaved")
     with rc.experiment_op(registry, cfg, kind, parent_experiment=parent_id, study=study, experiment_id=exp_id, feature_hash=pv.digest(sorted(ds.features), 16), counts=kind not in rc.NON_COUNTING) as op:
         holdout = _holdout_block(registry, cfg, ds, stop_after, evaluation, entry_point, exp_id)
@@ -178,7 +201,7 @@ def run_experiment(overrides: dict | None = None, bundle=None, config=None, buil
         if stop_after == "validation":
             rc.guard_development(train, train.plan)
         lineage = None if op is None else {"study": op.study_id, "operation": op.op_key, "kind": op.kind, "counts": op.counts}
-        exp = evaluate_run(cfg, ds, train, info, registry, progress, save, parent_id, explain, final_model, robustness, trials_extra, exp_id, stop_after, t0, holdout=holdout, lineage=lineage)
+        exp = evaluate_run(cfg, ds, train, info, registry, progress, save, parent_id, explain, final_model, robustness, trials_extra, exp_id, stop_after, t0, holdout=holdout, lineage=lineage, market=market)
         if op is not None:
             op.experiment_id = exp.id
             op.finish_detail = {"sharpe": exp.metrics.get("oos", {}).get("sharpe"), "validation_sharpe": exp.metrics.get("validation", {}).get("sharpe"), "holdout": holdout.get("status")}
@@ -205,7 +228,7 @@ def _holdout_block(registry, cfg: dict, ds: Dataset, stop_after: str | None, eva
 
 def evaluate_run(cfg: dict, ds: Dataset, train: TrainResult, info: dict, registry: Registry | None = None, progress=None, save: bool = True, parent_id: str | None = None, explain: bool = True,
                  final_model: bool = True, robustness: bool | None = None, trials_extra: int = 0, experiment_id: str | None = None, stop_after: str | None = None, t0: float | None = None,
-                 holdout: dict | None = None, lineage: dict | None = None) -> Experiment:
+                 holdout: dict | None = None, lineage: dict | None = None, market: dict | None = None) -> Experiment:
     """Everything after the fitting: positions, backtest, segments, information coefficient, overfitting diagnostics, explanation, robustness, the report and (if a registry is given) the record. Separate
     from ``run_experiment`` so that the same predictions can be re-run under different signal and cost settings without refitting (``rebacktest``)."""
     t0 = time.perf_counter() if t0 is None else t0
@@ -230,6 +253,16 @@ def evaluate_run(cfg: dict, ds: Dataset, train: TrainResult, info: dict, registr
     except ValueError as exc:
         raise ExperimentError(str(exc)) from None
     result = run_backtest(weights, ds.returns, ds.investable, cfg["backtest"], lag, cfg["name"])
+    realistic = None
+    if realistic_requested(cfg):                                               # the declared evaluation mode: the same weights through orders, fills and the ledger instead of a cost per unit of turnover
+        mk = _market(cfg, None, None, None, info, market)
+        try:
+            realistic = xe.realistic_run(weights, ds.prices, ds.returns, ds.investable, cfg["backtest"], lag + int(cfg["backtest"].get("extra_lag", 0)), cfg["execution"], volume=(mk or {}).get("volume"),
+                                         data_status=(mk or {}).get("status", str(info.get("source", "unknown"))), name=cfg["name"], legacy=result,
+                                         **{k: (mk or {}).get(k) for k in ("membership", "actions", "borrow", "closed", "halted")})
+        except ValueError as exc:
+            raise ExperimentError(str(exc)) from None
+        result = realistic.backtest
     first_signal = scores.dropna(how="all").index[0]
     parts = trim_to_signal(result, first_signal, lag)
     net, gross, costs, turnover = parts["net"], parts["gross"], parts["costs"], parts["turnover"]
@@ -317,6 +350,9 @@ def evaluate_run(cfg: dict, ds: Dataset, train: TrainResult, info: dict, registr
         "warnings": list(over["warnings"]), "seconds": round(time.perf_counter() - t0, 2), "created": time.strftime("%Y-%m-%d %H:%M:%S"),
     })
     report["output_contract"] = build_contract(train.kind, train.task, train.target, ds, cfg, chash)
+    report["execution"] = jsonable(realistic.block if realistic is not None else xe.legacy_block(cfg))
+    if realistic is not None and rob is not None:
+        report["warnings"].append("The robustness tests re-run the vectorized engine, not the order-level execution: their cost and delay variants do not describe the realistic result.")
     report["holdout"] = jsonable(holdout if holdout is not None else {"status": "development" if stop_after else "unrecorded"})
     report["lineage"] = jsonable(lineage if lineage is not None else {"study": rc.study_of(cfg), "operation": None, "note": "not registered as an operation (this run was made through a path that records none)"})
     if registry is not None:
@@ -337,7 +373,7 @@ def evaluate_run(cfg: dict, ds: Dataset, train: TrainResult, info: dict, registr
     res = report["model_extras"].get("resources", {})
     metrics["run"] = {k: v for k, v in {"train_seconds": res.get("train_seconds"), "total_seconds": res.get("total_seconds"), "n_params": res.get("n_params"), "peak_memory_mb": res.get("peak_memory_mb"),
                                          "n_fits": float(len(train.diagnostics))}.items() if v is not None}
-    exp = Experiment(exp_id, cfg, ds, train, scores, weights, net, gross, costs, turnover, bench, insample_net, labels, first_signal, fmodel, report, ctx, metrics)
+    exp = Experiment(exp_id, cfg, ds, train, scores, weights, net, gross, costs, turnover, bench, insample_net, labels, first_signal, fmodel, report, ctx, metrics, execution=realistic)
     if registry is not None and save:
         progress("saving")
         record = pv.provenance_record(cfg, ds, train, report["output_contract"], chash)
@@ -384,6 +420,11 @@ def save_experiment(registry: Registry, exp: Experiment, info: dict, parent_id: 
             files["bundle"] = d / "model.qfb"
         except (ValueError, TypeError) as exc:                                            # a model with no recorded fit schema keeps working through model.pkl; the lack is said, not hidden
             (d / "bundle_error.txt").write_text(str(exc))
+    if exp.execution is not None:                                                     # the orders, fills and journal of the realistic mode, with a manifest of hashes the report cites
+        manifest = xe.write_artifacts(exp.execution, d)
+        exp.report["execution"]["manifest"] = {"sha256": manifest["manifest_sha256"], "files": manifest["files"], "inputs": manifest["inputs"]}
+        files.update({f"execution_{k}": d / v["file"] for k, v in manifest["files"].items()})
+        files["execution_manifest"] = d / "execution_manifest.json"
     report = jsonable(exp.report)
     import json as _json
 
@@ -448,22 +489,24 @@ def load_run(registry: Registry, exp_id: str) -> tuple[dict, Dataset, TrainResul
     return cfg, ds, train, {"source": rec.get("source") or "platform", "label": report["provenance"].get("label", "")}
 
 
-def rebacktest(registry: Registry, exp_id: str, overrides: dict | None = None, progress=None, save: bool = True) -> Experiment:
+def rebacktest(registry: Registry, exp_id: str, overrides: dict | None = None, progress=None, save: bool = True, bundle=None, config=None, builder=None, market: dict | None = None) -> Experiment:
     """Run a saved experiment's predictions through different positions rules, rebalancing or costs, with no refitting. ``overrides`` may change the ``signal`` and ``backtest`` sections only (anything
     else would change the predictions). The new run is recorded as a child of the original and counts as another look at the data: it is an operation of the parent's study, and it inherits what the parent
     read (a re-analysis of outcomes a plan or an exploratory run already exposed is recorded as one and is never untouched)."""
-    bad = set(overrides or {}) - {"signal", "backtest", "name", "notes", "robustness"}
+    bad = set(overrides or {}) - {"signal", "backtest", "name", "notes", "robustness", "execution"}
     if bad:
-        raise ExperimentError(f"a re-backtest can change only the signal, backtest and robustness settings, not {sorted(bad)}: they would change the predictions")
+        raise ExperimentError(f"a re-backtest can change only the signal, backtest, execution and robustness settings, not {sorted(bad)}: they would change the predictions")
     cfg0, ds, train, info = load_run(registry, exp_id)
     cfg = experiment_config(merge(cfg0, overrides or {}), name=(overrides or {}).get("name") or f"{cfg0['name']}-rebacktest")
-    kind = "signal_variation" if "signal" in (overrides or {}) or "backtest" not in (overrides or {}) else "portfolio_variation"
+    over_keys = set(overrides or {})
+    kind = "portfolio_variation" if "execution" in over_keys and "signal" not in over_keys else ("signal_variation" if "signal" in over_keys or "backtest" not in over_keys else "portfolio_variation")
+    market = _market(cfg, bundle, config, builder, info, market)                      # a realistic rerun needs the volume of the universe; a vectorized one needs nothing more
     child_id = registry.new_id(cfg["name"])
     study = rc.study_of_experiment(registry, exp_id) or rc.study_of(cfg0)
     with rc.experiment_op(registry, cfg, kind, parent_experiment=exp_id, study=study, experiment_id=child_id, feature_hash=pv.digest(sorted(ds.features), 16), adopt_parent=False) as op:
         holdout = rc.inherit_holdout(registry, [exp_id], child_id, "rebacktest")
         exp = evaluate_run(cfg, ds, train, info, registry, progress, save, exp_id, explain=False, final_model=False, robustness=None, experiment_id=child_id, holdout=holdout,
-                           lineage={"study": study, "operation": op.op_key, "kind": kind, "counts": True, "parent": exp_id})
+                           lineage={"study": study, "operation": op.op_key, "kind": kind, "counts": True, "parent": exp_id}, market=market)
         op.experiment_id = exp.id
         op.finish_detail = {"parent": exp_id, "holdout": holdout.get("status")}
     return exp

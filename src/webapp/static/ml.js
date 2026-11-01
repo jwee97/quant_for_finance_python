@@ -348,7 +348,7 @@
   const fresh = (mode) => { M.results[mode] = null; M.errors[mode] = null; };
   const JOB_MODES = new Set(["dataset", "train", "search", "forward"]);
   const CONTROLS = (id) => [{ modes: ["controls"], path: "/api/ml/promotion-status", query: { id } }, { modes: ["controls_lineage"], path: "/api/ml/lineage", query: { id } }, { modes: ["controls_holdout"], path: "/api/ml/holdout", query: {} },
-    { modes: ["controls_stats"], path: "/api/ml/statistical-diagnostics", query: { id } }];
+    { modes: ["controls_stats"], path: "/api/ml/statistical-diagnostics", query: { id } }, { modes: ["controls_exec"], path: "/api/ml/trading-diagnostics", query: { id } }];
 
   M.run = async (fromForm) => {
     const m = M.mode, f = M.form;
@@ -1055,7 +1055,7 @@
   const GATE_DIR = { passed: "up", failed: "down", blocked: "down", pending: "" };
   const ITEM_WORD = { ok: "met", failed: "failed", missing: "not yet produced", stale: "stale", blocked: "blocked", not_applicable: "not applicable" };
   function buildControls(root, d) {
-    const lin = (M.results.controls_lineage || {}).data, ho = (M.results.controls_holdout || {}).data, st = (M.results.controls_stats || {}).data;
+    const lin = (M.results.controls_lineage || {}).data, ho = (M.results.controls_holdout || {}).data, st = (M.results.controls_stats || {}).data, xd = (M.results.controls_exec || {}).data;
     header(root, `Research record for ${shortId(d.experiment_id)}`, `${d.model_kind} · gate policy ${d.policy_version}`);
     W.provenance(root, d);
     W.flags(root, [d.note, "A stale decision is shown as pending: its evidence has changed since it was decided."], "Read first. ");
@@ -1067,6 +1067,20 @@
     for (const n of ["A", "B", "C"]) {
       const g = d.gates[n], c = W.card(root, `Gate ${n} · ${GATE_NAME[n]}: ${g.status}${g.stale ? " (stale)" : ""}`, g.dependencies.length ? `Needs Gate ${g.dependencies.join(" and ")} as well.` : "");
       table(c, [{ label: "Evidence", get: (i) => i.label }, { label: "State", get: (i) => ITEM_WORD[i.status] || i.status }, { label: "Why", get: (i) => i.reason }], g.items);
+    }
+    if (xd) {                                                                                  // the evaluation mode of the result, and what it can and cannot support
+      const real = xd.mode === "realistic_cash_equity", fmtc = (v) => (Q.bad(v) ? "n/a" : Number(v).toLocaleString("en-US", { maximumFractionDigits: 0 }));
+      const c = W.card(root, `Execution mode: ${String(xd.mode).replace(/_/g, " ")}`, real ? `Orders, fills and the ledger produced this result${xd.parent ? ` (a re-run of ${shortId(xd.parent)})` : ""}; gross less the itemised costs reconciles to net.`
+        : `A vectorized result: a cost per unit of turnover, with no orders, capacity or cash. ${xd.recorded === false ? xd.note || "" : ""}`);
+      if (real) {
+        W.kv(c, "Result", [["Gross P&L", fmtc(xd.gross_net.gross_pnl)], ["Itemised costs", fmtc(xd.gross_net.costs_total)], ["Net P&L", fmtc(xd.gross_net.net_pnl)], ["Reconciled", xd.reconciliation.reconciled && xd.reconciliation.ledger_ok ? "yes" : "NO"],
+          ["Fills", String(xd.n_fills)], ["Turnover a year", sig(xd.ann_turnover, 1) + "x"], ["Lag", `${xd.timeline.delay_sessions} session(s), applied once`], ["Prices", xd.price_convention]]);
+        table(c, [{ label: "Cost", get: (r) => r[0] }, { label: "Amount", num: true, get: (r) => fmtc(r[1]) }], Object.entries(xd.costs));
+        if ((xd.capacity.levels || []).length) table(c, [{ label: "Capital", num: true, get: (r) => fmtc(r.capital) }, { label: "Share of the target filled", num: true, get: (r) => spct(r.fill_share, 0) },
+          { label: "Impact (bps of traded)", num: true, get: (r) => sig(r.impact_bps_of_traded, 1) }], xd.capacity.levels);
+        else W.hint(c, `Capacity is not established: ${xd.capacity.reason || ""}`);
+      } else table(c, [{ label: "Not modelled by this engine", get: (r) => r }], xd.not_modelled || []);
+      W.flags(c, xd.limitations || xd.cannot_support || [], "Limits. ");
     }
     const nl = W.card(root, "Models and stages", "A stage change is decided from the gates above; production also needs a recorded human approval.");
     if (!(d.models || []).length) W.hint(nl, "This experiment has no registered model.");

@@ -116,11 +116,40 @@ strategy-improvement experiments and the advanced modules (Releases 6 to 8). Gat
 ## Gates
 
 - Gate A is "implemented as specified", not "profitable". The family requirements are the `ml-verify` ones listed in `gates.family_requirements`; a requirement not registered in this checkout is `missing`, never skipped.
-- Gate B cannot pass in this release: the realistic-execution evidence (Release 4) and the statistical-diagnostics evidence (Release 5) have no providers and report `blocked`. Gate C additionally needs prospective evidence and the
-  operating controls, which no release before 8 provides. The tests exercise the logic with injected providers; no strategy has earned any gate.
+- Gate B cannot pass in this checkout: Release 4 supplies the realistic-execution provider, but the statistical-diagnostics evidence (Release 5) has no provider and reports `blocked`; the execution item is itself blocked for any result on simulated or unknown data, for a long-short book with no borrow records and for a result with no volume. Gate C additionally needs prospective evidence (Release 5) and
+  operating controls, which no release before 8 provides. The tests exercise the logic with injected providers and fixture rows; no strategy has earned any gate.
 - A stale decision (the code, data or policy changed) is shown as pending. The source-tree hash invalidates the provenance item of every experiment run before the change, which is intended.
 
 ## Fixed in passing
 
 - The deflated Sharpe ratio of a finalised search counted every search trial twice (the registry already held them and `trials_extra` added them again). The API and `search` now pass the trials the registry does not hold.
 - The tuning verdict's comparison of the best and starting settings needs the evaluation: without `finalize` it is not computed, and the response says why.
+
+
+# Release 4: executable trading and reconciled accounting
+
+## What the realistic mode is, and is not
+
+- It is a **cash-equity, single-currency, daily-bar** evaluation: orders decided at one close are filled at a later close at a modelled price. Opening-auction and intraday liquidity, queue position, latency, hidden liquidity, short squeezes and market-wide halts are not represented; a same-bar fill is refused because it needs an auction model that does not exist.
+- The marks and the fill reference are the dataset's **research closes** (vendor-adjusted where the source adjusts them). No executable (unadjusted) price series and no corporate-action events come with the platform's data, so splits, dividends and mergers are not accounted for as events unless a caller supplies them (`market={"actions": ...}`); the report says so. Dividends in an adjusted series are reinvested implicitly.
+- **Impact** is the square-root law of the event-driven stack with a coefficient that is an **assumption**, never a measured cost, because no calibration data exist (`impact_label` says `assumed (uncalibrated)`). Spread and slippage are proportional to the price and default to the backtest section's own costs; there is no observed spread.
+- **Capacity** is measured at predeclared capital levels on the last held target, not over the history, from the prior average dollar volume (volume times the research price, which a split in the history can mis-scale). With no volume capacity is **not established** and the claim is blocked; with `max_participation: null` every order is assumed to fill in full and that is stated.
+- **Short selling** needs borrow records. The platform has none: a long-short result is blocked at Gate B unless a `BorrowBook` is supplied or `shorts: refuse` is chosen (then the book is long-only where the strategy asked for shorts, and the report says so). The scenario fee of a loose book is visible and never described as a record.
+- **Membership, halts and delistings**: eligibility acts at decision dates (weekly with the default rebalance), so a security that is delisted between two decisions needs a `delisting` action to be settled on its date. The stale-expiry and over-long-halt write-down of the mark policy is not applied by the adapter, which carries the last good mark (P1-10 is `in_progress`). The built-in universes carry no dated membership and are today's survivors.
+- **Other asset classes**: multi-currency books, futures rolls with variation margin and perpetual funding are reconciled as **fixtures** against independent arithmetic (P1-12, P1-13), not run through the pipeline. The ledger books cash on the trade date; settlement dates are computed and reported (`FXBook.unsettled`), not simulated.
+
+## How it differs from the vectorized engine
+
+On the shared subset (the same weights, mask and volatility target, the same lag applied once, the same rebalance dates, close-to-close prices, costs proportional to traded notional) the two return the same stream (tested to 2e-9 at lags 1 and 2). They differ, by design, in: constant-gross renormalisation of the drifted book between rebalances (the engine) versus drifting shares (the ledger); whole shares, lots and the cash they leave;
+participation limits and expired orders; impact when volume is available; interest on cash and the financing of borrowed cash; and, with `sizing: decision_close`, an order sized in shares at the decision close. A comparison block in every realistic report shows both numbers on the same days; the difference is not an error in either.
+
+## Other limits
+
+- The in-sample (train-segment) series and the robustness tests of a realistic run still use the vectorized engine, and the report says so.
+- A realistic run is a look at the same outcomes as its parent: it is a counted `portfolio_variation` of the study and inherits the parent's holdout state; running it never makes an exposed history untouched.
+- `GET /api/ml/trading-diagnostics` reads an experiment saved before execution modes existed as `vectorized_legacy`, flagged `recorded: false`.
+
+## Fixed in passing
+
+- Ineligible shorts: the first version of the adapter rejected the purchase that covers a short in an ineligible asset (it treated every buy as an addition). Exiting is always allowed; what is rejected is a request for more exposure than the book has.
+- Orders with a lag of more than one session were cancelled by the next day's decision before they could fill; orders are now target positions queued per asset.

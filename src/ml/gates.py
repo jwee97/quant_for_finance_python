@@ -22,7 +22,7 @@ from pathlib import Path
 from .provenance import digest, source_tree_hash
 from .registry import Registry, RegistryError
 
-POLICY_VERSION = "gates-v1"
+POLICY_VERSION = "gates-v2"                                                                                # v2: Gate B reads the execution evidence of Release 4
 GATES = ("A", "B", "C")
 ITEM_STATUS = ("ok", "failed", "missing", "stale", "blocked", "not_applicable")
 
@@ -67,12 +67,12 @@ def family_requirements(kind: str) -> list[str]:
 
 
 # ------------------------------------------------------------------------------------------------------------------ evidence providers
-def _verification_items(registry: Registry, kind: str) -> list[Item]:
+def _verification_items(registry: Registry, kind: str, requirements: list[str] | None = None) -> list[Item]:
     from . import verification
 
     cur = {r["requirement_id"]: r for r in verification.current(registry)}
     items = []
-    for req in family_requirements(kind):
+    for req in (requirements if requirements is not None else family_requirements(kind)):
         if req not in cur:
             items.append(Item(f"verification:{req}", f"requirement {req}", "missing", "this requirement has no verification registered in this checkout"))
             continue
@@ -220,6 +220,51 @@ def _null_item(registry: Registry, experiment_id: str) -> Item:
     return Item("null_controls", "null-control false-promotion rate", "ok", res.get("verdict", ""), ref)
 
 
+EXECUTION_REQUIREMENTS = ["P1-01", "P1-02", "P1-03", "P1-04", "P1-05", "P1-06", "P1-07", "P1-09", "P1-10", "P1-11", "P1-14"]     # the machinery of a cash-equity run; P1-08 is added when shorts were held
+RANK = {"failed": 5, "blocked": 4, "stale": 3, "missing": 2, "ok": 0, "not_applicable": 0}
+
+
+def _execution_item(registry: Registry, experiment_id: str, report: dict) -> Item:
+    """Gate B's realistic-execution evidence (Release 4): the experiment must itself be a realistic-mode result whose artifacts are the ones its manifest names, whose accounting reconciles, whose machinery
+    is verified and current, and whose data and capabilities support the claim. A vectorized result cannot pass a requirement it does not model; it is not failed, it is blocked, and told how to get there."""
+    item_id, label = "realistic_net_oos", "realistic net out-of-sample evidence"
+    block = report.get("execution") or {}
+    mode = block.get("mode", "vectorized_legacy")
+    if mode != "realistic_cash_equity":
+        return Item(item_id, label, "blocked", f"this result is a {mode} run: it does not model order lifecycles, participation limits, cash, borrow or corporate actions, and a simplified result cannot pass a requirement it does not "
+                                               "model; re-run it in the realistic mode (quant ml-realistic) and evaluate that child experiment")
+    manifest = block.get("manifest")
+    if not manifest:
+        return Item(item_id, label, "missing", "the realistic result has no artifact manifest (it was not saved with its orders, fills and journal)")
+    folder = Path(registry.root) / "experiments" / experiment_id
+    for meta in manifest.get("files", {}).values():
+        path = folder / meta["file"]
+        if not path.exists() or digest_file(path) != meta["sha256"]:
+            return Item(item_id, label, "failed", f"{meta['file']} is missing or differs from the hash in the manifest: the artifacts were changed after the run", manifest.get("sha256"))
+    rec = block.get("reconciliation") or {}
+    if not (rec.get("reconciled") and rec.get("ledger_ok")):
+        return Item(item_id, label, "failed", f"the accounting does not reconcile (gross less itemised costs differs from net by {rec.get('gap')}; ledger identities ok: {rec.get('ledger_ok')})", manifest.get("sha256"))
+    reqs = EXECUTION_REQUIREMENTS + (["P1-08"] if block.get("short_positions") else [])
+    ver = _verification_items(registry, "", reqs)
+    worst = max(ver, key=lambda i: RANK[i.status]) if ver else None
+    refs = manifest.get("sha256", "") + "|" + ",".join(sorted(i.evidence or i.id for i in ver))
+    if worst is not None and RANK[worst.status] > 0:
+        return Item(item_id, label, worst.status, f"the execution machinery is not verified: {worst.label}: {worst.reason}", refs)
+    caps = block.get("capability") or {}
+    if caps.get("blockers"):
+        return Item(item_id, label, "blocked", "; ".join(caps["blockers"]), refs)
+    status = str(caps.get("data_status", ""))
+    if "simulated" in status or "synthetic" in status or status == "unknown":
+        return Item(item_id, label, "blocked", f"the market data is {status}: results check the machinery, not a market, and cannot validate a strategy", refs)
+    return Item(item_id, label, "ok", "reconciled realistic result on real data; limitations: " + ("; ".join(caps.get("limitations", [])) or "none"), refs)
+
+
+def digest_file(path) -> str:
+    import hashlib
+
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
 def _no_provider(item_id: str, label: str, release: str, what: str):
     def provider(registry: Registry, experiment_id: str, report: dict) -> Item:
         return Item(item_id, label, "blocked", f"{what} has no provider in this checkout ({release} of the programme implements it): the gate cannot pass without it")
@@ -233,7 +278,7 @@ class GatePolicy:
     version: str = POLICY_VERSION
     a_requires_provenance: bool = True
     b_providers: dict = field(default_factory=lambda: {
-        "realistic_net_oos": _no_provider("realistic_net_oos", "realistic net out-of-sample evidence", "Release 4", "the executable-trading and reconciled-accounting evidence"),
+        "realistic_net_oos": _execution_item,
         "statistical_diagnostics": _no_provider("statistical_diagnostics", "uncertainty, benchmarks, robustness and capacity", "Release 5", "the statistical-validity diagnostics"),
     })
     c_providers: dict = field(default_factory=lambda: {
