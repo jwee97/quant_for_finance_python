@@ -48,9 +48,14 @@ def futures_bundle(curves: dict[str, pd.DataFrame], asset_class: dict | None = N
         macro[f"BASISMOM_{root}"] = basis_momentum(cr)
     price_frame = pd.DataFrame(prices).dropna(how="all")
     macro_frame = pd.DataFrame(macro).reindex(price_frame.index)
+    marks = None
     if hold_days:
-        price_frame, macro_frame = _hold_through_closures(price_frame, hold_days), _hold_through_closures(macro_frame, hold_days)
-    return bundle_from_prices(price_frame, asset_class=asset_class or {r: "commodity" for r in curves}, macro=macro_frame, name=name)
+        held = _hold_through_closures(price_frame, hold_days)
+        marks = price_frame.isna() & held.notna()                                              # the cells that are a carried mark, not a price anything traded at
+        price_frame, macro_frame = held, _hold_through_closures(macro_frame, hold_days)
+    bundle = bundle_from_prices(price_frame, asset_class=asset_class or {r: "commodity" for r in curves}, macro=macro_frame, name=name)
+    bundle.marks = marks
+    return bundle
 
 
 def fx_bundle(market: dict, name: str = "fx") -> MarketBundle:

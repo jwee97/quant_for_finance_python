@@ -54,7 +54,9 @@ def equal_weight_benchmark(returns: pd.DataFrame, investable: pd.DataFrame | Non
 
 def label_days(index: pd.DatetimeIndex, segment_labels: pd.Series) -> pd.Series:
     """The segment of every date in ``index``: the plan's labels, carried forward over the unlabelled tail (which belongs to the forward segment) and back over any lead-in."""
-    s = segment_labels.reindex(index.union(segment_labels.index)).sort_index().ffill().bfill()
+    s = segment_labels.reindex(index.union(segment_labels.index)).sort_index().ffill()
+    if len(segment_labels):
+        s = s.fillna(segment_labels.sort_index().iloc[0])                      # the lead-in belongs to the plan's first segment: a definition of the segment, not a value taken from later data
     return s.reindex(index)
 
 

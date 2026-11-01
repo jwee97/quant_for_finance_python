@@ -54,26 +54,29 @@ class FeatureSpec:
     group: str
     description: str
     fn: Callable[[Inputs], pd.DataFrame]
-    lookback: int = 1                    # trading days of history the value needs
+    lookback: int = 1                    # trading days of history the value needs (for a recursive feature: the span after which it is close to converged)
     needs: tuple = ()                    # "volume", "ohlc", "raw_close", "macro", "carry", "iv", "crypto"
     broadcast: bool = False
+    memory: str = "finite"               # "finite": the value depends on exactly the trailing ``lookback`` rows or fewer; "recursive": an exponential filter, which depends on all history with decaying weights
 
     def info(self) -> dict:
-        return {"name": self.name, "group": self.group, "description": self.description, "lookback": self.lookback, "needs": list(self.needs), "broadcast": self.broadcast}
+        return {"name": self.name, "group": self.group, "description": self.description, "lookback": self.lookback, "needs": list(self.needs), "broadcast": self.broadcast, "memory": self.memory}
 
 
 FEATURES: dict[str, FeatureSpec] = {}
 
 
-def feature(name: str, group: str, description: str, lookback: int = 1, needs: tuple = (), broadcast: bool = False):
+def feature(name: str, group: str, description: str, lookback: int = 1, needs: tuple = (), broadcast: bool = False, memory: str = "finite"):
     """Register a feature function under ``name``."""
     if group not in GROUPS:
         raise ValueError(f"unknown feature group '{group}'")
+    if memory not in ("finite", "recursive"):
+        raise ValueError(f"memory is 'finite' or 'recursive', not '{memory}'")
 
     def wrap(fn):
         if name in FEATURES:
             raise ValueError(f"feature '{name}' is already registered")
-        FEATURES[name] = FeatureSpec(name, group, description, fn, lookback, needs, broadcast)
+        FEATURES[name] = FeatureSpec(name, group, description, fn, lookback, needs, broadcast, memory)
         return fn
     return wrap
 
@@ -125,14 +128,14 @@ feature("mom_6_1", "momentum", "return from 6 months ago to 1 month ago", lookba
 feature("mom_3_1", "momentum", "return from 3 months ago to 1 month ago", lookback=64)(lambda x: x.prices.shift(21) / x.prices.shift(63) - 1.0)
 
 
-@feature("rsi_14", "momentum", "Wilder's relative strength index over 14 days, centred at 0 (range -0.5 to 0.5)", lookback=60)
+@feature("rsi_14", "momentum", "Wilder's relative strength index over 14 days, centred at 0 (range -0.5 to 0.5)", lookback=60, memory="recursive")
 def _rsi(x: Inputs) -> pd.DataFrame:
     d = x.prices.diff()
     up, dn = d.clip(lower=0.0).ewm(alpha=1 / 14, adjust=False, min_periods=14).mean(), (-d.clip(upper=0.0)).ewm(alpha=1 / 14, adjust=False, min_periods=14).mean()
     return up / (up + dn).replace(0.0, np.nan) - 0.5
 
 
-@feature("macd_hist", "momentum", "MACD histogram (12/26/9 exponential averages) as a fraction of price", lookback=80)
+@feature("macd_hist", "momentum", "MACD histogram (12/26/9 exponential averages) as a fraction of price", lookback=80, memory="recursive")
 def _macd(x: Inputs) -> pd.DataFrame:
     p = x.prices
     macd = p.ewm(span=12, adjust=False, min_periods=26).mean() - p.ewm(span=26, adjust=False, min_periods=26).mean()
@@ -178,7 +181,7 @@ feature("downside_vol_63", "volatility", "annualised root-mean-square of negativ
 feature("skew_63", "volatility", "skewness of daily returns over 63 days", lookback=63)(lambda x: x.returns.rolling(63, min_periods=40).skew())
 feature("kurt_63", "volatility", "excess kurtosis of daily returns over 63 days", lookback=63)(lambda x: x.returns.rolling(63, min_periods=40).kurt())
 feature("drawdown_63", "volatility", "price over its 63-day high, minus 1", lookback=63)(lambda x: x.prices / x.prices.rolling(63, min_periods=40).max() - 1.0)
-feature("ewma_vol_30", "volatility", "annualised exponentially weighted volatility, half-life 30 days", lookback=60)(lambda x: np.sqrt((x.returns ** 2).ewm(halflife=30, min_periods=30).mean()) * np.sqrt(ANN))
+feature("ewma_vol_30", "volatility", "annualised exponentially weighted volatility, half-life 30 days", lookback=60, memory="recursive")(lambda x: np.sqrt((x.returns ** 2).ewm(halflife=30, min_periods=30).mean()) * np.sqrt(ANN))
 
 
 @feature("parkinson_21", "volatility", "annualised range-based (Parkinson) volatility over 21 days from daily high and low", lookback=21, needs=("ohlc",))
@@ -194,7 +197,7 @@ def _beta(x: Inputs) -> pd.DataFrame:
     return cov.div(m.rolling(63, min_periods=40).var(ddof=1).replace(0.0, np.nan), axis=0)
 
 
-@feature("idio_vol_63", "volatility", "annualised volatility of returns left after removing the 63-day beta to the market", lookback=63)
+@feature("idio_vol_63", "volatility", "annualised volatility of returns left after removing the 63-day beta to the market (a 63-day beta inside a 63-day window)", lookback=126)
 def _idio(x: Inputs) -> pd.DataFrame:
     beta = _beta(x)
     resid = x.returns.sub(beta.shift(1).mul(x.market, axis=0))                    # beta known at t-1 applied to the market return of t: the residual is a clean out-of-sample measure

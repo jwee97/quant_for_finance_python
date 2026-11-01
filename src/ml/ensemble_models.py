@@ -24,6 +24,7 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 
+from .causal import CausalView
 from .models import _INFO, Model, make_model
 from .regimes import market_state
 
@@ -107,10 +108,11 @@ class MemberEnsemble(Model):
         self._ds = None
         self._fwd = self._state = None
         self.members_: list = []
+        self.lineage_: dict = {}
 
     # ------------------------------------------------------------------------------------------------------------ data access
     def bind(self, ds) -> "MemberEnsemble":
-        self._ds, self._fwd, self._state = ds, None, None
+        self._ds, self._fwd, self._state = (CausalView.of(ds) if ds is not None else None), None, None
         for m in self.members_:
             if m.needs_dataset:
                 m.bind(ds)
@@ -161,6 +163,17 @@ class MemberEnsemble(Model):
             raise ValueError(f"too few rows to fit an ensemble ({len(fit_rows)} to fit, {len(val_rows)} to weigh the members on)")
         yv = y.to_numpy(dtype=float)
         self.y_mean_, self.y_std_ = float(np.nanmean(yv)), float(np.nanstd(yv)) or 1.0
+        bound = self._ds is not None
+        lag_h = (self._ds.lag + self._ds.horizon) if bound else None                                                 # an ensemble that was never bound to a dataset does not know its label horizon: its purge is 0 and the lineage says so
+        date_of = (lambda q: str(self._ds.dates[int(q)].date())) if bound else (lambda q: int(q))
+        self.lineage_ = {"scheme": "chronological cross-fitting: members are fitted on the earlier training rows, predict the later ones, and those out-of-sample predictions set the calibration and the weights",
+                         "members": [k for k, _ in self.specs_],
+                         "stage_1": {"fit_rows": int(len(fit_rows)), "first": date_of(pos[fit_rows].min()), "last": date_of(pos[fit_rows].max()), "label_end_max": date_of(pos[fit_rows].max() + lag_h) if bound else None,
+                                     "purge": int(purge) if bound else None, "producer": "each member, fitted on these rows only"},
+                         "stage_2": {"rows": int(len(val_rows)), "first": date_of(start), "last": date_of(pos[val_rows].max()), "base_predictions": "out of sample: no member was fitted on a row of this stage",
+                                     "sets": "calibration (intercept, slope, residual scale) and member weights"},
+                         "stage_1_labels_settled_before_stage_2": bool(pos[fit_rows].max() + lag_h < start) if bound else None, "refit_full": bool(int(p["refit_full"])),
+                         "deployed_members_fitted_on": "all training rows (information cutoff = the last training day)" if int(p["refit_full"]) else "stage 1 rows only"}
         first = [self._new(i).fit(Xs.iloc[fit_rows], y.iloc[fit_rows], pos[fit_rows]) for i in range(len(self.specs_))]
         Xv = Xs.iloc[val_rows]
         S = np.column_stack([m.predict(Xv) for m in first])
@@ -268,7 +281,7 @@ class MemberEnsemble(Model):
 
     def diagnostics(self) -> dict:
         names = [k for k, _ in self.specs_]
-        d = {"members": names, "weighting": self.params["weighting"], "interval_level": 0.8, "calibration": [{"member": n, "intercept": float(a), "slope": float(b), "residual_std": float(s), "heldout_ic": float(ic) if np.isfinite(ic) else None}
+        d = {"members": names, "lineage": self.lineage_, "weighting": self.params["weighting"], "interval_level": 0.8, "calibration": [{"member": n, "intercept": float(a), "slope": float(b), "residual_std": float(s), "heldout_ic": float(ic) if np.isfinite(ic) else None}
                                                                                    for n, a, b, s, ic in zip(names, self.a_, self.b_, self.sigma_, self.val_ic_mean_)],
              "member_diagnostics": {n: m.diagnostics() for n, m in zip(names, self.members_) if m.diagnostics()}}
         if self.regime_weights_ is not None:

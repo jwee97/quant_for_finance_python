@@ -24,6 +24,7 @@ from scipy import stats
 from sklearn.linear_model import Ridge
 
 from ..contracts import validate_distribution, validate_quantiles
+from ..causal import CausalView
 from ..models import Model
 from ..targets import forward_return
 from .data import FeatureScaler, SeqAccessor
@@ -79,7 +80,7 @@ class DeepModel(Model):
 
     # ------------------------------------------------------------------------------------------------------------ data access
     def bind(self, ds) -> "DeepModel":
-        self._ds, self._base = ds, None
+        self._ds, self._base = CausalView.of(ds), None
         return self
 
     def _base_accessor(self) -> SeqAccessor:

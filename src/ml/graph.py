@@ -21,6 +21,7 @@ from torch.nn import functional as F
 
 from .deep.data import FeatureScaler, SeqAccessor
 from .deep.trainer import TrainConfig, fit_network, resolve_device
+from .causal import CausalView
 from .models import Model
 
 MIN_DATES = 120
@@ -120,7 +121,7 @@ class GraphModel(Model):
         self.net_ = None
 
     def bind(self, ds) -> "GraphModel":
-        self._ds, self._base = ds, None
+        self._ds, self._base = CausalView.of(ds), None
         return self
 
     # ------------------------------------------------------------------------------------------------------------ the panel as graphs

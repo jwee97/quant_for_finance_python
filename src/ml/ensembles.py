@@ -153,8 +153,8 @@ def thompson_weights(history: pd.DataFrame, discount: float = 0.995, n_draws: in
 def hedge_weights(R: pd.DataFrame, eta: float = 5.0, vol_window: int = 63) -> pd.DataFrame:
     """Multiplicative weights updated every day: ``w <- w exp(eta r / sigma)`` normalised, with ``r / sigma`` each strategy's return in units of its own trailing volatility so ``eta`` means the same for
     a calm strategy and a wild one. Weights are floored at 1% so a strategy that has done badly can come back."""
-    sig = R.rolling(vol_window, min_periods=20).std(ddof=1).shift(1).bfill().replace(0.0, np.nan).fillna(R.std(ddof=1))
-    z = (R / sig).clip(-4, 4).fillna(0.0).to_numpy()
+    sig = R.rolling(vol_window, min_periods=20).std(ddof=1).shift(1).replace(0.0, np.nan)               # trailing volatility known before the day; where there is none yet (the first 20 days, a flat strategy) ...
+    z = (R / sig).clip(-4, 4).fillna(0.0).to_numpy()                                                  # ... the strategy gets no update: it is never filled from later days or from the whole sample
     n = R.shape[1]
     w = np.full(n, 1.0 / n)
     out = np.empty_like(z)
@@ -196,7 +196,10 @@ def combine(R: pd.DataFrame, method: str, lookback: int = 252, rebalance: int = 
     ret = (W.shift(1) * R).sum(axis=1, min_count=1).dropna()
     turnover = float(W.diff().abs().sum(axis=1).mean() * ANN / 2.0) if W.notna().any().any() else float("nan")
     summary = strategy_summary(ret)
-    return Combination(method, W.dropna(how="all"), ret, {"lookback": lookback, "rebalance": rebalance, "risk_aversion": risk_aversion, "eta": eta}, summary, turnover)
+    params = {"lookback": lookback, "rebalance": rebalance, "risk_aversion": risk_aversion, "eta": eta}
+    if method == "online_learning":
+        params["volatility_fill"] = "none: no update until 20 days of trailing volatility exist (causal_v2; earlier results back-filled the first volatility from later days)"
+    return Combination(method, W.dropna(how="all"), ret, params, summary, turnover)
 
 
 def _segment_sharpes(r: pd.Series, labels: pd.Series | None) -> dict:
@@ -264,6 +267,8 @@ def meta_label_scores(ds, train, model_kind: str = "logistic", params: dict | No
     prob = pd.Series(np.nan, index=prim.index)
     blocks = [(a, b) for a, b in zip([f_["test_start"] for f_ in train.folds if not f_.get("skipped")], [f_["test_end"] for f_ in train.folds if not f_.get("skipped")])]
     n_models = 0
+    producer = train.producers()
+    lineage = []
     for a, b in blocks:
         lo, hi = ds.dates.get_indexer([pd.Timestamp(a), pd.Timestamp(b)])
         past = (pos <= lo - purge) & right.notna().to_numpy()
@@ -275,9 +280,15 @@ def meta_label_scores(ds, train, model_kind: str = "logistic", params: dict | No
         prob[now] = p
         out[now] = np.sign(prim[now]) * np.clip(2.0 * p - 1.0, 0.0, 1.0)
         n_models += 1
+        used = producer.reindex(pd.DatetimeIndex(sorted(set(dates[past])))).dropna(subset=["fold"])
+        lineage.append({"block": n_models - 1, "meta_fit_cutoff": str(ds.dates[lo].date()), "meta_train_rows": int(past.sum()), "meta_train_last_decision": str(ds.dates[int(pos[past].max())].date()),
+                        "meta_label_end_max": str(ds.dates[min(int(pos[past].max()) + purge, len(ds.dates) - 1)].date()), "labels_settled_at_cutoff": bool(int(pos[past].max()) + purge <= lo),
+                        "producer_folds": sorted(int(v) for v in used["fold"].unique()), "producer_fit_cutoffs": sorted({c for c in used["fit_cutoff"] if isinstance(c, str)}),
+                        "producer_lineage": "recorded" if train.lineage_recorded else "not recorded (the primary run was saved before fold lineage was kept)",
+                        "base_predictions": "out of sample: every training row's primary score came from a fold fitted before that row's date"})
     ok = prob.notna() & right.notna()
     auc = float(roc_auc_score(right[ok], prob[ok])) if ok.sum() > 50 and right[ok].nunique() == 2 else float("nan")
-    return {"scores": out.unstack("asset").reindex(index=ds.dates, columns=ds.assets), "probability": prob, "auc": auc, "n_models": n_models, "coverage": float(prob.notna().mean()),
+    return {"scores": out.unstack("asset").reindex(index=ds.dates, columns=ds.assets), "probability": prob, "auc": auc, "n_models": n_models, "lineage": lineage, "coverage": float(prob.notna().mean()),
             "primary_hit_rate": float(right[right.notna()].mean()), "meta_hit_rate": float(right[ok & (prob > 0.5)].mean()) if (ok & (prob > 0.5)).any() else float("nan")}
 
 

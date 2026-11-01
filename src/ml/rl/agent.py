@@ -17,6 +17,7 @@ import numpy as np
 import pandas as pd
 
 from ..deep.data import FeatureScaler, SeqAccessor
+from ..causal import CausalView
 from ..models import Model
 from .env import STATE_SCHEMA_VERSION, PortfolioEnv, rollout
 
@@ -51,7 +52,7 @@ class RLAgent(Model):
         self.agent_ = None
 
     def bind(self, ds) -> "RLAgent":
-        self._ds, self._base = ds, None
+        self._ds, self._base = CausalView.of(ds), None
         return self
 
     # ------------------------------------------------------------------------------------------------------------ the environment

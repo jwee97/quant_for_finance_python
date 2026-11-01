@@ -20,6 +20,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from . import audit as audit_mod, pit as pit_mod
+from .intervals import CONVENTION
 from .features import FEATURES, compute_features, inputs_from_bundle
 from .targets import make_targets, parse_target
 
@@ -213,6 +215,11 @@ def build_dataset(bundle, dataset_cfg: dict, name: str = "dataset", extra_target
         raise ValueError("no feature could be computed from this data: " + "; ".join(sorted(set(fs.skipped.values()))[:3]))
     names = [target] + [t for t in extra_targets if t != target]
     targets = make_targets(names, x.prices, x.returns, lag, str(c.get("benchmark", "equal_weight")))
+    carried = getattr(bundle, "marks", None)
+    marks = pd.DataFrame(False, index=x.prices.index, columns=x.assets) if carried is None else carried.reindex(index=x.prices.index, columns=x.assets).fillna(False).astype(bool)
+    voided = marks.shift(-lag, fill_value=False) | marks.shift(-(lag + horizon), fill_value=False)       # a label whose entry or exit price is a carried mark could not have been earned: nothing traded there
+    if voided.to_numpy().any():
+        targets = {k: f.mask(voided) for k, f in targets.items()}
     idx = pd.MultiIndex.from_product([x.prices.index, x.assets], names=["date", "asset"])
     norm = str(c.get("normalize", "cross_sectional_z"))
     cols = {}
@@ -221,16 +228,30 @@ def build_dataset(bundle, dataset_cfg: dict, name: str = "dataset", extra_target
     X = pd.DataFrame(cols, index=idx)
     Y = pd.DataFrame({t: _flatten(f) for t, f in targets.items()}, index=idx)
     seen = x.prices.notna().cumsum()
-    ok = (bundle.investable.reindex_like(x.prices).fillna(False).astype(bool) & (seen >= int(c.get("min_history", 252))) & x.prices.notna()).to_numpy().reshape(-1)
+    investable = bundle.investable.reindex_like(x.prices).fillna(False).astype(bool)
+    has_price, inv, mark = x.prices.notna().to_numpy().reshape(-1), investable.to_numpy().reshape(-1), marks.to_numpy().reshape(-1)
+    long_enough = (seen >= int(c.get("min_history", 252))).to_numpy().reshape(-1)
+    ok = inv & ~mark & long_enough & has_price
     coverage = X.notna().mean(axis=1).to_numpy() >= 0.5
     keep = ok & coverage
+    causes = {"no_price": int((~has_price).sum()), "not_investable": int((has_price & ~inv).sum()), "closed_market_mark": int((has_price & inv & mark).sum()),
+              "short_history": int((has_price & inv & ~mark & ~long_enough).sum()), "low_feature_coverage": int((ok & ~coverage).sum())}      # a partition of the date x asset cells with the rows kept
     X, Y = X[keep], Y[keep]
     if X.empty:
         raise ValueError("no row survives the investability, history and coverage filters: the data is too short for this configuration")
-    meta = {"universe": c.get("universe"), "target": target, "kind": kind, "horizon": horizon, "lag": lag, "feature_groups": list(c["feature_groups"]), "normalize": norm, "winsor": float(c.get("winsor", 0.0)),
+    n_dates = len(x.prices.index)
+    label = {"convention": CONVENTION, "target": target, "lag": lag, "horizon": horizon, "first_decision": str(x.prices.index[0].date()), "last_decision": str(x.prices.index[-1].date()),
+             "last_labelled_decision": str(x.prices.index[max(n_dates - 1 - lag - horizon, 0)].date()), "unlabelled_tail_dates": int(min(lag + horizon, n_dates)),
+             "labelled_rows": int(Y[target].notna().sum()), "rows": int(len(Y)), "label_available_at": "close of the day the label interval ends (decision date + lag + horizon)"}
+    label["labels_voided_by_marks"] = int(voided.to_numpy().sum())
+    used = pit_mod.macro_columns_used(list(fs.frames), x.macro.columns, x.assets)
+    audit = audit_mod.dataset_audit(x.prices, {n: (FEATURES[n].group if n in FEATURES else "derived", f) for n, f in fs.frames.items()}, keep, causes, label,
+                                    pit=pit_mod.pit_report(used, getattr(bundle, "macro_meta", None)))
+    audit["marks"] = {"carried_cells": int(marks.to_numpy().sum()), "policy": "a carried mark is not a tradable price: its row is excluded, its asset is not investable that day, and a label whose entry or exit price is one is void"}
+    meta = {"label_convention": CONVENTION, "audit": audit, "universe": c.get("universe"), "target": target, "kind": kind, "horizon": horizon, "lag": lag, "feature_groups": list(c["feature_groups"]), "normalize": norm, "winsor": float(c.get("winsor", 0.0)),
             "benchmark": str(c.get("benchmark", "equal_weight")), "skipped": fs.skipped, "broadcast": sorted(fs.broadcast), "targets": names, "data_fingerprint": bundle_fingerprint(bundle),
             "bundle": getattr(bundle, "name", "bundle"), "min_history": int(c.get("min_history", 252)), **(source or {})}
-    return Dataset(name, X, Y, x.prices, x.returns, bundle.investable.reindex_like(x.prices).fillna(False).astype(bool), meta, dict(bundle.asset_class or {}), dict(bundle.group or {}))
+    return Dataset(name, X, Y, x.prices, x.returns, investable & ~marks, meta, dict(bundle.asset_class or {}), dict(bundle.group or {}))
 
 
 def _slice_bundle(bundle, sl: slice):
@@ -239,7 +260,7 @@ def _slice_bundle(bundle, sl: slice):
 
     pick = lambda f: None if f is None else f.loc[sl]                                  # noqa: E731
     return replace(bundle, prices=bundle.prices.loc[sl], returns=bundle.returns.loc[sl], investable=bundle.investable.loc[sl], high=pick(bundle.high), low=pick(bundle.low), volume=pick(bundle.volume),
-                   macro=bundle.macro.loc[sl] if len(bundle.macro) else bundle.macro, market=None)
+                   macro=bundle.macro.loc[sl] if len(bundle.macro) else bundle.macro, market=None, marks=pick(getattr(bundle, "marks", None)))
 
 
 def _regime_frame(bundle, detector: str, x) -> pd.DataFrame:

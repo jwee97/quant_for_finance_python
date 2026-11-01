@@ -29,6 +29,8 @@ class MarketBundle:
     group: dict = field(default_factory=dict)
     name: str = "bundle"
     market: object | None = None             # the underlying MarketData when there is one (the Generation 1-4 builders want it)
+    marks: pd.DataFrame | None = None        # True where a value is a MARK carried over a closed market (an exchange holiday), not a price anything traded at; None: the bundle carries nothing over
+    macro_meta: dict = field(default_factory=dict)   # per macro series: how its availability is known (release_lag_days, source, frequency, and quality when the loader knows better); empty: nothing is recorded
 
     @property
     def index(self) -> pd.DatetimeIndex:
@@ -79,7 +81,7 @@ class MarketBundle:
         macro = self.macro.copy()
         if not macro.empty:
             macro.loc[macro.index > pd.Timestamp(cutoff)] = rng.normal(size=(int((macro.index > pd.Timestamp(cutoff)).sum()), macro.shape[1])) * 10.0
-        return MarketBundle(prices, returns, self.investable, high, low, volume, macro, self.asset_class, self.group, self.name + "+noise", None)
+        return MarketBundle(prices, returns, self.investable, high, low, volume, macro, self.asset_class, self.group, self.name + "+noise", None, self.marks, self.macro_meta)
 
 
 def bundle_from_market(market, macro: pd.DataFrame | None = None, name: str = "platform") -> MarketBundle:
@@ -89,7 +91,7 @@ def bundle_from_market(market, macro: pd.DataFrame | None = None, name: str = "p
     macro = macro if macro is not None else pd.DataFrame(index=prices.index)
     return MarketBundle(prices=prices, returns=returns, investable=market.investable, high=getattr(market, "high", None), low=getattr(market, "low", None),
                         volume=getattr(market, "volume", None), macro=macro.reindex(prices.index), asset_class=dict(market.asset_class or {}),
-                        group=dict(market.group or {}), name=name, market=market)
+                        group=dict(market.group or {}), name=name, market=market, macro_meta=dict(getattr(macro, "attrs", {}).get("macro_meta", {})))
 
 
 def bundle_from_prices(prices: pd.DataFrame, volume: pd.DataFrame | None = None, high: pd.DataFrame | None = None, low: pd.DataFrame | None = None,
@@ -148,7 +150,9 @@ def load_macro_levels(config, index: pd.DatetimeIndex, download: bool = False) -
 
     specs, raw = ensure_macro_raw(config)
     levels = macro_feature_panel(raw, specs, index, config)["levels"]
+    meta = {s.id: {"release_lag_days": s.release_lag_days, "source": s.source, "frequency": s.frequency} for s in specs}
     extra = [MacroSeriesSpec.from_config(s) for s in (config.get("framework.extra_series", []) or [])] + list(TIMING_SERIES)
+    meta.update({s.id: {"release_lag_days": s.release_lag_days, "source": s.source, "frequency": s.frequency} for s in extra})
     if extra:
         raw_dir = config.root / "data" / "raw" / "framework"
         missing = [s for s in extra if not (raw_dir / f"{s.id}.csv").exists()]
@@ -167,13 +171,15 @@ def load_macro_levels(config, index: pd.DatetimeIndex, download: bool = False) -
         for spec in alt_specs:
             if spec.id in ("BAA10Y", "VIX3M", "VXN", "GVZ", "OVX", "ICSA"):
                 levels[spec.id] = asof_series(alt_raw[spec.id], spec, pd.DatetimeIndex(index)).reindex(index)
+                meta[spec.id] = {"release_lag_days": spec.release_lag_days, "source": spec.source, "frequency": spec.frequency}
     except Exception:                                        # optional: a bundle without them still works; models that need them say so
         pass
-    levels = _with_positioning(config, levels, index)
+    levels = _with_positioning(config, levels, index, meta)
+    levels.attrs["macro_meta"] = meta                                                  # how each series' availability is known, for the dataset report (``ml/pit.py``)
     return levels
 
 
-def _with_positioning(config, levels: pd.DataFrame, index: pd.DatetimeIndex) -> pd.DataFrame:
+def _with_positioning(config, levels: pd.DataFrame, index: pd.DatetimeIndex, meta: dict | None = None) -> pd.DataFrame:
     """CFTC speculative positioning (``cftc_es``, ``cftc_nq``, ``cftc_ust10``, ``cftc_gold``, ``cftc_silver``, ``cftc_crude``) known only after the release lag.
 
     Read from the Generation 3 table if it has been downloaded; nothing is fetched here, and a missing table just leaves the columns out.
@@ -189,4 +195,6 @@ def _with_positioning(config, levels: pd.DataFrame, index: pd.DatetimeIndex) -> 
     levels = levels.copy()
     for spec in specs:
         levels[spec.id] = asof_series(series[spec.id], spec, pd.DatetimeIndex(index)).reindex(index)
+        if meta is not None:
+            meta[spec.id] = {"release_lag_days": spec.release_lag_days, "source": spec.source, "frequency": spec.frequency}
     return levels

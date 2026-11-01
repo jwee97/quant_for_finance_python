@@ -19,6 +19,7 @@ from scipy.stats import multivariate_normal
 from sklearn.linear_model import Ridge
 
 from .contracts import validate_probabilities
+from .causal import CausalView
 from .models import Model
 
 STATE_COLUMNS = ("mkt_ret", "log_vol", "log_disp")
@@ -166,7 +167,7 @@ class RegimeMixture(Model):
         return d
 
     def bind(self, ds) -> "RegimeMixture":
-        self._ds = ds
+        self._ds = ds = CausalView.of(ds)
         self._state = market_state(ds)
         self._cache = {}
         return self
@@ -206,6 +207,7 @@ class RegimeMixture(Model):
         self.n_train_ = len(Xs)
         d = X.index.get_level_values(0)
         self.start_, hi = d.min(), d.max()
+        self.fit_end_ = hi                                                           # the last day the model was fitted on: what it reports about its own fit stops here, not at the end of the block it is then asked about
         window = self._state.loc[self.start_:hi].dropna()
         if len(window) < MIN_DAYS:
             raise ValueError(f"{len(window)} days of market history are too few to find regimes (at least {MIN_DAYS})")
@@ -251,7 +253,8 @@ class RegimeMixture(Model):
         return pd.Series(self.occupancy_ @ coef, index=self.features_)
 
     def diagnostics(self) -> dict:
-        stats = self._state.loc[self.start_:].dropna()
+        end = getattr(self, "fit_end_", None)                                         # artifacts saved before this was recorded fall back to the bound history
+        stats = self._state.loc[self.start_:end].dropna() if end is not None else self._state.loc[self.start_:].dropna()
         P = self.probabilities(stats.index.max()).reindex(stats.index).dropna()
         hard = P.to_numpy().argmax(axis=1)
         rows = []
