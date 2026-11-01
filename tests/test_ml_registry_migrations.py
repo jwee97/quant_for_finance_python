@@ -31,11 +31,12 @@ def make_legacy_registry(root):
 def test_a_registry_from_before_the_migrations_opens_keeps_every_row_and_gains_the_new_tables(tmp_path):
     make_legacy_registry(tmp_path)
     reg = rg.Registry(tmp_path)
-    assert reg.schema_version() == max(v for v, _, _ in rg.MIGRATIONS) >= 6
+    assert reg.schema_version() == max(v for v, _, _ in rg.MIGRATIONS) >= 9
     with reg._conn() as c:
         tables = {r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         assert {"research_studies", "lineage_events", "experiment_tombstones", "provenance", "evaluation_plans", "plan_events", "holdout_reservations", "holdout_access_log", "selection_evidence", "null_studies",
-                "null_replications", "gate_decisions", "stage_changes", "verification_checks"} <= tables
+                "null_replications", "gate_decisions", "stage_changes", "verification_checks", "analysis_records", "validation_policies", "policy_adoptions", "commitments", "commitment_audit", "settlements",
+                "strategy_versions", "risk_limits", "governance_events"} <= tables
         assert c.execute("SELECT COUNT(*) FROM experiments").fetchone()[0] == 1 and c.execute("SELECT stage FROM models WHERE id='ridge-legacy-1'").fetchone()[0] == "production"
         assert c.execute("SELECT COUNT(*) FROM forward_signals").fetchone()[0] == 1 and c.execute("SELECT value FROM metrics").fetchone()[0] == 1.25
     assert reg.get_experiment("legacy-1")["stage"] == "production" and reg.report("legacy-1")["trials"]["dataset_trials"] == 3
@@ -101,3 +102,37 @@ def test_legacy_stages_can_be_left_without_evidence_and_every_change_is_recorded
         reg.promote("nope", "archived")
     with pytest.raises(rg.RegistryError, match="stage must be one of"):
         reg.promote("ridge-legacy-1", "launched")
+
+
+def test_a_registry_at_the_end_of_release_3_gains_the_release_5_tables_and_keeps_every_row(tmp_path):
+    """Migrations 7 to 9 on a registry that already holds verification, lineage, gate and stage rows: they are added, the earlier rows are untouched, and the append-only tables refuse rewriting."""
+    make_legacy_registry(tmp_path)
+    con = sqlite3.connect(tmp_path / "registry.sqlite")
+    con.executescript(rg.SCHEMA)
+    con.execute("CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, name TEXT, applied TEXT)")
+    for version, name, script in [m for m in rg.MIGRATIONS if m[0] <= 6]:
+        for statement in (list(script) if isinstance(script, (list, tuple)) else [x.strip() for x in script.split(";") if x.strip()]):
+            con.execute(statement)
+        con.execute("INSERT INTO schema_migrations VALUES (?,?,?)", (version, name, "2026-01-01 00:00:00"))
+    con.execute("INSERT INTO gate_decisions (subject_id, gate, policy_version, status, stale, evidence, reasons, actor, previous_seq, at) VALUES ('legacy-1', 'A', 'gates-v2', 'pending', 0, '{}', '[]', 'x', NULL, 'then')")
+    con.commit()
+    con.close()
+    reg = rg.Registry(tmp_path)
+    assert reg.schema_version() == 9
+    with reg._conn() as c:
+        assert [r[0] for r in c.execute("SELECT version FROM schema_migrations ORDER BY version")] == list(range(1, 10))
+        assert c.execute("SELECT policy_version FROM gate_decisions").fetchone()[0] == "gates-v2" and c.execute("SELECT COUNT(*) FROM experiments").fetchone()[0] == 1
+        c.execute("INSERT INTO policy_adoptions (policy_hash, actor, note, at) VALUES ('h', 'a', 'n', 't')")
+        c.execute("INSERT INTO governance_events (kind, subject_id, detail, actor, at) VALUES ('halted', 'v', '{}', 'a', 't')")
+        c.execute("INSERT INTO analysis_records (kind, subject_id, study_id, content, content_hash, policy_hash, actor, created) VALUES ('diagnostics', 'e', NULL, '{}', 'h', NULL, 'a', 't')")
+        c.execute("INSERT INTO validation_policies (policy_hash, name, version, illustrative, content, created) VALUES ('h', 'p', 'v', 0, '{}', 't')")
+        c.execute("INSERT INTO commitments (commitment_id, commit_key, content_hash, strategy_version, decision_ts, universe_version, horizon, created_at, created_epoch, artifact_hashes, classification, why, forecasts, actor) "
+                  "VALUES ('cm-1', 'k', 'h', 'sv', '2024-01-01', 'u', 5, 't', 0.0, '{}', 'replay', 'w', '{}', 'a')")
+        c.execute("INSERT INTO settlements (commitment_id, version, outcomes, outcome_hash, vintage, settled_at, actor) VALUES ('cm-1', 1, '{}', 'h', 'first', 't', 'a')")
+        c.execute("INSERT INTO strategy_versions (version_id, experiment_id, content, created, actor) VALUES ('sv-1', 'legacy-1', '{}', 't', 'a')")
+        c.execute("INSERT INTO risk_limits (limits_hash, content, created, actor) VALUES ('h', '{}', 't', 'a')")
+        for stmt, text in (("UPDATE policy_adoptions SET actor='x'", "append-only"), ("DELETE FROM governance_events", "append-only"), ("UPDATE analysis_records SET kind='x'", "append-only"),
+                           ("UPDATE settlements SET outcomes='{}'", "append-only"), ("DELETE FROM commitments", "cannot be deleted"), ("UPDATE strategy_versions SET actor='x'", "immutable"),
+                           ("UPDATE risk_limits SET actor='x'", "immutable"), ("DELETE FROM validation_policies", "cannot be deleted")):
+            with pytest.raises(sqlite3.DatabaseError, match=text):
+                c.execute(stmt)

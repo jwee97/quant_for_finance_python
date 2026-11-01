@@ -390,7 +390,8 @@ def compare_experiments(registry, ids: list[str], max_points: int = 700) -> dict
         rows.append({"id": i, "name": names[i], "model": cfg["model"]["kind"], "target": cfg["dataset"]["target"], "universe": cfg["dataset"]["universe"] if isinstance(cfg["dataset"]["universe"], str) else "tickers",
                      "signal": cfg["signal"]["method"], "rebalance": cfg["backtest"]["rebalance"], "ic": rep["ic"]["all"].get("mean"), "ic_ir": rep["ic"]["all"].get("ir"),
                      "generalization": rep["overfit"].get("generalization_score"), "trials": rep["trials"]["dataset_trials"], "turnover": rep["metrics"]["oos"].get("ann_turnover"),
-                     "segments": {seg: {k: v.get(k) for k in ("sharpe", "ann_return", "ann_vol", "max_drawdown", "n_days")} for seg, v in st.items()}, "warnings": list(rep.get("warnings", []))[:3]})
+                     "segments": {seg: {k: v.get(k) for k in ("sharpe", "ann_return", "ann_vol", "max_drawdown", "n_days")} for seg, v in st.items()}, "warnings": list(rep.get("warnings", []))[:3],
+                     "holdout": (rep.get("holdout") or {}).get("status", "not recorded"), "execution_mode": (rep.get("execution") or {}).get("mode", "vectorized_legacy")})   # which look the protected segments cost, and how the result was produced
     common = R.dropna()
     note = None
     if len(common) < 60:

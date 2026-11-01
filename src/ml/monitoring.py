@@ -15,6 +15,8 @@ different distribution".
 
 from __future__ import annotations
 
+import hashlib
+import json
 import math
 from pathlib import Path
 
@@ -22,6 +24,10 @@ import numpy as np
 import pandas as pd
 import yaml
 
+from . import execution as xe
+from . import governance as gv
+from . import prospective as pr
+from . import provenance as pv
 from .bundle import InferenceBundle
 from .config import DEFAULTS, experiment_config, merge
 from .datasets import build_dataset, resolve_bundle
@@ -86,14 +92,30 @@ def forward_record(signals: list[dict], name: str, experiment_id: str, horizon: 
            "n_replay": sum(pd.Timestamp(s["signal_date"]) < pd.Timestamp(seen_through) for s in signals) if seen_through else None, "model_seen_through": seen_through}
     if done:
         r = pd.Series([s["realised"] for s in done], index=pd.to_datetime([s["signal_date"] for s in done]))
-        per_day = r / max(horizon, 1)
-        out.update({"mean_realised": float(r.mean()), "hit_rate": float((r > 0).mean()), "cumulative": float((1.0 + per_day).prod() - 1.0), "sharpe": sharpe_of(per_day),
-                    "series": {"dates": [str(d.date()) for d in r.index], "realised": [float(v) for v in r], "cumulative": [float(v) for v in (1.0 + per_day).cumprod() - 1.0]}})
+        # The realised value of one signal is the return of its book over ITS horizon, and horizons overlap: these numbers describe the forecasts, they are not a daily P&L. No equity curve is built from them
+        # (dividing a multi-day return by the horizon and compounding it is wrong); the strategy's equity is built from the committed holdings and the daily prices by the ledger (``ForwardTracker.summary``).
+        out.update({"mean_realised": float(r.mean()), "hit_rate": float((r > 0).mean()), "horizon_outcomes": {"n": int(len(r)), "mean": float(r.mean()), "hit_rate": float((r > 0).mean()),
+                                                                                                   "note": "return of each signal's book over its own horizon; overlapping, so not independent and not a daily P&L"}})
     if out["n_replay"]:
         out["alerts"].append(f"{out['n_replay']} of {len(signals)} signals are for dates the saved model had already seen (its labels reach {seen_through}): they are replays, not forecasts, and say nothing about live performance.")
     if out["n_backfilled"]:
         out["alerts"].append(f"{out['n_backfilled']} of {len(signals)} signals were recorded after their date (replayed history, not live forecasts).")
     return out
+
+
+def ledger_view(registry: Registry, experiment_id: str) -> dict:
+    """What the prospective ledger holds for an experiment's current strategy version, from the registry alone (no data is loaded): the version and its operating state, the commitments (creation time,
+    classification and why, cutoffs, settled versions), the counts of prospective and replay evidence kept apart, and the forecast skill of the settled commitments."""
+    v = gv.current_version(registry, experiment_id)
+    if v is None:
+        return {"strategy_version": None, "note": "no commitment has been written for this experiment yet"}
+    vid = v["version_id"]
+    rows = pr._rows(registry, vid)                                                                # noqa: SLF001
+    sett = pr._settlements(registry, [r["commitment_id"] for r in rows])                          # noqa: SLF001
+    return {"strategy_version": vid, "state": gv.state(registry, vid), "counts": pr.counts(registry, vid),
+            "commitments": [{"commitment_id": r["commitment_id"], "decision_ts": r["decision_ts"], "created_at": r["created_at"], "classification": r["classification"], "why": r["why"], "data_cutoff": r["data_cutoff"],
+                             "fit_cutoff": r["fit_cutoff"], "n_forecasts": len(json.loads(r["forecasts"])), "settled_versions": len(sett[r["commitment_id"]])} for r in rows[-200:]],
+            "evaluation": {c: pr.evaluate(registry, vid, classification=c) for c in ("prospective", "replay")}}
 
 
 class ForwardTracker:
@@ -112,6 +134,7 @@ class ForwardTracker:
         bundle_path = d / "model.qfb"
         self.bundle = InferenceBundle.load(bundle_path) if bundle_path.exists() else None                 # experiments saved before the bundle existed have none: their schema is checked by the model alone
         self.seen_through = (getattr(self.model, "fit_info_", None) or {}).get("label_end_max")           # the last day the final model's labels reached: it has seen the market through then
+        self._version: dict | None = None                                                                 # the strategy version whose commitments this tracker writes (registered on first use)
 
     # ------------------------------------------------------------------------------------------------------------ one day
     def _dataset(self, bundle, as_of):
@@ -125,8 +148,9 @@ class ForwardTracker:
             bundle = _slice_bundle(bundle, slice(None, pd.Timestamp(as_of)))
         return build_dataset(bundle, self.cfg["dataset"], self.cfg["name"], source=info), bundle
 
-    def step(self, bundle=None, as_of=None, capital: float = 100_000.0) -> dict:
-        """Produce and save the signal for the last date in the data (or ``as_of``). Returns the signal: scores, target weights, current weights, trades and the paper orders for ``capital``."""
+    def step(self, bundle=None, as_of=None, capital: float = 100_000.0, _now: float | None = None) -> dict:
+        """Produce and save the signal for the last date in the data (or ``as_of``). Returns the signal: scores, target weights, current weights, trades and the paper orders for ``capital``, and the ledger's answer
+        (``commitment``: committed as prospective or as a replay, unchanged, refused by a risk limit or a halt, or rejected as a conflict). ``_now`` is a test hook; the API never passes it."""
         ds, bundle = self._dataset(bundle, as_of)
         date = ds.dates[-1]
         sig_cfg = self.cfg["signal"]
@@ -152,18 +176,86 @@ class ForwardTracker:
         held = pd.Series(past[-1]["weights"], dtype=float).reindex(ds.assets).fillna(0.0) if past else pd.Series(0.0, index=ds.assets)
         rebalance = is_rebalance_day(date, self.cfg["backtest"]["rebalance"])
         new_held = target if (rebalance or not past) else held
+        score_row = scores.iloc[-1]
+        # The commitment is written (or refused) BEFORE anything is recorded as held: a book that breaches a documented limit, or a version that is halted, never becomes a signal.
+        commitment = self._commit(ds, date, score_row, new_held, held, replay, _now)
+        if commitment["status"] in ("refused", "rejected_conflict") and not any(str(date.date()) == s["signal_date"] for s in past):
+            new_held = held
         trades = (new_held - held)
         turnover = float(trades.abs().sum())
         orders = [{"asset": a, "side": "buy" if d > 0 else "sell", "weight_change": float(d), "notional": float(abs(d) * capital)} for a, d in trades.items() if abs(d) > 1e-4]
-        if any(str(date.date()) == s["signal_date"] for s in past):
-            sid = None                                                                     # the signal for this date exists: do not log it twice
+        if any(str(date.date()) == s["signal_date"] for s in past) or commitment["status"] in ("refused", "rejected_conflict"):
+            sid = None                                                                     # the signal for this date exists (do not log it twice), or the ledger refused the book or the key holds other content
         else:
-            sid = self.registry.log_forward_signal(self.id, date, {a: float(w) for a, w in new_held.items() if abs(w) > 1e-8}, {a: float(v) for a, v in scores.iloc[-1].dropna().items()}, turnover)
-        return {"experiment_id": self.id, "date": str(date.date()), "signal_id": sid, "rebalance_day": bool(rebalance), "scores": {a: float(v) for a, v in scores.iloc[-1].dropna().items()},
+            sid = self.registry.log_forward_signal(self.id, date, {a: float(w) for a, w in new_held.items() if abs(w) > 1e-8}, {a: float(v) for a, v in score_row.dropna().items()}, turnover)
+        return {"experiment_id": self.id, "date": str(date.date()), "signal_id": sid, "rebalance_day": bool(rebalance), "scores": {a: float(v) for a, v in score_row.dropna().items()},
                 "target": {a: float(w) for a, w in target.items() if abs(w) > 1e-8}, "held_before": {a: float(w) for a, w in held.items() if abs(w) > 1e-8},
                 "weights": {a: float(w) for a, w in new_held.items() if abs(w) > 1e-8}, "turnover": turnover, "orders": orders, "capital": float(capital),
-                "replay": replay, "model_seen_through": self.seen_through,
+                "replay": replay, "model_seen_through": self.seen_through, "commitment": commitment,
                 "note": (f"the model was fitted with labels that end on {self.seen_through}: a signal for {date.date()} is a replay of history it has seen, not a forecast" if replay else None)}
+
+    # ------------------------------------------------------------------------------------------------------------ the prospective ledger
+    def _ledger_version(self) -> str:
+        """The strategy version whose commitments this tracker writes: the latest registered for the experiment, or a new one (no risk limits) when none exists."""
+        if self._version is None:
+            self._version = gv.current_version(self.registry, self.id) or gv.register_version(self.registry, self.id, actor="forward-test")
+        return self._version["version_id"]
+
+    def _commit(self, ds, date, score_row: pd.Series, book: pd.Series, previous: pd.Series, replay: bool, clock: float | None) -> dict:
+        """Write the decision of ``date`` to the immutable ledger. The creation time is the server's; whether it is prospective or a replay is decided by the ledger from the cutoffs, not stated here."""
+        vid = self._ledger_version()
+        model_sha = hashlib.sha256((Path(self.registry.root) / "experiments" / self.id / "model.pkl").read_bytes()).hexdigest()[:32]
+        lag = max(int(self.cfg["dataset"].get("lag", 1)) + int(self.cfg["backtest"].get("extra_lag", 0)), 1)
+        arts = {"model": model_sha, "data": pv.dataset_manifest(ds)["data_hash"][:32], "code": pv.source_tree_hash()["sha256"][:32]}
+        universe = hashlib.sha256(",".join(sorted(map(str, ds.assets))).encode()).hexdigest()[:12]
+        try:
+            res = gv.commit_forecast(self.registry, vid, decision_ts=date, universe_version=universe, horizon=int(self.cfg["dataset"]["horizon"]), forecasts={a: float(v) for a, v in score_row.dropna().items()},
+                                     weights={a: float(w) for a, w in book.items() if abs(w) > 1e-8}, previous_weights={a: float(w) for a, w in previous.items() if abs(w) > 1e-8}, data_cutoff=ds.dates[-1],
+                                     fit_cutoff=self.seen_through, artifact_hashes=arts, model_created=self.record.get("created"), label_start=date + pd.offsets.BDay(lag), actor="forward-test", now=clock)
+        except (gv.LimitBreach, gv.StrategyHalted) as exc:
+            return {"status": "refused", "reason": str(exc), "strategy_version": vid}
+        except pr.CommitmentConflict as exc:
+            return {"status": "rejected_conflict", "reason": str(exc), "strategy_version": vid}
+        return {**res, "strategy_version": vid}
+
+    def _settle_ledger(self, ds, fwd: pd.DataFrame) -> list[dict]:
+        """Append the outcomes of every commitment whose label window has completed in the data. A settled commitment whose outcomes now differ (the data was revised) gets a NEW version with a reason."""
+        existing = gv.current_version(self.registry, self.id)
+        if existing is None:
+            return []
+        out = []
+        for r in pr._rows(self.registry, existing["version_id"]):                                  # noqa: SLF001
+            d = pd.Timestamp(r["decision_ts"])
+            if d not in fwd.index or fwd.loc[d].isna().all():
+                continue
+            outcomes = {a: float(v) for a, v in fwd.loc[d].dropna().items()}
+            res = pr.settle(self.registry, r["commitment_id"], outcomes, vintage=str(ds.dates[-1].date()), reason="the realised returns differ from the earlier settlement: the data was revised", actor="forward-test")
+            if res["status"] == "settled":
+                out.append({"commitment_id": r["commitment_id"], "decision_ts": r["decision_ts"], "version": res["version"], "classification": r["classification"]})
+        return out
+
+    def ledger(self, ds=None, volume=None) -> dict:
+        """The ledger's view of this experiment's current strategy version (``ledger_view``) and, when ``ds`` is given, the actual daily equity of each stream built from the committed holdings and the daily
+        prices."""
+        out = ledger_view(self.registry, self.id)
+        if ds is None or out.get("strategy_version") is None:
+            return out
+        vid = out["strategy_version"]
+        lag = max(int(self.cfg["dataset"].get("lag", 1)) + int(self.cfg["backtest"].get("extra_lag", 0)), 1)
+        out["equity"] = {}
+        for cls in ("prospective", "replay"):
+            if not out["counts"][cls]["committed"]:
+                continue
+            eq = pr.equity(self.registry, vid, ds.prices, xe.ExecutionSpec(delay=lag), volume=volume, classification=cls)
+            if eq.get("equity") is None:
+                out["equity"][cls] = {"eligibility": eq["eligibility"], "reason": eq["reason"]}
+                continue
+            r = eq["returns"].dropna()
+            ok = len(r) >= 20
+            out["equity"][cls] = {"eligibility": "applied", "n_days": int(len(r)), "n_decisions": eq["n_decisions"], "total_return": float(eq["equity"].iloc[-1] / eq["equity"].iloc[0] - 1.0) if len(eq["equity"]) > 1 else 0.0,
+                                  "sharpe": sharpe_of(r) if ok else None, "reason": "" if ok else f"{len(r)} daily returns: too few for a ratio", "dates": [str(d.date()) for d in eq["equity"].index], "values": [float(v) for v in eq["equity"]],
+                                  "reconciliation": eq["reconciliation"], "limitations": eq["limitations"], "note": eq["note"]}
+        return out
 
     # ------------------------------------------------------------------------------------------------------------ settling
     def settle(self, bundle=None, as_of=None) -> list[dict]:
@@ -188,11 +280,13 @@ class ForwardTracker:
             sc = pd.Series(s["scores"], dtype=float).reindex(ds.assets)
             ic = rank_ic_wide(sc.to_frame().T, r.to_frame().T, min_assets=3).iloc[0] if sc.notna().sum() >= 3 else float("nan")
             settled.append({"signal_date": s["signal_date"], "realised": realised, "ic": None if not np.isfinite(ic) else float(ic)})
+        self._settle_ledger(ds, fwd)                                                              # the ledger keeps its own append-only, versioned settlements of the same windows
         return settled
 
     # ------------------------------------------------------------------------------------------------------------ the record
-    def summary(self, bundle=None, as_of=None) -> dict:
-        """The forward track record, the live IC against the backtest's, and drift."""
+    def summary(self, bundle=None, as_of=None, monitor: bool = False, volume=None) -> dict:
+        """The forward track record, the live IC against the backtest's, drift, and the ledger's view (commitments, prospective and replay evidence apart, actual daily equity from the committed holdings). With
+        ``monitor`` the check is also written to the governance audit (and can halt the version on a breach of a documented limit); a plain read writes nothing."""
         sigs = self.registry.forward_signals(self.id)
         report = self.registry.report(self.id)
         out = forward_record(sigs, self.cfg["name"], self.id, int(self.cfg["dataset"]["horizon"]), self.seen_through)
@@ -223,4 +317,13 @@ class ForwardTracker:
             out["drift"]["prediction_psi"] = psi(oos.to_numpy(), recent.to_numpy())
         except (FileNotFoundError, KeyError, ValueError):
             out["drift"]["prediction_psi"] = None
+        out["ledger"] = self.ledger(ds, volume)
+        if out["ledger"].get("strategy_version"):
+            if out["ledger"]["counts"]["replay"]["committed"]:
+                out["alerts"].append(f"{out['ledger']['counts']['replay']['committed']} commitment(s) are replays: they are listed and never count as prospective evidence.")
+            if monitor:
+                eq = (out["ledger"].get("equity") or {}).get("prospective") or {}
+                rets = pd.Series(eq["values"], index=pd.to_datetime(eq["dates"])).pct_change().dropna() if eq.get("values") else None
+                last = out["ledger"]["commitments"][-1]["decision_ts"] if out["ledger"]["commitments"] else None
+                out["monitoring"] = gv.monitor(self.registry, out["ledger"]["strategy_version"], drift=out["drift"], live_ic=out["live_ic"], returns=rets, last_decision=last)
         return out

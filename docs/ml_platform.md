@@ -172,6 +172,24 @@ GET  /api/ml/trading-diagnostics?id=...
 The report (`report["execution"]`) carries the timeline from decision to fill (the lag is applied once), the price convention, gross and net, the itemised costs, turnover, leverage, equity before and after costs, capacity at capital levels declared before the run, the accounting reconciliation, a comparison with the vectorized engine on the same days, the
 capability report (what the data and adapter support, the blockers and the limitations) and a manifest of the order, fill and journal files with their hashes. Costs default to the backtest section's; the impact coefficient is an assumption unless calibrated, and says so. Gate B reads this evidence; a vectorized result cannot pass it.
 
+### Statistical and prospective validation (Release 5)
+
+**A policy first.** The platform implies no Sharpe, deflated-Sharpe, PBO, p-value or paper-trading-duration threshold. A named person adopts a versioned *validation policy* before the evaluation (`quant ml-policy --file policy.json --actor NAME --note REASON`, or `POST /api/ml/validation-policy`); an illustrative example exists (`--adopt-example`) and is not a recommendation. Until one is adopted, Gates B and C are blocked.
+
+```
+quant ml-diagnostics <experiment> [--neighborhood '{"signal.n": [2, 3, 4]}'] [--delays 0,1,2,5] [--capitals 1e5,1e6,1e7] [--prices prices.csv]
+POST /api/ml/statistical-diagnostics/run {"id": "...", "n_boot": 500, "delays": [0, 1], "neighborhood": {"signal.n": [2, 3, 4]}}
+GET  /api/ml/statistical-diagnostics?id=...        # the stored record, read against the policy in force (stale under another policy)
+```
+
+The diagnostics give the annualised Sharpe ratio with **three statements of its uncertainty around one estimate**: the naive interval (which says it treats days as independent), a HAC interval (Newey-West, delta method) and a stationary-bootstrap interval; the active return against *matched* benchmarks (beta, net-exposure, sector and risk matched, estimated only from information known before each day) with the unmatched
+equal-weight market shown as descriptive; regimes declared before the evaluation (a regime with too few days is insufficient evidence, never dropped); and the neighbourhood, delay and capacity analyses, which re-run the saved predictions, report the whole grid and never a best cell, and count as looks. Diagnostics refuse the test and forward segments of an experiment that no frozen plan evaluated.
+
+**Forward testing is a ledger.** `quant ml-forward <experiment>` (or the Forward test view, `POST /api/ml/forward/step`) records the model's signal, writes an immutable *commitment* (keyed by strategy version, decision time, universe version and horizon; the server's creation time; the data and fit cutoffs and artifact hashes) and settles the commitments whose window has passed. The server classifies each commitment as **prospective** or a
+**replay**: a replay of history is listed and never counts toward prospective evidence. A revision of realised data is a new settlement version with a reason. The strategy's equity is built from the committed holdings and the daily prices; a multi-day forecast is not turned into a daily return.
+
+**A strategy version** is the model with its signal, execution and risk settings (`quant ml-governance <experiment> --register --actor NAME --limits '{"max_gross": 1.5, "max_drawdown": 0.2}'`). The platform refuses to commit a book that breaches a documented limit and a version that is halted or rolled back; it keeps a written recovery procedure, monitoring checks and the separate human deployment approval, each with a name and a time. Gate C reads them.
+
 ## If LightGBM or XGBoost shows as "not available"
 
 The two boosting libraries are optional and need the OpenMP runtime of the operating system (`libgomp.so.1` on Linux). Where the library is missing, importing them fails with `OSError: libgomp.so.1: cannot open shared object file`. The Machine learning tab does not fail with it: the model list shows LightGBM and XGBoost as not available, with the reason, and every other model (linear, ridge, lasso, elastic net, logistic, random forest, scikit-learn's histogram gradient boosting, autoregression, Kalman, online and regime models) works as before. Scikit-learn's histogram gradient boosting is the same family of model as LightGBM and needs nothing extra.

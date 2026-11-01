@@ -1,4 +1,4 @@
-"""Persisted verification evidence for the model-correctness requirements (spec v3, Releases 1 to 4).
+"""Persisted verification evidence for the model-correctness requirements (spec v3, Releases 1 to 5).
 
 A requirement is verified by the test files that check it. ``run_verification`` runs them (pytest in a subprocess, so a crash cannot take the app down), reads the JUnit report, and records one row per
 requirement in the registry: the status, the counts, the environment, a hash of the source files the requirement concerns, and the hash and path of the report that proves it. The status rules are strict:
@@ -52,6 +52,17 @@ SOURCES = {
     "execution": ["src/ml/realism.py", "src/ml/execution.py", "src/ml/experiments.py", "src/ml/config.py", "src/ledger", "src/instruments", "src/backtest/execution.py", "src/backtest/engine.py",
                   "src/backtest/costs.py"],
     "execsurface": ["src/ml/realism.py", "src/ml/execution.py", "src/ml/experiments.py", "src/ml/gates.py", "src/ml/cli.py", "src/ml/visualization.py", "src/webapp/ml_api.py", "src/ledger", "src/instruments"],
+    # Release 5: statistical and prospective validation
+    "nested": ["src/ml/nested.py", "src/ml/evaluation.py"],
+    "hac": ["src/ml/inference.py", "src/stats/inference.py", "src/stats/regression.py"],
+    "matched": ["src/ml/benchmarks.py", "src/ml/inference.py", "src/stats/regression.py"],
+    "regimes5": ["src/ml/regime_eval.py", "src/ml/inference.py"],
+    "robust5": ["src/ml/sensitivity.py", "src/ml/experiments.py", "src/ml/config.py", "src/ml/execution.py"],
+    "calibration": ["src/ml/calibration.py"],
+    "seeds": ["src/ml/multiseed.py", "src/ml/inference.py", "src/ml/diagnostics.py"],
+    "ledger": ["src/ml/prospective.py", "src/ml/monitoring.py", "src/ml/execution.py", "src/ml/r5_schema.py", "src/ml/governance.py", "src/ml/registry.py", "src/ml/cli.py", "src/webapp/ml_api.py", "src/ledger"],
+    "governance": ["src/ml/governance.py", "src/ml/policy.py", "src/ml/r5_gates.py", "src/ml/diagnostics.py", "src/ml/gates.py", "src/ml/r5_schema.py", "src/ml/monitoring.py", "src/ml/registry.py",
+                   "src/ml/cli.py", "src/webapp/ml_api.py"],
 }
 REQUIREMENTS = {                                                # requirement id -> (test files, source group)
     "P0-01": (["tests/test_ml_rl_accounting_reference.py"], "rl"),
@@ -84,7 +95,7 @@ REQUIREMENTS = {                                                # requirement id
     "P0-27": (["tests/test_ml_statistical_eligibility.py"], "selection"),
     "P0-28": (["tests/test_ml_holdout_controls.py", "tests/test_ml_statistical_eligibility.py"], "featuresearch"),
     "P0-29": (["tests/test_ml_ci_policy.py", "tests/test_ml_promotion_gates.py", "tests/test_ml_registry_migrations.py"], "ci"),
-    "P1-26": (["tests/test_ml_holdout_controls.py"], "controls"),
+    "P1-26": (["tests/test_ml_holdout_controls.py", "tests/test_ml_statistical_api.py"], "controls"),
     "P1-01": (["tests/test_ml_execution_ledger.py"], "execution"),
     "P1-02": (["tests/test_ml_execution_ledger.py"], "execution"),
     "P1-03": (["tests/test_ml_execution_ledger.py"], "execution"),
@@ -99,6 +110,17 @@ REQUIREMENTS = {                                                # requirement id
     "P1-12": (["tests/test_ml_execution_fixtures.py", "tests/test_ml_execution_ledger.py"], "execution"),
     "P1-13": (["tests/test_ml_execution_fixtures.py", "tests/test_ml_execution_ledger.py"], "execution"),
     "P1-14": (["tests/test_ml_execution_ledger.py", "tests/test_ml_execution_pipeline.py", "tests/test_ml_execution_api.py", "tests/test_ml_execution_cli.py"], "execsurface"),
+    "P1-15": (["tests/test_ml_nested_selection.py"], "nested"),
+    "P1-16": (["tests/test_ml_statistical_inference.py"], "hac"),
+    "P1-17": (["tests/test_ml_statistical_eligibility.py"], "selection"),
+    "P1-18": (["tests/test_ml_matched_benchmarks.py"], "matched"),
+    "P1-19": (["tests/test_ml_regime_evaluation.py"], "regimes5"),
+    "P1-20": (["tests/test_ml_sensitivity.py"], "robust5"),
+    "P1-21": (["tests/test_ml_sensitivity.py"], "robust5"),
+    "P1-22": (["tests/test_ml_calibration_scores.py"], "calibration"),
+    "P1-23": (["tests/test_ml_multiseed.py"], "seeds"),
+    "P1-24": (["tests/test_ml_prospective_commitments.py", "tests/test_ml_forward_equity.py", "tests/test_ml_statistical_api.py", "tests/test_ml_statistical_cli.py"], "ledger"),
+    "P1-25": (["tests/test_ml_validation_policy_governance.py", "tests/test_ml_statistical_api.py", "tests/test_ml_statistical_cli.py"], "governance"),
 }
 
 

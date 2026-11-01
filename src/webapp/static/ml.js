@@ -348,7 +348,8 @@
   const fresh = (mode) => { M.results[mode] = null; M.errors[mode] = null; };
   const JOB_MODES = new Set(["dataset", "train", "search", "forward"]);
   const CONTROLS = (id) => [{ modes: ["controls"], path: "/api/ml/promotion-status", query: { id } }, { modes: ["controls_lineage"], path: "/api/ml/lineage", query: { id } }, { modes: ["controls_holdout"], path: "/api/ml/holdout", query: {} },
-    { modes: ["controls_stats"], path: "/api/ml/statistical-diagnostics", query: { id } }, { modes: ["controls_exec"], path: "/api/ml/trading-diagnostics", query: { id } }];
+    { modes: ["controls_stats"], path: "/api/ml/statistical-diagnostics", query: { id } }, { modes: ["controls_exec"], path: "/api/ml/trading-diagnostics", query: { id } },
+    { modes: ["controls_policy"], path: "/api/ml/validation-policy", query: {} }, { modes: ["controls_gov"], path: "/api/ml/governance", query: { id } }];
 
   M.run = async (fromForm) => {
     const m = M.mode, f = M.form;
@@ -1037,6 +1038,22 @@
       if (sig1.orders.length) table(c, [{ label: "Asset", get: (o) => o.asset }, { label: "Side", get: (o) => o.side }, { label: "Weight change", num: true, get: (o) => spct(o.weight_change, 1) }, { label: "Notional", num: true, get: (o) => Q.money(o.notional) }, { label: "Target weight", num: true, get: (o) => spct(sig1.weights[o.asset] || 0, 1) }], sig1.orders);
       else W.hint(c, "No orders: the book already matches the target.");
     }
+    const led = (live.ledger && live.ledger.strategy_version) ? live.ledger : d.ledger;
+    if (led && led.strategy_version) {
+      const cn = led.counts;
+      const cl = W.card(root, "Prospective ledger", `Strategy version ${led.strategy_version} · ${led.state.state}. Each decision is committed before its outcome and classified by the server; a replay of history is listed and never counted as prospective evidence.`);
+      table(cl, [{ label: "Class", get: (r) => r[0] }, { label: "Committed", num: true, get: (r) => String(r[1].committed) }, { label: "Settled", num: true, get: (r) => String(r[1].settled) }, { label: "Distinct settled days", num: true, get: (r) => String(r[1].distinct_settled_days) }],
+        [["prospective", cn.prospective], ["replay (never counted)", cn.replay]]);
+      table(cl, [{ label: "Decision", get: (r) => String(r.decision_ts).slice(0, 10) }, { label: "Committed at", get: (r) => r.created_at }, { label: "Class", get: (r) => r.classification }, { label: "Why", get: (r) => r.why }], led.commitments.slice(-10).reverse());
+      if (!led.equity) W.hint(cl, "The daily equity of the committed holdings is built from the prices when a step runs: press the button on the left.");
+      for (const [cls, eq] of Object.entries(led.equity || {})) {
+        if (eq.eligibility !== "applied") { W.hint(cl, `${cls}: ${eq.reason}`); continue; }
+        const e2 = h("div", "charts", root);
+        chartCard(e2, `Daily equity of the committed holdings (${cls})`, `Built from the holdings, fills and cash of the ledger on the daily prices: ${eq.n_days} days, total return ${spct(eq.total_return, 2)}${eq.sharpe === null || eq.sharpe === undefined ? ` (${eq.reason})` : `, Sharpe ${sig(eq.sharpe)}`}. A multi-day forecast is not turned into a daily return.`, {
+          draw: (b) => C.line(b, { dates: eq.dates, series: [{ name: "Equity", color: css(cls === "prospective" ? "--s1" : "--muted"), values: eq.values }], baseline: eq.values[0], yFormat: (v) => Number(v).toLocaleString("en-US", { maximumFractionDigits: 0 }), tipFormat: (v) => Number(v).toLocaleString("en-US", { maximumFractionDigits: 0 }), height: 240, label: `Daily equity, ${cls} commitments` }),
+          table: (b) => table(b, [{ label: "Date", get: (i) => eq.dates[i] }, { label: "Equity", num: true, get: (i) => Number(eq.values[i]).toLocaleString("en-US", { maximumFractionDigits: 0 }) }], eq.dates.map((_, i) => i).filter((i) => i % 5 === 0)) });
+      }
+    }
     const top = drift.top || [];
     if (top.length) {
       const ch = h("div", "charts", root);
@@ -1050,12 +1067,78 @@
       { label: "Realised", num: true, get: (x) => (Q.bad(x.realised) ? "open" : spct(x.realised, 2)) }, { label: "Settled through", get: (x) => x.settled_through || "" }], d.signals.slice().reverse());
   }
 
+
+  /* ---------- Release 5: the validation policy, the statistical diagnostics, governance and the prospective ledger ---------- */
+  const ci = (r) => (r && r.interval && r.interval[0] !== null ? `${sig(r.interval[0])} to ${sig(r.interval[1])}` : "n/a");
+  function policyCard(root, pol) {
+    const a = pol.adopted;
+    const c = W.card(root, "Validation policy", a ? `${a.policy.name} ${a.policy.version} · adopted by ${a.adoption.actor} on ${a.adoption.at}: ${a.adoption.note}`
+      : "No policy is adopted: the platform implies no Sharpe, deflated-Sharpe, PBO, p-value or paper-trading threshold, so Gates B and C are blocked.");
+    if (!a) { W.hint(c, "A named person adopts a policy before the evaluation: quant ml-policy --file policy.json --actor NAME --note REASON (or POST /api/ml/validation-policy). An illustrative example exists (--adopt-example); it is not a recommendation."); return; }
+    if (a.policy.illustrative) W.flags(c, ["This is the ILLUSTRATIVE example policy: its numbers are not calibrated to any market or strategy and are not a recommendation."], "Read first. ");
+    table(c, [{ label: "Criterion", get: (r) => r[0] }, { label: "Declared value", get: (r) => String(r[1]) }, { label: "Meaning", get: (r) => (pol.criteria[r[0]] || {}).text || "" }], Object.entries(a.policy.criteria).filter((r) => r[1] !== null));
+  }
+  function diagnosticsCard(root, dg) {
+    const rec = dg.record, trim = (t) => String(t || "").slice(0, 10);
+    const c = W.card(root, "Statistical diagnostics", rec ? `${rec.sample.n} days on the ${rec.segment} segment (${trim(rec.sample.first)} to ${trim(rec.sample.last)}) · computed ${dg.created} under policy ${dg.policy_hash || "none"}${dg.stale ? " · STALE: another policy is adopted now" : ""}`
+      : "No diagnostics have been computed for this experiment.");
+    actions(c, [["Compute the diagnostics", () => W.request(M, () => [{ modes: ["controls_dx_run"], job: true, path: "/api/ml/statistical-diagnostics/run", body: { id: M.cur } }, ...CONTROLS(M.cur)], "Computing the diagnostics…")]]);
+    if (dg.note) W.hint(c, dg.note);
+    if (rec) {
+      W.sub(c, "Sharpe ratio: one estimate, three statements of its uncertainty");
+      table(c, [{ label: "Estimator", get: (r) => r.label }, { label: "Annualised Sharpe", num: true, get: (r) => sig(r.value) }, { label: `${pct(rec.level, 0)} interval`, num: true, get: (r) => ci(r) },
+        { label: "Dependence assumed", get: (r) => r.dependence }, { label: "State", get: (r) => (r.eligibility === "applied" ? "applied" : `${r.eligibility}: ${r.reason}`) }],
+      [["naive", "Naive (treats days as independent)"], ["hac", "HAC (Newey-West, delta method)"], ["bootstrap", "Stationary bootstrap"]].map(([k, label]) => ({ ...rec.sharpe[k], label })));
+      W.sub(c, "Against matched benchmarks (estimated from information known before each day)");
+      table(c, [{ label: "Comparison", get: (b) => String(b.kind).replace(/_/g, " ") }, { label: "Matched", get: (b) => (b.matched ? "yes" : "no: descriptive only") }, { label: "Days", num: true, get: (b) => String(b.n_aligned) },
+        { label: "Active mean a day", num: true, get: (b) => (Q.bad(b.active_mean.value) ? "n/a" : num(b.active_mean.value, 5)) }, { label: "Interval", num: true, get: (b) => ci(b.active_mean) },
+        { label: "Sharpe difference", num: true, get: (b) => (Q.bad(b.sharpe_difference.value) ? "n/a" : sig(b.sharpe_difference.value)) }], Object.values(rec.benchmarks));
+      W.sub(c, "Regimes (declared before the evaluation)");
+      table(c, [{ label: "Regime", get: (r) => `${r.regime}: ${r.state}` }, { label: "Kind", get: (r) => (r.causal ? "causal rule" : "retrospective slice") }, { label: "Days", num: true, get: (r) => String(r.n_days) },
+        { label: "Sharpe (HAC interval)", num: true, get: (r) => (r.eligibility === "applied" ? ci({ interval: r.sharpe_hac_interval }) : "insufficient evidence") }], rec.regimes.rows);
+      if (rec.neighborhood) {
+        W.sub(c, `Neighbourhood of ${rec.neighborhood.declared_points} predeclared settings (the whole grid, not the best cell)`);
+        if (rec.neighborhood.summary) table(c, [{ label: "Minimum", num: true, get: (x) => sig(x.min) }, { label: "Median", num: true, get: (x) => sig(x.median) }, { label: "Maximum", num: true, get: (x) => sig(x.max) },
+          { label: "Share positive", num: true, get: (x) => spct(x.share_positive, 0) }, { label: "Baseline", num: true, get: (x) => sig(rec.neighborhood.baseline) }], [rec.neighborhood.summary]);
+        else W.hint(c, rec.neighborhood.reason || "insufficient");
+      }
+      if (rec.delay) { W.sub(c, "Delay between decision and fill"); table(c, [{ label: "Extra sessions", num: true, get: (r) => String(r.extra_sessions) }, { label: "Sharpe", num: true, get: (r) => sig(r.value) }, { label: "Share of the undelayed result", num: true, get: (r) => (Q.bad(r.ratio_to_undelayed) ? "undefined" : spct(r.ratio_to_undelayed, 0)) }], rec.delay.rows); }
+      if (rec.capacity) { W.sub(c, "Capacity (realistic execution)"); table(c, [{ label: "Capital", num: true, get: (r) => Number(r.capital).toLocaleString("en-US") }, { label: "State", get: (r) => r.state }, { label: "Sharpe", num: true, get: (r) => sig(r.value) }], rec.capacity.rows); }
+      if (rec.calibration && rec.calibration.eligibility === "not_applicable") W.hint(c, `Calibration: ${rec.calibration.reason}`);
+      W.flags(c, rec.limitations || [], "Limits. ");
+    }
+    if (dg.items.length) { W.sub(c, "Read against the adopted policy"); table(c, [{ label: "Criterion", get: (i) => i.label }, { label: "State", get: (i) => ITEM_WORD[i.status] || i.status }, { label: "Why", get: (i) => i.reason }], dg.items); }
+    if (dg.multiseed && dg.multiseed.rows) {
+      const m = dg.multiseed;
+      W.sub(c, "Seeds declared in advance (the median is the estimate; no seed is chosen)");
+      table(c, [{ label: "Seed", num: true, get: (r) => String(r.seed) }, { label: m.metric, num: true, get: (r) => sig(r.value) }, { label: "Its own HAC interval", num: true, get: (r) => ci({ interval: r.sharpe_hac_interval }) }], m.rows);
+      if (m.summary) W.hint(c, `Median ${sig(m.summary.median)}, spread across seeds ${sig(m.summary.std_across_seeds)}. ${m.flag || ""}`);
+    }
+  }
+  function governanceCard(root, gv) {
+    const cur = gv.current, led = gv.ledger || {};
+    const c = W.card(root, "Strategy version, risk limits and prospective evidence", cur ? `Version ${cur.version.version_id} (${gv.versions.length} registered) · ${cur.state.state}${cur.state.state !== "active" ? ` since ${cur.state.since}: ${cur.state.reason}` : ""}`
+      : "No strategy version is registered. A version is the model together with its signal, execution and risk settings; changing any of them is a new version and its evidence starts again.");
+    if (!cur) { W.hint(c, "Register one: quant ml-governance EXPERIMENT --register --actor NAME [--limits JSON] (or POST /api/ml/governance/version)."); return; }
+    const lim = cur.risk_limits && Object.keys(cur.risk_limits.limits).length ? Object.entries(cur.risk_limits.limits).map(([k, v]) => `${k} ${v}`).join(", ") : "none documented";
+    W.kv(c, "Operating controls", [["Risk limits", lim], ["Recovery procedure", cur.recovery_plan ? `written by ${cur.recovery_plan.actor}` : "not recorded"], ["Latest monitoring", cur.last_monitoring ? `${cur.last_monitoring.at}: ${cur.last_monitoring.detail.status}` : "never"],
+      ["Deployment approvals", String(cur.approvals.length)], ["Model artifact", String((cur.version.content.model_artifact || {}).sha256 || "none").slice(0, 12)], ["Execution", String(cur.version.content.settings.execution === "vectorized_legacy" ? "vectorized legacy" : "declared")]]);
+    if (led.strategy_version && led.commitments.length) {
+      const cn = led.counts;
+      W.sub(c, "Prospective ledger (immutable commitments; replays are listed and never counted)");
+      table(c, [{ label: "Class", get: (r) => r[0] }, { label: "Committed", num: true, get: (r) => String(r[1].committed) }, { label: "Settled", num: true, get: (r) => String(r[1].settled) }, { label: "Distinct settled days", num: true, get: (r) => String(r[1].distinct_settled_days) }],
+        [["prospective", cn.prospective], ["replay (never counted)", cn.replay]]);
+      if (led.commitments.length) table(c, [{ label: "Decision", get: (r) => String(r.decision_ts).slice(0, 10) }, { label: "Committed at", get: (r) => r.created_at }, { label: "Class", get: (r) => r.classification }, { label: "Why", get: (r) => r.why }, { label: "Settled", num: true, get: (r) => String(r.settled_versions) }], led.commitments.slice(-15).reverse());
+    } else W.hint(c, "Nothing has been committed yet: the Forward test records the first commitment.");
+  }
+
   /* ---------- research controls: the gates, the lineage, the holdout and the selection evidence of one experiment ---------- */
   const GATE_NAME = { A: "Algorithm Verified", B: "Strategy Validated", C: "Operationally Ready" };
   const GATE_DIR = { passed: "up", failed: "down", blocked: "down", pending: "" };
   const ITEM_WORD = { ok: "met", failed: "failed", missing: "not yet produced", stale: "stale", blocked: "blocked", not_applicable: "not applicable" };
   function buildControls(root, d) {
     const lin = (M.results.controls_lineage || {}).data, ho = (M.results.controls_holdout || {}).data, st = (M.results.controls_stats || {}).data, xd = (M.results.controls_exec || {}).data;
+    const pol = (M.results.controls_policy || {}).data, gv = (M.results.controls_gov || {}).data;
     header(root, `Research record for ${shortId(d.experiment_id)}`, `${d.model_kind} · gate policy ${d.policy_version}`);
     W.provenance(root, d);
     W.flags(root, [d.note, "A stale decision is shown as pending: its evidence has changed since it was decided."], "Read first. ");
@@ -1068,6 +1151,9 @@
       const g = d.gates[n], c = W.card(root, `Gate ${n} · ${GATE_NAME[n]}: ${g.status}${g.stale ? " (stale)" : ""}`, g.dependencies.length ? `Needs Gate ${g.dependencies.join(" and ")} as well.` : "");
       table(c, [{ label: "Evidence", get: (i) => i.label }, { label: "State", get: (i) => ITEM_WORD[i.status] || i.status }, { label: "Why", get: (i) => i.reason }], g.items);
     }
+    if (pol) policyCard(root, pol);
+    if (st && st.diagnostics) diagnosticsCard(root, st.diagnostics);
+    if (gv) governanceCard(root, gv);
     if (xd) {                                                                                  // the evaluation mode of the result, and what it can and cannot support
       const real = xd.mode === "realistic_cash_equity", fmtc = (v) => (Q.bad(v) ? "n/a" : Number(v).toLocaleString("en-US", { maximumFractionDigits: 0 }));
       const c = W.card(root, `Execution mode: ${String(xd.mode).replace(/_/g, " ")}`, real ? `Orders, fills and the ledger produced this result${xd.parent ? ` (a re-run of ${shortId(xd.parent)})` : ""}; gross less the itemised costs reconciles to net.`

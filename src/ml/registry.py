@@ -34,6 +34,8 @@ from pathlib import Path
 import pandas as pd
 import yaml
 
+from .r5_schema import MIGRATIONS as RELEASE_5_MIGRATIONS
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS experiments (
     id TEXT PRIMARY KEY, name TEXT, created TEXT, status TEXT, config_hash TEXT, dataset_key TEXT, universe TEXT, model_kind TEXT, target TEXT, horizon INTEGER,
@@ -109,7 +111,7 @@ CREATE INDEX IF NOT EXISTS idx_verification_requirement ON verification_checks (
         "CREATE TABLE IF NOT EXISTS stage_changes (seq INTEGER PRIMARY KEY AUTOINCREMENT, model_id TEXT NOT NULL, from_stage TEXT, to_stage TEXT NOT NULL, actor TEXT, note TEXT, gate_seq TEXT, at TEXT NOT NULL)",
         "CREATE TRIGGER IF NOT EXISTS stage_changes_no_update BEFORE UPDATE ON stage_changes BEGIN SELECT RAISE(ABORT, 'stage changes are append-only'); END",
     ]),
-]
+] + RELEASE_5_MIGRATIONS                                                                                     # 7 analysis records and policies, 8 the prospective ledger, 9 governance (Release 5)
 CHECK_STATUSES = ("pass", "fail", "not_run", "blocked", "not_applicable")
 STAGES = ("none", "candidate", "staging", "production", "archived")
 SUBDIRS = ("experiments", "models", "features", "predictions", "reports")

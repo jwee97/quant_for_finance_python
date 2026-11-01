@@ -151,9 +151,9 @@ configuration, seed, features, folds and output contract; the environment and ha
 ## Gates
 
 `gates.evaluate` computes Gates A, B and C from the persisted evidence; `decide` appends a decision when status, staleness, policy or evidence changes. A is the family's `ml-verify` evidence (current for the source it
-hashed), provenance for the checked-out code, lineage, output contract and a loadable bundle (inherited from a parent for a re-backtest). B adds the frozen plan with an untouched evaluation, applicable and met selection
-controls, a sufficient null study, and the realistic-execution evidence of Release 4 (`gates._execution_item`) and the statistical evidence of Release 5 (a placeholder that reports `blocked` until its provider exists). C adds prospective evidence and the operating controls (placeholders). `Registry.promote`
-refuses `staging` without A and B, and `production` without A, B, C and a recorded human approval.
+hashed), provenance for the checked-out code, lineage, output contract and a loadable bundle (inherited from a parent for a re-backtest). B adds the frozen plan with an untouched evaluation, applicable selection
+controls, a sufficient null study, the realistic-execution evidence of Release 4 (`gates._execution_item`) and, from Release 5, the statistical diagnostics read against the adopted validation policy (`r5_gates.statistical_items`). C adds the prospective evidence of the current strategy version
+(`r5_gates.prospective_items`) and its operating controls (`r5_gates.operational_items`). `Registry.promote` refuses `staging` without A and B, and `production` without A, B, C and a recorded human approval. Providers may return one item or several.
 
 ## Version changes (Release 3)
 
@@ -210,3 +210,55 @@ P1-14, plus P1-08 when shorts were held) is not current, `blocked` by the capabi
 * New modules `src/ml/realism.py` and `src/ml/execution.py`; `config` gains the optional `execution` section; `rebacktest(..., bundle=, config=, builder=, market=)` and `run_experiment(..., market=)`; `evaluate_run(..., market=)`; `Experiment.execution`.
 * Every new report gains `execution`. `GET /api/ml/trading-diagnostics`, `POST /api/ml/rebacktest` and `POST /api/ml/train` take the `execution` section; `quant ml-realistic`.
 * Gate policy `gates-v2`: Gate B reads the execution evidence. Verification requirements P1-01 to P1-14.
+
+
+# Release 5: statistical and prospective validation
+
+## What was reused
+
+The platform's own bootstrap and block-length code (`stats/inference.py`), its OLS with HAC errors and the Newey-West lag rule (`stats/regression.py`), the Release 3 selection layer, `rebacktest` (every re-run of the saved predictions is a child experiment and a counted look), the Release 4 adapter and ledger
+(the equity of committed holdings is built by `execution.execute_weights`, not by a new accounting), the registry and its migrations, and the gate evaluator. New modules: `inference`, `benchmarks`, `regime_eval`, `calibration`, `sensitivity`, `nested`, `multiseed`, `policy`, `diagnostics`, `prospective`, `governance`, `r5_gates`, `r5_schema`.
+
+## One output contract
+
+Every statistical result is a `StatResult` (`inference.py`): name and version, hypothesis, sample identity (segment, count, first and last date, a hash of the values), frequency and units, risk-free convention, estimator, the dependence assumed, its settings (lags, block length), level, seed and replications,
+the selection-family scope, and value, interval and p-value **only when the procedure was applied**; an eligibility (`applied`, `insufficient`, `unsupported`, `not_applicable`, `failed`) with a reason and the limitations. The three Sharpe statements share ONE point estimate: the naive iid standard error (and
+what it ignores), the delta method on the moment conditions (x, x^2) with a Newey-West long-run covariance, and a stationary-bootstrap percentile interval (200 replications at least). A HAC standard error of a mean is never presented as a standard error of a Sharpe ratio. A horizon of h forces at least h-1 lags.
+
+## The validation policy is a declaration
+
+`policy.ValidationPolicy` is a name, a version and a set of optional criteria (the segment judged, the minimum days, the interval method, the lower bound the Sharpe interval must exceed, the deflated-probability, PBO and selection-p thresholds, the benchmark kind and the active-return bound, regime, neighbourhood,
+delay, calibration and capacity requirements, the prospective minimums and the monitoring age). A criterion left unset is not required and is shown as not required; there are no hidden defaults, and the platform implies no threshold. The policy has a content hash; changing any threshold is a new policy. `example_policy()` is
+labelled illustrative. `adopt` needs a named person and a note and is an append-only record whose latest row is the policy in force. Algorithm acceptance (Gate A) never reads it: a correct implementation passes Gate A whatever the policy says about profit.
+
+## Diagnostics and Gate B
+
+`diagnostics.run` computes, for one experiment and the policy's segment, the three Sharpe statements, the HAC mean, the incremental return against each matched benchmark (beta, net-exposure, sector and risk matched, each estimated from information known before the day, and the equal-weight market labelled descriptive and
+unmatched), the regimes (causal rules and retrospective slices declared before the evaluation, with insufficient evidence stated per regime), calibration where the model produced class probabilities, the study's selection evidence and, when asked, the neighbourhood, delay and capacity analyses. It refuses a protected
+segment of an experiment that no frozen plan evaluated. The record is appended to `analysis_records` with the policy hash. `evaluate_policy` turns a record and a policy into items (`ok`, `failed`, `missing`, `blocked`, `not_applicable`); `r5_gates.statistical_items` returns them to Gate B with the verification state of the
+procedures themselves (P1-16 to P1-19, and P1-20 to P1-22 when the policy asks for them). Under another policy the record is `stale`. With no policy the item is `blocked`. A reinforcement-learning result additionally needs a multi-seed record.
+
+## The prospective ledger
+
+`prospective.commit` writes an immutable commitment under the key `strategy version | decision time | universe version | horizon`. An identical repeat is a no-op that is audited; different content under the same key is rejected, and the rejection is audited (the audit row is written before the error is raised). The creation
+time is the server's. The ledger itself classifies the commitment: **prospective** only if it was written before the first session whose price the label needs, the data cutoff and the fit cutoff are at or before the decision, and the model artifact existed before the commitment; otherwise **replay**, with the reasons. Settlements are
+appended as versions (a revision needs a reason; the original is kept) and counted separately for the two classes; `counts` never adds a replay to prospective evidence. The strategy's equity is built from the committed holdings by the Release 4 adapter on the daily prices (`equity`); forecast skill (a rank IC per decision) is a
+different stream. `ForwardTracker.step` writes the commitment before it records anything as held; `settle` appends the outcomes; the old return/horizon compounding is removed.
+
+## Governance
+
+A *strategy version* (`governance.register_version`) is the identity of the model artifact together with the dataset, model, signal, execution and risk settings; the platform's code hash is recorded with each commitment, not in the identity. `commit_forecast` is the service function every entry point uses: it refuses a halted or
+rolled-back version and a book that breaches a documented limit (gross, net, position, turnover, drawdown, daily loss, staleness) and records each refusal. `monitor` reads drift (PSI), the live rank IC and the limits on the committed holdings' returns; a hard breach halts the version. Halt, resume, rollback, the written recovery
+procedure and the deployment approval are appended to `governance_events` with a name; the approval is tied to the version it covered and `Registry.promote` records it. Gate C reads all of it.
+
+## Migrations 7 to 9
+
+7 `analysis_records`, `validation_policies`, `policy_adoptions`; 8 `commitments`, `commitment_audit`, `settlements`; 9 `strategy_versions`, `risk_limits`, `governance_events`. Additive, with triggers that refuse updates and deletes of the append-only tables (`r5_schema.py`).
+
+## Version changes (Release 5)
+
+* Gate policy `gates-v3`. `GET/POST /api/ml/validation-policy`, `POST /api/ml/statistical-diagnostics/run`, `POST /api/ml/multiseed/run`, `GET /api/ml/governance`, `POST /api/ml/governance/version` and `/action`; `GET /api/ml/statistical-diagnostics` also returns the stored record read against the policy; `GET /api/ml/forward` returns the ledger; `POST /api/ml/forward/step` refuses unknown fields.
+* `quant ml-policy`, `ml-diagnostics`, `ml-multiseed`, `ml-governance`, `ml-forward`.
+* `selection.run_procedures` excludes candidates with a constant return stream and records the exclusion (a statistic built on them was a number without meaning); the DSR item judges the more conservative of the two trial conventions. The bootstrap needs 200 replications.
+* `ForwardTracker.summary` no longer reports a cumulative return or Sharpe computed from horizon returns. Comparisons name each result's holdout status and execution mode.
+* Verification requirements P1-15 to P1-25.

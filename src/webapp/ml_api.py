@@ -19,14 +19,17 @@ import numpy as np
 import pandas as pd
 
 from ..assets import common
+from ..ml import diagnostics as dx
 from ..ml import ensembles as en
 from ..ml import execution as xexec
 from ..ml import explainability as xp
 from ..ml import frozen_eval as fe
 from ..ml import gates
+from ..ml import governance as gv
 from ..ml import monitoring as mon
 from ..ml import null_controls as nc
 from ..ml import optimization as opt
+from ..ml import policy as pol
 from ..ml import research_controls as rc
 from ..ml import selection as sel
 from ..ml import strategy_search as ss
@@ -189,13 +192,15 @@ class MlApi:
         return {"/api/ml/catalog": self.catalog, "/api/ml/experiments": self.experiments, "/api/ml/experiment": self.experiment, "/api/ml/compare": self.compare, "/api/ml/explain": self.explain,
                 "/api/ml/feature-sets": self.feature_sets, "/api/ml/verification": self.verification, "/api/ml/models": self.models, "/api/ml/trials": self.trials, "/api/ml/forward": self.forward, "/api/ml/report-html": self.report_html,
                 "/api/ml/lineage": self.lineage, "/api/ml/holdout": self.holdout, "/api/ml/promotion-status": self.promotion_status, "/api/ml/statistical-diagnostics": self.statistical_diagnostics,
-                "/api/ml/null-controls": self.null_controls, "/api/ml/trading-diagnostics": self.trading_diagnostics}
+                "/api/ml/null-controls": self.null_controls, "/api/ml/trading-diagnostics": self.trading_diagnostics, "/api/ml/validation-policy": self.validation_policy, "/api/ml/governance": self.governance_status}
 
     def post_routes(self) -> dict:
         return {"/api/ml/dataset/build": self.dataset_build, "/api/ml/train": self.train, "/api/ml/rebacktest": self.rebacktest, "/api/ml/search": self.search, "/api/ml/tune": self.tune, "/api/ml/tune/stop": self.tune_stop,
                 "/api/ml/combine": self.combine, "/api/ml/meta-label": self.meta_label, "/api/ml/forward/step": self.forward_step, "/api/ml/promote": self.promote, "/api/ml/verification/run": self.verification_run, "/api/ml/delete": self.delete,
                 "/api/ml/evaluation-plan": self.evaluation_plan, "/api/ml/evaluation-plan/freeze": self.evaluation_plan_freeze, "/api/ml/evaluate": self.evaluate,
-                "/api/ml/null-controls/run": self.null_controls_run, "/api/ml/selection-tests/run": self.selection_tests_run}
+                "/api/ml/null-controls/run": self.null_controls_run, "/api/ml/selection-tests/run": self.selection_tests_run, "/api/ml/validation-policy": self.validation_policy_adopt,
+                "/api/ml/statistical-diagnostics/run": self.diagnostics_run, "/api/ml/multiseed/run": self.multiseed_run, "/api/ml/governance/version": self.governance_version,
+                "/api/ml/governance/action": self.governance_action}
 
     # ------------------------------------------------------------------------------------------------------------ plumbing
     @property
@@ -862,8 +867,9 @@ class MlApi:
             study = _study(q["study"]) if q.get("study") else (rc.study_of_experiment(self.registry, _id(q)) if q.get("id") else None)
             if not q.get("study") and not q.get("id"):
                 raise ApiError("give id (an experiment) or study")
+            diagnostics = self._diagnostics_block(_id(q)) if q.get("id") else None
             if not study:                                                                                   # an experiment saved before lineage: no study, no evidence, said plainly
-                return clean(common.envelope("ml_statistical_diagnostics", {"study": None, "evidence": [], "latest": [], "null_studies": [], "raw_looks": 0,
+                return clean(common.envelope("ml_statistical_diagnostics", {"study": None, "evidence": [], "latest": [], "null_studies": [], "raw_looks": 0, "diagnostics": diagnostics,
                                                                            "statement": "this experiment is in no study (it ran before lineage was recorded), so no selection test can be attributed to it"},
                                              {"registry": "platform"}, [], None, []))
             family = rc.study_family(self.registry, study)
@@ -878,7 +884,7 @@ class MlApi:
         latest = {}
         for r in rows:
             latest.setdefault(r["method"], r)
-        data = {"study": study, "evidence": rows, "latest": list(latest.values()), "null_studies": nulls, "raw_looks": rc.raw_looks(self.registry, study),
+        data = {"study": study, "evidence": rows, "latest": list(latest.values()), "null_studies": nulls, "raw_looks": rc.raw_looks(self.registry, study), "diagnostics": diagnostics,
                 "statement": sel.statement([sel.Evidence(r["method"], r["status"], statistic=r["statistic"] or {}) for r in latest.values()]) if latest else "no selection test has been run for this study"}
         return clean(common.envelope("ml_statistical_diagnostics", data, {"registry": "platform"}, [], None, ["A procedure with status other than applied was not applied; it is not a pass."]))
 
@@ -895,7 +901,8 @@ class MlApi:
         def work(progress):
             with _user_errors():
                 progress("applying the selection procedures to the study's recorded trials")
-                return clean(sel.evaluate_study(self.registry, study, procedures=tuple(procs), n_boot=n_boot, seed=seed))
+                adopted = pol.adopted(self.registry)
+                return clean(sel.evaluate_study(self.registry, study, procedures=tuple(procs), n_boot=n_boot, seed=seed, criteria=sel.criteria_from_policy(adopted[0] if adopted else None)))
 
         return self._submit(f"ml: selection tests for {study}", work)
 
@@ -966,6 +973,140 @@ class MlApi:
         res["next"] = {n: (g["reasons"][0] if g["reasons"] else "nothing outstanding") for n, g in res["gates"].items()}
         return clean(common.envelope("ml_promotion_status", res, {"registry": "platform"}, [], None, [res["note"], "A gate that is not passed is shown with its reason. A stale decision is shown as pending."]))
 
+    # ------------------------------------------------------------------------------------------------------------ Release 5: the validation policy, the diagnostics, governance and the ledger
+    def _diagnostics_block(self, exp_id: str) -> dict | None:
+        """The latest stored statistical diagnostics of an experiment, read against the adopted policy. ``stale`` when they were computed under a different policy (then no item is shown as a verdict)."""
+        rec = dx.latest(self.registry, exp_id, "diagnostics")
+        adopted = pol.adopted(self.registry)
+        seeds = dx.latest(self.registry, exp_id, "multiseed")
+        if rec is None:
+            return {"record": None, "policy": None if adopted is None else adopted[0].content(), "items": [], "stale": False, "multiseed": None if seeds is None else seeds["content"],
+                    "note": "no diagnostics have been computed for this experiment"}
+        stale = adopted is None or rec["policy_hash"] != adopted[0].content_hash()
+        items = [] if stale or adopted is None else dx.evaluate_policy(adopted[0], rec["content"])
+        return {"record": rec["content"], "seq": rec["seq"], "created": rec["created"], "content_hash": rec["content_hash"], "policy_hash": rec["policy_hash"], "stale": stale, "items": items,
+                "multiseed": None if seeds is None else seeds["content"],
+                "policy": None if adopted is None else adopted[0].content(),
+                "note": "computed under another policy than the one adopted now: compute them again" if stale and adopted is not None else "no policy is adopted: the numbers are shown, no verdict is read from them" if adopted is None else ""}
+
+    def validation_policy(self, q: dict) -> dict:
+        """``GET /api/ml/validation-policy``: the policy in force (or none), who adopted it and why, the adoption history, the criteria a policy may state, and the illustrative example. The platform implies no
+        Sharpe, deflated-Sharpe, PBO, p-value or paper-trading-duration threshold: until a person adopts a policy Gates B and C are blocked."""
+        with _user_errors():
+            adopted, history = pol.adopted(self.registry), pol.history(self.registry, 20)
+        crit = {k: ({"kind": v[0], "options": list(v[1]), "text": v[2]} if v[0] == "choice" else {"kind": v[0], "min": v[1], "max": v[2], "text": v[3]}) for k, v in pol.CRITERIA.items()}
+        data = {"adopted": None if adopted is None else {"policy": adopted[0].content(), "policy_hash": adopted[0].content_hash(), "adoption": adopted[1]}, "history": history, "criteria": crit,
+                "example": pol.example_policy().content()}
+        return clean(common.envelope("ml_validation_policy", data, {"registry": "platform"}, [], None,
+                                     ["A policy is a declaration made before the evaluation. The example is illustrative: its numbers are not calibrated to any market and are not a recommendation."]))
+
+    def validation_policy_adopt(self, body: dict) -> dict:
+        """``POST /api/ml/validation-policy {"policy": {...} | "example": true, "actor", "note"}``: adopt a policy. Needs a named person and a reason; the record is append-only and the latest adoption is in force."""
+        _only(body, {"policy", "example", "actor", "note"}, "/api/ml/validation-policy")
+        if bool(body.get("example")) == bool(body.get("policy")):
+            raise ApiError("give either policy (an object) or example: true")
+        raw = body.get("policy")
+        if not body.get("example") and (not isinstance(raw, dict) or set(raw) - {"name", "version", "criteria", "description"} or not isinstance(raw.get("criteria"), dict)):
+            raise ApiError("policy is an object with name, version, criteria (an object) and an optional description")
+        with _user_errors():
+            policy = pol.example_policy() if body.get("example") else pol.ValidationPolicy(str(raw.get("name") or "")[:80], str(raw.get("version") or "")[:40], dict(raw["criteria"]), False,
+                                                                                             str(raw.get("description") or "")[:1000])
+            rec = pol.adopt(self.registry, policy, str(body.get("actor") or "")[:80], str(body.get("note") or "")[:500])
+        return clean(common.envelope("ml_validation_policy_adopted", rec, {"registry": "platform"}, [], None, ["Diagnostics computed under an earlier policy are stale under this one and must be computed again."]))
+
+    def diagnostics_run(self, body: dict) -> dict:
+        """``POST /api/ml/statistical-diagnostics/run {"id", "n_boot"?, "seed"?, "neighborhood"?, "delays"?, "capitals"?}`` (a job): compute and store the statistical diagnostics of one experiment under the adopted
+        policy: the three Sharpe estimates, matched benchmarks, regimes, calibration, the study's selection evidence, and (when asked) the neighbourhood, delay and capacity analyses, which re-run the saved
+        predictions on the validation segment and count as looks."""
+        _only(body, {"id", "n_boot", "seed", "neighborhood", "delays", "capitals"}, "/api/ml/statistical-diagnostics/run")
+        exp_id = _id(body)
+        n_boot, seed = _int(body, "n_boot", 500, 200, 2000), _int(body, "seed", 0, 0, 1_000_000)
+        grid = body.get("neighborhood")
+        if grid is not None:
+            if not isinstance(grid, dict) or not 1 <= len(grid) <= 4 or any(not isinstance(v, list) or not 1 <= len(v) <= 8 for v in grid.values()):
+                raise ApiError("neighborhood is an object of 1 to 4 settings (signal.*, backtest.*, execution.*), each a list of 1 to 8 values")
+        delays, capitals = body.get("delays"), body.get("capitals")
+        if delays is not None and (not isinstance(delays, list) or not 1 <= len(delays) <= 8 or any(not isinstance(d, int) or isinstance(d, bool) or not 0 <= d <= 20 for d in delays)):
+            raise ApiError("delays is a list of 1 to 8 integers between 0 and 20 (extra sessions between decision and fill)")
+        if capitals is not None and (not isinstance(capitals, list) or not 2 <= len(capitals) <= 6 or any(not isinstance(c, (int, float)) or isinstance(c, bool) or not 1e3 <= c <= 1e12 for c in capitals)):
+            raise ApiError("capitals is a list of 2 to 6 amounts between 1e3 and 1e12")
+
+        def work(progress):
+            with _user_errors():
+                self.registry.get_experiment(exp_id)
+                progress("computing the dependence-aware estimates, benchmarks, regimes and calibration")
+                out = dx.run(self.registry, exp_id, actor="api", n_boot=n_boot, seed=seed, neighborhood_grid=grid, delays=delays, capitals=capitals, config=self.app.config, builder=self.app.builder)
+            return clean({"experiment_id": exp_id, "record_seq": out.get("record_seq"), "policy_hash": out["policy_hash"], "diagnostics": self._diagnostics_block(exp_id)})
+
+        return self._submit(f"ml: diagnostics {exp_id[-6:]}", work)
+
+    def multiseed_run(self, body: dict) -> dict:
+        """``POST /api/ml/multiseed/run {"id", "seeds", "n_boot"?}`` (a job): train the experiment's own configuration once per predeclared seed (three or more, distinct) in development mode, as looks of the same
+        study, and store the spread across seeds beside each seed's time-series uncertainty. A seed is never chosen by its result; the point estimate is the median."""
+        _only(body, {"id", "seeds", "n_boot"}, "/api/ml/multiseed/run")
+        exp_id = _id(body)
+        seeds = body.get("seeds")
+        if not isinstance(seeds, list) or not 3 <= len(seeds) <= 12 or any(not isinstance(x, int) or isinstance(x, bool) or not 0 <= x <= 1_000_000 for x in seeds) or len(set(seeds)) != len(seeds):
+            raise ApiError("seeds is a list of 3 to 12 distinct integers between 0 and 1000000, declared before the runs")
+        n_boot = _int(body, "n_boot", 300, 200, 1000)
+
+        def work(progress):
+            with _user_errors():
+                self.registry.get_experiment(exp_id)
+                progress(f"training {len(seeds)} seeds in development mode")
+                out = dx.multiseed(self.registry, exp_id, seeds, n_boot=n_boot, actor="api", config=self.app.config, builder=self.app.builder)
+            return clean(out)
+
+        return self._submit(f"ml: {len(seeds)} seeds for {exp_id[-6:]}", work)
+
+    def governance_status(self, q: dict) -> dict:
+        """``GET /api/ml/governance?id=<experiment>``: the strategy versions registered for an experiment (identity: model artifact, signal, execution, dataset and risk settings), the current one's risk limits,
+        operating state, latest monitoring check, written recovery procedure, recorded approvals and audit trail, and the prospective ledger's counts."""
+        exp_id = _id(q)
+        with _user_errors():
+            self.registry.get_experiment(exp_id)
+            versions = gv.versions_of(self.registry, exp_id)
+            current = gv.summary(self.registry, versions[-1]["version_id"]) if versions else None
+            ledger = mon.ledger_view(self.registry, exp_id)
+        data = {"experiment_id": exp_id, "versions": [{"version_id": v["version_id"], "created": v["created"], "actor": v["actor"], "risk_limits_hash": v["risk_limits_hash"], "settings": v["content"]["settings"]} for v in versions],
+                "current": current, "ledger": ledger, "limits": {k: {"kind": v[0], "min": v[1], "max": v[2], "text": v[3]} for k, v in gv.LIMITS.items()}}
+        return clean(common.envelope("ml_governance", data, {"registry": "platform"}, [], None,
+                                     ["Changing the signal, execution or risk settings is a new strategy version: its evidence starts again. A deployment approval is a person's record and is tied to one version."]))
+
+    def governance_version(self, body: dict) -> dict:
+        """``POST /api/ml/governance/version {"id", "actor", "risk_limits"?}``: register the identity of an experiment as a strategy version under the given risk limits (idempotent)."""
+        _only(body, {"id", "actor", "risk_limits"}, "/api/ml/governance/version")
+        exp_id = _id(body)
+        raw = body.get("risk_limits")
+        if raw is not None and not isinstance(raw, dict):
+            raise ApiError("risk_limits is an object of limits: " + ", ".join(sorted(gv.LIMITS)))
+        with _user_errors():
+            self.registry.get_experiment(exp_id)
+            out = gv.register_version(self.registry, exp_id, actor=str(body.get("actor") or "")[:80], risk_limits=None if raw is None else gv.RiskLimits(dict(raw), "api"))
+        return clean(common.envelope("ml_governance_version", out, {"registry": "platform"}, [], None, ["The platform's code hash is not part of the identity; each commitment records it."]))
+
+    def governance_action(self, body: dict) -> dict:
+        """``POST /api/ml/governance/action {"version", "action", "actor", "reason"|"note"|"procedure"|"to"}``: halt, resume, roll back, document the recovery procedure or record the separate human deployment
+        approval. Every action is appended to the audit with the person's name."""
+        _only(body, {"version", "action", "actor", "reason", "note", "procedure", "to", "stage"}, "/api/ml/governance/action")
+        version, action, actor = _id(body, "version"), str(body.get("action") or ""), str(body.get("actor") or "")[:80]
+        with _user_errors():
+            if action == "halt":
+                out = gv.halt(self.registry, version, str(body.get("reason") or "")[:500], actor)
+            elif action == "resume":
+                out = gv.resume(self.registry, version, str(body.get("note") or "")[:500], actor)
+            elif action == "rollback":
+                out = gv.rollback(self.registry, version, _id(body, "to"), str(body.get("reason") or "")[:500], actor)
+            elif action == "recovery":
+                out = {"event_seq": gv.document_recovery(self.registry, version, str(body.get("procedure") or "")[:4000], actor), "version_id": version}
+            elif action == "approve":
+                if body.get("stage", "production") not in ("staging", "production"):
+                    raise ApiError("stage is staging or production")
+                out = gv.approve_deployment(self.registry, version, actor=actor, note=str(body.get("note") or "")[:500], stage=str(body.get("stage") or "production"))
+            else:
+                raise ApiError("action is one of halt, resume, rollback, recovery, approve")
+        return clean(common.envelope("ml_governance_action", out, {"registry": "platform"}, [], None, ["An approval records a person's decision; it does not move a model. Promotion re-checks the gates."]))
+
     # ------------------------------------------------------------------------------------------------------------ explanation
     def explain(self, q: dict) -> dict:
         """``GET /api/ml/explain?id=&asset=&date=``: why the saved final model scored an asset as it did on a date (Shapley values, an exact decomposition of the score), with the day's scores for every asset."""
@@ -1019,11 +1160,14 @@ class MlApi:
         summary = mon.forward_record(signals, record["name"], exp_id, int(report["config"]["dataset"]["horizon"]), seen)
         rows = [{"id": s["id"], "date": s["signal_date"], "recorded": s["created"], "turnover": s["turnover"], "realised": s["realised"], "settled_through": s["realised_date"], "n_positions": len(s["weights"]),
                  "weights": s["weights"], "scores": s["scores"]} for s in signals]
-        return clean(common.envelope("ml_forward", {"summary": summary, "signals": rows, "backtest_ic": report["ic"]["all"].get("mean"), "rebalance": report["config"]["backtest"]["rebalance"]},
+        ledger = mon.ledger_view(reg, exp_id)
+        return clean(common.envelope("ml_forward", {"summary": summary, "signals": rows, "backtest_ic": report["ic"]["all"].get("mean"), "rebalance": report["config"]["backtest"]["rebalance"], "ledger": ledger},
                                      {"signals": "platform"}, summary["alerts"], None, ["A signal is a paper order list: nothing is sent anywhere. 'Recorded' is when the signal was made, so a signal recorded after its date is marked as replayed."]))
 
     def forward_step(self, body: dict) -> dict:
-        """``POST /api/ml/forward/step`` (a job): record the saved model's signal for the newest date (or ``as_of``), settle the signals whose window has completed, and report the live record and drift."""
+        """``POST /api/ml/forward/step`` (a job): record the saved model's signal for the newest date (or ``as_of``), commit it to the immutable ledger (the ledger classifies it prospective or replay from the
+        cutoffs it computes; a request cannot say), settle the commitments whose window has completed, run a monitoring check and report the live record, drift and the equity of the committed holdings."""
+        _only(body, {"id", "capital", "as_of", "record"}, "/api/ml/forward/step")                    # a commitment's class, creation time and cutoffs are computed here; a request cannot state them
         exp_id = _id(body)
         capital = _float(body, "capital", 100_000.0, 1e3, 1e10)
         as_of = _date("as_of", body["as_of"]) if body.get("as_of") else None
@@ -1039,7 +1183,7 @@ class MlApi:
                 progress("settling matured signals")
                 settled = tracker.settle(None, as_of)
                 progress("measuring drift")
-                summary = tracker.summary(None, as_of)
+                summary = tracker.summary(None, as_of, monitor=True)
             return {"signal": signal, "settled": settled, "summary": summary}
 
         return self._submit(f"ml: forward {exp_id[-6:]}", work)

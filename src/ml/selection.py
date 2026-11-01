@@ -59,7 +59,18 @@ def _guard(M: pd.DataFrame, n_tries: int, method: str, criteria: dict, min_candi
         return Evidence(method, "insufficient", f"{M.shape[0]} common observations is fewer than the {int(criteria['min_obs'])} the procedure needs to say anything", scope=scope)
     if not np.isfinite(M.to_numpy()).all():
         return Evidence(method, "unsupported", "the candidates' return streams have gaps on the common dates; the procedure needs complete streams", scope=scope)
+    flat = constant_candidates(M)
+    if flat:
+        return Evidence(method, "unsupported", f"the return stream of {flat} is constant: its Sharpe ratio is undefined, and a statistic built on it would be a number without meaning. ``run_procedures`` excludes such "
+                                               "candidates and records the exclusion; called directly, the procedure refuses them", scope=scope)
     return None
+
+
+def constant_candidates(M: pd.DataFrame) -> list[str]:
+    """Candidates whose return stream does not vary beyond rounding (a strategy that never traded, or held a flat book): their Sharpe ratio, t-statistic and rank are undefined."""
+    from .inference import is_constant
+
+    return [str(c) for c in M.columns if is_constant(M[c].to_numpy(dtype=float))]
 
 
 def _sharpes(M: pd.DataFrame) -> pd.Series:
@@ -161,9 +172,22 @@ def false_discovery(M: pd.DataFrame, n_tries: int, criteria: dict) -> Evidence:
                                "n_discoveries_bh": int((bh <= criteria["alpha"]).sum()), "criterion": f"BY q of the best <= {criteria['alpha']}", "passes": bool(by[i] <= criteria["alpha"])})
 
 
+def criteria_from_policy(policy) -> dict:
+    """The criteria a policy declares, as the keyword arguments of ``run_procedures`` (``alpha``, ``dsr_min``, ``pbo_max``). A threshold the policy leaves unset keeps the platform's default, which the gate does
+    not read when a policy is adopted: the policy's own items judge the numbers."""
+    out = dict(CRITERIA)
+    for crit, key in (("alpha", "max_selection_p"), ("dsr_min", "min_deflated_probability"), ("pbo_max", "max_pbo")):
+        if policy is not None and policy.required(key):
+            out[crit] = float(policy.criteria[key])
+    return out
+
+
 def run_procedures(M: pd.DataFrame, n_tries: int, *, benchmark: pd.Series | None = None, criteria: dict | None = None, procedures: tuple = PROCEDURES, seed: int = 0, n_boot: int = 500) -> list[Evidence]:
     """Every requested procedure on the candidate matrix ``M`` (dates x candidates, net returns on the SAME validation dates). A procedure that raises is recorded as ``failed`` with the error."""
     crit = {**CRITERIA, **(criteria or {})}
+    flat = constant_candidates(M) if np.isfinite(M.to_numpy()).all() else []
+    if flat:                                                                                          # excluded from every statistic; the raw try count still includes them, so deflation is not helped
+        M = M.drop(columns=flat)
     table = {"dsr": lambda: deflated(M, n_tries, crit), "pbo": lambda: overfitting_probability(M, n_tries, crit), "reality_check": lambda: reality_check(M, n_tries, crit, benchmark, seed, n_boot),
              "spa": lambda: superior_predictive_ability(M, n_tries, crit, benchmark, seed, n_boot), "fdr": lambda: false_discovery(M, n_tries, crit)}
     out = []
@@ -176,6 +200,9 @@ def run_procedures(M: pd.DataFrame, n_tries: int, *, benchmark: pd.Series | None
         except Exception as exc:                                                                   # noqa: BLE001 - a procedure that cannot be computed is evidence of that, not a crash
             ev = Evidence(name, "failed", f"{type(exc).__name__}: {exc}", scope=_scope(M, n_tries))
         ev.statistic = {**ev.statistic, "criteria": crit} if ev.status == "applied" else ev.statistic
+        if flat:
+            ev.scope = {**ev.scope, "excluded_constant_candidates": flat}
+            ev.limitations = [*ev.limitations, f"{len(flat)} candidate(s) with a constant return stream ({', '.join(flat)}) were excluded: their Sharpe ratio is undefined. They still count among the {n_tries} recorded tries"]
         out.append(ev)
     return out
 

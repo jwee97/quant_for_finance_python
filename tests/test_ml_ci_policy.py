@@ -22,6 +22,11 @@ RELEASE_3 = ["tests/test_ml_provenance.py", "tests/test_ml_holdout_controls.py",
 RELEASE_4 = ["tests/test_ml_execution_ledger.py", "tests/test_ml_execution_fixtures.py", "tests/test_ml_execution_pipeline.py", "tests/test_ml_execution_api.py", "tests/test_ml_execution_cli.py"]
 
 
+RELEASE_5 = ["tests/test_ml_nested_selection.py", "tests/test_ml_statistical_inference.py", "tests/test_ml_matched_benchmarks.py", "tests/test_ml_regime_evaluation.py", "tests/test_ml_sensitivity.py",
+             "tests/test_ml_calibration_scores.py", "tests/test_ml_multiseed.py", "tests/test_ml_prospective_commitments.py", "tests/test_ml_forward_equity.py", "tests/test_ml_validation_policy_governance.py",
+             "tests/test_ml_statistical_api.py", "tests/test_ml_statistical_cli.py"]
+
+
 def steps(job: dict) -> list[str]:
     return [str(s.get("run", "")) for s in job.get("steps", [])]
 
@@ -51,6 +56,7 @@ def test_every_registered_requirement_names_tests_and_sources_that_exist():
             assert (ROOT / entry).exists(), f"the source group {group} names {entry}, which does not exist"
     assert {f"P0-{n}" for n in range(23, 30)} <= set(vf.REQUIREMENTS) and "P1-26" in vf.REQUIREMENTS
     assert {f"P1-{n:02d}" for n in range(1, 15)} <= set(vf.REQUIREMENTS), "every requirement of Release 4 is registered"
+    assert {f"P1-{n}" for n in range(15, 27)} <= set(vf.REQUIREMENTS), "every requirement of Release 5 is registered"
 
 
 def test_the_release_3_tests_run_in_the_base_install_and_the_dashboard_lanes():
@@ -112,3 +118,15 @@ def test_the_test_suite_registers_its_pytest_markers():
 @pytest.mark.parametrize("name", ["ml-correctness", "ml-base", "replit-python"])
 def test_the_lanes_are_present(name):
     assert name in CI["jobs"]
+
+
+def test_the_release_5_tests_run_in_the_base_install_and_the_dashboard_lanes_and_the_browser_lane():
+    for lane in ("ml-base", "replit-python"):
+        text = " ".join(steps(CI["jobs"][lane]))
+        for t in RELEASE_5:
+            assert t in text, f"{t} is not run by the {lane} lane"
+    assert "tests/test_webapp_ml_validation_browser.py" in " ".join(steps(CI["jobs"]["browser"]))
+    named = {t for tests, _ in vf.REQUIREMENTS.values() for t in tests}
+    assert set(RELEASE_5) <= named, "every Release 5 test file is the evidence of some requirement"
+    for lane in ("ml-base", "ml-correctness"):
+        assert CI["jobs"][lane]["timeout-minutes"] >= 45, "the lanes that run the growing verification set have headroom"

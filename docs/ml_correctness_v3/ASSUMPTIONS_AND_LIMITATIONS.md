@@ -116,8 +116,8 @@ strategy-improvement experiments and the advanced modules (Releases 6 to 8). Gat
 ## Gates
 
 - Gate A is "implemented as specified", not "profitable". The family requirements are the `ml-verify` ones listed in `gates.family_requirements`; a requirement not registered in this checkout is `missing`, never skipped.
-- Gate B cannot pass in this checkout: Release 4 supplies the realistic-execution provider, but the statistical-diagnostics evidence (Release 5) has no provider and reports `blocked`; the execution item is itself blocked for any result on simulated or unknown data, for a long-short book with no borrow records and for a result with no volume. Gate C additionally needs prospective evidence (Release 5) and
-  operating controls, which no release before 8 provides. The tests exercise the logic with injected providers and fixture rows; no strategy has earned any gate.
+- Gate B needs, besides the frozen plan, the selection controls and the null study, the realistic-execution evidence of Release 4 and the statistical diagnostics of Release 5 read against an **adopted validation policy**; with no policy adopted it is `blocked`, and the execution item is itself blocked for any result on simulated or unknown data, for a long-short book with no borrow records and for a result
+  with no volume. Gate C additionally needs genuine prospective evidence (elapsed time that cannot be manufactured) and the operating controls of Release 5. The tests exercise the logic with injected providers and fixture rows; no strategy has earned any gate.
 - A stale decision (the code, data or policy changed) is shown as pending. The source-tree hash invalidates the provenance item of every experiment run before the change, which is intended.
 
 ## Fixed in passing
@@ -153,3 +153,49 @@ participation limits and expired orders; impact when volume is available; intere
 
 - Ineligible shorts: the first version of the adapter rejected the purchase that covers a short in an ineligible asset (it treated every buy as an addition). Exiting is always allowed; what is rejected is a request for more exposure than the book has.
 - Orders with a lag of more than one session were cancelled by the next day's decision before they could fill; orders are now target positions queued per asset.
+
+
+# Release 5: statistical and prospective validation
+
+## What the numbers are, and are not
+
+- **No threshold is implied.** Whether a deflated-Sharpe probability of 0.9, a PBO of 0.4 or sixty settled days is enough is a decision, made by a named person before the evaluation and recorded as a versioned policy. The illustrative example policy is a documented sketch of the *kind* of statement a policy makes; its numbers are not calibrated to any market or strategy. Nothing in the platform approves a strategy on
+  its own: a correct implementation that loses fails Gate B and passes Gate A.
+- **The person is a name, not an identity.** The platform has no authentication, so `actor` on an adoption, a halt, a rollback or an approval is the text the caller gave. The audit keeps it and the time; it does not prove who typed it. A deployment that needs that proof must put the API behind an authenticated front end.
+- **Sharpe-ratio intervals.** The HAC interval is a delta-method, asymptotic statement that needs a long sample to estimate fourth moments; the Newey-West lag is a rule of thumb (a horizon of h forces at least h-1 lags); the bootstrap interval is a percentile interval, not bias-corrected, with Monte Carlo error that is recorded as the number of replications (at least 200). The naive interval is shown only to show what it ignores.
+  Intervals describe sampling uncertainty of this sample; they say nothing about whether the sample resembles the future.
+- **Matched benchmarks.** The platform has the equal-weight market and no other traded factor; any other factor is whatever the caller supplies. The sector-matched comparison uses the dataset's current group map (not a point-in-time classification). Exposures are those of the *target* weights through the vectorized engine's lag and schedule, not the executed holdings of a realistic run (the record says so). A beta estimated on 252 days is itself uncertain; the
+  matched comparison removes the part of the return explained by that beta, no more.
+- **Regimes.** The default definitions (trend over 63 days at plus or minus 5%, volatility terciles of the history seen so far, liquidity stress against a 252-day median, sideways) are conventional, not calibrated. A regime with fewer days than the policy's minimum is insufficient evidence and has no number. Crisis windows are retrospective slices chosen with hindsight and are labelled descriptive. The liquidity regime needs traded volume
+  and is insufficient without it.
+- **Selection tests** keep the limits of Release 3 (a raw count of tries is not a complete correction; the DSR standard error does not correct for serial dependence; CSCV treats blocks as exchangeable and is not a chronological validation; Reality Check and SPA test the family of recorded candidates only; Benjamini-Yekutieli is the criterion). A candidate whose return stream is constant has no Sharpe ratio: it is excluded from the statistics, the exclusion is
+  recorded, and it still counts among the tries.
+- **Neighbourhood, delay and capacity** re-run the *saved predictions* with other signal, backtest or execution settings. They do not refit the model, so the neighbourhood of a model hyper-parameter is not covered (the search and tuning flows record every trial). Each point is a child experiment and a counted look. The capacity analysis is the realistic cash-equity mode with an assumed impact coefficient.
+- **Calibration and conformal intervals.** Brier, log loss, reliability (Wilson intervals), Platt and isotonic calibrators fitted on earlier data, pinball and interval scores, a rolling split conformal procedure and Adaptive Conformal Inference exist as library functions with independent tests. The rolling split procedure is labelled as having no time-series guarantee; ACI's bound is a long-run average, not a per-period coverage. The diagnostics run reports probability calibration only; the experiment report
+  does not yet produce the quantile and interval scores from quantile models.
+- **Nested selection** is a tested procedure with an audit that recomputes its facts from the label intervals. The search and tuning flows are not yet run through it.
+- **Multi-seed evaluation** reports the median over predeclared seeds and the spread across them beside each seed's time-series uncertainty; it never chooses a seed, and each seed is a counted look. It was exercised on non-reinforcement-learning families: the agents' deterministic policy evaluation depends on the optional packages and is not verified here.
+
+## The prospective ledger
+
+- A commitment is **prospective** only if it was written before the first session whose price its label needs, with data and a fitted model that already existed. The server's clock decides, so the daily step must run before the next session opens anywhere in the universe; a late step is a replay. The first label session is taken on a Monday-to-Friday calendar, which can classify a commitment made on a holiday as a replay although no session
+  had traded (conservative; never the other way). History built from simulated or past data is always a replay, whatever it is called.
+- Elapsed time cannot be manufactured: a policy's minimum number of settled prospective days is met by waiting, and replays are listed beside the count and never added to it.
+- The equity of a prospective strategy is built from the committed holdings on the platform's daily research closes by the Release 4 adapter (whole shares, costs, cash). It is not a broker statement. A forecast horizon plays no part in it.
+- A settlement is the realised return of each asset over the label window as the platform's data shows it on that date. A later revision of the data is a new settlement version with its reason; both evaluations are kept.
+
+## Governance
+
+- Limits are enforced where the platform commits a book (`commit_forecast`) and where it promotes a model (`Registry.promote`). The platform places no orders, so nothing stops a person who trades outside it.
+- Monitoring is the population stability index of the features and the scores (alert at 0.25), the live rank IC against the backtest's (alert below two standard errors) and the limits on the committed holdings' returns. A breach of a hard limit halts the version; an alert does not.
+- A strategy version's identity is the model artifact with the dataset, model, signal, execution and risk settings. A different limit is a different version and its evidence (commitments, monitoring, approval) starts again. The **current** version of an experiment is the latest one *created*; registering an identical identity again returns the existing version and does not make it current.
+- The staleness limit is measured against the server's clock: a version with `max_staleness_days` that is monitored long after its last decision (a replay of old history, a forward test left idle) is halted by the check, which is what the limit is for.
+
+## Fixed in passing
+
+- A rejected conflicting commitment was audited inside the transaction that then raised, so the audit row was rolled back with the error; found by the test, now written before the error is raised.
+- A percentile bootstrap interval with exactly 100 replications came back as `applied` with missing bounds; fewer than 200 is now `insufficient`.
+- DSR, FDR, PBO and SPA returned `applied` with undefined statistics (or an unexplained failure) when a candidate's returns were constant; such candidates are now excluded and the exclusion is recorded.
+- `ForwardTracker.summary` compounded each signal's horizon return divided by the horizon into a "cumulative" and a Sharpe ratio. That is not a daily equity curve; it is removed and replaced by the equity of the committed holdings.
+- The neighbourhood analysis accepted a setting that no section has and reported a flat, flattering distribution; it now refuses it.
+- Gate B's selection item no longer judges a result against the platform's built-in selection thresholds once a policy is adopted: the policy's thresholds do, and the evidence is recorded under them.

@@ -174,13 +174,13 @@ def test_gate_b_reads_the_plan_the_selection_controls_and_the_null_study(evaluat
     assert item(gates.evaluate(reg, exp_id), "B", "null_controls")["status"] == "ok"
 
 
-def test_gate_b_stays_blocked_while_the_later_releases_evidence_has_no_provider(evaluated):
+def test_gate_b_stays_blocked_while_no_validation_policy_has_been_adopted(evaluated):
     reg, exp_id, _ = evaluated
     pass_all_checks(reg)
     res = gates.evaluate(reg, exp_id)
     b = res["gates"]["B"]
     assert item(res, "B", "realistic_net_oos")["status"] == "blocked" and "vectorized_legacy run" in item(res, "B", "realistic_net_oos")["reason"], "a vectorized result cannot pass what it does not model (Release 4)"
-    assert item(res, "B", "statistical_diagnostics")["status"] == "blocked" and "Release 5" in item(res, "B", "statistical_diagnostics")["reason"]
+    assert item(res, "B", "statistical_diagnostics")["status"] == "blocked" and "no validation policy has been adopted" in item(res, "B", "statistical_diagnostics")["reason"], "no threshold is implied (Release 5)"
     assert b["status"] == "blocked" and res["gates"]["C"]["status"] == "blocked" and any("requires Gate B" in r for r in res["gates"]["C"]["reasons"])
 
 
@@ -234,8 +234,13 @@ def test_production_needs_the_gates_and_a_recorded_human_approval(seeded, monkey
         reg.promote(mid, "production", approval={"actor": "  ", "note": "x"})
     staged = reg.promote(mid, "staging")
     assert staged["allowed"] and set(staged["gate_seqs"]) == {"A", "B", "C"}
+    from src.ml import governance
+
+    version = governance.register_version(reg, exp_id, actor="a.person")["version_id"]
     done = reg.promote(mid, "production", approval={"actor": "a.person", "note": "reviewed the prospective record"})
     assert done["allowed"] and next(m for m in reg.list_models() if m["id"] == mid)["stage"] == "production"
+    [approval] = governance.approvals(reg, version)
+    assert approval["actor"] == "a.person" and approval["detail"]["stage"] == "production" and set(approval["detail"]["gate_seqs"]) == {"A", "B", "C"}, "the human decision is in the governance audit, tied to the version"
     last = gates.stage_history(reg, mid)[-1]
     assert last["to_stage"] == "production" and last["actor"] == "a.person" and last["gate_seq"]
     assert reg.get_experiment(exp_id)["stage"] == "production"

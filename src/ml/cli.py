@@ -479,11 +479,174 @@ def cmd_null_controls(args, config) -> int:
 
 def cmd_selection_tests(args, config) -> int:
     """Apply the selection-bias procedures to a study's recorded trials where they apply, and persist each result or the reason it was not applied."""
+    from . import policy as pol
     from . import selection as sel
 
     registry = Registry(args.registry)
-    out = sel.evaluate_study(registry, args.study, n_boot=args.n_boot, seed=args.seed)
+    adopted = pol.adopted(registry)
+    out = sel.evaluate_study(registry, args.study, n_boot=args.n_boot, seed=args.seed, criteria=sel.criteria_from_policy(adopted[0] if adopted else None))
     lines = [f"study {args.study}: {out['n_tries']} tries recorded, {out['n_candidates']} with return streams", f"  {out['statement']}"] + [f"  {''.join(e['method']):<14} {e['status']:<15} {e['reason'][:100] or ('met' if e['statistic'].get('passes') else 'not met')}" for e in out["evidence"]]
+    _print_json_or(args, out, lines)
+    return 0
+
+
+def cmd_policy(args, config) -> int:
+    """Show the validation policy in force, or adopt one (a named person and a reason are required)."""
+    from . import policy as pol
+
+    registry = Registry(args.registry)
+    try:
+        if args.adopt_example or args.file:
+            if args.adopt_example and args.file:
+                raise ValueError("give --file or --adopt-example, not both")
+            if args.file:
+                content = json.loads(Path(args.file).read_text())
+                policy = pol.ValidationPolicy(str(content["name"]), str(content["version"]), dict(content.get("criteria") or {}), False, str(content.get("description", "")))
+            else:
+                policy = pol.example_policy()
+            made = pol.adopt(registry, policy, args.actor or "", args.note or "")
+            print(f"adopted {made['name']} {made['version']} ({made['policy_hash']}) by {made['actor']}" + (" - an ILLUSTRATIVE example, not a recommendation" if made["illustrative"] else ""))
+        adopted = pol.adopted(registry)
+        history = pol.history(registry, 10)
+    except (pol.PolicyError, ValueError, KeyError, OSError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    payload = {"adopted": None if adopted is None else {"policy": adopted[0].content(), "policy_hash": adopted[0].content_hash(), "adoption": adopted[1]}, "history": history, "example": pol.example_policy().content()}
+    lines = ["no validation policy is adopted: the platform implies no Sharpe, deflated-Sharpe, PBO, p-value or paper-trading threshold, and Gates B and C are blocked"] if adopted is None else \
+        [f"policy in force: {adopted[0].name} {adopted[0].version} ({adopted[0].content_hash()}), adopted by {adopted[1]['actor']} on {adopted[1]['at']}: {adopted[1]['note']}" + (" [ILLUSTRATIVE]" if adopted[0].illustrative else "")] + \
+        [f"  {k} = {v}" for k, v in sorted(adopted[0].criteria.items()) if v is not None]
+    _print_json_or(args, payload, lines)
+    return 0
+
+
+def cmd_diagnostics(args, config) -> int:
+    """Compute and store the statistical diagnostics of one experiment under the adopted policy: three Sharpe estimates, matched benchmarks, regimes, calibration and the study's selection evidence."""
+    from . import diagnostics as dx
+    from . import policy as pol
+
+    registry = Registry(args.registry)
+    market: dict = {}
+    try:
+        grid = json.loads(args.neighborhood) if args.neighborhood else None
+        delays = [int(x) for x in args.delays.split(",")] if args.delays else None
+        capitals = [float(x) for x in args.capitals.split(",")] if args.capitals else None
+        if grid or delays or capitals:
+            bundle = _bundle_and_info(args, config)[0] if args.prices else None
+            market = {"bundle": bundle, "config": config}
+        out = dx.run(registry, args.experiment, actor="cli", n_boot=args.n_boot, seed=args.seed, neighborhood_grid=grid, delays=delays, capitals=capitals, **market)
+        adopted = pol.adopted(registry)
+        items = dx.evaluate_policy(adopted[0], out) if adopted and out["policy_hash"] == adopted[0].content_hash() else []
+    except (ExperimentError, RegistryError, ValueError, KeyError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    sh = out["sharpe"]
+    ci = lambda r: "n/a" if not r.get("interval") else f"[{r['interval'][0]:.2f}, {r['interval'][1]:.2f}]"          # noqa: E731
+    lines = [f"{args.experiment}: {out['sample']['n']} days on the {out['segment']} segment ({out['sample']['first']} to {out['sample']['last']}), policy {out['policy_hash'] or 'none adopted'}",
+             f"  annualised Sharpe {_fmt(sh['naive']['value'])}: naive interval {ci(sh['naive'])} (assumes independent days) | HAC {ci(sh['hac'])} | stationary bootstrap {ci(sh['bootstrap'])}"]
+    for b in out["benchmarks"].values():
+        am, kind = b["active_mean"], b["kind"]
+        lines.append(f"  vs {kind:<26} {'matched' if b['matched'] else 'UNMATCHED (descriptive)':<22} active mean/day " + ("n/a" if am.get("value") is None else f"{am['value']:.5f} {ci(am)}") + f" over {b['n_aligned']} days")
+    applied = [r for r in out["regimes"]["rows"] if r.get("eligibility") == "applied"]
+    lines.append(f"  regimes: {len(applied)} readable of {len(out['regimes']['rows'])} (a regime with fewer than {out['regimes']['min_days']} days is insufficient evidence)")
+    for key, label in (("neighborhood", "neighbourhood"), ("delay", "delay"), ("capacity", "capacity")):
+        if key in out:
+            lines.append(f"  {label}: {out[key]['eligibility']}" + (f" - {out[key]['reason']}" if out[key].get("reason") else ""))
+    lines += [f"  [{i['status']:^9}] {i['label']}" + (f": {i['reason']}" if i["reason"] else "") for i in items] if items else ["  no policy item is read: " + ("no policy is adopted" if out["policy_hash"] is None else "the diagnostics were computed under another policy")]
+    _print_json_or(args, {k: v for k, v in out.items() if k != "regime_declaration"}, lines)
+    return 0
+
+
+def cmd_governance(args, config) -> int:
+    """Strategy versions, risk limits, operating state, recovery procedure and approvals of an experiment; with a flag, record one action by a named person."""
+    from . import governance as gv
+
+    registry = Registry(args.registry)
+    try:
+        registry.get_experiment(args.experiment)
+        actor = args.actor or ""
+        if args.register:
+            limits = gv.RiskLimits(json.loads(args.limits), "cli") if args.limits else None
+            made = gv.register_version(registry, args.experiment, actor=actor, risk_limits=limits)
+            print(f"version {made['version_id']} {'registered' if made['created'] else 'already registered'}")
+        versions = gv.versions_of(registry, args.experiment)
+        vid = args.version or (versions[-1]["version_id"] if versions else None)
+        if vid and args.halt:
+            gv.halt(registry, vid, args.halt, actor)
+        if vid and args.resume:
+            gv.resume(registry, vid, args.resume, actor)
+        if vid and args.rollback_to:
+            gv.rollback(registry, vid, args.rollback_to, args.reason or "", actor)
+        if vid and args.recovery:
+            gv.document_recovery(registry, vid, args.recovery, actor)
+        if vid and args.approve:
+            gv.approve_deployment(registry, vid, actor=actor, note=args.approve, stage=args.stage)
+        summary = gv.summary(registry, vid) if vid else None
+    except (gv.GovernanceError, RegistryError, ValueError, KeyError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    if summary is None:
+        _print_json_or(args, {"experiment_id": args.experiment, "versions": []}, ["no strategy version is registered for this experiment (use --register [--limits JSON] --actor NAME)"])
+        return 0
+    st, lim = summary["state"], summary["risk_limits"]
+    lines = [f"{args.experiment}: version {summary['version']['version_id']} ({len(versions)} registered), {st['state']}" + (f" since {st['since']}: {st['reason']}" if st["state"] != "active" else ""),
+             "  risk limits: " + (", ".join(f"{k}={v}" for k, v in lim["limits"].items()) if lim and lim["limits"] else "none documented"),
+             "  recovery procedure: " + ("recorded" if summary["recovery_plan"] else "not recorded"),
+             "  last monitoring: " + (f"{summary['last_monitoring']['at']} {summary['last_monitoring']['detail']['status']}" if summary["last_monitoring"] else "never"),
+             f"  deployment approvals recorded: {len(summary['approvals'])}"]
+    _print_json_or(args, summary, lines)
+    return 0
+
+
+def cmd_forward(args, config) -> int:
+    """One forward-test step: record today's signal and commit it to the immutable ledger, settle the commitments whose window has completed, check monitoring and print the ledger's view."""
+    from . import monitoring as mon
+
+    registry = Registry(args.registry)
+    try:
+        bundle = _bundle_and_info(args, config)[0] if args.prices else None
+        tracker = mon.ForwardTracker(registry, args.experiment, config)
+        signal = None if args.no_record else tracker.step(bundle, args.as_of, args.capital)
+        settled = tracker.settle(bundle, args.as_of)
+        summary = tracker.summary(bundle, args.as_of, monitor=True)
+    except (ExperimentError, RegistryError, ValueError, KeyError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    led = summary.get("ledger") or {}
+    lines = []
+    if signal:
+        c = signal["commitment"]
+        lines.append(f"{signal['date']}: {c['status']}" + (f" as {c['classification']}: {c['why']}" if c.get("classification") else f": {c.get('reason', '')}"))
+    lines.append(f"settled {len(settled)} signal(s) this run")
+    if led.get("strategy_version"):
+        cnt = led["counts"]
+        lines.append(f"ledger {led['strategy_version']} ({led['state']['state']}): prospective {cnt['prospective']['settled']}/{cnt['prospective']['committed']} settled over {cnt['prospective']['distinct_settled_days']} day(s); "
+                     f"replays {cnt['replay']['committed']} (never counted)")
+        for cls, eq in (led.get("equity") or {}).items():
+            lines.append(f"  {cls} equity: " + (f"{eq['n_days']} days, total return {_fmt(eq['total_return'], 'pct')}" + ("" if eq.get("sharpe") is not None else f" ({eq['reason']})") if eq.get("eligibility") == "applied" else eq["reason"]))
+    lines += [f"alert: {a}" for a in summary["alerts"]]
+    _print_json_or(args, {"signal": signal, "settled": settled, "summary": summary}, lines)
+    return 0
+
+
+def cmd_multiseed(args, config) -> int:
+    """Train an experiment's own configuration once per predeclared seed (development mode) and report the spread across seeds beside the time-series uncertainty of each. No seed is chosen."""
+    from . import diagnostics as dx
+
+    registry = Registry(args.registry)
+    try:
+        seeds = [int(x) for x in args.seeds.split(",")]
+        bundle = _bundle_and_info(args, config)[0] if args.prices else None
+        out = dx.multiseed(registry, args.experiment, seeds, n_boot=args.n_boot, actor="cli", bundle=bundle, config=config)
+    except (ExperimentError, RegistryError, ValueError, KeyError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    lines = [f"{args.experiment}: {len(out['rows'])} seeds {out['declaration']['seeds']} on the {out['segment']} segment, {out['metric']} per seed (the point estimate is the median; no seed is chosen)"]
+    lines += [f"  seed {r['seed']:>6}: {r['value'] if r['value'] is None else round(r['value'], 3)}  HAC interval {r['sharpe_hac_interval'] and [round(x, 2) for x in r['sharpe_hac_interval']]}" for r in out["rows"]]
+    if out.get("summary"):
+        s = out["summary"]
+        lines.append(f"  median {s['median']:.3f}, spread across seeds (std) {s['std_across_seeds']:.3f}, a seed's own sampling error {s['mean_time_series_se'] if s['mean_time_series_se'] is None else round(s['mean_time_series_se'], 3)}: {out['flag']}")
+    else:
+        lines.append(f"  {out['eligibility']}: {out.get('reason', '')}")
     _print_json_or(args, out, lines)
     return 0
 
@@ -596,6 +759,25 @@ def register(sub) -> None:
     p.set_defaults(func=cmd_null_controls)
     p = sub.add_parser("ml-selection-tests", help="apply the selection-bias procedures (DSR, PBO, Reality Check, SPA, FDR) to a study's trials where they apply")
     common(p, data=False); p.add_argument("study"); p.add_argument("--n-boot", dest="n_boot", type=int, default=500); p.add_argument("--seed", type=int, default=0); p.add_argument("--json", action="store_true"); p.set_defaults(func=cmd_selection_tests)
+    p = sub.add_parser("ml-policy", help="show the validation policy in force, or adopt one (--adopt-example for the illustrative example, --file for your own); a named person and a reason are required")
+    common(p, data=False); p.add_argument("--adopt-example", dest="adopt_example", action="store_true"); p.add_argument("--file", help="a JSON file with name, version, criteria and an optional description")
+    p.add_argument("--actor"); p.add_argument("--note"); p.add_argument("--json", action="store_true"); p.set_defaults(func=cmd_policy)
+    p = sub.add_parser("ml-diagnostics", help="compute and store the statistical diagnostics of an experiment under the adopted policy (HAC and bootstrap Sharpe intervals, matched benchmarks, regimes, calibration)")
+    common(p, data=False); p.add_argument("experiment"); p.add_argument("--n-boot", dest="n_boot", type=int, default=500); p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--neighborhood", help='JSON grid of settings to vary, e.g. \'{"signal.n": [2, 3, 4]}\' (re-runs the saved predictions on the validation segment)'); p.add_argument("--delays", help="extra sessions of delay, e.g. 0,1,2,5")
+    p.add_argument("--capitals", help="capital levels for the capacity analysis, e.g. 1e5,1e6,1e7"); p.add_argument("--prices", help="your own wide CSV of prices (for the analyses that re-run)"); p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_diagnostics)
+    p = sub.add_parser("ml-multiseed", help="train an experiment's configuration over predeclared seeds (development mode); report the spread across seeds beside each seed's time-series uncertainty")
+    common(p, data=False); p.add_argument("experiment"); p.add_argument("--seeds", required=True, help="three or more distinct seeds declared in advance, e.g. 1,2,3,4,5"); p.add_argument("--n-boot", dest="n_boot", type=int, default=300)
+    p.add_argument("--prices", help="your own wide CSV of prices"); p.add_argument("--json", action="store_true"); p.set_defaults(func=cmd_multiseed)
+    p = sub.add_parser("ml-governance", help="strategy versions (signal, execution and risk settings), risk limits, halt/resume/rollback, recovery procedure and the separate deployment approval")
+    common(p, data=False); p.add_argument("experiment"); p.add_argument("--actor"); p.add_argument("--register", action="store_true"); p.add_argument("--limits", help='JSON risk limits, e.g. \'{"max_gross": 1.5, "max_drawdown": 0.2}\'')
+    p.add_argument("--version"); p.add_argument("--halt", metavar="REASON"); p.add_argument("--resume", metavar="NOTE"); p.add_argument("--rollback-to", dest="rollback_to", metavar="VERSION"); p.add_argument("--reason")
+    p.add_argument("--recovery", metavar="PROCEDURE"); p.add_argument("--approve", metavar="NOTE"); p.add_argument("--stage", choices=["staging", "production"], default="production"); p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_governance)
+    p = sub.add_parser("ml-forward", help="one forward-test step: commit today's signal to the immutable ledger, settle matured commitments, check monitoring")
+    common(p, data=False); p.add_argument("experiment"); p.add_argument("--capital", type=float, default=100_000.0); p.add_argument("--as-of", dest="as_of"); p.add_argument("--no-record", dest="no_record", action="store_true")
+    p.add_argument("--prices", help="your own wide CSV of prices"); p.add_argument("--json", action="store_true"); p.set_defaults(func=cmd_forward)
     p = sub.add_parser("ml-promotion", help="the three independent gates of an experiment, from the persisted evidence")
     common(p, data=False); p.add_argument("experiment"); p.add_argument("--json", action="store_true"); p.set_defaults(func=cmd_promotion)
     p = sub.add_parser("ml-promote", help="move a registered model to a stage; the registry checks the gates, production also needs a recorded human approval")

@@ -22,7 +22,7 @@ from pathlib import Path
 from .provenance import digest, source_tree_hash
 from .registry import Registry, RegistryError
 
-POLICY_VERSION = "gates-v2"                                                                                # v2: Gate B reads the execution evidence of Release 4
+POLICY_VERSION = "gates-v3"                                                                                # v2: Gate B reads the execution evidence of Release 4; v3: and the statistical diagnostics, the prospective ledger and the operating controls of Release 5
 GATES = ("A", "B", "C")
 ITEM_STATUS = ("ok", "failed", "missing", "stale", "blocked", "not_applicable")
 
@@ -185,7 +185,7 @@ def _selection_item(registry: Registry, experiment_id: str, report: dict) -> Ite
     with registry._conn() as c:                                                                  # noqa: SLF001
         rows = [dict(r) for r in c.execute("SELECT * FROM selection_evidence WHERE study_id=? AND (subject IS NULL OR subject=?) ORDER BY id", (study, experiment_id))]
     if not rows:
-        return Item("selection", "selection-bias controls", "missing", "no selection test has been run for this study: run POST /api/ml/statistical-diagnostics")
+        return Item("selection", "selection-bias controls", "missing", "no selection test has been run for this study: run POST /api/ml/selection-tests/run")
     latest = {}
     for r in rows:
         latest[r["method"]] = r
@@ -195,6 +195,10 @@ def _selection_item(registry: Registry, experiment_id: str, report: dict) -> Ite
     if not applied:
         why = "; ".join(f"{r['method']}: {r['status']} ({(r['reason'] or '')[:80]})" for r in latest.values())
         return Item("selection", "selection-bias controls", "blocked", f"no selection procedure was applicable to this study, and a procedure that was not applied does not pass: {why}", refs)
+    from . import policy as pol
+
+    if pol.adopted(registry) is not None:                                                         # the adopted policy declares the thresholds: this item says only that procedures were applied; the dx: items judge them
+        return Item("selection", "selection-bias controls", "ok", "applied: " + ", ".join(sorted(statistic)) + "; judged by the thresholds of the adopted validation policy (see the statistical items)", refs)
     failing = [m for m, s in statistic.items() if s.get("passes") is False]
     if failing:
         return Item("selection", "selection-bias controls", "failed", f"the selection control(s) {', '.join(failing)} did not support the result", refs)
@@ -271,6 +275,28 @@ def _no_provider(item_id: str, label: str, release: str, what: str):
     return provider
 
 
+def _statistical_items(registry: Registry, experiment_id: str, report: dict):
+    from . import r5_gates
+
+    return r5_gates.statistical_items(registry, experiment_id, report)
+
+
+def _prospective_items(registry: Registry, experiment_id: str, report: dict):
+    from . import r5_gates
+
+    return r5_gates.prospective_items(registry, experiment_id, report)
+
+
+def _operational_items(registry: Registry, experiment_id: str, report: dict):
+    from . import r5_gates
+
+    return r5_gates.operational_items(registry, experiment_id, report)
+
+
+def _flat(result) -> list:
+    return list(result) if isinstance(result, (list, tuple)) else [result]
+
+
 @dataclass(frozen=True)
 class GatePolicy:
     """What each gate requires. ``b_providers`` and ``c_providers`` map an item id to a function ``(registry, experiment_id, report) -> Item``; later releases replace the placeholders."""
@@ -279,11 +305,11 @@ class GatePolicy:
     a_requires_provenance: bool = True
     b_providers: dict = field(default_factory=lambda: {
         "realistic_net_oos": _execution_item,
-        "statistical_diagnostics": _no_provider("statistical_diagnostics", "uncertainty, benchmarks, robustness and capacity", "Release 5", "the statistical-validity diagnostics"),
+        "statistical_diagnostics": _statistical_items,
     })
     c_providers: dict = field(default_factory=lambda: {
-        "prospective_evidence": _no_provider("prospective_evidence", "prospective evidence", "Release 5", "committed, settled prospective forecasts"),
-        "operational_policy": _no_provider("operational_policy", "monitoring, reconciliation, recovery and rollback", "Release 8", "the operating controls"),
+        "prospective_evidence": _prospective_items,
+        "operational_policy": _operational_items,
     })
 
     def with_providers(self, b: dict | None = None, c: dict | None = None, version: str | None = None) -> "GatePolicy":
@@ -332,9 +358,9 @@ def evaluate(registry: Registry, experiment_id: str, policy: GatePolicy | None =
             inherited.append(Item(f"ancestor:{anc}", f"ancestor {anc}", "blocked", f"an ancestor experiment has failed algorithm checks ({a_anc[0].id}): a critical failure blocks its descendants"))
     a_items += inherited[:1]
     gate_a = _gate("A", a_items, [], policy)
-    b_items = [_holdout_item(registry, report), _selection_item(registry, experiment_id, report), _null_item(registry, experiment_id)] + [p(registry, experiment_id, report) for p in policy.b_providers.values()]
+    b_items = [_holdout_item(registry, report), _selection_item(registry, experiment_id, report), _null_item(registry, experiment_id)] + [i for p in policy.b_providers.values() for i in _flat(p(registry, experiment_id, report))]
     gate_b = _gate("B", b_items, [("A", gate_a)], policy)
-    c_items = [p(registry, experiment_id, report) for p in policy.c_providers.values()]
+    c_items = [i for p in policy.c_providers.values() for i in _flat(p(registry, experiment_id, report))]
     gate_c = _gate("C", c_items, [("A", gate_a), ("B", gate_b)], policy)
     return {"experiment_id": experiment_id, "model_kind": kind, "policy_version": policy.version, "gates": {"A": gate_a, "B": gate_b, "C": gate_c},
             "note": "Gate A says the algorithm is implemented as specified; it says nothing about profit. A strategy can fail Gate B and a correct algorithm still passes Gate A."}
@@ -397,4 +423,10 @@ def authorize_stage(registry: Registry, model_id: str, experiment_id: str, stage
         raise PromotionBlocked(f"{model_id} cannot move to {stage}: {detail}")
     if stage == "production" and not (approval and str(approval.get("actor", "")).strip() and str(approval.get("note", "")).strip()):
         raise PromotionBlocked(f"{model_id} passes the gates, but production is a human decision: record an approval with an actor and a note")
+    if stage == "production":                                                                       # the person's decision is kept in the governance audit, tied to the strategy version it approved
+        from . import governance
+
+        version = governance.current_version(registry, experiment_id)
+        if version is not None:
+            governance.approve_deployment(registry, version["version_id"], actor=str(approval["actor"]).strip(), note=str(approval["note"]).strip(), stage=stage, gate_seqs=res["gate_seqs"])
     return {"allowed": True, "stage": stage, "gate_seqs": res["gate_seqs"], "policy_version": res["policy_version"]}
