@@ -97,6 +97,24 @@ def _volume(cfg: dict, market: dict):
     return getattr(bundle, "volume", None)
 
 
+def _interval_calibration(cfg: dict, ds, train, preds: pd.DataFrame, segment: str, lag_total: int) -> dict:
+    """Quantile and interval scores (pinball, coverage with its interval, width, interval score) and the two conformal procedures, for the diagnosed segment only, when the model stored a predictive
+    distribution. The conformal calibration residuals are those of earlier forecasts whose outcomes had ended (horizon plus lag sessions before), so nothing in the segment calibrates itself."""
+    dist = train.extras.get("distribution")
+    if dist is None or not len(dist):
+        return {"eligibility": "not_applicable", "reason": "the model stored no predictive distribution (its output is a point forecast, a rank or a probability)"}
+    levels = cal.interval_levels(cfg["model"])
+    if levels is None:
+        return {"eligibility": "unavailable", "reason": f"the quantile levels of the {cfg['model']['kind']} model's interval are not recorded, so coverage cannot be compared with a nominal level"}
+    lo, hi = levels
+    seg = preds["segment"].reindex(dist.index).where(lambda v: v == segment)
+    y = preds["target"].reindex(dist.index)
+    horizon = int(ds.horizon)
+    return {"eligibility": "applied", "segment": segment, "model": cfg["model"]["kind"], "quantiles": cal.quantile_report(dist, y, seg, alpha_low=lo, alpha_high=hi),
+            "conformal": cal.conformal_report(dist["mean"], y, seg, ds.dates, alpha=1.0 - (hi - lo), delay=lag_total + horizon),
+            "note": "coverage is read against the nominal level with its interval; the conformal intervals are centred on the stored centre forecast, use only outcomes that had ended, and carry the guarantee stated with each method (none for the split, a long-run average for the adaptive)"}
+
+
 def run(registry, experiment_id: str, *, policy: pol.ValidationPolicy | None = None, actor: str = "system", frequency: str = "daily", volume: pd.DataFrame | None = None, n_boot: int = 500,
         seed: int = 0, neighborhood_grid: dict | None = None, delays=None, capitals=None, crisis_windows: dict | None = None, save: bool = True, **market) -> dict:
     """Compute and (by default) store the diagnostics. ``policy`` defaults to the adopted one; without any policy the diagnostics are still computed with declared neutral settings, are stored with no policy hash,
@@ -148,6 +166,7 @@ def run(registry, experiment_id: str, *, policy: pol.ValidationPolicy | None = N
         out["calibration"] = _jsonable(cal.probability_report(p, y, seg))
     else:
         out["calibration"] = {"eligibility": "not_applicable", "reason": "the model produced no class probabilities (its output is not a probability)"}
+    out["interval_calibration"] = _interval_calibration(cfg, ds, train, preds, segment, lag_total)
     # --- selection bias evidence already held by the study
     out["selection"] = _selection(registry, experiment_id)
     # --- analyses that re-run the saved predictions

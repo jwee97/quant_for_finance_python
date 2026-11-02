@@ -111,3 +111,23 @@ def test_the_html_report_shows_the_audit_the_dependence_treatment_and_the_fold_l
     legacy = {**reg.report(exp.id), "audit": None, "dependence": None, "folds": {"list": [{"fold": 0, "skipped": False, "test_start": "2020-01-01", "test_end": "2020-02-01"}]}}
     old = render_html(legacy)
     assert "audit: not recorded" in old and "Fold lineage: not recorded" in old
+
+
+def test_forward_testing_refuses_an_experiment_whose_saved_rule_misreads_its_models_output(saved, tmp_path):
+    reg, exp, _ = saved
+    import shutil
+
+    import yaml
+
+    copy = tmp_path / "ml_legacy"
+    shutil.copytree(reg.root, copy)
+    path = copy / "experiments" / exp.id / "config.yaml"
+    cfg = yaml.safe_load(path.read_text())
+    mon.ForwardTracker(rg.Registry(copy), exp.id)                                                         # as saved it is fine
+    cfg["signal"]["method"] = "target_weights"                                                            # a rule that reads the output as portfolio weights, on a model that outputs a return
+    path.write_text(yaml.safe_dump(cfg))
+    with pytest.raises(ValueError, match="cannot be forward-tested.*target_weights reads the model's output as portfolio weights"):
+        mon.ForwardTracker(rg.Registry(copy), exp.id)
+    cfg["signal"]["reinterpret_outputs"] = True                                                           # the one explicit override, which the report records, still works
+    path.write_text(yaml.safe_dump(cfg))
+    mon.ForwardTracker(rg.Registry(copy), exp.id)

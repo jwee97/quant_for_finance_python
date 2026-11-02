@@ -29,14 +29,15 @@ from . import governance as gv
 from . import prospective as pr
 from . import provenance as pv
 from .bundle import InferenceBundle
+from .contracts import OutputContractError, check_signal_use
 from .config import DEFAULTS, experiment_config, merge
 from .datasets import build_dataset, resolve_bundle
 from .evaluation import rank_ic_wide, sharpe_of
 from .experiments import confidence_from_scores, regime_series, trailing_vol
-from .models import Model
+from .models import Model, task_for
 from .registry import Registry, RegistryError
 from .signals import OVERLAY_KEYS, STATEFUL_METHODS, build_weights
-from .targets import forward_return
+from .targets import forward_return, is_classification
 
 PSI_ALERT = 0.25
 PSI_WATCH = 0.10
@@ -127,6 +128,10 @@ class ForwardTracker:
         d = Path(registry.root) / "experiments" / experiment_id
         saved = yaml.safe_load((d / "config.yaml").read_text())
         self.cfg = experiment_config(merge(DEFAULTS, saved), name=saved.get("name"))
+        try:                                                                                              # an experiment saved before output contracts existed may carry a rule that misreads its model's output
+            check_signal_use(self.cfg["model"]["kind"], task_for(is_classification(self.cfg["dataset"]["target"])), self.cfg["dataset"]["target"], self.cfg["signal"])
+        except OutputContractError as exc:
+            raise ValueError(f"this experiment cannot be forward-tested: {exc}") from None
         model_path = d / "model.pkl"
         if not model_path.exists():
             raise RegistryError(f"experiment '{experiment_id}' has no saved model: it was run with final_model=False")

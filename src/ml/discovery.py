@@ -5,7 +5,9 @@ Searching many expressions for one that works is the surest way to find somethin
 * **A closed grammar that cannot read the future.** An expression is parsed (never ``eval``-ed) and accepted only if every node is one of: a number, a feature name from the panel it is given, ``+ - * /``,
   unary minus, or one of ``lag`` ``delta`` ``rolling_mean`` ``rolling_std`` ``rank`` ``zscore`` ``abs`` ``sign``. The time functions look back only (``lag(x, k)`` with ``k >= 0``); the cross-sectional
   ones use the same date. A name that is not a feature (the label, a forward return, a sealed outcome) is refused, so an expression cannot read an outcome. Beyond the parser, ``causal_check`` evaluates
-  an expression on the data and on the data with everything after a date scrambled and requires the values up to that date to be identical.
+  an expression on the data and on the data with everything after a date scrambled and requires the values up to that date to agree to within rounding (1e-9): the order in which a row-wise mean or
+  standard deviation adds its terms depends on how the frame is laid out in memory, so two evaluations of the same expression can differ in the last bit, while a value that looks ahead differs by
+  the size of the noise that replaced the future.
 * **A finite budget, all of it logged.** A search has a maximum number of candidates; every candidate that was generated is in the log, evaluated or rejected, with its reason. The budget cannot be
   exceeded by asking for more.
 * **Only development rows.** Candidates are scored by their rank IC on dates before ``sealed_from``; later dates are masked whatever the target holds, and a search whose development window reaches the
@@ -31,6 +33,7 @@ VERSION = "discovery-v1"
 FUNCS = {"lag": 2, "delta": 2, "rolling_mean": 2, "rolling_std": 2, "rank": 1, "zscore": 1, "abs": 1, "sign": 1}
 TIME_FUNCS = ("lag", "delta", "rolling_mean", "rolling_std")
 MAX_K = 252
+CAUSAL_TOLERANCE = 1e-9                                  # relative and absolute: rounding (about 1e-16) is below it, any dependence on the scrambled future (noise of scale 10) far above
 
 
 class DiscoveryError(ValueError):
@@ -144,7 +147,7 @@ def evaluate(expr: str, panel: dict[str, pd.DataFrame]) -> pd.DataFrame:
 
 
 def causal_check(expr: str, panel: dict[str, pd.DataFrame], at: int | None = None, seed: int = 0) -> dict:
-    """Evaluate on the panel and on a copy whose rows after position ``at`` are replaced by noise; the values up to ``at`` must be identical."""
+    """Evaluate on the panel and on a copy whose rows after position ``at`` are replaced by noise; the values up to ``at`` must agree to within rounding (``CAUSAL_TOLERANCE``) and have the same missing cells."""
     rng = np.random.default_rng(seed)
     n = len(next(iter(panel.values())))
     at = n // 2 if at is None else int(at)
@@ -154,8 +157,8 @@ def causal_check(expr: str, panel: dict[str, pd.DataFrame], at: int | None = Non
         v.iloc[at + 1:] = rng.normal(size=v.iloc[at + 1:].shape) * 10.0
     other = evaluate(expr, scrambled)
     a, b = base.iloc[: at + 1].to_numpy(), other.iloc[: at + 1].to_numpy()
-    same = bool(np.allclose(a, b, equal_nan=True, atol=0.0, rtol=0.0))
-    return {"causal": same, "checked_through": str(base.index[at]), "differences": int((~np.isclose(a, b, equal_nan=True, atol=0.0, rtol=0.0)).sum())}
+    agree = np.isclose(a, b, equal_nan=True, atol=CAUSAL_TOLERANCE, rtol=CAUSAL_TOLERANCE)
+    return {"causal": bool(agree.all()), "checked_through": str(base.index[at]), "differences": int((~agree).sum()), "tolerance": CAUSAL_TOLERANCE}
 
 
 def generate(features: list[str], n: int, seed: int = 0, depth: int = 2) -> list[str]:

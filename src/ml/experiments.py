@@ -418,6 +418,11 @@ def save_experiment(registry: Registry, exp: Experiment, info: dict, parent_id: 
     for name, frame in tr.extras.items():                                           # distribution, regimes, heads, weights, latent, portfolio: what the model reported beside its scores
         frame.to_parquet(d / f"extra_{name}.parquet")
         files[f"extra_{name}"] = d / f"extra_{name}.parquet"
+    if "events" in tr.extras and parent_id is None:                                 # what the environment overrode in an agent's book: an append-only record beside the table (a re-backtest has the parent's)
+        from . import diagnostics as dx                                             # imported here: diagnostics imports this module
+
+        constraints = (exp.final_model.diagnostics() if exp.final_model is not None else {}).get("constraints")
+        dx.store(registry, "rl_events", exp_id, {**mr.events_section(tr.extras["events"], seg), "model": cfg["model"]["kind"], "constraints": constraints}, actor="system")
     if exp.final_model is not None and exp.final_model.diagnostics():
         (d / "diagnostics.json").write_text(json.dumps(jsonable(exp.final_model.diagnostics()), allow_nan=False))
         files["diagnostics"] = d / "diagnostics.json"

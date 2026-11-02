@@ -3,6 +3,7 @@ model catalogue imported LightGBM to see whether it was there and only expected 
 
 from __future__ import annotations
 
+import importlib.util
 import sys
 
 import pytest
@@ -46,7 +47,8 @@ def test_the_model_catalogue_lists_a_booster_that_cannot_load_as_unavailable_ins
     catalogue = {m["kind"]: m for m in md.model_catalog()}                                    # this raised OSError before
     for kind in ("lightgbm", "xgboost"):
         assert catalogue[kind]["available"] is False and "installed but cannot load" in catalogue[kind]["reason"], kind
-    assert catalogue["catboost"]["available"] is False                                        # not installed in the test environment, or broken the same way: either way unavailable
+    if importlib.util.find_spec("catboost") is None:                                          # catboost does not use the OpenMP runtime these boosters were made to lose, so where it is installed (the `boosting` extra) it stays available
+        assert catalogue["catboost"]["available"] is False and catalogue["catboost"]["reason"]
     for kind in ("ridge", "random_forest", "hist_gb", "kalman"):
         assert catalogue[kind]["available"] is True and catalogue[kind]["reason"] is None, kind
     with pytest.raises(md.ModelUnavailable, match=r"libgomp.*choose another model"):

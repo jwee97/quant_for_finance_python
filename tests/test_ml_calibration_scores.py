@@ -97,3 +97,61 @@ def test_adaptive_conformal_meets_its_long_run_bound_for_any_sequence_including_
     fixed = cal.rolling_split_conformal(pred, y, alpha=0.1, window=300, min_calibration=100)
     assert abs((1 - fixed["scores"]["coverage"]) - 0.1) > 0.0 and "not conditional coverage" in out["guarantee"]
     assert out["levels"].dropna().min() < 0.1 < out["levels"].dropna().max() or out["levels"].dropna().nunique() > 1, "the working level moves after misses and hits"
+
+
+# ------------------------------------------------------------------------------------------------------------------ a stored predictive distribution
+def _panel(values, assets=("A", "B"), start="2021-01-04"):
+    n = len(values) // len(assets)
+    idx = pd.MultiIndex.from_product([pd.bdate_range(start, periods=n), list(assets)], names=["date", "asset"])
+    return pd.Series(np.asarray(values, dtype=float), index=idx)
+
+
+def test_the_quantile_report_has_hand_calculated_coverage_width_interval_score_and_pinball_per_segment():
+    n = 40
+    centre = _panel(np.arange(n))
+    lower, upper = centre - 1.0, centre + 1.0
+    y = centre.copy()
+    y.iloc[:4] = upper.iloc[:4] + 0.5                                                             # four outcomes above the interval, by 0.5
+    seg = pd.Series(["validation"] * 30 + ["test"] * 10, index=centre.index)
+    out = cal.quantile_report(pd.DataFrame({"lower": lower, "mean": centre, "upper": upper}), y, seg, alpha_low=0.1, alpha_high=0.9)
+    v, t = out["segments"]["validation"], out["segments"]["test"]
+    assert out["nominal"] == pytest.approx(0.8) and v["n"] == 30 and t["n"] == 10 and t["eligibility"] == "insufficient", "ten forecasts are too few to score"
+    assert v["coverage"] == pytest.approx(26 / 30) and v["width"] == pytest.approx(2.0) and v["coverage_interval"][0] < 26 / 30 < v["coverage_interval"][1]
+    assert v["interval_score"] == pytest.approx(2.0 + (2 / 0.2) * (4 * 0.5) / 30), "the width plus 2 / alpha times each miss"
+    ys = y.to_numpy()[:30]
+
+    def by_hand(forecast, tau):                                                                    # the definition, one row at a time
+        return float(np.mean([max(tau * (a - f), (tau - 1) * (a - f)) for a, f in zip(ys, forecast.to_numpy()[:30])]))
+
+    assert v["pinball"]["lower"] == pytest.approx(by_hand(lower, 0.1)) and v["pinball"]["centre"] == pytest.approx(by_hand(centre, 0.5)) and v["pinball"]["upper"] == pytest.approx(by_hand(upper, 0.9))
+    gap = y.copy(); gap.iloc[5] = np.nan                                                          # an outcome that is not yet known is not scored, not counted as a miss
+    assert cal.quantile_report(pd.DataFrame({"lower": lower, "mean": centre, "upper": upper}), gap, seg, alpha_low=0.1, alpha_high=0.9)["segments"]["validation"]["n"] == 29
+
+
+def test_the_conformal_report_calibrates_each_asset_on_outcomes_that_had_ended_and_the_delay_matters():
+    n = 30
+    dates = pd.bdate_range("2021-01-04", periods=n)
+    centre = _panel(np.zeros(2 * n))
+    y = _panel(np.repeat(np.arange(1, n + 1, dtype=float), 2))                                    # the residual on day t is t + 1: a series that keeps growing
+    seg = pd.Series("all", index=centre.index)
+    kw = dict(alpha=0.2, window=5, min_calibration=5, min_segment=5)
+    late = cal.conformal_report(centre, y, seg, dates, delay=2, **kw)["methods"]["split"]["segments"]["all"]
+    # with five residuals the conformal quantile is the largest, and on day i the five latest ended residuals are those of days i - 6 .. i - 2, so the half-width is i - 1 and the outcome (i + 1) is always outside
+    assert late["n"] == 2 * (n - 6) and late["coverage"] == 0.0 and late["width"] == pytest.approx(2 * np.mean(np.arange(5, n - 1)))
+    own = cal.conformal_report(centre, y, seg, dates, delay=0, **kw)["methods"]["split"]["segments"]["all"]
+    assert own["coverage"] == 1.0, "a calibration that includes the forecast's own outcome would look perfect: the delay is what keeps it honest"
+    full = cal.conformal_report(centre, y, seg, dates, delay=2, **kw)
+    assert "none for time series" in full["methods"]["split"]["guarantee"] and "long-run" in full["methods"]["adaptive"]["guarantee"] and full["delay_sessions"] == 2
+    a = full["methods"]["adaptive"]["segments"]["all"]
+    assert a["eligibility"] == "applied" and 0.0 <= a["coverage"] <= 1.0
+    few = cal.conformal_report(centre, y, seg, dates, delay=2, alpha=0.2, window=5, min_calibration=5, min_segment=500)["methods"]["split"]["segments"]["all"]
+    assert few["eligibility"] == "insufficient" and "fewer than 500" in few["reason"]
+
+
+def test_the_quantile_levels_of_each_interval_come_from_the_models_own_settings():
+    assert cal.interval_levels({"kind": "lgbm_quantile", "params": {}}) == (0.1, 0.9)
+    assert cal.interval_levels({"kind": "tft", "params": {"alpha_low": 0.05, "alpha_high": 0.85}}) == (0.05, 0.85)
+    lo, hi = cal.interval_levels({"kind": "ngboost", "params": {"level": 0.9}})
+    assert (lo, hi) == (pytest.approx(0.05), pytest.approx(0.95))
+    assert cal.interval_levels({"kind": "model_ensemble", "params": {}}) == (0.1, 0.9) and cal.interval_levels({"kind": "ridge", "params": {}}) is None
+

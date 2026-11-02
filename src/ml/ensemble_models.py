@@ -33,6 +33,7 @@ from scipy import stats
 from scipy.optimize import nnls
 
 from .causal import CausalView
+from .contracts import AGENTS
 from .models import _INFO, Model, make_model
 from .regimes import market_state
 
@@ -125,6 +126,9 @@ class MemberEnsemble(Model):
         if not 2 <= len(self.specs_) <= MAX_MEMBERS:
             raise ValueError(f"an ensemble needs between 2 and {MAX_MEMBERS} members")
         for k, mp in self.specs_:
+            if k in AGENTS:
+                raise ValueError(f"'{k}' is an agent whose output is a set of portfolio weights; calibrating positions against returns would present a position as an expected return. Run it as its own experiment, "
+                                 "and mix return forecasts here")
             if k not in _INFO or k == "model_ensemble":
                 raise ValueError(f"'{k}' is not a model that can be a member; choose from {sorted(set(_INFO) - {'model_ensemble'})[:6]} ...")
             make_model(k, mp, "regression", seed)                                    # a wrong setting or a missing package is refused here

@@ -1,5 +1,6 @@
 """P0-08: every network matches its manifest, and the architecture-specific properties (patching, residual decomposition, multi-rate pooling, causal convolution, quantile layout) hold."""
 
+import numpy as np
 import pytest
 
 torch = pytest.importorskip("torch")
@@ -119,3 +120,46 @@ def test_the_tft_lays_out_three_quantiles_per_horizon_and_keeps_normalised_varia
     assert out.shape == (5, 3 * OUT), "quantile i of horizon h is output 3h + i"
     assert m.last_variables.shape == (F_,) and m.last_attention.shape == (L,)
     assert float(m.last_variables.sum()) == pytest.approx(1.0, abs=1e-5) and float(m.last_attention.sum()) == pytest.approx(1.0, abs=1e-5)
+
+
+# ------------------------------------------------------------------------------------------------------------------ LSTM and GRU against their equations, written out in numpy
+def _sigmoid(z):
+    return 1.0 / (1.0 + np.exp(-z))
+
+
+def _recurrent_layer(kind, x, w_ih, w_hh, b_ih, b_hh):
+    """One layer of the textbook equations in PyTorch's parametrisation (gate order i, f, g, o for the LSTM and r, z, n for the GRU), for a batch of windows, zero initial state."""
+    batch, steps, _ = x.shape
+    h, c, out = np.zeros((batch, w_hh.shape[1])), np.zeros((batch, w_hh.shape[1])), []
+    for t in range(steps):
+        gi, gh = x[:, t] @ w_ih.T + b_ih, h @ w_hh.T + b_hh
+        if kind == "lstm":
+            i, f, g, o = np.split(gi + gh, 4, axis=1)
+            c = _sigmoid(f) * c + _sigmoid(i) * np.tanh(g)
+            h = _sigmoid(o) * np.tanh(c)
+        else:
+            i_r, i_z, i_n = np.split(gi, 3, axis=1)
+            h_r, h_z, h_n = np.split(gh, 3, axis=1)
+            r, z = _sigmoid(i_r + h_r), _sigmoid(i_z + h_z)
+            h = (1.0 - z) * np.tanh(i_n + r * h_n) + z * h                                  # the reset gate multiplies the hidden-to-hidden part of the candidate, as PyTorch defines it
+        out.append(h)
+    return np.stack(out, axis=1)
+
+
+@pytest.mark.parametrize("kind", ["lstm", "gru"])
+def test_lstm_and_gru_match_an_independent_numpy_implementation_of_their_equations(kind):
+    torch.manual_seed(1)
+    model = build_net(kind, F_, L, OUT, {**CFG, "hidden": 6, "layers": 2}).eval()
+    x = torch.randn(4, L, F_)
+    want = model(x).detach().numpy()
+    seq = x.numpy().astype(np.float64)
+    for k in range(2):
+        p = {n: getattr(model.rnn, f"{n}_l{k}").detach().numpy().astype(np.float64) for n in ("weight_ih", "weight_hh", "bias_ih", "bias_hh")}
+        seq = _recurrent_layer(kind, seq, p["weight_ih"], p["weight_hh"], p["bias_ih"], p["bias_hh"])
+    last = seq[:, -1]
+    norm, linear = model.head[0], model.head[2]
+    z = (last - last.mean(axis=1, keepdims=True)) / np.sqrt(last.var(axis=1, keepdims=True) + norm.eps) * norm.weight.detach().numpy() + norm.bias.detach().numpy()
+    got = z @ linear.weight.detach().numpy().T + linear.bias.detach().numpy()
+    np.testing.assert_allclose(got, want, atol=2e-5, err_msg=f"the {kind.upper()} network is not the {kind.upper()} equations")
+    # the window is read in time order: reversing it changes the answer, and the first step does not see the last
+    assert not np.allclose(model(torch.flip(x, dims=[1])).detach().numpy(), want, atol=1e-4)

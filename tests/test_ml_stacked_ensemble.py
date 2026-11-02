@@ -234,3 +234,11 @@ def test_the_members_frame_keeps_each_members_calibrated_forecast_and_stays_miss
 
     merged = tr.collect_extras([ex])
     assert set(merged) == {"distribution", "weights", "members"} and merged["members"].index.equals(merged["distribution"].index)
+
+
+def test_an_agent_cannot_be_an_ensemble_member_because_its_output_is_a_set_of_positions_not_a_return():
+    for agent in ("ppo", "sac", "recurrent_ppo"):
+        with pytest.raises(ValueError, match="agent whose output is a set of portfolio weights"):
+            md.make_model("model_ensemble", {"members": f"ridge,{agent}"}, "regression", 0)
+    md.make_model("model_ensemble", {"members": "ridge,lasso"}, "regression", 0)                           # return forecasts mix
+    md.make_model("model_ensemble", {"members": "ridge,lgbm_ranker"}, "regression", 0)                     # a ranker's score is calibrated to return units before it is mixed, as every member's is

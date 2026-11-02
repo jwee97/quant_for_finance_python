@@ -160,6 +160,13 @@
     const info = cat.models.find((k) => k.kind === f.model);
     if (info) {
       h("p", "hint", b, info.description);
+      const arch = (cat.architectures || {})[f.model];                                  // the architecture manifest: what the network is, and, for a reduced one, what it leaves out
+      if (arch) {
+        h("p", "hint", b, `Architecture: ${arch.variant} (${arch.reference}).` + (arch.reduced && (arch.differences || []).length ? ` It leaves out or changes: ${arch.differences.join("; ")}.` : ""));
+        const dt = h("details", "how", b); h("summary", "", dt, "What this network reads, returns and does with missing values");
+        table(dt, [{ label: "Aspect", get: (x) => x[0] }, { label: "This network", get: (x) => x[1] }], [["Input", arch.input_axes], ["Output", arch.output_axes], ["Missing values", arch.masking], ["Normalisation", arch.normalization],
+          ["Residual connections", arch.residuals], ["Attention", arch.attention], ["Forecast horizons", arch.horizon_mapping]]);
+      }
       if (SLOW.has(info.family)) h("p", "hint", b, "This model trains a network or an agent at every refit, which takes minutes rather than seconds on a CPU. Raise Refit every (days) or lower the epochs or timesteps while exploring.");
       const own = (f.params[f.model] = f.params[f.model] || Object.fromEntries(Object.entries(info.params).map(([k, v]) => [k, paramSpec(info, k).type === "bool" ? !!Number(v) : String(v)])));
       for (const k of Object.keys(own)) {
@@ -1120,7 +1127,27 @@
       }
       if (rec.delay) { W.sub(c, "Delay between decision and fill"); table(c, [{ label: "Extra sessions", num: true, get: (r) => String(r.extra_sessions) }, { label: "Sharpe", num: true, get: (r) => sig(r.value) }, { label: "Share of the undelayed result", num: true, get: (r) => (Q.bad(r.ratio_to_undelayed) ? "undefined" : spct(r.ratio_to_undelayed, 0)) }], rec.delay.rows); }
       if (rec.capacity) { W.sub(c, "Capacity (realistic execution)"); table(c, [{ label: "Capital", num: true, get: (r) => Number(r.capital).toLocaleString("en-US") }, { label: "State", get: (r) => r.state }, { label: "Sharpe", num: true, get: (r) => sig(r.value) }], rec.capacity.rows); }
-      if (rec.calibration && rec.calibration.eligibility === "not_applicable") W.hint(c, `Calibration: ${rec.calibration.reason}`);
+      const pcal = rec.calibration, ical = rec.interval_calibration;
+      if (pcal && pcal.eligibility === "not_applicable") W.hint(c, `Probability calibration: ${pcal.reason}`);
+      else if (pcal && pcal.segments) {
+        W.sub(c, "Class probabilities: Brier score, log loss and calibration error, each beside the forecast that always says the base rate");
+        table(c, [{ label: "Segment", get: (r) => r.segment }, { label: "Forecasts", num: true, get: (r) => String(r.n) }, { label: "Brier (base rate)", num: true, get: (r) => (r.eligibility === "applied" ? `${sig(r.brier, 4)} (${sig(r.brier_base_rate, 4)})` : r.reason) },
+          { label: "Log loss (base rate)", num: true, get: (r) => (r.eligibility === "applied" ? `${sig(r.log_loss, 4)} (${sig(r.log_loss_base_rate, 4)})` : "") }, { label: "Calibration error", num: true, get: (r) => (r.eligibility === "applied" ? sig(r.reliability.ece, 3) : "") }],
+        Object.entries(pcal.segments).map(([segment, r]) => ({ ...r, segment })));
+      }
+      if (ical && ical.eligibility === "applied") {
+        const q = ical.quantiles, span = (r) => `${spct(r.coverage_interval[0], 1)} to ${spct(r.coverage_interval[1], 1)}`;
+        W.sub(c, `Prediction interval of the ${ical.model} model: nominal ${spct(q.nominal, 0)}, from the ${num(q.alpha_low, 2)} and ${num(q.alpha_high, 2)} quantiles (the ${ical.segment} segment)`);
+        table(c, [{ label: "Segment", get: (r) => r.segment }, { label: "Forecasts", num: true, get: (r) => String(r.n) }, { label: "Coverage (interval)", num: true, get: (r) => (r.eligibility === "applied" ? `${spct(r.coverage, 1)} (${span(r)})` : r.reason) },
+          { label: "Mean width", num: true, get: (r) => (r.eligibility === "applied" ? spct(r.width, 2) : "") }, { label: "Interval score", num: true, get: (r) => (r.eligibility === "applied" ? sig(r.interval_score, 4) : "") },
+          { label: "Pinball: lower / centre / upper", num: true, get: (r) => (r.eligibility === "applied" ? [r.pinball.lower, r.pinball.centre, r.pinball.upper].map((v) => sig(v, 4)).join(" / ") : "") }],
+        Object.entries(q.segments).map(([segment, r]) => ({ ...r, segment })));
+        W.sub(c, `The same level from time-series conformal prediction, calibrated only on outcomes that had ended (${ical.conformal.delay_sessions} sessions earlier or more)`);
+        table(c, [{ label: "Method", get: (r) => r.method }, { label: "Forecasts with an interval", num: true, get: (r) => String(r.n) }, { label: "Coverage (interval)", num: true, get: (r) => (r.eligibility === "applied" ? `${spct(r.coverage, 1)} (${span(r)})` : r.reason) },
+          { label: "Mean width", num: true, get: (r) => (r.eligibility === "applied" ? spct(r.width, 2) : "") }, { label: "What is guaranteed", get: (r) => r.guarantee }],
+        Object.entries(ical.conformal.methods).flatMap(([name, m]) => Object.values(m.segments).map((r) => ({ ...r, method: name === "split" ? "Rolling split conformal" : "Adaptive conformal inference", guarantee: m.guarantee }))));
+        W.hint(c, ical.note);
+      } else if (ical && ical.reason) W.hint(c, `Interval calibration: ${ical.reason}`);
       W.flags(c, rec.limitations || [], "Limits. ");
     }
     if (dg.items.length) { W.sub(c, "Read against the adopted policy"); table(c, [{ label: "Criterion", get: (i) => i.label }, { label: "State", get: (i) => ITEM_WORD[i.status] || i.status }, { label: "Why", get: (i) => i.reason }], dg.items); }

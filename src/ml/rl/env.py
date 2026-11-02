@@ -33,6 +33,14 @@ from gymnasium import spaces
 from .ledger import EPS_EQUITY, Ledger, differential_sharpe, drawdown_increase
 
 REWARDS = ("return", "risk_adjusted", "dsr")
+# What the environment says when it changes, refuses to follow or overrides an action, and a stable name for each so that an audit counts them without reading prose (P0-04). The prefixes are the start of the
+# messages written in ``check_action``, ``decide``, ``_execute`` and ``step``; a message that matches none is named "other" and a test fails on it.
+EVENT_KINDS = (("action clipped", "clipped_action"), ("no eligible asset", "no_eligible_asset"), ("forced liquidation", "forced_liquidation"), ("a position or exposure limit trimmed", "limit_trim"),
+               ("the mandatory trades alone", "mandatory_trades_over_budget"), ("the trade was shortened", "turnover_shortened"), ("exposure above", "leverage_cutback"))
+
+
+def event_kind(text: str) -> str:
+    return next((kind for prefix, kind in EVENT_KINDS if text.startswith(prefix)), "other")
 STATE_SCHEMA_VERSION = 2                                      # 1: weights and drawdown carried from forward-shifted returns; 2: quantity ledger, event timeline, pending order in the observation
 TRADING_DAYS = 252.0
 

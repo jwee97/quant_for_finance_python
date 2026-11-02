@@ -89,3 +89,37 @@ def test_fitted_states_are_ordered_by_volatility_and_a_reloaded_engine_filters_i
     again = pickle.loads(pickle.dumps(fitted))
     assert np.array_equal(fitted.filter(Z[:400]), again.filter(Z[:400]))
     assert np.allclose(fitted.filter(Z).sum(axis=1), 1.0)
+
+
+def test_the_markov_switching_filter_matches_an_independent_hamilton_filter_and_recovers_the_regimes():
+    """The Markov-switching engine is statsmodels' filter; this is a second implementation (Hamilton's recursion in log space, written here) run on the engine's own fitted parameters, so the check does not rest on
+    the library agreeing with itself, and a simulated market with known regimes shows the filtered probabilities find them."""
+    from src.ml.regimes import MarkovSwitchingEngine
+
+    rng = np.random.default_rng(7)
+    n, P, mu, sd = 900, np.array([[0.97, 0.03], [0.06, 0.94]]), np.array([0.0006, -0.0008]), np.array([0.006, 0.02])
+    s = np.zeros(n, dtype=int)
+    for t in range(1, n):
+        s[t] = rng.choice(2, p=P[s[t - 1]])
+    y = mu[s] + sd[s] * rng.normal(size=n)
+    Z = np.zeros((n, len(STATE_COLUMNS)))
+    Z[:, STATE_COLUMNS.index("mkt_ret")] = y
+    eng = MarkovSwitchingEngine(2, switching_variance=True, seed=0).fit(Z)
+    got = eng.filter(Z)
+    names = list(eng._model(y).param_names)                                                           # noqa: SLF001
+    mu_hat = np.array([eng.params_[names.index(f"const[{i}]")] for i in range(2)])[eng.order_]
+    s2_hat = np.array([eng.params_[names.index(f"sigma2[{i}]")] for i in range(2)])[eng.order_]
+    T = eng.trans_                                                                                    # row = from, in the engine's order (calm state first)
+    w, v = np.linalg.eig(T.T)
+    pi = np.real(v[:, np.argmax(np.real(w))])
+    pi = pi / pi.sum()                                                                                # the stationary distribution: statsmodels' default start
+    logf = -0.5 * (np.log(2 * np.pi * s2_hat) + (y[:, None] - mu_hat) ** 2 / s2_hat)
+    pred, ref = pi, []
+    for t in range(n):
+        a = np.log(pred) + logf[t]
+        f = np.exp(a - logsumexp(a))
+        ref.append(f)
+        pred = f @ T
+    assert np.allclose(got, np.array(ref), atol=1e-6), float(np.abs(got - np.array(ref)).max())
+    assert np.allclose(got.sum(axis=1), 1.0) and ((got[:, 1] > 0.5) == (s == 1)).mean() > 0.9, "the turbulent state (the larger variance) is found on at least nine days in ten"
+    assert mu_hat.shape == (2,) and s2_hat[0] < s2_hat[1], "states are ordered by variance, so a number means the same thing after a refit"

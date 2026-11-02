@@ -88,9 +88,12 @@ def test_a_model_s_own_settings_are_menus_switches_and_text_as_well_as_numbers(m
         _choose(mp, "lstm")
         assert mp.locator("#ml select[data-key=device] option").all_text_contents() == ["auto", "cpu", "cuda"] and mp.locator("#ml input[data-key=horizons]").get_attribute("type") == "text"
         assert "trains a network" in mp.inner_text("#ml .panel") and "training curves" in mp.inner_text("#ml .panel")
+        assert "Hochreiter and Schmidhuber" in mp.inner_text("#ml .panel") and "It leaves out or changes" not in mp.inner_text("#ml .panel")      # a faithful network says what it is and nothing is left out
     if "tft" in avail:
         _choose(mp, "tft")
         assert "prediction intervals" in mp.inner_text("#ml .panel") and mp.locator("#ml input[data-key=alpha_high]").input_value() == "0.9"
+        text = mp.inner_text("#ml .panel")                                                              # the manifest is on the form: the compact network says so and what it leaves out
+        assert "COMPACT Temporal Fusion Transformer" in text and "no static covariates" in text and "quantile i of horizon h" in text
 
 
 def test_an_agent_trades_its_own_weights_and_the_rule_comes_back_with_another_model(mp):

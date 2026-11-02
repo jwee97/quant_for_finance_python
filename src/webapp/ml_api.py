@@ -36,6 +36,7 @@ from ..ml import strategy_search as ss
 from ..ml.bundle import InferenceBundle
 from ..ml.config import build_key, experiment_config, load_ml_config
 from ..ml.datasets import UNIVERSES, build_dataset, feature_catalog, resolve_bundle
+from ..ml.deep.manifest import ARCHITECTURES, architecture                      # a table of text: importing it does not import PyTorch
 from ..ml.experiments import RL_KINDS, load_run, rebacktest, run_experiment
 from ..ml.features import GROUPS
 from ..ml.models import Model, ModelUnavailable, default_refit, model_catalog
@@ -360,7 +361,8 @@ class MlApi(AdvancedRoutes):
             reg = self.registry
             counts = {"experiments": len(reg.list_experiments(10_000)), "models": len(reg.list_models()), "feature_sets": len(reg.list_feature_sets())}
         return clean({
-            "models": [{**m, "refit_every": m["refit_every"]} for m in model_catalog()], "search_kinds": list(ss.DEFAULT_KINDS), "feature_groups": groups,
+            "models": [{**m, "refit_every": m["refit_every"]} for m in model_catalog()], "architectures": {k: architecture(k) for k in ARCHITECTURES},
+            "search_kinds": list(ss.DEFAULT_KINDS), "feature_groups": groups,
             "targets": [{"kind": k, "text": v, "classification": k in CLASSIFICATION} for k, v in TARGET_KINDS.items()], "horizons": [1, 5, 10, 20, 60],
             "signals": [{"id": s, "text": SIGNAL_TEXT.get(s, "")} for s in SIGNAL_METHODS], "ensembles": [{"id": k, "text": v} for k, v in ENSEMBLE_TEXT.items()],
             "universes": [{"id": "etf", "text": "The platform's ETFs (real prices)", "source": "platform"}, {"id": "crypto", "text": "Deribit BTC and ETH with their carry indices (real data)", "source": "platform"},

@@ -9,6 +9,8 @@
   ``adaptive_conformal`` is Adaptive Conformal Inference (Gibbs & Candes 2021): the miscoverage level is nudged after every outcome, which guarantees the LONG-RUN average miscoverage is within
   ``(max(a1, 1 - a1) + gamma) / (gamma T)`` of ``alpha`` for ANY sequence. That is a guarantee about the average over time, not about coverage in every regime or conditional on the features, and
   nothing here promises more.
+* ``quantile_report`` and ``conformal_report`` apply these to a model's stored predictive distribution: per eligible segment, the pinball loss at the interval's two levels and at the median, the coverage
+  with its Wilson interval, the width and the interval score; and, per asset, the two conformal procedures calibrated only on forecasts whose outcomes had already been realised, beside the model's own interval.
 """
 
 from __future__ import annotations
@@ -216,3 +218,78 @@ def adaptive_conformal(pred: pd.Series, y: pd.Series, *, alpha: float = 0.1, gam
     return {"method": "adaptive conformal inference", "guarantee": f"long-run average miscoverage within {bound:.4f} of alpha over {T} forecasts, for any sequence; not conditional coverage",
             "alpha": alpha, "gamma": gamma, "window": window, "lower": lo, "upper": hi, "levels": levels, "average_miscoverage": float(used.mean()) if T else float("nan"), "bound": bound, "n": int(T),
             "scores": interval_scores(lo.to_numpy(), hi.to_numpy(), y.to_numpy(), alpha)}
+
+
+# ------------------------------------------------------------------------------------------------------------------------------------ a stored predictive distribution
+def interval_levels(model_cfg: dict) -> tuple[float, float] | None:
+    """The quantile levels (low, high) of the interval a model stores, from the model's own settings: ``alpha_low`` and ``alpha_high`` for the quantile models, ``level`` for NGBoost (a central interval) and
+    0.8 for the ensemble (the level it reports). ``None`` for a kind that stores no interval."""
+    from .models import _INFO
+
+    kind = model_cfg.get("kind")
+    info = _INFO.get(kind)
+    p = {**(info.params if info else {}), **(model_cfg.get("params") or {})}
+    if kind in ("lgbm_quantile", "tft"):
+        return float(p["alpha_low"]), float(p["alpha_high"])
+    if kind == "ngboost":
+        level = float(p["level"])
+        return 0.5 - level / 2.0, 0.5 + level / 2.0
+    if kind == "model_ensemble":
+        return 0.1, 0.9
+    return None
+
+
+def quantile_report(dist: pd.DataFrame, y: pd.Series, segments: pd.Series, *, alpha_low: float, alpha_high: float, min_segment: int = MIN_SEGMENT) -> dict:
+    """Per eligible segment: the empirical coverage of ``[lower, upper]`` against the nominal ``alpha_high - alpha_low`` (with a Wilson interval), the mean width, the interval score, and the pinball loss of
+    the lower and upper forecasts at their own levels and of the centre (``mean``) at 0.5. ``dist`` has the columns ``lower``, ``mean`` and ``upper``, ``y`` and ``segments`` are aligned with it. A segment with
+    fewer than ``min_segment`` scored forecasts is ``insufficient``. The centre is the median for a quantile model and the mean for a Normal one; the interval score assumes the central interval."""
+    nominal = float(alpha_high) - float(alpha_low)
+    out: dict = {"version": VERSION, "alpha_low": float(alpha_low), "alpha_high": float(alpha_high), "nominal": nominal, "segments": {}}
+    for seg in pd.unique(segments.dropna()):
+        m = (segments == seg).to_numpy()
+        lo, ce, hi, yy = (np.asarray(v, dtype=float)[m] for v in (dist["lower"].to_numpy(), dist["mean"].to_numpy(), dist["upper"].to_numpy(), y.to_numpy()))
+        ok = np.isfinite(lo) & np.isfinite(ce) & np.isfinite(hi) & np.isfinite(yy)
+        lo, ce, hi, yy = lo[ok], ce[ok], hi[ok], yy[ok]
+        if len(yy) < min_segment:
+            out["segments"][str(seg)] = {"eligibility": "insufficient", "n": int(len(yy)), "reason": f"{len(yy)} scored forecasts: fewer than {min_segment}"}
+            continue
+        scores = interval_scores(lo, hi, yy, 1.0 - nominal)
+        out["segments"][str(seg)] = {**scores, "pinball": {"lower": pinball(lo, yy, alpha_low), "centre": pinball(ce, yy, 0.5), "upper": pinball(hi, yy, alpha_high)}}
+    return out
+
+
+def conformal_report(centre: pd.Series, y: pd.Series, segments: pd.Series, dates: pd.DatetimeIndex, *, alpha: float, delay: int, window: int = 250, min_calibration: int = 50, gamma: float = 0.01,
+                     min_segment: int = MIN_SEGMENT) -> dict:
+    """The two conformal procedures of this module run asset by asset on the stored centre forecasts, and scored per eligible segment. ``centre`` and ``y`` are indexed by (date, asset) and ``segments`` is
+    aligned with them; ``dates`` is the calendar the series are laid on (a missing day is a missing row, so ``delay`` counts sessions). ``delay`` is the number of sessions between a forecast and the realisation
+    of its outcome: the calibration residuals of a forecast are those of earlier forecasts whose outcomes had ended by then, never one that was still forming. Intervals exist only once ``min_calibration``
+    such residuals have accumulated, so the first forecasts are unscored, and the scores are over the forecasts that have one (``n`` says how many)."""
+    assets = sorted(set(centre.index.get_level_values(1)))
+    lows: dict[str, list] = {"split": [], "adaptive": []}
+    highs: dict[str, list] = {"split": [], "adaptive": []}
+    for a in assets:
+        c, t = centre.xs(a, level=1).reindex(dates), y.xs(a, level=1).reindex(dates)
+        for name, run in (("split", rolling_split_conformal), ("adaptive", adaptive_conformal)):
+            res = run(c, t, alpha=alpha, window=window, min_calibration=min_calibration, delay=delay, **({"gamma": gamma} if name == "adaptive" else {}))
+            lows[name].append(res["lower"].rename(a))
+            highs[name].append(res["upper"].rename(a))
+    out: dict = {"version": VERSION, "alpha": float(alpha), "nominal": 1.0 - float(alpha), "delay_sessions": int(delay), "window": int(window), "min_calibration": int(min_calibration), "gamma": float(gamma), "methods": {}}
+    guarantees = {"split": "none for time series: finite-sample coverage needs exchangeable calibration and test residuals; the empirical coverage is the evidence",
+                  "adaptive": "the long-run average miscoverage over the scored forecasts is within a stated bound of alpha for any sequence of outcomes; not coverage in every regime and not conditional on the features"}
+    def long(frames: list) -> pd.Series:
+        wide = pd.concat(frames, axis=1)                                                           # date x asset
+        flat = pd.Series(wide.to_numpy().ravel(), index=pd.MultiIndex.from_product([wide.index, wide.columns], names=["date", "asset"]))
+        return flat.reindex(centre.index)
+
+    for name in ("split", "adaptive"):
+        lo, hi = long(lows[name]), long(highs[name])
+        rows: dict = {}
+        for seg in pd.unique(segments.dropna()):
+            m = (segments == seg).to_numpy()
+            sc = interval_scores(lo.to_numpy()[m], hi.to_numpy()[m], y.to_numpy()[m], alpha)
+            if sc["eligibility"] != "applied" or sc["n"] < min_segment:
+                rows[str(seg)] = {"eligibility": "insufficient", "n": int(sc.get("n", 0)), "reason": f"{sc.get('n', 0)} forecasts with a conformal interval: fewer than {min_segment}"}
+            else:
+                rows[str(seg)] = sc
+        out["methods"][name] = {"guarantee": guarantees[name], "segments": rows}
+    return out

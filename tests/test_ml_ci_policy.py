@@ -171,3 +171,26 @@ def test_the_release_8_tests_run_in_the_base_install_and_the_dashboard_lanes_and
     assert set(RELEASE_8) <= named, "every Release 8 test file is the evidence of some requirement"
     assert {f"P3-{i:02d}" for i in range(1, 13)} <= set(vf.REQUIREMENTS), "P3-01 to P3-12 are registered"
     assert CI["jobs"]["test"]["timeout-minutes"] >= 80, "the whole-suite job has headroom for the growing suite"
+
+
+def test_the_architecture_catalogue_test_needs_no_pytorch_so_it_runs_in_the_base_install_lanes_and_is_evidence_of_p0_08():
+    t = "tests/test_ml_architecture_catalogue.py"
+    for lane in ("ml-base", "replit-python"):
+        assert t in " ".join(steps(CI["jobs"][lane])), f"{t} is not run by the {lane} lane"
+    assert t in vf.REQUIREMENTS["P0-08"][0]
+
+
+def test_the_interval_diagnostics_test_runs_in_the_base_install_lanes_and_its_browser_test_in_the_browser_lane():
+    t = "tests/test_ml_interval_diagnostics.py"
+    for lane in ("ml-base", "replit-python"):
+        assert t in " ".join(steps(CI["jobs"][lane])), f"{t} is not run by the {lane} lane"
+    assert "tests/test_webapp_ml_intervals_browser.py" in " ".join(steps(CI["jobs"]["browser"]))
+    assert t in vf.REQUIREMENTS["P1-22"][0]
+
+
+def test_the_rl_events_test_runs_in_the_base_install_lanes_where_it_skips_and_the_lane_that_installs_the_agents_and_is_evidence_of_p0_04():
+    t = "tests/test_ml_rl_events.py"
+    for lane in ("ml-base", "replit-python"):
+        assert t in " ".join(steps(CI["jobs"][lane])), f"{t} is not run by the {lane} lane"
+    assert t in vf.REQUIREMENTS["P0-04"][0]
+

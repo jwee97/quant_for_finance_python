@@ -19,7 +19,7 @@ import pandas as pd
 from ..deep.data import FeatureScaler, SeqAccessor
 from ..causal import CausalView
 from ..models import Model
-from .env import STATE_SCHEMA_VERSION, PortfolioEnv, rollout
+from .env import STATE_SCHEMA_VERSION, PortfolioEnv, event_kind, rollout
 
 RECURRENT = "recurrent_ppo"
 MIN_DAYS = 120
@@ -151,16 +151,16 @@ class RLAgent(Model):
             return a, state
         return act
 
-    def _chain(self, start: int, end: int, X: pd.DataFrame) -> np.ndarray:
-        """The books decided on days ``start .. end`` by playing the policy forward from a flat account on day ``start``, one session after another, with the ledger the policy was trained in. The result for a
-        day does not depend on how many days are asked for after it, or in how many calls: every call replays from the start of the chain."""
+    def _chain(self, start: int, end: int, X: pd.DataFrame) -> tuple[np.ndarray, list]:
+        """The books decided on days ``start .. end`` by playing the policy forward from a flat account on day ``start``, one session after another, with the ledger the policy was trained in, and the events
+        the environment reported on each day. The result for a day does not depend on how many days are asked for after it, or in how many calls: every call replays from the start of the chain."""
         ds = self._ds
         days = ds.dates[start:end + 1]
         feats, present = self._arrays(days, X)
         mask = present & ds.investable[ds.assets].to_numpy()[start:end + 1]
         rets = ds.returns[ds.assets].to_numpy(dtype=np.float64)[start:end + 1]
-        books, _ = rollout(self._policy(), feats, rets, mask, self._env_kwargs(), self.kind == RECURRENT)
-        return books
+        books, trace = rollout(self._policy(), feats, rets, mask, self._env_kwargs(), self.kind == RECURRENT)
+        return books, trace["events"]
 
     def raw_predict(self, X: pd.DataFrame) -> np.ndarray:
         """Each day's target weights. Two chains, both starting flat: the training window (in-sample) from its first day, and everything after it from the first day after it (a refit starts a new account)."""
@@ -174,13 +174,31 @@ class RLAgent(Model):
         if (t_row < 0).any() or (a_row < 0).any():
             raise ValueError("some rows are on a date or for an asset that is not in the dataset the agent is bound to")
         out = np.full(len(X), np.nan)
+        seen = {}
         for first, sel in ((self.train_lo_, t_row <= self.train_hi_), (self.train_hi_ + 1, t_row > self.train_hi_)):
             if not sel.any():
                 continue
             start, end = min(first, int(t_row[sel].min())), int(t_row[sel].max())
-            books = self._chain(start, end, X)
+            books, events = self._chain(start, end, X)
             out[sel] = books[t_row[sel] - start, a_row[sel]]
+            seen.update({start + rel: list(events[rel]) for rel in range(len(events))})                      # the same day replays to the same events, so this is the same whatever the call
+        self.__dict__.setdefault("_events", {}).update(seen)
         return out
+
+    def predict_extras(self, X: pd.DataFrame) -> dict:
+        """The events of the days in ``X``, one row for each day on which the environment clipped an action, liquidated what was no longer eligible, trimmed a limit or shortened a trade: ``n_events``,
+        their ``kinds`` (stable names, one for each event) and the ``detail`` (the environment's own sentences). A day with none has no row. The days are those the policy was replayed over; the frame is saved with the
+        experiment and summarised in the registry, so a constraint that overrode the policy leaves a record."""
+        ds = self._ds
+        if ds is None:
+            raise ValueError("the agent must be bound to a dataset before it predicts")
+        days = sorted({int(t) for t in ds.dates.get_indexer(X.index.get_level_values(0)) if t >= 0})
+        if any(d not in self.__dict__.get("_events", {}) for d in days):
+            self.raw_predict(X)                                                                           # a model that has not replayed these days (a reloaded one) replays them now
+        seen = self.__dict__["_events"]
+        rows = [(ds.dates[d], len(seen[d]), ",".join(event_kind(e) for e in seen[d]), " | ".join(seen[d])) for d in days if seen.get(d)]
+        frame = pd.DataFrame(rows, columns=["date", "n_events", "kinds", "detail"]).set_index("date")
+        return {"events": frame}
 
     def importance(self) -> pd.Series:
         """The size of the first layer's weights on each feature (all assets together): a rough guide to what the policy reads, not an attribution."""
@@ -202,6 +220,7 @@ class RLAgent(Model):
     def __getstate__(self):
         state = dict(self.__dict__)
         state.update(_ds=None, _base=None)
+        state.pop("_events", None)                                                               # a replay's events are re-derived, never stored with the model
         if self.agent_ is not None:
             buf = io.BytesIO()
             self.agent_.save(buf)

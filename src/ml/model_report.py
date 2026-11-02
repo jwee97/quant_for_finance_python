@@ -101,6 +101,25 @@ def ranking_section(scores: pd.DataFrame, fwd: pd.DataFrame, labels: pd.Series |
     return out
 
 
+# ------------------------------------------------------------------------------------------------------------ what a constraint overrode
+def events_section(events: pd.DataFrame, labels: pd.Series | None) -> dict:
+    """The events a reinforcement-learning environment reported while its policy was replayed (clipped actions, forced liquidations, trimmed limits, shortened trades), counted by kind and by segment, with
+    the dates of the first and the last and a hash of the table that was saved. A policy that was never overridden has none, and that is a fact too."""
+    import hashlib
+    from collections import Counter
+
+    kinds = [k for cell in events["kinds"] for k in str(cell).split(",") if k]
+    seg = labels.reindex(events.index).to_numpy() if labels is not None and len(events) else np.array([], dtype=object)
+    by_segment = {}
+    for s in ("validation", "test", "forward"):
+        pick = [k for cell, g in zip(events["kinds"], seg) if g == s for k in str(cell).split(",") if k]
+        if pick:
+            by_segment[s] = dict(sorted(Counter(pick).items()))
+    return {"days_with_events": int(len(events)), "events": int(len(kinds)), "by_kind": dict(sorted(Counter(kinds).items())), "by_segment": by_segment,
+            "first": str(events.index.min().date()) if len(events) else None, "last": str(events.index.max().date()) if len(events) else None,
+            "table_hash": hashlib.sha256(events.to_csv().encode()).hexdigest()[:32]}
+
+
 # ------------------------------------------------------------------------------------------------------------ distributions
 def intervals_section(dist: pd.DataFrame, y: pd.Series, nominal: float, labels: pd.Series | None) -> dict | None:
     y = y.reindex(dist.index)

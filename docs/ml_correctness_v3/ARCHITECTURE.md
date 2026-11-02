@@ -262,6 +262,7 @@ procedure and the deployment approval are appended to `governance_events` with a
 * `selection.run_procedures` excludes candidates with a constant return stream and records the exclusion (a statistic built on them was a number without meaning); the DSR item judges the more conservative of the two trial conventions. The bootstrap needs 200 replications.
 * `ForwardTracker.summary` no longer reports a cumulative return or Sharpe computed from horizon returns. Comparisons name each result's holdout status and execution mode.
 * Verification requirements P1-15 to P1-25.
+* (Follow-up to Release 8.) The diagnostics record also carries `interval_calibration` (`calibration.quantile_report`, `calibration.conformal_report`, `calibration.interval_levels`), computed for the diagnosed segment from a stored predictive distribution; the dashboard's diagnostics card shows it and the class-probability scores.
 
 # Release 6: alpha research foundation
 
@@ -373,6 +374,11 @@ The five modules that work on a saved experiment or on the registry's records ha
 
 * No migration, and no new configuration setting: the modules are called, not configured into an experiment.
 * `model_ensemble`'s `predict_extras` also returns `members` (each member's calibrated forecast, missing where it did not score), persisted by the generic extras path as `extra_members.parquet`; `champion.register` records an `assumptions_check` and refuses two registered versions that differ in execution, cost/schedule or risk limits.
+* `ForwardTracker` checks the saved rule against the model's output kind and refuses a mismatch; `model_ensemble` refuses agent members.
+* `GET /api/ml/catalog` also carries `architectures`: the manifest entry of every network (variant, reference, whether it is reduced and what it leaves out, input and output axes, masking, normalisation, residuals, attention, horizon mapping), shown on the model form. Importing it loads no network library.
+* `SklearnModel.predict_proba` and the online logistic model validate their probabilities (finite, inside [0, 1], and the classes are [0, 1]); a fit that cannot meet that raises `OutputContractError`.
+* `discovery.causal_check` compares with a tolerance (`CAUSAL_TOLERANCE`, 1e-9) and reports it.
+* `RLAgent.predict_extras` returns `events` (the environment's overrides on the replayed days, with the stable kinds of `rl.env.EVENT_KINDS`); `save_experiment` stores them as `extra_events.parquet` and, for an experiment that is not a re-backtest, an `rl_events` analysis record. `CatBoost` is told to write no files.
 * `allocation.solve` accepts `holding_penalty` (a per-name cost on the size of a position, the worst case of a box on expected returns); without it the problem is unchanged.
 * `GET /api/ml/advanced`, `/api/ml/drift`, `/api/ml/retraining`, `/api/ml/champion`, `/api/ml/uncertainty-monitor`, `/api/ml/reports`, `/api/ml/report` and `POST /api/ml/retraining/action`, `/api/ml/champion/register`, `/commit`, `/look`, `/api/ml/report/build`; `quant ml-advanced`.
 * Verification requirements P3-01 to P3-12 (86 in all); the CI `test` job allows 80 minutes.

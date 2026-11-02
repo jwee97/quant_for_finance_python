@@ -32,6 +32,7 @@ from sklearn.preprocessing import StandardScaler
 
 from ..ops.hpo import Categorical, Float, Int, LogFloat
 from ..utils.optional import OptionalPackageError, import_optional, unavailable_reason
+from .contracts import OutputContractError, validate_probabilities
 
 
 ARTIFACT_MAGIC = b"QFM1"
@@ -225,9 +226,14 @@ class SklearnModel(Model):
         return self.pipe_.predict(values) * self.y_std_ + self.y_mean_
 
     def predict_proba(self, X: pd.DataFrame) -> np.ndarray | None:
+        """The probability of class 1 (the return is positive, or the asset is in the top group). Column 1 of a scikit-learn model is the class 1 only when the classes are [0, 1], which is checked, and the
+        result must be finite and inside [0, 1] (P0-09)."""
         if self.task != "classification":
             return None
-        return self.pipe_.predict_proba(X[self.features_].to_numpy(dtype=np.float64))[:, 1]
+        classes = [float(c) for c in getattr(self.pipe_.named_steps["model"], "classes_", [0, 1])]
+        if classes != [0.0, 1.0]:
+            raise OutputContractError(f"the {self.kind} model was fitted on the classes {classes}, not [0, 1]: its second probability column is not the probability of class 1")
+        return validate_probabilities(self.pipe_.predict_proba(X[self.features_].to_numpy(dtype=np.float64))[:, 1], f"the {self.kind} model's probabilities")
 
     def importance(self) -> pd.Series:
         est = self.pipe_.named_steps["model"]
@@ -293,7 +299,7 @@ def _build_sklearn(kind: str, task: str, p: dict, seed: int) -> SklearnModel:
     if kind == "catboost":
         cb = _import("catboost")
         kw = dict(iterations=int(p.get("iterations", 300)), depth=int(p.get("depth", 4)), learning_rate=float(p.get("learning_rate", 0.05)), l2_leaf_reg=float(p.get("l2_leaf_reg", 5.0)), random_seed=seed,
-                  verbose=False, thread_count=1)
+                  verbose=False, thread_count=1, allow_writing_files=False)                 # without it every fit writes a catboost_info folder (training logs) into whatever directory the app runs in
         return SklearnModel(kind, task, p, seed, (cb.CatBoostClassifier if clf else cb.CatBoostRegressor)(**kw), False, True)
     raise ValueError(f"unknown model '{kind}'")
 
@@ -452,7 +458,7 @@ class OnlineLogistic(Model):
         return self._p(X) - 0.5
 
     def predict_proba(self, X: pd.DataFrame) -> np.ndarray | None:
-        return self._p(X)
+        return validate_probabilities(self._p(X), "the online logistic model's probabilities")
 
     def importance(self) -> pd.Series:
         return pd.Series(self.w_, index=self.features_)

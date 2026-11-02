@@ -63,6 +63,29 @@ def test_every_generated_expression_is_causal_and_the_check_catches_one_that_is_
     assert leaky
 
 
+def test_the_causal_check_forgives_rounding_but_not_a_dependence_on_the_future(monkeypatch):
+    """A row-wise mean adds its terms in an order that depends on the frame's memory layout (pandas 2 lays a frame and its copy out differently), so two evaluations can differ in the last bit: that is not a
+    look-ahead. A value that reads the next row is one: it changes by the size of the noise that replaced the future."""
+    P = frames(seed=1)
+    calls = []
+
+    def rounding(expr, panel):                                                                      # the second evaluation is off by one part in 1e14 everywhere, whatever the future holds
+        calls.append(expr)
+        return panel["f1"] * (1.0 + 1e-14 * (len(calls) - 1))
+
+    monkeypatch.setattr(dc, "evaluate", rounding)
+    chk = dc.causal_check("f1", P, at=200)
+    assert chk["causal"] is True and chk["differences"] == 0 and chk["tolerance"] == dc.CAUSAL_TOLERANCE
+
+    monkeypatch.setattr(dc, "evaluate", lambda expr, panel: panel["f1"].shift(-1))                  # what the grammar forbids: the value at t is the next row's
+    leak = dc.causal_check("lag(f1, 0)", P, at=200)
+    assert leak["causal"] is False and leak["differences"] >= len(ASSETS) // 2, "the last checked row reads the scrambled future, so it differs"
+
+    monkeypatch.setattr(dc, "evaluate", lambda expr, panel: panel["f1"].where(panel["f1"].shift(-1).abs() < 9.0))      # a cell that goes missing because of the future is a difference too
+    gap = dc.causal_check("f1", P, at=200)
+    assert gap["causal"] is False and gap["differences"] >= 1
+
+
 # ------------------------------------------------------------------------------------------------------------------ budget, log and sealed rows
 def test_the_budget_is_a_hard_limit_and_every_candidate_is_in_the_log_with_its_reason():
     P = frames(seed=2)

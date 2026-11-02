@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.ml import experiments as xe
+from src.ml import experiments as xe, models as md
 from src.ml.contracts import (OutputContractError, build_contract, check_signal_use, output_kind, pinball_loss, validate_distribution, validate_probabilities, validate_quantiles)
 from tests.ml_helpers import make_bundle
 
@@ -103,3 +103,33 @@ def test_a_predictive_distribution_needs_a_positive_scale_and_a_mean_inside_its_
             validate_distribution(bad)
     with pytest.raises(OutputContractError, match="columns"):
         validate_distribution(good[["mean", "std"]])
+
+
+# ------------------------------------------------------------------------------------------------------------ the probabilities a classifier hands out
+def _labelled(n=400, seed=2):
+    rng = np.random.default_rng(seed)
+    X = pd.DataFrame(rng.normal(size=(n, 4)), columns=list("abcd"), index=pd.MultiIndex.from_product([pd.RangeIndex(n // 4), list("wxyz")], names=["date", "asset"]))
+    y = pd.Series((X["a"] + 0.5 * rng.normal(size=n) > 0).astype(float), index=X.index)
+    return X, y, np.repeat(np.arange(n // 4), 4)
+
+
+@pytest.mark.parametrize("kind, params", [("logistic", {}), ("hist_gb", {"max_iter": 30, "min_samples_leaf": 10}), ("random_forest", {"n_estimators": 30, "max_depth": 4, "min_samples_leaf": 5}), ("online_logistic", {})])
+def test_a_classifiers_probabilities_are_finite_bounded_and_the_probability_of_class_one(kind, params):
+    X, y, dates = _labelled()
+    model = md.make_model(kind, params, "classification", 0).fit(X, y, dates)
+    p = model.predict_proba(X)
+    assert p.shape == (len(X),) and np.isfinite(p).all() and ((p >= 0) & (p <= 1)).all()
+    assert np.corrcoef(p, X["a"])[0, 1] > 0.5, "the score rises with the feature that makes the label 1: the column is the probability of class one"
+    assert np.allclose(model.predict(X), p - 0.5), "the score is the probability less one half"
+
+
+def test_a_classifier_whose_classes_are_not_zero_and_one_is_refused_and_so_is_a_broken_fit():
+    X, y, dates = _labelled()
+    model = md.make_model("logistic", {}, "classification", 0).fit(X, y, dates)
+    model.pipe_.named_steps["model"].classes_ = np.array([1.0, 2.0])                               # a fit on other labels: column 1 would be the probability of class 2
+    with pytest.raises(OutputContractError, match="not \\[0, 1\\]"):
+        model.predict_proba(X)
+    online = md.make_model("online_logistic", {}, "classification", 0).fit(X, y, dates)
+    online.w_[0] = np.nan                                                                          # a numerically broken fit hands out nothing rather than NaN probabilities
+    with pytest.raises(OutputContractError, match="finite"):
+        online.predict_proba(X)
