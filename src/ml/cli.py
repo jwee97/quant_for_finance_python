@@ -902,7 +902,7 @@ def register(sub) -> None:
     p.add_argument("--actor"); p.add_argument("--note"); p.add_argument("--json", action="store_true"); p.set_defaults(func=cmd_policy)
     p = sub.add_parser("ml-diagnostics", help="compute and store the statistical diagnostics of an experiment under the adopted policy (HAC and bootstrap Sharpe intervals, matched benchmarks, regimes, calibration)")
     common(p, data=False); p.add_argument("experiment"); p.add_argument("--n-boot", dest="n_boot", type=int, default=500); p.add_argument("--seed", type=int, default=0)
-    p.add_argument("--neighborhood", help='JSON grid of settings to vary, e.g. \'{"signal.n": [2, 3, 4]}\' (re-runs the saved predictions on the validation segment)'); p.add_argument("--delays", help="extra sessions of delay, e.g. 0,1,2,5")
+    p.add_argument("--neighborhood", help="JSON grid of settings to vary, e.g. '{\"signal.n\": [2, 3, 4]}' (re-runs the saved predictions on the validation segment); a grid over the model's own settings, e.g. '{\"model.params.alpha\": [1, 10, 100]}', refits the model at each point (up to 12 points)"); p.add_argument("--delays", help="extra sessions of delay, e.g. 0,1,2,5")
     p.add_argument("--capitals", help="capital levels for the capacity analysis, e.g. 1e5,1e6,1e7"); p.add_argument("--prices", help="your own wide CSV of prices (for the analyses that re-run)"); p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_diagnostics)
     p = sub.add_parser("ml-multiseed", help="train an experiment's configuration over predeclared seeds (development mode); report the spread across seeds beside each seed's time-series uncertainty")

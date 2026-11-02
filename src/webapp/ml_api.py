@@ -1032,14 +1032,14 @@ class MlApi(AdvancedRoutes):
     def diagnostics_run(self, body: dict) -> dict:
         """``POST /api/ml/statistical-diagnostics/run {"id", "n_boot"?, "seed"?, "neighborhood"?, "delays"?, "capitals"?}`` (a job): compute and store the statistical diagnostics of one experiment under the adopted
         policy: the three Sharpe estimates, matched benchmarks, regimes, calibration, the study's selection evidence, and (when asked) the neighbourhood, delay and capacity analyses, which re-run the saved
-        predictions on the validation segment and count as looks."""
+        predictions on the validation segment and count as looks (a grid over model.params.* refits the model at each point, in development mode, up to 12 points)."""
         _only(body, {"id", "n_boot", "seed", "neighborhood", "delays", "capitals"}, "/api/ml/statistical-diagnostics/run")
         exp_id = _id(body)
         n_boot, seed = _int(body, "n_boot", 500, 200, 2000), _int(body, "seed", 0, 0, 1_000_000)
         grid = body.get("neighborhood")
         if grid is not None:
             if not isinstance(grid, dict) or not 1 <= len(grid) <= 4 or any(not isinstance(v, list) or not 1 <= len(v) <= 8 for v in grid.values()):
-                raise ApiError("neighborhood is an object of 1 to 4 settings (signal.*, backtest.*, execution.*), each a list of 1 to 8 values")
+                raise ApiError("neighborhood is an object of 1 to 4 settings (signal.*, backtest.*, execution.*, or model.params.* for the model's own hyper-parameters, each point of which refits the model), each a list of 1 to 8 values")
         delays, capitals = body.get("delays"), body.get("capitals")
         if delays is not None and (not isinstance(delays, list) or not 1 <= len(delays) <= 8 or any(not isinstance(d, int) or isinstance(d, bool) or not 0 <= d <= 20 for d in delays)):
             raise ApiError("delays is a list of 1 to 8 integers between 0 and 20 (extra sessions between decision and fill)")

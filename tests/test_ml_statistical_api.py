@@ -217,3 +217,16 @@ def test_a_conflicting_commitment_is_not_logged_as_a_signal_and_is_reported(app)
         assert c.execute("SELECT COUNT(*) FROM forward_signals WHERE experiment_id=?", (exp,)).fetchone()[0] == n_signals
         assert c.execute("SELECT content_hash FROM commitments WHERE commit_key=?", (key,)).fetchone()[0] == content_hash
         assert c.execute("SELECT COUNT(*) FROM commitment_audit WHERE commit_key=? AND event='rejected_conflict'", (key,)).fetchone()[0] == 1
+
+
+def test_a_grid_over_the_models_own_hyper_parameters_is_accepted_by_the_route_and_refits_in_the_background(app, parent):
+    run = app.extra_post["/api/ml/statistical-diagnostics/run"]
+    with pytest.raises(ApiError, match="model.params"):
+        run({"id": parent["id"], "neighborhood": {"signal.n": 3}})                                         # the message names the model settings too
+    out = finished(app, run({"id": parent["id"], "n_boot": 200, "neighborhood": {"model.params.alpha": [1.0, 10.0, 100.0]}}))
+    nb = out["diagnostics"]["record"]["neighborhood"]
+    assert nb["refit"] is True and nb["declared_points"] == 3 and nb["evaluated"] == 3 and nb["eligibility"] == "applied" and nb["segment"] == "validation"
+    assert all(r["experiment_id"] for r in nb["points"]) and any("REFITS" in n for n in nb["notes"])
+    mixed = wait(app, run({"id": parent["id"], "n_boot": 200, "neighborhood": {"model.params.alpha": [1.0, 10.0, 100.0], "signal.n": [2, 3]}}))
+    assert mixed["status"] == "error" and "not both" in json.dumps(mixed), "a grid that mixes refits with re-runs is refused with the reason"
+

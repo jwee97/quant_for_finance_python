@@ -28,6 +28,7 @@ from .registry import Registry
 ROOT = Path(__file__).resolve().parents[2]
 CHECK_VERSION = 1
 SOURCES = {
+    "reconcile": ["src/ml/rl", "src/ml/signals.py", "src/ml/realism.py", "src/ml/execution.py", "src/ledger", "src/instruments", "src/backtest/execution.py", "src/backtest/engine.py", "src/backtest/costs.py"],
     "rl": ["src/ml/rl", "src/ml/signals.py"], "rl_events": ["src/ml/rl", "src/ml/signals.py", "src/ml/model_report.py", "src/ml/experiments.py"], "ranker": ["src/ml/boosting.py"], "graph": ["src/ml/graph.py"], "arch": ["src/ml/deep", "src/webapp/ml_api.py", "src/webapp/static/ml.js"], "contracts": ["src/ml/contracts.py", "src/ml/boosting.py", "src/ml/regimes.py", "src/ml/monitoring.py", "src/ml/ensemble_models.py", "src/ml/models.py"],
     "hmm": ["src/ml/regimes.py"], "serialization": ["src/ml/models.py", "src/ml/deep/model.py", "src/ml/graph.py", "src/ml/rl/agent.py", "src/ml/ensemble_models.py"],
     # Release 2: causal data and training integrity
@@ -106,7 +107,7 @@ REQUIREMENTS = {                                                # requirement id
     "P0-10": (["tests/test_ml_hmm_reference.py"], "hmm"),
     "P0-11": (["tests/test_ml_output_contracts.py", "tests/test_ml_cost_aware_signal.py", "tests/test_ml_overlays.py", "tests/test_ml_product_surfaces.py", "tests/test_ml_stacked_ensemble.py"], "contracts"),
     "P0-12": (["tests/test_ml_serialization_matrix.py"], "serialization"),
-    "P0-30": (["tests/test_ml_rl_accounting_reference.py"], "rl"),
+    "P0-30": (["tests/test_ml_rl_accounting_reference.py", "tests/test_ml_execution_ledger.py", "tests/test_ml_execution_fixtures.py"], "reconcile"),
     "P0-13": (["tests/test_ml_interval_splits.py", "tests/test_ml_dependence.py", "tests/test_ml_product_surfaces.py"], "intervals"),
     "P0-14": (["tests/test_ml_feature_audit.py"], "features"),
     "P0-15": (["tests/test_ml_pit_sessions.py"], "pit"),
@@ -144,7 +145,7 @@ REQUIREMENTS = {                                                # requirement id
     "P1-17": (["tests/test_ml_statistical_eligibility.py"], "selection"),
     "P1-18": (["tests/test_ml_matched_benchmarks.py"], "matched"),
     "P1-19": (["tests/test_ml_regime_evaluation.py"], "regimes5"),
-    "P1-20": (["tests/test_ml_sensitivity.py"], "robust5"),
+    "P1-20": (["tests/test_ml_sensitivity.py", "tests/test_ml_statistical_api.py"], "robust5"),
     "P1-21": (["tests/test_ml_sensitivity.py"], "robust5"),
     "P1-22": (["tests/test_ml_calibration_scores.py", "tests/test_ml_interval_diagnostics.py"], "calibration"),
     "P1-23": (["tests/test_ml_multiseed.py"], "seeds"),

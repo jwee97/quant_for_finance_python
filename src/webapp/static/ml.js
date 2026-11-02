@@ -1124,6 +1124,7 @@
         if (rec.neighborhood.summary) table(c, [{ label: "Minimum", num: true, get: (x) => sig(x.min) }, { label: "Median", num: true, get: (x) => sig(x.median) }, { label: "Maximum", num: true, get: (x) => sig(x.max) },
           { label: "Share positive", num: true, get: (x) => spct(x.share_positive, 0) }, { label: "Baseline", num: true, get: (x) => sig(rec.neighborhood.baseline) }], [rec.neighborhood.summary]);
         else W.hint(c, rec.neighborhood.reason || "insufficient");
+        if (rec.neighborhood.refit) W.hint(c, (rec.neighborhood.notes || []).join(" "));
       }
       if (rec.delay) { W.sub(c, "Delay between decision and fill"); table(c, [{ label: "Extra sessions", num: true, get: (r) => String(r.extra_sessions) }, { label: "Sharpe", num: true, get: (r) => sig(r.value) }, { label: "Share of the undelayed result", num: true, get: (r) => (Q.bad(r.ratio_to_undelayed) ? "undefined" : spct(r.ratio_to_undelayed, 0)) }], rec.delay.rows); }
       if (rec.capacity) { W.sub(c, "Capacity (realistic execution)"); table(c, [{ label: "Capital", num: true, get: (r) => Number(r.capital).toLocaleString("en-US") }, { label: "State", get: (r) => r.state }, { label: "Sharpe", num: true, get: (r) => sig(r.value) }], rec.capacity.rows); }

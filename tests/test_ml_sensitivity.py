@@ -5,6 +5,7 @@ A development-mode parent is used throughout, so the analyses read the validatio
 import types
 
 import numpy as np
+import pandas as pd
 import pytest
 
 from src.ml import experiments as xe, registry as rg, research_controls as rc, sensitivity as sn
@@ -45,8 +46,8 @@ def test_a_point_that_cannot_run_is_listed_as_failed_with_its_reason_and_a_grid_
     assert thin["eligibility"] == "insufficient" and thin["summary"] is None, "two points are not a distribution"
     with pytest.raises(ValueError, match="more than 64"):
         sn.grid_points({"a": list(range(9)), "b": list(range(9))})
-    with pytest.raises(ValueError, match="needs a refit|not a re-backtest"):
-        sn.neighborhood(reg, parent.id, {"model.params.alpha": [1, 10, 100]})
+    with pytest.raises(ValueError, match="not a re-backtest setting"):
+        sn.neighborhood(reg, parent.id, {"dataset.target": ["fwd_ret_5", "fwd_ret_10", "fwd_ret_20"]})
     with pytest.raises(ValueError, match="non-empty list"):
         sn.grid_points({"signal.n": []})
     with pytest.raises(ValueError, match="metric must be"):
@@ -98,3 +99,34 @@ def test_a_grid_over_a_setting_that_does_not_exist_is_refused_before_anything_ru
         sn.neighborhood(reg, parent.id, {"signal.top_frac": [0.2, 0.3, 0.4]})
     with pytest.raises(ValueError, match="not a setting of the execution section"):
         sn.neighborhood(reg, parent.id, {"execution.no_such_thing": [1, 2, 3]})
+
+
+def test_a_grid_over_the_models_own_hyper_parameters_refits_every_point_in_development_mode_and_counts_each_as_a_look(world):
+    bundle, reg, parent = world
+    study = rc.study_of_experiment(reg, parent.id)
+    before = rc.lineage(reg, study)["raw_looks"]
+    out = sn.neighborhood(reg, parent.id, {"model.params.alpha": [1.0, 10.0, 100.0, 1000.0]}, segment="validation", bundle=bundle)
+    assert out["refit"] is True and out["declared_points"] == 4 and out["evaluated"] == 4 and out["failed"] == 0 and out["eligibility"] == "applied"
+    assert any("REFITS" in n for n in out["notes"]) and any("not selected" in n for n in out["notes"]) and out["summary"]["distinct_values"] >= 2, "the strength of the penalty changes the result"
+    for r in out["points"]:                                                                            # each point is a saved experiment of the same study and never predicted a protected segment
+        preds = pd.read_parquet(reg.root / "experiments" / r["experiment_id"] / "predictions.parquet")
+        assert set(preds["segment"].unique()) == {"validation"}
+    same = next(r for r in out["points"] if r["point"]["model.params.alpha"] == 10.0)
+    assert same["value"] == pytest.approx(out["baseline"], abs=1e-9), "the point that is the baseline's own setting reproduces the baseline: the refit is on the same windows and data"
+    assert rc.lineage(reg, study)["raw_looks"] >= before + 4, "every refit is a counted look at the study"
+    assert out["grid_hash"] == sn.grid_hash({"model.params.alpha": [1.0, 10.0, 100.0, 1000.0]}) and "best" not in out["summary"]
+
+
+def test_a_model_grid_is_refused_before_anything_runs_when_it_mixes_kinds_names_an_unknown_setting_is_too_big_or_reads_a_protected_segment(world):
+    _, reg, parent = world
+    n = len(reg.list_experiments(10_000))
+    with pytest.raises(ValueError, match="not both"):
+        sn.neighborhood(reg, parent.id, {"model.params.alpha": [1, 2, 3], "signal.n": [2, 3]})
+    with pytest.raises(ValueError, match="no parameter"):
+        sn.neighborhood(reg, parent.id, {"model.params.nonsense": [1, 2, 3]})
+    with pytest.raises(ValueError, match="more than 12"):
+        sn.neighborhood(reg, parent.id, {"model.params.alpha": [float(i) for i in range(1, 14)]})
+    with pytest.raises(ValueError, match="validation segment only"):
+        sn.neighborhood(reg, parent.id, {"model.params.alpha": [1.0, 2.0, 3.0]}, segment="test")
+    assert len(reg.list_experiments(10_000)) == n, "nothing was fitted"
+
