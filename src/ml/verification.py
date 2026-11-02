@@ -1,4 +1,4 @@
-"""Persisted verification evidence for the model-correctness requirements (spec v3, Releases 1 to 5).
+"""Persisted verification evidence for the model-correctness requirements (spec v3, Releases 1 to 6).
 
 A requirement is verified by the test files that check it. ``run_verification`` runs them (pytest in a subprocess, so a crash cannot take the app down), reads the JUnit report, and records one row per
 requirement in the registry: the status, the counts, the environment, a hash of the source files the requirement concerns, and the hash and path of the report that proves it. The status rules are strict:
@@ -63,6 +63,14 @@ SOURCES = {
     "ledger": ["src/ml/prospective.py", "src/ml/monitoring.py", "src/ml/execution.py", "src/ml/r5_schema.py", "src/ml/governance.py", "src/ml/registry.py", "src/ml/cli.py", "src/webapp/ml_api.py", "src/ledger"],
     "governance": ["src/ml/governance.py", "src/ml/policy.py", "src/ml/r5_gates.py", "src/ml/diagnostics.py", "src/ml/gates.py", "src/ml/r5_schema.py", "src/ml/monitoring.py", "src/ml/registry.py",
                    "src/ml/cli.py", "src/webapp/ml_api.py"],
+    # Release 6: alpha research foundation
+    "targets6": ["src/ml/targets.py", "src/ml/datasets.py", "src/ml/null_controls.py", "src/ml/comparison.py", "src/ml/config.py"],
+    "alpha": ["src/ml/alpha.py", "src/ml/r6_reports.py", "src/ml/inference.py", "src/ml/comparison.py", "src/ml/cli.py", "src/webapp/ml_api.py"],
+    "featsel": ["src/ml/featsel.py", "src/ml/catalog_extra.py", "src/ml/comparison.py", "src/ml/training.py"],
+    "allocation": ["src/ml/allocation.py", "src/ml/risk_models.py", "src/ml/signals.py", "src/ml/contracts.py", "src/ml/config.py", "src/ml/r6_reports.py", "src/ml/experiments.py"],
+    "riskmodels": ["src/ml/risk_models.py", "src/portfolio/covariance.py", "src/ml/r6_reports.py"],
+    "horizons": ["src/ml/horizons.py", "src/ml/signals.py", "src/ml/intervals.py", "src/ml/targets.py", "src/ml/comparison.py", "src/ml/datasets.py"],
+    "parsimony": ["src/ml/parsimony.py", "src/ml/comparison.py"],
 }
 REQUIREMENTS = {                                                # requirement id -> (test files, source group)
     "P0-01": (["tests/test_ml_rl_accounting_reference.py"], "rl"),
@@ -121,6 +129,17 @@ REQUIREMENTS = {                                                # requirement id
     "P1-23": (["tests/test_ml_multiseed.py"], "seeds"),
     "P1-24": (["tests/test_ml_prospective_commitments.py", "tests/test_ml_forward_equity.py", "tests/test_ml_statistical_api.py", "tests/test_ml_statistical_cli.py"], "ledger"),
     "P1-25": (["tests/test_ml_validation_policy_governance.py", "tests/test_ml_statistical_api.py", "tests/test_ml_statistical_cli.py"], "governance"),
+    "P2-01": (["tests/test_ml_relative_targets.py", "tests/test_ml_comparison_harness.py"], "targets6"),
+    "P2-02": (["tests/test_ml_alpha_diagnostics.py", "tests/test_ml_r6_reports.py", "tests/test_ml_alpha_portfolio_surfaces.py"], "alpha"),
+    "P2-03": (["tests/test_ml_stable_selection.py", "tests/test_ml_comparison_harness.py"], "featsel"),
+    "P2-04": (["tests/test_ml_allocation.py", "tests/test_ml_cost_aware_signal.py"], "allocation"),
+    "P2-07": (["tests/test_ml_risk_models.py", "tests/test_ml_r6_reports.py"], "riskmodels"),
+    "P2-10": (["tests/test_ml_horizons.py"], "horizons"),
+    "P2-13": (["tests/test_ml_alpha_diagnostics.py"], "alpha"),
+    "P2-14": (["tests/test_ml_allocation.py", "tests/test_ml_r6_reports.py"], "allocation"),
+    "P2-16": (["tests/test_ml_allocation.py"], "allocation"),
+    "P2-17": (["tests/test_ml_parsimony.py", "tests/test_ml_comparison_harness.py"], "parsimony"),
+    "P2-18": (["tests/test_ml_alpha_diagnostics.py", "tests/test_ml_r6_reports.py"], "alpha"),
 }
 
 

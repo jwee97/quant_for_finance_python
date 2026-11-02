@@ -27,6 +27,11 @@ RELEASE_5 = ["tests/test_ml_nested_selection.py", "tests/test_ml_statistical_inf
              "tests/test_ml_statistical_api.py", "tests/test_ml_statistical_cli.py"]
 
 
+RELEASE_6 = ["tests/test_ml_risk_models.py", "tests/test_ml_allocation.py", "tests/test_ml_cost_aware_signal.py", "tests/test_ml_alpha_diagnostics.py", "tests/test_ml_relative_targets.py",
+             "tests/test_ml_stable_selection.py", "tests/test_ml_parsimony.py", "tests/test_ml_comparison_harness.py", "tests/test_ml_horizons.py", "tests/test_ml_r6_reports.py",
+             "tests/test_ml_alpha_portfolio_surfaces.py"]
+
+
 def steps(job: dict) -> list[str]:
     return [str(s.get("run", "")) for s in job.get("steps", [])]
 
@@ -130,3 +135,13 @@ def test_the_release_5_tests_run_in_the_base_install_and_the_dashboard_lanes_and
     assert set(RELEASE_5) <= named, "every Release 5 test file is the evidence of some requirement"
     for lane in ("ml-base", "ml-correctness"):
         assert CI["jobs"][lane]["timeout-minutes"] >= 45, "the lanes that run the growing verification set have headroom"
+
+
+def test_the_release_6_tests_run_in_the_base_install_and_the_dashboard_lanes_and_the_browser_lane():
+    for lane in ("ml-base", "replit-python"):
+        text = " ".join(steps(CI["jobs"][lane]))
+        for t in RELEASE_6:
+            assert t in text, f"{t} is not run by the {lane} lane"
+    assert "tests/test_webapp_ml_alpha_browser.py" in " ".join(steps(CI["jobs"]["browser"]))
+    named = {t for tests, _ in vf.REQUIREMENTS.values() for t in tests}
+    assert set(RELEASE_6) <= named, "every Release 6 test file is the evidence of some requirement"

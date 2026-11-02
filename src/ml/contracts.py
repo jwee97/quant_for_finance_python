@@ -60,6 +60,15 @@ def check_signal_use(kind: str, task: str, target: str, signal_cfg: dict) -> str
         raise OutputContractError(f"the {kind} agent sizes its own positions (its output is portfolio weights), but the position rule '{method}' would rank and rescale them again; choose target_weights, or set signal.reinterpret_outputs to do it anyway")
     elif ok in ("volatility_forecast", "drawdown_forecast"):
         raise OutputContractError(f"a {kind} model on {target} forecasts {ok.replace('_', ' ')}, which is not how attractive an asset is; map it to a strategy explicitly, or set signal.reinterpret_outputs to rank assets by it as it is")
+    elif method == "cost_aware_mean_variance":
+        from .targets import parse_target
+
+        tkind = parse_target(target)[0]
+        if ok != "expected_return" or tkind not in ("fwd_ret", "excess_ret", "sector_ret", "resid_ret"):
+            raise OutputContractError(f"the cost-aware optimiser weighs the forecast against risk and cost in return units, but a {kind} model on {target} outputs a {ok.replace('_', ' ')}"
+                                      f"{'' if ok != 'expected_return' else ' of a ' + tkind.replace('_', ' ') + ' target'}, which is not a return; choose a rank-based rule, or set signal.reinterpret_outputs to read it as a return anyway")
+        if tkind != "fwd_ret" and abs(float(signal_cfg.get("net", 0.0))) > 1e-12:
+            raise OutputContractError(f"a {tkind.replace('_', ' ')} forecast is a return relative to a benchmark or group, which says nothing about the market's own direction: the optimiser can only hold it dollar neutral (set signal.net to 0)")
     elif method in RANK_RULES and ok not in SCORE_KINDS:
         raise OutputContractError(f"the position rule '{method}' cannot read a {ok.replace('_', ' ')}")
     return ok

@@ -15,6 +15,8 @@ Methods (``build_weights(method=...)``):
 ``confidence_weighted``    ``proportional`` times the prediction's confidence
 ``uncertainty_weighted``   each score shrunk toward zero by ``kappa`` times the asset's excess predictive uncertainty, then weighted by score over std ** ``uncertainty_power``
 ``uncertainty_mean_variance``  those views through the inverse of the (Ledoit-Wolf) covariance of trailing returns: the covariance-aware version of the same idea
+``cost_aware_mean_variance`` the book that maximises expected return less risk, trading cost and turnover from the book actually held (``allocation.solve``), for a model whose output is an expected return in
+                           return units; the covariance is fitted as of each decision date (``risk_models.fit_asof``) and scaled to the forecast horizon, and every solve's status is reported
 ``target_weights``         the scores ARE the target weights (a reinforcement-learning policy's output), only clipped to the gross exposure
 
 Controls: ``cap_weights`` (a maximum per position, redistributing the excess), ``group_caps`` (a maximum gross per sector or asset class), ``holding_period`` (the average of the last ``H`` daily books, i.e. staggered
@@ -27,7 +29,9 @@ import numpy as np
 import pandas as pd
 
 UNCERTAINTY_METHODS = ("uncertainty_weighted", "uncertainty_mean_variance")
-METHODS = ("top_n_long_short", "long_only_top_quantile", "proportional", "vol_scaled", "rank_normalised", "threshold", "regime_filtered", "confidence_weighted", *UNCERTAINTY_METHODS, "target_weights")
+ALLOCATION_METHODS = ("cost_aware_mean_variance",)
+METHODS = ("top_n_long_short", "long_only_top_quantile", "proportional", "vol_scaled", "rank_normalised", "threshold", "regime_filtered", "confidence_weighted", *UNCERTAINTY_METHODS, *ALLOCATION_METHODS,
+           "target_weights")
 
 
 def _scale_sides(raw: np.ndarray, gross: float, net: float) -> np.ndarray:
@@ -207,6 +211,56 @@ def uncertainty_mean_variance(score: pd.DataFrame, std: pd.DataFrame, returns: p
     return pd.DataFrame(out, index=score.index, columns=score.columns)
 
 
+def cost_aware_mean_variance(score: pd.DataFrame, returns: pd.DataFrame, investable: pd.DataFrame | None, cfg: dict, groups: dict | None = None) -> tuple[pd.DataFrame, dict]:
+    """The cost-aware allocation (``allocation.solve``) at every ``opt_every``-th decision date, held between. ``score`` is read as the expected return over ``window_days`` (the dataset's horizon) and the daily
+    covariance of each date's fit is scaled to the same window. The book held before each solve is the previous solution, so the trading cost and the turnover penalty act on real trades. Returns the weights and a
+    log of every solve: how many were optimal, infeasible or failed, how many were no-trade, and what was done when a solve gave no book (the previous book is held and the event is counted, never hidden)."""
+    from . import allocation as alloc
+    from . import risk_models as rm
+
+    net = float(cfg.get("net", 0.0))
+    spec = alloc.AllocationSpec(risk_aversion=float(cfg.get("risk_aversion", 5.0)), cost=float(cfg["cost_bps"]) / 1e4, turnover_penalty=float(cfg.get("turnover_penalty", 0.0)),
+                                gross_max=float(cfg.get("gross", 1.0)), position_max=float(cfg.get("max_weight") or 0.35), net_min=net, net_max=net, group_max=cfg.get("sector_cap") or None,
+                                fallback=str(cfg.get("alloc_fallback", "none")))
+    cov_spec = rm.CovSpec(str(cfg.get("cov_method", "lw_constant_correlation")), window=int(cfg.get("cov_window", 252)))
+    days = int(cfg["window_days"])
+    every = int(cfg.get("opt_every") or days)
+    out = np.zeros(score.shape)
+    last = pd.Series(0.0, index=score.columns)
+    log = {"method": "cost_aware_mean_variance", "spec": spec.content(), "covariance": cov_spec.content(), "window_days": days, "opt_every": every, "solves": 0, "optimal": 0, "infeasible": 0, "failed": 0,
+           "fallback_used": 0, "held_after_failure": 0, "no_trade": 0, "skipped_too_few_assets": 0, "skipped_no_covariance": 0, "repaired_covariances": 0,
+           "note": "a solve with no book holds the previous book and is counted; a configured fallback is labelled in the solve and counted under fallback_used"}
+    for i, date in enumerate(score.index):
+        if i % every == 0:
+            row = score.iloc[i].dropna()
+            if len(row) < 4:
+                last = pd.Series(0.0, index=score.columns)
+                log["skipped_too_few_assets"] += int(len(row) > 0)                              # a date with no forecast at all (before the model's first prediction) is not a skipped solve
+            else:
+                try:
+                    fit = rm.fit_asof(returns, date, cov_spec, investable)
+                except ValueError:
+                    fit = None
+                names = [] if fit is None else [a for a in row.index if a in fit.matrix.index]
+                if len(names) < 4:
+                    last = pd.Series(0.0, index=score.columns)
+                    log["skipped_no_covariance"] += 1
+                else:
+                    mu_w, cov_w = alloc.window_inputs(row[names], fit.matrix.loc[names, names], days)
+                    log["repaired_covariances"] += int(fit.repaired)
+                    sol = alloc.solve(mu_w, cov_w, last.reindex(names).fillna(0.0), spec, groups=groups)
+                    log["solves"] += 1
+                    log[sol.status if sol.status in ("optimal", "infeasible", "failed") else "failed"] += 1
+                    log["fallback_used"] += int(sol.fallback_used is not None)
+                    if sol.weights is None:
+                        log["held_after_failure"] += 1
+                    else:
+                        log["no_trade"] += int(sol.no_trade)
+                        last = sol.weights.reindex(score.columns).fillna(0.0)
+        out[i] = last.to_numpy()
+    return pd.DataFrame(out, index=score.index, columns=score.columns), log
+
+
 def target_weights(score: pd.DataFrame, gross: float = 1.0) -> pd.DataFrame:
     """The scores read as weights (a policy's output): missing values are flat and a book above ``gross`` is scaled down to it."""
     w = score.fillna(0.0)
@@ -250,14 +304,21 @@ def build_weights(score: pd.DataFrame, cfg: dict, vol: pd.DataFrame | None = Non
                 raise ValueError("the uncertainty_mean_variance method needs the assets' returns")
             w = uncertainty_mean_variance(s, uncertainty, returns, gross, net, float(cfg.get("kappa", 0.0)), float(cfg.get("uncertainty_power", 1.0)), int(cfg.get("mv_lookback", 126)),
                                           int(cfg.get("mv_rebalance", 5)))
+    elif method == "cost_aware_mean_variance":
+        if returns is None:
+            raise ValueError("the cost_aware_mean_variance method needs the assets' returns")
+        w, alloc_log = cost_aware_mean_variance(s, returns, investable, cfg, groups)
     elif method == "target_weights":
         w = target_weights(s, gross)
     else:
         if confidence is None:
             raise ValueError("the confidence_weighted method needs prediction confidences")
         w = proportional(s, gross, net, weight=confidence.reindex_like(s).clip(lower=0.0))
-    if cfg.get("max_weight"):
+    if cfg.get("max_weight") and method not in ALLOCATION_METHODS:                  # the optimiser enforces its own position and group limits: capping afterwards would move its solution
         w = cap_weights(w, float(cfg["max_weight"]))
-    if cfg.get("sector_cap") and groups:
+    if cfg.get("sector_cap") and groups and method not in ALLOCATION_METHODS:
         w = group_caps(w, groups, float(cfg["sector_cap"]))
-    return holding_period(w, int(cfg.get("holding_period", 1)))
+    out = holding_period(w, int(cfg.get("holding_period", 1)))
+    if method in ALLOCATION_METHODS:
+        out.attrs["allocation"] = alloc_log
+    return out

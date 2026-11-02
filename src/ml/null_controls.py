@@ -90,7 +90,7 @@ def placebo_dataset(ds, offset: int):
     from .targets import make_targets
 
     names = list(ds.Y.columns)
-    targets = make_targets(names, prices, returns, int(ds.lag), str(ds.meta.get("benchmark", "equal_weight")))         # the labels are recomputed from the placebo prices, row for row where the real dataset had rows
+    targets = make_targets(names, prices, returns, int(ds.lag), str(ds.meta.get("benchmark", "equal_weight")), groups=dict(ds.group or {}))         # the labels are recomputed from the placebo prices, row for row where the real dataset had rows
     dpos = pd.Series(np.arange(n), index=ds.dates).reindex(ds.Y.index.get_level_values(0)).to_numpy()
     apos = pd.Index(ds.assets).get_indexer(ds.Y.index.get_level_values(1))
     Y = pd.DataFrame({t: targets[t].reindex(index=ds.dates, columns=ds.assets).to_numpy(dtype=float)[dpos, apos] for t in names}, index=ds.Y.index)

@@ -36,7 +36,7 @@ HASH_SECTIONS = ("dataset", "split", "model", "signal", "backtest", "execution")
 NORMALIZATIONS = ("none", "cross_sectional_z", "rank")
 SCHEMES = ("walk_forward", "expanding", "rolling")
 REBALANCES = ("daily", "weekly", "monthly")
-HOLDING_PERIODS = (1, 5, 20)
+HOLDING_PERIODS = (1, 5, 10, 20)
 
 
 class MLConfigError(ValueError):
@@ -89,6 +89,19 @@ def validate(cfg: dict) -> dict:
     _check(int(sig["holding_period"]) >= 1 and int(sig["holding_period"]) <= 60, "signal.holding_period must be between 1 and 60 days")
     _check(0.0 < float(sig["max_weight"]) <= 1.0 and float(sig["gross"]) > 0, "signal.max_weight in (0, 1] and signal.gross > 0")
     _check(int(sig["n"]) >= 1 and 0.0 < float(sig["quantile"]) <= 0.5, "signal.n >= 1 and signal.quantile in (0, 0.5]")
+    if sig["method"] == "cost_aware_mean_variance":                                     # the optimiser's own settings are optional and absent from the defaults, so no existing configuration hash changes
+        from .risk_models import METHODS as COV_METHODS
+
+        _check(int(sig["holding_period"]) == 1, "the cost-aware optimiser trades edge against cost itself: averaging its books over a holding period would change the units of its cost term (set signal.holding_period to 1)")
+        _check(0.0 <= float(sig.get("risk_aversion", 5.0)) <= 100.0 and float(sig.get("turnover_penalty", 0.0)) >= 0.0, "signal.risk_aversion in [0, 100] and signal.turnover_penalty >= 0")
+        _check(sig.get("cov_method", "lw_constant_correlation") in COV_METHODS, f"signal.cov_method must be one of {COV_METHODS}")
+        _check(60 <= int(sig.get("cov_window", 252)) <= 1000 and 1 <= int(sig.get("opt_every") or 1) <= 60, "signal.cov_window in [60, 1000] and signal.opt_every in [1, 60]")
+        _check(sig.get("alloc_fallback", "none") in ("none", "hold", "equal_weight"), "signal.alloc_fallback must be none, hold or equal_weight")
+        sig["cost_bps"] = float(bt["cost_bps"]) + float(bt["slippage_bps"])                  # derived from the backtest section, so one place decides what a trade costs
+        sig["window_days"] = int(d["horizon"])                                               # the forecast horizon: the window the covariance is scaled to
+    else:
+        sig.pop("cost_bps", None)
+        sig.pop("window_days", None)
     _check(d.get("regime_detector") in (None, "vol_state", "hmm", "gmm"), "dataset.regime_detector must be null, vol_state, hmm or gmm")
     if d.get("sessions") is not None:                                                  # optional, and absent from the defaults so that no existing configuration hash changes
         from .sessions import SessionError, validate_settings

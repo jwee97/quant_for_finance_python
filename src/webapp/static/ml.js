@@ -12,7 +12,7 @@
   const SIGNAL_NAME = { top_n_long_short: "Long the top n, short the bottom n", long_only_top_quantile: "Long only: the top quantile", proportional: "Proportional to the score", vol_scaled: "Score divided by volatility", rank_normalised: "Weighted by rank",
     threshold: "Long above, short below a threshold", regime_filtered: "Only in the calm regime", confidence_weighted: "Score times the model's confidence",
     uncertainty_weighted: "Score over the model's own uncertainty", uncertainty_mean_variance: "Uncertainty-adjusted views through the covariance", target_weights: "The scores are the weights (the agents)" };
-  const SIGNAL_FIELDS = { top_n_long_short: ["n"], long_only_top_quantile: ["quantile"], threshold: ["threshold"], uncertainty_weighted: ["kappa", "uncertainty_power"], uncertainty_mean_variance: ["kappa", "uncertainty_power", "mv_lookback"] };
+  const SIGNAL_FIELDS = { top_n_long_short: ["n"], long_only_top_quantile: ["quantile"], threshold: ["threshold"], uncertainty_weighted: ["kappa", "uncertainty_power"], uncertainty_mean_variance: ["kappa", "uncertainty_power", "mv_lookback"], cost_aware_mean_variance: ["risk_aversion", "cov_window", "opt_every", "turnover_penalty"] };
   const RL_KINDS = new Set(["ppo", "sac", "recurrent_ppo"]), SLOW = new Set(["deep sequence", "forecasting", "representation", "graph", "reinforcement"]);
   const METHOD_NAME = { equal: "Equal weight", inverse_vol: "Inverse volatility", risk_parity: "Risk parity", mean_variance: "Mean-variance", bayesian: "Bayes-Stein", regime_conditioned: "Regime-conditioned", online_learning: "Online learning (Hedge)",
     bandit: "Bandit (Thompson)", best_trailing: "Best trailing Sharpe", regime_selector: "Best in this regime" };
@@ -52,7 +52,7 @@
       signal: "top_n_long_short", n: "3", quantile: "30", threshold: "0", gross: "1", net: "0", maxWeight: "35", holding: "5", rebalance: "weekly", cost: "5", slippage: "2", targetVol: "10", maxLev: "1.5",
       explain: true, robust: false, finalize: false, seed: "0", sort: "validation.sharpe", fModel: "", fStage: "", fUniverse: "", exp: "", asset: "", date: "", perms: "40",
       searchKind: "search", engine: "builtin", kinds: new Set(), nRandom: "8", nBayes: "6", generations: "2", population: "6", topK: "2", tuneEffort: "standard",
-      methods: new Set(), lookback: "252", every: "21", riskAversion: "5", capital: "100000", asOf: "", kappa: "0", uncertainty_power: "1", mv_lookback: "126" },
+      methods: new Set(), lookback: "252", every: "21", riskAversion: "5", capital: "100000", asOf: "", kappa: "0", uncertainty_power: "1", mv_lookback: "126", risk_aversion: "5", cov_window: "252", opt_every: "5", turnover_penalty: "0" },
   };
 
   /* ---------- what the server offers, and the list of experiments ---------- */
@@ -181,7 +181,9 @@
     const info = cat.signals.find((s) => s.id === f.signal); if (info) h("p", "hint", b, info.text + ".");
     const spec = { n: { label: "n (assets on each side)", step: 1, min: 1, max: 20 }, quantile: { label: "Top quantile (%)", step: 5, min: 5, max: 50 }, threshold: { label: "Threshold (in score units)", step: "any" },
       kappa: { label: "Shrink views on unusually uncertain assets (kappa)", step: 0.1, min: 0, max: 10 }, uncertainty_power: { label: "Divide the view by uncertainty to the power", step: 0.25, min: 0, max: 3 },
-      mv_lookback: { label: "Covariance window (days)", step: 21, min: 40, max: 504 } };
+      mv_lookback: { label: "Covariance window (days)", step: 21, min: 40, max: 504 }, risk_aversion: { label: "Risk aversion (the weight on variance)", step: 0.5, min: 0, max: 100 },
+      cov_window: { label: "Covariance window (days)", step: 21, min: 60, max: 1000 }, opt_every: { label: "Re-solve every (days; set to the horizon)", step: 1, min: 1, max: 60 },
+      turnover_penalty: { label: "Quadratic turnover penalty", step: 0.1, min: 0, max: 10 } };
     for (const k of SIGNAL_FIELDS[f.signal] || []) Q.labField(b, { key: k, kind: "number", ...spec[k] }, f, after);
     Q.labField(b, { key: "gross", label: "Gross exposure", kind: "number", step: 0.1, min: 0.1, max: 3 }, f, after);
     Q.labField(b, { key: "maxWeight", label: "Largest position (% of the book)", kind: "number", step: 1, min: 2, max: 100 }, f, after);
@@ -349,7 +351,9 @@
   const JOB_MODES = new Set(["dataset", "train", "search", "forward"]);
   const CONTROLS = (id) => [{ modes: ["controls"], path: "/api/ml/promotion-status", query: { id } }, { modes: ["controls_lineage"], path: "/api/ml/lineage", query: { id } }, { modes: ["controls_holdout"], path: "/api/ml/holdout", query: {} },
     { modes: ["controls_stats"], path: "/api/ml/statistical-diagnostics", query: { id } }, { modes: ["controls_exec"], path: "/api/ml/trading-diagnostics", query: { id } },
-    { modes: ["controls_policy"], path: "/api/ml/validation-policy", query: {} }, { modes: ["controls_gov"], path: "/api/ml/governance", query: { id } }];
+    { modes: ["controls_policy"], path: "/api/ml/validation-policy", query: {} }, { modes: ["controls_gov"], path: "/api/ml/governance", query: { id } },
+    { modes: ["controls_alpha"], path: "/api/ml/alpha-diagnostics", query: { id, stored: 1 } }, { modes: ["controls_port"], path: "/api/ml/portfolio-diagnostics", query: { id, stored: 1 } },
+    { modes: ["controls_improve"], path: "/api/ml/improvement-experiment", query: {} }];
 
   M.run = async (fromForm) => {
     const m = M.mode, f = M.form;
@@ -1132,6 +1136,86 @@
     } else W.hint(c, "Nothing has been committed yet: the Forward test records the first commitment.");
   }
 
+  /* ---------- Release 6: alpha and portfolio diagnostics, and controlled comparisons against a frozen baseline ---------- */
+  function alphaCard(root, al) {
+    const ok = al.eligibility === "applied";
+    const c = W.card(root, "Alpha diagnostics", ok ? `${al.model} on ${al.target} · ${al.segment} segment · ${al.label} · recorded ${al.computed_at || "just now"} (each request is kept as a look)`
+      : "Rank IC, decay, coverage, stability and redundancy of the saved scores, on development data. The test and forward segments stay sealed.");
+    actions(c, [["Compute the alpha diagnostics", () => W.request(M, () => [{ modes: ["controls_alpha_run"], path: "/api/ml/alpha-diagnostics", query: { id: M.cur } }, ...CONTROLS(M.cur)], "Computing the alpha diagnostics…")]]);
+    if (!ok) { W.hint(c, al.reason || "Not computed yet."); return; }
+    const m = al.ic.mean;
+    W.kv(c, "Rank IC", [["Mean", m.eligibility === "applied" ? `${num(m.value, 4)} (${pct(m.level, 0)} interval ${ci(m)})` : `${m.eligibility}: ${m.reason}`], ["Dates with an IC", String(al.ic.n_with_ic)],
+      ["Dependence", `Newey-West, lag ${m.settings ? m.settings.lags : "n/a"} (labels of ${al.horizon} sessions overlap)`], ["Hit rate", Q.bad(al.ic.hit_rate) ? "n/a" : spct(al.ic.hit_rate, 0)],
+      ["Dates without an IC", Object.keys(al.ic.unavailable_by_reason).length ? Object.entries(al.ic.unavailable_by_reason).map(([k, v]) => `${k.replace(/_/g, " ")} ${v}`).join(", ") : "none"]]);
+    const lags = [...new Set(al.decay.cells.map((x) => x.extra_lag))], hs = [...new Set(al.decay.cells.map((x) => x.horizon))], cell = (k, hz) => al.decay.cells.find((x) => x.extra_lag === k && x.horizon === hz);
+    W.sub(c, "Decay: mean rank IC by extra delay (rows) and return horizon (columns)");
+    table(c, [{ label: "Extra sessions", get: (k) => `+${k}` }, ...hs.map((hz) => ({ label: `${hz}-session return`, num: true, get: (k) => { const x = cell(k, hz); return Q.bad(x.mean_ic) ? "n/a" : `${num(x.mean_ic, 4)}${x.share_of_undelayed !== null && k !== lags[0] ? ` (${spct(x.share_of_undelayed, 0)})` : ""}`; } }))], lags);
+    W.kv(c, "Coverage and stability", [["Coverage of investable cells", Q.bad(al.coverage.coverage) ? "n/a" : spct(al.coverage.coverage, 1)], ["Investable cells with no score", String(al.coverage.missing_cells || 0)],
+      ["Blocks with the same sign", Q.bad(al.stability.same_sign_share) ? "n/a" : spct(al.stability.same_sign_share, 0)], ["Features / independent features", al.redundancy.eligibility === "applied" ? `${al.redundancy.n_features} / ${num(al.redundancy.effective_independent_features, 1)}` : "n/a"],
+      ["Pairs above the redundancy threshold", al.redundancy.eligibility === "applied" ? String((al.redundancy.pairs_above_threshold || []).length) : "n/a"]]);
+    if (al.incremental) {
+      const i = al.incremental;
+      W.sub(c, `What it adds to ${shortId(i.baseline_id)} (predictive, on this sample; not a causal claim and not a feature importance)`);
+      if (i.eligibility !== "applied") W.hint(c, i.reason);
+      else W.kv(c, "Given the existing signal", [["Conditional IC", `${num(i.conditional_ic.mean.value, 4)} (${ci(i.conditional_ic.mean)})`], ["Plain IC", num(i.plain_ic.mean.value, 4)],
+        ["Blend minus baseline, Sharpe", i.blend.difference && i.blend.difference.value !== null ? `${sig(i.blend.difference.value)} (${ci(i.blend.difference)})` : `${i.blend.eligibility}: ${i.blend.reason || ""}`]]);
+    }
+  }
+  function portfolioCard(root, pf) {
+    const ok = pf.eligibility === "applied";
+    const c = W.card(root, "Portfolio diagnostics", ok ? `${pf.model} on ${pf.target} · ${pf.segment} segment · recorded ${pf.computed_at || "just now"}` : "The book the experiment held, the covariance estimators compared on the risk it realised, risk contributions and the sensitivity of a cost-aware book.");
+    actions(c, [["Compute the portfolio diagnostics", () => W.request(M, () => [{ modes: ["controls_port_run"], path: "/api/ml/portfolio-diagnostics", query: { id: M.cur } }, ...CONTROLS(M.cur)], "Computing the portfolio diagnostics…")]]);
+    if (!ok) { W.hint(c, pf.reason || "Not computed yet."); return; }
+    const b = pf.book;
+    W.kv(c, "The book it held", [["Days with a book", String(b.days_with_a_book)], ["Gross (mean / max)", `${num(b.gross.mean, 2)} / ${num(b.gross.max, 2)}`], ["Net (min to max)", `${num(b.net.min, 2)} to ${num(b.net.max, 2)}`],
+      ["Effective positions", num(b.concentration.effective_positions, 1)], ["Top three share", spct(b.concentration.top3_share, 0)], ["Mean daily turnover", Q.bad(b.mean_daily_turnover) ? "n/a" : num(b.mean_daily_turnover, 3)]]);
+    W.sub(c, `Covariance estimators on the risk the book realised over ${pf.risk_models.horizon} days (${pf.risk_models.decision_dates} dates; forecast over realised of 1 is unbiased)`);
+    table(c, [{ label: "Estimator", get: (r) => r[0] }, { label: "Windows", num: true, get: (r) => String(r[1].windows) }, { label: "Forecast / realised", num: true, get: (r) => (Q.bad(r[1].risk_ratio_forecast_to_realised) ? "n/a" : num(r[1].risk_ratio_forecast_to_realised, 2)) },
+      { label: "QLIKE", num: true, get: (r) => (Q.bad(r[1].qlike) ? "n/a" : num(r[1].qlike, 3)) }, { label: "Worst condition", num: true, get: (r) => (Q.bad(r[1].worst_condition) ? "n/a" : num(r[1].worst_condition, 0)) },
+      { label: "Repair rate", num: true, get: (r) => (Q.bad(r[1].repair_rate) ? "n/a" : spct(r[1].repair_rate, 0)) }, { label: "Minimum-variance book risk", num: true, get: (r) => (Q.bad(r[1].gmv_realised_risk) ? "n/a" : num(r[1].gmv_realised_risk, 4)) }], Object.entries(pf.risk_models.estimators));
+    const rc = pf.risk_contributions;
+    if (rc && rc.table) {
+      W.sub(c, `Risk contributions of the last book (${rc.estimator}, as of ${rc.asof})`);
+      const rows = rc.table.filter((r) => Math.abs(r.share) > 0.001).sort((x, y) => Math.abs(y.share) - Math.abs(x.share)).slice(0, 12);
+      const ch = h("div", "charts", c);
+      chartCard(ch, "Share of the book's variance", rc.chosen_because, { wide: true, draw: (bx) => C.hbars(bx, { rows: rows.map((r) => ({ label: r.asset, value: r.share, tip: [["Weight", num(r.weight, 3)]] })), format: (v) => spct(v, 0), name: "Share", label: "Risk contribution", labelWidth: 90 }),
+        table: (bx) => table(bx, [{ label: "Asset", get: (r) => r.asset }, { label: "Weight", num: true, get: (r) => num(r.weight, 3) }, { label: "Share of variance", num: true, get: (r) => spct(r.share, 1) }], rows) });
+    }
+    const al = pf.allocation;
+    W.sub(c, "Cost-aware allocation: how the optimal book moves under a predeclared grid");
+    if (al.eligibility !== "applied") W.hint(c, `${al.eligibility === "not_applicable" ? "Not applicable" : "Not run"}: ${al.reason}`);
+    else {
+      const sm = al.summary || {};
+      W.kv(c, `On ${al.asof}`, [["Grid points / without a solution", `${al.points.length} / ${al.failed}`], ["Largest change in the book", Q.bad(sm.max_weight_change) ? "n/a" : num(sm.max_weight_change, 3)], ["Points that do not trade", Q.bad(sm.share_no_trade) ? "n/a" : spct(sm.share_no_trade, 0)],
+        ["Risk range", sm.risk_range ? `${num(sm.risk_range[0], 4)} to ${num(sm.risk_range[1], 4)}` : "n/a"], ["Base solve", al.base_status], ["Units", al.units]]);
+      W.hint(c, al.interpretation);
+    }
+    W.flags(c, pf.caveats || [], "Limits. ");
+  }
+  const FAMILY_PRESETS = { target: [["excess_ret", "Return minus the benchmark's"], ["sector_ret", "Return minus the sector's"], ["resid_ret", "Residual of the benchmark (beta from trailing data)"]],
+    horizon: [[1, "1 session"], [5, "5 sessions"], [10, "10 sessions"], [20, "20 sessions"]], feature: [["stable_select", "Stability-selected features inside each fold"]], portfolio: [["cost_aware", "Cost-aware allocation in place of the position rule"]] };
+  const FAMILY_NAME = { target: "Target engineering", horizon: "Forecast horizon", feature: "Feature selection", portfolio: "Portfolio construction" };
+  function improvementCard(root, im) {
+    const cards = im.cards || [];
+    const c = W.card(root, "Controlled comparisons against this experiment", "One change at a time, on the same data, folds and costs, on the validation segment. The card is frozen before it runs, runs once, and keeps the negative results. Nothing here promotes a strategy.");
+    const f = M.improve = M.improve || { family: "target", hypothesis: "", change: "", presets: new Set(["excess_ret"]) };
+    const row = h("div", "row", c);
+    const lab = (text, el) => { const l = h("label", "f", row); h("span", "", l, text); l.appendChild(el); return el; };
+    const fam = lab("Family", h("select", "", null)); for (const k of Object.keys(FAMILY_NAME)) { const o = h("option", "", fam, FAMILY_NAME[k]); o.value = k; o.selected = k === f.family; }
+    fam.addEventListener("change", () => { f.family = fam.value; f.presets = new Set(); M.draw(); });
+    const hyp = lab("Hypothesis (before the numbers)", h("input", "", null)); hyp.type = "text"; hyp.value = f.hypothesis; hyp.addEventListener("input", () => { f.hypothesis = hyp.value; });
+    const chg = lab("The one change", h("input", "", null)); chg.type = "text"; chg.value = f.change; chg.addEventListener("input", () => { f.change = chg.value; });
+    const pick = h("div", "row tight", c);
+    for (const [v, text] of FAMILY_PRESETS[f.family]) { const l = h("label", "f inline", pick), i = h("input", "", l); i.type = "checkbox"; i.checked = f.presets.has(v); i.addEventListener("change", () => { if (i.checked) f.presets.add(v); else f.presets.delete(v); }); l.appendChild(document.createTextNode(text)); }
+    actions(c, [["Freeze the card and run it", () => {
+      if (!f.hypothesis.trim() || !f.change.trim() || !f.presets.size) { Q.toast("State the hypothesis and the one change, and choose at least one candidate."); return; }
+      W.request(M, () => [{ modes: ["controls_improve_run"], job: true, path: "/api/ml/improvement-experiment", body: { family: f.family, hypothesis: f.hypothesis, one_change: f.change, from_experiment: M.cur, presets: [...f.presets] } }, ...CONTROLS(M.cur)], "Running the comparison…");
+    }]]);
+    if (!cards.length) { W.hint(c, "No card is stored yet."); return; }
+    table(c, [{ label: "Card", get: (x) => x.card_id }, { label: "Family", get: (x) => FAMILY_NAME[x.family] || x.family }, { label: "Hypothesis", get: (x) => x.hypothesis }, { label: "State", get: (x) => x.state },
+      { label: "Verdicts", get: (x) => (x.verdicts.length ? x.verdicts.map((v) => String(v).replace(/_/g, " ")).join(", ") : "not run") }, { label: "Frozen", get: (x) => x.frozen_at }], cards.slice(0, 12));
+  }
+
   /* ---------- research controls: the gates, the lineage, the holdout and the selection evidence of one experiment ---------- */
   const GATE_NAME = { A: "Algorithm Verified", B: "Strategy Validated", C: "Operationally Ready" };
   const GATE_DIR = { passed: "up", failed: "down", blocked: "down", pending: "" };
@@ -1139,6 +1223,7 @@
   function buildControls(root, d) {
     const lin = (M.results.controls_lineage || {}).data, ho = (M.results.controls_holdout || {}).data, st = (M.results.controls_stats || {}).data, xd = (M.results.controls_exec || {}).data;
     const pol = (M.results.controls_policy || {}).data, gv = (M.results.controls_gov || {}).data;
+    const al = (M.results.controls_alpha || {}).data, pf = (M.results.controls_port || {}).data, im = (M.results.controls_improve || {}).data;
     header(root, `Research record for ${shortId(d.experiment_id)}`, `${d.model_kind} · gate policy ${d.policy_version}`);
     W.provenance(root, d);
     W.flags(root, [d.note, "A stale decision is shown as pending: its evidence has changed since it was decided."], "Read first. ");
@@ -1154,6 +1239,9 @@
     if (pol) policyCard(root, pol);
     if (st && st.diagnostics) diagnosticsCard(root, st.diagnostics);
     if (gv) governanceCard(root, gv);
+    if (al) alphaCard(root, al);
+    if (pf) portfolioCard(root, pf);
+    if (im) improvementCard(root, im);
     if (xd) {                                                                                  // the evaluation mode of the result, and what it can and cannot support
       const real = xd.mode === "realistic_cash_equity", fmtc = (v) => (Q.bad(v) ? "n/a" : Number(v).toLocaleString("en-US", { maximumFractionDigits: 0 }));
       const c = W.card(root, `Execution mode: ${String(xd.mode).replace(/_/g, " ")}`, real ? `Orders, fills and the ledger produced this result${xd.parent ? ` (a re-run of ${shortId(xd.parent)})` : ""}; gross less the itemised costs reconciles to net.`

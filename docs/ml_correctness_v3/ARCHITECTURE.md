@@ -262,3 +262,39 @@ procedure and the deployment approval are appended to `governance_events` with a
 * `selection.run_procedures` excludes candidates with a constant return stream and records the exclusion (a statistic built on them was a number without meaning); the DSR item judges the more conservative of the two trial conventions. The bootstrap needs 200 replications.
 * `ForwardTracker.summary` no longer reports a cumulative return or Sharpe computed from horizon returns. Comparisons name each result's holdout status and execution mode.
 * Verification requirements P1-15 to P1-25.
+
+# Release 6: alpha research foundation
+
+## What was reused
+
+Targets go through the existing catalogue (`targets.make_target`, `dataset.target`), models through the model catalogue (`stable_select` is one more kind with a builder module), the position rule through `signals.build_weights`, the covariance estimators of `src/portfolio/covariance.py`, the impact law of the event-driven stack, `run_experiment` for every arm of a comparison and the append-only `analysis_records` table of Release 5 for every stored card, result and diagnostic. No new configuration subsystem was added: the new settings are keys of the existing `dataset`, `model` and `signal` sections, validated by `config.validate`, and the ones that are derived (the optimiser's cost and window) are set there from the `backtest` and `dataset` sections so that one place decides what a trade costs.
+
+## Where the pieces live
+
+| Concern | Module |
+| --- | --- |
+| relative and residual targets; target documentation | `targets.py` (`sector_ret_h`, `resid_ret_h`, `describe`) |
+| rank IC, decay, coverage, stability, redundancy, correlation, conditional IC, blend | `alpha.py` |
+| stability selection inside a fold | `featsel.py` (`StableSelect`, model kind `stable_select`) |
+| covariance estimators compared on realised risk | `risk_models.py` |
+| cost-aware allocation, its perturbation grid, partial fills carried forward | `allocation.py`; the pipeline method is `signals.cost_aware_mean_variance` |
+| horizons and tranche accounting | `horizons.py`, `signals.holding_period` |
+| the simplicity tie-break | `parsimony.py` |
+| frozen cards, matched arms, paired verdicts | `comparison.py` |
+| diagnostics of a saved experiment | `r6_reports.py` (`alpha_diagnostics`, `portfolio_diagnostics`) |
+
+## The frozen comparison
+
+`comparison.new_card` takes a baseline and *changes* laid over it, and refuses a change that alters anything the family does not allow (`diff_paths`) or alters nothing. `freeze` stores the card append-only; `run` runs the baseline and each candidate once through `run_experiment` with `stop_after="validation"` (the test and forward outcomes are not predicted), checks that the data fingerprint, the assets and, for the families that need it, the fold boundaries are the baseline's, and compares each candidate on the dates both have. The primary metric is either the paired mean difference of the daily rank IC against the **one raw forward return of the baseline's horizon** (a Newey-West interval whose lag is at least the horizon less one) or the paired Sharpe difference of the daily net returns (a joint stationary bootstrap). The verdict needs the Holm-adjusted p-value over the card's candidates below the level, an interval that excludes zero and an effect at least the declared minimum; `inconclusive` and `worse` stay in the record with every other negative finding. The gate decision on a card is always `not_evaluated`: a development comparison is not a frozen final evaluation.
+
+## Allocation in the pipeline
+
+`cost_aware_mean_variance` reads the model's score as an expected return over the dataset's horizon, fits a covariance as of each decision date (only returns up to and including it), scales it to the same window, and solves `allocation.solve` every `opt_every` days from the book actually held. It is allowed only for an `expected_return` output on a return-unit target (absolute targets may carry a net exposure; relative ones are held dollar-neutral), holds the book between solves and counts every solve in `report['allocation']`: optimal, infeasible, failed, no-trade, repaired covariances and fallbacks. A solve that gives no book holds the previous book and is counted, never presented as an optimum.
+
+## Version changes (Release 6)
+
+* New target kinds `sector_ret_h` and `resid_ret_h`; `HOLDING_PERIODS` is 1, 5, 10, 20; model kind `stable_select`; signal method `cost_aware_mean_variance` with optional `risk_aversion`, `cov_method`, `cov_window`, `opt_every`, `turnover_penalty` and `alloc_fallback` (absent from the defaults, so no existing configuration hash changes) and derived `cost_bps` and `window_days`.
+* `GET /api/ml/alpha-diagnostics`, `GET /api/ml/portfolio-diagnostics`, `GET` and `POST /api/ml/improvement-experiment`; `quant ml-alpha`, `ml-portfolio`, `ml-improve`.
+* No registry migration: cards, results and diagnostics are `analysis_records` of new kinds.
+* Verification requirements P2-01, P2-02, P2-03, P2-04, P2-07, P2-10, P2-13, P2-14, P2-16, P2-17, P2-18.
+

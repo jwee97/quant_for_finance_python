@@ -41,6 +41,7 @@ from ..ml.features import GROUPS
 from ..ml.models import Model, ModelUnavailable, default_refit, model_catalog
 from ..ml.registry import STAGES, Registry
 from ..ml.signals import METHODS as SIGNAL_METHODS
+from ..ml import comparison as cmpn, r6_reports as r6
 from ..ml.targets import CLASSIFICATION
 from ..ml.targets import KINDS as TARGET_KINDS
 from ..ml.training import plan_for
@@ -77,6 +78,7 @@ SIGNAL_TEXT = {"top_n_long_short": "Long the n highest scores, short the n lowes
                "confidence_weighted": "Proportional to score times the model's confidence (for a classifier, |2p - 1|)",
                "uncertainty_weighted": "Score divided by the model's own predictive standard deviation (needs a model that reports one), with views on unusually uncertain assets shrunk by kappa",
                "uncertainty_mean_variance": "The same uncertainty-adjusted views through the inverse covariance of trailing returns: the covariance-aware version",
+               "cost_aware_mean_variance": "The book that maximises the forecast return less risk, trading cost and turnover from the book actually held (needs a return forecast; solver status is reported)",
                "target_weights": "The scores ARE the target weights (for the reinforcement-learning agents, which size their own positions)"}
 ENSEMBLE_TEXT = {"equal": "One over N", "inverse_vol": "Weight by one over trailing volatility", "risk_parity": "Equal risk contributions from a shrunk covariance matrix", "mean_variance": "Long-only mean-variance with means shrunk halfway to their average",
                  "bayesian": "Mean-variance with Bayes-Stein shrunk means", "regime_conditioned": "Mean-variance on the days in the same volatility regime as today", "online_learning": "Multiplicative weights (Hedge): winners gain weight",
@@ -91,7 +93,8 @@ SPEC = {
               "embargo": ("int", 0, 60), "validation_fraction": ("float", 0.05, 0.4), "test_fraction": ("float", 0.05, 0.4), "forward_fraction": ("float", 0.05, 0.4)},
     "signal": {"method": ("choice", SIGNAL_METHODS), "n": ("int", 1, 20), "quantile": ("float", 0.05, 0.5), "threshold": ("float", -10.0, 10.0), "gross": ("float", 0.1, 3.0), "net": ("float", -1.0, 1.0), "max_weight": ("float", 0.02, 1.0),
                "sector_cap": ("float", 0.05, 1.0), "holding_period": ("int", 1, 60), "regime_on_states": ("states",), "reinterpret_outputs": ("bool",), "kappa": ("float", 0.0, 10.0), "uncertainty_power": ("float", 0.0, 3.0), "mv_lookback": ("int", 40, 504),
-               "mv_rebalance": ("int", 1, 60)},
+               "mv_rebalance": ("int", 1, 60), "risk_aversion": ("float", 0.0, 100.0), "cov_method": ("choice", ("sample", "ewma", "lw_constant_correlation", "lw_identity", "pca_denoised", "factor")),
+               "cov_window": ("int", 60, 1000), "opt_every": ("int", 1, 60), "turnover_penalty": ("float", 0.0, 10.0), "alloc_fallback": ("choice", ("none", "hold", "equal_weight"))},
     "backtest": {"rebalance": ("choice", ("daily", "weekly", "monthly")), "cost_bps": ("float", 0.0, 250.0), "slippage_bps": ("float", 0.0, 250.0), "target_vol": ("float", 0.01, 1.0), "max_leverage": ("float", 0.5, 5.0),
                  "extra_lag": ("int", 0, 20)},
     "execution": {"mode": ("choice", ("vectorized_legacy", "realistic_cash_equity")), "capital": ("float", 1_000.0, 1e12), "max_participation": ("float", 0.001, 1.0), "adv_window": ("int", 5, 250),
@@ -192,7 +195,8 @@ class MlApi:
         return {"/api/ml/catalog": self.catalog, "/api/ml/experiments": self.experiments, "/api/ml/experiment": self.experiment, "/api/ml/compare": self.compare, "/api/ml/explain": self.explain,
                 "/api/ml/feature-sets": self.feature_sets, "/api/ml/verification": self.verification, "/api/ml/models": self.models, "/api/ml/trials": self.trials, "/api/ml/forward": self.forward, "/api/ml/report-html": self.report_html,
                 "/api/ml/lineage": self.lineage, "/api/ml/holdout": self.holdout, "/api/ml/promotion-status": self.promotion_status, "/api/ml/statistical-diagnostics": self.statistical_diagnostics,
-                "/api/ml/null-controls": self.null_controls, "/api/ml/trading-diagnostics": self.trading_diagnostics, "/api/ml/validation-policy": self.validation_policy, "/api/ml/governance": self.governance_status}
+                "/api/ml/null-controls": self.null_controls, "/api/ml/trading-diagnostics": self.trading_diagnostics, "/api/ml/validation-policy": self.validation_policy, "/api/ml/governance": self.governance_status,
+                "/api/ml/alpha-diagnostics": self.alpha_diagnostics, "/api/ml/portfolio-diagnostics": self.portfolio_diagnostics, "/api/ml/improvement-experiment": self.improvement_get}
 
     def post_routes(self) -> dict:
         return {"/api/ml/dataset/build": self.dataset_build, "/api/ml/train": self.train, "/api/ml/rebacktest": self.rebacktest, "/api/ml/search": self.search, "/api/ml/tune": self.tune, "/api/ml/tune/stop": self.tune_stop,
@@ -200,7 +204,7 @@ class MlApi:
                 "/api/ml/evaluation-plan": self.evaluation_plan, "/api/ml/evaluation-plan/freeze": self.evaluation_plan_freeze, "/api/ml/evaluate": self.evaluate,
                 "/api/ml/null-controls/run": self.null_controls_run, "/api/ml/selection-tests/run": self.selection_tests_run, "/api/ml/validation-policy": self.validation_policy_adopt,
                 "/api/ml/statistical-diagnostics/run": self.diagnostics_run, "/api/ml/multiseed/run": self.multiseed_run, "/api/ml/governance/version": self.governance_version,
-                "/api/ml/governance/action": self.governance_action}
+                "/api/ml/governance/action": self.governance_action, "/api/ml/improvement-experiment": self.improvement_run}
 
     # ------------------------------------------------------------------------------------------------------------ plumbing
     @property
@@ -1039,6 +1043,124 @@ class MlApi:
             return clean({"experiment_id": exp_id, "record_seq": out.get("record_seq"), "policy_hash": out["policy_hash"], "diagnostics": self._diagnostics_block(exp_id)})
 
         return self._submit(f"ml: diagnostics {exp_id[-6:]}", work)
+
+    def _stored_record(self, kind: str, exp_id: str, record_kind: str) -> dict:
+        rec = dx.latest(self.registry, exp_id, record_kind)
+        data = ({"eligibility": "not_computed", "reason": "these diagnostics have not been computed for this experiment", "experiment_id": exp_id} if rec is None
+                else {**rec["content"], "record_seq": rec["seq"], "computed_at": rec["created"], "stored": True})
+        return clean(common.envelope(kind, data, {"registry": "platform"}, [], None, []))
+
+    def alpha_diagnostics(self, q: dict) -> dict:
+        """``GET /api/ml/alpha-diagnostics?id=<experiment>[&segment=validation][&baseline=<experiment>]``: the rank IC of the saved scores with a dependence-aware interval, its rolling value, its decay with delay and
+        horizon, coverage, stability across blocks, the redundancy of the feature panel (development rows only) and, given a baseline experiment, the conditional IC and the paired blend. The test and forward segments
+        are refused unless a frozen plan evaluated them. Each request is appended to ``analysis_records`` as a look (diagnostics that drive feature choices are logged)."""
+        _only(q, {"id", "segment", "baseline", "stored"}, "/api/ml/alpha-diagnostics")
+        with _user_errors():
+            exp_id = _id(q)
+            self.registry.get_experiment(exp_id)
+            if q.get("stored"):                                                                    # the latest record of a request made earlier: reading it computes and records nothing
+                return self._stored_record("ml_alpha_diagnostics", exp_id, "alpha_diagnostics")
+            baseline = _id(q, "baseline") if q.get("baseline") else None
+            with self._heavy:
+                out = r6.alpha_diagnostics(self.registry, exp_id, segment=str(q.get("segment") or "validation"), baseline_id=baseline)
+            seq = dx.store(self.registry, "alpha_diagnostics", exp_id, out, actor="api")
+        return clean(common.envelope("ml_alpha_diagnostics", {**out, "record_seq": seq}, {"registry": "platform"}, [], None, []))
+
+    def portfolio_diagnostics(self, q: dict) -> dict:
+        """``GET /api/ml/portfolio-diagnostics?id=<experiment>[&segment=validation][&horizon=21][&dates=24]``: the book the experiment held, the covariance estimators compared on the risk it realised, the risk
+        contributions of its last book and, for a return forecast only, how an optimal cost-aware book moves under a predeclared perturbation grid. Appended to ``analysis_records`` as a look."""
+        _only(q, {"id", "segment", "horizon", "dates", "stored"}, "/api/ml/portfolio-diagnostics")
+        with _user_errors():
+            exp_id = _id(q)
+            self.registry.get_experiment(exp_id)
+            if q.get("stored"):
+                return self._stored_record("ml_portfolio_diagnostics", exp_id, "portfolio_diagnostics")
+            with self._heavy:
+                out = r6.portfolio_diagnostics(self.registry, exp_id, segment=str(q.get("segment") or "validation"), horizon=_int(q, "horizon", 21, 5, 63), max_dates=_int(q, "dates", 24, 6, 60))
+            seq = dx.store(self.registry, "portfolio_diagnostics", exp_id, out, actor="api")
+        return clean(common.envelope("ml_portfolio_diagnostics", {**out, "record_seq": seq}, {"registry": "platform"}, [], None, []))
+
+    def improvement_get(self, q: dict) -> dict:
+        """``GET /api/ml/improvement-experiment?id=<card>`` (the frozen card with its results, negative findings and gate decision) or, without an id, the list of cards (``&study=`` narrows it)."""
+        _only(q, {"id", "study"}, "/api/ml/improvement-experiment")
+        with _user_errors():
+            if q.get("id"):
+                data = cmpn.get(self.registry, str(q["id"]))
+            else:
+                data = {"cards": cmpn.list_cards(self.registry, _study(q["study"]) if q.get("study") else None)}
+        return clean(common.envelope("ml_improvement_experiment", data, {"registry": "platform"}, [], None, []))
+
+    IMPROVEMENT_FAMILIES = ("target", "feature", "horizon", "portfolio")
+
+    def _saved_baseline(self, exp_id: str) -> dict:
+        """A saved experiment's configuration in the shape a request carries it (the derived signal settings are left out: validation derives them again)."""
+        with _user_errors():
+            cfg = self.registry.report(exp_id)["config"]
+        body = {k: dict(cfg[k]) for k in ("dataset", "split", "model", "signal", "backtest") if cfg.get(k)}
+        for k in ("cost_bps", "window_days"):
+            body.get("signal", {}).pop(k, None)
+        if cfg.get("execution"):
+            ex = dict(cfg["execution"])
+            if isinstance(ex.get("impact"), dict):
+                ex["impact_coefficient"] = ex.pop("impact").get("coefficient", 0.0)
+            body["execution"] = ex
+        return body
+
+    def improvement_run(self, body: dict) -> dict:
+        """``POST /api/ml/improvement-experiment`` (a job): freeze a comparison card and run it once. ``family`` is ``target``, ``feature``, ``horizon`` or ``portfolio``; ``baseline`` is a configuration as for
+        ``/api/ml/train``; ``candidates`` are 1 to 6 CHANGES laid over the baseline (a change that alters anything the family does not allow is refused); ``hypothesis`` and ``one_change`` are required.
+        Optional: ``study``, ``primary_metric`` (``ic`` or ``net_sharpe``), ``parsimony`` (a declared tie-break rule), ``min_effect``, ``level``, ``minimum_coverage``, ``n_boot``, ``seed``. The arms are development
+        runs (the test and forward outcomes are not predicted); nothing here promotes anything."""
+        allowed = {"family", "hypothesis", "one_change", "baseline", "from_experiment", "candidates", "presets", "study", "primary_metric", "parsimony", "min_effect", "level", "minimum_coverage", "n_boot",
+                   "seed"}
+        _only(body, allowed, "/api/ml/improvement-experiment")
+        family = str(body.get("family") or "")
+        if family not in self.IMPROVEMENT_FAMILIES:
+            raise ApiError(f"family must be one of {list(self.IMPROVEMENT_FAMILIES)}")
+        for key in ("hypothesis", "one_change"):
+            if not str(body.get(key) or "").strip():
+                raise ApiError(f"{key} is required: state it before the numbers exist")
+        cands, presets = body.get("candidates") or [], body.get("presets") or []
+        if not isinstance(cands, list) or not isinstance(presets, list) or any(not isinstance(c, dict) for c in cands) or not 1 <= len(cands) + len(presets) <= 6:
+            raise ApiError("candidates is a list of 1 to 6 objects, each a change laid over the baseline (presets may stand in for some or all of them)")
+        if (body.get("baseline") is None) == (body.get("from_experiment") is None):
+            raise ApiError("give exactly one of baseline (a configuration object, as for /api/ml/train) and from_experiment (a saved experiment whose configuration is the baseline)")
+        if body.get("baseline") is not None and not isinstance(body["baseline"], dict):
+            raise ApiError("baseline is a configuration object, as for /api/ml/train")
+        rule = body.get("parsimony")
+        if rule is not None and not isinstance(rule, dict):
+            raise ApiError("parsimony is a rule object, for example {\"rule\": \"one_se\", \"k\": 1, \"complexity\": \"n_features\"}")
+        metric = body.get("primary_metric")
+        if metric not in (None, "ic", "net_sharpe"):
+            raise ApiError("primary_metric is ic or net_sharpe")
+        min_effect, level = _float(body, "min_effect", 0.0, 0.0, 10.0), _float(body, "level", 0.05, 0.001, 0.2)
+        coverage, n_boot, seed = _float(body, "minimum_coverage", 0.8, 0.0, 1.0), _int(body, "n_boot", 1000, 200, 3000), _int(body, "seed", 0, 0, 1_000_000)
+        base = self._overrides(body["baseline"] if body.get("baseline") is not None else self._saved_baseline(_id(body, "from_experiment")))
+
+        def change(c: dict) -> dict:
+            ch = self._overrides(c, need_model=False)
+            if "refit_every" not in (c.get("split") or {}) and "refit_every" in ch.get("split", {}):
+                ch["split"].pop("refit_every")                                         # the default refit period of a model kind is not a change the user asked for
+                if not ch["split"]:
+                    ch.pop("split")
+            return ch
+
+        changes = []
+        if presets:
+            with _user_errors():
+                changes.extend(change(c) for c in cmpn.preset_changes(family, base, presets))
+        changes.extend(change(c) for c in cands)
+        study = _study(body["study"]) if body.get("study") else f"improve-{family}-{cmpn.digest(base, 6)}"
+
+        def work(progress):
+            with _user_errors():
+                card = cmpn.new_card(str(body["hypothesis"]), family, base, changes, study_id=study, one_change_description=str(body["one_change"]), primary_metric=metric, parsimony=rule,
+                                     min_effect=min_effect, level=level, minimum_coverage=coverage, n_boot=n_boot, seed=seed)
+                cmpn.freeze(self.registry, card, actor="api")
+                out = cmpn.run(self.registry, card["card_id"], config=self.app.config, builder=self.app.builder, progress=progress)
+            return clean({"card_id": card["card_id"], "card": out})
+
+        return self._submit(f"ml: {family} comparison", work)
 
     def multiseed_run(self, body: dict) -> dict:
         """``POST /api/ml/multiseed/run {"id", "seeds", "n_boot"?}`` (a job): train the experiment's own configuration once per predeclared seed (three or more, distinct) in development mode, as looks of the same

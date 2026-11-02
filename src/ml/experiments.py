@@ -28,7 +28,7 @@ from .config import DEFAULTS, build_key, config_hash, dataset_key, experiment_co
 from .datasets import Dataset, build_dataset, resolve_bundle
 from .models import Model
 from .registry import Registry
-from .signals import UNCERTAINTY_METHODS, build_weights
+from .signals import ALLOCATION_METHODS, UNCERTAINTY_METHODS, build_weights
 from .models import task_for
 from .contracts import OutputContractError, build_contract, check_signal_use
 from .targets import forward_return, is_classification
@@ -275,7 +275,7 @@ def evaluate_run(cfg: dict, ds: Dataset, train: TrainResult, info: dict, registr
     insample_net = None
     s_in = train.scores_wide(ds, "insample")
     if s_in.notna().any().any():
-        sig_in = {**cfg["signal"], "method": "proportional"} if cfg["signal"]["method"] in UNCERTAINTY_METHODS else cfg["signal"]               # no predictive distribution in sample
+        sig_in = {**cfg["signal"], "method": "proportional"} if cfg["signal"]["method"] in (*UNCERTAINTY_METHODS, *ALLOCATION_METHODS) else cfg["signal"]               # no predictive distribution in sample; the optimiser is not run on in-sample scores
         w_in = build_weights(s_in, sig_in, vol, confidence_from_scores(s_in, None), regime_on, groups, ds.investable)
         r_in = trim_to_signal(run_backtest(w_in, ds.returns, ds.investable, cfg["backtest"], lag, cfg["name"] + "_in_sample"), s_in.dropna(how="all").index[0], lag)["net"]
         last_in = s_in.dropna(how="all").index[-1]
@@ -353,6 +353,12 @@ def evaluate_run(cfg: dict, ds: Dataset, train: TrainResult, info: dict, registr
     report["execution"] = jsonable(realistic.block if realistic is not None else xe.legacy_block(cfg))
     if realistic is not None and rob is not None:
         report["warnings"].append("The robustness tests re-run the vectorized engine, not the order-level execution: their cost and delay variants do not describe the realistic result.")
+    alloc_log = weights.attrs.get("allocation")
+    if alloc_log:                                                                  # what the optimiser did, solve by solve: a failed or infeasible solve is a visible count, not a quiet hold
+        report["allocation"] = jsonable(alloc_log)
+        bad = int(alloc_log["failed"]) + int(alloc_log["infeasible"])
+        if bad or alloc_log["fallback_used"]:
+            report["warnings"].append(f"The cost-aware optimiser had no solution in {bad} of {alloc_log['solves']} solves (the previous book was held) and used a configured fallback {alloc_log['fallback_used']} time(s): see report.allocation.")
     report["holdout"] = jsonable(holdout if holdout is not None else {"status": "development" if stop_after else "unrecorded"})
     report["lineage"] = jsonable(lineage if lineage is not None else {"study": rc.study_of(cfg), "operation": None, "note": "not registered as an operation (this run was made through a path that records none)"})
     if registry is not None:

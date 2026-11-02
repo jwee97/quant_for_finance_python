@@ -687,6 +687,114 @@ def cmd_promote(args, config) -> int:
     return 0
 
 
+def _ci(r: dict | None) -> str:
+    return "n/a" if not r or not r.get("interval") else f"[{r['interval'][0]:+.4f}, {r['interval'][1]:+.4f}]"
+
+
+def cmd_alpha(args, config) -> int:
+    """Alpha diagnostics of a saved experiment: rank IC with a dependence-aware interval, decay, coverage, stability and redundancy, and (given a baseline) the conditional IC and the blend."""
+    from . import diagnostics as dx
+    from . import r6_reports as r6
+
+    registry = Registry(args.registry)
+    try:
+        out = r6.alpha_diagnostics(registry, args.experiment, segment=args.segment, baseline_id=args.baseline)
+        dx.store(registry, "alpha_diagnostics", args.experiment, out, actor="cli")
+    except (ExperimentError, RegistryError, ValueError, KeyError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    if args.json:
+        print(json.dumps(out, indent=1, allow_nan=False))
+        return 0
+    if out["eligibility"] != "applied":
+        print(f"{args.experiment}: {out['reason']}")
+        return 0
+    ic = out["ic"]
+    print(f"{args.experiment} ({out['model']} on {out['target']}), {out['segment']} segment: mean rank IC {_fmt(ic['mean']['value'])} {_ci(ic['mean'])} over {ic['n_with_ic']} dates "
+          f"(Newey-West lag {ic['mean']['settings']['lags']}, horizon {out['horizon']}); hit rate {_fmt(ic['hit_rate'])}")
+    if ic["unavailable_by_reason"]:
+        print("  dates without an IC: " + ", ".join(f"{k} {v}" for k, v in ic["unavailable_by_reason"].items()))
+    cells = {(c["extra_lag"], c["horizon"]): c for c in out["decay"]["cells"]}
+    print("  decay (mean IC by extra delay in rows, horizon in columns): horizons " + " ".join(f"{h:>7}" for h in sorted({h for _, h in cells})))
+    for k in sorted({k for k, _ in cells}):
+        print(f"    +{k} sessions  " + " ".join(f"{_fmt(cells[(k, h)]['mean_ic']):>7}" for h in sorted({h for _, h in cells})))
+    cov, st, red = out["coverage"], out["stability"], out["redundancy"]
+    print(f"  coverage {_fmt(cov.get('coverage'))} of investable cells; stability: same sign in {_fmt(st.get('same_sign_share'))} of blocks; features: {red.get('n_features')} with about {_fmt(red.get('effective_independent_features'))} independent")
+    inc = out.get("incremental")
+    if inc:
+        if inc["eligibility"] != "applied":
+            print(f"  incremental value: {inc['eligibility']} ({inc['reason']})")
+        else:
+            print(f"  given {args.baseline}: conditional IC {_fmt(inc['conditional_ic']['mean']['value'])} {_ci(inc['conditional_ic']['mean'])} (plain {_fmt(inc['plain_ic']['mean']['value'])}); blend vs baseline Sharpe difference "
+                  f"{_fmt((inc['blend'].get('difference') or {}).get('value'))} {_ci(inc['blend'].get('difference'))}  [predictive, not causal]")
+    return 0
+
+
+def cmd_portfolio(args, config) -> int:
+    """Portfolio diagnostics of a saved experiment: the book it held, covariance estimators compared on realised risk, risk contributions, and (for a return forecast) the cost-aware allocation's sensitivity."""
+    from . import diagnostics as dx
+    from . import r6_reports as r6
+
+    registry = Registry(args.registry)
+    try:
+        out = r6.portfolio_diagnostics(registry, args.experiment, segment=args.segment, horizon=args.horizon, max_dates=args.dates)
+        dx.store(registry, "portfolio_diagnostics", args.experiment, out, actor="cli")
+    except (ExperimentError, RegistryError, ValueError, KeyError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    if args.json:
+        print(json.dumps(out, indent=1, allow_nan=False))
+        return 0
+    if out["eligibility"] != "applied":
+        print(f"{args.experiment}: {out['reason']}")
+        return 0
+    b = out["book"]
+    print(f"{args.experiment}, {out['segment']} segment: {b['days_with_a_book']} days with a book; gross {_fmt(b['gross']['mean'])}, net {_fmt(b['net']['mean'])}, effective positions {_fmt(b['concentration']['effective_positions'])}, "
+          f"mean daily turnover {_fmt(b['mean_daily_turnover'])}")
+    print(f"  covariance estimators on the risk the book realised over {out['risk_models']['horizon']} days ({out['risk_models']['decision_dates']} dates; forecast/realised 1.0 is unbiased):")
+    for name, e in out["risk_models"]["estimators"].items():
+        print(f"    {name:<34} windows {e['windows']:>3}  ratio {_fmt(e['risk_ratio_forecast_to_realised'])}  QLIKE {_fmt(e['qlike'])}  worst condition {_fmt(e['worst_condition'])}  repairs {_fmt(e['repair_rate'])}")
+    al = out["allocation"]
+    if al["eligibility"] != "applied":
+        print(f"  allocation sensitivity: {al['eligibility']} ({al['reason']})")
+    else:
+        sm = al["summary"] or {}
+        print(f"  allocation sensitivity on {al['asof']} ({len(al['points'])} grid points, {al['failed']} without a solution): largest change in the book {_fmt(sm.get('max_weight_change'))}, share of points that do not trade {_fmt(sm.get('share_no_trade'))}")
+    return 0
+
+
+def cmd_improve(args, config) -> int:
+    """Freeze and run a comparison card from a JSON spec (family, hypothesis, one_change, baseline, candidates, ...), or show a stored card. The arms are development runs; nothing is promoted."""
+    from . import comparison as cmpn
+
+    registry = Registry(args.registry)
+    try:
+        if args.card:
+            card = cmpn.get(registry, args.card)
+        else:
+            spec = json.loads(Path(args.spec).read_text())
+            bundle = _bundle_and_info(args, config)[0] if args.prices else None
+            card = cmpn.new_card(spec["hypothesis"], spec["family"], spec["baseline"], spec["candidates"], study_id=spec.get("study") or f"improve-{spec['family']}", one_change_description=spec["one_change"],
+                                 primary_metric=spec.get("primary_metric"), parsimony=spec.get("parsimony"), min_effect=float(spec.get("min_effect", 0.0)), n_boot=int(spec.get("n_boot", 1000)))
+            cmpn.freeze(registry, card, actor="cli")
+            card = cmpn.run(registry, card["card_id"], bundle=bundle, config=config, progress=lambda m: print(f"  {m}", file=sys.stderr, flush=True) if args.verbose else None)
+    except (ExperimentError, RegistryError, ValueError, KeyError, OSError, cmpn.ComparisonError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    if args.json:
+        print(json.dumps(card, indent=1, default=str, allow_nan=False))
+        return 0
+    print(f"{card['card_id']} ({card['family_label']}, study {card['study_id']}, frozen {card['frozen_at']}): {card['hypothesis']}")
+    print(f"  one change: {card['one_change_description']}; primary metric {card['primary_metric']}; {card['state']}")
+    for a in (card["results"] or {}).get("candidates", []):
+        d = (a.get("metrics") or {}).get(card["primary_metric"], {}).get("difference")
+        print(f"  {a['name']}: {a.get('verdict', a['status'])} - {a.get('reason', '')}" + ("" if not d or d.get("value") is None else f"  [difference {_fmt(d['value'])} {_ci(d)}]"))
+    for f in card["negative_findings"]:
+        print(f"  negative finding: {f.get('candidate', '-')}: {f['what']} ({f.get('detail')})")
+    print(f"  gate: {card['gate_decision']['status']} - {card['gate_decision']['reason']}")
+    return 0
+
+
 def register(sub) -> None:
     """Add the four commands to a ``quant`` sub-parser collection."""
     def common(q, data: bool = True):
@@ -778,6 +886,16 @@ def register(sub) -> None:
     p = sub.add_parser("ml-forward", help="one forward-test step: commit today's signal to the immutable ledger, settle matured commitments, check monitoring")
     common(p, data=False); p.add_argument("experiment"); p.add_argument("--capital", type=float, default=100_000.0); p.add_argument("--as-of", dest="as_of"); p.add_argument("--no-record", dest="no_record", action="store_true")
     p.add_argument("--prices", help="your own wide CSV of prices"); p.add_argument("--json", action="store_true"); p.set_defaults(func=cmd_forward)
+    p = sub.add_parser("ml-alpha", help="alpha diagnostics of a saved experiment: rank IC with a dependence-aware interval, decay, coverage, stability, redundancy, and the value it adds to a baseline experiment")
+    common(p, data=False); p.add_argument("experiment"); p.add_argument("--segment", default="validation", help="validation (default); test and forward only for an experiment a frozen plan evaluated")
+    p.add_argument("--baseline", help="another saved experiment treated as the existing signal"); p.add_argument("--json", action="store_true"); p.set_defaults(func=cmd_alpha)
+    p = sub.add_parser("ml-portfolio", help="portfolio diagnostics of a saved experiment: the book it held, covariance estimators on realised risk, risk contributions, allocation sensitivity")
+    common(p, data=False); p.add_argument("experiment"); p.add_argument("--segment", default="validation"); p.add_argument("--horizon", type=int, default=21, help="days over which realised risk is measured")
+    p.add_argument("--dates", type=int, default=24, help="decision dates sampled"); p.add_argument("--json", action="store_true"); p.set_defaults(func=cmd_portfolio)
+    p = sub.add_parser("ml-improve", help="freeze and run a controlled comparison card (target, feature, horizon or portfolio) from a JSON spec, or show a stored card with --card")
+    common(p, data=False); p.add_argument("--spec", help="JSON file: family, hypothesis, one_change, baseline, candidates (changes laid over the baseline), and optional study, primary_metric, parsimony, min_effect, n_boot")
+    p.add_argument("--card", help="show this stored card instead"); p.add_argument("--prices", help="your own wide CSV of prices instead of the universe in the baseline"); p.add_argument("--universe", default="etf")
+    p.add_argument("--verbose", action="store_true"); p.add_argument("--json", action="store_true"); p.set_defaults(func=cmd_improve)
     p = sub.add_parser("ml-promotion", help="the three independent gates of an experiment, from the persisted evidence")
     common(p, data=False); p.add_argument("experiment"); p.add_argument("--json", action="store_true"); p.set_defaults(func=cmd_promotion)
     p = sub.add_parser("ml-promote", help="move a registered model to a stage; the registry checks the gates, production also needs a recorded human approval")

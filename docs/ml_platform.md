@@ -190,6 +190,29 @@ equal-weight market shown as descriptive; regimes declared before the evaluation
 
 **A strategy version** is the model with its signal, execution and risk settings (`quant ml-governance <experiment> --register --actor NAME --limits '{"max_gross": 1.5, "max_drawdown": 0.2}'`). The platform refuses to commit a book that breaches a documented limit and a version that is halted or rolled back; it keeps a written recovery procedure, monitoring checks and the separate human deployment approval, each with a name and a time. Gate C reads them.
 
+### Alpha research foundation (Release 6)
+
+**Targets.** Besides `fwd_ret_h` and `excess_ret_h` there are `sector_ret_h` (the return less the mean of the asset's group on that date) and `resid_ret_h` (the return less a loading times the benchmark's, the loading estimated from the 252 trailing days up to the decision). The dataset's record says what each one means, how its loading was estimated and that a static sector map is not point in time.
+
+**Diagnostics of a saved experiment** (development data; the sealed segments stay sealed):
+
+```
+quant ml-alpha <experiment> [--baseline <other experiment>]
+quant ml-portfolio <experiment> [--horizon 21] [--dates 24]
+GET  /api/ml/alpha-diagnostics?id=...&baseline=...      # rank IC with a dependence-aware interval, decay by delay and horizon, coverage, stability, redundancy, conditional IC, blend, correlation
+GET  /api/ml/portfolio-diagnostics?id=...                # the book held, covariance estimators on realised risk, risk contributions, allocation sensitivity (return forecasts only)
+```
+
+**Controlled comparisons.** One change at a time against a baseline, on the same data, folds and costs, on the validation segment. A *card* states the hypothesis and the one change before any number exists, is frozen, and runs once.
+
+```
+quant ml-improve --spec card.json --prices prices.csv        # family: target | feature | horizon | portfolio
+POST /api/ml/improvement-experiment {"family": "target", "from_experiment": "...", "presets": ["excess_ret", "resid_ret"], "hypothesis": "...", "one_change": "..."}
+GET  /api/ml/improvement-experiment?id=cmp-...               # the card with its results, negative findings and gate decision (always not evaluated)
+```
+
+The verdicts are `supported_on_development`, `worse` or `inconclusive`, each with its reason and the paired difference with its interval; losing and inconclusive candidates stay listed. The feature family compares single economically motivated feature groups before the stability-selected set (model kind `stable_select`, which chooses its features inside each fold's training rows and records the chosen and rejected ones with their frequencies). The horizon family moves the target, the horizon and the holding period together and compares the daily net returns of the book each implies; it never divides a multi-day return by its horizon. The portfolio family compares the existing position rule with `cost_aware_mean_variance`, which weighs a return forecast against risk and trading cost from the book actually held and counts every solve (optimal, infeasible, failed, no trade); it is refused for a rank score.
+
 ## If LightGBM or XGBoost shows as "not available"
 
 The two boosting libraries are optional and need the OpenMP runtime of the operating system (`libgomp.so.1` on Linux). Where the library is missing, importing them fails with `OSError: libgomp.so.1: cannot open shared object file`. The Machine learning tab does not fail with it: the model list shows LightGBM and XGBoost as not available, with the reason, and every other model (linear, ridge, lasso, elastic net, logistic, random forest, scikit-learn's histogram gradient boosting, autoregression, Kalman, online and regime models) works as before. Scikit-learn's histogram gradient boosting is the same family of model as LightGBM and needs nothing extra.
@@ -211,6 +234,7 @@ Served by `src/webapp/ml_api.py`; JSON in, JSON out. Anything slow returns `{"jo
 | `GET /api/ml/experiments`, `/api/ml/experiment`, `/api/ml/models`, `/api/ml/trials`, `/api/ml/feature-sets` | the registry |
 | `GET /api/ml/compare`, `/api/ml/explain`, `POST /api/ml/combine` | comparison, one prediction explained, strategy combination |
 | `GET /api/ml/forward`, `POST /api/ml/forward/step` (job) | forward-test signals and the daily step |
+| `GET /api/ml/alpha-diagnostics`, `GET /api/ml/portfolio-diagnostics`, `GET /api/ml/improvement-experiment`, `POST /api/ml/improvement-experiment` (job) | Release 6: alpha and portfolio diagnostics of a saved experiment; frozen comparison cards |
 | `POST /api/ml/promote`, `/api/ml/delete` | model stages; delete an experiment (needs `confirm: true`) |
 | `GET /api/jobs`, `GET /api/job/<id>` | every job the app has run, newest first (without results), and one job with its result: a page that was reloaded, or an app that was restarted, finds a run again (see below) |
 

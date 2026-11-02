@@ -23,7 +23,7 @@ import pandas as pd
 from . import audit as audit_mod, pit as pit_mod, provenance as provenance_mod, sessions as sess_mod
 from .intervals import CONVENTION
 from .features import FEATURES, compute_features, inputs_from_bundle
-from .targets import make_targets, parse_target
+from .targets import describe as describe_target, make_targets, parse_target
 
 UNIVERSES = ("etf", "crypto", "futures")
 
@@ -225,7 +225,7 @@ def build_dataset(bundle, dataset_cfg: dict, name: str = "dataset", extra_target
     if not fs.frames:
         raise ValueError("no feature could be computed from this data: " + "; ".join(sorted(set(fs.skipped.values()))[:3]))
     names = [target] + [t for t in extra_targets if t != target]
-    targets = make_targets(names, x.prices, x.returns, lag, str(c.get("benchmark", "equal_weight")))
+    targets = make_targets(names, x.prices, x.returns, lag, str(c.get("benchmark", "equal_weight")), groups=dict(bundle.group or {}))
     carried = getattr(bundle, "marks", None)
     marks = pd.DataFrame(False, index=x.prices.index, columns=x.assets) if carried is None else carried.reindex(index=x.prices.index, columns=x.assets).fillna(False).astype(bool)
     voided = marks.shift(-lag, fill_value=False) | marks.shift(-(lag + horizon), fill_value=False)       # a label whose entry or exit price is a carried mark could not have been earned: nothing traded there
@@ -262,6 +262,7 @@ def build_dataset(bundle, dataset_cfg: dict, name: str = "dataset", extra_target
     meta = {"label_convention": CONVENTION, "audit": audit, "universe": c.get("universe"), "target": target, "kind": kind, "horizon": horizon, "lag": lag, "feature_groups": list(c["feature_groups"]), "normalize": norm, "winsor": float(c.get("winsor", 0.0)),
             "benchmark": str(c.get("benchmark", "equal_weight")), "skipped": fs.skipped, "broadcast": sorted(fs.broadcast), "targets": names, "data_fingerprint": bundle_fingerprint(bundle),
             "input_manifest": provenance_mod.input_manifest(bundle),
+            "target_documentation": {n: describe_target(n, dict(bundle.group or {}), str(c.get("benchmark", "equal_weight")), lag) for n in names if parse_target(n)[0] in ("excess_ret", "sector_ret", "resid_ret")},
             "bundle": getattr(bundle, "name", "bundle"), "min_history": int(c.get("min_history", 252)), **(source or {})}
     return Dataset(name, X, Y, x.prices, x.returns, investable & ~marks, meta, dict(bundle.asset_class or {}), dict(bundle.group or {}))
 

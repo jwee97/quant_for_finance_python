@@ -98,6 +98,13 @@ EXTRA_INFO = [
               {"members": {"type": "text", "help": "Model kinds, comma separated, each with its default settings (for example ridge,lightgbm,lstm)"},
                "weighting": {"type": "choice", "choices": ["equal", "dynamic", "regime"], "help": "equal; dynamic: weights follow trailing rank IC; regime: the best members of each volatility regime"},
                "refit_full": {"type": "bool", "help": "Refit the members on the whole training window after the weights are set (otherwise they keep the earlier fit)"}}, (), ("distribution", "weights")),
+    ModelInfo("stable_select", "Stable feature selection", "selection", ("regression", "classification"),
+              "A base model fitted on the features that a stability selection keeps from each fold's own training rows: blocks of dates are resampled, a feature must be picked in at least `pi` of the halves. The chosen and rejected features are persisted with their frequencies. A fold with no stable feature is skipped, never fitted on everything",
+              {"base": "ridge", "alpha": 10.0, "selector": "ic", "top_k": 0, "pi": 0.6, "subsamples": 40, "block_days": 21, "fraction": 0.5, "selector_alpha": 0.05, "min_features": 1}, 21, None,
+              {"base": {"type": "choice", "choices": ["linear", "ridge", "lasso", "elasticnet", "logistic"], "help": "The model fitted on the chosen features"},
+               "selector": {"type": "choice", "choices": ["ic", "lasso"], "help": "ic: the top_k features by absolute mean cross-sectional rank IC; lasso: the features with a non-zero L1 coefficient at selector_alpha"},
+               "top_k": {"type": "int", "help": "Features each subsample picks under the ic selector (0: the ceiling of the square root of the number of features)"},
+               "pi": {"type": "float", "help": "A feature is kept if it is picked in at least this share of the subsamples"}}, (), ()),
     ModelInfo("ppo", "PPO agent", "reinforcement", ("regression",),
               "Proximal policy optimisation (Stable-Baselines3) trading the assets in a Gymnasium environment with costs, slippage, exposure and turnover limits; the policy's weights are the scores",
               {**RL_COMMON, "n_steps": 512, "ent_coef": 0.0, "n_epochs": 5, "clip_range": 0.2}, 252, None, RL_SPECS, ("gymnasium", "stable_baselines3"), ("training", "rewards")),
@@ -111,7 +118,7 @@ EXTRA_INFO = [
 
 EXTRA_MODULE = {"lgbm_ranker": "boosting", "xgb_ranker": "boosting", "lgbm_quantile": "boosting", "ngboost": "boosting", "hmm_regime": "regimes", "markov_switching": "regimes", "lstm": "deep.model",
                 "gru": "deep.model", "tcn": "deep.model", "patchtst": "deep.model", "nbeats": "deep.model", "nhits": "deep.model", "tft": "deep.model", "autoencoder": "deep.model", "vae": "deep.model",
-                "gcn": "graph", "gat": "graph", "model_ensemble": "ensemble_models", "ppo": "rl.agent", "sac": "rl.agent", "recurrent_ppo": "rl.agent"}
+                "gcn": "graph", "gat": "graph", "stable_select": "featsel", "model_ensemble": "ensemble_models", "ppo": "rl.agent", "sac": "rl.agent", "recurrent_ppo": "rl.agent"}
 
 _BOOST_SPACE = {"num_leaves": Int(4, 31), "learning_rate": LogFloat(0.01, 0.1), "n_estimators": Int(100, 400), "reg_lambda": LogFloat(1.0, 50.0)}
 _DEEP_SPACE = {"hidden": Categorical(16, 32, 64), "dropout": Float(0.0, 0.4), "learning_rate": LogFloat(0.0003, 0.01), "weight_decay": LogFloat(1e-6, 1e-2), "lookback": Categorical(10, 20, 40)}
@@ -129,6 +136,7 @@ EXTRA_SPACES = {
     "vae": {"latent_dim": Int(4, 16), "ridge_alpha": LogFloat(0.1, 1000.0), "beta": LogFloat(0.1, 4.0), "learning_rate": LogFloat(0.0003, 0.01)},
     "gcn": {"hidden": Categorical(16, 32, 64), "dropout": Float(0.0, 0.4), "learning_rate": LogFloat(0.0003, 0.01), "neighbors": Int(2, 6)},
     "gat": {"hidden": Categorical(16, 32, 64), "dropout": Float(0.0, 0.4), "learning_rate": LogFloat(0.0003, 0.01), "neighbors": Int(2, 6), "heads": Categorical(1, 2, 4)},
+    "stable_select": {"alpha": LogFloat(0.1, 1000.0), "pi": Float(0.5, 0.9)},
     "model_ensemble": {"val_fraction": Float(0.15, 0.4), "decay_days": Int(21, 252), "temperature": LogFloat(0.25, 5.0)},
     "ppo": {"learning_rate": LogFloat(0.0001, 0.003), "gamma": Float(0.9, 0.999), "risk_aversion": Float(0.0, 2.0), "ent_coef": Float(0.0, 0.02)},
     "sac": {"learning_rate": LogFloat(0.0001, 0.003), "gamma": Float(0.9, 0.999), "risk_aversion": Float(0.0, 2.0)},
