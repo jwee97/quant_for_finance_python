@@ -237,6 +237,21 @@ POST /api/ml/combine {"ids": [...], "development_end": "2021-12-31"}   # adds mi
 
 The families are `target`, `feature`, `horizon`, `portfolio`, `rebalancing`, `risk_control`, `ensemble`, `execution` and `combination`. A combination exists only for components that were each compared on their own, and its tests join their multiple-testing family; an ablation removes one component at a time. A risk-control card reports the candidate's drawdown at the baseline's volatility, because a smaller position lowers drawdown without any timing skill. The verdicts are still development-segment verdicts, and the gate decision of every card is `not_evaluated`.
 
+### Optional advanced modules (Release 8)
+
+Twelve modules are available on request and are off otherwise: nothing in a training, search, tuning or forward-test workflow imports them, and they need only the base install. `quant ml-advanced catalog` (or `GET /api/ml/advanced`) lists them with how each is reached and whether it can run here.
+
+```
+quant ml-advanced drift <experiment>                 # PSI and an adjusted KS test of every feature against the window the model was fitted on; drift of the settled rank IC
+quant ml-advanced monitor <experiment>               # calibration, forecast distribution, stated uncertainty and member disagreement, each on its own
+quant ml-advanced retrain-trigger <experiment> [--kind manual] [--policy policy.json]    # a trigger is recorded, and is a proposal or a suppressed trigger with the reason
+quant ml-advanced retrain-approve <experiment> --proposal N --actor NAME --note TEXT      # also retrain-reject, retrain-recover, retrain-status
+quant ml-advanced champion-register --spec pair.json --actor NAME     # also champion-commit PAIR --spec decision.json --actor NAME, champion-show PAIR and champion-look PAIR --actor NAME
+quant ml-advanced report-build <experiment>          # also report-show REPORT [--markdown] and report-verify REPORT
+```
+
+A drift alert, a monitor alert and a retraining proposal are things for a person to read: none retrains, halts, rolls back or promotes anything, and a stored report does not change when models or data are updated later. The numerical modules (`bma`, `dro`, `horizon_combo`, `transfer`, `discovery`, `offpolicy`, `tax_lots`) take arrays and frames you supply and have no route; each states its assumptions and refuses, with a reason, what it cannot support: an off-policy estimate without logged behaviour probabilities, an after-tax figure without a supplied policy, a transfer between assets that share a security.
+
 ## If LightGBM or XGBoost shows as "not available"
 
 The two boosting libraries are optional and need the OpenMP runtime of the operating system (`libgomp.so.1` on Linux). Where the library is missing, importing them fails with `OSError: libgomp.so.1: cannot open shared object file`. The Machine learning tab does not fail with it: the model list shows LightGBM and XGBoost as not available, with the reason, and every other model (linear, ridge, lasso, elastic net, logistic, random forest, scikit-learn's histogram gradient boosting, autoregression, Kalman, online and regime models) works as before. Scikit-learn's histogram gradient boosting is the same family of model as LightGBM and needs nothing extra.
@@ -260,6 +275,11 @@ Served by `src/webapp/ml_api.py`; JSON in, JSON out. Anything slow returns `{"jo
 | `GET /api/ml/forward`, `POST /api/ml/forward/step` (job) | forward-test signals and the daily step |
 | `GET /api/ml/alpha-diagnostics`, `GET /api/ml/portfolio-diagnostics`, `GET /api/ml/improvement-experiment`, `POST /api/ml/improvement-experiment` (job) | Release 6: alpha and portfolio diagnostics of a saved experiment; frozen comparison cards (Release 7 adds the families `rebalancing`, `risk_control`, `ensemble`, `execution` and `combination`) |
 | `GET /api/ml/delay-report` | Release 7: IC, expected edge, net result and capacity at declared delays |
+| `GET /api/ml/advanced` | Release 8: the twelve optional advanced modules, off by default, with their door, availability and latest verification |
+| `GET /api/ml/drift`, `GET /api/ml/uncertainty-monitor` | Release 8: drift of the features and the settled IC; the four uncertainty checks (`stored=1` reads the latest record and computes nothing) |
+| `GET /api/ml/retraining`, `POST /api/ml/retraining/action` | Release 8: the retraining history of an experiment; trigger, approve, reject, recover, rollback (decisions name a person; no retraining is started from here) |
+| `GET /api/ml/champion`, `POST /api/ml/champion/register`, `/commit`, `/look` | Release 8: a frozen champion/challenger pair, both forecasts committed together, the predeclared looks |
+| `GET /api/ml/reports`, `GET /api/ml/report`, `POST /api/ml/report/build` | Release 8: reproducible reports built from a stored snapshot |
 | `POST /api/ml/promote`, `/api/ml/delete` | model stages; delete an experiment (needs `confirm: true`) |
 | `GET /api/jobs`, `GET /api/job/<id>` | every job the app has run, newest first (without results), and one job with its result: a page that was reloaded, or an app that was restarted, finds a run again (see below) |
 

@@ -1,4 +1,4 @@
-"""Persisted verification evidence for the model-correctness requirements (spec v3, Releases 1 to 6).
+"""Persisted verification evidence for the model-correctness requirements (spec v3, Releases 1 to 8).
 
 A requirement is verified by the test files that check it. ``run_verification`` runs them (pytest in a subprocess, so a crash cannot take the app down), reads the JUnit report, and records one row per
 requirement in the registry: the status, the counts, the environment, a hash of the source files the requirement concerns, and the hash and path of the report that proves it. The status rules are strict:
@@ -79,6 +79,19 @@ SOURCES = {
     "regime7": ["src/ml/regime_exposure.py", "src/ml/regimes.py", "src/ml/signals.py", "src/ml/config.py", "src/ml/comparison.py"],
     "metalabel": ["src/ml/ensembles.py", "src/ml/comparison.py", "src/ml/training.py"],
     "delay": ["src/ml/delay_report.py", "src/ml/alpha.py", "src/ml/backtest.py", "src/ml/r6_reports.py", "src/ml/cli.py", "src/webapp/ml_api.py"],
+    # Release 8: optional advanced research and operations
+    "drift8": ["src/ml/drift.py", "src/ml/inference.py", "src/ml/advanced.py", "src/ml/advanced_cli.py", "src/webapp/ml_advanced_api.py"],
+    "retrain8": ["src/ml/retrain.py", "src/ml/diagnostics.py", "src/ml/governance.py", "src/ml/comparison.py", "src/ml/advanced.py", "src/ml/advanced_cli.py", "src/webapp/ml_advanced_api.py"],
+    "bma8": ["src/ml/bma.py", "src/ml/ensemble_models.py", "src/ml/inference.py"],
+    "dro8": ["src/ml/dro.py", "src/ml/allocation.py", "src/probability/resampling.py"],
+    "horizon8": ["src/ml/horizon_combo.py", "src/ml/alpha.py", "src/ml/backtest.py", "src/ml/signals.py", "src/ml/targets.py", "src/ml/inference.py"],
+    "transfer8": ["src/ml/transfer.py", "src/ml/alpha.py", "src/ml/inference.py"],
+    "discovery8": ["src/ml/discovery.py", "src/ml/drift.py", "src/ml/alpha.py", "src/ml/inference.py"],
+    "offpolicy8": ["src/ml/offpolicy.py"],
+    "tax8": ["src/ml/tax_lots.py"],
+    "champion8": ["src/ml/champion.py", "src/ml/prospective.py", "src/ml/inference.py", "src/ml/diagnostics.py", "src/ml/advanced.py", "src/ml/advanced_cli.py", "src/webapp/ml_advanced_api.py"],
+    "monitor8": ["src/ml/uncertainty_monitor.py", "src/ml/drift.py", "src/ml/backtest.py", "src/ml/advanced.py", "src/ml/advanced_cli.py", "src/webapp/ml_advanced_api.py"],
+    "report8": ["src/ml/repro_report.py", "src/ml/diagnostics.py", "src/ml/gates.py", "src/ml/policy.py", "src/ml/advanced.py", "src/ml/advanced_cli.py", "src/webapp/ml_advanced_api.py"],
 }
 REQUIREMENTS = {                                                # requirement id -> (test files, source group)
     "P0-01": (["tests/test_ml_rl_accounting_reference.py"], "rl"),
@@ -155,6 +168,18 @@ REQUIREMENTS = {                                                # requirement id
     "P2-11": (["tests/test_ml_regime_exposure.py", "tests/test_ml_improvement_families.py"], "regime7"),
     "P2-12": (["tests/test_ml_meta_label_audit.py", "tests/test_ml_oof_lineage.py"], "metalabel"),
     "P2-15": (["tests/test_ml_delay_report.py", "tests/test_ml_r7_surfaces.py"], "delay"),
+    "P3-01": (["tests/test_ml_drift.py", "tests/test_ml_advanced_surfaces.py"], "drift8"),
+    "P3-02": (["tests/test_ml_retrain.py", "tests/test_ml_advanced_surfaces.py"], "retrain8"),
+    "P3-03": (["tests/test_ml_bma.py"], "bma8"),
+    "P3-04": (["tests/test_ml_dro.py"], "dro8"),
+    "P3-05": (["tests/test_ml_horizon_combo.py"], "horizon8"),
+    "P3-06": (["tests/test_ml_transfer.py"], "transfer8"),
+    "P3-07": (["tests/test_ml_discovery.py"], "discovery8"),
+    "P3-08": (["tests/test_ml_offpolicy.py"], "offpolicy8"),
+    "P3-09": (["tests/test_ml_tax_lots.py"], "tax8"),
+    "P3-10": (["tests/test_ml_champion.py", "tests/test_ml_advanced_surfaces.py"], "champion8"),
+    "P3-11": (["tests/test_ml_uncertainty_monitor.py", "tests/test_ml_advanced_surfaces.py"], "monitor8"),
+    "P3-12": (["tests/test_ml_repro_report.py", "tests/test_ml_advanced_surfaces.py"], "report8"),
 }
 
 

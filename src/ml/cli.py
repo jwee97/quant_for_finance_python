@@ -934,3 +934,6 @@ def register(sub) -> None:
     p = sub.add_parser("ml-promote", help="move a registered model to a stage; the registry checks the gates, production also needs a recorded human approval")
     common(p, data=False); p.add_argument("model"); p.add_argument("stage", choices=["none", "candidate", "staging", "production", "archived"]); p.add_argument("--note")
     p.add_argument("--approval-actor", dest="approval_actor"); p.add_argument("--approval-note", dest="approval_note"); p.set_defaults(func=cmd_promote)
+    from . import advanced_cli                                                  # the optional advanced modules of Release 8: one command, nothing imported until it runs
+
+    advanced_cli.register(sub)

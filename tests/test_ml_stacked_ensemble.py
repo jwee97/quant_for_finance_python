@@ -212,3 +212,25 @@ def test_a_row_no_member_scores_has_no_prediction_and_too_few_scoring_members_is
     patch_members(monkeypatch, {"ridge": 0.6, "lasso": 0.6})
     with pytest.raises(ValueError, match="fewer than two members score"):
         md.make_model("model_ensemble", {"members": MEMBERS, "weighting": "stacked"}, "regression", 0).bind(ds).fit(ds.X.iloc[rows], ds.Y[ds.target].iloc[rows], pos)
+
+
+def test_the_members_frame_keeps_each_members_calibrated_forecast_and_stays_missing_where_a_member_did_not_score(ds, monkeypatch):
+    patch_members(monkeypatch, {"lasso": 0.1})
+    rows, pos = fit_rows(ds)
+    model = md.make_model("model_ensemble", {"members": MEMBERS, "weighting": "equal"}, "regression", 0).bind(ds)
+    model.fit(ds.X.iloc[rows], ds.Y[ds.target].iloc[rows], pos)
+    block = ds.X.iloc[np.flatnonzero((ds.positions() >= 820) & (ds.positions() < 900))]
+    ex = model.predict_extras(block)
+    members = ex["members"]
+    assert list(members.columns) == list(ex["weights"].columns) and members.index.equals(block.index)
+    S = np.column_stack([m.predict(block[model.features_]) for m in model.members_])
+    np.testing.assert_allclose(members.to_numpy(), model.a_ + model.b_ * S, equal_nan=True, err_msg="the calibrated forecast a + b * score, in return units, member by member")
+    miss = members["lasso"].isna().to_numpy()
+    assert miss.any() and not members["ridge"].isna().any(), "a member's missing score is a missing value, not a zero"
+    full = ~members.isna().any(axis=1).to_numpy()
+    np.testing.assert_allclose(model.predict(block)[full], members[full].mean(axis=1).to_numpy(), atol=1e-12, err_msg="with equal weights and every member present the ensemble is the mean of its members")
+    # the extras the training loop persists include it, indexed like the distribution
+    from src.ml import training as tr
+
+    merged = tr.collect_extras([ex])
+    assert set(merged) == {"distribution", "weights", "members"} and merged["members"].index.equals(merged["distribution"].index)

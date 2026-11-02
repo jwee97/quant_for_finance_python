@@ -335,3 +335,44 @@ The position rules are still built by `signals.build_weights`; the new rules are
 * `GET /api/ml/delay-report`, `development_end` on `POST /api/ml/combine`, the families and `members`, `select_baseline`, `combination_of`, `ablation` and `options` on `POST /api/ml/improvement-experiment`; `quant ml-delay`.
 * Verification requirements P2-05, P2-06, P2-08, P2-09, P2-11, P2-12, P2-15.
 
+# Release 8: optional advanced research and operations
+
+## What was reused
+
+The advanced modules sit beside the pipeline, not in it. They read a saved experiment through `experiments.load_run` and the registry, and write their results as append-only `analysis_records` of new kinds (`drift_report`, `retrain_event`, `champion_challenger`, `uncertainty_monitor`, `reproducible_report`); no migration was needed. Drift and the champion's look use `inference` (Newey-West and the p-value rules); the champion commits through the Release 5 prospective ledger (`prospective.commit`, `settle`), so a replay never counts; the retraining procedure rolls back through `governance` and validates through `comparison.compare_saved`; robust allocation solves through `allocation.solve`, which gained an optional per-name `holding_penalty` (absent means unchanged); Bayesian averaging reports its regularised comparison through `ensemble_models.stack_weights`; the horizon combination builds its books with `signals.build_weights` and scores them with `backtest.run_backtest`; reports read `diagnostics`, `gates` and `policy`.
+
+## Off by default
+
+Nothing in the base workflow imports an advanced module, and none is scheduled: a test starts a fresh interpreter, imports the experiment, search, CLI and API modules, and asserts that none of the twelve modules and none of torch, LightGBM, XGBoost, CatBoost, NGBoost, Optuna, Gymnasium, Stable-Baselines3, cvxpy or transformers is loaded. All twelve import and run on the base install (numpy, pandas, SciPy, scikit-learn). `GET /api/ml/advanced` and `quant ml-advanced catalog` list them with their door (API, command line or library), what each needs, whether it can run in this environment and the latest recorded verification of its requirement. Availability means the code runs here, not that the technique helps.
+
+## Where the pieces live
+
+| Concern | Module |
+| --- | --- |
+| the catalogue, and the services the API and the command line share (drift, uncertainty monitor, retraining proposal, retraining policy) | `advanced.py` |
+| drift on a fixed reference window, effective sample sizes, adjusted p-values, settled-only performance drift, alert lineage | `drift.py` |
+| triggers, cooldown, minimum data, approval, nested validation, failure suspension, recovery, rollback | `retrain.py` |
+| calibration, distribution, uncertainty and disagreement checks, escalation | `uncertainty_monitor.py` |
+| frozen pair, joint commitment, predeclared looks with alpha spending | `champion.py` |
+| reports as a pure function of a stored snapshot | `repro_report.py` |
+| Bayesian model averaging under a g-prior | `bma.py` |
+| distributionally robust allocation | `dro.py` |
+| multi-horizon combination | `horizon_combo.py` |
+| cross-asset transfer | `transfer.py` |
+| expression discovery with a budget and a log | `discovery.py` |
+| off-policy estimators | `offpolicy.py` |
+| tax lots and after-tax accounting under a supplied policy | `tax_lots.py` |
+| routes | `webapp/ml_advanced_api.py` (mixed into `MlApi`) |
+| command line | `advanced_cli.py` (`quant ml-advanced`) |
+
+## The surfaces
+
+The five modules that work on a saved experiment or on the registry's records have routes, a command and a dashboard section (the Advanced card of the research record): each action is a request that names it, is recorded as a look, and changes no stage. Mutations (a retraining decision, a champion registration, commitment or look, a report build) call the same service functions as the command line and refuse an unnamed person. The numerical modules take arrays and frames the caller supplies and have no route.
+
+## Version changes (Release 8)
+
+* No migration, and no new configuration setting: the modules are called, not configured into an experiment.
+* `model_ensemble`'s `predict_extras` also returns `members` (each member's calibrated forecast, missing where it did not score), persisted by the generic extras path as `extra_members.parquet`; `champion.register` records an `assumptions_check` and refuses two registered versions that differ in execution, cost/schedule or risk limits.
+* `allocation.solve` accepts `holding_penalty` (a per-name cost on the size of a position, the worst case of a box on expected returns); without it the problem is unchanged.
+* `GET /api/ml/advanced`, `/api/ml/drift`, `/api/ml/retraining`, `/api/ml/champion`, `/api/ml/uncertainty-monitor`, `/api/ml/reports`, `/api/ml/report` and `POST /api/ml/retraining/action`, `/api/ml/champion/register`, `/commit`, `/look`, `/api/ml/report/build`; `quant ml-advanced`.
+* Verification requirements P3-01 to P3-12 (86 in all); the CI `test` job allows 80 minutes.

@@ -186,7 +186,9 @@ def _fallback(spec: AllocationSpec, w0: pd.Series, why: str, status: str, base: 
 
 
 def solve(mu: pd.Series, cov: pd.DataFrame, current: pd.Series | None = None, spec: AllocationSpec | None = None, *, groups: dict | None = None, capital: float | None = None,
-          adv: pd.Series | None = None, sigma: pd.Series | None = None) -> Allocation:
+          adv: pd.Series | None = None, sigma: pd.Series | None = None, holding_penalty: pd.Series | None = None) -> Allocation:
+    """``holding_penalty`` (optional, per name, in the units of ``mu``) subtracts ``penalty_i * |w_i|`` from the objective: the worst-case loss of expected return when each forecast may be off by that much
+    (the box uncertainty set of ``dro``). It is not part of the specification and does not enter the reported utility."""
     spec = spec or AllocationSpec()
     assets = list(mu.index)
     n = len(assets)
@@ -194,6 +196,9 @@ def solve(mu: pd.Series, cov: pd.DataFrame, current: pd.Series | None = None, sp
     w0 = w0s.to_numpy(dtype=float)
     m = mu.to_numpy(dtype=float)
     s = cov.reindex(index=assets, columns=assets).to_numpy(dtype=float)
+    hp = None if holding_penalty is None else holding_penalty.reindex(assets).fillna(0.0).to_numpy(dtype=float)
+    if hp is not None and (hp < 0).any():
+        raise ValueError("a holding penalty is not negative")
     base = {}
     if not (np.isfinite(m).all() and np.isfinite(s).all()):
         return _fallback(spec, w0s, "the forecast or the covariance has missing values: nothing is optimised on them", "failed", base)
@@ -228,6 +233,8 @@ def solve(mu: pd.Series, cov: pd.DataFrame, current: pd.Series | None = None, sp
         val = -m @ w - spec.cash_return * (1.0 - w.sum()) + 0.5 * spec.risk_aversion * w @ s @ w + spec.cost * tt.sum() + 0.5 * spec.turnover_penalty * d @ d
         if kimp is not None:
             val += float((kimp * tt ** 1.5).sum())
+        if hp is not None:
+            val += float(hp @ (p + q))
         return float(val)
 
     def grad(x):
@@ -236,7 +243,8 @@ def solve(mu: pd.Series, cov: pd.DataFrame, current: pd.Series | None = None, sp
         gw = -m + spec.cash_return + spec.risk_aversion * (s @ w)
         gt = spec.cost + (1.5 * kimp * np.sqrt(tt) if kimp is not None else 0.0)
         gd = spec.turnover_penalty * d
-        return np.concatenate([gw, -gw, gd + gt, -gd + gt])
+        h = 0.0 if hp is None else hp
+        return np.concatenate([gw + h, -gw + h, gd + gt, -gd + gt])
 
     cons = [{"type": "eq", "fun": lambda x: a_eq @ x - w0, "jac": lambda x: a_eq}]
     if len(r_in):

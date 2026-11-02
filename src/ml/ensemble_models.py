@@ -342,6 +342,7 @@ class MemberEnsemble(Model):
                 sig[:, j] = np.maximum(self.b_[j] * dist["std"].to_numpy(), FLOOR_STD * self.sigma_[j])
         Wr, dates, Wd = self._weights(X, S)
         fin = np.isfinite(cal)
+        member_cal = cal.copy()                                                                                      # each member's calibrated forecast, NaN where it has no score for the row
         if not fin.all():                                                                                            # where a member has no score for a row, the others' weights are renormalised for that row
             Wr = np.where(fin, Wr, 0.0)
             tot = Wr.sum(axis=1)
@@ -349,7 +350,7 @@ class MemberEnsemble(Model):
             cal = np.where(fin, cal, 0.0)
         mu = (Wr * cal).sum(axis=1)
         var = (Wr * (sig ** 2 + (cal - mu[:, None]) ** 2)).sum(axis=1)
-        return {"mu": mu, "std": np.sqrt(var), "disagreement": np.sqrt((Wr * (cal - mu[:, None]) ** 2).sum(axis=1)), "dates": dates, "W": Wd}
+        return {"mu": mu, "std": np.sqrt(var), "disagreement": np.sqrt((Wr * (cal - mu[:, None]) ** 2).sum(axis=1)), "dates": dates, "W": Wd, "members": member_cal}
 
     def raw_predict(self, X: pd.DataFrame) -> np.ndarray:
         return self._core(X)["mu"]
@@ -358,8 +359,10 @@ class MemberEnsemble(Model):
         c = self._core(X)
         z = stats.norm.ppf(0.9)
         dist = pd.DataFrame({"mean": c["mu"], "std": c["std"], "lower": c["mu"] - z * c["std"], "upper": c["mu"] + z * c["std"], "disagreement": c["disagreement"]}, index=X.index)
-        weights = pd.DataFrame(c["W"], index=c["dates"], columns=[f"{k}" if [s[0] for s in self.specs_].count(k) == 1 else f"{k}#{i}" for i, (k, _) in enumerate(self.specs_)])
-        return {"distribution": dist, "weights": weights}
+        names = [f"{k}" if [s[0] for s in self.specs_].count(k) == 1 else f"{k}#{i}" for i, (k, _) in enumerate(self.specs_)]
+        weights = pd.DataFrame(c["W"], index=c["dates"], columns=names)
+        members = pd.DataFrame(c["members"], index=X.index, columns=names)                                           # kept so that the spread between the members can be monitored later; a missing score stays missing
+        return {"distribution": dist, "weights": weights, "members": members}
 
     def importance(self) -> pd.Series:
         total = pd.Series(0.0, index=self.features_)

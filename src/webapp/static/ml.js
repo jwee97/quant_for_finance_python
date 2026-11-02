@@ -354,7 +354,9 @@
     { modes: ["controls_stats"], path: "/api/ml/statistical-diagnostics", query: { id } }, { modes: ["controls_exec"], path: "/api/ml/trading-diagnostics", query: { id } },
     { modes: ["controls_policy"], path: "/api/ml/validation-policy", query: {} }, { modes: ["controls_gov"], path: "/api/ml/governance", query: { id } },
     { modes: ["controls_alpha"], path: "/api/ml/alpha-diagnostics", query: { id, stored: 1 } }, { modes: ["controls_port"], path: "/api/ml/portfolio-diagnostics", query: { id, stored: 1 } },
-    { modes: ["controls_improve"], path: "/api/ml/improvement-experiment", query: {} }, { modes: ["controls_delay"], path: "/api/ml/delay-report", query: { id, stored: 1 } }];
+    { modes: ["controls_improve"], path: "/api/ml/improvement-experiment", query: {} }, { modes: ["controls_delay"], path: "/api/ml/delay-report", query: { id, stored: 1 } },
+    { modes: ["controls_drift"], path: "/api/ml/drift", query: { id, stored: 1 } }, { modes: ["controls_monitor"], path: "/api/ml/uncertainty-monitor", query: { id, stored: 1 } },
+    { modes: ["controls_retrain"], path: "/api/ml/retraining", query: { id } }, { modes: ["controls_reports"], path: "/api/ml/reports", query: { id } }];
 
   M.run = async (fromForm) => {
     const m = M.mode, f = M.form;
@@ -1267,6 +1269,74 @@
     W.flags(c, dl.caveats || [], "Limits. ");
   }
 
+  /* ---------- Release 8: the optional advanced modules. Off by default: each action is a request that names it, is recorded, and changes no stage ---------- */
+  const ADV_STATE = { ok: "ok", watch: "watch", alert: "ALERT", insufficient: "not enough data", unavailable: "unavailable", not_applicable: "not applicable", degraded: "degraded" };
+  function advancedCard(root, a) {
+    const c = W.card(root, "Advanced (optional)", "Off by default: nothing here runs until you ask. Every request is recorded as a look, and none of it changes a stage or promotes a model.");
+    const done = (text) => { Q.toast(text); invalidate(); M.run(true); };
+    actions(c, [
+      ["Check for drift", () => W.request(M, () => [{ modes: ["controls_drift_run"], path: "/api/ml/drift", query: { id: M.cur } }, ...CONTROLS(M.cur)], "Checking the features and the settled IC for drift…")],
+      ["Monitor uncertainty", () => W.request(M, () => [{ modes: ["controls_monitor_run"], path: "/api/ml/uncertainty-monitor", query: { id: M.cur } }, ...CONTROLS(M.cur)], "Monitoring calibration, uncertainty and disagreement…")],
+      ["Record a manual retraining trigger", async () => { try { const r = await api("/api/ml/retraining/action", { id: M.cur, action: "trigger", kind: "manual" }); const d = r.data || r; done(d.outcome === "proposed" ? `Proposal ${d.proposal} recorded; nothing is trained until a person approves it` : `Not a proposal: ${d.reason}`); } catch (e) { Q.toast(e.message); } }],
+      ["List the advanced modules", () => W.request(M, () => [{ modes: ["controls_advanced_run"], path: "/api/ml/advanced", query: {} }, ...CONTROLS(M.cur)], "Listing the advanced modules…")],
+      ["Build a report", async () => { try { const r = await api("/api/ml/report/build", { id: M.cur }); const d = r.data || r; done(d.status === "built" ? `Report ${d.report_id} built` : `Report ${d.report_id} is unchanged: the inputs are the same`); } catch (e) { Q.toast(e.message); } }],
+    ]);
+    const fresh_ = (mode, stored) => { const r = (M.results[mode] || {}).data; return r && r.experiment_id === M.cur ? r : stored; };                 // what was just asked for, else what is on record
+    const dr = fresh_("controls_drift_run", a.drift);
+    W.sub(c, "Drift");
+    if (dr && dr.eligibility === "applied") {
+      const inp = dr.inputs, pf = dr.performance, lin = dr.lineage;
+      W.hint(c, `Reference ${inp.reference.first} to ${inp.reference.last} (${inp.reference.dates} dates, fixed at the fit cutoff ${inp.reference.fixed_at}) against ${inp.recent.first} to ${inp.recent.last} · as of ${dr.as_of} · recorded ${dr.computed_at || "just now"} · look ${lin.looks_so_far}`);
+      table(c, [{ label: "Feature", get: (r) => r.feature }, { label: "State", get: (r) => ADV_STATE[r.state] || r.state }, { label: "PSI (a heuristic)", num: true, get: (r) => sig(r.psi, 3) },
+        { label: "KS p, adjusted", num: true, get: (r) => sig(r.ks_p_adjusted, 4) }, { label: "Reference rows", num: true, get: (r) => String(r.n_reference) }, { label: "Recent rows", num: true, get: (r) => String(r.n_recent) }], inp.features.slice(0, 10));
+      W.hint(c, `Settled-IC drift: ${ADV_STATE[pf.state] || pf.state}. ${pf.reason || ""} ${lin.new.length ? "New alerts: " + lin.new.join(", ") + ". " : ""}${lin.persisting.length ? "Still alerting: " + lin.persisting.join(", ") + ". " : ""}${dr.note}`);
+    } else W.hint(c, (dr && dr.reason && dr.eligibility !== "not_computed") ? dr.reason : "Drift has not been checked for this experiment.");
+    const cat = (M.results.controls_advanced_run || {}).data;
+    if (cat) {
+      W.sub(c, "The twelve optional modules (all off by default)");
+      table(c, [{ label: "Requirement", get: (r) => r.id }, { label: "Module", get: (r) => r.name }, { label: "Reached by", get: (r) => r.surface.join(" and ") }, { label: "Runs here", get: (r) => (r.available ? "yes" : "no: " + r.reason) },
+        { label: "Verification", get: (r) => (r.verification ? r.verification.status + (r.verification.stale ? " (stale)" : "") : "not run") }], cat.modules);
+      W.hint(c, cat.note);
+    }
+    const mo = fresh_("controls_monitor_run", a.monitor);
+    W.sub(c, "Uncertainty and disagreement");
+    if (mo && mo.eligibility === "applied") {
+      W.hint(c, `Overall: ${ADV_STATE[mo.overall.state] || mo.overall.state}. ${mo.overall.reason} · reference ends ${mo.reference_end} · as of ${mo.as_of}`);
+      table(c, [{ label: "Check", get: (r) => cap(r.check) }, { label: "State", get: (r) => ADV_STATE[r.state] || r.state }, { label: "Level", get: (r) => r.level || "" }, { label: "Value", num: true, get: (r) => (Q.bad(r.value) ? "n/a" : sig(r.value, 3)) },
+        { label: "Why", get: (r) => r.reason }], mo.checks);
+      W.hint(c, mo.note);
+    } else W.hint(c, (mo && mo.reason && mo.eligibility !== "not_computed") ? `${mo.reason}` : "The uncertainty monitor has not been run for this experiment. A model that states no uncertainty has nothing to monitor, and that is reported as such, never as healthy.");
+    const rt = a.retrain;
+    W.sub(c, "Retraining proposals");
+    if (rt) {
+      const st = rt.state;
+      W.hint(c, `Open proposal: ${st.open_proposal || "none"} · consecutive failures: ${st.consecutive_failures} · ${st.suspended ? "SUSPENDED until a person documents a recovery" : "not suspended"} · ${rt.events_total} event${rt.events_total === 1 ? "" : "s"}`);
+      if (rt.events.length) table(c, [{ label: "Event", get: (r) => r.event }, { label: "By", get: (r) => r.actor }, { label: "When", get: (r) => r.created }, { label: "Why", get: (r) => r.reason || r.note || r.trigger || "" }], rt.events.slice(-8));
+      W.hint(c, rt.note + " Approval, rejection, recovery and rollback name a person: quant ml-advanced retrain-approve EXPERIMENT --proposal N --actor NAME --note TEXT, or POST /api/ml/retraining/action.");
+    }
+    W.sub(c, "Champion and challenger");
+    const prow = h("div", "row tight", c), pin = h("input", "", prow), pbtn = h("button", "btn", prow, "Show the pair");
+    pin.type = "text"; pin.placeholder = "pair id, for example cc-0123456789abcd"; pin.value = M.pairId || ""; pin.setAttribute("aria-label", "Champion and challenger pair id"); pbtn.type = "button";
+    pbtn.addEventListener("click", () => { M.pairId = pin.value.trim(); W.request(M, () => [{ modes: ["controls_champion_run"], path: "/api/ml/champion", query: { id: M.pairId } }, ...CONTROLS(M.cur)], "Reading the pair…"); });
+    const cp = (M.results.controls_champion_run || {}).data;
+    if (cp && cp.pair_id === M.pairId) {
+      const cn = (who) => { const x = ((cp.counts || {})[who] || {}).prospective || {}; return `${x.committed || 0} committed, ${x.settled || 0} settled`; };
+      W.kv(c, "Pair", [["Champion", cp.champion], ["Challenger", cp.challenger], ["Horizon", String(cp.horizon)], ["Universe version", cp.universe_version], ["Spending", `${String(cp.rule).replace(/_/g, " ")} · alpha ${cp.alpha}`],
+        ["Registered", `${cp.registered_at} by ${cp.actor}`], ["Data cutoff", cp.data_cutoff || "not declared"], ["Settled pairs", String(cp.settled_pairs)],
+        ["Next look needs", cp.next_look_needs === null ? "none left" : `${cp.next_look_needs} settled pairs (${cp.next_look_available ? "available" : "not yet"})`], ["Verdict", String(cp.verdict).replace(/_/g, " ")],
+        ["Prospective commitments", `champion ${cn("champion")}; challenger ${cn("challenger")}`]]);
+      if (cp.looks_taken.length) table(c, [{ label: "Look", get: (r) => `${r.look} of ${r.of}` }, { label: "Pairs", num: true, get: (r) => String(r.pairs_used) }, { label: "Level", num: true, get: (r) => sig(r.level, 4) },
+        { label: "Champion IC", num: true, get: (r) => sig(r.champion_ic, 4) }, { label: "Challenger IC", num: true, get: (r) => sig(r.challenger_ic, 4) }, { label: "Verdict", get: (r) => String(r.verdict).replace(/_/g, " ") }, { label: "Why", get: (r) => r.reason }], cp.looks_taken);
+      W.hint(c, "A look is a statement about the evidence at that look and promotes nothing. Replays are listed and never counted.");
+    } else W.hint(c, "A pair is registered before the observations it is judged on (quant ml-advanced champion-register, or POST /api/ml/champion/register). Enter its id to read its evidence.");
+    const rp = a.reports;
+    W.sub(c, "Reproducible reports");
+    if (rp && rp.reports.length) {
+      table(c, [{ label: "Report", get: (r) => r.report_id }, { label: "Built", get: (r) => r.built }, { label: "Snapshot taken", get: (r) => r.captured_at }, { label: "Hash", get: (r) => r.report_hash }], rp.reports.slice(0, 8));
+      W.hint(c, "A stored report is rendered from its own snapshot and does not change when models or data are updated. Open one: GET /api/ml/report?report=ID&verify=1, or quant ml-advanced report-verify ID.");
+    } else W.hint(c, "No report has been built for this experiment.");
+  }
+
   /* ---------- research controls: the gates, the lineage, the holdout and the selection evidence of one experiment ---------- */
   const GATE_NAME = { A: "Algorithm Verified", B: "Strategy Validated", C: "Operationally Ready" };
   const GATE_DIR = { passed: "up", failed: "down", blocked: "down", pending: "" };
@@ -1275,6 +1345,7 @@
     const lin = (M.results.controls_lineage || {}).data, ho = (M.results.controls_holdout || {}).data, st = (M.results.controls_stats || {}).data, xd = (M.results.controls_exec || {}).data;
     const pol = (M.results.controls_policy || {}).data, gv = (M.results.controls_gov || {}).data;
     const al = (M.results.controls_alpha || {}).data, pf = (M.results.controls_port || {}).data, im = (M.results.controls_improve || {}).data, dl = (M.results.controls_delay || {}).data;
+    const adv = { drift: (M.results.controls_drift || {}).data, monitor: (M.results.controls_monitor || {}).data, retrain: (M.results.controls_retrain || {}).data, reports: (M.results.controls_reports || {}).data };
     header(root, `Research record for ${shortId(d.experiment_id)}`, `${d.model_kind} · gate policy ${d.policy_version}`);
     W.provenance(root, d);
     W.flags(root, [d.note, "A stale decision is shown as pending: its evidence has changed since it was decided."], "Read first. ");
@@ -1293,6 +1364,7 @@
     if (al) alphaCard(root, al);
     if (pf) portfolioCard(root, pf);
     if (dl) delayCard(root, dl);
+    if (adv.drift || adv.monitor || adv.retrain || adv.reports) advancedCard(root, adv);
     if (im) improvementCard(root, im);
     if (xd) {                                                                                  // the evaluation mode of the result, and what it can and cannot support
       const real = xd.mode === "realistic_cash_equity", fmtc = (v) => (Q.bad(v) ? "n/a" : Number(v).toLocaleString("en-US", { maximumFractionDigits: 0 }));

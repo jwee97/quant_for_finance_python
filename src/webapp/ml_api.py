@@ -51,6 +51,7 @@ from ..ml.visualization import jsonable, leaderboard_payload, render_html, shap_
 from ..utils.optional import unavailable_reason
 from . import tuning
 from .api import ApiError
+from .ml_advanced_api import AdvancedRoutes
 from .payload import clean
 from .universe import MAX_TICKERS, UniverseError, normalise
 
@@ -188,7 +189,7 @@ def _user_errors():
         raise ApiError(str(exc.args[0] if isinstance(exc, KeyError) and exc.args else exc)) from None
 
 
-class MlApi:
+class MlApi(AdvancedRoutes):
     def __init__(self, app):
         self.app = app
         self.root = Path(app.root)
@@ -204,7 +205,7 @@ class MlApi:
                 "/api/ml/lineage": self.lineage, "/api/ml/holdout": self.holdout, "/api/ml/promotion-status": self.promotion_status, "/api/ml/statistical-diagnostics": self.statistical_diagnostics,
                 "/api/ml/null-controls": self.null_controls, "/api/ml/trading-diagnostics": self.trading_diagnostics, "/api/ml/validation-policy": self.validation_policy, "/api/ml/governance": self.governance_status,
                 "/api/ml/alpha-diagnostics": self.alpha_diagnostics, "/api/ml/portfolio-diagnostics": self.portfolio_diagnostics, "/api/ml/improvement-experiment": self.improvement_get,
-                "/api/ml/delay-report": self.delay_report}
+                "/api/ml/delay-report": self.delay_report, **self.advanced_get_routes()}
 
     def post_routes(self) -> dict:
         return {"/api/ml/dataset/build": self.dataset_build, "/api/ml/train": self.train, "/api/ml/rebacktest": self.rebacktest, "/api/ml/search": self.search, "/api/ml/tune": self.tune, "/api/ml/tune/stop": self.tune_stop,
@@ -212,7 +213,7 @@ class MlApi:
                 "/api/ml/evaluation-plan": self.evaluation_plan, "/api/ml/evaluation-plan/freeze": self.evaluation_plan_freeze, "/api/ml/evaluate": self.evaluate,
                 "/api/ml/null-controls/run": self.null_controls_run, "/api/ml/selection-tests/run": self.selection_tests_run, "/api/ml/validation-policy": self.validation_policy_adopt,
                 "/api/ml/statistical-diagnostics/run": self.diagnostics_run, "/api/ml/multiseed/run": self.multiseed_run, "/api/ml/governance/version": self.governance_version,
-                "/api/ml/governance/action": self.governance_action, "/api/ml/improvement-experiment": self.improvement_run}
+                "/api/ml/governance/action": self.governance_action, "/api/ml/improvement-experiment": self.improvement_run, **self.advanced_post_routes()}
 
     # ------------------------------------------------------------------------------------------------------------ plumbing
     @property
