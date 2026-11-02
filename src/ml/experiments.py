@@ -28,7 +28,7 @@ from .config import DEFAULTS, build_key, config_hash, dataset_key, experiment_co
 from .datasets import Dataset, build_dataset, resolve_bundle
 from .models import Model
 from .registry import Registry
-from .signals import ALLOCATION_METHODS, UNCERTAINTY_METHODS, build_weights
+from .signals import ALLOCATION_METHODS, OVERLAY_KEYS, SIZING_METHODS, UNCERTAINTY_METHODS, build_weights
 from .models import task_for
 from .contracts import OutputContractError, build_contract, check_signal_use
 from .targets import forward_return, is_classification
@@ -275,7 +275,9 @@ def evaluate_run(cfg: dict, ds: Dataset, train: TrainResult, info: dict, registr
     insample_net = None
     s_in = train.scores_wide(ds, "insample")
     if s_in.notna().any().any():
-        sig_in = {**cfg["signal"], "method": "proportional"} if cfg["signal"]["method"] in (*UNCERTAINTY_METHODS, *ALLOCATION_METHODS) else cfg["signal"]               # no predictive distribution in sample; the optimiser is not run on in-sample scores
+        sig_in = {k: v for k, v in cfg["signal"].items() if k not in OVERLAY_KEYS}                                                                                       # the in-sample book is a display: no overlay is run on it
+        if sig_in["method"] in (*UNCERTAINTY_METHODS, *ALLOCATION_METHODS, *SIZING_METHODS):                                                                              # no predictive distribution, no optimiser and no calibration on in-sample scores
+            sig_in["method"] = "proportional"
         w_in = build_weights(s_in, sig_in, vol, confidence_from_scores(s_in, None), regime_on, groups, ds.investable)
         r_in = trim_to_signal(run_backtest(w_in, ds.returns, ds.investable, cfg["backtest"], lag, cfg["name"] + "_in_sample"), s_in.dropna(how="all").index[0], lag)["net"]
         last_in = s_in.dropna(how="all").index[-1]
@@ -353,6 +355,9 @@ def evaluate_run(cfg: dict, ds: Dataset, train: TrainResult, info: dict, registr
     report["execution"] = jsonable(realistic.block if realistic is not None else xe.legacy_block(cfg))
     if realistic is not None and rob is not None:
         report["warnings"].append("The robustness tests re-run the vectorized engine, not the order-level execution: their cost and delay variants do not describe the realistic result.")
+    for key in ("sizing", "overlays"):
+        if weights.attrs.get(key):
+            report[key] = jsonable(weights.attrs[key])
     alloc_log = weights.attrs.get("allocation")
     if alloc_log:                                                                  # what the optimiser did, solve by solve: a failed or infeasible solve is a visible count, not a quiet hold
         report["allocation"] = jsonable(alloc_log)

@@ -17,7 +17,11 @@ Methods (``build_weights(method=...)``):
 ``uncertainty_mean_variance``  those views through the inverse of the (Ledoit-Wolf) covariance of trailing returns: the covariance-aware version of the same idea
 ``cost_aware_mean_variance`` the book that maximises expected return less risk, trading cost and turnover from the book actually held (``allocation.solve``), for a model whose output is an expected return in
                            return units; the covariance is fitted as of each decision date (``risk_models.fit_asof``) and scaled to the forecast horizon, and every solve's status is reported
+``calibrated_sizing``      the score calibrated walk-forward to a return, sized by edge, its uncertainty, risk and signal stability; flat when no edge has been shown (``sizing.py``)
 ``target_weights``         the scores ARE the target weights (a reinforcement-learning policy's output), only clipped to the gross exposure
+
+Overlays on any of the above (optional ``signal`` settings, applied last, for a model whose output is a return forecast): ``trade_filter_k`` keeps a trade only if its net edge is at least that many forecast
+standard errors (``tradefilter.py``); ``no_trade_margin`` holds the book unless moving earns its cost with that safety margin (``notrade.py``).
 
 Controls: ``cap_weights`` (a maximum per position, redistributing the excess), ``group_caps`` (a maximum gross per sector or asset class), ``holding_period`` (the average of the last ``H`` daily books, i.e. staggered
 tranches that each stay for ``H`` days) and ``extra_lag`` (a delay on top of the engine's own).
@@ -30,8 +34,12 @@ import pandas as pd
 
 UNCERTAINTY_METHODS = ("uncertainty_weighted", "uncertainty_mean_variance")
 ALLOCATION_METHODS = ("cost_aware_mean_variance",)
+SIZING_METHODS = ("calibrated_sizing",)
 METHODS = ("top_n_long_short", "long_only_top_quantile", "proportional", "vol_scaled", "rank_normalised", "threshold", "regime_filtered", "confidence_weighted", *UNCERTAINTY_METHODS, *ALLOCATION_METHODS,
-           "target_weights")
+           *SIZING_METHODS, "target_weights")
+OVERLAY_KEYS = ("trade_filter_k", "no_trade_margin", "regime_exposure")              # applied in this order, after the book is built; the first two need a forecast in return units, the last is a risk control that needs none
+DERIVED_KEYS = ("cost_bps", "window_days", "label_offset", "rebalance", "lag_total")   # set by config.validate from the other sections, never by a request
+STATEFUL_METHODS = (*ALLOCATION_METHODS, *SIZING_METHODS)                              # rules whose book depends on the book held or on a history of settled outcomes
 
 
 def _scale_sides(raw: np.ndarray, gross: float, net: float) -> np.ndarray:
@@ -308,6 +316,12 @@ def build_weights(score: pd.DataFrame, cfg: dict, vol: pd.DataFrame | None = Non
         if returns is None:
             raise ValueError("the cost_aware_mean_variance method needs the assets' returns")
         w, alloc_log = cost_aware_mean_variance(s, returns, investable, cfg, groups)
+    elif method == "calibrated_sizing":
+        if returns is None:
+            raise ValueError("the calibrated_sizing method needs the assets' returns")
+        from . import sizing
+
+        w, size_log = sizing.apply(s, returns, investable, cfg)
     elif method == "target_weights":
         w = target_weights(s, gross)
     else:
@@ -319,6 +333,28 @@ def build_weights(score: pd.DataFrame, cfg: dict, vol: pd.DataFrame | None = Non
     if cfg.get("sector_cap") and groups and method not in ALLOCATION_METHODS:
         w = group_caps(w, groups, float(cfg["sector_cap"]))
     out = holding_period(w, int(cfg.get("holding_period", 1)))
+    overlays = {}
+    if cfg.get("trade_filter_k") is not None or cfg.get("no_trade_margin") is not None:
+        if returns is None:
+            raise ValueError("the trade filter and the no-trade region need the assets' returns")
+        if cfg.get("trade_filter_k") is not None:
+            from . import tradefilter
+
+            out, overlays["trade_filter"] = tradefilter.apply(out, s, returns, investable, cfg)
+        if cfg.get("no_trade_margin") is not None:
+            from . import notrade
+
+            out, overlays["no_trade"] = notrade.apply(out, s, returns, investable, cfg)
+    if cfg.get("regime_exposure") is not None:                                         # last: a risk cut on the whole book is not vetoed by a rule that weighs expected return against cost
+        if returns is None:
+            raise ValueError("the regime exposure needs the assets' returns")
+        from . import regime_exposure
+
+        out, overlays["regime_exposure"] = regime_exposure.apply(out, returns, investable, cfg)
     if method in ALLOCATION_METHODS:
         out.attrs["allocation"] = alloc_log
+    if method in SIZING_METHODS:
+        out.attrs["sizing"] = size_log
+    if overlays:
+        out.attrs["overlays"] = overlays
     return out

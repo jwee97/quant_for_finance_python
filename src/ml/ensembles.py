@@ -236,6 +236,55 @@ def compare_methods(R: pd.DataFrame, methods: tuple = METHODS, regimes: pd.Serie
             "similarity": similarity_map(R.loc[start:])}
 
 
+def mixture_study(R: pd.DataFrame, *, development_end, regimes: pd.Series | None = None, methods: tuple = ("equal", "inverse_vol", "regime_conditioned"), n_boot: int = 600, seed: int = 0,
+                  min_dev_days: int = 120, min_eval_days: int = 60, **kw) -> dict:
+    """Does a mixture of strategies beat the best single one that the development period would have chosen, and does a regime-conditioned mixture beat the simple ones? (spec v3, Release 7, P2-08)
+
+    The best single member is the one with the highest Sharpe ratio **up to ``development_end``**; everything after it is the evaluation stream. Each mixture's weights on a day come from the members' returns
+    up to the allocation date (``combine`` applies them to the days after it), so no weight is trained on a day it is then scored on. Each mixture is compared with the best single member and with the
+    equal-weight mixture by a paired Sharpe-difference on the evaluation days both have, with a stationary bootstrap interval; the best single member is the winner of a choice among ``N`` and is flagged as such.
+    Nothing is selected from the table, and a gain that the interval does not separate from zero is reported as inconclusive."""
+    from . import inference as inf
+
+    R = R.dropna(how="all").fillna(0.0)
+    cut = pd.Timestamp(development_end)
+    dev, evaluation = R.loc[:cut], R.loc[cut:].iloc[1:]
+    if len(dev) < min_dev_days or len(evaluation) < min_eval_days:
+        raise ValueError(f"the study needs at least {min_dev_days} development days and {min_eval_days} evaluation days; the streams have {len(dev)} and {len(evaluation)} around {cut.date()}")
+    dev_sharpe = {c: sharpe_of(dev[c]) for c in R.columns}
+    best = max(dev_sharpe, key=lambda c: dev_sharpe[c] if np.isfinite(dev_sharpe[c]) else -9.0)
+    runs, errors = {}, {}
+    for m in methods:
+        try:
+            runs[m] = combine(R, m, regimes=regimes, **kw)
+        except ValueError as exc:
+            errors[m] = str(exc)
+    best_eval = R[best].loc[evaluation.index]
+    scope = f"{len(runs)} mixture(s) against the best of {R.shape[1]} members chosen on development; the mixtures' settings were not tuned here"
+
+    def paired(a: pd.Series, b: pd.Series, label: str) -> dict:
+        return inf.paired_difference(a, b, statistic="sharpe", n_boot=int(n_boot), seed=int(seed), horizon=1, label=label, scope=scope).as_dict()
+
+    equal_eval = runs["equal"].returns.reindex(evaluation.index).dropna() if "equal" in runs else None
+    rows = []
+    for m, c in runs.items():
+        r = c.returns.reindex(evaluation.index).dropna()
+        eq = (1.0 + r).cumprod()
+        rows.append({"method": m, "sharpe": sharpe_of(r), "ann_return": float(r.mean() * ANN) if len(r) else None, "max_drawdown": float((eq / eq.cummax() - 1.0).min()) if len(r) else None,
+                     "turnover": c.turnover, "evaluation_days": int(len(r)), "mean_weights": {k: float(v) for k, v in c.weights.reindex(evaluation.index).dropna(how="all").mean().items()},
+                     "vs_best_single": paired(r, best_eval, f"{m} minus the best single member ({best})"),
+                     "vs_equal_weight": paired(r, equal_eval, f"{m} minus the equal-weight mixture") if equal_eval is not None and m != "equal" else None})
+    corr = evaluation.corr().to_numpy()
+    off = corr[~np.eye(len(corr), dtype=bool)]
+    return {"version": "mixture-study-v1", "development": [str(dev.index[0].date()), str(dev.index[-1].date())], "evaluation": [str(evaluation.index[0].date()), str(evaluation.index[-1].date())],
+            "best_single": {"member": best, "development_sharpe": dev_sharpe[best], "chosen_on": "the development period only", "evaluation_sharpe": sharpe_of(best_eval),
+                            "selection_note": f"the best of {R.shape[1]} members: its development Sharpe ratio is the maximum of {R.shape[1]}, not an unbiased estimate"},
+            "members": {c: {"development_sharpe": dev_sharpe[c], "evaluation_sharpe": sharpe_of(R[c].loc[evaluation.index])} for c in R.columns},
+            "member_correlation": float(np.nanmean(off)) if len(off) else None, "rows": rows, "errors": errors,
+            "caveats": ["the weights of a mixture on a day use only returns up to the allocation date", "the comparison is on the evaluation days after development_end; nothing was tuned on them",
+                        "changing the weights between strategies has a cost that is not charged here"]}
+
+
 def strategy_regimes(returns: pd.DataFrame, investable: pd.DataFrame | None = None) -> pd.Series:
     """Volatility-tercile regime labels (``low``, ``mid``, ``high``) of the equal-weight market, known at the previous close; for the regime-conditioned combinations."""
     v, _ = market_states(returns, investable)
@@ -243,7 +292,7 @@ def strategy_regimes(returns: pd.DataFrame, investable: pd.DataFrame | None = No
 
 
 # ------------------------------------------------------------------------------------------------------------------ meta-labelling
-def meta_label_scores(ds, train, model_kind: str = "logistic", params: dict | None = None, min_rows: int = 400, seed: int = 0) -> dict:
+def meta_label_scores(ds, train, model_kind: str = "logistic", params: dict | None = None, min_rows: int = 400, seed: int = 0, cost: float = 0.0) -> dict:
     """A second model that says when the first is right. The label of a primary prediction is 1 if the position its sign implies made money (``sign(score) x forward return > 0``). The secondary model
     sees the same features plus the primary score and is fitted walk-forward on the PAST out-of-sample primary predictions whose labels were complete (the same purge as the primary), then scores the
     next block. The meta score is ``sign(primary) x max(2 P(right) - 1, 0)``: the primary's side, sized by the secondary's confidence, and no bet at all when the secondary thinks the primary is more likely wrong than right (the secondary never reverses the side). Returns the meta scores (wide), the secondary model's AUC and coverage."""
@@ -256,7 +305,7 @@ def meta_label_scores(ds, train, model_kind: str = "logistic", params: dict | No
     fwd_wide = forward_return(ds.prices, ds.horizon, ds.lag).reindex(index=ds.dates, columns=ds.assets)
     fwd_long = pd.Series(fwd_wide.to_numpy().reshape(-1), index=pd.MultiIndex.from_product([ds.dates, ds.assets], names=["date", "asset"]))
     f = fwd_long.reindex(prim.index)
-    right = ((np.sign(prim) * f) > 0).astype(float).where(f.notna() & (prim != 0))
+    right = ((np.sign(prim) * f - 2.0 * float(cost)) > 0).astype(float).where(f.notna() & (prim != 0))       # a bet is right if it earned more than the declared cost of entering and leaving it (one-way ``cost`` each way)
     X = ds.X.reindex(prim.index).copy()
     X["primary_score"] = prim
     X["primary_abs"] = prim.abs()
@@ -288,7 +337,7 @@ def meta_label_scores(ds, train, model_kind: str = "logistic", params: dict | No
                         "base_predictions": "out of sample: every training row's primary score came from a fold fitted before that row's date"})
     ok = prob.notna() & right.notna()
     auc = float(roc_auc_score(right[ok], prob[ok])) if ok.sum() > 50 and right[ok].nunique() == 2 else float("nan")
-    return {"scores": out.unstack("asset").reindex(index=ds.dates, columns=ds.assets), "probability": prob, "auc": auc, "n_models": n_models, "lineage": lineage, "coverage": float(prob.notna().mean()),
+    return {"scores": out.unstack("asset").reindex(index=ds.dates, columns=ds.assets), "probability": prob, "auc": auc, "n_models": n_models, "lineage": lineage, "coverage": float(prob.notna().mean()), "label_cost": float(cost),
             "primary_hit_rate": float(right[right.notna()].mean()), "meta_hit_rate": float(right[ok & (prob > 0.5)].mean()) if (ok & (prob > 0.5)).any() else float("nan")}
 
 
@@ -306,9 +355,12 @@ def load_streams(registry, ids: list[str]) -> tuple[pd.DataFrame, dict[str, pd.S
     return pd.DataFrame(cols), labels, names
 
 
-def combine_experiments(registry, ids: list[str], methods: tuple = METHODS, lookback: int = 252, rebalance: int = 21, min_history: int = 126, risk_aversion: float = 5.0, eta: float = 5.0, seed: int = 0) -> dict:
+def combine_experiments(registry, ids: list[str], methods: tuple = METHODS, lookback: int = 252, rebalance: int = 21, min_history: int = 126, risk_aversion: float = 5.0, eta: float = 5.0, seed: int = 0,
+                        development_end: str | None = None) -> dict:
     """The strategy combination engine on saved experiments: every method in ``methods`` allocates across their out-of-sample net returns. Segment Sharpe ratios use the first experiment's segments.
-    The regime-based methods use the volatility regime of the first experiment's universe (they are listed under ``errors`` when its saved panel is unavailable)."""
+    The regime-based methods use the volatility regime of the first experiment's universe (they are listed under ``errors`` when its saved panel is unavailable). With ``development_end`` the result also
+    carries ``mixture_study``: the best single member chosen on the days up to it against each mixture on the days after it. If the days after it reach the parents' test or forward segments the study is a
+    re-analysis of them, and the combination's lineage (below) records the exposure it inherits."""
     if len(ids) < 2:
         raise ValueError("choose at least two experiments to combine")
     from . import research_controls as rc
@@ -316,7 +368,7 @@ def combine_experiments(registry, ids: list[str], methods: tuple = METHODS, look
     study = rc.study_of_experiment(registry, ids[0]) or rc.study_of(registry.report(ids[0])["config"])
     with rc.begin(registry, "ensemble", study, parent_key=rc.op_key_of_experiment(registry, ids[0]), counts=True, seed=int(seed),
                   detail={"experiments": list(ids), "methods": list(methods), "lookback": lookback, "rebalance": rebalance}) as op:
-        out = _combine(registry, ids, methods, lookback, rebalance, min_history, risk_aversion, eta, seed)
+        out = _combine(registry, ids, methods, lookback, rebalance, min_history, risk_aversion, eta, seed, development_end)
         inherited = rc.inherit_holdout(registry, ids, op.op_key, "combine")
         out["lineage"] = {"study": study, "operation": op.op_key, "parents": inherited["parents"], "holdout": inherited["status"], "untouched": inherited.get("untouched"),
                           "note": "a combination is another look at its parents' streams: it counts in the study and inherits what they read (a combination of runs whose test and forward outcomes were read is a re-analysis of them)"}
@@ -324,7 +376,7 @@ def combine_experiments(registry, ids: list[str], methods: tuple = METHODS, look
     return out
 
 
-def _combine(registry, ids: list[str], methods: tuple, lookback: int, rebalance: int, min_history: int, risk_aversion: float, eta: float, seed: int) -> dict:
+def _combine(registry, ids: list[str], methods: tuple, lookback: int, rebalance: int, min_history: int, risk_aversion: float, eta: float, seed: int, development_end: str | None = None) -> dict:
     R, labels, names = load_streams(registry, ids)
     regimes = None
     try:
@@ -340,12 +392,16 @@ def _combine(registry, ids: list[str], methods: tuple, lookback: int, rebalance:
     out = compare_methods(R, tuple(methods), regimes, labels[ids[0]], lookback=lookback, rebalance=rebalance, min_history=min_history, risk_aversion=risk_aversion, eta=eta, seed=seed)
     out["names"] = names
     out["experiments"] = list(ids)
+    if development_end:
+        out["mixture_study"] = mixture_study(R, development_end=development_end, regimes=regimes, methods=tuple(methods), lookback=lookback, rebalance=rebalance, min_history=min_history,
+                                             risk_aversion=risk_aversion, eta=eta, seed=seed)
     out["note"] = ("Each method re-estimates its weights every {r} days from the returns up to that day and applies them afterwards. The strategies' returns include the days they were selected on "
                    "(validation); read the test and forward columns for evidence.").format(r=rebalance)
     return out
 
 
-def meta_label_experiment(registry, exp_id: str, model_kind: str = "logistic", params: dict | None = None, signal: dict | None = None, progress=None, save: bool = True, min_rows: int = 400, seed: int = 0):
+def meta_label_experiment(registry, exp_id: str, model_kind: str = "logistic", params: dict | None = None, signal: dict | None = None, progress=None, save: bool = True, min_rows: int = 400, seed: int = 0,
+                          include_costs: bool = True):
     """Meta-label a saved experiment: fit the secondary model on its out-of-sample bets, size the book with it (proportional to the meta score by default: the primary's side, no bet where the secondary
     doubts it) and run the result through the same backtest, segments and diagnostics. Returns ``(experiment, meta summary)``; the new run is a child of the original and counts as another look."""
     from . import research_controls as rc
@@ -356,7 +412,8 @@ def meta_label_experiment(registry, exp_id: str, model_kind: str = "logistic", p
     if progress:
         progress("fitting the secondary model on the primary's past bets")
     try:
-        meta = meta_label_scores(ds, train, model_kind, params, min_rows, seed)
+        cost = (float(cfg0["backtest"]["cost_bps"]) + float(cfg0["backtest"]["slippage_bps"])) / 1e4 if include_costs else 0.0           # the primary's declared one-way cost: a bet that does not earn it back is wrong
+        meta = meta_label_scores(ds, train, model_kind, params, min_rows, seed, cost)
     except ValueError as exc:
         raise ExperimentError(str(exc)) from None
     flat = pd.Series(meta["scores"].to_numpy().reshape(-1), index=pd.MultiIndex.from_product([ds.dates, ds.assets], names=["date", "asset"])).dropna()
@@ -374,7 +431,16 @@ def meta_label_experiment(registry, exp_id: str, model_kind: str = "logistic", p
                            lineage={"study": study, "operation": op.op_key, "kind": "meta_label", "counts": True, "parent": exp_id})
         op.experiment_id = exp.id
         op.finish_detail = {"parent": exp_id, "holdout": holdout.get("status")}
-    return exp, {k: meta[k] for k in ("auc", "n_models", "coverage", "primary_hit_rate", "meta_hit_rate")}
+    summary = {k: meta[k] for k in ("auc", "n_models", "coverage", "primary_hit_rate", "meta_hit_rate", "label_cost")}
+    summary["lineage"] = meta["lineage"]
+    if save and registry is not None:                                                  # the complete base-plus-filter strategy against the base signal, paired on the validation segment
+        from . import comparison as cmp_
+
+        try:
+            summary["versus_base"] = cmp_.compare_saved(registry, exp_id, exp.id)
+        except (ValueError, KeyError, OSError) as exc:
+            summary["versus_base"] = {"eligibility": "failed", "reason": str(exc)}
+    return exp, summary
 
 
 def compare_experiments(registry, ids: list[str], max_points: int = 700) -> dict:

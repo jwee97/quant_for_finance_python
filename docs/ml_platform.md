@@ -213,6 +213,30 @@ GET  /api/ml/improvement-experiment?id=cmp-...               # the card with its
 
 The verdicts are `supported_on_development`, `worse` or `inconclusive`, each with its reason and the paired difference with its interval; losing and inconclusive candidates stay listed. The feature family compares single economically motivated feature groups before the stability-selected set (model kind `stable_select`, which chooses its features inside each fold's training rows and records the chosen and rejected ones with their frequencies). The horizon family moves the target, the horizon and the holding period together and compares the daily net returns of the book each implies; it never divides a multi-day return by its horizon. The portfolio family compares the existing position rule with `cost_aware_mean_variance`, which weighs a return forecast against risk and trading cost from the book actually held and counts every solve (optimal, infeasible, failed, no trade); it is refused for a rank score.
 
+### Strategy-improvement experiments (Release 7)
+
+New rules are overlays on the book a position rule builds; each is off unless its setting is present, so an existing configuration is unchanged.
+
+```
+signal: {no_trade_margin: 1.0}            # trade only if the gain exceeds the cost times (1 + margin); no_trade_hold_margin adds hysteresis
+signal: {trade_filter_k: 1.0}             # trade only if the net edge is at least k forecast-error deviations
+signal: {method: calibrated_sizing}       # size from a walk-forward calibrated forecast and its uncertainty; flat with no demonstrated edge
+signal: {regime_exposure: vol_quantile}   # also hmm, markov_switching: filtered states, budgets from the book's own past, never above 1
+model:  {kind: model_ensemble, params: {members: "ridge,lasso", weighting: stacked, shrink: 0.5}}   # also stacked_regime
+```
+
+```
+quant ml-delay <experiment> [--delays 0,1,2,5]     # IC, expected edge, net result and capacity when the book is executed later
+GET  /api/ml/delay-report?id=...&delays=0,1,2,5&participation=0.1
+POST /api/ml/improvement-experiment {"family": "rebalancing", "presets": ["no_trade:1.0", "trade_filter:1.0"], ...}
+POST /api/ml/improvement-experiment {"family": "risk_control", "candidates": [{"signal": {"regime_exposure": "vol_quantile"}}], ...}
+POST /api/ml/improvement-experiment {"family": "ensemble", "members": "ridge,lasso,elasticnet", "select_baseline": true, "presets": ["weighting:stacked"], ...}
+POST /api/ml/improvement-experiment {"family": "combination", "combination_of": [{"card_id": "cmp-...", "candidate": "..."}, ...], "ablation": true}
+POST /api/ml/combine {"ids": [...], "development_end": "2021-12-31"}   # adds mixture_study: the best single member chosen up to the date against each mixture after it
+```
+
+The families are `target`, `feature`, `horizon`, `portfolio`, `rebalancing`, `risk_control`, `ensemble`, `execution` and `combination`. A combination exists only for components that were each compared on their own, and its tests join their multiple-testing family; an ablation removes one component at a time. A risk-control card reports the candidate's drawdown at the baseline's volatility, because a smaller position lowers drawdown without any timing skill. The verdicts are still development-segment verdicts, and the gate decision of every card is `not_evaluated`.
+
 ## If LightGBM or XGBoost shows as "not available"
 
 The two boosting libraries are optional and need the OpenMP runtime of the operating system (`libgomp.so.1` on Linux). Where the library is missing, importing them fails with `OSError: libgomp.so.1: cannot open shared object file`. The Machine learning tab does not fail with it: the model list shows LightGBM and XGBoost as not available, with the reason, and every other model (linear, ridge, lasso, elastic net, logistic, random forest, scikit-learn's histogram gradient boosting, autoregression, Kalman, online and regime models) works as before. Scikit-learn's histogram gradient boosting is the same family of model as LightGBM and needs nothing extra.
@@ -234,7 +258,8 @@ Served by `src/webapp/ml_api.py`; JSON in, JSON out. Anything slow returns `{"jo
 | `GET /api/ml/experiments`, `/api/ml/experiment`, `/api/ml/models`, `/api/ml/trials`, `/api/ml/feature-sets` | the registry |
 | `GET /api/ml/compare`, `/api/ml/explain`, `POST /api/ml/combine` | comparison, one prediction explained, strategy combination |
 | `GET /api/ml/forward`, `POST /api/ml/forward/step` (job) | forward-test signals and the daily step |
-| `GET /api/ml/alpha-diagnostics`, `GET /api/ml/portfolio-diagnostics`, `GET /api/ml/improvement-experiment`, `POST /api/ml/improvement-experiment` (job) | Release 6: alpha and portfolio diagnostics of a saved experiment; frozen comparison cards |
+| `GET /api/ml/alpha-diagnostics`, `GET /api/ml/portfolio-diagnostics`, `GET /api/ml/improvement-experiment`, `POST /api/ml/improvement-experiment` (job) | Release 6: alpha and portfolio diagnostics of a saved experiment; frozen comparison cards (Release 7 adds the families `rebalancing`, `risk_control`, `ensemble`, `execution` and `combination`) |
+| `GET /api/ml/delay-report` | Release 7: IC, expected edge, net result and capacity at declared delays |
 | `POST /api/ml/promote`, `/api/ml/delete` | model stages; delete an experiment (needs `confirm: true`) |
 | `GET /api/jobs`, `GET /api/job/<id>` | every job the app has run, newest first (without results), and one job with its result: a page that was reloaded, or an app that was restarted, finds a run again (see below) |
 

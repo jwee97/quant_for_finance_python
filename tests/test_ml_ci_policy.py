@@ -30,6 +30,8 @@ RELEASE_5 = ["tests/test_ml_nested_selection.py", "tests/test_ml_statistical_inf
 RELEASE_6 = ["tests/test_ml_risk_models.py", "tests/test_ml_allocation.py", "tests/test_ml_cost_aware_signal.py", "tests/test_ml_alpha_diagnostics.py", "tests/test_ml_relative_targets.py",
              "tests/test_ml_stable_selection.py", "tests/test_ml_parsimony.py", "tests/test_ml_comparison_harness.py", "tests/test_ml_horizons.py", "tests/test_ml_r6_reports.py",
              "tests/test_ml_alpha_portfolio_surfaces.py"]
+RELEASE_7 = ["tests/test_ml_overlays.py", "tests/test_ml_calibrated_sizing.py", "tests/test_ml_regime_exposure.py", "tests/test_ml_stacked_ensemble.py", "tests/test_ml_mixture_study.py", "tests/test_ml_meta_label_audit.py",
+             "tests/test_ml_delay_report.py", "tests/test_ml_improvement_families.py", "tests/test_ml_r7_surfaces.py"]
 
 
 def steps(job: dict) -> list[str]:
@@ -145,3 +147,13 @@ def test_the_release_6_tests_run_in_the_base_install_and_the_dashboard_lanes_and
     assert "tests/test_webapp_ml_alpha_browser.py" in " ".join(steps(CI["jobs"]["browser"]))
     named = {t for tests, _ in vf.REQUIREMENTS.values() for t in tests}
     assert set(RELEASE_6) <= named, "every Release 6 test file is the evidence of some requirement"
+
+
+def test_the_release_7_tests_run_in_the_base_install_and_the_dashboard_lanes_and_the_browser_lane():
+    for lane in ("ml-base", "replit-python"):
+        text = " ".join(steps(CI["jobs"][lane]))
+        for t in RELEASE_7:
+            assert t in text, f"{t} is not run by the {lane} lane"
+    assert "tests/test_webapp_ml_r7_browser.py" in " ".join(steps(CI["jobs"]["browser"]))
+    named = {t for tests, _ in vf.REQUIREMENTS.values() for t in tests}
+    assert set(RELEASE_7) <= named, "every Release 7 test file is the evidence of some requirement"

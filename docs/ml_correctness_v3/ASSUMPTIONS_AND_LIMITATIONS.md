@@ -220,3 +220,26 @@ participation limits and expired orders; impact when volume is available; intere
 - A constant paired difference (two arms that differ by a fixed amount) has no long-run variance and is `insufficient`, not a significant result.
 - `conditional_ic` gave a signal the existing signals reproduce exactly the state `tied_signal`; it is now `explained_signal`, a different condition, and its IC is unavailable, not zero.
 
+
+# Release 7: controlled strategy-improvement experiments
+
+## What the overlays, ensembles and comparisons are, and are not
+
+- **Development evidence.** Every arm of a comparison is a development run: the test and forward outcomes are not predicted, the verdicts are `supported_on_development`, `worse` or `inconclusive`, and the gate decision of a card is always `not_evaluated`. A gain here motivates a frozen evaluation; it is not that evaluation, and no strategy is promoted by it.
+- **One change, then combinations.** A combination is built only from components that were each compared on their own, and its multiple-testing family includes theirs. Combining the components that looked best is still a selection among the components, and the card says so.
+- **Arms that act after the forecasts re-run the baseline's saved predictions.** The two alternatives share forecasts, folds and risk model; that is why a no-trade region or a regime exposure is compared fairly, and it means the card measures the rule and not a retrained model.
+- **No-trade region and trade filter.** Both read the model's score as an expected return over the dataset's horizon, so they refuse a rank or a probability. The no-trade region applies at the engine's rebalance dates, weighs utility under the platform's own covariance and costs, and has no market-impact model. The filter's error scale is the RMS forecast error of a trailing window of settled decisions; with no settled decision there is no estimate, nothing is filtered, and the count of such decisions is reported. A lower coverage is not a better result, and the log says how much diversification the rejections cost.
+- **Calibrated sizing.** The score is mapped to return units by a cross-sectional slope estimated walk-forward on settled outcomes with a Newey-West error; with no demonstrated edge the book is flat, and the gross is whatever the edge and the risk imply (never scaled up). It does not make a probability calibrated.
+- **Regime exposure.** States are filtered, never smoothed, and are numbered by volatility at each refit; the budgets are read from what the unscaled book earned the day after each state, over the rows before the refit. A state with too little evidence gets the neutral exposure, a model that cannot be fitted leaves the exposure neutral, and the overlay only lowers a book. It needs `regime_min_train` rows of the book's own history before it acts; because the book exists only where the experiment predicted, a short development-mode sample may never reach that, and `warmup_days` says so. A drawdown gain is read against a volatility-matched drawdown: a smaller position is not better timing.
+- **Stacked ensemble weights** are fitted on the held-out stage, whose base predictions are out of sample, by non-negative least squares shrunk toward equal weights; a member that scores less than the coverage floor of the held-out rows carries no weight. They are static between refits, and `stacked_regime` fits them per regime with the pooled weights where a regime has fewer than 20 held-out dates.
+- **The development-selected single model** is the best of N on the validation segment: an optimistic estimate of that model, so an ensemble that beats it has beaten a baseline selected in its favour. The regime-conditioned mixtures were tested on return streams built to have that structure and on noise; no claim is made about real markets.
+- **Meta-labels** treat a bet as right if it earned more than the primary's declared one-way cost paid twice; that is not the itemised cost of each bet. The comparison of the filtered strategy with its base describes a pair; it is not a controlled one-change test.
+- **Delay report.** A delay is a number of sessions on the dataset's own index, reported in calendar days; the book that executes is the one decided at the observation close, and no rule re-reads the signal later. Net results are the vectorized engine's on the saved book. Capacity is the share of the book one session's participation limit lets through, at the delayed session's liquidity, and needs a volume record and a limit; it is `not_established` without them.
+- **Not done in this release:** P2-16 (capital and liquidity inside the optimiser's choice) and P2-17 (the tie-break on search and tuning winners) remain `in_progress`, and no real-data evidence that any improvement holds was produced.
+
+## Fixed in passing
+
+- A card's changed settings listed the settings the configuration fills in (`cost_bps` and the others); they are now listed apart as `derived`.
+- Two components whose cards generated the same candidate name had the same ablation name; the card id now tells them apart.
+- A member that scored too few held-out rows made an ensemble's mean IC an empty-slice warning and could blank every prediction; it is now left out below the coverage floor and its rows are renormalised.
+

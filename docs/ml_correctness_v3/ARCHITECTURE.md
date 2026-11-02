@@ -298,3 +298,40 @@ Targets go through the existing catalogue (`targets.make_target`, `dataset.targe
 * No registry migration: cards, results and diagnostics are `analysis_records` of new kinds.
 * Verification requirements P2-01, P2-02, P2-03, P2-04, P2-07, P2-10, P2-13, P2-14, P2-16, P2-17, P2-18.
 
+
+# Release 7: controlled strategy-improvement experiments
+
+## What was reused
+
+The position rules are still built by `signals.build_weights`; the new rules are overlays that run on the book it returns, with the same covariance estimators (`risk_models`), the same costs and the same engine. Every arm of a comparison is a `run_experiment`, or a `rebacktest` of the baseline's saved predictions when the change acts only after the forecasts exist (the position rule, the schedule, the costs, the execution), so that the two alternatives are evaluated on the same forecasts, the same folds and the same risk model. Comparison cards, results and reports are `analysis_records` of new kinds; no migration was added.
+
+## Where the pieces live
+
+| Concern | Module |
+| --- | --- |
+| no-trade regions: utility of the held book against the proposed one, a safety margin, hysteresis, hard controls that override with reasons | `notrade.py` |
+| the net-edge trade filter: a forecast-error scale from settled decisions, coverage and rejection log | `tradefilter.py` |
+| sizing from a calibrated forecast and its uncertainty | `sizing.py` (signal method `calibrated_sizing`) |
+| causal regime exposure: filtered states numbered by volatility, a budget per state from the unscaled book's own past | `regime_exposure.py` |
+| regularised stacked ensemble weights, member coverage | `ensemble_models.py` (`stacked`, `stacked_regime`) |
+| mixtures of strategy streams against the best single member chosen on development | `ensembles.py` (`mixture_study`) |
+| meta-labels with the declared cost, the base-plus-filter strategy against its base | `ensembles.py`, `comparison.compare_saved` |
+| IC, edge, net result and capacity at declared delays | `delay_report.py` |
+| the families, presets, combinations, ablations and the development-selected baseline | `comparison.py` |
+
+## Overlays and their order
+
+`build_weights` applies, after the book is built and averaged over the holding period: the trade filter (`trade_filter_k`), then the no-trade region (`no_trade_margin`), then the regime exposure (`regime_exposure`). The first two weigh an expected return against a cost and therefore need a return forecast (`contracts.check_signal_use` refuses a rank or probability output). The regime exposure is last because it is a risk control on the whole book: a risk cut must not be vetoed by a rule that weighs return against cost. It multiplies the book by a number between its floor and its cap (at most 1), changes only when the filtered state changes, and so cannot lever a book past the limits it was built within. The in-sample book of an experiment is a display and runs no overlay, and a forward test refuses every rule that needs state (`monitoring.ForwardTracker`).
+
+## Combinations and ablations
+
+`comparison.combination_card` builds a card from components that were each run on their own: the candidate is their changes laid together (two components that set the same setting differently are refused), its allowed paths are the union of the components' families, and its Holm family includes the components' own tests, so a combination is another logged candidate and not a free reuse of the best findings. `ablation_card` takes the full combination as the baseline and removes one component at a time (its settings return to the original baseline's; a setting the baseline never had is switched off); a candidate that is `worse` says the removed component helps. Both record their components in `lineage`.
+
+## Version changes (Release 7)
+
+* Signal settings (absent from the defaults, so no existing configuration hash changes): `no_trade_margin`, `no_trade_hold_margin`, `trade_filter_k`, `trade_filter_cost_margin`, `trade_filter_window`, `calib_window`, `calib_min_t`, `stability_window`, `regime_exposure`, `regime_states`, `regime_floor`, `regime_cap`, `regime_refit_every`, `regime_min_days`, `regime_min_train`; the signal method `calibrated_sizing`; the derived settings `cost_bps`, `window_days`, `label_offset`, `rebalance` and `lag_total` are filled in by the configuration only when a rule needs them.
+* Ensemble weightings `stacked` and `stacked_regime` with `shrink` and `min_coverage`; a member below the coverage floor is left out of every weighting.
+* Comparison families `rebalancing`, `risk_control`, `ensemble`, `execution` and `combination`; `meta_label_scores` takes a `cost`.
+* `GET /api/ml/delay-report`, `development_end` on `POST /api/ml/combine`, the families and `members`, `select_baseline`, `combination_of`, `ablation` and `options` on `POST /api/ml/improvement-experiment`; `quant ml-delay`.
+* Verification requirements P2-05, P2-06, P2-08, P2-09, P2-11, P2-12, P2-15.
+

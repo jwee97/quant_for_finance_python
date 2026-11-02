@@ -35,7 +35,7 @@ from .evaluation import rank_ic_wide, sharpe_of
 from .experiments import confidence_from_scores, regime_series, trailing_vol
 from .models import Model
 from .registry import Registry, RegistryError
-from .signals import build_weights
+from .signals import OVERLAY_KEYS, STATEFUL_METHODS, build_weights
 from .targets import forward_return
 
 PSI_ALERT = 0.25
@@ -151,9 +151,12 @@ class ForwardTracker:
     def step(self, bundle=None, as_of=None, capital: float = 100_000.0, _now: float | None = None) -> dict:
         """Produce and save the signal for the last date in the data (or ``as_of``). Returns the signal: scores, target weights, current weights, trades and the paper orders for ``capital``, and the ledger's answer
         (``commitment``: committed as prospective or as a replay, unchanged, refused by a risk limit or a halt, or rejected as a conflict). ``_now`` is a test hook; the API never passes it."""
+        sig_cfg = self.cfg["signal"]
+        if sig_cfg["method"] in STATEFUL_METHODS or any(sig_cfg.get(k) is not None for k in OVERLAY_KEYS):
+            raise ValueError(f"forward testing does not support signal.method '{sig_cfg['method']}' with the cost-aware optimiser, calibrated sizing, a no-trade region or a trade filter: these rules depend on the book actually held "
+                             "and on a history of settled outcomes, and a step scores only the last few dates. Forward-test an experiment that uses a rank-based rule, or re-backtest this one")
         ds, bundle = self._dataset(bundle, as_of)
         date = ds.dates[-1]
-        sig_cfg = self.cfg["signal"]
         h = max(int(sig_cfg.get("holding_period", 1)), 1)
         dates = ds.dates[-h:]
         rows = ds.X[ds.X.index.get_level_values(0).isin(dates)]

@@ -61,17 +61,30 @@ def check_signal_use(kind: str, task: str, target: str, signal_cfg: dict) -> str
     elif ok in ("volatility_forecast", "drawdown_forecast"):
         raise OutputContractError(f"a {kind} model on {target} forecasts {ok.replace('_', ' ')}, which is not how attractive an asset is; map it to a strategy explicitly, or set signal.reinterpret_outputs to rank assets by it as it is")
     elif method == "cost_aware_mean_variance":
-        from .targets import parse_target
-
-        tkind = parse_target(target)[0]
-        if ok != "expected_return" or tkind not in ("fwd_ret", "excess_ret", "sector_ret", "resid_ret"):
-            raise OutputContractError(f"the cost-aware optimiser weighs the forecast against risk and cost in return units, but a {kind} model on {target} outputs a {ok.replace('_', ' ')}"
-                                      f"{'' if ok != 'expected_return' else ' of a ' + tkind.replace('_', ' ') + ' target'}, which is not a return; choose a rank-based rule, or set signal.reinterpret_outputs to read it as a return anyway")
-        if tkind != "fwd_ret" and abs(float(signal_cfg.get("net", 0.0))) > 1e-12:
-            raise OutputContractError(f"a {tkind.replace('_', ' ')} forecast is a return relative to a benchmark or group, which says nothing about the market's own direction: the optimiser can only hold it dollar neutral (set signal.net to 0)")
+        _return_forecast(kind, target, ok, signal_cfg, "the cost-aware optimiser weighs the forecast against risk and cost")
+    elif method == "calibrated_sizing":
+        if ok not in ("expected_return", "ranking_score", "quantile_forecast"):
+            raise OutputContractError(f"calibrated sizing calibrates a score to a return by regression on what followed it, which needs a score that orders assets by their return; a {kind} model on {target} outputs a {ok.replace('_', ' ')}"
+                                      "; choose another rule, or set signal.reinterpret_outputs to read it as a score anyway")
     elif method in RANK_RULES and ok not in SCORE_KINDS:
         raise OutputContractError(f"the position rule '{method}' cannot read a {ok.replace('_', ' ')}")
+    if signal_cfg.get("no_trade_margin") is not None:
+        _return_forecast(kind, target, ok, signal_cfg, "the no-trade region compares utilities in return units")
+    if signal_cfg.get("trade_filter_k") is not None:
+        _return_forecast(kind, target, ok, signal_cfg, "the trade filter compares each trade's edge with the forecast error and the cost")
     return ok
+
+
+def _return_forecast(kind: str, target: str, ok: str, signal_cfg: dict, why: str) -> None:
+    """Refuse a rule that needs a forecast in return units when the model's output is not one (a rank score, a probability), or is a return relative to a benchmark while the rule would hold a net exposure."""
+    from .targets import parse_target
+
+    tkind = parse_target(target)[0]
+    if ok != "expected_return" or tkind not in ("fwd_ret", "excess_ret", "sector_ret", "resid_ret"):
+        raise OutputContractError(f"{why}, but a {kind} model on {target} outputs a {ok.replace('_', ' ')}"
+                                  f"{'' if ok != 'expected_return' else ' of a ' + tkind.replace('_', ' ') + ' target'}, which is not a return; choose a rank-based rule, or set signal.reinterpret_outputs to read it as a return anyway")
+    if tkind != "fwd_ret" and abs(float(signal_cfg.get("net", 0.0))) > 1e-12:
+        raise OutputContractError(f"a {tkind.replace('_', ' ')} forecast is a return relative to a benchmark or group, which says nothing about the market's own direction: it can only be held dollar neutral (set signal.net to 0)")
 
 
 def build_contract(kind: str, task: str, target: str, ds, cfg: dict, config_hash: str | None = None) -> dict:

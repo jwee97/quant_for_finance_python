@@ -71,6 +71,14 @@ SOURCES = {
     "riskmodels": ["src/ml/risk_models.py", "src/portfolio/covariance.py", "src/ml/r6_reports.py"],
     "horizons": ["src/ml/horizons.py", "src/ml/signals.py", "src/ml/intervals.py", "src/ml/targets.py", "src/ml/comparison.py", "src/ml/datasets.py"],
     "parsimony": ["src/ml/parsimony.py", "src/ml/comparison.py"],
+    # Release 7: controlled strategy-improvement experiments
+    "notrade": ["src/ml/notrade.py", "src/ml/signals.py", "src/ml/config.py", "src/ml/contracts.py", "src/ml/risk_models.py", "src/ml/experiments.py", "src/ml/comparison.py"],
+    "tradefilter": ["src/ml/tradefilter.py", "src/ml/signals.py", "src/ml/config.py", "src/ml/contracts.py", "src/ml/experiments.py", "src/ml/comparison.py"],
+    "sizing7": ["src/ml/sizing.py", "src/ml/signals.py", "src/ml/config.py", "src/ml/contracts.py", "src/ml/inference.py", "src/ml/experiments.py", "src/ml/comparison.py"],
+    "ensemble7": ["src/ml/ensemble_models.py", "src/ml/ensembles.py", "src/ml/catalog_extra.py", "src/ml/comparison.py", "src/webapp/ml_api.py"],
+    "regime7": ["src/ml/regime_exposure.py", "src/ml/regimes.py", "src/ml/signals.py", "src/ml/config.py", "src/ml/comparison.py"],
+    "metalabel": ["src/ml/ensembles.py", "src/ml/comparison.py", "src/ml/training.py"],
+    "delay": ["src/ml/delay_report.py", "src/ml/alpha.py", "src/ml/backtest.py", "src/ml/r6_reports.py", "src/ml/cli.py", "src/webapp/ml_api.py"],
 }
 REQUIREMENTS = {                                                # requirement id -> (test files, source group)
     "P0-01": (["tests/test_ml_rl_accounting_reference.py"], "rl"),
@@ -140,6 +148,13 @@ REQUIREMENTS = {                                                # requirement id
     "P2-16": (["tests/test_ml_allocation.py"], "allocation"),
     "P2-17": (["tests/test_ml_parsimony.py", "tests/test_ml_comparison_harness.py"], "parsimony"),
     "P2-18": (["tests/test_ml_alpha_diagnostics.py", "tests/test_ml_r6_reports.py"], "alpha"),
+    "P2-05": (["tests/test_ml_overlays.py", "tests/test_ml_improvement_families.py", "tests/test_ml_r7_surfaces.py"], "notrade"),
+    "P2-06": (["tests/test_ml_calibrated_sizing.py"], "sizing7"),
+    "P2-08": (["tests/test_ml_stacked_ensemble.py", "tests/test_ml_mixture_study.py", "tests/test_ml_r7_surfaces.py"], "ensemble7"),
+    "P2-09": (["tests/test_ml_overlays.py"], "tradefilter"),
+    "P2-11": (["tests/test_ml_regime_exposure.py", "tests/test_ml_improvement_families.py"], "regime7"),
+    "P2-12": (["tests/test_ml_meta_label_audit.py", "tests/test_ml_oof_lineage.py"], "metalabel"),
+    "P2-15": (["tests/test_ml_delay_report.py", "tests/test_ml_r7_surfaces.py"], "delay"),
 }
 
 

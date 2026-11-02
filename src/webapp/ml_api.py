@@ -42,6 +42,8 @@ from ..ml.models import Model, ModelUnavailable, default_refit, model_catalog
 from ..ml.registry import STAGES, Registry
 from ..ml.signals import METHODS as SIGNAL_METHODS
 from ..ml import comparison as cmpn, r6_reports as r6
+from ..ml import delay_report as dly
+from ..ml.ensemble_models import parse_members
 from ..ml.targets import CLASSIFICATION
 from ..ml.targets import KINDS as TARGET_KINDS
 from ..ml.training import plan_for
@@ -79,6 +81,7 @@ SIGNAL_TEXT = {"top_n_long_short": "Long the n highest scores, short the n lowes
                "uncertainty_weighted": "Score divided by the model's own predictive standard deviation (needs a model that reports one), with views on unusually uncertain assets shrunk by kappa",
                "uncertainty_mean_variance": "The same uncertainty-adjusted views through the inverse covariance of trailing returns: the covariance-aware version",
                "cost_aware_mean_variance": "The book that maximises the forecast return less risk, trading cost and turnover from the book actually held (needs a return forecast; solver status is reported)",
+               "calibrated_sizing": "The score calibrated to a return by regression on settled outcomes, sized by edge, its uncertainty, risk and signal stability; flat when no edge has been shown",
                "target_weights": "The scores ARE the target weights (for the reinforcement-learning agents, which size their own positions)"}
 ENSEMBLE_TEXT = {"equal": "One over N", "inverse_vol": "Weight by one over trailing volatility", "risk_parity": "Equal risk contributions from a shrunk covariance matrix", "mean_variance": "Long-only mean-variance with means shrunk halfway to their average",
                  "bayesian": "Mean-variance with Bayes-Stein shrunk means", "regime_conditioned": "Mean-variance on the days in the same volatility regime as today", "online_learning": "Multiplicative weights (Hedge): winners gain weight",
@@ -94,7 +97,11 @@ SPEC = {
     "signal": {"method": ("choice", SIGNAL_METHODS), "n": ("int", 1, 20), "quantile": ("float", 0.05, 0.5), "threshold": ("float", -10.0, 10.0), "gross": ("float", 0.1, 3.0), "net": ("float", -1.0, 1.0), "max_weight": ("float", 0.02, 1.0),
                "sector_cap": ("float", 0.05, 1.0), "holding_period": ("int", 1, 60), "regime_on_states": ("states",), "reinterpret_outputs": ("bool",), "kappa": ("float", 0.0, 10.0), "uncertainty_power": ("float", 0.0, 3.0), "mv_lookback": ("int", 40, 504),
                "mv_rebalance": ("int", 1, 60), "risk_aversion": ("float", 0.0, 100.0), "cov_method": ("choice", ("sample", "ewma", "lw_constant_correlation", "lw_identity", "pca_denoised", "factor")),
-               "cov_window": ("int", 60, 1000), "opt_every": ("int", 1, 60), "turnover_penalty": ("float", 0.0, 10.0), "alloc_fallback": ("choice", ("none", "hold", "equal_weight"))},
+               "cov_window": ("int", 60, 1000), "opt_every": ("int", 1, 60), "turnover_penalty": ("float", 0.0, 10.0), "alloc_fallback": ("choice", ("none", "hold", "equal_weight")),
+               "no_trade_margin": ("float", 0.0, 50.0), "no_trade_hold_margin": ("float", 0.0, 50.0), "trade_filter_k": ("float", 0.0, 10.0), "trade_filter_cost_margin": ("float", 0.0, 50.0),
+               "trade_filter_window": ("int", 40, 1000), "calib_window": ("int", 60, 2000), "calib_min_t": ("float", 0.0, 10.0), "stability_window": ("int", 5, 250),
+               "regime_exposure": ("choice", ("vol_quantile", "hmm", "markov_switching")), "regime_states": ("int", 2, 5), "regime_floor": ("float", 0.0, 1.0), "regime_cap": ("float", 0.05, 1.0),
+               "regime_refit_every": ("int", 5, 252), "regime_min_days": ("int", 20, 500), "regime_min_train": ("int", 60, 1000)},
     "backtest": {"rebalance": ("choice", ("daily", "weekly", "monthly")), "cost_bps": ("float", 0.0, 250.0), "slippage_bps": ("float", 0.0, 250.0), "target_vol": ("float", 0.01, 1.0), "max_leverage": ("float", 0.5, 5.0),
                  "extra_lag": ("int", 0, 20)},
     "execution": {"mode": ("choice", ("vectorized_legacy", "realistic_cash_equity")), "capital": ("float", 1_000.0, 1e12), "max_participation": ("float", 0.001, 1.0), "adv_window": ("int", 5, 250),
@@ -103,7 +110,7 @@ SPEC = {
                   "financing_spread": ("float", 0.0, 0.5), "lot": ("int", 1, 100_000), "min_adv_dollars": ("float", 0.0, 1e12), "min_listing_days": ("int", 0, 5000),
                   "shorts": ("choice", ("unconstrained", "refuse"))},
 }
-NULLABLE = {"start", "end", "regime_detector", "sector_cap", "target_vol", "max_participation"}                    # an explicit null means "none", not "use the default"
+NULLABLE = {"start", "end", "regime_detector", "sector_cap", "target_vol", "max_participation", "no_trade_margin", "no_trade_hold_margin", "trade_filter_k", "regime_exposure"}                    # an explicit null means "none", not "use the default"
 
 
 def _id(q: dict, key: str = "id") -> str:
@@ -196,7 +203,8 @@ class MlApi:
                 "/api/ml/feature-sets": self.feature_sets, "/api/ml/verification": self.verification, "/api/ml/models": self.models, "/api/ml/trials": self.trials, "/api/ml/forward": self.forward, "/api/ml/report-html": self.report_html,
                 "/api/ml/lineage": self.lineage, "/api/ml/holdout": self.holdout, "/api/ml/promotion-status": self.promotion_status, "/api/ml/statistical-diagnostics": self.statistical_diagnostics,
                 "/api/ml/null-controls": self.null_controls, "/api/ml/trading-diagnostics": self.trading_diagnostics, "/api/ml/validation-policy": self.validation_policy, "/api/ml/governance": self.governance_status,
-                "/api/ml/alpha-diagnostics": self.alpha_diagnostics, "/api/ml/portfolio-diagnostics": self.portfolio_diagnostics, "/api/ml/improvement-experiment": self.improvement_get}
+                "/api/ml/alpha-diagnostics": self.alpha_diagnostics, "/api/ml/portfolio-diagnostics": self.portfolio_diagnostics, "/api/ml/improvement-experiment": self.improvement_get,
+                "/api/ml/delay-report": self.delay_report}
 
     def post_routes(self) -> dict:
         return {"/api/ml/dataset/build": self.dataset_build, "/api/ml/train": self.train, "/api/ml/rebacktest": self.rebacktest, "/api/ml/search": self.search, "/api/ml/tune": self.tune, "/api/ml/tune/stop": self.tune_stop,
@@ -1080,6 +1088,33 @@ class MlApi:
             seq = dx.store(self.registry, "portfolio_diagnostics", exp_id, out, actor="api")
         return clean(common.envelope("ml_portfolio_diagnostics", {**out, "record_seq": seq}, {"registry": "platform"}, [], None, []))
 
+    def delay_report(self, q: dict) -> dict:
+        """``GET /api/ml/delay-report?id=<experiment>[&segment=validation][&delays=0,1,2,5][&participation=0.1][&stored=1]``: the saved experiment's rank IC, expected edge, net result and capacity when its
+        book is executed 0, 1, 2, 5 ... sessions later (the delays are declared in the request and 0 must be among them), the timing in real calendar days, and the stale-book rule: a delayed book cannot see
+        a newer signal. Capacity needs ``participation`` (a limit on the share of a day's volume) and the universe's volume; without them it is said to be not established. Each request is appended to
+        ``analysis_records``. The test and forward segments are refused unless a frozen plan evaluated them."""
+        _only(q, {"id", "segment", "delays", "participation", "stored"}, "/api/ml/delay-report")
+        exp_id = _id(q)
+        with _user_errors():
+            if str(q.get("stored") or "") in ("1", "true"):
+                return self._stored_record("ml_delay_report", exp_id, "delay_report")
+            try:
+                delays = [int(x) for x in str(q.get("delays") or "0,1,2,5").split(",") if x.strip() != ""]
+            except ValueError:
+                raise ApiError("delays is a comma-separated list of whole numbers of sessions, for example 0,1,2,5") from None
+            participation = _float(q, "participation", 0.0, 0.0, 1.0) or None
+            volume = None
+            if participation:
+                cfg = self.registry.report(exp_id)["config"]
+                try:
+                    volume = getattr(resolve_bundle(self.app.config, cfg["dataset"]["universe"], self.app.builder)[0], "volume", None)
+                except (FileNotFoundError, KeyError, ValueError):
+                    volume = None                                                                                 # capacity is then reported as not established, not assumed
+            with self._heavy:
+                out = dly.report(self.registry, exp_id, segment=str(q.get("segment") or "validation"), declaration=dly.declare(delays), volume=volume, max_participation=participation)
+            seq = dx.store(self.registry, "delay_report", exp_id, out, actor="api")
+        return clean(common.envelope("ml_delay_report", {**out, "record_seq": seq}, {"registry": "platform"}, [], None, []))
+
     def improvement_get(self, q: dict) -> dict:
         """``GET /api/ml/improvement-experiment?id=<card>`` (the frozen card with its results, negative findings and gate decision) or, without an id, the list of cards (``&study=`` narrows it)."""
         _only(q, {"id", "study"}, "/api/ml/improvement-experiment")
@@ -1090,7 +1125,7 @@ class MlApi:
                 data = {"cards": cmpn.list_cards(self.registry, _study(q["study"]) if q.get("study") else None)}
         return clean(common.envelope("ml_improvement_experiment", data, {"registry": "platform"}, [], None, []))
 
-    IMPROVEMENT_FAMILIES = ("target", "feature", "horizon", "portfolio")
+    IMPROVEMENT_FAMILIES = ("target", "feature", "horizon", "portfolio", "rebalancing", "risk_control", "ensemble", "execution", "combination")
 
     def _saved_baseline(self, exp_id: str) -> dict:
         """A saved experiment's configuration in the shape a request carries it (the derived signal settings are left out: validation derives them again)."""
@@ -1112,14 +1147,35 @@ class MlApi:
         Optional: ``study``, ``primary_metric`` (``ic`` or ``net_sharpe``), ``parsimony`` (a declared tie-break rule), ``min_effect``, ``level``, ``minimum_coverage``, ``n_boot``, ``seed``. The arms are development
         runs (the test and forward outcomes are not predicted); nothing here promotes anything."""
         allowed = {"family", "hypothesis", "one_change", "baseline", "from_experiment", "candidates", "presets", "study", "primary_metric", "parsimony", "min_effect", "level", "minimum_coverage", "n_boot",
-                   "seed"}
+                   "seed", "members", "select_baseline", "combination_of", "ablation", "options"}
         _only(body, allowed, "/api/ml/improvement-experiment")
         family = str(body.get("family") or "")
         if family not in self.IMPROVEMENT_FAMILIES:
             raise ApiError(f"family must be one of {list(self.IMPROVEMENT_FAMILIES)}")
+        ablation = bool(body.get("ablation"))
         for key in ("hypothesis", "one_change"):
-            if not str(body.get(key) or "").strip():
+            if not str(body.get(key) or "").strip() and not (ablation and family == "combination"):
                 raise ApiError(f"{key} is required: state it before the numbers exist")
+        if family == "combination":
+            return self._combination_run(body, ablation)
+        options = body.get("options") or {}
+        if not isinstance(options, dict) or set(options) - {"capital", "max_participation"}:
+            raise ApiError("options holds capital and max_participation (the realistic execution preset)")
+        members = body.get("members")
+        if members is not None:
+            text = ",".join(str(m) for m in members) if isinstance(members, list) else str(members)
+            try:
+                parsed = parse_members(text)
+            except ValueError as exc:
+                raise ApiError(str(exc)) from None
+            if not 2 <= len(parsed) <= 8:
+                raise ApiError("members: between two and eight models")
+            options = {**options, "members": text}
+        if family == "ensemble" and not options.get("members"):
+            raise ApiError("an ensemble comparison needs members, for example \"ridge,lasso,elasticnet\"")
+        select = bool(body.get("select_baseline"))
+        if select and family != "ensemble":
+            raise ApiError("select_baseline applies to the ensemble family: the baseline is the best single member on the development segment")
         cands, presets = body.get("candidates") or [], body.get("presets") or []
         if not isinstance(cands, list) or not isinstance(presets, list) or any(not isinstance(c, dict) for c in cands) or not 1 <= len(cands) + len(presets) <= 6:
             raise ApiError("candidates is a list of 1 to 6 objects, each a change laid over the baseline (presets may stand in for some or all of them)")
@@ -1148,19 +1204,56 @@ class MlApi:
         changes = []
         if presets:
             with _user_errors():
-                changes.extend(change(c) for c in cmpn.preset_changes(family, base, presets))
+                changes.extend(change(c) for c in cmpn.preset_changes(family, base, presets, options))
         changes.extend(change(c) for c in cands)
         study = _study(body["study"]) if body.get("study") else f"improve-{family}-{cmpn.digest(base, 6)}"
 
         def work(progress):
             with _user_errors():
-                card = cmpn.new_card(str(body["hypothesis"]), family, base, changes, study_id=study, one_change_description=str(body["one_change"]), primary_metric=metric, parsimony=rule,
-                                     min_effect=min_effect, level=level, minimum_coverage=coverage, n_boot=n_boot, seed=seed)
+                baseline, selection = base, None
+                if select:                                                                                    # the single model development would choose: each member alone, then the ensemble against the winner
+                    selection = cmpn.select_baseline(self.registry, base, parse_members(options["members"]), study_id=study, config=self.app.config, builder=self.app.builder, progress=progress,
+                                                     metric=metric or "ic")
+                    baseline = cmpn.merge(base, {"model": {"kind": selection["selected"]["kind"], "params": selection["selected"]["params"]}})
+                card = cmpn.new_card(str(body["hypothesis"]), family, baseline, changes, study_id=study, one_change_description=str(body["one_change"]), primary_metric=metric, parsimony=rule,
+                                     min_effect=min_effect, level=level, minimum_coverage=coverage, n_boot=n_boot, seed=seed, baseline_selection=selection)
                 cmpn.freeze(self.registry, card, actor="api")
                 out = cmpn.run(self.registry, card["card_id"], config=self.app.config, builder=self.app.builder, progress=progress)
             return clean({"card_id": card["card_id"], "card": out})
 
         return self._submit(f"ml: {family} comparison", work)
+
+    def _combination_run(self, body: dict, ablation: bool) -> dict:
+        """The combination (or its leave-one-out ablation) of components that were each compared on their own: ``combination_of`` is a list of ``{card_id, candidate}``. The baseline, the candidates and the
+        presets are the components' and cannot be given again."""
+        for key in ("baseline", "from_experiment", "candidates", "presets", "members", "select_baseline", "options"):
+            if body.get(key):
+                raise ApiError(f"{key} does not apply to a combination: it is built from the components, which were each compared against one baseline")
+        parents = body.get("combination_of")
+        if not isinstance(parents, list) or not 2 <= len(parents) <= 6 or any(not isinstance(x, dict) or set(x) != {"card_id", "candidate"} for x in parents):
+            raise ApiError("combination_of is a list of 2 to 6 objects {card_id, candidate}, each a candidate of a card that was run")
+        metric = body.get("primary_metric")
+        if metric not in (None, "ic", "net_sharpe"):
+            raise ApiError("primary_metric is ic or net_sharpe")
+        kw = dict(primary_metric=metric, min_effect=_float(body, "min_effect", 0.0, 0.0, 10.0), level=_float(body, "level", 0.05, 0.001, 0.2), minimum_coverage=_float(body, "minimum_coverage", 0.8, 0.0, 1.0),
+                  n_boot=_int(body, "n_boot", 1000, 200, 3000), seed=_int(body, "seed", 0, 0, 1_000_000))
+        if body.get("study"):
+            kw["study_id"] = _study(body["study"])
+        if body.get("parsimony") is not None:
+            raise ApiError("a combination is compared against its baseline, not against a simpler candidate: parsimony does not apply")
+        make = cmpn.ablation_card if ablation else cmpn.combination_card
+        text = {"hypothesis": str(body.get("hypothesis") or "").strip(), "one_change_description": str(body.get("one_change") or "").strip()}
+        if ablation:
+            text = {k: v for k, v in text.items() if v}
+
+        def work(progress):
+            with _user_errors():
+                card = make(self.registry, parents, **text, **kw)
+                cmpn.freeze(self.registry, card, actor="api")
+                out = cmpn.run(self.registry, card["card_id"], config=self.app.config, builder=self.app.builder, progress=progress)
+            return clean({"card_id": card["card_id"], "card": out})
+
+        return self._submit(f"ml: {'ablation' if ablation else 'combination'} comparison", work)
 
     def multiseed_run(self, body: dict) -> dict:
         """``POST /api/ml/multiseed/run {"id", "seeds", "n_boot"?}`` (a job): train the experiment's own configuration once per predeclared seed (three or more, distinct) in development mode, as looks of the same
@@ -1264,6 +1357,11 @@ class MlApi:
             raise ApiError(f"methods must be drawn from {list(en.METHODS)}")
         kw = {"lookback": _int(body, "lookback", 252, 60, 1000), "rebalance": _int(body, "rebalance", 21, 5, 126), "min_history": _int(body, "min_history", 126, 40, 750),
               "risk_aversion": _float(body, "risk_aversion", 5.0, 0.5, 50.0), "eta": _float(body, "eta", 5.0, 0.5, 50.0), "seed": _int(body, "seed", 0, 0, 1_000_000)}
+        if body.get("development_end"):                                                                  # the best single member is chosen up to this date and each mixture is judged after it
+            try:
+                kw["development_end"] = str(pd.Timestamp(str(body["development_end"])).date())
+            except (ValueError, TypeError):
+                raise ApiError("development_end is a date, for example 2021-12-31") from None
         with _user_errors(), self._heavy:
             out = en.combine_experiments(self.registry, ids, tuple(methods), **kw)
         return clean(common.envelope("ml_combine", out, {"experiments": "platform"}, [], out["start"], [out["note"]]))

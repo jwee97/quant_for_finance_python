@@ -12,7 +12,7 @@
   const SIGNAL_NAME = { top_n_long_short: "Long the top n, short the bottom n", long_only_top_quantile: "Long only: the top quantile", proportional: "Proportional to the score", vol_scaled: "Score divided by volatility", rank_normalised: "Weighted by rank",
     threshold: "Long above, short below a threshold", regime_filtered: "Only in the calm regime", confidence_weighted: "Score times the model's confidence",
     uncertainty_weighted: "Score over the model's own uncertainty", uncertainty_mean_variance: "Uncertainty-adjusted views through the covariance", target_weights: "The scores are the weights (the agents)" };
-  const SIGNAL_FIELDS = { top_n_long_short: ["n"], long_only_top_quantile: ["quantile"], threshold: ["threshold"], uncertainty_weighted: ["kappa", "uncertainty_power"], uncertainty_mean_variance: ["kappa", "uncertainty_power", "mv_lookback"], cost_aware_mean_variance: ["risk_aversion", "cov_window", "opt_every", "turnover_penalty"] };
+  const SIGNAL_FIELDS = { top_n_long_short: ["n"], long_only_top_quantile: ["quantile"], threshold: ["threshold"], uncertainty_weighted: ["kappa", "uncertainty_power"], uncertainty_mean_variance: ["kappa", "uncertainty_power", "mv_lookback"], cost_aware_mean_variance: ["risk_aversion", "cov_window", "opt_every", "turnover_penalty"], calibrated_sizing: ["risk_aversion", "calib_window", "calib_min_t"] };
   const RL_KINDS = new Set(["ppo", "sac", "recurrent_ppo"]), SLOW = new Set(["deep sequence", "forecasting", "representation", "graph", "reinforcement"]);
   const METHOD_NAME = { equal: "Equal weight", inverse_vol: "Inverse volatility", risk_parity: "Risk parity", mean_variance: "Mean-variance", bayesian: "Bayes-Stein", regime_conditioned: "Regime-conditioned", online_learning: "Online learning (Hedge)",
     bandit: "Bandit (Thompson)", best_trailing: "Best trailing Sharpe", regime_selector: "Best in this regime" };
@@ -52,7 +52,7 @@
       signal: "top_n_long_short", n: "3", quantile: "30", threshold: "0", gross: "1", net: "0", maxWeight: "35", holding: "5", rebalance: "weekly", cost: "5", slippage: "2", targetVol: "10", maxLev: "1.5",
       explain: true, robust: false, finalize: false, seed: "0", sort: "validation.sharpe", fModel: "", fStage: "", fUniverse: "", exp: "", asset: "", date: "", perms: "40",
       searchKind: "search", engine: "builtin", kinds: new Set(), nRandom: "8", nBayes: "6", generations: "2", population: "6", topK: "2", tuneEffort: "standard",
-      methods: new Set(), lookback: "252", every: "21", riskAversion: "5", capital: "100000", asOf: "", kappa: "0", uncertainty_power: "1", mv_lookback: "126", risk_aversion: "5", cov_window: "252", opt_every: "5", turnover_penalty: "0" },
+      methods: new Set(), lookback: "252", every: "21", riskAversion: "5", capital: "100000", asOf: "", kappa: "0", uncertainty_power: "1", mv_lookback: "126", risk_aversion: "5", cov_window: "252", opt_every: "5", turnover_penalty: "0", calib_window: "504", calib_min_t: "2" },
   };
 
   /* ---------- what the server offers, and the list of experiments ---------- */
@@ -183,7 +183,8 @@
       kappa: { label: "Shrink views on unusually uncertain assets (kappa)", step: 0.1, min: 0, max: 10 }, uncertainty_power: { label: "Divide the view by uncertainty to the power", step: 0.25, min: 0, max: 3 },
       mv_lookback: { label: "Covariance window (days)", step: 21, min: 40, max: 504 }, risk_aversion: { label: "Risk aversion (the weight on variance)", step: 0.5, min: 0, max: 100 },
       cov_window: { label: "Covariance window (days)", step: 21, min: 60, max: 1000 }, opt_every: { label: "Re-solve every (days; set to the horizon)", step: 1, min: 1, max: 60 },
-      turnover_penalty: { label: "Quadratic turnover penalty", step: 0.1, min: 0, max: 10 } };
+      turnover_penalty: { label: "Quadratic turnover penalty", step: 0.1, min: 0, max: 10 }, calib_window: { label: "Calibration window (settled decisions)", step: 21, min: 60, max: 2000 },
+      calib_min_t: { label: "Smallest t-statistic of the calibration that sizes a bet", step: 0.5, min: 0, max: 10 } };
     for (const k of SIGNAL_FIELDS[f.signal] || []) Q.labField(b, { key: k, kind: "number", ...spec[k] }, f, after);
     Q.labField(b, { key: "gross", label: "Gross exposure", kind: "number", step: 0.1, min: 0.1, max: 3 }, f, after);
     Q.labField(b, { key: "maxWeight", label: "Largest position (% of the book)", kind: "number", step: 1, min: 2, max: 100 }, f, after);
@@ -353,7 +354,7 @@
     { modes: ["controls_stats"], path: "/api/ml/statistical-diagnostics", query: { id } }, { modes: ["controls_exec"], path: "/api/ml/trading-diagnostics", query: { id } },
     { modes: ["controls_policy"], path: "/api/ml/validation-policy", query: {} }, { modes: ["controls_gov"], path: "/api/ml/governance", query: { id } },
     { modes: ["controls_alpha"], path: "/api/ml/alpha-diagnostics", query: { id, stored: 1 } }, { modes: ["controls_port"], path: "/api/ml/portfolio-diagnostics", query: { id, stored: 1 } },
-    { modes: ["controls_improve"], path: "/api/ml/improvement-experiment", query: {} }];
+    { modes: ["controls_improve"], path: "/api/ml/improvement-experiment", query: {} }, { modes: ["controls_delay"], path: "/api/ml/delay-report", query: { id, stored: 1 } }];
 
   M.run = async (fromForm) => {
     const m = M.mode, f = M.form;
@@ -1017,6 +1018,15 @@
       table: (b) => table(b, [{ label: "Method", get: (r) => METHOD_NAME[r.method] || r.method }, ...ids.map((id) => ({ label: nm[id] || shortId(id), num: true, get: (r) => pct((r.final_weights || {})[id] || 0, 1) }))], rows) });
     const c2 = W.card(root, "The strategies on their own", "Sharpe by segment, from each experiment's saved returns.");
     table(c2, [{ label: "Strategy", get: (id) => nm[id] || shortId(id) }, { label: "Full period", num: true, get: (id) => sig(d.strategy_sharpes[id]) }, ...OOS.map((s) => ({ label: SEG_NAME[s], num: true, get: (id) => sig(((d.strategy_segments || {})[id] || {})[s]) }))], ids);
+    if (d.mixture_study) {
+      const ms = d.mixture_study, bs = ms.best_single;
+      const mc = W.card(root, "Mixtures against the best single member", `The best member (${nm[bs.member] || bs.member}) was chosen on ${ms.development[0]} to ${ms.development[1]} only; every mixture is judged on ${ms.evaluation[0]} to ${ms.evaluation[1]}, with weights learned from earlier days.`);
+      W.hint(mc, bs.selection_note);
+      const diff = (x) => (x && x.value !== null && x.value !== undefined ? `${sig(x.value)} (${ci(x)})` : x ? String(x.eligibility).replace(/_/g, " ") : "n/a");
+      table(mc, [{ label: "Method", get: (r) => METHOD_NAME[r.method] || r.method }, { label: "Sharpe on the evaluation days", num: true, get: (r) => sig(r.sharpe) }, { label: "Minus the best single member", num: true, get: (r) => diff(r.vs_best_single) },
+        { label: "Minus the equal-weight mixture", num: true, get: (r) => (r.vs_equal_weight ? diff(r.vs_equal_weight) : "the benchmark") }], ms.rows);
+      W.flags(mc, ms.caveats || [], "Limits. ");
+    }
     if (ids.length >= 3 && d.similarity && d.similarity.explained > 0) {
       const ch2 = h("div", "charts", root);
       chartCard(ch2, "Strategy similarity map", `Strategies whose returns move together sit close (it keeps ${pct(d.similarity.explained, 0)} of the structure in two dimensions). Combining helps most when the points are far apart.`, {
@@ -1193,27 +1203,68 @@
     W.flags(c, pf.caveats || [], "Limits. ");
   }
   const FAMILY_PRESETS = { target: [["excess_ret", "Return minus the benchmark's"], ["sector_ret", "Return minus the sector's"], ["resid_ret", "Residual of the benchmark (beta from trailing data)"]],
-    horizon: [[1, "1 session"], [5, "5 sessions"], [10, "10 sessions"], [20, "20 sessions"]], feature: [["stable_select", "Stability-selected features inside each fold"]], portfolio: [["cost_aware", "Cost-aware allocation in place of the position rule"]] };
-  const FAMILY_NAME = { target: "Target engineering", horizon: "Forecast horizon", feature: "Feature selection", portfolio: "Portfolio construction" };
+    horizon: [[1, "1 session"], [5, "5 sessions"], [10, "10 sessions"], [20, "20 sessions"]], feature: [["stable_select", "Stability-selected features inside each fold"]],
+    portfolio: [["cost_aware", "Cost-aware allocation in place of the position rule"], ["calibrated_sizing", "Size from a calibrated forecast and its uncertainty"]],
+    rebalancing: [["no_trade:1.0", "No-trade region, margin 1 x the incremental cost"], ["no_trade:3.0", "No-trade region, margin 3 x the incremental cost"], ["trade_filter:1.0", "Trade filter: net edge of at least one forecast-error deviation"]],
+    risk_control: [["regime_exposure:vol_quantile", "Exposure by volatility band (causal)"], ["regime_exposure:hmm", "Exposure by hidden-Markov state (filtered, never smoothed)"], ["regime_exposure:markov_switching", "Exposure by Markov-switching state (filtered)"]],
+    ensemble: [["weighting:equal", "Equal weights"], ["weighting:dynamic", "Weights follow trailing rank IC"], ["weighting:regime", "The best members of each volatility regime"], ["weighting:stacked", "Regularised stacked weights"], ["weighting:stacked_regime", "Stacked weights per regime"]],
+    execution: [["realistic", "Orders, fills and participation limits in place of a flat cost"]], combination: [] };
+  const FAMILY_NAME = { target: "Target engineering", horizon: "Forecast horizon", feature: "Feature selection", portfolio: "Portfolio construction", rebalancing: "Rebalancing", risk_control: "Risk control", ensemble: "Ensembles",
+    execution: "Execution", combination: "Combination or ablation of compared components" };
   function improvementCard(root, im) {
     const cards = im.cards || [];
-    const c = W.card(root, "Controlled comparisons against this experiment", "One change at a time, on the same data, folds and costs, on the validation segment. The card is frozen before it runs, runs once, and keeps the negative results. Nothing here promotes a strategy.");
+    const c = W.card(root, "Controlled comparisons against this experiment", "One change at a time, on the same data, folds and costs, on the validation segment. The card is frozen before it runs, runs once, and keeps the negative results. Combinations come only after their components were compared on their own. Nothing here promotes a strategy.");
     const f = M.improve = M.improve || { family: "target", hypothesis: "", change: "", presets: new Set(["excess_ret"]) };
+    f.parts = f.parts || new Set(); f.members = f.members || "ridge,lasso,elasticnet"; if (f.select === undefined) f.select = true;
     const row = h("div", "row", c);
     const lab = (text, el) => { const l = h("label", "f", row); h("span", "", l, text); l.appendChild(el); return el; };
     const fam = lab("Family", h("select", "", null)); for (const k of Object.keys(FAMILY_NAME)) { const o = h("option", "", fam, FAMILY_NAME[k]); o.value = k; o.selected = k === f.family; }
-    fam.addEventListener("change", () => { f.family = fam.value; f.presets = new Set(); M.draw(); });
+    fam.addEventListener("change", () => { f.family = fam.value; f.presets = new Set(); f.parts = new Set(); M.draw(); });
     const hyp = lab("Hypothesis (before the numbers)", h("input", "", null)); hyp.type = "text"; hyp.value = f.hypothesis; hyp.addEventListener("input", () => { f.hypothesis = hyp.value; });
     const chg = lab("The one change", h("input", "", null)); chg.type = "text"; chg.value = f.change; chg.addEventListener("input", () => { f.change = chg.value; });
+    if (f.family === "ensemble") {
+      const mem = lab("Members of the ensemble", h("input", "", null)); mem.type = "text"; mem.value = f.members; mem.addEventListener("input", () => { f.members = mem.value; });
+      const l = h("label", "f inline", row), i = h("input", "", l); i.type = "checkbox"; i.checked = f.select; i.addEventListener("change", () => { f.select = i.checked; }); l.appendChild(document.createTextNode("Compare with the best single member on the development segment"));
+    }
     const pick = h("div", "row tight", c);
-    for (const [v, text] of FAMILY_PRESETS[f.family]) { const l = h("label", "f inline", pick), i = h("input", "", l); i.type = "checkbox"; i.checked = f.presets.has(v); i.addEventListener("change", () => { if (i.checked) f.presets.add(v); else f.presets.delete(v); }); l.appendChild(document.createTextNode(text)); }
+    if (f.family === "combination") {
+      const runCards = cards.filter((x) => x.state === "run");
+      for (const x of runCards) x.candidates.forEach((name, j) => {
+        const value = JSON.stringify({ card_id: x.card_id, candidate: name }), l = h("label", "f inline", pick), i = h("input", "", l);
+        i.type = "checkbox"; i.checked = f.parts.has(value); i.addEventListener("change", () => { if (i.checked) f.parts.add(value); else f.parts.delete(value); });
+        l.appendChild(document.createTextNode(`${FAMILY_NAME[x.family] || x.family}: ${name} (${String((x.verdicts || [])[j] || "").replace(/_/g, " ") || "not run"})`));
+      });
+      if (!runCards.length) W.hint(c, "Run at least two single-change cards first: a combination is built only from components that were compared on their own.");
+      const l = h("label", "f inline", pick), i = h("input", "", l); i.type = "checkbox"; i.checked = !!f.ablation; i.addEventListener("change", () => { f.ablation = i.checked; });
+      l.appendChild(document.createTextNode("Ablate: remove one component at a time from the full combination"));
+    } else for (const [v, text] of FAMILY_PRESETS[f.family]) { const l = h("label", "f inline", pick), i = h("input", "", l); i.type = "checkbox"; i.checked = f.presets.has(v); i.addEventListener("change", () => { if (i.checked) f.presets.add(v); else f.presets.delete(v); }); l.appendChild(document.createTextNode(text)); }
     actions(c, [["Freeze the card and run it", () => {
-      if (!f.hypothesis.trim() || !f.change.trim() || !f.presets.size) { Q.toast("State the hypothesis and the one change, and choose at least one candidate."); return; }
-      W.request(M, () => [{ modes: ["controls_improve_run"], job: true, path: "/api/ml/improvement-experiment", body: { family: f.family, hypothesis: f.hypothesis, one_change: f.change, from_experiment: M.cur, presets: [...f.presets] } }, ...CONTROLS(M.cur)], "Running the comparison…");
+      const combo = f.family === "combination";
+      if (!(combo && f.ablation) && (!f.hypothesis.trim() || !f.change.trim())) { Q.toast("State the hypothesis and the one change before the numbers exist."); return; }
+      if (combo ? f.parts.size < 2 : !f.presets.size) { Q.toast(combo ? "Choose at least two compared components." : "Choose at least one candidate."); return; }
+      const body = combo ? { family: f.family, hypothesis: f.hypothesis, one_change: f.change, combination_of: [...f.parts].map((x) => JSON.parse(x)), ablation: !!f.ablation }
+        : { family: f.family, hypothesis: f.hypothesis, one_change: f.change, from_experiment: M.cur, presets: [...f.presets], ...(f.family === "ensemble" ? { members: f.members, select_baseline: f.select } : {}) };
+      W.request(M, () => [{ modes: ["controls_improve_run"], job: true, path: "/api/ml/improvement-experiment", body }, ...CONTROLS(M.cur)], "Running the comparison…");
     }]]);
     if (!cards.length) { W.hint(c, "No card is stored yet."); return; }
     table(c, [{ label: "Card", get: (x) => x.card_id }, { label: "Family", get: (x) => FAMILY_NAME[x.family] || x.family }, { label: "Hypothesis", get: (x) => x.hypothesis }, { label: "State", get: (x) => x.state },
       { label: "Verdicts", get: (x) => (x.verdicts.length ? x.verdicts.map((v) => String(v).replace(/_/g, " ")).join(", ") : "not run") }, { label: "Frozen", get: (x) => x.frozen_at }], cards.slice(0, 12));
+  }
+  function delayCard(root, dl) {
+    const ok = dl.eligibility === "applied";
+    const c = W.card(root, "Delay report", ok ? `${dl.model} on ${dl.target} · ${dl.segment} segment · delays ${dl.declaration.delays.join(", ")} (declaration ${dl.declaration.hash}) · recorded ${dl.computed_at || "just now"}`
+      : "The rank IC, expected edge, net result and capacity when the book is executed later than planned, at delays declared up front. The test and forward segments stay sealed.");
+    actions(c, [["Compute the delay report", () => W.request(M, () => [{ modes: ["controls_delay_run"], path: "/api/ml/delay-report", query: { id: M.cur } }, ...CONTROLS(M.cur)], "Computing the delay report…")]]);
+    if (!ok) { W.hint(c, dl.reason || "Not computed yet."); return; }
+    W.hint(c, dl.rule + ". The wait is measured on the real calendar, and the IC starts from the same fill the portfolio gets.");
+    const cap = (r) => (r.capacity.status === "measured" ? r.capacity.levels.map((x) => `${Number(x.capital).toExponential(0)}: ${spct(x.median_fill_share, 0)}`).join(" · ") : "not established");
+    table(c, [{ label: "Delay (sessions)", get: (r) => String(r.delay) }, { label: "Calendar days (mean)", num: true, get: (r) => (Q.bad(r.timing.calendar_days.mean) ? "n/a" : num(r.timing.calendar_days.mean, 1)) },
+      { label: "Rank IC", num: true, get: (r) => (Q.bad(r.ic.mean_ic) ? "n/a" : num(r.ic.mean_ic, 4)) }, { label: "IC against undelayed", num: true, get: (r) => (Q.bad(r.ic_ratio_to_undelayed) ? "undefined" : spct(r.ic_ratio_to_undelayed, 0)) },
+      { label: "Gross a year", num: true, get: (r) => (r.portfolio.eligibility === "applied" ? spct(r.portfolio.gross_ann_return, 1) : "n/a") }, { label: "Net a year", num: true, get: (r) => (r.portfolio.eligibility === "applied" ? spct(r.portfolio.net_ann_return, 1) : "n/a") },
+      { label: "Sharpe", num: true, get: (r) => (r.portfolio.eligibility === "applied" ? sig(r.portfolio.sharpe) : "n/a") }, { label: "Break-even cost (bps)", num: true, get: (r) => (Q.bad(r.portfolio.breakeven_cost_bps) ? "n/a" : sig(r.portfolio.breakeven_cost_bps, 1)) },
+      { label: "Share of the book filled", get: cap }], dl.rows);
+    W.hint(c, `The experiment declared ${sig(dl.declared_cost_bps, 1)} bps one way. A ratio is undefined when the undelayed result is not positive.`);
+    W.flags(c, dl.caveats || [], "Limits. ");
   }
 
   /* ---------- research controls: the gates, the lineage, the holdout and the selection evidence of one experiment ---------- */
@@ -1223,7 +1274,7 @@
   function buildControls(root, d) {
     const lin = (M.results.controls_lineage || {}).data, ho = (M.results.controls_holdout || {}).data, st = (M.results.controls_stats || {}).data, xd = (M.results.controls_exec || {}).data;
     const pol = (M.results.controls_policy || {}).data, gv = (M.results.controls_gov || {}).data;
-    const al = (M.results.controls_alpha || {}).data, pf = (M.results.controls_port || {}).data, im = (M.results.controls_improve || {}).data;
+    const al = (M.results.controls_alpha || {}).data, pf = (M.results.controls_port || {}).data, im = (M.results.controls_improve || {}).data, dl = (M.results.controls_delay || {}).data;
     header(root, `Research record for ${shortId(d.experiment_id)}`, `${d.model_kind} · gate policy ${d.policy_version}`);
     W.provenance(root, d);
     W.flags(root, [d.note, "A stale decision is shown as pending: its evidence has changed since it was decided."], "Read first. ");
@@ -1241,6 +1292,7 @@
     if (gv) governanceCard(root, gv);
     if (al) alphaCard(root, al);
     if (pf) portfolioCard(root, pf);
+    if (dl) delayCard(root, dl);
     if (im) improvementCard(root, im);
     if (xd) {                                                                                  // the evaluation mode of the result, and what it can and cannot support
       const real = xd.mode === "realistic_cash_equity", fmtc = (v) => (Q.bad(v) ? "n/a" : Number(v).toLocaleString("en-US", { maximumFractionDigits: 0 }));

@@ -200,3 +200,66 @@ def test_a_feature_card_compares_the_simple_motivated_sets_first_and_records_wha
         cp.preset_changes("target", BASE, ["vibes"])
     with pytest.raises(cp.ComparisonError, match="left no candidate"):
         cp.preset_changes("horizon", BASE, [5])
+
+
+# ------------------------------------------------------------------------------------------------------------------ Release 7: arms that act after the predictions, and saved pairs
+BASE1 = {**BASE, "signal": {"method": "top_n_long_short", "n": 3, "holding_period": 1}, "backtest": {"cost_bps": 5.0, "slippage_bps": 2.0, "rebalance": "weekly"}}
+
+
+def test_a_card_that_changes_only_the_position_rule_re_runs_the_baselines_own_predictions(reg, bundle):
+    from src.ml import experiments as xp
+
+    c = card(family="rebalancing", baseline=BASE1, candidates=[{"signal": {"no_trade_margin": 2.0}}], study_id="study-nt", hypothesis="a no-trade region saves more cost than the alpha it gives up",
+             one_change_description="the rebalance rule: trade only when the gain exceeds the cost with a margin")
+    assert c["candidates"][0]["changed"] == ["signal.no_trade_margin"] and cp._post_model(c["candidates"][0]["changed"]) is True
+    cp.freeze(reg, c)
+    out = cp.run(reg, c["card_id"], bundle=bundle)
+    cand = out["results"]["candidates"][0]
+    assert cand["status"] == "compared" and cand["arm"] == "re-run of the baseline's saved predictions"
+    ids = out["evidence_artifacts"]["experiments"]
+    pb, pc = (xp.load_run(reg, ids[k])[2].predictions for k in ("baseline", cand["name"]))
+    pd.testing.assert_series_equal(pb, pc), "the two alternatives are evaluated on the very same forecasts"
+    assert cand["manifest"]["fold_manifest_hash"] == out["observed"]["baseline"]["fold_manifest_hash"]
+    assert cand["metrics"]["turnover"]["candidate"] < cand["metrics"]["turnover"]["baseline"], "the no-trade region traded less than the plain schedule"
+    assert cand["metrics"]["net_sharpe"]["difference"]["eligibility"] in ("applied", "insufficient") and cand["metrics"]["costs"]["candidate"] <= cand["metrics"]["costs"]["baseline"]
+    assert reg.report(ids[cand["name"]])["overlays"]["no_trade"]["decisions"] > 10, "the overlay's own log is on the candidate's report"
+    retrain = card(family="rebalancing", baseline=BASE1, candidates=[{"signal": {"no_trade_margin": 2.0}}], study_id="study-nt")["candidates"][0]
+    assert retrain["name"] != c["baseline"]["name"], "an arm has its own name even when the change leaves the generated name alone"
+
+
+def test_a_candidate_that_changes_the_model_is_retrained_not_re_run(reg, bundle):
+    c = card(candidates=[{"dataset": {"target": "excess_ret_5"}}])
+    assert cp._post_model(c["candidates"][0]["changed"]) is False
+    assert cp._post_model([]) is False and cp._post_model(["signal.n", "backtest.cost_bps", "execution.mode"]) is True and cp._post_model(["signal.n", "model.kind"]) is False
+
+
+def test_two_saved_experiments_are_compared_on_their_shared_validation_dates_and_a_mismatch_is_refused(reg, bundle):
+    from src.ml import ensembles as en, experiments as xp
+
+    base = xp.run_experiment({**BASE1, "name": "primary"}, bundle=bundle, registry=reg, explain=False, robustness=False)
+    child, meta = en.meta_label_experiment(reg, base.id, "logistic", min_rows=200)
+    vs = meta["versus_base"]
+    assert vs["eligibility"] == "applied" and vs["baseline"] == base.id and vs["candidate"] == child.id and vs["segment"] == "validation"
+    assert vs["metrics"]["net_sharpe"]["difference"]["eligibility"] in ("applied", "insufficient") and vs["metrics"]["ic"]["aligned"] > 100
+    assert "not a controlled one-change test" in vs["note"]
+    assert meta["label_cost"] == pytest.approx(7e-4) and meta["lineage"], "the declared cost and the lineage of each secondary model are on the summary"
+    self_pair = cp.compare_saved(reg, base.id, base.id)
+    assert self_pair["eligibility"] == "applied"
+    d = self_pair["metrics"]["ic"]["difference"]
+    assert d["eligibility"] == "insufficient" and d["value"] is None, "a strategy against itself differs by a constant zero: the difference has no variance and is not estimated, not reported as an effect"
+    assert self_pair["metrics"]["net_sharpe"]["difference"]["value"] in (0.0, None)
+    other = xp.run_experiment({**BASE1, "name": "other-horizon", "dataset": {**BASE1["dataset"], "target": "fwd_ret_10", "horizon": 10}, "signal": {**BASE1["signal"], "holding_period": 1}}, bundle=bundle, registry=reg,
+                              explain=False, robustness=False)
+    mismatch = cp.compare_saved(reg, base.id, other.id)
+    assert mismatch["eligibility"] == "not_comparable" and "horizon and lag differ" in mismatch["reason"]
+
+
+def test_a_meta_label_must_earn_the_declared_cost_to_count_as_right(reg, bundle):
+    from src.ml import ensembles as en, experiments as xp
+
+    base = xp.run_experiment({**BASE1, "name": "primary-cost"}, bundle=bundle, registry=reg, explain=False, robustness=False)
+    cfg, ds, train, _ = xp.load_run(reg, base.id)
+    free = en.meta_label_scores(ds, train, "logistic", None, 200, 0, cost=0.0)
+    dear = en.meta_label_scores(ds, train, "logistic", None, 200, 0, cost=0.01)
+    assert free["label_cost"] == 0.0 and dear["label_cost"] == 0.01
+    assert dear["primary_hit_rate"] < free["primary_hit_rate"], "a bet has to earn back what it cost to enter and leave it: fewer of them are right"

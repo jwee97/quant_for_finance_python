@@ -32,6 +32,7 @@ from . import inference as inf
 from . import parsimony as pa
 from .backtest import label_days
 from .config import build_key, config_hash, dataset_key, experiment_config, merge
+from .signals import DERIVED_KEYS
 from .targets import forward_return
 
 VERSION = "comparison-v1"
@@ -56,6 +57,9 @@ FAMILIES = {
                      "secondary": ["max_drawdown", "turnover"], "folds": "identical"},
     "execution": {"label": "Execution", "baseline": "simplified fills", "candidate": "capacity-aware fills", "allowed": ("execution", "backtest"), "primary": "net_sharpe",
                   "secondary": ["costs", "turnover"], "folds": "identical"},
+    # a combination is built by ``combination_card`` from components that were each compared on their own; it may change what its components changed and nothing else
+    "combination": {"label": "Combination of components already compared", "baseline": "the baseline the components were each compared against", "candidate": "several components at once",
+                    "allowed": (), "primary": "net_sharpe", "secondary": ["ic", "turnover", "costs", "max_drawdown"], "folds": "comparable"},
 }
 PRIMARY_METRICS = ("ic", "net_sharpe")
 
@@ -94,6 +98,11 @@ def _ladder_rank(change: dict) -> int:
     return 2
 
 
+def _post_model(changed: list[str]) -> bool:
+    """True if every changed setting acts after the predictions exist (the position rule, the costs and schedule, the execution), so the arm can reuse the baseline's saved predictions."""
+    return bool(changed) and all(p.split(".")[0] in ("signal", "backtest", "execution") for p in changed)
+
+
 def _allowed(path: str, allowed: tuple) -> bool:
     return any(path == a or path.startswith(a + ".") for a in allowed)
 
@@ -114,7 +123,8 @@ def holm(pvalues: list[float]) -> list[float]:
 # --------------------------------------------------------------------------------------------------------------------- the card
 def new_card(hypothesis: str, family: str, baseline: dict, candidates: list[dict], *, study_id: str, one_change_description: str, primary_metric: str | None = None,
              secondary_metrics: list[str] | None = None, parsimony: dict | None = None, uncertainty_method: str | None = None, minimum_coverage: float = 0.8, min_effect: float = 0.0, level: float = 0.05,
-             robustness_grid: dict | None = None, final_evaluation_policy: str | None = None, compute_budget: dict | None = None, n_boot: int = 1000, seed: int = 0, base_defaults: dict | None = None) -> dict:
+             robustness_grid: dict | None = None, final_evaluation_policy: str | None = None, compute_budget: dict | None = None, n_boot: int = 1000, seed: int = 0, base_defaults: dict | None = None,
+             lineage: dict | None = None, allowed: tuple | None = None, baseline_selection: dict | None = None) -> dict:
     """The declared part of the card of spec section 10.2. Candidates are experiment overrides; each is merged into its full configuration and must differ from the baseline only where the family allows."""
     if family not in FAMILIES:
         raise ComparisonError(f"unknown experiment family '{family}'; the families are {sorted(FAMILIES)}")
@@ -130,18 +140,23 @@ def new_card(hypothesis: str, family: str, baseline: dict, candidates: list[dict
         raise ComparisonError("level must be in (0, 1), minimum_coverage in [0, 1] and min_effect non-negative")
     if parsimony is not None:
         pa.validate_rule(dict(parsimony))
+    allowed_paths = tuple(allowed) if allowed is not None else fam["allowed"]
+    if family == "combination" and not lineage:
+        raise ComparisonError("a combination card is built from components that were compared on their own: use combination_card or ablation_card")
     bcfg = experiment_config({**baseline, "study": study_id}, defaults=base_defaults)
     cands = []
     for i, change in enumerate(candidates):
         over = merge(baseline, change)                                                                    # a candidate is the baseline with ONE declared change laid over it
         ccfg = experiment_config({**over, "study": study_id}, defaults=base_defaults)
-        paths = diff_paths(bcfg, ccfg)
-        stray = [p for p in paths if not _allowed(p, fam["allowed"])]
+        derived = [p for p in diff_paths(bcfg, ccfg) if p.startswith("signal.") and p.split(".", 1)[1] in DERIVED_KEYS]                       # filled in by the configuration from the other sections, not declared
+        paths = [p for p in diff_paths(bcfg, ccfg) if p not in derived]
+        stray = [p for p in paths if not _allowed(p, allowed_paths)]
         if not paths:
             raise ComparisonError(f"candidate {i + 1} is the baseline: it changes nothing")
         if stray:
-            raise ComparisonError(f"candidate {i + 1} differs from the baseline in {stray}, which the {family} family does not allow ({list(fam['allowed'])}): a comparison changes one thing, on matched assumptions")
-        cands.append({"name": ccfg["name"], "change": change, "overrides": over, "config_hash": config_hash(ccfg), "changed": paths})
+            raise ComparisonError(f"candidate {i + 1} differs from the baseline in {stray}, which the {family} family does not allow ({list(allowed_paths)}): a comparison changes one thing, on matched assumptions")
+        name = ccfg["name"] if ccfg["name"] != bcfg["name"] and ccfg["name"] not in [c["name"] for c in cands] else f"{bcfg['name']} #{i + 1}"[:80]            # an arm has a name of its own, whatever it changes
+        cands.append({"name": name, "change": change, "overrides": over, "config_hash": config_hash(ccfg), "changed": paths, "derived": derived})
     ladder = None
     if family == "feature":                                                                                  # economically motivated, low-complexity sets are compared before the selected one
         rank = lambda c: _ladder_rank(c["change"])                                                           # noqa: E731
@@ -162,6 +177,12 @@ def new_card(hypothesis: str, family: str, baseline: dict, candidates: list[dict
         "final_evaluation_policy": final_evaluation_policy or "none: this card compares on development data (the validation segment). A final evaluation needs a frozen evaluation plan and its own reservation.",
         "settings": {"n_boot": int(n_boot), "seed": int(seed), "segment": SEGMENT, "level": level, "min_effect": min_effect}, "ladder": ladder,
     }
+    if lineage:                                                                                           # a combination or an ablation: its components, and the tests it shares a family with
+        content["lineage"] = lineage
+        content["multiple_testing_scope"] = {**content["multiple_testing_scope"], "family_size": len(cands) + len(lineage.get("inherited", [])),
+                                             "note": "over the candidates of this card AND the tests of its components: a combination does not reuse the components' findings for free"}
+    if baseline_selection:                                                                                # the baseline was itself the best of several runs: recorded, and a reason to read a gain over it as conservative
+        content["baseline_selection"] = baseline_selection
     content["card_id"] = "cmp-" + digest(content, 12)
     return content
 
@@ -196,10 +217,37 @@ def get(registry, card_id: str) -> dict:
 
 
 FEATURE_GROUPS = ("price", "momentum", "mean_reversion", "volatility", "volume", "relative")
-PRESETS = {"target": ("excess_ret", "sector_ret", "resid_ret"), "horizon": (1, 5, 10, 20), "feature": ("stable_select", *(f"group:{g}" for g in FEATURE_GROUPS)), "portfolio": ("cost_aware",)}
+WEIGHTINGS = ("equal", "dynamic", "regime", "stacked", "stacked_regime")
+PRESETS = {"target": ("excess_ret", "sector_ret", "resid_ret"), "horizon": (1, 5, 10, 20), "feature": ("stable_select", *(f"group:{g}" for g in FEATURE_GROUPS)), "portfolio": ("cost_aware", "calibrated_sizing"),
+           "rebalancing": ("no_trade:<margin>", "trade_filter:<k>"), "risk_control": ("regime_exposure:vol_quantile", "regime_exposure:hmm", "regime_exposure:markov_switching"),
+           "ensemble": tuple(f"weighting:{w}" for w in WEIGHTINGS), "execution": ("realistic",)}
+PARAMETRISED = {"rebalancing": ("no_trade", "trade_filter"), "risk_control": ("regime_exposure",), "ensemble": ("weighting",)}              # presets written kind:value
 
 
-def preset_changes(family: str, baseline: dict, choices: list) -> list[dict]:
+def _parametrised(family: str, choice, options: dict) -> dict:
+    """One preset written ``kind:value`` as a change laid over the baseline."""
+    kind, _, value = str(choice).partition(":")
+    if kind not in PARAMETRISED.get(family, ()):
+        raise ComparisonError(f"{choice!r} is not a {family} preset; the presets are {list(PRESETS[family])}")
+    try:
+        if kind == "no_trade":
+            return {"signal": {"no_trade_margin": float(value)}}
+        if kind == "trade_filter":
+            return {"signal": {"trade_filter_k": float(value)}}
+        if kind == "regime_exposure":
+            engine, _, states = value.partition(":")
+            return {"signal": {"regime_exposure": engine, **({"regime_states": int(states)} if states else {})}}
+    except ValueError:
+        raise ComparisonError(f"{choice!r}: the value after the colon must be a number") from None
+    if value not in WEIGHTINGS:                                                                                  # the ensemble weightings
+        raise ComparisonError(f"{choice!r}: the weighting must be one of {list(WEIGHTINGS)}")
+    members = str(options.get("members") or "").strip()
+    if not members:
+        raise ComparisonError("an ensemble preset needs the members of the ensemble (for example ridge,lasso,elasticnet)")
+    return {"model": {"kind": "model_ensemble", "params": {"members": members, "weighting": value}}}
+
+
+def preset_changes(family: str, baseline: dict, choices: list, options: dict | None = None) -> list[dict]:
     """The standard candidates of a family as changes to ``baseline``: another kind of target at the baseline's horizon; other horizons, each with its matching holding period; the baseline's linear model behind a
     stability selection; the cost-aware optimiser in place of the baseline's position rule. A choice the baseline already is (its own horizon, say) is left out."""
     if family not in PRESETS:
@@ -207,9 +255,16 @@ def preset_changes(family: str, baseline: dict, choices: list) -> list[dict]:
     cfg = experiment_config(baseline)
     out = []
     for choice in choices:
+        if family in PARAMETRISED:
+            out.append(_parametrised(family, choice, options or {}))
+            continue
         if choice not in PRESETS[family]:
             raise ComparisonError(f"{choice!r} is not a {family} preset; the presets are {list(PRESETS[family])}")
-        if family == "target":
+        if family == "execution":
+            out.append({"execution": {"mode": "realistic_cash_equity", **{k: v for k, v in (options or {}).items() if k in ("capital", "max_participation")}}})
+        elif family == "portfolio" and choice == "calibrated_sizing":
+            out.append({"signal": {"method": "calibrated_sizing", "holding_period": 1}})
+        elif family == "target":
             h = int(cfg["dataset"]["horizon"])
             out.append({"dataset": {"target": f"{choice}_{h}"}})
         elif family == "horizon":
@@ -248,18 +303,48 @@ def list_cards(registry, study_id: str | None = None, limit: int = 50) -> list[d
 
 
 # --------------------------------------------------------------------------------------------------------------------- one experiment, seen as development series
-def _series(exp, label_horizon: int) -> dict:
-    ds, plan = exp.dataset, exp.train.plan
+def _series_from(ds, plan, scores: pd.DataFrame, net: pd.Series, turnover: pd.Series, costs: pd.Series, labels: pd.Series, label_horizon: int) -> dict:
     fwd = forward_return(ds.prices, label_horizon, ds.lag).reindex(index=ds.dates, columns=ds.assets)
-    ic = ev.rank_ic_wide(exp.scores, fwd).dropna()
+    ic = ev.rank_ic_wide(scores, fwd).dropna()
     ic_seg = label_days(ic.index, plan.labels())
-    net_seg = exp.labels
-    own = ev.rank_ic_wide(exp.scores, forward_return(ds.prices, ds.horizon, ds.lag).reindex(index=ds.dates, columns=ds.assets)).dropna()
+    own = ev.rank_ic_wide(scores, forward_return(ds.prices, ds.horizon, ds.lag).reindex(index=ds.dates, columns=ds.assets)).dropna()
     own_seg = label_days(own.index, plan.labels())
     dev_dates = pd.DatetimeIndex([d for d, s in zip(plan.dates, label_days(pd.DatetimeIndex(plan.dates), plan.labels())) if s == SEGMENT])
-    scored = (exp.scores.reindex(dev_dates).notna().sum(axis=1) >= 2) if len(dev_dates) else pd.Series(dtype=bool)
-    return {"ic": ic[ic_seg == SEGMENT], "ic_own": own[own_seg == SEGMENT], "net": exp.net[net_seg == SEGMENT], "turnover": exp.turnover[net_seg == SEGMENT], "costs": exp.costs[net_seg == SEGMENT],
+    scored = (scores.reindex(dev_dates).notna().sum(axis=1) >= 2) if len(dev_dates) else pd.Series(dtype=bool)
+    return {"ic": ic[ic_seg == SEGMENT], "ic_own": own[own_seg == SEGMENT], "net": net[labels == SEGMENT], "turnover": turnover[labels == SEGMENT], "costs": costs[labels == SEGMENT],
             "coverage": float(scored.mean()) if len(scored) else float("nan"), "dev_dates": int(len(dev_dates))}
+
+
+def _series(exp, label_horizon: int) -> dict:
+    return _series_from(exp.dataset, exp.train.plan, exp.scores, exp.net, exp.turnover, exp.costs, exp.labels, label_horizon)
+
+
+def _series_saved(registry, exp_id: str, label_horizon: int | None = None):
+    """The development series of an experiment that was saved earlier (its predictions, returns, turnover and costs), with its configuration and dataset; ``label_horizon`` defaults to its own."""
+    from . import experiments as xp
+
+    cfg, ds, train, _ = xp.load_run(registry, exp_id)
+    ret = pd.read_parquet(registry.root / "experiments" / exp_id / "returns.parquet")
+    return _series_from(ds, train.plan, train.scores_wide(ds), ret["net"], ret["turnover"], ret["costs"], ret["segment"], int(ds.horizon) if label_horizon is None else int(label_horizon)), cfg, ds
+
+
+def compare_saved(registry, baseline_id: str, candidate_id: str, *, n_boot: int = 1000, seed: int = 0, scope: str = "one pre-declared comparison of two saved experiments") -> dict:
+    """The paired comparison of two experiments that already exist (a meta-labelled child with its parent, a combination with a member) on the validation segment, on the dates both have. Both are read
+    against the baseline's raw forward return of its own horizon. They must share the assets, the horizon and the lag, or the comparison is refused with the difference named."""
+    base_series, bcfg, bds = _series_saved(registry, baseline_id)
+    label_h = int(bds.horizon)
+    cand_series, ccfg, cds = _series_saved(registry, candidate_id, label_h)
+    problems = []
+    if list(cds.assets) != list(bds.assets):
+        problems.append("the two experiments do not trade the same assets")
+    if (int(cds.horizon), int(cds.lag)) != (int(bds.horizon), int(bds.lag)):
+        problems.append(f"the horizon and lag differ ({bds.horizon}/{bds.lag} against {cds.horizon}/{cds.lag})")
+    if problems:
+        return {"eligibility": "not_comparable", "reason": "; ".join(problems), "baseline": baseline_id, "candidate": candidate_id}
+    hold = max(int(bcfg["signal"].get("holding_period", 1)), int(ccfg["signal"].get("holding_period", 1)))
+    return {"eligibility": "applied", "baseline": baseline_id, "candidate": candidate_id, "segment": SEGMENT, "label_horizon": label_h,
+            "metrics": _clean(compare_series(base_series, cand_series, label_horizon=label_h, hold=hold, n_boot=int(n_boot), seed=int(seed), scope=scope)),
+            "note": "paired on the validation segment, on the dates both have; the candidate may differ from the baseline in more than one respect, so this is a description of the pair, not a controlled one-change test"}
 
 
 def _max_drawdown(r: pd.Series) -> float:
@@ -311,7 +396,21 @@ def compare_series(base: dict, cand: dict, *, label_horizon: int, hold: int, n_b
         out[key] = {"baseline": float(b.mean()) if len(b) else None, "candidate": float(c.mean()) if len(c) else None, "label": label}
     out["max_drawdown"] = {"baseline": _max_drawdown(base["net"]), "candidate": _max_drawdown(cand["net"])}
     out["coverage"] = {"baseline": base["coverage"], "candidate": cand["coverage"], "label": "share of development dates with at least two scored assets"}
+    out["risk_matched"] = _risk_matched(base["net"], cand["net"])
     return out
+
+
+def _risk_matched(base: pd.Series, cand: pd.Series) -> dict:
+    """The candidate's risk against the baseline's on the dates both have, and the candidate's drawdown after scaling it to the baseline's volatility: a risk control that only lowers exposure lowers drawdown
+    too, and the matched figure says how much of a drawdown gain is more than that."""
+    both = pd.concat([base, cand], axis=1, join="inner").dropna()
+    if len(both) < 60 or not (both.iloc[:, 0].std(ddof=1) > 0 and both.iloc[:, 1].std(ddof=1) > 0):
+        return {"eligibility": "insufficient", "reason": "fewer than 60 aligned days or a return stream with no variation"}
+    b, c = both.iloc[:, 0], both.iloc[:, 1]
+    scale = float(b.std(ddof=1) / c.std(ddof=1))
+    return {"eligibility": "applied", "aligned_days": int(len(both)), "volatility_ratio": float(1.0 / scale), "max_drawdown_baseline": _max_drawdown(b), "max_drawdown_candidate": _max_drawdown(c),
+            "max_drawdown_candidate_at_baseline_volatility": _max_drawdown(c * scale),
+            "note": "the last figure is the candidate's drawdown if its returns were scaled to the baseline's volatility: the drawdown gain that is not just a smaller position"}
 
 
 def _verdict(primary: dict, adj_p: float | None, level: float, min_effect: float) -> tuple[str, str]:
@@ -335,7 +434,8 @@ def decide(card: dict, per_candidate: list[dict]) -> list[dict]:
     for c in per_candidate:
         d = (c.get("metrics") or {}).get(primary, {}).get("difference") if c.get("status") == "compared" else None
         ps.append(d["p_value"] if d and d["eligibility"] == "applied" else None)
-    adj = holm(ps)
+    inherited = [x.get("p_value") for x in ((card.get("lineage") or {}).get("inherited") or [])]              # the components' own tests belong to the family of a combination
+    adj = holm(ps + inherited)[: len(ps)]
     for c, p_adj in zip(per_candidate, adj):
         if c.get("status") != "compared":
             c["verdict"], c["reason"] = "not_compared", c.get("reason", "the candidate was not compared")
@@ -382,8 +482,14 @@ def run(registry, card_id: str, *, bundle=None, config=None, builder=None, progr
         progress(f"candidate {i + 1} of {len(card['candidates'])}")
         row = {"name": cand["name"], "config_hash": cand["config_hash"], "changed": cand["changed"]}
         try:
-            same_panel = build_key(experiment_config({**cand["overrides"], "study": study})) == build_key(base.cfg)
-            exp = _run_arm(xp, cand["overrides"], study, bundle=bundle, config=config, builder=builder, registry=registry, progress=progress, dataset=base.dataset if same_panel else None)
+            if _post_model(cand["changed"]):                                                                 # nothing before the position rule changed: the arm re-runs the baseline's own predictions, so the two
+                change = {k: v for k, v in cand["change"].items() if k in ("signal", "backtest", "execution")}   # alternatives are evaluated on the same forecasts, the same risk model and the same folds
+                exp = xp.rebacktest(registry, base.id, {**change, "name": cand["name"]}, progress=progress, bundle=bundle, config=config, builder=builder)
+                row["arm"] = "re-run of the baseline's saved predictions"
+            else:
+                same_panel = build_key(experiment_config({**cand["overrides"], "study": study})) == build_key(base.cfg)
+                exp = _run_arm(xp, {**cand["overrides"], "name": cand["name"]}, study, bundle=bundle, config=config, builder=builder, registry=registry, progress=progress, dataset=base.dataset if same_panel else None)
+                row["arm"] = "retrained"
         except (xp.ExperimentError, ValueError) as exc:
             row.update(status="failed", reason=str(exc))
             arms.append(row)
@@ -412,6 +518,8 @@ def run(registry, card_id: str, *, bundle=None, config=None, builder=None, progr
     results = {"baseline": {"name": base.cfg["name"], "experiment_id": base.id, "n_features": _n_features(base), "kind": base.train.kind,
                             "metrics": {"ic": base_series["ic"].mean() if len(base_series["ic"]) else None, "coverage": base_series["coverage"]}}, "candidates": arms, "parsimony": parsimony,
                "segment": SEGMENT, "label_horizon": label_h, "ran_at": started}
+    if (card.get("lineage") or {}).get("kind") == "ablation":
+        results["ablation"] = _ablation_reading(card, arms)
     record = {"state": "run", "results": _clean(results), "negative_findings": findings, "gate_decision": {"gate": "B", "status": "not_evaluated",
               "reason": "a development-segment comparison is not a frozen final evaluation: gate B reads the evaluation plan, and nothing here promotes a strategy"},
               "evidence_artifacts": {"experiments": experiments, "card_id": card_id}, "observed": {"baseline": _clean(base_man)}}
@@ -474,7 +582,155 @@ def _negative_findings(card: dict, arms: list[dict], base_series: dict) -> list[
         t = a["metrics"]["turnover"]
         if t["baseline"] is not None and t["candidate"] is not None and t["candidate"] > 1.05 * t["baseline"]:
             out.append({"candidate": a["name"], "what": "higher_turnover", "detail": f"mean daily turnover {t['candidate']:.4g} against {t['baseline']:.4g}"})
+        rm = a["metrics"].get("risk_matched") or {}
+        if rm.get("eligibility") == "applied" and rm["max_drawdown_candidate"] > rm["max_drawdown_baseline"] and rm["max_drawdown_candidate_at_baseline_volatility"] <= rm["max_drawdown_baseline"]:
+            out.append({"candidate": a["name"], "what": "drawdown_gain_is_lower_exposure",
+                        "detail": f"the drawdown is {rm['max_drawdown_candidate']:.3f} against {rm['max_drawdown_baseline']:.3f}, but at the baseline's volatility it would be {rm['max_drawdown_candidate_at_baseline_volatility']:.3f}: "
+                                  "the gain is a smaller position, not better timing"})
         d = a["metrics"]["net_sharpe"]["difference"]
         if card["primary_metric"] != "net_sharpe" and d["eligibility"] == "applied" and d["value"] is not None and d["value"] < 0:
             out.append({"candidate": a["name"], "what": "net_sharpe_lower", "detail": f"the net Sharpe difference is {d['value']:+.3g}: a better rank IC did not become a better net result"})
     return out
+
+
+# --------------------------------------------------------------------------------------------------------------------- combinations, ablations and the development-selected baseline
+_MISSING = object()
+
+
+def _get_path(cfg: dict, path: str):
+    cur = cfg
+    for part in path.split("."):
+        if not isinstance(cur, dict) or part not in cur:
+            return _MISSING
+        cur = cur[part]
+    return cur
+
+
+def _nest(path: str, value) -> dict:
+    out: dict = {}
+    cur = out
+    parts = path.split(".")
+    for part in parts[:-1]:
+        cur[part] = {}
+        cur = cur[part]
+    cur[parts[-1]] = value
+    return out
+
+
+def _components(registry, parents: list[dict]) -> tuple[dict, list[dict]]:
+    """Check the components of a combination: each is a candidate of a card that was run, compared on its own, against one and the same baseline. Returns that baseline's overrides and the components."""
+    if not isinstance(parents, list) or len(parents) < 2 or any(not isinstance(p, dict) or not p.get("card_id") or not p.get("candidate") for p in parents):
+        raise ComparisonError("a combination needs at least two components, each {card_id, candidate}")
+    seen, comps, baseline, base_hash = set(), [], None, None
+    for p in parents:
+        key = (p["card_id"], p["candidate"])
+        if key in seen:
+            raise ComparisonError(f"component {p['candidate']!r} of {p['card_id']} is listed twice")
+        seen.add(key)
+        card = get(registry, p["card_id"])
+        if card["state"] != "run" or not card.get("results"):
+            raise ComparisonError(f"card {p['card_id']} has not been run: each enhancement is compared on its own before any combination is tried")
+        cand = next((c for c in card["candidates"] if c["name"] == p["candidate"]), None)
+        arm = next((a for a in card["results"]["candidates"] if a["name"] == p["candidate"]), None)
+        if cand is None or arm is None:
+            raise ComparisonError(f"card {p['card_id']} has no candidate named {p['candidate']!r}")
+        if arm.get("status") != "compared":
+            raise ComparisonError(f"component {p['candidate']!r} of {p['card_id']} was {arm.get('status')}: only components that were compared can be combined")
+        if base_hash is None:
+            base_hash, baseline = card["baseline_version"], card["baseline"]["overrides"]
+        elif card["baseline_version"] != base_hash:
+            raise ComparisonError("the components were compared against different baselines: a combination is evaluated against one baseline")
+        d = ((arm.get("metrics") or {}).get(card["primary_metric"]) or {}).get("difference") or {}
+        change = {k: v for k, v in cand["change"].items() if k not in IGNORED}
+        comps.append({"card_id": p["card_id"], "candidate": p["candidate"], "family": card["family"], "change": change, "verdict": arm.get("verdict"), "adjusted_p_value": arm.get("adjusted_p_value"),
+                      "metric": card["primary_metric"], "p_value": d.get("p_value"), "study": card["study_id"]})
+    return baseline, comps
+
+
+def _merge_components(comps: list[dict]) -> dict:
+    """The components' changes laid together. Two components that set the same setting to different values cannot be combined as they are, and the refusal names them."""
+    seen, merged = {}, {}
+    for c in comps:
+        for path, val in _leaves(c["change"]):
+            if path in seen and _canon(seen[path][1]) != _canon(val):
+                raise ComparisonError(f"components {seen[path][0]!r} and {c['candidate']!r} both set {path}, to different values: they cannot be combined as they are")
+            seen[path] = (c["candidate"], val)
+        merged = merge(merged, c["change"])
+    return merged
+
+
+def _lineage(kind: str, comps: list[dict]) -> dict:
+    return {"kind": kind, "components": [{k: c[k] for k in ("card_id", "candidate", "family", "verdict", "adjusted_p_value")} for c in comps],
+            "inherited": [{k: c[k] for k in ("card_id", "candidate", "metric", "p_value")} for c in comps],
+            "rule": "enhancements are compared one at a time first; a combination is another logged candidate whose multiple-testing family includes its components' own tests, not a free reuse of the best findings"}
+
+
+def combination_card(registry, parents: list[dict], *, hypothesis: str, one_change_description: str, study_id: str | None = None, **kw) -> dict:
+    """The card that tests several components together against the baseline they were each compared against. Every component must already have been run on its own (one change at a time comes first);
+    the candidate is the components' changes laid together; its Holm family includes the components' tests. ``kw`` are the optional settings of ``new_card``."""
+    baseline, comps = _components(registry, parents)
+    change = _merge_components(comps)
+    allowed = tuple(sorted({a for c in comps for a in FAMILIES[c["family"]]["allowed"]}))
+    return new_card(hypothesis, "combination", baseline, [{**change, "name": f"combination of {len(comps)}"}], study_id=study_id or comps[0]["study"], one_change_description=one_change_description,
+                    lineage=_lineage("combination", comps), allowed=allowed, **kw)
+
+
+def ablation_card(registry, parents: list[dict], *, hypothesis: str | None = None, one_change_description: str | None = None, study_id: str | None = None, **kw) -> dict:
+    """The leave-one-out card of a combination: the baseline is the full combination and each candidate removes one component (its settings return to the original baseline's), so a verdict of 'worse'
+    says the removed component helps. Its Holm family includes the components' tests like the combination's."""
+    from .config import experiment_config
+
+    baseline, comps = _components(registry, parents)
+    change = _merge_components(comps)
+    full = merge(baseline, change)
+    base_cfg = experiment_config(baseline)
+    cands = []
+    for c in comps:
+        rev: dict = {}
+        for path, _ in _leaves(c["change"]):
+            parts = path.split(".")
+            if "params" in parts:                                                                        # a model's parameters are replaced as a whole, so the whole mapping goes back
+                parts = parts[: parts.index("params") + 1]
+            sub = ".".join(parts)
+            val = _get_path(base_cfg, sub)
+            rev = merge(rev, _nest(sub, None if val is _MISSING else val))                                # a setting the baseline never had is switched off (null), not left on
+        rev["name"] = f"without {c['family']}:{c['candidate']}@{c['card_id'][4:10]}"[:80]                      # two cards can each have a candidate of the same generated name: the card id tells them apart
+        cands.append(rev)
+    allowed = tuple(sorted({a for c in comps for a in FAMILIES[c["family"]]["allowed"]}))
+    return new_card(hypothesis or "each component of the combination contributes: without it the combination is worse", "combination", full, cands, study_id=study_id or comps[0]["study"],
+                    one_change_description=one_change_description or "remove one component of the combination at a time", lineage=_lineage("ablation", comps), allowed=allowed, **kw)
+
+
+def _ablation_reading(card: dict, arms: list[dict]) -> list[dict]:
+    """What removing each component did, in words: worse means the component helps, supported means it hurts, anything else means no distinguishable contribution."""
+    words = {"worse": "the component helps: without it the combination is worse", "supported_on_development": "the component hurts: without it the combination is better",
+             "inconclusive": "no distinguishable contribution on the development segment", "not_compared": "not evaluated"}
+    comps = (card.get("lineage") or {}).get("components") or []
+    return [{"component": comp["candidate"], "card_id": comp["card_id"], "family": comp["family"], "verdict_of_removing_it": arm.get("verdict"), "reading": words.get(arm.get("verdict"), "not evaluated"),
+             "adjusted_p_value": arm.get("adjusted_p_value")} for comp, arm in zip(comps, arms)]
+
+
+def select_baseline(registry, base: dict, members: list[tuple[str, dict]], *, study_id: str, bundle=None, config=None, builder=None, progress=None, metric: str = "ic") -> dict:
+    """The single model that development would have chosen: each member run alone on the baseline's data, folds, position rule and costs, and the best by the card's primary metric on the validation
+    segment. Every run is a counted development look of the study. The winner is the best of ``N``: an optimistic estimate that an ensemble must beat, which makes a gain over it conservative."""
+    from . import experiments as xp
+    from .evaluation import sharpe_of
+
+    if not 2 <= len(members) <= 8:
+        raise ComparisonError("choose between two and eight members")
+    if metric not in PRIMARY_METRICS:
+        raise ComparisonError(f"the metric must be one of {list(PRIMARY_METRICS)}")
+    rows = []
+    for i, (kind, params) in enumerate(members):
+        if progress:
+            progress(f"member {i + 1} of {len(members)}: {kind}")
+        exp = _run_arm(xp, {**merge(base, {"model": {"kind": kind, "params": params}}), "name": f"member-{kind}"[:80]}, study_id, bundle=bundle, config=config, builder=builder, registry=registry, progress=progress)
+        ser = _series(exp, int(exp.dataset.horizon))
+        score = float(ser["ic"].mean()) if metric == "ic" and len(ser["ic"]) else (float(sharpe_of(ser["net"].dropna())) if metric == "net_sharpe" else float("nan"))
+        rows.append({"kind": kind, "params": params, "score": score if np.isfinite(score) else None, "experiment_id": exp.id, "development_days": int(len(ser["net"]))})
+    ranked = [r for r in rows if r["score"] is not None]
+    if not ranked:
+        raise ComparisonError("no member produced a score on the development segment")
+    best = max(ranked, key=lambda r: r["score"])
+    return {"metric": metric, "segment": SEGMENT, "members": rows, "selected": {k: best[k] for k in ("kind", "params", "score", "experiment_id")}, "n_candidates": len(members),
+            "note": f"the best of {len(members)} on the {SEGMENT} segment: an optimistic estimate of that model, so an ensemble that beats it has beaten a baseline that was selected in its favour"}

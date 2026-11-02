@@ -730,6 +730,36 @@ def cmd_alpha(args, config) -> int:
     return 0
 
 
+def cmd_delay(args, config) -> int:
+    """The delay report of a saved experiment: rank IC, expected edge, net result and capacity when its book is executed later, at delays declared on the command line (0 must be among them)."""
+    from . import delay_report as dly
+    from . import diagnostics as dx
+
+    registry = Registry(args.registry)
+    try:
+        delays = [int(x) for x in str(args.delays).split(",") if x.strip() != ""]
+        out = dly.report(registry, args.experiment, segment=args.segment, declaration=dly.declare(delays))
+        dx.store(registry, "delay_report", args.experiment, out, actor="cli")
+    except (ExperimentError, RegistryError, ValueError, KeyError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    if args.json:
+        print(json.dumps(out, indent=1, allow_nan=False))
+        return 0
+    if out["eligibility"] != "applied":
+        print(f"{args.experiment}: {out['reason']}")
+        return 0
+    print(f"{args.experiment} ({out['model']} on {out['target']}), {out['segment']} segment, delays {out['declaration']['delays']} (declaration {out['declaration']['hash']}): {out['rule']}")
+    print(f"  {'delay':>5} {'calendar days':>14} {'rank IC':>8} {'ratio':>6} {'gross/yr':>9} {'net/yr':>8} {'Sharpe':>7} {'break-even bps':>15}  capacity")
+    for r in out["rows"]:
+        p, cap = r["portfolio"], r["capacity"]
+        cal = r["timing"]["calendar_days"]["mean"]
+        print(f"  {r['delay']:>5} {_fmt(cal):>14} {_fmt(r['ic']['mean_ic']):>8} {_fmt(r['ic_ratio_to_undelayed']):>6} {_fmt(p.get('gross_ann_return')):>9} {_fmt(p.get('net_ann_return')):>8} "
+              f"{_fmt(p.get('sharpe')):>7} {_fmt(p.get('breakeven_cost_bps')):>15}  {cap['status'] if cap['status'] != 'measured' else 'measured'}")
+    print(f"  declared one-way cost {_fmt(out['declared_cost_bps'])} bps; a ratio is undefined when the undelayed result is not positive")
+    return 0
+
+
 def cmd_portfolio(args, config) -> int:
     """Portfolio diagnostics of a saved experiment: the book it held, covariance estimators compared on realised risk, risk contributions, and (for a return forecast) the cost-aware allocation's sensitivity."""
     from . import diagnostics as dx
@@ -892,7 +922,10 @@ def register(sub) -> None:
     p = sub.add_parser("ml-portfolio", help="portfolio diagnostics of a saved experiment: the book it held, covariance estimators on realised risk, risk contributions, allocation sensitivity")
     common(p, data=False); p.add_argument("experiment"); p.add_argument("--segment", default="validation"); p.add_argument("--horizon", type=int, default=21, help="days over which realised risk is measured")
     p.add_argument("--dates", type=int, default=24, help="decision dates sampled"); p.add_argument("--json", action="store_true"); p.set_defaults(func=cmd_portfolio)
-    p = sub.add_parser("ml-improve", help="freeze and run a controlled comparison card (target, feature, horizon or portfolio) from a JSON spec, or show a stored card with --card")
+    p = sub.add_parser("ml-delay", help="delay report of a saved experiment: rank IC, expected edge, net result and capacity when its book is executed later, at delays you declare")
+    common(p, data=False); p.add_argument("experiment"); p.add_argument("--segment", default="validation"); p.add_argument("--delays", default="0,1,2,5", help="sessions of delay, comma separated; 0 must be among them")
+    p.add_argument("--json", action="store_true"); p.set_defaults(func=cmd_delay)
+    p = sub.add_parser("ml-improve", help="freeze and run a controlled comparison card (target, feature, horizon, portfolio, rebalancing, risk_control, ensemble or execution) from a JSON spec, or show a stored card with --card")
     common(p, data=False); p.add_argument("--spec", help="JSON file: family, hypothesis, one_change, baseline, candidates (changes laid over the baseline), and optional study, primary_metric, parsimony, min_effect, n_boot")
     p.add_argument("--card", help="show this stored card instead"); p.add_argument("--prices", help="your own wide CSV of prices instead of the universe in the baseline"); p.add_argument("--universe", default="etf")
     p.add_argument("--verbose", action="store_true"); p.add_argument("--json", action="store_true"); p.set_defaults(func=cmd_improve)

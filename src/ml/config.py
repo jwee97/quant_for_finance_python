@@ -89,19 +89,42 @@ def validate(cfg: dict) -> dict:
     _check(int(sig["holding_period"]) >= 1 and int(sig["holding_period"]) <= 60, "signal.holding_period must be between 1 and 60 days")
     _check(0.0 < float(sig["max_weight"]) <= 1.0 and float(sig["gross"]) > 0, "signal.max_weight in (0, 1] and signal.gross > 0")
     _check(int(sig["n"]) >= 1 and 0.0 < float(sig["quantile"]) <= 0.5, "signal.n >= 1 and signal.quantile in (0, 0.5]")
-    if sig["method"] == "cost_aware_mean_variance":                                     # the optimiser's own settings are optional and absent from the defaults, so no existing configuration hash changes
-        from .risk_models import METHODS as COV_METHODS
+    from .risk_models import METHODS as COV_METHODS
 
+    # the optional settings of the Release 6 and 7 rules: absent from the defaults, so no existing configuration hash changes
+    _check(0.0 <= float(sig.get("risk_aversion", 5.0)) <= 100.0 and float(sig.get("turnover_penalty", 0.0)) >= 0.0, "signal.risk_aversion in [0, 100] and signal.turnover_penalty >= 0")
+    _check(sig.get("cov_method", "lw_constant_correlation") in COV_METHODS, f"signal.cov_method must be one of {COV_METHODS}")
+    _check(60 <= int(sig.get("cov_window", 252)) <= 1000 and 1 <= int(sig.get("opt_every") or 1) <= 60, "signal.cov_window in [60, 1000] and signal.opt_every in [1, 60]")
+    _check(sig.get("alloc_fallback", "none") in ("none", "hold", "equal_weight"), "signal.alloc_fallback must be none, hold or equal_weight")
+    if sig["method"] == "cost_aware_mean_variance":
         _check(int(sig["holding_period"]) == 1, "the cost-aware optimiser trades edge against cost itself: averaging its books over a holding period would change the units of its cost term (set signal.holding_period to 1)")
-        _check(0.0 <= float(sig.get("risk_aversion", 5.0)) <= 100.0 and float(sig.get("turnover_penalty", 0.0)) >= 0.0, "signal.risk_aversion in [0, 100] and signal.turnover_penalty >= 0")
-        _check(sig.get("cov_method", "lw_constant_correlation") in COV_METHODS, f"signal.cov_method must be one of {COV_METHODS}")
-        _check(60 <= int(sig.get("cov_window", 252)) <= 1000 and 1 <= int(sig.get("opt_every") or 1) <= 60, "signal.cov_window in [60, 1000] and signal.opt_every in [1, 60]")
-        _check(sig.get("alloc_fallback", "none") in ("none", "hold", "equal_weight"), "signal.alloc_fallback must be none, hold or equal_weight")
-        sig["cost_bps"] = float(bt["cost_bps"]) + float(bt["slippage_bps"])                  # derived from the backtest section, so one place decides what a trade costs
+    if sig.get("no_trade_margin") is not None:
+        _check(float(sig["no_trade_margin"]) >= 0.0, "signal.no_trade_margin is not negative (a multiple of the incremental cost)")
+        _check(sig.get("no_trade_hold_margin") is None or 0.0 <= float(sig["no_trade_hold_margin"]) <= float(sig["no_trade_margin"]), "signal.no_trade_hold_margin is between 0 and the margin: a trading episode may continue on less than it took to start")
+    if sig.get("trade_filter_k") is not None:
+        _check(0.0 <= float(sig["trade_filter_k"]) <= 10.0 and float(sig.get("trade_filter_cost_margin", 1.0)) >= 0.0 and 40 <= int(sig.get("trade_filter_window", 252)) <= 1000,
+               "signal.trade_filter_k in [0, 10], trade_filter_cost_margin >= 0 and trade_filter_window in [40, 1000]")
+    if sig.get("regime_exposure") is not None:
+        from .regime_exposure import ENGINES
+
+        _check(sig["regime_exposure"] in ENGINES, f"signal.regime_exposure must be one of {list(ENGINES)}: only causal (filtered) states can set an exposure, never smoothed probabilities or a calendar of crises chosen with hindsight")
+        _check(2 <= int(sig.get("regime_states", 3)) <= 5 and 0.0 <= float(sig.get("regime_floor", 0.25)) <= float(sig.get("regime_cap", 1.0)) <= 1.0 and float(sig.get("regime_cap", 1.0)) > 0.0,
+               "signal.regime_states in [2, 5] and 0 <= regime_floor <= regime_cap <= 1 (the overlay lowers a book, it never levers it)")
+        _check(5 <= int(sig.get("regime_refit_every", 63)) <= 252 and 20 <= int(sig.get("regime_min_days", 60)) <= 500 and 60 <= int(sig.get("regime_min_train", 252)) <= 1000,
+               "signal.regime_refit_every in [5, 252], regime_min_days in [20, 500] and regime_min_train in [60, 1000]")
+    if sig["method"] == "calibrated_sizing":
+        _check(60 <= int(sig.get("calib_window", 504)) <= 2000 and float(sig.get("calib_min_t", 2.0)) >= 0.0 and 5 <= int(sig.get("stability_window", 21)) <= 250,
+               "signal.calib_window in [60, 2000], calib_min_t >= 0 and stability_window in [5, 250]")
+    derived = sig["method"] in ("cost_aware_mean_variance", "calibrated_sizing") or sig.get("no_trade_margin") is not None or sig.get("trade_filter_k") is not None
+    if derived:                                                                             # what these rules need from the other sections, set here so that one place decides each of them
+        sig["cost_bps"] = float(bt["cost_bps"]) + float(bt["slippage_bps"])
         sig["window_days"] = int(d["horizon"])                                               # the forecast horizon: the window the covariance is scaled to
+        sig["label_offset"] = int(d["lag"]) + int(d["horizon"])                             # outcomes settle this many sessions after the decision
+        sig["rebalance"] = bt["rebalance"]
+        sig["lag_total"] = int(d["lag"]) + int(bt["extra_lag"])
     else:
-        sig.pop("cost_bps", None)
-        sig.pop("window_days", None)
+        for k in ("cost_bps", "window_days", "label_offset", "rebalance", "lag_total"):
+            sig.pop(k, None)
     _check(d.get("regime_detector") in (None, "vol_state", "hmm", "gmm"), "dataset.regime_detector must be null, vol_state, hmm or gmm")
     if d.get("sessions") is not None:                                                  # optional, and absent from the defaults so that no existing configuration hash changes
         from .sessions import SessionError, validate_settings
