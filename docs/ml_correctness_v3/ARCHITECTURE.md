@@ -280,7 +280,9 @@ Targets go through the existing catalogue (`targets.make_target`, `dataset.targe
 | covariance estimators compared on realised risk | `risk_models.py` |
 | cost-aware allocation, its perturbation grid, partial fills carried forward | `allocation.py`; the pipeline method is `signals.cost_aware_mean_variance` |
 | horizons and tranche accounting | `horizons.py`, `signals.holding_period` |
-| the simplicity tie-break | `parsimony.py` |
+| the simplicity tie-break on comparison cards | `parsimony.py` |
+| constrained selection: pooled validation returns, eligibility gates, ranking, Pareto, fold-lineage audit | `model_selection.py` |
+| the simplest candidate not meaningfully worse: paired dependence-aware gap, heuristic or formal rule, complexity vector | `simplicity.py` |
 | frozen cards, matched arms, paired verdicts | `comparison.py` |
 | diagnostics of a saved experiment | `r6_reports.py` (`alpha_diagnostics`, `portfolio_diagnostics`) |
 
@@ -353,6 +355,7 @@ Nothing in the base workflow imports an advanced module, and none is scheduled: 
 | the catalogue, and the services the API and the command line share (drift, uncertainty monitor, retraining proposal, retraining policy) | `advanced.py` |
 | drift on a fixed reference window, effective sample sizes, adjusted p-values, settled-only performance drift, alert lineage | `drift.py` |
 | triggers, cooldown, minimum data, approval, nested validation, failure suspension, recovery, rollback | `retrain.py` |
+| the schedule, the diagnostic triggers, the constrained challenger search on identical out-of-sample rows, the decision, versions | `adaptive_retrain.py` |
 | calibration, distribution, uncertainty and disagreement checks, escalation | `uncertainty_monitor.py` |
 | frozen pair, joint commitment, predeclared looks with alpha spending | `champion.py` |
 | reports as a pure function of a stored snapshot | `repro_report.py` |
@@ -364,6 +367,7 @@ Nothing in the base workflow imports an advanced module, and none is scheduled: 
 | off-policy estimators | `offpolicy.py` |
 | tax lots and after-tax accounting under a supplied policy | `tax_lots.py` |
 | routes | `webapp/ml_advanced_api.py` (mixed into `MlApi`) |
+| selection routes | `webapp/ml_selection_api.py` (mixed into `MlApi`) |
 | command line | `advanced_cli.py` (`quant ml-advanced`) |
 
 ## The surfaces
@@ -383,3 +387,17 @@ The five modules that work on a saved experiment or on the registry's records ha
 * `allocation.solve` accepts `holding_penalty` (a per-name cost on the size of a position, the worst case of a box on expected returns); without it the problem is unchanged.
 * `GET /api/ml/advanced`, `/api/ml/drift`, `/api/ml/retraining`, `/api/ml/champion`, `/api/ml/uncertainty-monitor`, `/api/ml/reports`, `/api/ml/report` and `POST /api/ml/retraining/action`, `/api/ml/champion/register`, `/commit`, `/look`, `/api/ml/report/build`; `quant ml-advanced`.
 * Verification requirements P3-01 to P3-12 (86 in all); the CI `test` job allows 80 minutes.
+
+
+## Constrained selection, the simplest adequate model and adaptive retraining (follow-up to Releases 5, 6 and 8)
+
+Three requirements share one evidence path, so that no number is computed twice.
+
+* **One series per candidate.** A search trial, a saved experiment and an arm of a retraining all become a *candidate*: the pooled chronological validation net returns (one return per day, folds laid end to end in date order), the turnover, coverage, exposure and liquidity evidence of those days, the complexity vector, and the lineage of the folds that produced them. A trial keeps its series in `TrialRunner.series`; a saved experiment is read from `returns.parquet`, `predictions.parquet`, `positions.parquet` and its report, validation rows only (the test and forward rows of a finalised experiment are counted and ignored).
+* **Selection** (`model_selection.select`): evidence, eligibility gates (data, risk, exposure, liquidity, statistical, each `pass`, `fail`, `unavailable` or `not_enforced`), ranking by the primary metric, Pareto analysis, then `simplicity.choose_simplest`. The result carries the policy and its hash, every candidate's gates and lineage, the dates of the evidence rows (once per distinct set) and what the choice does and does not claim; `select_saved` and the search store it append-only (`model_selection`).
+* **Nested estimate** (`model_selection.nested_estimate`): the ranking rule (net Sharpe on the inner window, ties to the simplest) is run through `nested.select_as_of` at the policy's cutoffs on the eligible candidates' pooled returns (`aggregate` lets the procedure choose on a Sharpe ratio, which is not a mean of per-date scores); its audit recomputes the windows from the dates.
+* **Simplicity** (`simplicity.choose_simplest`): the paired gap between the highest-ranked candidate and each other one on the days both have, from a joint stationary bootstrap with the block length chosen from the dependence of the difference (the same primitives and seed as `inference.paired_difference`); a heuristic (`one_se`) or a formal one-sided non-inferiority test against a declared margin (`non_inferiority`), Holm-adjusted; complexity compared in a declared order with unmeasured dimensions sorting last.
+* **Fold lineage.** `training.walk_forward_train` records for each fold its training and test rows as runs of positions (`train_row_ranges`, `test_row_ranges`), with the count, the hash, the fit cutoff, the last day any training label reaches and the time the model took to predict its block. `model_selection.audit_folds` re-derives the facts from the rows (hash, count, last label day against the cutoff, disjoint ordered train and test rows) instead of trusting the recorded numbers; the retraining search runs it on every arm.
+* **Adaptive retraining** (`adaptive_retrain`): the incumbent's saved configuration is the baseline of a frozen comparison card of family `retraining`, whose candidates may change only `split.window`, `split.rolling_days`, `split.refit_every` and `model.params`; `comparison.run` runs the incumbent and the challengers as development runs on the same data and refuses an arm that scored different validation rows (`manifest.oos_validation_rows_hash`). The arms are judged by the selection above and by the card's Holm-adjusted paired verdict; `decide` recommends a challenger only if both agree and the observations were identical. The outcome flows through `retrain.start` (an approved proposal, development mode, a nested validation, failure counting), is stored as `retrain_evidence`, and registers governance versions of the incumbent, its re-run and each challenger. Nothing calls `registry.promote`.
+
+Version changes: no migration. `training.walk_forward_train` fold records gain `predict_seconds`, `train_row_ranges` and `test_row_ranges`, and the report's fold list carries them; `comparison.FAMILIES` gains `retraining`; `comparison.manifest` gains `oos_validation_rows_hash`; `retrain.TRIGGERS` gains `calibration_alert` and `retrain.start` accepts a trainer that reports `no_challenger`; the `schedule` trigger is verified against the calendar; the search and tuning results gain `model_selection` only when `selection` is asked for; `GET /api/ml/retraining` and the retraining action carry the evaluation, the search and the versions.

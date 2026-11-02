@@ -106,6 +106,22 @@ def row_hash(positions: np.ndarray) -> str:
     return hashlib.sha256(np.ascontiguousarray(positions, dtype=np.int64).tobytes()).hexdigest()[:16]
 
 
+def row_ranges(positions, cap: int = 4000) -> list | None:
+    """Sorted row positions as runs, ``[[first, last], ...]`` inclusive: the rows of a fold in a form that can be stored with it and expanded again (``expand_ranges``). ``None`` if there would be more than
+    ``cap`` runs (a panel with very scattered gaps); the hash of the rows still identifies them then."""
+    a = np.asarray(positions, dtype=np.int64)
+    if a.size == 0:
+        return []
+    breaks = np.flatnonzero(np.diff(a) != 1)
+    starts, ends = np.r_[a[0], a[breaks + 1]], np.r_[a[breaks], a[-1]]
+    return None if len(starts) > cap else [[int(x), int(y)] for x, y in zip(starts, ends)]
+
+
+def expand_ranges(ranges) -> np.ndarray:
+    """The row positions a list of runs stands for."""
+    return np.concatenate([np.arange(int(a), int(b) + 1, dtype=np.int64) for a, b in ranges]) if ranges else np.array([], dtype=np.int64)
+
+
 def dependence_weights(ds: Dataset, rows: np.ndarray, horizon: int | None = None) -> dict:
     """How much the labels of the training ``rows`` overlap, and the sample weights that undo it (López de Prado, *Advances in Financial Machine Learning*, ch. 4).
 
@@ -191,11 +207,11 @@ def walk_forward_train(ds: Dataset, model_cfg: dict, split_cfg: dict, seed: int 
         test_rows = np.flatnonzero((lab >= sp.test[0]) & (lab <= sp.test[-1]))
         tr_idx = np.flatnonzero(in_train)
         info = {"fold": sp.fold, "train_start": str(ds.dates[upos[sp.train[0]]].date()), "train_end": str(ds.dates[upos[sp.train[-1]]].date()), "test_start": str(ds.dates[upos[sp.test[0]]].date()),
-                "test_end": str(ds.dates[upos[sp.test[-1]]].date()), "n_train": int(len(tr_idx)), "n_test": int(len(test_rows))}
+                "test_end": str(ds.dates[upos[sp.test[-1]]].date()), "n_train": int(len(tr_idx)), "n_test": int(len(test_rows)), "test_row_ranges": row_ranges(test_rows)}
         if len(tr_idx):
             end_max = int(iv.label_ends(pos_all[tr_idx], ds.lag, horizon).max())
             info.update(fit_cutoff=str(ds.dates[t_first].date()), label_end_max=str(ds.dates[min(end_max, len(ds.dates) - 1)].date()), train_rows_hash=row_hash(tr_idx),
-                        rows_removed_by_interval_rule=int((in_block & ~in_train).sum()), rows_added_by_interval_rule=int((in_train & ~in_block).sum()), purge_rule="label ended by the first decision date, less the embargo")
+                        train_row_ranges=row_ranges(tr_idx), rows_removed_by_interval_rule=int((in_block & ~in_train).sum()), rows_added_by_interval_rule=int((in_train & ~in_block).sum()), purge_rule="label ended by the first decision date, less the embargo")
         if len(tr_idx) < MIN_TRAIN_ROWS or not len(test_rows):
             skipped.append(sp.fold)
             models.append(None)
@@ -223,7 +239,9 @@ def walk_forward_train(ds: Dataset, model_cfg: dict, split_cfg: dict, seed: int 
         Xte = ds.X.iloc[test_rows]
         if model.needs_dataset:
             model.bind(CausalView(ds, t_last))                                            # while it predicts the block it may read history up to the block's last day, and nothing later
+        t_pred = time.perf_counter()
         pred = pd.Series(model.predict(Xte), index=Xte.index)
+        predict_seconds = time.perf_counter() - t_pred                                  # how long the fitted model took to score the block: the inference latency a candidate is judged on
         preds.append(pred)
         if task == "classification":
             probs.append(pd.Series(model.predict_proba(Xte), index=Xte.index))
@@ -233,7 +251,7 @@ def walk_forward_train(ds: Dataset, model_cfg: dict, split_cfg: dict, seed: int 
         diagnostics.append({"fold": sp.fold, **model.diagnostics()})
         models.append(model)
         fold_rows.append(test_rows)
-        folds.append({**info, "skipped": False, "seconds": round(time.perf_counter() - f0, 3)})
+        folds.append({**info, "skipped": False, "seconds": round(time.perf_counter() - f0, 3), "predict_seconds": round(predict_seconds, 6)})
         if progress:
             progress(f"fold {sp.fold + 1} of {len(splits)}")
     if not preds:

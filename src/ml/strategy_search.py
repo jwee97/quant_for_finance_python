@@ -81,12 +81,28 @@ def crossover(a: dict, b: dict, spaces: dict, rng: np.random.Generator) -> dict:
     return child
 
 
+def finalist_order(good: list[dict], chosen: dict | None, top_k: int) -> list[dict]:
+    """The trials to freeze into the evaluation plan when a constrained selection was made: the selected trial first, then the other eligible ones in the order of the ranking. The plan is frozen from
+    a selection that read validation data only; with no selection (or none selected) the caller keeps the best few by the composite score."""
+    if chosen is None or chosen.get("selected_trial") is None:
+        return []
+    by_number = {r["number"]: r for r in good}
+    numbers = [int(x["id"].split("-", 1)[1]) for x in chosen["ranking"]]
+    order = [int(chosen["selected_trial"])] + [n for n in numbers if n != int(chosen["selected_trial"])]
+    return [by_number[n] for n in order if n in by_number][: max(1, top_k)]
+
+
 def search(base_overrides: dict, bundle=None, config=None, builder=None, registry: Registry | None = None, kinds: tuple = DEFAULT_KINDS, n_random: int = 12, n_bayes: int = 12,
            generations: int = 3, population: int = 8, top_k: int = 3, seed: int = 0, study_name: str = "search", objective_weights: dict | None = None, progress=None,
-           finalize_top: bool = False, idempotency_key: str | None = None) -> dict:
+           finalize_top: bool = False, idempotency_key: str | None = None, selection: dict | bool | None = None) -> dict:
     """Run the three-stage search. It stops at the end of the validation segment: the test and forward segments are not read. ``finalize_top=True`` (off by default) freezes an evaluation plan from the best
     ``top_k`` and evaluates it once (``frozen_eval.compat_finalize``): all finalists share that one look, with the deflated Sharpe ratio over all trials as the declared selection treatment. Returns the stages, the
-    trials, the selection report over all trials and, if asked for, the finalists' reports and the evaluation record."""
+    trials, the selection report over all trials and, if asked for, the finalists' reports and the evaluation record.
+
+    ``selection`` (off by default, so the result is what it always was) asks for the constrained multi-objective selection over every trial's pooled validation returns (``model_selection``: eligibility gates,
+    validation net Sharpe as the primary metric unless the policy says otherwise, Pareto comparison, then the simplest candidate that is not meaningfully worse than the highest-ranked). ``True`` takes the
+    documented defaults, a mapping is a ``SelectionPolicy``. The proposals of the search still follow ``objective_weights``; the selection decides which trial is chosen. With ``finalize_top`` the finalists
+    are then the selected trial first and the next-ranked eligible ones, not the best few by the composite score."""
     t0 = time.perf_counter()
     runner = SearchRunner(base_overrides, bundle, config, builder, registry, study_name, objective_weights)
     target = runner.base["dataset"]["target"]
@@ -147,8 +163,17 @@ def search(base_overrides: dict, bundle=None, config=None, builder=None, registr
             result["selection"] = shared_returns.selection_report(n_boot=200)
         except (ValueError, KeyError, np.linalg.LinAlgError) as exc:
             result["selection"] = {"error": str(exc)}
+    chosen = None
+    if selection:
+        from . import model_selection as ms
+
+        pol = ms.policy_from({} if selection is True else selection)
+        chosen = ms.select_trials(runner.records, runner.series, pol, runner.base["model"]["kind"])
+        chosen = ms.store_result(registry, chosen, pol, study_id=rc.study_of(runner.base), actor="search")
+        result["model_selection"] = chosen
     if finalize_top and good:
         picks = good[: max(1, top_k)]
+        picks = finalist_order(good, chosen, top_k) or picks
         if progress:
             progress(f"freezing a plan from the best {len(picks)} and evaluating it once")
         if registry is not None:

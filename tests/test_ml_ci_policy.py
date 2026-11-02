@@ -194,3 +194,15 @@ def test_the_rl_events_test_runs_in_the_base_install_lanes_where_it_skips_and_th
         assert t in " ".join(steps(CI["jobs"][lane])), f"{t} is not run by the {lane} lane"
     assert t in vf.REQUIREMENTS["P0-04"][0]
 
+
+
+def test_the_selection_simplicity_and_adaptive_retraining_tests_run_in_the_base_install_lanes_the_browser_test_in_the_browser_lane_and_all_are_evidence_of_their_requirements():
+    units = ["tests/test_ml_model_selection.py", "tests/test_ml_simplicity.py", "tests/test_ml_adaptive_retrain.py", "tests/test_ml_selection_surfaces.py"]
+    for lane in ("ml-base", "replit-python"):
+        text = " ".join(steps(CI["jobs"][lane]))
+        for t in units:
+            assert t in text, f"{t} is not run by the {lane} lane"
+    assert "tests/test_webapp_ml_selection_browser.py" in " ".join(steps(CI["jobs"]["browser"]))
+    assert {"tests/test_ml_model_selection.py", "tests/test_ml_selection_surfaces.py"} <= set(vf.REQUIREMENTS["P1-15"][0])
+    assert "tests/test_ml_simplicity.py" in vf.REQUIREMENTS["P2-17"][0]
+    assert {"tests/test_ml_adaptive_retrain.py", "tests/test_ml_selection_surfaces.py"} <= set(vf.REQUIREMENTS["P3-02"][0])

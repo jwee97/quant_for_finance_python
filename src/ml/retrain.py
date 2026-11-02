@@ -25,7 +25,7 @@ from . import diagnostics as dx
 
 VERSION = "retrain-v1"
 KIND = "retrain_event"
-TRIGGERS = ("drift_alert", "performance_alert", "schedule", "manual")
+TRIGGERS = ("drift_alert", "performance_alert", "calibration_alert", "schedule", "manual")
 TERMINAL = ("completed", "failed", "rejected")
 
 
@@ -158,6 +158,10 @@ def start(registry, subject: str, proposal: int, policy: RetrainPolicy, *, incum
         hs = _holdout_status(registry, result)
         if hs != "development":
             raise RetrainError(f"the retraining did not stay in development mode (holdout status: {hs or 'not recorded'}): a retraining cannot read the protected segments")
+        if result.get("no_challenger"):                                                          # the search ran and nothing was distinguishably better: the incumbent stays in force
+            seq = _log(registry, subject, "rejected", actor, now, proposal=proposal, reason=result.get("reason") or "no challenger was distinguishably better than the incumbent", evidence=result.get("evidence_ref"))
+            return {"outcome": "rejected", "event": seq, "reason": result.get("reason") or "no challenger was distinguishably better than the incumbent: the incumbent stays in force", "promoted": False,
+                    "evidence_ref": result.get("evidence_ref")}
         challenger = result["challenger_id"]
         verdict = None
         if policy.require_nested_validation:
@@ -178,9 +182,9 @@ def start(registry, subject: str, proposal: int, policy: RetrainPolicy, *, incum
             _log(registry, subject, "suspended", actor, now, reason=f"{fails} consecutive failed retrainings", proposal=proposal)
             out["suspended"] = True
         return out
-    seq = _log(registry, subject, "completed", actor, now, proposal=proposal, challenger=challenger, incumbent=incumbent_id, validation=verdict, stage="candidate", promoted=False,
+    seq = _log(registry, subject, "completed", actor, now, proposal=proposal, challenger=challenger, incumbent=incumbent_id, validation=verdict, stage="candidate", promoted=False, evidence=result.get("evidence_ref"),
                promotion="a challenger is registered as a candidate; promotion goes through the gates and, for production, a recorded human approval")
-    return {"outcome": "completed", "event": seq, "challenger_id": challenger, "promoted": False, "validation": verdict}
+    return {"outcome": "completed", "event": seq, "challenger_id": challenger, "promoted": False, "validation": verdict, "evidence_ref": result.get("evidence_ref")}
 
 
 def recover(registry, subject: str, *, actor: str, note: str, now: float | None = None) -> dict:

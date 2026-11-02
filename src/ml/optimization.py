@@ -75,6 +75,7 @@ class TrialRunner:
         self.info = info
         self._datasets: dict[str, Dataset] = {}
         self.records: list[dict] = []
+        self.series: dict[int, "object"] = {}                                       # trial number -> its validation net returns, for the constrained selection that follows the search
 
     def _dataset_for(self, cfg: dict) -> Dataset:
         key = build_key(cfg)
@@ -112,7 +113,8 @@ class TrialRunner:
                     exp = run_experiment(cfg, dataset=self._dataset_for(cfg), info=self.info, registry=None, save=False, explain=False, final_model=False, robustness=False, stop_after="validation")
                     score, parts = validation_score(exp.report, self.weights)
                     net = exp.net[exp.labels == "validation"]
-                    detail = {"score": score, **parts, "ic": exp.report["ic"]["all"]["mean"], "config_hash": config_hash(cfg)}
+                    detail = {"score": score, **parts, "ic": exp.report["ic"]["all"]["mean"], "config_hash": config_hash(cfg), "evidence": self._evidence(exp)}
+                    self.series[number] = net
                     if op is not None:
                         op.finish_detail = {"score": score if score == score else None}
                         self._keep_stream(op, net)
@@ -131,6 +133,14 @@ class TrialRunner:
             self.registry.log_trial(self.study, dataset_key(self.base), number, params, score, seconds, stage)
         return score, net, detail
 
+
+    @staticmethod
+    def _evidence(exp) -> dict:
+        """What the constrained selection needs from this trial besides its returns (validation days only): turnover, coverage, exposure, liquidity and the complexity inputs."""
+        from . import model_selection as ms
+        from .comparison import _n_features
+
+        return ms.evidence_from_run(exp.report, exp.net, exp.labels, exp.turnover, exp.weights, exp.scores, n_features=_n_features(exp), train_seconds=exp.train.seconds, fold_list=exp.train.folds)
 
     def _keep_stream(self, op, net) -> None:
         """The trial's validation net returns, written atomically beside the registry: the selection tests (DSR, PBO, Reality Check, SPA, FDR) need the streams of all the study's tries, and a trial that is not
@@ -188,13 +198,16 @@ def include(space: dict, start: dict) -> dict:
 
 
 def tune(base_overrides: dict, space: dict, n_trials: int = 20, method: str = "random", seed: int = 0, bundle=None, config=None, builder=None, registry: Registry | None = None,
-         study_name: str = "tune", objective_weights: dict | None = None, progress=None, start: dict | None = None, stop=None) -> dict:
+         study_name: str = "tune", objective_weights: dict | None = None, progress=None, start: dict | None = None, stop=None, selection: dict | bool | None = None) -> dict:
     """Search ``space`` (dotted path -> ``ops.hpo`` distribution) with ``method`` (random, tpe, bayes or optuna; grid and halving are not supported here) for ``n_trials`` candidates. Returns the trials, the best
     parameters, and the selection report that deflates the best one by the number of trials.
 
     ``start`` (a value for every path of the space, inside it: see ``include``) is run first as trial 0 and counts as one of the ``n_trials``; no configuration is then run twice, a TPE or Gaussian
     process search begins proposing after a third of the trials, and what comes before is an evenly spread (scrambled Sobol) sample rather than random draws: with 8 to 30 trials in a space of several
-    settings, gaps and clumps in the start are most of what the search has to learn from. ``stop()`` returning ``True`` ends the search after the trial it is on."""
+    settings, gaps and clumps in the start are most of what the search has to learn from. ``stop()`` returning ``True`` ends the search after the trial it is on.
+
+    ``selection`` (off by default) adds ``model_selection`` to the result: the constrained multi-objective selection over every trial's pooled validation returns (see ``model_selection``). ``best`` stays the
+    trial with the highest composite score; ``model_selection.selected_trial`` is the one the constrained selection chooses."""
     runner = TrialRunner(base_overrides, bundle, config, builder, registry, study_name, objective_weights)
     st = Study(space, "maximize", seed)
 
@@ -221,6 +234,12 @@ def tune(base_overrides: dict, space: dict, n_trials: int = 20, method: str = "r
     out = finish(st, runner)
     out["start_number"] = None if start is None else 0
     out["stopped"] = "user" if asked["stop"] else None
+    if selection:
+        from . import model_selection as ms
+
+        pol = ms.policy_from({} if selection is True else selection)
+        chosen = ms.select_trials(runner.records, runner.series, pol, runner.base["model"]["kind"])
+        out["model_selection"] = ms.store_result(registry, chosen, pol, study_id=rc.study_of(runner.base), actor="tune")
     return out
 
 

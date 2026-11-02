@@ -825,6 +825,35 @@ def cmd_improve(args, config) -> int:
     return 0
 
 
+def cmd_select(args, config) -> int:
+    """Choose among saved experiments by the constrained selection: validation rows only, eligibility gates, the pooled validation net Sharpe, Pareto and the simplest candidate not meaningfully worse."""
+    from . import model_selection as ms
+
+    registry = Registry(args.registry)
+    try:
+        policy = ms.policy_from(json.loads(Path(args.policy).read_text())) if args.policy else ms.SelectionPolicy()
+        out = ms.select_saved(registry, args.experiments, policy, until=args.until, actor="cli", store=not args.no_store, audit=args.audit)
+    except (ExperimentError, RegistryError, ValueError, KeyError, OSError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    if args.json:
+        print(json.dumps(out, indent=1, default=str, allow_nan=False))
+        return 0
+    print(f"{out['selection_id']} ({out['primary_metric']}, policy {out['policy_hash']}; validation segment only, protected segments read: {out['scope']['protected_segments_read']}): "
+          f"{out['counts']['eligible']} eligible, {out['counts']['ineligible']} ineligible, {out['counts']['insufficient']} insufficient, {out['counts']['failed']} failed")
+    for c in out["candidates"]:
+        m = c.get("metrics") or {}
+        print(f"  {c['id']:<28} {c['state']:<12} {out['primary_metric']} {_fmt(c.get('primary'))}  max drawdown {_fmt(m.get('max_drawdown'))}  turnover {_fmt(m.get('turnover'))}" + (f"  - {c['reason']}" if c.get("reason") else ""))
+    if out["selected"] is None:
+        print("  nothing selected: " + out["reason"])
+        return 0
+    print(f"  highest ranked: {out['highest_ranked']}; Pareto front: {', '.join(out['pareto']['front']) or '-'}; selected: {out['selected']}" + (" (chosen over the highest-ranked for being simpler)" if out["changed_by_simplicity"] else ""))
+    if out.get("simplicity") and out["simplicity"].get("claim"):
+        print("  " + out["simplicity"]["claim"]["statement"])
+    print("  " + out["claims"]["out_of_sample"])
+    return 0
+
+
 def register(sub) -> None:
     """Add the four commands to a ``quant`` sub-parser collection."""
     def common(q, data: bool = True):
@@ -929,6 +958,10 @@ def register(sub) -> None:
     common(p, data=False); p.add_argument("--spec", help="JSON file: family, hypothesis, one_change, baseline, candidates (changes laid over the baseline), and optional study, primary_metric, parsimony, min_effect, n_boot")
     p.add_argument("--card", help="show this stored card instead"); p.add_argument("--prices", help="your own wide CSV of prices instead of the universe in the baseline"); p.add_argument("--universe", default="etf")
     p.add_argument("--verbose", action="store_true"); p.add_argument("--json", action="store_true"); p.set_defaults(func=cmd_improve)
+    p = sub.add_parser("ml-select", help="choose among saved experiments by the constrained selection (validation rows only: eligibility gates, pooled validation net Sharpe, Pareto, simplest candidate not meaningfully worse)")
+    common(p, data=False); p.add_argument("experiments", nargs="+"); p.add_argument("--policy", help="JSON file with a selection policy (see GET /api/ml/selection-policy for every field and its default)")
+    p.add_argument("--until", help="read the evidence only up to this date"); p.add_argument("--no-store", dest="no_store", action="store_true"); p.add_argument("--audit", action="store_true", help="re-derive each fold's facts from the rows it recorded (loads the saved panels)")
+    p.add_argument("--json", action="store_true"); p.set_defaults(func=cmd_select)
     p = sub.add_parser("ml-promotion", help="the three independent gates of an experiment, from the persisted evidence")
     common(p, data=False); p.add_argument("experiment"); p.add_argument("--json", action="store_true"); p.set_defaults(func=cmd_promotion)
     p = sub.add_parser("ml-promote", help="move a registered model to a stage; the registry checks the gates, production also needs a recorded human approval")

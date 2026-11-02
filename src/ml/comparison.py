@@ -57,6 +57,10 @@ FAMILIES = {
                      "secondary": ["max_drawdown", "turnover"], "folds": "identical"},
     "execution": {"label": "Execution", "baseline": "simplified fills", "candidate": "capacity-aware fills", "allowed": ("execution", "backtest"), "primary": "net_sharpe",
                   "secondary": ["costs", "turnover"], "folds": "identical"},
+    # a retraining challenger changes how the SAME model is trained (its window, refit schedule or nearby hyper-parameters) and nothing it is judged on: the out-of-sample blocks must be the same ones
+    "retraining": {"label": "Retraining policy", "baseline": "the incumbent as it is trained now", "candidate": "another training window, refit schedule or nearby hyper-parameters for the same model, features, target and costs",
+                   "allowed": ("split.window", "split.rolling_days", "split.refit_every", "model.params"), "primary": "net_sharpe", "secondary": ["ic", "turnover", "costs", "max_drawdown", "n_features"],
+                   "folds": "test_identical"},                                                                                   # the same (date, asset) rows scored on the validation segment; the blocks may be cut differently
     # a combination is built by ``combination_card`` from components that were each compared on their own; it may change what its components changed and nothing else
     "combination": {"label": "Combination of components already compared", "baseline": "the baseline the components were each compared against", "candidate": "several components at once",
                     "allowed": (), "primary": "net_sharpe", "secondary": ["ic", "turnover", "costs", "max_drawdown"], "folds": "comparable"},
@@ -359,11 +363,24 @@ def _n_features(exp) -> float:
     return float(np.mean(chosen)) if chosen else float(len(exp.dataset.features))
 
 
+def _oos_rows_hash(exp) -> str:
+    """A fingerprint of the out-of-sample observations an arm predicted on the validation segment: the (date, asset) rows, not the way the blocks were cut. Two arms that refit on different schedules or
+    windows but score exactly the same rows have the same fingerprint, and those are the arms that can be compared on identical observations."""
+    idx = exp.train.predictions.index
+    dates = idx.get_level_values(0)
+    lab = label_days(pd.DatetimeIndex(dates.unique()), exp.train.plan.labels()).reindex(dates).to_numpy()
+    keep = idx[lab == SEGMENT]
+    h = hashlib.sha256()
+    h.update(np.ascontiguousarray(np.asarray(keep.get_level_values(0).values.astype("datetime64[ns]").astype("int64"))).tobytes())
+    h.update("|".join(map(str, keep.get_level_values(1))).encode())
+    return h.hexdigest()[:16]
+
+
 def manifest(exp) -> dict:
     """What an arm was actually run on: the data, the fold boundaries and the feature, target and output schemas, hashed."""
     ds, tr = exp.dataset, exp.train
     folds = [[f.get("fold"), f.get("train_start"), f.get("train_end"), f.get("test_start"), f.get("test_end"), bool(f.get("skipped"))] for f in tr.folds]
-    return {"data_fingerprint": ds.meta.get("data_fingerprint"), "input_manifest_hash": digest(ds.meta.get("input_manifest") or {}), "assets": list(ds.assets), "first_date": str(ds.dates[0].date()),
+    return {"oos_validation_rows_hash": _oos_rows_hash(exp), "data_fingerprint": ds.meta.get("data_fingerprint"), "input_manifest_hash": digest(ds.meta.get("input_manifest") or {}), "assets": list(ds.assets), "first_date": str(ds.dates[0].date()),
             "last_date": str(ds.dates[-1].date()), "fold_manifest": folds, "fold_manifest_hash": digest(folds), "feature_schema_hash": digest(sorted(ds.features)),
             "target_schema_hash": digest({"target": tr.target, "horizon": ds.horizon, "lag": ds.lag}), "output_schema_hash": digest({"model": tr.kind, "task": tr.task}),
             "n_train_rows": [int(f.get("n_train", 0)) for f in tr.folds]}
@@ -502,6 +519,8 @@ def run(registry, card_id: str, *, bundle=None, config=None, builder=None, progr
         bounds = lambda m: [f[1:5] for f in m["fold_manifest"]]                                                                      # noqa: E731
         if fam["folds"] == "identical" and bounds(man) != bounds(base_man):
             problems.append("the fold boundaries differ from the baseline's")
+        if fam["folds"] == "test_identical" and man["oos_validation_rows_hash"] != base_man["oos_validation_rows_hash"]:
+            problems.append("the challenger does not predict the same out-of-sample observations as the incumbent (the validation rows it scored differ, for example because a fold could not be fitted)")
         row["manifest"] = {k: man[k] for k in ("fold_manifest_hash", "feature_schema_hash", "target_schema_hash", "output_schema_hash", "n_train_rows")}
         if problems:
             row.update(status="not_comparable", reason="; ".join(problems) + ": a comparison is on matched data and folds")

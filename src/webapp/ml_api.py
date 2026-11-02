@@ -40,6 +40,7 @@ from ..ml.deep.manifest import ARCHITECTURES, architecture                      
 from ..ml.experiments import RL_KINDS, load_run, rebacktest, run_experiment
 from ..ml.features import GROUPS
 from ..ml.models import Model, ModelUnavailable, default_refit, model_catalog
+from ..ml.model_selection import policy_from as ms_policy_from
 from ..ml.registry import STAGES, Registry
 from ..ml.signals import METHODS as SIGNAL_METHODS
 from ..ml import comparison as cmpn, r6_reports as r6
@@ -53,6 +54,7 @@ from ..utils.optional import unavailable_reason
 from . import tuning
 from .api import ApiError
 from .ml_advanced_api import AdvancedRoutes
+from .ml_selection_api import SelectionRoutes
 from .payload import clean
 from .universe import MAX_TICKERS, UniverseError, normalise
 
@@ -190,7 +192,7 @@ def _user_errors():
         raise ApiError(str(exc.args[0] if isinstance(exc, KeyError) and exc.args else exc)) from None
 
 
-class MlApi(AdvancedRoutes):
+class MlApi(AdvancedRoutes, SelectionRoutes):
     def __init__(self, app):
         self.app = app
         self.root = Path(app.root)
@@ -206,7 +208,7 @@ class MlApi(AdvancedRoutes):
                 "/api/ml/lineage": self.lineage, "/api/ml/holdout": self.holdout, "/api/ml/promotion-status": self.promotion_status, "/api/ml/statistical-diagnostics": self.statistical_diagnostics,
                 "/api/ml/null-controls": self.null_controls, "/api/ml/trading-diagnostics": self.trading_diagnostics, "/api/ml/validation-policy": self.validation_policy, "/api/ml/governance": self.governance_status,
                 "/api/ml/alpha-diagnostics": self.alpha_diagnostics, "/api/ml/portfolio-diagnostics": self.portfolio_diagnostics, "/api/ml/improvement-experiment": self.improvement_get,
-                "/api/ml/delay-report": self.delay_report, **self.advanced_get_routes()}
+                "/api/ml/delay-report": self.delay_report, **self.advanced_get_routes(), **self.selection_get_routes()}
 
     def post_routes(self) -> dict:
         return {"/api/ml/dataset/build": self.dataset_build, "/api/ml/train": self.train, "/api/ml/rebacktest": self.rebacktest, "/api/ml/search": self.search, "/api/ml/tune": self.tune, "/api/ml/tune/stop": self.tune_stop,
@@ -214,7 +216,7 @@ class MlApi(AdvancedRoutes):
                 "/api/ml/evaluation-plan": self.evaluation_plan, "/api/ml/evaluation-plan/freeze": self.evaluation_plan_freeze, "/api/ml/evaluate": self.evaluate,
                 "/api/ml/null-controls/run": self.null_controls_run, "/api/ml/selection-tests/run": self.selection_tests_run, "/api/ml/validation-policy": self.validation_policy_adopt,
                 "/api/ml/statistical-diagnostics/run": self.diagnostics_run, "/api/ml/multiseed/run": self.multiseed_run, "/api/ml/governance/version": self.governance_version,
-                "/api/ml/governance/action": self.governance_action, "/api/ml/improvement-experiment": self.improvement_run, **self.advanced_post_routes()}
+                "/api/ml/governance/action": self.governance_action, "/api/ml/improvement-experiment": self.improvement_run, **self.advanced_post_routes(), **self.selection_post_routes()}
 
     # ------------------------------------------------------------------------------------------------------------ plumbing
     @property
@@ -531,16 +533,34 @@ class MlApi(AdvancedRoutes):
         key = str(body["idempotency_key"]) if body.get("idempotency_key") else None
         if key is not None and not rc.ID.match(key):
             raise ApiError("idempotency_key is 1 to 80 letters, digits, '.', '_', ':' or '-'")
+        selection = self._selection_request(body)
 
         def work(progress):
             with _user_errors():
                 result = ss.search(over, config=self.app.config, builder=self.app.builder, registry=self.registry, kinds=tuple(kinds), seed=seed, progress=progress, finalize_top=finalise, idempotency_key=key,
-                                   **budget)
+                                   selection=selection, **budget)
             return jsonable({**result, "budget": budget, "finalize": {"requested": finalise, "note": None if finalise else "the search stopped at the end of the validation segment; to evaluate the best on the test and "
                                                                                                                        "forward segments, freeze a plan (POST /api/ml/evaluation-plan) and evaluate it (POST /api/ml/evaluate), or repeat the search with finalize: true "
                                                                                                                        "(deprecated: it does the same, once, and records it)"}})
 
         return self._submit(f"ml: search {sum(budget[k] for k in ('n_random', 'n_bayes'))}+ trials", work)
+
+    @staticmethod
+    def _selection_request(body: dict):
+        """The ``selection`` option of a search or a tuning: absent or false is off (the result is what it always was), true takes the documented defaults and an object is a selection policy, which is
+        checked now so that a bad one is refused before a job is queued."""
+        raw = body.get("selection")
+        if raw in (None, False, ""):
+            return None
+        if raw is True:
+            return True
+        if not isinstance(raw, dict):
+            raise ApiError("selection is true, false or an object (see GET /api/ml/selection-policy)")
+        try:
+            ms_policy_from(raw)
+        except ValueError as exc:
+            raise ApiError(str(exc)) from None
+        return raw
 
     def tune(self, body: dict) -> dict:
         """``POST /api/ml/tune`` (a job): the settings of ONE model kind, validation-only, and (optionally) the best set finalised on every segment. With ``effort`` (``quick``, ``standard`` or ``thorough``)
@@ -575,6 +595,7 @@ class MlApi(AdvancedRoutes):
         key = str(body["idempotency_key"]) if body.get("idempotency_key") else None
         if key is not None and not rc.ID.match(key):
             raise ApiError("idempotency_key is 1 to 80 letters, digits, '.', '_', ':' or '-'")
+        selection = self._selection_request(body)
         begin = None
         if effort:                                                                   # the settings in the form are the first trial: the space is stretched to hold them
             try:
@@ -587,8 +608,13 @@ class MlApi(AdvancedRoutes):
         def work(progress):
             with _user_errors():
                 out = opt.tune(over, space, trials, method, seed, config=self.app.config, builder=self.app.builder, registry=self.registry, study_name=f"tune-{kind}", progress=progress, start=begin,
-                               stop=stop.is_set)
+                               stop=stop.is_set, selection=selection)
                 final = final_start = hold_t = bench = evaluation = None
+                picked = (out.get("model_selection") or {}).get("selected_trial")
+                if picked is not None and out.get("best"):                                       # the constrained selection, which read validation data only, names the settings to evaluate once
+                    row = next(t for t in out["trials"] if t["number"] == picked)
+                    out["best"] = {**out["best"], "number": picked, "params": row["params"], "score": row.get("score"), **{k: row.get(k) for k in ("validation_sharpe", "turnover", "max_drawdown", "instability", "train_validation_gap", "ic")},
+                                   "chosen_by": "constrained selection"}
                 if finalise and out.get("best"):
                     progress("freezing an evaluation plan from the best validation settings and evaluating it once")
                     wants_comparison = begin is not None and out["best"]["number"] != 0

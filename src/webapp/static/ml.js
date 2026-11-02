@@ -34,8 +34,8 @@
   const M = {
     id: "ml", root: "#ml", view: "#view-ml", title: "Machine learning", api: 8, mode: "experiments", busy: "", results: {}, errors: {}, cache: new Map(), guard: null, go: null, progress: null,
     about: "Train models only inside the whole pipeline: features without look-ahead, walk-forward fits, a backtest with costs, and results cut into train, validation, test and forward segments, with every look at the data counted.",
-    modes: [["dataset", "Dataset"], ["train", "Train"], ["experiments", "Experiments"], ["compare", "Compare"], ["explain", "Explain"], ["overfit", "Overfitting"], ["search", "Search"], ["combine", "Combine"], ["forward", "Forward test"], ["controls", "Research controls"]],
-    runLabel: { dataset: "Build the dataset", train: "Train and backtest", experiments: "Refresh", compare: "Compare", explain: "Explain", overfit: "Check again", search: "Run the search", combine: "Combine", forward: "Record today's signal", controls: "Refresh" },
+    modes: [["dataset", "Dataset"], ["train", "Train"], ["experiments", "Experiments"], ["compare", "Compare"], ["explain", "Explain"], ["overfit", "Overfitting"], ["search", "Search"], ["select", "Select"], ["combine", "Combine"], ["forward", "Forward test"], ["controls", "Research controls"]],
+    runLabel: { dataset: "Build the dataset", train: "Train and backtest", experiments: "Refresh", compare: "Compare", explain: "Explain", overfit: "Check again", search: "Run the search", select: "Choose", combine: "Combine", forward: "Record today's signal", controls: "Refresh" },
     blurb: { dataset: "Causal features and forward-looking targets, with each feature's coverage and its information coefficient on the warm-up segment only.",
       train: "Walk-forward training, position rules, a backtest with costs, and the result split into train, validation, test and forward segments.",
       experiments: "Every saved experiment, ranked, with the number of looks at the same data when it ran. Open one, delete one, pick several to compare or combine.",
@@ -43,6 +43,7 @@
       explain: "Why the saved model scored an asset as it did on a date: Shapley values split the score exactly into what each feature added.",
       overfit: "How much of the best result survives where nothing was fitted: Sharpe by segment, the deflated Sharpe ratio, stress tests and meta-labelling.",
       search: "Random trials, then Bayesian, then genetic, on validation only; the best few are run on every segment once, and every trial is counted.",
+      select: "Choose among saved experiments on their validation rows only: eligibility gates, the pooled validation net Sharpe, a Pareto comparison and the simplest candidate that is not meaningfully worse.",
       combine: "Ten ways to weight several strategies, each estimated only from the past, side by side.",
       forward: "Paper signals recorded as the days arrive, settled when their window ends, with the live rank IC and the drift of each feature against the backtest.",
       controls: "The research record of one experiment: the three independent gates and why each is or is not passed, every try in its study, what was read of the protected test and forward outcomes, and which selection tests applied." },
@@ -51,6 +52,7 @@
       window: "expanding", rollingDays: "1260", minTrain: "756", refit: "", embargo: "0", valFrac: "20", testFrac: "15", fwdFrac: "15", model: "ridge", params: {},
       signal: "top_n_long_short", n: "3", quantile: "30", threshold: "0", gross: "1", net: "0", maxWeight: "35", holding: "5", rebalance: "weekly", cost: "5", slippage: "2", targetVol: "10", maxLev: "1.5",
       explain: true, robust: false, finalize: false, seed: "0", sort: "validation.sharpe", fModel: "", fStage: "", fUniverse: "", exp: "", asset: "", date: "", perms: "40",
+      selection: false, selPrimary: "net_sharpe", selMaxDd: "40", selMinDays: "126", selMinCov: "80", selMinSharpe: "0", selSimplicity: true, selRule: "one_se", selK: "1", selMargin: "0.25",
       searchKind: "search", engine: "builtin", kinds: new Set(), nRandom: "8", nBayes: "6", generations: "2", population: "6", topK: "2", tuneEffort: "standard",
       methods: new Set(), lookback: "252", every: "21", riskAversion: "5", capital: "100000", asOf: "", kappa: "0", uncertainty_power: "1", mv_lookback: "126", risk_aversion: "5", cov_window: "252", opt_every: "5", turnover_penalty: "0", calib_window: "504", calib_min_t: "2" },
   };
@@ -103,6 +105,7 @@
     if (m === "train" && !modelKinds().some((k) => k.kind === f.model && k.available)) return "This model cannot predict the chosen target.";
     if (m === "search" && f.searchKind === "search" && !f.kinds.size) return "Choose at least one model to search over.";
     if (m === "compare" && (M.picked.size < 2 || M.picked.size > 8)) return "Choose between two and eight experiments.";
+    if (m === "select" && (M.picked.size < 1 || M.picked.size > 20)) return "Choose between one and twenty experiments.";
     if (m === "combine" && (M.picked.size < 2 || M.picked.size > 12)) return "Choose between two and twelve experiments.";
     if (m === "combine" && !f.methods.size) return "Choose at least one method.";
     if (["explain", "overfit", "forward"].includes(m) && !M.cur) return M.board ? "Train an experiment first." : "Loading the experiments…";
@@ -233,6 +236,30 @@
       });
     }
   }
+  /* ---------- the constrained selection (P1-15, P2-17): thresholds are fields, each with the default the server documents ---------- */
+  function selectionFields(b, f, withSwitch) {
+    const after = () => Q.syncLab(M), again = () => Q.renderLab(M);
+    if (withSwitch) Q.labField(b, { key: "selection", label: "Choose the winner with the constrained selection", kind: "bool", help: "Off by default: the result is what it always was. On: every trial is judged on its pooled validation returns against the requirements below, and the simplest trial that is not meaningfully worse than the best is selected." }, f, again);
+    if (withSwitch && !f.selection) return;
+    Q.labField(b, { key: "selPrimary", label: "Rank by", kind: "choice", options: [["net_sharpe", "Validation net Sharpe (default)"], ["net_sortino", "Net Sortino"], ["net_calmar", "Net Calmar"], ["net_ann_return", "Net return a year"], ["ic", "Rank IC"]] }, f, after);
+    Q.labField(b, { key: "selMaxDd", label: "Largest drawdown allowed (%)", kind: "number", step: 1, min: 1, max: 100 }, f, after);
+    Q.labField(b, { key: "selMinDays", label: "Fewest validation days", kind: "number", step: 1, min: 20, max: 5000 }, f, after);
+    Q.labField(b, { key: "selMinCov", label: "Fewest days with two assets scored (%)", kind: "number", step: 1, min: 0, max: 100 }, f, after);
+    Q.labField(b, { key: "selMinSharpe", label: "Net Sharpe must be above (blank = no floor)", kind: "number", step: 0.1 }, f, after);
+    Q.labField(b, { key: "selSimplicity", label: "Prefer the simplest candidate that is not meaningfully worse", kind: "bool", help: "Uses the paired difference of the candidates on the days they share, with a dependence-aware bootstrap. No fixed penalty on the Sharpe ratio." }, f, again);
+    if (f.selSimplicity) {
+      Q.labField(b, { key: "selRule", label: "Not meaningfully worse means", kind: "choice", options: [["one_se", "Heuristic: within k standard errors of the paired gap"], ["non_inferiority", "Formal: non-inferior within a margin I declare"]] }, f, again);
+      if (f.selRule === "non_inferiority") Q.labField(b, { key: "selMargin", label: "Margin (in units of the ranking metric, declared before the results)", kind: "number", step: 0.05, min: 0.001 }, f, after);
+      else Q.labField(b, { key: "selK", label: "k (standard errors of the paired gap)", kind: "number", step: 0.25, min: 0, max: 10 }, f, after);
+    }
+    h("p", "hint", b, "Every other threshold has a documented default: GET /api/ml/selection-policy. The test and forward segments are never read.");
+  }
+  function selectionBody(f) {
+    const floor = optNumber(f.selMinSharpe, "Net Sharpe floor");
+    const eligibility = { max_drawdown: needNumber(f.selMaxDd, "Largest drawdown") / 100, min_validation_days: needNumber(f.selMinDays, "Validation days"), min_coverage: needNumber(f.selMinCov, "Coverage") / 100, min_net_sharpe: floor === undefined ? null : floor };
+    const simplicity = !f.selSimplicity ? { enabled: false } : f.selRule === "non_inferiority" ? { rule: "non_inferiority", margin: needNumber(f.selMargin, "Margin") } : { rule: "one_se", k: needNumber(f.selK, "k") };
+    return { primary_metric: f.selPrimary, eligibility, simplicity };
+  }
   M.sections = (panel) => {
     watchRuns();                                                                             // find the runs again when the tab opens or the mode changes
     const m = M.mode, f = M.form, cat = M.catalog, after = () => Q.syncLab(M);
@@ -314,6 +341,10 @@
       }
       const d = sec("2. Data", false); universeBlock(d); featureBlock(d); targetBlock(d);
       prepBlock(sec("3. Preparation and window", false)); segmentBlock(sec("4. Segments and refits", false)); signalBlock(sec("5. Position rule", false)); costBlock(sec("6. Costs and risk", false));
+      selectionFields(sec("7. Selection (optional)", false), f, true);
+    } else if (m === "select") {
+      pickList(sec("1. Experiments"), "One to twenty saved experiments:", 20);
+      selectionFields(sec("2. Requirements and rules"), f, false);
     } else if (m === "combine") {
       pickList(sec("1. Strategies"), "Two to twelve saved experiments:", 12);
       const b = sec("2. Methods");
@@ -384,12 +415,13 @@
     if (m === "search") {
       const tune = f.searchKind === "tune", before = M.results.search;
       await W.request(M, () => (tune
-        ? [{ modes: ["search"], job: true, path: "/api/ml/tune", body: { ...baseBody(f), model: modelBody(f), effort: f.tuneEffort, engine: f.engine, finalize: !!f.finalize } }]
+        ? [{ modes: ["search"], job: true, path: "/api/ml/tune", body: { ...baseBody(f), model: modelBody(f), effort: f.tuneEffort, engine: f.engine, finalize: !!f.finalize, selection: f.selection ? selectionBody(f) : undefined } }]
         : [{ modes: ["search"], job: true, path: "/api/ml/search", body: { ...baseBody(f), kinds: [...f.kinds], finalize: !!f.finalize, n_random: needNumber(f.nRandom, "Random trials"), n_bayes: needNumber(f.nBayes, "Bayesian trials"), generations: needNumber(f.generations, "Generations"),
-          population: needNumber(f.population, "Population"), top_k: needNumber(f.topK, "Finalists") } }]), tune ? "Tuning…" : "Searching…");
+          population: needNumber(f.population, "Population"), top_k: needNumber(f.topK, "Finalists"), selection: f.selection ? selectionBody(f) : undefined } }]), tune ? "Tuning…" : "Searching…");
       if (M.results.search !== before) invalidate();
       return;
     }
+    if (m === "select") return W.request(M, () => [{ modes: ["select"], path: "/api/ml/select", body: { experiments: [...M.picked], policy: selectionBody(f) } }], "Choosing among the experiments…");
     if (m === "combine") return W.request(M, () => [{ modes: ["combine"], path: "/api/ml/combine", body: { ids: [...M.picked], methods: [...f.methods], lookback: needNumber(f.lookback, "Window"), rebalance: needNumber(f.every, "Re-estimate every"), risk_aversion: needNumber(f.riskAversion, "Risk aversion") } }], "Combining…");
     if (m === "forward") {
       const read = { modes: ["forward"], path: "/api/ml/forward", query: { id: M.cur } };
@@ -401,7 +433,7 @@
     const m = M.mode;
     if (!M.catalog) { loadCatalog(); return; }
     if (m === "experiments") { M.run(true); return; }
-    if (["compare", "combine", "explain", "overfit", "forward", "controls"].includes(m)) {
+    if (["compare", "select", "combine", "explain", "overfit", "forward", "controls"].includes(m)) {
       if (!M.board) { ensureBoard(); return; }
       if ((m === "overfit" || m === "forward" || m === "controls") && M.cur) M.run(true);
       else if (m === "compare" && M.picked.size >= 2) M.run(true);
@@ -415,6 +447,7 @@
     explain: ["Explain a prediction", ["Why did the saved model score an asset as it did on a date? Shapley values split the score exactly into what each feature added. They describe the model, not the market."]],
     overfit: ["Check for overfitting", ["How much of the best result survives where nothing was fitted, and whether the stress tests hold."]],
     search: ["Search for strategies", ["Random trials, then Bayesian, then genetic. Trials see only the warm-up and validation segments; the best few are run on every segment once at the end, and every trial is counted against them."]],
+    select: ["Choose among experiments", ["Choose one to twenty experiments on the left. Only their validation rows are read. A candidate must meet the data, risk, exposure, liquidity and statistical requirements before it is ranked; the ranking is by the validation net Sharpe of the pooled chronological returns (never an average of fold Sharpe ratios); a Pareto comparison shows the trade-offs, and the simplest candidate that is not meaningfully worse than the highest ranked is selected. Nothing is promoted."]],
     combine: ["Combine strategies", ["Choose two to twelve experiments on the left: ten ways to weight them, each estimated only from the returns up to the day it is used."]],
     forward: ["Forward test", ["Record the saved model's signal for the newest date, settle the signals whose window has passed, and watch the live rank IC and the drift of each feature against the backtest."]],
     controls: ["Research controls", ["Choose an experiment on the left: its three independent gates (Algorithm Verified, Strategy Validated, Operationally Ready) with the reason each is not passed, every try recorded in its study, what was read of the protected test and forward outcomes, and which selection tests applied."]] };
@@ -486,7 +519,7 @@
       }
     }
   }
-  M.build = (root, d, body) => ({ dataset: buildDataset, train: buildTrain, experiments: buildExperiments, compare: buildCompare, explain: buildExplain, overfit: buildOverfit, search: buildSearch, combine: buildCombine, forward: buildForward, controls: buildControls })[M.mode](root, d, body);
+  M.build = (root, d, body) => ({ dataset: buildDataset, train: buildTrain, experiments: buildExperiments, compare: buildCompare, explain: buildExplain, overfit: buildOverfit, search: buildSearch, select: buildSelect, combine: buildCombine, forward: buildForward, controls: buildControls })[M.mode](root, d, body);
   const header = (root, title, sub) => Q.labHead(root, title, sub, GUIDE);
 
   /* ---------- opening, deleting and re-running saved experiments ---------- */
@@ -988,6 +1021,7 @@
       table: (b) => trialTable(b, trials) });
     const c2 = W.card(root, "Best trials by score", "The score is the validation Sharpe less penalties for turnover, drawdown, instability across validation blocks and the train-to-validation gap.");
     trialTable(c2, trials.slice().sort((a, b) => b.score - a.score).slice(0, 12));
+    if (d.model_selection) selectionCard(root, d.model_selection);
     const fin = d.finalists || (d.final ? [{ trial: best.number, experiment_id: d.final.id, name: d.final.report.name, params: best.params, validation_score: best.score, segments: d.final.report.segments.stats }] : []);
     if (fin.length) {
       const c3 = W.card(root, tune ? "The best settings, on every segment" : "Finalists, run on every segment", "Each is fitted once more on all the segments and saved as an experiment, with every trial counted against its deflated Sharpe ratio.");
@@ -1002,6 +1036,51 @@
   }
   const trialTable = (b, rows) => table(b, [{ label: "#", num: true, get: (t) => String(t.number) }, { label: "Stage", get: (t) => String(t.stage).replace("-", "\u2011") }, { label: "Validation Sharpe", num: true, get: (t) => sig(t.validation_sharpe) }, { label: "Score", num: true, get: (t) => sig(t.score) },
     { label: "Turnover", num: true, get: (t) => sig(t.turnover, 1) + "×" }, { label: "Settings", get: (t) => paramText(t.params) }], rows);
+
+  /* ---------- the constrained selection: eligibility, ranking, Pareto, simplicity ---------- */
+  const SEL_STATE = { eligible: "eligible", ineligible: "ineligible", insufficient: "too little data", failed: "failed to run" };
+  const snake = (t) => String(t).replace(/_/g, " ");
+  function selectionCard(root, s) {
+    const nm = (x) => { const id = typeof x === "string" ? x : x.id, c = typeof x === "string" ? (s.candidates || []).find((k) => k.id === x) : x; return c && c.label && c.label !== id ? c.label : (String(id).startsWith("trial-") ? id : shortId(id)); };
+    const c = W.card(root, "Constrained selection", `${s.n_candidates} candidates · ranked by ${snake(s.primary_metric)} on the pooled chronological validation returns · policy ${s.policy_hash}`);
+    W.flags(c, [s.scope.note, s.claims.out_of_sample], "Read first. ");
+    const sel = (s.candidates || []).find((x) => x.id === s.selected), top = (s.candidates || []).find((x) => x.id === s.highest_ranked);
+    W.kv(c, "Result", [["Eligible", `${s.counts.eligible} of ${s.n_candidates} (${s.counts.ineligible} ineligible, ${s.counts.insufficient} with too little data, ${s.counts.failed} failed to run)`], ["Highest ranked", top ? nm(top) : "none"],
+      ["Selected", sel ? nm(sel) + (s.changed_by_simplicity ? ": simpler than the highest ranked, and not meaningfully worse by the rule below" : "") : "nothing: " + (s.reason || "")], ["What the choice means", s.claims.selection], ["Equivalence", s.claims.statistical_equivalence]]);
+    table(c, [{ label: "Candidate", get: (r) => nm(r) }, { label: "State", get: (r) => SEL_STATE[r.state] || r.state }, { label: cap(snake(s.primary_metric)), num: true, get: (r) => sig(r.primary) },
+      { label: "Max drawdown", num: true, get: (r) => (r.metrics && !Q.bad(r.metrics.max_drawdown) ? pct(r.metrics.max_drawdown, 1) : "n/a") }, { label: "Turnover a year", num: true, get: (r) => (r.metrics && !Q.bad(r.metrics.turnover) ? sig(r.metrics.turnover, 1) + "×" : "n/a") },
+      { label: "Instability", num: true, get: (r) => (r.metrics && !Q.bad(r.metrics.instability) ? sig(r.metrics.instability, 2) : "n/a") },
+      { label: "Complexity", get: (r) => (r.complexity ? `family ${r.complexity.model_complexity}, ${Q.bad(r.complexity.n_features) ? "?" : sig(r.complexity.n_features, 0)} features` : "n/a") }, { label: "Why it is not eligible", get: (r) => r.reason || "" }], s.candidates || []);
+    if (s.pareto && s.pareto.eligibility === "applied") {
+      W.sub(c, "Pareto comparison");
+      W.hint(c, `On ${s.pareto.objectives.map(snake).join(", ")} the Pareto front is ${s.pareto.front.map(nm).join(", ") || "empty"}: no other candidate is at least as good on every criterion and better on one.${(s.pareto.dropped || []).length ? " Left out because some candidate lacks them: " + s.pareto.dropped.map((x) => snake(x.objective)).join(", ") + "." : ""}`);
+      if ((s.against_selected || []).length) table(c, [{ label: "Compared with the selected", get: (r) => nm(r.b) }, { label: "Verdict", get: (r) => r.verdict }, { label: "It is better on", get: (r) => r.better_b.map(snake).join(", ") || "nothing" },
+        { label: "It is worse on", get: (r) => r.better_a.map(snake).join(", ") || "nothing" }], s.against_selected);
+    }
+    const ne = s.nested;
+    if (ne && ne.eligibility === "applied") {
+      W.sub(c, "Nested estimate of the ranking rule");
+      W.hint(c, ne.reading + ".");
+      W.kv(c, "Chained result", [["Days chained", `${ne.chain_days} (${ne.outer_first} to ${ne.outer_last})`], ["The rule, choosing as it went", sig(ne.chain_sharpe)], ["The selected candidate on the same days", sig(ne.selected_on_outer_days)],
+        ["The median candidate on the same days", sig(ne.median_candidate)], ["The best candidate in hindsight", sig(ne.best_in_hindsight)], ["Audit of the windows", ne.audit.ok ? `passed (${ne.audit.steps_checked} steps)` : "FAILED: " + ne.audit.violations.join("; ")]]);
+      table(c, [{ label: "Cutoff", get: (r) => r.cutoff }, { label: "Chosen", get: (r) => (r.chosen ? nm(r.chosen) : "") }, { label: "Inner days", num: true, get: (r) => String(r.n_inner || 0) },
+        { label: "Outer days", num: true, get: (r) => String(r.n_outer || 0) }, { label: "State", get: (r) => r.state }], ne.steps);
+    } else if (ne && ne.reason) W.hint(c, "Nested estimate: " + ne.reason + ".");
+    const sp = s.simplicity;
+    if (sp && sp.table) {
+      W.sub(c, sp.claim.kind === "formal_non_inferiority" ? "Simplicity: a formal non-inferiority test" : "Simplicity: a selection heuristic, not a test of equivalence");
+      W.hint(c, sp.claim.statement);
+      table(c, [{ label: "Candidate", get: (r) => nm(r.id) }, { label: "Gap to the highest ranked", num: true, get: (r) => (Q.bad(r.gap) ? "n/a" : sig(r.gap, 3)) }, { label: "Standard error of the paired gap", num: true, get: (r) => (Q.bad(r.se_of_gap) ? "n/a" : sig(r.se_of_gap, 3)) },
+        { label: "How", get: (r) => snake(r.how || "") }, { label: "Status", get: (r) => snake(r.statistical_status) }, { label: "Why", get: (r) => r.reason }], sp.table);
+      W.flags(c, sp.claim.caveats || [], "Limits. ");
+    }
+  }
+  function buildSelect(root, d) {
+    header(root, "Choosing among saved experiments", `${d.n_candidates} candidates${d.selection_id ? " · " + d.selection_id : ""}`);
+    const ig = (d.origin || {}).ignored_rows || {}, n = Object.values(ig).reduce((a, r) => a + Object.values(r).reduce((x, y) => x + y, 0), 0);
+    if (n) W.flags(root, [`${n} rows outside the validation segment (test, forward or after the cut) were counted and never read.`], "Holdout. ");
+    selectionCard(root, d);
+  }
 
   /* ---------- combine ---------- */
   function buildCombine(root, d) {
@@ -1335,12 +1414,57 @@
       W.hint(c, mo.note);
     } else W.hint(c, (mo && mo.reason && mo.eligibility !== "not_computed") ? `${mo.reason}` : "The uncertainty monitor has not been run for this experiment. A model that states no uncertainty has nothing to monitor, and that is reported as such, never as healthy.");
     const rt = a.retrain;
-    W.sub(c, "Retraining proposals");
+    W.sub(c, "Retraining: schedule, diagnostics and a constrained challenger search");
     if (rt) {
-      const st = rt.state;
+      const st = rt.state, ap = rt.adaptive_policy, ev = rt.evidence, approved = rt.events.some((e) => e.event === "approved" && e.proposal === st.open_proposal);
       W.hint(c, `Open proposal: ${st.open_proposal || "none"} · consecutive failures: ${st.consecutive_failures} · ${st.suspended ? "SUSPENDED until a person documents a recovery" : "not suspended"} · ${rt.events_total} event${rt.events_total === 1 ? "" : "s"}`);
       if (rt.events.length) table(c, [{ label: "Event", get: (r) => r.event }, { label: "By", get: (r) => r.actor }, { label: "When", get: (r) => r.created }, { label: "Why", get: (r) => r.reason || r.note || r.trigger || "" }], rt.events.slice(-8));
-      W.hint(c, rt.note + " Approval, rejection, recovery and rollback name a person: quant ml-advanced retrain-approve EXPERIMENT --proposal N --actor NAME --note TEXT, or POST /api/ml/retraining/action.");
+      W.hint(c, `Default policy: a ${ap.schedule.frequency} schedule (a daily strategy refits every ${ap.refit_every.join(" or ")} sessions), training windows tried ${ap.windows.map((w) => (w[0] === "rolling" ? `rolling ${w[1]} days` : "expanding")).join(" and ")}, at most ${ap.max_challengers} challengers, a challenger must be better at a Holm-adjusted level of ${ap.level} on the same out-of-sample observations. Autonomous retraining is off: ${rt.note}`);
+      const te = (M.results.controls_retrain_eval || {}).data;
+      if (te && te.subject === M.cur) {
+        W.hint(c, `Triggers as of ${te.as_of}: the last fit was ${te.last_fit}, ${te.rows_since_fit} rows since, ${te.train_days} days of history.`);
+        table(c, [{ label: "Trigger", get: (r) => snake(r.kind) }, { label: "State", get: (r) => (r.fired ? "FIRED" : snake(r.state)) }, { label: "Enabled", get: (r) => (r.enabled ? "yes" : "no") }, { label: "Why", get: (r) => r.reason }], te.triggers);
+        const fired = te.triggers.filter((x) => x.fired && x.enabled && x.kind !== "manual");
+        if (fired.length) actions(c, fired.map((x) => [`Propose a retraining: ${snake(x.kind)}`, async () => {
+          try { const r = await api("/api/ml/retraining/action", { id: M.cur, action: "trigger", kind: x.kind }); const d = r.data || r; done(d.outcome === "proposed" ? `Proposal ${d.proposal} recorded; nothing is trained until a person approves it` : `Not a proposal: ${d.reason}`); } catch (e) { Q.toast(e.message); }
+        }, "", "A trigger is a proposal: a person approves it before anything is trained"]));
+      }
+      const row = h("div", "row tight", c), who = h("input", "", row), why = h("input", "", row);
+      who.type = "text"; who.placeholder = "your name (an approval names a person)"; who.value = M.retrainActor || ""; who.setAttribute("aria-label", "Who decides"); why.type = "text"; why.placeholder = "why"; why.value = M.retrainNote || ""; why.setAttribute("aria-label", "Why");
+      who.addEventListener("input", () => { M.retrainActor = who.value; }); why.addEventListener("input", () => { M.retrainNote = why.value; });
+      const decide = (action) => async () => {
+        try {
+          const r = await api("/api/ml/retraining/action", { id: M.cur, action, proposal: st.open_proposal, actor: who.value.trim(), note: why.value.trim() }); const d = r.data || r;
+          done(`${cap(d.outcome || action)}`);
+        } catch (e) { Q.toast(e.message); }
+      };
+      actions(c, [
+        ["Check the triggers now", () => W.request(M, () => [{ modes: ["controls_retrain_eval"], path: "/api/ml/retraining/action", body: { id: M.cur, action: "evaluate", refresh: true } }, ...CONTROLS(M.cur)], "Reading the schedule and the diagnostics…")],
+        ["Propose a scheduled retraining", async () => { try { const r = await api("/api/ml/retraining/action", { id: M.cur, action: "trigger", kind: "schedule" }); const d = r.data || r; done(d.outcome === "proposed" ? `Proposal ${d.proposal} recorded` : `Not a proposal: ${d.reason}`); } catch (e) { Q.toast(e.message); } }],
+        ["Approve the open proposal", decide("approve"), "", "Needs your name and a reason", !st.open_proposal],
+        ["Reject it", decide("reject"), "", "Needs your name and a reason", !st.open_proposal],
+        ["Run the challenger search", () => W.request(M, () => [{ modes: ["controls_retrain_start"], job: true, path: "/api/ml/retraining/action", body: { id: M.cur, action: "start", proposal: st.open_proposal, actor: who.value.trim() } }, ...CONTROLS(M.cur)],
+          "Retraining the challengers on the same data and comparing them with the incumbent…"), "primary", "Development data only; nothing is promoted", !st.open_proposal || !approved],
+      ]);
+      if (ev) {
+        W.sub(c, "Latest challenger search");
+        W.kv(c, "Outcome", [["Decision", cap(snake(ev.decision.decision))], ["Why", ev.decision.reason], ["Data read", `${ev.scope.mode} mode, the validation segment; protected segments read: ${ev.scope.protected_segments_read ? "yes" : "no"}`],
+          ["The re-run incumbent matches the saved one", ev.incumbent.reproduced.checked ? (ev.incumbent.reproduced.reproduced ? "yes" : "no: " + (ev.incumbent.reproduced.reason || "the data has changed since")) : "not checked"], ["Multiplicity", ev.search_space.multiplicity], ["Promoted", "no: " + ev.promotion]]);
+        table(c, [{ label: "Challenger", get: (r) => r.name.replace(/^retrain: /, "") }, { label: "Verdict", get: (r) => snake(r.verdict || r.status) }, { label: "Sharpe, incumbent to challenger", get: (r) => `${sig(r.net_sharpe.incumbent)} → ${sig(r.net_sharpe.challenger)}` },
+          { label: "Difference (interval)", get: (r) => { const d = r.net_sharpe.difference || {}; return Q.bad(d.value) || !d.interval ? "n/a" : `${sig(d.value)} (${sig(d.interval[0])} to ${sig(d.interval[1])})`; } },
+          { label: "Same observations", get: (r) => (r.identical_oos.identical ? "yes" : "no") }, { label: "Adjusted p", num: true, get: (r) => sig(r.adjusted_p_value, 3) }], ev.challengers);
+      }
+      if ((rt.versions || []).length) {
+        W.sub(c, "Versions, kept for rollback");
+        table(c, [{ label: "Version", get: (r) => r.version_id }, { label: "Role", get: (r) => r.role }, { label: "Name", get: (r) => r.name }, { label: "State", get: (r) => snake(r.state) }], rt.versions);
+        const rb = h("div", "row tight", c), from = h("select", "", rb), to = h("select", "", rb);
+        for (const sel of [from, to]) for (const v of rt.versions) { const o = h("option", "", sel, `${v.role}: ${v.version_id}`); o.value = v.version_id; }
+        from.setAttribute("aria-label", "Version to take out of service"); to.setAttribute("aria-label", "Version to return to"); if (rt.versions.length > 1) to.selectedIndex = 0;
+        actions(c, [["Roll back", async () => {
+          try { const r = await api("/api/ml/retraining/action", { id: M.cur, action: "rollback", from_version: from.value, to_version: to.value, actor: who.value.trim(), note: why.value.trim() }); const d = r.data || r; done(`${cap(snake(d.outcome || "rolled_back"))}`); } catch (e) { Q.toast(e.message); }
+        }, "", "Takes the first version out of service and returns to the second; both are kept. Needs your name and a reason"]]);
+      }
+      W.hint(c, "Approval, rejection, recovery and rollback name a person: quant ml-advanced retrain-approve|reject|recover|rollback EXPERIMENT --proposal N --actor NAME --note TEXT, or POST /api/ml/retraining/action.");
     }
     W.sub(c, "Champion and challenger");
     const prow = h("div", "row tight", c), pin = h("input", "", prow), pbtn = h("button", "btn", prow, "Show the pair");

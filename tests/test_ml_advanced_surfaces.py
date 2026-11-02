@@ -132,7 +132,11 @@ def test_retraining_routes_record_proposals_and_decisions_and_cannot_switch_auto
     with pytest.raises(ApiError, match="does not take"):
         post(app, "/api/ml/retraining/action", {"id": ens["id"], "action": "trigger", "autonomous": True})
     with pytest.raises(ApiError, match="action is one of"):
-        act(action="start")
+        act(action="vibes")
+    with pytest.raises(ApiError, match="actor is required"):
+        act(action="start", proposal=1)
+    with pytest.raises(ApiError, match="is not the open proposal"):
+        act(action="start", proposal=1, actor="alice")
     with pytest.raises(ApiError, match="autonomous retraining cannot be enabled here"):
         act(action="trigger", policy={**policy, "autonomous": True})
     with pytest.raises(ApiError, match="a retraining policy has"):

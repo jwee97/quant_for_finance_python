@@ -97,48 +97,84 @@ class AdvancedRoutes:
     # ------------------------------------------------------------------------------------------------------------ P3-02 retraining
     def retraining(self, q: dict) -> dict:
         """``GET /api/ml/retraining?id=<experiment>``: the retraining history of an experiment (every trigger with the reason it was or was not a proposal, approvals, rejections, failures, suspension,
-        recovery, rollback) and the state it leaves: the open proposal, consecutive failures and whether it is suspended."""
+        recovery, rollback), the state it leaves (the open proposal, consecutive failures, whether it is suspended), the defaults of the adaptive policy (monthly schedule, training windows, thresholds),
+        the evidence of the latest challenger search and the strategy versions in its lineage."""
         h = _h()
         h._only(q, {"id"}, "/api/ml/retraining")
+        from ..ml import adaptive_retrain as ar
         from ..ml import retrain as rt
 
         with h._user_errors():
             exp_id = h._id(q)
             self.registry.get_experiment(exp_id)
             events = rt.events(self.registry, exp_id)
+            evidence, history, versions = ar.latest_evidence(self.registry, exp_id), ar.evidence_history(self.registry, exp_id), ar.versions(self.registry, exp_id)["versions"]
         data = {"subject": exp_id, "state": rt.status(self.registry, exp_id), "events": events[-60:], "events_total": len(events), "triggers": list(rt.TRIGGERS), "default_policy": asdict(rt.RetrainPolicy(name="default")),
+                "adaptive_policy": asdict(ar.AdaptivePolicy()), "evidence": evidence, "evidence_history": history, "versions": versions,
                 "note": "A trigger is a proposal. Nothing is trained until a person approves it (or a policy allows it, from code), a retraining cannot read a protected segment, and a challenger is never promoted by it."}
         return clean(common.envelope("ml_retraining", data, {"registry": "platform"}, [], None, []))
 
     def retraining_action(self, body: dict) -> dict:
-        """``POST /api/ml/retraining/action {"id", "action": "trigger"|"approve"|"reject"|"recover"|"rollback", ...}``. ``trigger`` takes ``kind`` (drift_alert and performance_alert need an alert in the latest
-        drift report; schedule and manual are accepted as declared) and an optional ``policy``; ``approve`` and ``reject`` take ``proposal``, ``actor`` and ``note``; ``recover`` lifts a suspension (``actor``,
-        ``note``); ``rollback`` takes ``from_version``, ``to_version``, ``actor`` and ``note`` and goes through governance. Starting a retraining is not a route: it needs a trainer and runs from code."""
+        """``POST /api/ml/retraining/action {"id", "action": "evaluate"|"trigger"|"approve"|"reject"|"start"|"recover"|"rollback", ...}``. ``evaluate`` reads every trigger now (the schedule from the calendar, the
+        diagnostics from the stored looks; ``refresh`` computes the drift report and the uncertainty monitor first) and proposes nothing. ``trigger`` takes ``kind`` (schedule, drift_alert, performance_alert and
+        calibration_alert must be backed by the calendar or by a recorded alert; manual is accepted as declared) and an optional ``policy``; ``approve`` and ``reject`` take ``proposal``, ``actor`` and ``note``;
+        ``start`` runs the constrained challenger search of an open, approved proposal as a job (``proposal``, ``actor``, optional ``policy``): development data only, the incumbent re-run beside its challengers, a
+        recommendation with its evidence and never a promotion; ``recover`` lifts a suspension (``actor``, ``note``); ``rollback`` takes ``from_version``, ``to_version``, ``actor`` and ``note`` and goes through
+        governance."""
         h = _h()
-        h._only(body, {"id", "action", "kind", "policy", "proposal", "actor", "note", "from_version", "to_version"}, "/api/ml/retraining/action")
+        h._only(body, {"id", "action", "kind", "policy", "proposal", "actor", "note", "from_version", "to_version", "as_of", "refresh"}, "/api/ml/retraining/action")
+        from ..ml import adaptive_retrain as ar
         from ..ml import retrain as rt
 
         action = str(body.get("action") or "")
-        if action not in ("trigger", "approve", "reject", "recover", "rollback"):
-            raise ApiError("action is one of trigger, approve, reject, recover, rollback")
+        if action not in ("evaluate", "trigger", "approve", "reject", "start", "recover", "rollback"):
+            raise ApiError("action is one of evaluate, trigger, approve, reject, start, recover, rollback")
         with h._user_errors():
             exp_id = h._id(body)
             self.registry.get_experiment(exp_id)
+            as_of = h._date("as_of", body["as_of"]) if body.get("as_of") else None
             try:
-                if action == "trigger":
+                if action == "evaluate":
                     policy = adv.retrain_policy(body.get("policy"))
                     with self._heavy:
-                        out = adv.propose_retraining(self.registry, exp_id, kind=str(body.get("kind") or "manual"), policy=policy, actor=_actor(body, required=False))
+                        out = ar.evaluate_triggers(self.registry, exp_id, policy, as_of=as_of, refresh=bool(body.get("refresh")), actor=_actor(body, required=False))
+                elif action == "trigger":
+                    policy = adv.retrain_policy(body.get("policy"))
+                    with self._heavy:
+                        out = adv.propose_retraining(self.registry, exp_id, kind=str(body.get("kind") or "manual"), policy=policy, actor=_actor(body, required=False), as_of=as_of)
                 elif action in ("approve", "reject"):
                     proposal = h._num("proposal", body.get("proposal"), 1, 10**9, True)
                     out = (rt.approve if action == "approve" else rt.reject)(self.registry, exp_id, proposal, actor=_actor(body), note=_text(body, "note"))
+                elif action == "start":
+                    return self._retraining_start(exp_id, body)
                 elif action == "recover":
                     out = rt.recover(self.registry, exp_id, actor=_actor(body), note=_text(body, "note"))
                 else:
                     out = rt.rollback(self.registry, exp_id, _text(body, "from_version", 100), _text(body, "to_version", 100), reason=_text(body, "note"), actor=_actor(body))
             except rt.RetrainError as exc:
                 raise ApiError(str(exc)) from None
-        return clean(common.envelope("ml_retraining_action", {"subject": exp_id, "action": action, **out, "state": rt.status(self.registry, exp_id)}, {"registry": "platform"}, [], None, []))
+        return _wrap("ml_retraining_action", {"subject": exp_id, "action": action, **out, "state": rt.status(self.registry, exp_id)})                # a trigger evaluation's own as_of moves to the envelope
+
+    def _retraining_start(self, exp_id: str, body: dict) -> dict:
+        """Queue the constrained challenger search of an open, approved proposal. Refused now, before any job exists, when there is no such proposal or no person has approved it."""
+        h = _h()
+        from ..ml import adaptive_retrain as ar
+        from ..ml import retrain as rt
+
+        proposal = h._num("proposal", body.get("proposal"), 1, 10**9, True)
+        actor = _actor(body)
+        policy = adv.retrain_policy(body.get("policy"))
+        if rt.status(self.registry, exp_id)["open_proposal"] != proposal:
+            raise ApiError(f"proposal {proposal} is not the open proposal of {exp_id}")
+        if not any(e["event"] == "approved" and e.get("proposal") == proposal for e in rt.events(self.registry, exp_id)):
+            raise ApiError("a person must approve the proposal before anything is trained: POST action=approve with an actor and a note")
+
+        def work(progress):
+            with h._user_errors():
+                out = ar.start(self.registry, exp_id, proposal, policy, config=self.app.config, builder=self.app.builder, progress=progress, actor=actor)
+            return clean({**out, "subject": exp_id, "state": rt.status(self.registry, exp_id)})
+
+        return self._submit(f"ml: retraining of {exp_id[-6:]}", work)
 
     # ------------------------------------------------------------------------------------------------------------ P3-10 champion and challenger
     def champion(self, q: dict) -> dict:

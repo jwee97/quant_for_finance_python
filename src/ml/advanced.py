@@ -22,7 +22,9 @@ MODULES = (
      "text": "PSI and a dependence-aware KS test of each feature against a fixed reference window ending at the model's fit cutoff, with coverage and sample counts; drift of the settled rank IC; alert lineage. An alert is a proposal to look, not an action."},
     {"id": "P3-02", "key": "retrain", "name": "Retraining triggers and proposals", "module": "src.ml.retrain", "surface": ["api", "cli"], "needs": [],
      "routes": ["GET /api/ml/retraining", "POST /api/ml/retraining/action"], "cli": "ml-advanced retrain",
-     "text": "Predefined triggers, cooldown, minimum data, duplicate suppression, an approval by a named person, nested validation, suspension after repeated failures, recovery and rollback. A retraining never promotes a challenger and never reads a protected segment. Starting a retraining is a library call (it needs a trainer)."},
+     "text": "Predefined triggers (a monthly schedule, drift, performance and calibration alerts), cooldown, minimum data, duplicate suppression, an approval by a named person, a constrained challenger search "
+             "(training window, refit schedule, nearby hyper-parameters) compared with the incumbent on identical out-of-sample observations, suspension after repeated failures, recovery, versions and rollback. "
+             "A retraining never promotes a challenger and never reads a protected segment."},
     {"id": "P3-03", "key": "bma", "name": "Bayesian model averaging", "module": "src.ml.bma", "surface": ["library"], "needs": [],
      "routes": [], "cli": None,
      "text": "Posterior model weights from closed-form Bayes factors under a stated g-prior and a stated approximation, with uncertainty, next to regularised stacked weights on the same out-of-sample data. Performance weights are never called posterior probabilities."},
@@ -137,50 +139,24 @@ def run_monitor(registry, exp_id: str, *, as_of=None, reference_end=None, policy
     return {**out, "record_seq": dx.store(registry, "uncertainty_monitor", exp_id, out, actor=actor)}
 
 
-def propose_retraining(registry, exp_id: str, *, kind: str, policy, actor: str, now: float | None = None) -> dict:
+def propose_retraining(registry, exp_id: str, *, kind: str, policy, actor: str, now: float | None = None, as_of=None) -> dict:
     """Record a retraining trigger for a saved experiment and say whether it became a proposal. The counts the policy tests (new rows since the last fit, days of history) are read from the experiment, and a
-    drift or performance trigger must be backed by an alert in the latest recorded drift report: a trigger is not something a caller can assert."""
-    import pandas as pd
-
-    from . import diagnostics as dx
-    from . import experiments as xp
+    trigger is verified, never asserted by the caller: a drift, performance or calibration trigger must be backed by an alert in the latest recorded look, and a schedule trigger by the calendar (the
+    schedule is due). ``policy`` is an ``AdaptivePolicy`` (or the procedure's own ``RetrainPolicy``, which takes the default schedule)."""
+    from . import adaptive_retrain as ar
     from . import retrain as rt
 
-    detail: dict = {}
-    if kind in ("drift_alert", "performance_alert"):
-        rec = dx.latest(registry, exp_id, "drift_report")
-        if rec is None:
-            raise rt.RetrainError(f"a {kind} trigger needs a recorded drift report that shows an alert: none has been computed for this experiment")
-        c = rec["content"]
-        if kind == "drift_alert":
-            alerting = sorted(r["feature"] for r in ((c.get("inputs") or {}).get("features") or []) if r.get("state") == "alert")
-            if not alerting:
-                raise rt.RetrainError("the latest drift report records no alerting feature, so there is no drift alert to act on")
-            detail = {"drift_record": rec["seq"], "alerting_features": alerting}
-        else:
-            perf = c.get("performance") or {}
-            if perf.get("state") != "alert":
-                raise rt.RetrainError("the latest drift report records no performance alert, so there is none to act on")
-            detail = {"drift_record": rec["seq"], "performance": {k: perf.get(k) for k in ("state", "reason")}}
-    _, ds, train, _ = xp.load_run(registry, exp_id)
-    folds = [f for f in train.folds if not f.get("skipped") and f.get("fit_cutoff")]
-    if not folds:
-        raise rt.RetrainError("the experiment records no fold with a fit cutoff, so the data since its last fit cannot be counted")
-    cutoff = pd.Timestamp(folds[-1]["fit_cutoff"])
-    return rt.trigger(registry, exp_id, policy, kind=kind, detail=detail, rows_since_fit=int((ds.dates > cutoff).sum()), train_days=int((ds.dates <= cutoff).sum()), actor=actor, now=now)
+    if isinstance(policy, rt.RetrainPolicy):
+        legacy = policy
+        policy = ar.AdaptivePolicy(name=legacy.name, triggers=tuple(legacy.triggers), cooldown_days=legacy.cooldown_days, min_new_rows=legacy.min_new_rows, min_train_days=legacy.min_train_days,
+                                   max_failures=legacy.max_failures)
+        return ar.propose(registry, exp_id, kind=kind, policy=policy, actor=actor, as_of=as_of, now=now, rpolicy=legacy)
+    return ar.propose(registry, exp_id, kind=kind, policy=policy, actor=actor, as_of=as_of, now=now)
 
 
 def retrain_policy(raw: dict | None):
-    """A retraining policy from a plain mapping. ``autonomous`` is not accepted here: these services record proposals and decisions, and starting a retraining is a library call that needs a trainer."""
-    from . import retrain as rt
+    """A retraining policy from a plain mapping: the procedure's limits (triggers, cooldown, data floors, failures) and the adaptive search's settings (schedule, training windows, refit intervals,
+    hyper-parameter values, thresholds). ``autonomous`` is not accepted here: these services record proposals and decisions, and a retraining starts only after a person approves it."""
+    from . import adaptive_retrain as ar
 
-    raw = dict(raw or {})
-    if raw.pop("autonomous", False):
-        raise rt.RetrainError("autonomous retraining cannot be enabled here: this records proposals and decisions; a retraining is started from code with a trainer after a person approves it")
-    allowed = {"name", "triggers", "cooldown_days", "min_new_rows", "min_train_days", "require_nested_validation", "max_failures"}
-    extra = sorted(set(raw) - allowed)
-    if extra:
-        raise rt.RetrainError(f"a retraining policy has {sorted(allowed)}, not {extra}")
-    if "triggers" in raw:
-        raw["triggers"] = tuple(raw["triggers"])
-    return rt.RetrainPolicy(**{"name": "default", **raw})
+    return ar.policy_from(raw)

@@ -40,9 +40,10 @@ def _ns(index: pd.DatetimeIndex) -> np.ndarray:
 
 
 def select_as_of(candidates: Mapping[str, pd.DataFrame], target: pd.DataFrame, label_end: pd.Series, cutoffs, *, inner_days: int = 252, min_inner: int = 60, tol: float = 0.0,
-                 until=None, score=None) -> dict:
+                 until=None, score=None, aggregate=None) -> dict:
     """Walk through ``cutoffs`` choosing among ``candidates`` (name -> wide scores, date x asset) by their mean ``score`` (rank IC against ``target`` by default) on the inner window, and chain the chosen
-    candidate's scores over the following outer window. ``label_end`` maps each decision date to the date its label ends (``Dataset.label_intervals()['label_end_at']``)."""
+    candidate's scores over the following outer window. ``label_end`` maps each decision date to the date its label ends (``Dataset.label_intervals()['label_end_at']``). ``aggregate`` turns the
+    per-date scores of the inner window into one number (the mean by default; a Sharpe ratio is not a mean, so a caller who selects on it passes its own)."""
     names = list(candidates)
     if not names:
         raise ValueError("no candidates")
@@ -67,7 +68,7 @@ def select_as_of(candidates: Mapping[str, pd.DataFrame], target: pd.DataFrame, l
         if len(usable) < min_inner:
             steps.append({"step": k, "cutoff": str(c.date()), "state": "insufficient", "n_inner": len(usable), "reason": f"{len(usable)} mature decision dates with a score for every candidate: fewer than {min_inner}"})
             continue
-        scores = {n: float(np.nanmean([ics[n][d] for d in usable])) for n in names}
+        scores = {n: float((aggregate or np.nanmean)(np.array([ics[n][d] for d in usable], dtype=float))) for n in names}
         best = max(scores.values())
         chosen = next(n for n in names if scores[n] >= best - tol)                      # the first-declared candidate within tol of the best
         end = nxt if nxt is not None else (until if until is not None else dates[-1])

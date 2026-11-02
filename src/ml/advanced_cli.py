@@ -13,7 +13,8 @@ from pathlib import Path
 from . import advanced as adv
 from .registry import Registry, RegistryError
 
-ACTIONS = ("catalog", "drift", "monitor", "retrain-status", "retrain-trigger", "retrain-approve", "retrain-reject", "retrain-recover", "champion-show", "champion-register", "champion-commit", "champion-look",
+ACTIONS = ("catalog", "drift", "monitor", "retrain-status", "retrain-evaluate", "retrain-trigger", "retrain-approve", "retrain-reject", "retrain-start", "retrain-evidence", "retrain-rollback",
+           "retrain-recover", "champion-show", "champion-register", "champion-commit", "champion-look",
            "report-build", "report-show", "report-verify")
 
 
@@ -97,20 +98,31 @@ def _monitor(args, registry) -> int:
     return 0
 
 
-def _retrain(args, registry) -> int:
+def _retrain(args, registry, config=None) -> int:
+    from . import adaptive_retrain as ar
     from . import retrain as rt
 
     _need(args, "target")
     act = args.what.split("-", 1)[1]
+    policy = adv.retrain_policy(_json_file(args.policy) if args.policy else None)
     if act == "status":
         st, ev = rt.status(registry, args.target), rt.events(registry, args.target)
-        out = {"subject": args.target, "state": st, "events": ev[-20:], "events_total": len(ev)}
+        out = {"subject": args.target, "state": st, "events": ev[-20:], "events_total": len(ev), "versions": ar.versions(registry, args.target)["versions"], "evidence_history": ar.evidence_history(registry, args.target)}
+    elif act == "evaluate":
+        out = ar.evaluate_triggers(registry, args.target, policy, as_of=args.as_of, refresh=args.refresh, actor=args.actor or "cli")
     elif act == "trigger":
-        policy = adv.retrain_policy(_json_file(args.policy) if args.policy else None)
-        out = adv.propose_retraining(registry, args.target, kind=args.kind, policy=policy, actor=args.actor or "cli")
+        out = adv.propose_retraining(registry, args.target, kind=args.kind, policy=policy, actor=args.actor or "cli", as_of=args.as_of)
     elif act in ("approve", "reject"):
         _need(args, "proposal", "actor", "note")
         out = (rt.approve if act == "approve" else rt.reject)(registry, args.target, args.proposal, actor=args.actor, note=args.note)
+    elif act == "start":
+        _need(args, "proposal", "actor")
+        out = ar.start(registry, args.target, args.proposal, policy, config=config, progress=lambda m: print(f"  {m}", file=sys.stderr, flush=True), actor=args.actor)
+    elif act == "evidence":
+        out = ar.latest_evidence(registry, args.target) or {"subject": args.target, "evidence": None, "reason": "no challenger search has been run for this experiment"}
+    elif act == "rollback":
+        _need(args, "actor", "note", "from_version", "to_version")
+        out = ar.rollback(registry, args.target, args.from_version, args.to_version, reason=args.note, actor=args.actor)
     else:
         _need(args, "actor", "note")
         out = rt.recover(registry, args.target, actor=args.actor, note=args.note)
@@ -122,6 +134,25 @@ def _retrain(args, registry) -> int:
         print(f"{args.target}: open proposal {st['open_proposal'] or 'none'}, consecutive failures {st['consecutive_failures']}, {'SUSPENDED' if st['suspended'] else 'not suspended'}; {out['events_total']} events")
         for e in out["events"]:
             print(f"  {e['seq']:>5} {e['event']:<10} by {e['actor']:<10} {e.get('reason') or e.get('note') or e.get('trigger') or ''}")
+        for v in out["versions"]:
+            print(f"  version {v['version_id']} ({v['role']}: {v['name']}) {v['state']}")
+    elif act == "evaluate":
+        print(f"{args.target}: as of {out['as_of']}, last fit {out['last_fit']}, {out['rows_since_fit']} rows since, {out['train_days']} days of history")
+        for t in out["triggers"]:
+            print(f"  {t['kind']:<18} {'FIRED' if t['fired'] else t['state']:<14} {'' if t['enabled'] else '(not enabled by the policy) '}{t['reason']}")
+        print("  " + out["note"])
+    elif act == "start":
+        ev = out.get("evidence") or {}
+        print(f"{args.target}: {out.get('outcome')}: {(ev.get('decision') or {}).get('reason') or out.get('reason') or out.get('error') or ''}")
+        for c in ev.get("challengers", []):
+            d = (c["net_sharpe"] or {}).get("difference") or {}
+            print(f"  {c['name']:<40} {c.get('verdict') or c.get('status'):<26} Sharpe {_num(c['net_sharpe']['incumbent'], 2)} -> {_num(c['net_sharpe']['challenger'], 2)}  difference {_num(d.get('value'), 2)} {d.get('interval') or ''}")
+        print("  nothing was promoted: " + (ev.get("promotion") or "a promotion goes through the gates and a recorded human approval"))
+    elif act == "evidence":
+        if out.get("decision"):
+            print(f"{args.target}: record {out['record_seq']}: {out['decision']['decision']}: {out['decision']['reason']}")
+        else:
+            print(f"{args.target}: {out.get('reason')}")
     else:
         print(f"{args.target}: {out.get('outcome')}" + (f" (proposal {out['proposal']})" if out.get("proposal") else "") + (f": {out['reason']}" if out.get("reason") else ""))
     return 0
@@ -203,7 +234,7 @@ def cmd_advanced(args, config) -> int:
         if args.what == "monitor":
             return _monitor(args, registry)
         if args.what.startswith("retrain-"):
-            return _retrain(args, registry)
+            return _retrain(args, registry, config)
         if args.what.startswith("champion-"):
             return _champion(args, registry)
         return _report(args, registry)
@@ -214,11 +245,12 @@ def cmd_advanced(args, config) -> int:
 
 def register(sub) -> None:
     p = sub.add_parser("ml-advanced", help="the optional advanced modules (drift, retraining proposals, champion/challenger, uncertainty monitor, reproducible reports) and the catalogue of all twelve")
-    p.add_argument("what", choices=ACTIONS, help="catalog | drift EXP | monitor EXP | retrain-status|trigger|approve|reject|recover EXP | champion-show|register|commit|look PAIR | report-build EXP | report-show|verify REPORT")
+    p.add_argument("what", choices=ACTIONS, help="catalog | drift EXP | monitor EXP | retrain-status|evaluate|trigger|approve|reject|start|evidence|rollback|recover EXP | champion-show|register|commit|look PAIR | report-build EXP | report-show|verify REPORT")
     p.add_argument("target", nargs="?", help="the experiment, pair or report the action is about")
     p.add_argument("--registry", default="artifacts/ml", help="where experiments and the registry live (default artifacts/ml)")
     p.add_argument("--as-of", dest="as_of"); p.add_argument("--reference-end", dest="reference_end"); p.add_argument("--reference-days", dest="reference_days", type=int, default=504)
     p.add_argument("--recent-days", dest="recent_days", type=int, default=63)
-    p.add_argument("--kind", default="manual", help="a retraining trigger: drift_alert, performance_alert, schedule or manual"); p.add_argument("--policy", help="JSON file with a retraining policy")
+    p.add_argument("--kind", default="manual", help="a retraining trigger: drift_alert, performance_alert, calibration_alert, schedule or manual"); p.add_argument("--policy", help="JSON file with a retraining policy")
     p.add_argument("--proposal", type=int); p.add_argument("--actor"); p.add_argument("--note"); p.add_argument("--spec", help="JSON file with a champion/challenger declaration, or with the forecasts of one decision (champion-commit)")
+    p.add_argument("--from-version", dest="from_version"); p.add_argument("--to-version", dest="to_version"); p.add_argument("--refresh", action="store_true", help="retrain-evaluate: compute the drift report and the uncertainty monitor first")
     p.add_argument("--markdown", action="store_true"); p.add_argument("--json", action="store_true"); p.set_defaults(func=cmd_advanced)

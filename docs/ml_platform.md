@@ -101,6 +101,51 @@ Costs are one-way turnover times `cost_bps` (the form fills in the backtest's co
 
 The search spaces of the new kinds are in the catalogue (`tune_spaces`). The Search and Tune forms have an **engine** menu: the platform's own random, TPE and Bayesian searches, or **Optuna** (a multivariate TPE sampler, fed the trials already run); both count every trial against the dataset's looks and score on the validation segment only.
 
+### Choosing the winner: constrained selection and the simplest adequate model
+
+A search leaves many candidates and a leaderboard rewards the lucky ones. `quant ml-select`, `POST /api/ml/select`, the **Select** view and the `selection` option of the search and tuning forms choose among them in four declared steps, and store the result (append-only, with the policy hash) so it can be audited later (`GET /api/ml/selection`).
+
+1. **Evidence on validation data only.** Each candidate is reduced to its **pooled chronological validation net returns**: the validation days of all its walk-forward folds laid end to end in date order. The Sharpe ratio, drawdown and the other figures are computed on that one series. They are never the average of per-fold Sharpe ratios, which weights a 20-day fold like a 200-day one and lets one noisy fold dominate; the report prints the naive average beside the pooled figure so the difference is visible, and two folds that disagree about the same day are refused. A candidate that carries test or forward dates is refused, the test and forward rows of a finalised experiment are counted and never read, and the finalists a search then freezes into an evaluation plan are the selected trial first and the next-ranked eligible ones.
+2. **Eligibility before ranking.** A candidate must pass the declared requirements for data, risk, exposure, liquidity and statistical evidence. Each gate is reported with its threshold, the observed value and a status: `pass`, `fail`, `unavailable` (the evidence was not produced; for an enforced gate that is not a pass) or `not_enforced`. A candidate that could not be run is `failed`, one with too little data is `insufficient`, one that broke a gate is `ineligible`. If nothing is eligible nothing is selected, rather than the least bad.
+3. **Ranking, the nested estimate of the rule, and Pareto.** Eligible candidates are ranked by the primary metric (`primary_metric`, default the validation net Sharpe; also `net_sortino`, `net_calmar`, `net_ann_return`, `ic`), ties broken by drawdown, turnover and complexity. The Pareto analysis over the primary metric and the secondary criteria (`secondary`: `max_drawdown`, `turnover`, `instability` across validation sub-periods, `complexity`) names the front, who dominates whom, and how the selected candidate compares with each other one. An objective that some candidate lacks is dropped and listed, not guessed. Beside the ranking, the **nested estimate** (`nested`) runs the ranking *rule* through the nested chronological procedure: at each of several cutoffs (`cutoff_fractions`) it chooses by the net Sharpe of the `inner_days` days known at that cutoff (at least `min_inner`), carries the choice unchanged over the days up to the next cutoff, and chains those days. The chained Sharpe is what choosing by this rule earned on days after each choice; the best candidate in hindsight, and the finally selected one, were chosen with those days in view, so the distance between them is the optimism of selecting among these candidates. Every step records its cutoff, the dates of its inner and outer windows and their hashes, and an audit recomputes from the dates that no inner day was after its cutoff and no window overlaps another.
+4. **The simplest candidate that is not meaningfully worse.** The complexity vector holds the family's rank, the number of features, the optional packages the model needs, the cost of training it, how long it takes to predict and how stable its validation performance was; an unmeasured dimension is counted as not simple, never as free. There is **no fixed Sharpe penalty**. "Not meaningfully worse" than the highest-ranked candidate comes from the **paired** difference on the days both have, with a dependence-aware joint stationary bootstrap, in one of two rules that are kept apart: `one_se` (the default) is a **selection heuristic** (the gap is at most `k` standard errors of the paired gap) and never claims equivalence; `non_inferiority` is a **formal one-sided test** against a `margin` the policy declares before the results, Holm-adjusted over the comparisons, which also reports where the candidate is equivalent within the margin. The margin is an assumption, the highest-ranked candidate is itself the best of N on these data (so every gap to it is overstated), and the claim is about validation data only.
+
+Every threshold is a field of the policy; `GET /api/ml/selection-policy` returns the defaults with what each does, and unknown fields are refused.
+
+| field | default | what it does |
+|---|---|---|
+| `primary_metric` | `net_sharpe` | the ranking metric |
+| `secondary` | `max_drawdown`, `turnover`, `instability`, `complexity` | tie-breakers and Pareto criteria |
+| `pareto` | the primary metric and `secondary` | the objectives of the Pareto analysis |
+| `blocks`, `min_block_days` | 4, 20 | the sub-periods the stability (spread of the block Sharpe ratios) is measured over |
+| `nested`, `enabled` | on | the nested estimate of the ranking rule (net Sharpe ranking only) |
+| `cutoff_fractions`, `inner_days`, `min_inner` | 0.40, 0.55, 0.70, 0.85; 126; 60 | where the cutoffs fall (shares of the pooled validation days), the days the rule looks at, and the fewest it needs |
+| `eligibility` | (the rows below) | the requirements |
+| `simplicity` | (the rows below) | the simplicity step |
+| `min_validation_days` | 126 | data: pooled validation days (fewer is `insufficient`) |
+| `min_coverage` | 0.80 | data: the share of validation days with at least two assets scored |
+| `min_assets` | 1 | data: assets scored |
+| `max_drawdown` | 0.40 | risk: largest peak-to-trough fall of the validation equity |
+| `max_ann_vol` | off | risk: annualised volatility |
+| `max_gross_exposure`, `max_abs_net_exposure` | 2.0, 1.0 | exposure: the largest sum of absolute weights, and the largest absolute sum of weights, on any validation day |
+| `max_ann_turnover` | off | liquidity: annualised one-way turnover |
+| `min_capacity_share`, `capacity_capital` | off | liquidity: the share of the book one session's participation limit lets through at a capital level; measured by the realistic execution mode with volume, otherwise unavailable and never assumed |
+| `min_effective_obs` | 60 | statistical: `n(1 - r)/(1 + r)` for the lag-1 autocorrelation `r` of the returns |
+| `min_net_sharpe` | 0.0 | statistical: the validation net Sharpe must be above this |
+| `min_sharpe_lower_bound`, `sharpe_level` | off, 0.95 | statistical: the lower end of the HAC interval of the Sharpe ratio |
+| `max_label_overlap` | 0 | statistical: folds whose training labels reached past the date their fit may inform, asserted from the recorded fold lineage |
+| `missing_evidence` | `ineligible` | what an enforced gate does with evidence that was not produced: `ineligible`, or `skip` (still reported as unavailable) |
+| `enabled` | true | switch the simplicity step off to keep the highest-ranked candidate |
+| `rule` | `one_se` | `one_se` (heuristic) or `non_inferiority` (formal) |
+| `k` | 1.0 | `one_se`: standard errors of the paired gap that still count as not distinguishable |
+| `margin`, `level` | none, 0.05 | `non_inferiority`: the largest loss accepted (in the metric's units, required) and the one-sided Holm-adjusted level |
+| `priority` | `model_complexity`, `n_features`, `dependencies`, `training_cost`, `inference_latency`, `stability` | the order in which the complexity dimensions decide |
+| `cost_tolerance` | 0.25 | a relative difference under which two costs, latencies or instabilities are a tie |
+| `n_boot`, `seed` | 1000, 0 | the bootstrap of the paired gap |
+| `require_paired` | false | refuse an unpaired standard error for the gap |
+
+`quant ml-select EXP [EXP ...] [--policy policy.json] [--until DATE] [--json]` prints the same result. A search or tuning asked for `selection` returns it next to the old answer (`best`, the highest composite score, is unchanged); the proposals of the search still follow `objective_weights`, the selection decides which trial is chosen. A selection can be declared before the results by putting its policy in a frozen plan's `decision_policy.selection`; the result then says whether it was predeclared or only supplied with the data.
+
 ### Optional packages
 
 `requirements.txt` already has PyTorch, LightGBM, XGBoost, hmmlearn and statsmodels. The rest is optional:
@@ -252,6 +297,40 @@ quant ml-advanced report-build <experiment>          # also report-show REPORT [
 
 A drift alert, a monitor alert and a retraining proposal are things for a person to read: none retrains, halts, rolls back or promotes anything, and a stored report does not change when models or data are updated later. The numerical modules (`bma`, `dro`, `horizon_combo`, `transfer`, `discovery`, `offpolicy`, `tax_lots`) take arrays and frames you supply and have no route; each states its assumptions and refuses, with a reason, what it cannot support: an off-policy estimate without logged behaviour probabilities, an after-tax figure without a supplied policy, a transfer between assets that share a security.
 
+### Adaptive retraining (P3-02)
+
+The retraining procedure above (a trigger becomes a proposal or is suppressed with its reason, a named person approves, a failure suspends, a recovery lifts it, a rollback goes through governance) now has the three things it was missing: what triggers a retraining, what a retraining trains, and how the result is judged. Nothing here is automatic: autonomous retraining cannot be switched on from a route, the command line or the dashboard.
+
+```
+quant ml-advanced retrain-evaluate <experiment> [--refresh] [--as-of DATE]   # every trigger now: the schedule from the calendar, the diagnostics from the stored looks
+quant ml-advanced retrain-trigger <experiment> --kind schedule|drift_alert|performance_alert|calibration_alert|manual [--policy policy.json]
+quant ml-advanced retrain-approve <experiment> --proposal N --actor NAME --note TEXT
+quant ml-advanced retrain-start <experiment> --proposal N --actor NAME [--policy policy.json]   # the constrained challenger search of an approved proposal
+quant ml-advanced retrain-evidence <experiment>      # also retrain-status (with the versions), retrain-rollback --from-version V --to-version W --actor NAME --note TEXT
+```
+
+* **Triggers.** A *schedule*, monthly by default (a daily strategy refits every 21 sessions; weekly, quarterly and a session count are options), is due when a new calendar period has begun since the last fit. A *drift alert* and a *performance alert* come from the latest drift report (P3-01), a *calibration alert* from the calibration check of the uncertainty monitor (P3-11, `calibration_min_consecutive` looks in a row). Each is verified against the calendar or the stored record: a diagnostic never run is `not_computed`, one that cannot exist for the model is `not_applicable`, and neither is read as health.
+* **A constrained challenger search.** The incumbent's configuration is the baseline of a frozen comparison card (family `retraining`). Challengers change only how the same model is trained: the **training window** (`windows`: expanding, or rolling over a number of days), the **refit interval** (`refit_every`, 21 sessions is monthly) and the hyper-parameter values listed in `param_grid`, one at a time. Anything else is refused, the number of challengers is capped (`max_challengers`) and the Holm adjustment counts every one.
+* **Identical out-of-sample observations.** The incumbent is re-run beside its challengers on the same data; the card refuses an arm that scored different validation rows, every difference is paired on the days both have, and the evidence records that no day was dropped. All of it is development data: the protected segments are never read (the holdout access ledger does not move).
+* **Judgement.** The arms go through the constrained selection above. A challenger is *recommended* only if it is the arm the selection chose **and** it is distinguishably better than the incumbent (Holm-adjusted, interval above zero, at least `min_effect`). A drift alert is why the search ran, not evidence for the challenger, and a better historical score is not evidence either: in the tests a challenger with a clearly higher validation Sharpe whose interval includes zero leaves the incumbent in force.
+* **Nothing is promoted.** The outcome is a recommendation with its evidence (stored append-only as `retrain_evidence`, with the policy hash). The incumbent, its re-run and every challenger get a strategy version in governance, so a rollback names two versions and keeps both; a promotion still needs the gates and, for production, a recorded human approval.
+
+| field | default | what it does |
+|---|---|---|
+| `name`, `triggers` | `adaptive-monthly`; schedule, drift, performance, calibration, manual | the policy's name and the trigger kinds it enables |
+| `schedule` | `monthly` (`frequency`; `every_sessions` 21 for the session schedule) | when a scheduled retraining is due |
+| `cooldown_days`, `min_new_rows`, `min_train_days`, `max_failures` | 21, 10, 504, 3 | days between proposals; rows since the last fit; history needed to retrain; failures before a suspension |
+| `calibration_min_consecutive` | 1 | looks in a row at which the calibration check must alert |
+| `windows` | expanding, rolling over 1260 days | the training windows tried (the incumbent's own is left out) |
+| `refit_every` | 21 | sessions between refits tried (monthly for a daily strategy) |
+| `param_grid` | none | hyper-parameter values to try, one parameter at a time |
+| `max_challengers` | 6 | a hard cap (at most 12) |
+| `min_effect`, `level` | 0.0, 0.05 | the smallest Sharpe improvement that counts; the Holm-adjusted level |
+| `n_boot`, `seed` | 1000, 0 | the bootstrap of the paired difference |
+| `selection` | the selection defaults | a selection policy mapping for the choice among the incumbent and its challengers |
+
+Limits: the calibration trigger reads interval coverage (a model that states no interval has none); probability calibration of a classifier is reported by the research record but has no alerting look. A challenger is fitted by the same walk-forward machinery, so a retraining that only refits on more data reproduces the incumbent: what the search can tell apart is a different window, schedule or nearby hyper-parameters, which the policy lists in advance.
+
 ## If LightGBM or XGBoost shows as "not available"
 
 The two boosting libraries are optional and need the OpenMP runtime of the operating system (`libgomp.so.1` on Linux). Where the library is missing, importing them fails with `OSError: libgomp.so.1: cannot open shared object file`. The Machine learning tab does not fail with it: the model list shows LightGBM and XGBoost as not available, with the reason, and every other model (linear, ridge, lasso, elastic net, logistic, random forest, scikit-learn's histogram gradient boosting, autoregression, Kalman, online and regime models) works as before. Scikit-learn's histogram gradient boosting is the same family of model as LightGBM and needs nothing extra.
@@ -277,7 +356,8 @@ Served by `src/webapp/ml_api.py`; JSON in, JSON out. Anything slow returns `{"jo
 | `GET /api/ml/delay-report` | Release 7: IC, expected edge, net result and capacity at declared delays |
 | `GET /api/ml/advanced` | Release 8: the twelve optional advanced modules, off by default, with their door, availability and latest verification |
 | `GET /api/ml/drift`, `GET /api/ml/uncertainty-monitor` | Release 8: drift of the features and the settled IC; the four uncertainty checks (`stored=1` reads the latest record and computes nothing) |
-| `GET /api/ml/retraining`, `POST /api/ml/retraining/action` | Release 8: the retraining history of an experiment; trigger, approve, reject, recover, rollback (decisions name a person; no retraining is started from here) |
+| `GET /api/ml/retraining`, `POST /api/ml/retraining/action` | Release 8: the retraining history of an experiment with the adaptive policy's defaults, the latest challenger-search evidence and the versions; evaluate, trigger, approve, reject, start (a job: the constrained challenger search of an approved proposal; development data only, never a promotion), recover, rollback (decisions name a person) |
+| `POST /api/ml/select`, `GET /api/ml/selection`, `GET /api/ml/selection-policy` | the constrained selection over saved experiments (validation rows only), a stored selection, and the documented defaults of every threshold; `selection` is also an option of `POST /api/ml/search` and `/api/ml/tune` |
 | `GET /api/ml/champion`, `POST /api/ml/champion/register`, `/commit`, `/look` | Release 8: a frozen champion/challenger pair, both forecasts committed together, the predeclared looks |
 | `GET /api/ml/reports`, `GET /api/ml/report`, `POST /api/ml/report/build` | Release 8: reproducible reports built from a stored snapshot |
 | `POST /api/ml/promote`, `/api/ml/delete` | model stages; delete an experiment (needs `confirm: true`) |
