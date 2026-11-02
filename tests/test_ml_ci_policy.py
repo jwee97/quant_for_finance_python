@@ -206,3 +206,13 @@ def test_the_selection_simplicity_and_adaptive_retraining_tests_run_in_the_base_
     assert {"tests/test_ml_model_selection.py", "tests/test_ml_selection_surfaces.py"} <= set(vf.REQUIREMENTS["P1-15"][0])
     assert "tests/test_ml_simplicity.py" in vf.REQUIREMENTS["P2-17"][0]
     assert {"tests/test_ml_adaptive_retrain.py", "tests/test_ml_selection_surfaces.py"} <= set(vf.REQUIREMENTS["P3-02"][0])
+
+
+def test_the_model_settings_tests_run_in_the_base_install_lanes_and_the_form_test_in_the_browser_lane():
+    """The schema of each model's settings and the API's use of it are checked where no optional package is installed (a model whose package is missing is refused for that, never for its size), and the form that
+    sends only the settings a person changed in a real browser."""
+    for lane in ("ml-base", "replit-python"):
+        text = " ".join(steps(CI["jobs"][lane]))
+        for t in ("tests/test_ml_param_schema.py", "tests/test_ml_model_params_api.py"):
+            assert t in text, f"{t} is not run by the {lane} lane"
+    assert "tests/test_webapp_ml_models_browser.py" in " ".join(steps(CI["jobs"]["browser"]))

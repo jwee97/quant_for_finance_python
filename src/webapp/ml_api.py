@@ -29,6 +29,7 @@ from ..ml import governance as gv
 from ..ml import monitoring as mon
 from ..ml import null_controls as nc
 from ..ml import optimization as opt
+from ..ml import param_schema as pschema
 from ..ml import policy as pol
 from ..ml import research_controls as rc
 from ..ml import selection as sel
@@ -310,23 +311,29 @@ class MlApi(AdvancedRoutes, SelectionRoutes):
         if model is not None:
             if not isinstance(model, dict):
                 raise ApiError("model must be an object with kind and params")
-            kind = str(model.get("kind") or "ridge")
-            params = model.get("params") or {}
-            if not isinstance(params, dict) or len(params) > 20:
-                raise ApiError("model.params must be an object of at most 20 settings")
-            for k, v in params.items():
-                if not PARAM.match(str(k)) or not (v is None or isinstance(v, (bool, int, float, str))):
-                    raise ApiError(f"model.params.{k} must be a number, text, true/false or null")
-            over["model"] = {"kind": kind, "params": dict(params)}
+            kind = model.get("kind")
+            kind = "ridge" if kind is None or kind == "" else kind
             known = {m["kind"]: m for m in model_catalog()}
-            if kind in known and not known[kind]["available"]:
+            if not isinstance(kind, str) or kind not in known:
+                raise ApiError(f"model.kind must be one of {sorted(known)}")
+            if not known[kind]["available"]:
                 raise ApiError(f"the {known[kind]['label']} model cannot be used here: {known[kind]['reason']}")      # refused before a job is queued, with the reason
-            if kind in known and "refit_every" not in over.get("split", {}):
+            raw = model.get("params")
+            if raw is not None and not isinstance(raw, dict):
+                raise ApiError("model.params must be an object of settings (name: value)")
+            try:
+                given = pschema.validate_params(kind, raw)                                 # each setting named is checked against the model's own schema: its type, its range, its choices
+                params = pschema.effective_params(kind, given)                             # and laid over the model's defaults: the experiment records every setting it ran with, whatever the client sent
+            except pschema.ParamError as exc:
+                raise ApiError(str(exc)) from None
+            over["model"] = {"kind": kind, "params": params}
+            if "refit_every" not in over.get("split", {}):
                 over.setdefault("split", {})["refit_every"] = default_refit(kind)           # trees refit every quarter, linear models every month: the platform's own default per kind
             if kind in RL_KINDS:                                                          # an agent sizes its own book, and trains against the costs the backtest will charge
                 over.setdefault("signal", {}).setdefault("method", "target_weights")
-                bt = {**load_ml_config()["backtest"], **over.get("backtest", {})}
-                over["model"]["params"].setdefault("cost_bps", float(bt["cost_bps"]) + float(bt["slippage_bps"]))
+                if "cost_bps" not in given:                                                # unless the request says otherwise; the model's default would be a cost nobody chose
+                    bt = {**load_ml_config()["backtest"], **over.get("backtest", {})}
+                    params["cost_bps"] = float(bt["cost_bps"]) + float(bt["slippage_bps"])
         elif need_model:
             over["model"] = {"kind": "ridge", "params": {}}
         if body.get("study"):

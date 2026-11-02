@@ -518,7 +518,7 @@ class ModelInfo:
     params: dict                         # name -> default
     refit_every: int = 21                # a sensible refit period (trees are slow, so they refit less often)
     optional_package: str | None = None
-    specs: dict = field(default_factory=dict)       # setting -> {"type": "choice" | "int" | "float" | "bool" | "text", "choices": [...], "help": "..."} for the form (a number needs none)
+    specs: dict = field(default_factory=dict)       # setting -> {"type": "choice" | "int" | "float" | "bool" | "text", "choices": [...], "help": "..."} for the form (a number needs none); the ranges are in param_schema.RANGES
     needs: tuple = ()                                # packages beyond the base install that the model imports (all must load for it to be available)
     outputs: tuple = ()                              # what it adds to a report: distribution, regimes, heads, training, weights
 
@@ -555,8 +555,10 @@ def model_catalog() -> list[dict]:
     def why(m: ModelInfo) -> str | None:
         return next((reasons[p] for p in ([m.optional_package] if m.optional_package else []) + list(m.needs) if reasons.get(p)), None)
 
+    from .param_schema import describe                                                 # imported here: the schema reads this module's catalogue
+
     return [{"kind": m.kind, "label": m.label, "family": m.family, "tasks": list(m.tasks), "description": m.description, "params": dict(m.params), "refit_every": m.refit_every,
-             "available": why(m) is None, "reason": why(m), "specs": dict(m.specs), "needs": list(m.needs), "outputs": list(m.outputs)} for m in MODEL_INFO]
+             "available": why(m) is None, "reason": why(m), "specs": dict(m.specs), "schema": describe(m.kind), "needs": list(m.needs), "outputs": list(m.outputs)} for m in MODEL_INFO]
 
 
 def default_refit(kind: str) -> int:

@@ -3,6 +3,8 @@ shows what it adds (intervals, ranking quality, regime probabilities, ensemble w
 
 from __future__ import annotations
 
+import time
+
 import pytest
 
 from src.ml import models as md
@@ -175,3 +177,107 @@ def test_an_ensemble_report_shows_member_weights_and_an_agent_report_its_rewards
         _train(mp, "agent")
         assert _card(mp, "Agent reward while training").count() == 1 and _card(mp, "Agent on its own training days").count() == 1
         _wait_until(mp, "document.querySelectorAll('#ml-results .chartcard').length >= 6")
+
+
+# ---------------------------------------------------------------------------------------------------------------------- the settings the form sends
+def _model_keys(page):
+    """The fields of the form's Model section: the model menu, then one field for each setting of the chosen model."""
+    return page.evaluate(r"(() => { const d = [...document.querySelectorAll('#ml details')].find((x) => /^2\. Model/.test(x.querySelector(':scope > summary').textContent)); return [...d.querySelectorAll('[data-key]')].map((e) => e.getAttribute('data-key')); })()")
+
+
+def _stub_runs(page):
+    """Catch what the Train form posts and answer it with a run that ends at once, so that nothing is trained. Returns the list the posted bodies are added to."""
+    sent = []
+
+    def post(route, request):
+        sent.append(request.post_data_json)
+        route.fulfill(status=200, content_type="application/json", body='{"job": "stub"}')
+
+    def job(route, request):
+        route.fulfill(status=200, content_type="application/json", body='{"status": "error", "error": "stopped by the test", "result": null}')
+
+    page.route("**/api/ml/train", post)
+    page.route("**/api/job/stub", job)
+    return sent
+
+
+def _press_train(page, sent):
+    """Press Train and wait for the request it posts."""
+    before = len(sent)
+    _run(page, "ml")
+    end = time.time() + 20
+    while len(sent) == before and time.time() < end:
+        time.sleep(0.1)
+    assert len(sent) > before, "the form posted nothing"
+    return sent[-1]["model"]
+
+
+def test_every_setting_of_a_model_is_on_the_form_and_a_form_left_alone_sends_no_setting_at_all(mp):
+    avail = _available()
+    sent = _stub_runs(mp)
+    seen = []
+    for kind in ("ridge", "random_forest", "ar", "lstm", "gru", "tcn", "patchtst", "nbeats", "nhits", "tft", "autoencoder", "vae", "gcn", "gat", "model_ensemble", "hmm_regime", "xgb_ranker", "lgbm_quantile", "ppo", "sac",
+                 "recurrent_ppo"):
+        if kind not in avail:
+            continue
+        _choose(mp, kind)
+        assert _model_keys(mp) == ["model"] + list(avail[kind]["params"]), kind                          # every setting, in the catalogue's order, whatever how many there are
+        assert _press_train(mp, sent) == {"kind": kind, "params": {}}, kind                              # nothing was changed, so nothing is sent: the server has the defaults
+        seen.append(kind)
+    assert {"ridge", "random_forest", "ar"} <= set(seen)
+
+
+def test_a_setting_that_is_changed_is_sent_alone_and_one_put_back_to_its_default_is_not(mp):
+    avail = _available()
+    sent = _stub_runs(mp)
+    if "patchtst" in avail:
+        _choose(mp, "patchtst")
+        _set(mp, "epochs", 3)
+        _set(mp, "d_model", 64)
+        mp.check("#ml input[data-key=resume]")
+        mp.select_option("#ml select[data-key=device]", "cpu")
+        assert _press_train(mp, sent) == {"kind": "patchtst", "params": {"epochs": 3, "d_model": 64, "resume": 1, "device": "cpu"}}
+        _set(mp, "epochs", 25)                                                                          # back to the default
+        mp.uncheck("#ml input[data-key=resume]")
+        assert _press_train(mp, sent) == {"kind": "patchtst", "params": {"d_model": 64, "device": "cpu"}}
+    _choose(mp, "ar")
+    assert mp.locator("#ml input[data-key=columns]").input_value() == ",".join(md.AR_FEATURES), "a list of names is shown as the names a person would type"
+    mp.fill("#ml input[data-key=columns]", "ret_1, ret_lag_2")
+    assert _press_train(mp, sent) == {"kind": "ar", "params": {"columns": "ret_1, ret_lag_2"}}
+    if "ppo" in avail:
+        _choose(mp, "ppo")
+        _set(mp, "total_timesteps", 800)
+        assert _press_train(mp, sent) == {"kind": "ppo", "params": {"total_timesteps": 800}}, "an agent's cost left at its default is not sent: the server uses the Backtest section's"
+        _set(mp, "cost_bps", 3)
+        assert _press_train(mp, sent) == {"kind": "ppo", "params": {"total_timesteps": 800, "cost_bps": 3}}
+
+
+def test_a_setting_that_is_not_a_whole_number_is_refused_by_the_form_before_anything_is_sent(mp):
+    avail = _available()
+    kind = next((k for k in ("lstm", "random_forest") if k in avail), "random_forest")
+    sent = _stub_runs(mp)
+    _choose(mp, kind)
+    _set(mp, "epochs" if kind == "lstm" else "n_estimators", 2.5)
+    _run(mp, "ml")
+    _wait_until(mp, "document.body.textContent.includes('must be a whole number')", timeout=10.0)
+    assert sent == []
+    mp.problems.clear()
+
+
+@pytest.mark.parametrize("kind, few", [("patchtst", {"epochs": 1, "max_rows": 2000, "d_model": 16, "n_heads": 2, "ff_dim": 32}), ("tft", {"epochs": 1, "max_rows": 2000, "hidden": 16, "n_heads": 2}),
+                                       ("recurrent_ppo", {"total_timesteps": 300, "n_steps": 64, "episode_days": 60, "hidden": 8, "lstm_hidden": 8})])
+def test_the_models_the_limit_of_twenty_settings_refused_train_from_the_form_and_the_report_records_every_setting(mp, kind, few):
+    """PatchTST, the Temporal Fusion Transformer and the recurrent PPO agent have more than twenty settings. The form sends the few that were changed, the server lays them over the defaults, the model trains, and
+    the report states all of its settings."""
+    info = _available().get(kind)
+    if info is None:
+        pytest.skip(f"{kind} is not available here")
+    _choose(mp, kind)
+    for key, value in few.items():
+        _set(mp, key, value)
+    with mp.expect_request(lambda r: r.url.endswith("/api/ml/train") and r.method == "POST") as posted:
+        _train(mp, f"{kind}-from-the-form")
+    changed = {k: v for k, v in few.items() if v != info["params"][k]}                                  # a value equal to the default (the TFT's two heads) is not a change
+    assert posted.value.post_data_json["model"] == {"kind": kind, "params": changed} and len(changed) < len(few) + 1
+    text = mp.locator("#ml-results").text_content()
+    assert len(info["params"]) > 20 and all(f"{name}=" in text for name in info["params"] if name not in ("columns",)), [n for n in info["params"] if f"{n}=" not in text]

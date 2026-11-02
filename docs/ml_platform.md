@@ -13,6 +13,7 @@
 | `splitters.py` | walk-forward and purged k-fold splits on the date axis, purge (`lag + horizon`) and embargo, and the segment plan (train, validation, test, forward) |
 | `models.py` | the model zoo behind one `Model` interface (`fit`, `predict`, `importance`, `to_bytes`); optional packages are reported as unavailable with a reason |
 | `catalog_extra.py`, `boosting.py`, `regimes.py`, `graph.py`, `ensemble_models.py` | the 21 kinds added to the zoo ([below](#the-model-families)): catalogue entries, default settings, form specs and search spaces; rankers and probabilistic boosters; regime models; graph networks; the member ensemble. Each is built lazily, so importing the platform loads none of their packages |
+| `param_schema.py` | the settings of each model as a schema (type, range or choices, default): what the web API validates a request's `model.params` against, and how what a request sends is laid over the model's defaults ([below](#a-models-settings)) |
 | `deep/` | the reusable PyTorch infrastructure: windows without look-ahead (`data`), nine networks (`nets`), one training loop (`trainer`), the `Model` wrappers with serialization (`model`) |
 | `rl/` | `PortfolioEnv`, a Gymnasium environment with the backtest engine's timing and costs (`env`), and the PPO, SAC and recurrent-PPO agents (`agent`) |
 | `model_report.py` | the `model_extras` section of a report: training curves, ranking quality, prediction intervals, regime probabilities, ensemble weights, the asset graph, an agent's rewards, and the cost and provenance of the run |
@@ -59,6 +60,21 @@ Twenty-one kinds sit beside the base zoo. All of them are selectable in the Trai
 | 5 reinforcement learning | `ppo`, `sac`, `recurrent_ppo` | Stable-Baselines3, sb3-contrib | **Agent reward while training** and the agent on its own training days |
 
 Every report also carries **Compute and provenance**: training time, device, parameter count, peak memory, the configuration hash, the data fingerprint, the git commit, the versions of the libraries the run imported, and the size and SHA-256 of the saved model. Each chart has a table behind it (the Chart / Table switch on the card).
+
+### A model's settings
+
+Every model has a schema for its settings (`src/ml/param_schema.py`): each setting is a whole number, a number, a switch, a menu, text or a list of feature names, with the range or the choices the model accepts and the default the catalogue gives it. `GET /api/ml/catalog` carries it as `schema` beside `params` and `specs`, and the Train form is built from it, so **every setting of the chosen model is on the form**, however many there are (twenty-three for PatchTST).
+
+A request's `model.params` is checked against the schema; the settings are not counted.
+
+- **The form sends only what was changed.** A setting left at its default is not sent, and one put back to its default stops being sent. The server lays what it receives over the model's defaults, so the experiment's saved configuration states every setting the model ran with, and the same settings are one configuration hash whether a client sent all of them, some or none (a browser's `10` and a script's `10.0` are stored as `10`; a switch is stored as 1 or 0). An agent's `cost_bps` that is not sent is the Backtest section's costs.
+- **Each value is checked for what it is.** A whole number must be whole (`2.5` layers is refused, not truncated). A number must be a finite JSON number inside its range (`dropout` is at least 0 and below 1, `learning_rate` is above 0); text, `true`, `NaN` and a number too large to use are refused. A switch is `true`, `false`, 1 or 0. A menu takes one of its listed values. Text has no control characters and at most 400 characters; `horizons`, `pool_sizes` and an ensemble's `members` are read by their grammar, and each member's own settings are checked against that member's schema. A null or a blank is "not set": the default stands.
+- **Settings that must agree are checked together**, as the networks themselves require when they are built: `d_model` a multiple of `n_heads` and `lookback` at least `patch_len` for PatchTST, `hidden` a multiple of `n_heads` for the TFT and of `heads` for the GAT.
+- **Everything else is refused before a job is queued**, with a message that names the setting and what is allowed (`model.params.dropout must be a number, at least 0 and below 1 (got 1.5)`): an unknown setting, a setting of another model, a `model` or `params` that is not an object, and a model kind that is unknown or not available here.
+
+The ranges are those the model's constructor or library enforces (a lower bound that mirrors a check is a fact about the model), the natural bounds of fractions and probabilities, and, for the counts that set the cost of a fit (trees, epochs, widths, timesteps), wide sanity limits that bind no real use. The tests build every available model with each setting at the edges of its range, and show that where a constructor checks a limit itself the schema refuses what the constructor refuses and accepts what it accepts, so the two cannot drift apart unnoticed. The two settings every model accepts although they are not among its own, `columns` (the features it may use) and `halflife_days` (the half-life of the weights on training rows), are in the schema too.
+
+Nothing re-validates a saved configuration. An experiment made earlier, with all of its settings, some of them or a script's own, is read as it is, and a model built from a partial configuration merges the defaults itself, as it always did.
 
 ### What a model can do beyond scoring a row
 
@@ -343,9 +359,9 @@ Served by `src/webapp/ml_api.py`; JSON in, JSON out. Anything slow returns `{"jo
 
 | route | what |
 |---|---|
-| `GET /api/ml/catalog` | models and their settings (`family`, `specs`, `needs`, `outputs`, `available` with the reason), feature groups, targets, position rules, combination methods, search `engines`, defaults, limits, and what tuning each model varies (`tune_spaces`, `tune_efforts`) |
+| `GET /api/ml/catalog` | models and their settings (`family`, `specs`, `schema`, `needs`, `outputs`, `available` with the reason), feature groups, targets, position rules, combination methods, search `engines`, defaults, limits, and what tuning each model varies (`tune_spaces`, `tune_efforts`) |
 | `POST /api/ml/dataset/build` (job) | build and describe a dataset |
-| `POST /api/ml/train` (job) | the whole experiment; returns the id and the report |
+| `POST /api/ml/train` (job) | the whole experiment; returns the id and the report. `model.params` names only the settings to change; each is validated against the model's schema and laid over its defaults |
 | `POST /api/ml/rebacktest` (job) | saved predictions under other signal, backtest or robustness settings |
 | `POST /api/ml/meta-label` (job) | size an experiment's bets by a second classifier |
 | `POST /api/ml/search`, `/api/ml/tune` (jobs), `POST /api/ml/tune/stop` | strategy search; tuning one model (with `effort`: from the form's own settings, with a verdict; with `engine: optuna`: Optuna's sampler); end a tuning early |
@@ -392,7 +408,7 @@ Whether the run outlives *you* depends on whether the app does. Your own compute
 ## Extending it
 
 - **A model:** add a class with the `Model` interface to `models.py` and an entry to its catalog (`kind`, `family`, `tasks`, default `params`); it appears in the Train form, the search space needs a line in `strategy_search.kind_space`.
-- **A model from a package that is not in `requirements.txt`:** put its entry in `catalog_extra.py` with `needs=("package",)` and a module in `EXTRA_MODULE` whose `build(kind, task, params, seed)` imports the package lazily; the catalogue lists it as unavailable, with the reason, where the package is missing. Give it `specs` for any setting that is not a number, and `outputs` for what its report shows.
+- **A model from a package that is not in `requirements.txt`:** put its entry in `catalog_extra.py` with `needs=("package",)` and a module in `EXTRA_MODULE` whose `build(kind, task, params, seed)` imports the package lazily; the catalogue lists it as unavailable, with the reason, where the package is missing. Give it `specs` for any setting that is not a number, `outputs` for what its report shows, and, in `param_schema.RANGES`, a range for each numeric setting (a test fails for a setting that has none, and for a range that belongs to no setting).
 - **A feature:** write a function of `Inputs` returning a date by asset frame, register it in a group of `features.py` with a description; the causality test in `tests/test_ml_data.py` picks it up and fails if it looks ahead.
 - **A position rule:** add it to `signals.build_weights` and `METHODS`; give it a line in `webapp/ml_api.SIGNAL_TEXT` and `static/ml.js`.
 - **A universe:** teach `datasets.resolve_bundle` to return a `MarketBundle` for it.

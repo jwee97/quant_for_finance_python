@@ -151,7 +151,19 @@
     Q.labField(b, { key: "window", label: "Training window", kind: "choice", options: [["expanding", "Expanding: everything before"], ["rolling", "Rolling: the last days only"]] }, f, () => Q.renderLab(M));
     if (f.window === "rolling") Q.labField(b, { key: "rollingDays", label: "Rolling window (days)", kind: "number", step: 21, min: 252, max: 5000 }, f, after);
   }
-  const paramSpec = (info, key) => { const d = info.params[key], sp = (info.specs || {})[key] || {}; return { type: sp.type || (typeof d === "number" ? "number" : "text"), choices: sp.choices || [], help: sp.help || "" }; };
+  /* A model's settings come with the catalogue's schema (type, range, choices); the hints and the default's own type fill in for a catalogue that has none. */
+  const paramSpec = (info, key) => {
+    const d = info.params[key], sp = (info.specs || {})[key] || {}, sc = (info.schema || {})[key] || {};
+    return { type: sc.type || sp.type || (typeof d === "number" ? "number" : "text"), choices: (sc.choices && sc.choices.length ? sc.choices : sp.choices) || [], help: sp.help || "", range: sc.range || "", format: sc.format || "" };
+  };
+  const formValue = (info, key, v) => { const t = paramSpec(info, key).type; return t === "bool" ? !!Number(v) : Array.isArray(v) ? v.join(",") : String(v); };      // what a setting's field shows: the default, as the person would type it
+  /* Every setting of the chosen model is on the form, each starting at its default; the form keeps what the person typed, and a setting that has no value yet (the tuned ones come first) gets its default. */
+  function ownParams(info) {
+    const own = (M.form.params[info.kind] = M.form.params[info.kind] || {});
+    for (const [k, v] of Object.entries(info.params)) if (!(k in own)) own[k] = formValue(info, k, v);
+    return own;
+  }
+  const sameAsDefault = (sp, value, d) => (sp.type === "bool" ? value === (Number(d) ? 1 : 0) : sp.type === "list" ? value === (Array.isArray(d) ? d.join(",") : String(d).trim()) : sp.type === "choice" || sp.type === "text" ? value === String(d).trim() : value === Number(d));
   function modelBlock(b) {
     const f = M.form, cat = M.catalog, kinds = modelKinds(), usable = kinds.filter((k) => k.available);
     fixModel();
@@ -171,14 +183,16 @@
           ["Residual connections", arch.residuals], ["Attention", arch.attention], ["Forecast horizons", arch.horizon_mapping]]);
       }
       if (SLOW.has(info.family)) h("p", "hint", b, "This model trains a network or an agent at every refit, which takes minutes rather than seconds on a CPU. Raise Refit every (days) or lower the epochs or timesteps while exploring.");
-      const own = (f.params[f.model] = f.params[f.model] || Object.fromEntries(Object.entries(info.params).map(([k, v]) => [k, paramSpec(info, k).type === "bool" ? !!Number(v) : String(v)])));
-      for (const k of Object.keys(own)) {
+      const own = ownParams(info);
+      for (const k of Object.keys(info.params)) {
         const sp = paramSpec(info, k), label = k.replace(/_/g, " "), after = () => Q.syncLab(M);
-        if (sp.type === "choice") Q.labField(b, { key: k, label, kind: "choice", options: sp.choices.map((c) => [c, c]), help: sp.help }, own, after);
-        else if (sp.type === "bool") Q.labField(b, { key: k, label, kind: "bool", help: sp.help }, own, after);
-        else if (sp.type === "text") Q.labField(b, { key: k, label, kind: "text", help: sp.help }, own, after);
-        else Q.labField(b, { key: k, label, kind: "number", step: "any", help: sp.help }, own, after);
+        const help = [sp.help, sp.format ? `Written as ${sp.format}.` : "", sp.range ? `Allowed: ${sp.type === "int" ? "a whole number, " : ""}${sp.range}.` : ""].filter(Boolean).join(" ");
+        if (sp.type === "choice") Q.labField(b, { key: k, label, kind: "choice", options: sp.choices.map((c) => [c, c]), help }, own, after);
+        else if (sp.type === "bool") Q.labField(b, { key: k, label, kind: "bool", help }, own, after);
+        else if (sp.type === "text" || sp.type === "list") Q.labField(b, { key: k, label, kind: "text", help }, own, after);
+        else Q.labField(b, { key: k, label, kind: "number", step: "any", help }, own, after);
       }
+      if (Object.keys(info.params).length) h("p", "hint", b, "Only the settings you change are sent; the server fills in the rest with the model's defaults, and the saved experiment records them all.");
       const says = { distribution: "prediction intervals", regimes: "regime probabilities", heads: "forecasts by horizon", training: "training curves", weights: "member weights", ranking: "ranking metrics", attention: "attention", rewards: "reward curves" };
       if ((info.outputs || []).length) h("p", "hint", b, "Besides its scores this model reports: " + info.outputs.map((o) => says[o] || o).join(", ") + ".");
     }
@@ -373,14 +387,18 @@
     const tv = optNumber(f.targetVol, "Volatility target");
     return { rebalance: f.rebalance, cost_bps: needNumber(f.cost, "Commission"), slippage_bps: needNumber(f.slippage, "Slippage"), target_vol: tv === undefined ? "" : tv / 100, max_leverage: needNumber(f.maxLev, "Largest leverage") };
   }
+  /* The model of a request: its kind and only the settings the person changed. A setting left at the catalogue's default is not sent (a network has twenty or more, and the server lays what is sent over the
+     defaults, so the experiment still records them all); an agent's cost left at its default is therefore the Backtest section's costs, which the server fills in. */
   function modelBody(f) {
-    const info = (M.catalog.models.find((k) => k.kind === f.model)) || { params: {}, specs: {} }, own = f.params[f.model] || {}, params = {};
-    for (const [k, v] of Object.entries(own)) {
-      const sp = paramSpec(info, k);
-      if (sp.type === "bool") params[k] = v ? 1 : 0;
-      else if (sp.type === "choice" || sp.type === "text") params[k] = String(v).trim();
-      else if (k === "cost_bps" && RL_KINDS.has(f.model) && String(v) === String(info.params[k])) continue;       // left at its default, the server follows the Backtest section's costs
-      else if (String(v).trim() !== "") params[k] = needNumber(v, k.replace(/_/g, " "));
+    const info = (M.catalog.models.find((k) => k.kind === f.model)) || { kind: f.model, params: {}, specs: {} }, own = ownParams(info), params = {};
+    for (const k of Object.keys(info.params)) {
+      const sp = paramSpec(info, k), v = own[k], name = k.replace(/_/g, " ");
+      let value;
+      if (sp.type === "bool") value = v ? 1 : 0;
+      else if (sp.type === "choice" || sp.type === "text" || sp.type === "list") value = String(v).trim();
+      else if (String(v).trim() === "") continue;                                                               // a blank number is the default
+      else { value = needNumber(v, name); if (sp.type === "int" && !Number.isInteger(value)) throw new Error(`${name} must be a whole number`); }
+      if (!sameAsDefault(sp, value, info.params[k])) params[k] = value;
     }
     return { kind: f.model, params };
   }

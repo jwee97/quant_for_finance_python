@@ -2,7 +2,7 @@
 reinforcement-learning agents.
 
 This file is only the catalogue (names, defaults, form hints, search spaces and which module builds each kind). The builders are imported on demand, so a package that is not installed (PyTorch,
-NGBoost, Stable-Baselines3) makes its models unavailable with a reason and never breaks the rest of the zoo.
+NGBoost, Stable-Baselines3) makes its models unavailable with a reason and never breaks the rest of the zoo. The range of each numeric setting is in ``param_schema.RANGES``, which the web API validates a request against.
 """
 
 from __future__ import annotations

@@ -428,6 +428,7 @@ def test_a_training_request_is_whitelisted_ranged_and_validated_before_it_is_que
     for body, text in (({"signal": {"bogus": 1}}, "no setting"), ({"backtest": {"cost_bps": -1}}, "between 0 and 250"), ({"dataset": {"universe": "mars"}}, "universe must be one of"),
                        ({"dataset": {"feature_groups": ["price", "astrology"]}}, "feature_groups"), ({"dataset": {"target": "fwd_ret_x"}}, "unknown target"), ({"dataset": {"horizon": 500}}, "between 1 and 252"),
                        ({"dataset": {"universe": ["ONLYONE"]}}, "between 2"), ({"dataset": {"universe": ["bad ticker!", "X"]}}, "not a valid ticker"), ({"model": {"kind": "ridge", "params": {"alpha; drop": 1}}}, "model.params"), ({"model": "ridge"}, "object"),
+                       ({"model": {"kind": "ridge", "params": {"no_such": 1}}}, "model.params.no_such is not a setting"),            # the model's own settings are its schema: an unknown one is refused here, not by the job
                        ({"split": {"validation_fraction": 0.4, "test_fraction": 0.4, "forward_fraction": 0.4}}, "leave at least 30%"), ({"seed": -1}, "seed"), ({"signal": "x"}, "must be an object"),
                        ({"model": {"kind": "regime_ridge"}}, "regime_detector")):
         with pytest.raises(ApiError, match=text):
@@ -439,7 +440,8 @@ def test_trees_get_their_own_refit_interval_unless_the_request_sets_one(mlapp):
     ml = mlapp.extra_get["/api/ml/catalog"].__self__
     assert ml._overrides({"model": {"kind": "random_forest"}})["split"]["refit_every"] == 63
     assert ml._overrides({"model": {"kind": "random_forest"}, "split": {"refit_every": 21}})["split"]["refit_every"] == 21
-    assert "split" not in ml._overrides({"model": {"kind": "no_such_model"}}) or ml._overrides({"model": {"kind": "no_such_model"}})["split"].get("refit_every") != 63
+    with pytest.raises(ApiError, match="model.kind must be one of"):                                  # a model the catalogue does not list is refused here, not by the job that would fail on it
+        ml._overrides({"model": {"kind": "no_such_model"}})
 
 
 def test_identifiers_are_checked_so_a_request_cannot_reach_outside_the_registry(mlapp):
@@ -685,8 +687,8 @@ def test_a_ticker_list_is_resolved_like_the_backtest_tab_and_a_failed_download_i
 def test_a_model_that_cannot_run_on_the_data_is_reported_as_a_message_not_a_crash(mlapp):
     job = wait(mlapp, mlapp.extra_post["/api/ml/train"]({**BASE, "split": {"min_train_days": 3000}}))
     assert job["status"] == "error" and "warm-up" in job["error"] and "min_train_days" in job["error"]
-    job = wait(mlapp, mlapp.extra_post["/api/ml/train"]({**BASE, "model": {"kind": "ridge", "params": {"no_such": 1}}}))
-    assert job["status"] == "error" and "no_such" in job["error"]
+    job = wait(mlapp, mlapp.extra_post["/api/ml/train"]({**BASE, "model": {"kind": "ridge", "params": {"columns": ["no_such_feature"]}}}))          # a valid request that the data cannot honour: the job says so
+    assert job["status"] == "error" and "no fold could be fitted" in job["error"]
 
 
 # ------------------------------------------------------------------------------------------------------------------ over HTTP
