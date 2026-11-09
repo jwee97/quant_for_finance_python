@@ -114,9 +114,24 @@ def bundle_from_prices(prices: pd.DataFrame, volume: pd.DataFrame | None = None,
 
 
 def load_prices_csv(path: str | Path, date_column: str = "date") -> pd.DataFrame:
-    """A wide CSV of prices: one date column and one column per asset."""
-    frame = pd.read_csv(path, parse_dates=[date_column]).set_index(date_column).sort_index()
-    return frame.apply(pd.to_numeric, errors="coerce")
+    """A wide CSV of prices: one date column and one column per asset.
+
+    The date column is named ``date`` when present. A file written by
+    ``DataFrame.to_csv`` on a frame with an unnamed date index instead
+    has a blank first header, so that first column is used as the date
+    index.
+    """
+    frame = pd.read_csv(path)
+    if not len(frame.columns):
+        raise ValueError(f"no columns found in {path}")
+    if date_column in frame.columns:
+        frame = frame.set_index(date_column)
+    else:
+        # No named date column: the dates are the first (unnamed) column,
+        # as written by DataFrame.to_csv on a frame with an unnamed index.
+        frame = frame.set_index(frame.columns[0])
+    frame.index = pd.to_datetime(frame.index)
+    return frame.sort_index().apply(pd.to_numeric, errors="coerce")
 
 
 def load_default_bundle(config, with_macro: bool = True, download: bool = False) -> MarketBundle:
