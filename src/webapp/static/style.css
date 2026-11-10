@@ -423,3 +423,28 @@ ul.plain { margin: 0 0 6px; padding-left: 20px; display: grid; gap: 2px; font-si
 #fundamentals .tone-crit { color: var(--crit); }
 #fundamentals .vh { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 #fundamentals .bgnote .row { align-items: center; }
+/* the Fundamentals tab's Enter reports grid: periods across, lines down, a text cell for every figure; the line names stay in view while the periods scroll */
+#fundamentals .enterwrap { max-height: 70vh; overflow: auto; }
+#fundamentals table.entergrid { width: max-content; min-width: 0; }
+#fundamentals table.entergrid th, #fundamentals table.entergrid td { white-space: nowrap; vertical-align: middle; }
+#fundamentals table.entergrid thead th { position: sticky; top: 0; z-index: 2; background: var(--surface); }
+#fundamentals table.entergrid thead tr:nth-child(2) th { top: 38px; }
+#fundamentals table.entergrid thead tr:nth-child(3) th { top: 76px; }
+#fundamentals table.entergrid thead tr:nth-child(4) th { top: 114px; }
+#fundamentals table.entergrid thead tr:nth-child(5) th { top: 152px; }
+#fundamentals table.entergrid thead tr:nth-child(6) th { top: 190px; }
+#fundamentals table.entergrid th.rowhead { position: sticky; left: 0; z-index: 1; background: var(--surface); text-align: left; min-width: 210px; max-width: 280px; white-space: normal; font-weight: 500; }
+#fundamentals table.entergrid thead th.rowhead { z-index: 3; }
+#fundamentals table.entergrid tr.group th.rowhead, #fundamentals table.entergrid tr.group td { background: var(--page); color: var(--ink-2); font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; padding-top: 10px; font-weight: 600; }
+#fundamentals table.entergrid .auto { color: var(--muted); font-size: 11px; }
+#fundamentals table.entergrid th.colhead { min-width: 118px; padding: 3px 4px; }
+#fundamentals table.entergrid td { padding: 2px 4px; }
+#fundamentals table.entergrid input, #fundamentals table.entergrid select { width: 112px; padding: 4px 6px; border-radius: 6px; font-size: 12.5px; }
+#fundamentals table.entergrid td input { text-align: right; font-variant-numeric: tabular-nums; }
+#fundamentals table.entergrid input.bad { border-color: var(--crit); box-shadow: 0 0 0 1px var(--crit); }
+#fundamentals table.entergrid input.warn { border-color: var(--warn); box-shadow: 0 0 0 1px var(--warn); }
+#fundamentals table.entergrid input.guess { border-style: dashed; border-color: var(--warn); }
+#fundamentals ul.issues { margin: 0; padding-left: 0; list-style: none; display: grid; gap: 6px; font-size: 13px; }
+#fundamentals ul.issues li { overflow-wrap: anywhere; }
+#fundamentals h2.sectionhead { margin: 8px 0 0; font-size: 18px; }
+

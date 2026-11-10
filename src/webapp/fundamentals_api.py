@@ -123,7 +123,8 @@ class FundamentalsApi:
     def get_routes(self) -> dict:
         return self._clean({"/api/fund/status": self.status, "/api/fund/overview": self.overview, "/api/fund/catalogue": self.catalogue, "/api/fund/companies": self.companies,
                             "/api/fund/company": self.company, "/api/fund/valuation": self.valuation, "/api/fund/coverage": self.coverage, "/api/fund/quality": self.quality, "/api/fund/library": self.library, "/api/fund/alpha": self.alpha,
-                            "/api/fund/graveyard": self.graveyard, "/api/fund/runs": self.runs, "/api/fund/run": self.run_summary, "/api/fund/experiments": self.experiments})
+                            "/api/fund/graveyard": self.graveyard, "/api/fund/runs": self.runs, "/api/fund/run": self.run_summary, "/api/fund/experiments": self.experiments,
+                            "/api/fund/manual/template": self.manual_template, "/api/fund/manual/entries": self.manual_entries})
 
     def post_routes(self) -> dict:
         return self._clean({"/api/fund/companies/add": self.add_companies, "/api/fund/companies/search": self.search_companies, "/api/fund/sync/plan": self.sync_plan, "/api/fund/coverage/plan": self.coverage_plan, "/api/fund/coverage/fetch": self.coverage_fetch,
@@ -132,7 +133,9 @@ class FundamentalsApi:
                             "/api/fund/library/validate": self.library_validate, "/api/fund/sync": self.sync, "/api/fund/simulate": self.simulate, "/api/fund/prices": self.load_prices,
                             "/api/fund/scan": self.scan, "/api/fund/evaluate": self.evaluate, "/api/fund/evaluate/formula": self.evaluate_formula, "/api/fund/lookahead": self.lookahead,
                             "/api/fund/discover": self.discover, "/api/fund/discover/preflight": self.preflight, "/api/fund/placebo": self.placebo, "/api/fund/monitor": self.monitor, "/api/fund/correlation": self.correlation, "/api/fund/combine": self.combine,
-                            "/api/fund/ml": self.ml, "/api/fund/backtest": self.backtest, "/api/fund/stop": self.stop})
+                            "/api/fund/ml": self.ml, "/api/fund/backtest": self.backtest, "/api/fund/stop": self.stop,
+                            "/api/fund/manual/parse": self.manual_parse, "/api/fund/manual/preview": self.manual_preview, "/api/fund/manual/save": self.manual_save,
+                            "/api/fund/manual/delete": self.manual_delete})
 
     @staticmethod
     def _clean(routes: dict) -> dict:
@@ -526,6 +529,51 @@ class FundamentalsApi:
         def work(progress, stop):
             return wb.load_prices(ids, start, self.fetch, progress, stop.is_set, bool(body.get("refresh")), body.get("fx", True) is not False)
         return self._job("fundamentals: load prices", work, True, "data")
+
+    # ------------------------------------------------------------------------------------------------------------ reports entered by hand
+    def manual_template(self, q: dict | None = None) -> dict:
+        """``GET /api/fund/manual/template``: the lines the entry grid offers (by statement, the ones most ratios need marked, the ones that fill themselves in), the units, the fiscal periods and the rules."""
+        return self.bench("real").manual_template()
+
+    def manual_entries(self, q: dict | None = None) -> dict:
+        """``GET /api/fund/manual/entries?id=``: the periods of a company that were entered by hand, as stored (the latest vintage of each), to put back in the grid and correct."""
+        q = q or {}
+        db = _db(q)
+        self._real_only(db, "reports entered by hand")
+        return self._guard(self.bench(db).manual_entries, _company_id(q))
+
+    def manual_parse(self, body: dict) -> dict:
+        """``POST /api/fund/manual/parse {text}``: read a table pasted from Excel (tab-separated) or a CSV file: the periods across, the lines down. Nothing is stored; the answer is what the grid is filled with."""
+        db = _db(body)
+        self._real_only(db, "reports entered by hand")
+        return self._guard(self.bench(db).manual_parse, body.get("text"))
+
+    def _manual_mode(self, body: dict) -> str:
+        mode = str(body.get("mode") or "correct")
+        if mode not in ("correct", "restate"):
+            raise ApiError("mode must be correct (fix what was typed) or restate (the company restated a period)")
+        return mode
+
+    def manual_preview(self, body: dict) -> dict:
+        """``POST /api/fund/manual/preview {security_id | company, units, currency?, periods, mode?}``: check an entry and compute what the Fundamentals tab would show for the company once it was saved:
+        the ratios and scores of every period, the multiples at a typed share price, the DuPont split, the Piotroski and anomaly screens. It works on a temporary copy of the one company; nothing is saved."""
+        db = _db(body)
+        self._real_only(db, "reports entered by hand")
+        return self._guard(self.bench(db).manual_preview, body, self._manual_mode(body))
+
+    def manual_save(self, body: dict) -> dict:
+        """``POST /api/fund/manual/save {security_id | company, units, currency?, periods, mode?, restated_on?}``: store the periods in the database as the ``manual`` source, with the date each became
+        public, and write the company's derived metrics. Every error of the check stops it: nothing is half saved. ``mode: correct`` (the default) overwrites a period entered before; ``restate`` stores a
+        change as a new vintage, public only from ``restated_on``. A company that is not in the database is created from ``company``; one that is, is chosen by ``security_id``."""
+        db = _db(body)
+        self._real_only(db, "reports entered by hand")
+        return self._guard(self.bench(db).manual_save, body, self._manual_mode(body), body.get("restated_on"))
+
+    def manual_delete(self, body: dict) -> dict:
+        """``POST /api/fund/manual/delete {security_id, fiscal_period, period_end}``: remove a period that was entered by hand (not a provider's)."""
+        db = _db(body)
+        self._real_only(db, "reports entered by hand")
+        return self._guard(self.bench(db).manual_delete, _company_id(body), body.get("fiscal_period"), body.get("period_end"))
 
     # ------------------------------------------------------------------------------------------------------------ jobs: research
     def scan(self, body: dict) -> dict:

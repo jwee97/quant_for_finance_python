@@ -480,6 +480,8 @@ class FundamentalsService:
         if info is None:
             raise FundamentalsError(f"no company with id {security_id}")
         name = provider or info.get("source") or "openfilings"
+        if name == "manual":
+            raise FundamentalsError("this company's statements were typed in by hand, so no provider can be asked for more years: add or correct them in Enter reports")
         return info, name, self.provider(name)
 
     def coverage(self, security_id: int, provider: str | None = None, today: date | str | None = None) -> dict:
@@ -623,7 +625,7 @@ class FundamentalsService:
                               "keys": [{k: v for k, v in s.items() if k != "key_id"} for s in keys], "key_notes": pool.notes, "recent": self.usage.recent(name, 12)})
         today = self._today()
         stale = 0
-        sources = {int(r.security_id): str(r.source) for r in self.store.securities().itertuples() if r.source}
+        sources = {int(r.security_id): str(r.source) for r in self.store.securities().itertuples() if r.source and r.source != "manual"}   # typed in by hand: there is nothing to fetch
         for sid, source in sources.items():
             if self.reason_to_sync(sid, source, "annual", None, today) in ("stale", "missing"):
                 stale += 1

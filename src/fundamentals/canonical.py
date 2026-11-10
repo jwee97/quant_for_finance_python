@@ -235,7 +235,13 @@ SEC_FIELDS: dict[str, str] = _sec_field_types()
 # the simulated provider speaks canonical codes already
 IDENTITY_MAP: dict[str, list[tuple[str, str]]] = {code: [(code, "as_is")] for code in METRICS}
 
-SOURCE_MAPS = {"openfilings": OPENFILINGS_MAP, "sec_edgar": SEC_MAP, "simulated": IDENTITY_MAP}
+# Figures a person types in themselves (the Fundamentals tab's "Enter reports"): canonical codes already. Costs and amounts spent are kept as positive magnitudes whichever sign the spreadsheet
+# shows: a statement prints capital spending as (1,000) and a data export often prints every cost as a negative, and both mean that 1,000 was spent.
+MANUAL_MAGNITUDES = ("cost_of_revenue", "research_and_development", "selling_general_admin", "interest_expense", "depreciation_amortization", "stock_based_compensation",
+                     "capital_expenditure", "acquisitions", "share_repurchases", "dividends_paid")
+MANUAL_MAP: dict[str, list[tuple[str, str]]] = {code: [(code, "abs" if code in MANUAL_MAGNITUDES else "as_is")] for code in METRICS}
+
+SOURCE_MAPS = {"openfilings": OPENFILINGS_MAP, "sec_edgar": SEC_MAP, "simulated": IDENTITY_MAP, "manual": MANUAL_MAP}
 APPROXIMATE = {"openfilings": OPENFILINGS_APPROXIMATE}
 APPROXIMATE_SOURCES = {"sec_edgar": SEC_APPROXIMATE_SOURCES}
 

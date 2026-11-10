@@ -23,7 +23,7 @@
     ["kr", "Korea"], ["tw", "Taiwan"], ["in", "India"], ["cn", "China"], ["br", "Brazil"], ["mx", "Mexico"], ["ch", "Switzerland"], ["il", "Israel"]];
 
   const FD = {
-    id: "fundamentals", root: "#fundamentals", view: "#view-fundamentals", title: "Fundamentals", api: 13, mode: "overview", busyBy: {}, jobs: {}, epoch: 0, results: {}, errors: {}, cache: new Map(), guard: null, go: null, progress: null,
+    id: "fundamentals", root: "#fundamentals", view: "#view-fundamentals", title: "Fundamentals", api: 14, mode: "overview", busyBy: {}, jobs: {}, epoch: 0, results: {}, errors: {}, cache: new Map(), guard: null, go: null, progress: null,
     about: "Company fundamentals from around the world in a local database, tested as factors and searched for alphas, with the evidence counted honestly.",
     modes: [["overview", "Overview"], ["companies", "Company explorer"], ["factors", "Factor lab"], ["discovery", "Alpha discovery"], ["library", "Alpha library"], ["monitor", "Alpha monitor"], ["data", "Data manager"]],
     db: Q.store("fund.db") === "demo" ? "demo" : "real", facets: {}, views: {},
@@ -740,8 +740,10 @@
     for (const n of v.notes || []) h("p", "hint", body, n);
     Q.refsLine(body, v.references);
   };
-  CO.view = (root, d) => {
-    const p = d.profile;
+  /* ``opts.preview`` draws the company from figures that are not in the database yet (Enter reports): the cards that ask the server about the stored company (the years held, the valuation, the price symbol) are
+     left out, and the valuation that came with the preview is drawn in place of the one that is asked for. */
+  CO.view = (root, d, opts) => {
+    const preview = !!(opts && opts.preview), p = d.profile;
     Q.labHead(root, `${p.company_name || p.ticker} (${p.ticker}${p.exchange ? ", " + p.exchange : ""})`, [p.country, p.sector, p.industry, p.currency].filter(Boolean).join(" · "), GUIDE);
     if (p.active === 0 || p.active === false) Q.labBanner(root, "Delisted. ", `This company is no longer listed${p.delisted_date ? " (since " + day(p.delisted_date) + ")" : ""}; its history is kept so that studies do not leave out the ones that failed.`);
     const k = h("div", "earnrow", root);
@@ -753,7 +755,7 @@
     if (zone) tile(k, "Altman Z″ distress score", num(zone.score, 2), { text: ZONE[zone.zone][0], dir: ZONE[zone.zone][1] }, "", "Altman's score for non-manufacturers: below 1.10 is the distress zone, above 2.60 the safe zone. A screen next to the sample it was fitted on, not a forecast of failure.");
     if (tests && tests.judged > 0) tile(k, "Graham's tests", `${Math.round(tests.met)} of ${Math.round(tests.judged)}`, { text: "of those the history can judge" }, "", "The defensive investor's tests of the balance sheet, the earnings record and the dividends.");
     if (d.anomaly_reading) tile(k, "Accounting-anomaly screen", d.annual.length && !Q.bad(d.annual[d.annual.length - 1].accounting_anomaly_score) ? num(d.annual[d.annual.length - 1].accounting_anomaly_score, 2) : "n/a", { text: d.anomaly_reading }, "", "A screen to look closer, never evidence of fraud");
-    CO.coverage(root, p);
+    if (!preview) CO.coverage(root, p);
     const rows = d.annual;
     const series = (names) => names.filter((n) => d.series[n] && d.series[n].some((v) => v !== null)).map((n, i) => ({ name: SERIES_NAME[n] || human(n), color: Q.colorOf(i), values: d.series[n] }));
     const ch = h("div", "charts", root);
@@ -772,7 +774,8 @@
     lineCard("Owner earnings", "Net income, owner earnings (net income plus depreciation less capital spending: Buffett's measure, with all spending counted as the spending needed to stay where the business is) and free cash flow.", ["net_income", "owner_earnings", "free_cash_flow"], money);
     CO.dupontChart(ch, d);
     CO.distress(ch, d);
-    CO.valuation(root, p);
+    if (!preview) CO.valuation(root, p);
+    else if (opts.valuation) { const vc = W.card(root, "What might the share be worth?", "The same rules, against the share price typed in beside the figures (not stored)."); vc.dataset.role = "fund-valuation"; vc.classList.add("roomy"); CO.valuationBody(h("div", "stack", vc), opts.valuation); }
     const fig = W.card(root, "The statements, with the day each became public", "A figure enters research on its 'public from' date plus the lag you choose, never on its period end. 'Estimated' means the filing date was not known and a lag was assumed.");
     fig.dataset.role = "fund-statements"; fig.classList.add("roomy");
     const cols = [{ label: "Year", get: (r) => String(r.fiscal_year) }, { label: "Period end", get: (r) => day(r.period_end) }, { label: "Public from", get: (r) => day(r.available) + (r.estimated ? " (estimated)" : "") }];
@@ -799,6 +802,7 @@
       const fl = W.card(root, "Figures the quality checks flagged", "A flagged figure is treated as missing in research. Check it against the filing.");
       table(fl, [{ label: "Year", get: (r) => String(r.fiscal_year) }, { label: "Figure", get: (r) => r.metric_code }, { label: "Value", num: true, get: (r) => compact(r.value) }, { label: "Flag", get: (r) => r.quality_flag.replace(/_/g, " ") }], d.flagged);
     }
+    if (preview) { CO.graham(root, d); FD.notes(root, "Read before relying on it", d.notes); return; }
     const sym = W.card(root, "Where its prices come from", "The symbol used to ask a market-data source for this company's prices. The market's usual suffix is tried first; if it is wrong, set the right one here.");
     sym.dataset.role = "fund-price-symbol";
     const ids = d.identifiers.filter((x) => x.provider === "yahoo" && x.id_type === "price_symbol");

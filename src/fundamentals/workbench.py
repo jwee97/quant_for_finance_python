@@ -19,7 +19,7 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 
-from . import analytics, bridge, calibration, combine, metrics, prices, scores, transforms
+from . import analytics, bridge, calibration, combine, manual, metrics, prices, scores, transforms
 from . import valuation as yardsticks
 from . import expr as X
 from . import factors as factor_library
@@ -647,6 +647,37 @@ class Workbench:
         n, t = float(np.median(counts[usable])), int(usable.sum())
         out = detectable_effect(n, t, h, step)
         return clean({**base, **out, "companies": n, "dates": t})
+
+    # ------------------------------------------------------------------------------------------------------------ reports entered by hand
+    def manual_template(self) -> dict:
+        """The lines, units and rules of the entry grid (see :mod:`manual`)."""
+        return clean(manual.template())
+
+    def manual_parse(self, text) -> dict:
+        """Read a table pasted from Excel or a CSV file into periods and figures. Nothing is stored."""
+        return clean(manual.parse_table(text))
+
+    def manual_preview(self, entry: dict, mode: str = "correct") -> dict:
+        """Check an entry and compute the ratios, scores and multiples the company would show once it was saved, on a temporary copy of the company: nothing is stored."""
+        return manual.preview(self.store, entry, self.service.root, mode=mode)
+
+    def manual_save(self, entry: dict, mode: str = "correct", restated_on=None) -> dict:
+        """Store an entry in the database (provider ``manual``), refresh the company's derived metrics, and forget the research contexts, which a corrected figure would leave out of date."""
+        try:
+            return manual.save(self.store, entry, mode, restated_on)
+        finally:
+            self.forget()
+
+    def manual_entries(self, security_id) -> dict:
+        """The periods of a company that were entered by hand, as stored."""
+        return manual.entries(self.store, security_id)
+
+    def manual_delete(self, security_id, fiscal_period, period_end) -> dict:
+        """Remove a period entered by hand."""
+        try:
+            return manual.delete_period(self.store, security_id, fiscal_period, period_end)
+        finally:
+            self.forget()
 
     # ------------------------------------------------------------------------------------------------------------ prices
     def load_prices(self, security_ids: list[int] | None = None, start: str = prices.DEFAULT_START, fetch=None, progress=None, stop=None, refresh: bool = False, fx: bool = True) -> dict:

@@ -29,7 +29,7 @@ from tests.test_webapp_workspaces_browser import _wait_until
 
 sync_api = pytest.importorskip("playwright.sync_api")
 
-MODES = ["Overview", "Company explorer", "Factor lab", "Alpha discovery", "Alpha library", "Alpha monitor", "Data manager"]
+MODES = ["Overview", "Company explorer", "Enter reports", "Factor lab", "Alpha discovery", "Alpha library", "Alpha monitor", "Data manager"]
 SECRETS = ("of_zzzzSECRETzzzz_one_0123456789", "of_zzzzSECRETzzzz_two_9876543210")
 WORLD = dict(db="demo", companies=40, start_year=2010, end_year=2018, seed=5, planted={"delta_roic": 0.011, "fcf_yield": 0.0068, "asset_growth": 0.0045})
 SEARCH = {"n_candidates": 30, "seed": 4, "seeds": ["div(fcf,market_cap)", "delta(roic,12)"], "finalists": 3}
@@ -119,7 +119,7 @@ def _tables_have_names(page) -> list[str]:
 
 
 # ------------------------------------------------------------------------------------------------------ the frame
-def test_the_tab_has_seven_views_and_opens_on_a_real_database_that_has_nothing_in_it(browser, live_fund):  # noqa: F811
+def test_the_tab_has_eight_views_and_opens_on_a_real_database_that_has_nothing_in_it(browser, live_fund):  # noqa: F811
     page = _page(browser, live_fund)
     try:
         page.click("#tab-fundamentals")
@@ -897,7 +897,7 @@ def test_an_app_older_than_the_tab_says_so(browser, live_fund):  # noqa: F811
         page.click("#tab-fundamentals")
         page.wait_for_selector("#fundamentals .card")
         text = page.inner_text("#fundamentals")
-        assert "needs a newer app" in text and "reports version 10; this tab needs 13" in text and "Stop the app" in text
+        assert "needs a newer app" in text and "reports version 10; this tab needs 14" in text and "Stop the app" in text
         assert page.locator("#fundamentals .labtop [role=tab]").count() == 0
     finally:
         page.close()
