@@ -15,6 +15,8 @@
     quant tune --model tsmom --space models.0.params.lookback=int:21:504 --trials 24   a hyperparameter search that counts its trials and deflates the winner
     quant forecast SPY --horizon 21       forecast a price as a distribution with Monte Carlo, Markov, Gaussian-process and other methods, and test each on the past (`--list` names them)
     quant models fit SPY                  fit Merton, Kou, variance gamma, NIG and Heston to an option chain; also `price` (a digital, barrier, average-price or American option under every model) and `hedge` (what hedging costs when trades cost money)
+    quant scenarios SPY QQQ TLT --generators all   thousands of possible futures from eight generators (resampling, GARCH, a GAN, a variational autoencoder, a diffusion model) and how closely each resembles the history (`--list` names them)
+    quant curve fit --file curve.txt      a Nelson-Siegel or Svensson yield curve (`--model svensson`); `quant curve dynamic` follows its level, slope and curvature through a history and tests the forecast
     quant benchmark --models tsmom momentum   score time and peak memory of models on the default bundle
     quant registry list                   versioned models: stages, lineage, promotion
     quant algo list                       the execution algorithms and where each strategy of the taxonomy lives; `quant algo run --algos vwap aim+vwap is:risk_aversion=0.01` compares them on a simulated day
@@ -275,6 +277,122 @@ def cmd_forecast(args, config) -> int:
     if args.json:
         Path(args.json).write_text(json.dumps({"ticker": ticker, "asof": asof, "horizon": args.horizon, "evaluation": evaluation, "now": now, "verdict": verdict}, indent=1), encoding="utf-8")
         print(f"\nwritten to {args.json}")
+    return 0
+
+
+def cmd_scenarios(args, config) -> int:
+    """Make scenarios of a portfolio's returns with several generators and score each against the history: the Scenarios tab, in the terminal."""
+    import json
+    import time
+
+    from .scenarios import report
+    from .webapp.payload import clean
+
+    if args.list:
+        for g in report.catalog():
+            print(f"{g['id']:12s} {g['family']:18s} {g['label']}")
+        return 0
+    bundle = _bundle(config, args.prices)
+    columns = {c.upper(): c for c in bundle.prices.columns}
+    wanted = args.tickers or list(bundle.prices.columns)[:4]
+    missing = [t for t in wanted if t.upper() not in columns]
+    if missing:
+        print(f"choose tickers from {', '.join(bundle.prices.columns)} ('{missing[0]}' is not in the data)", file=sys.stderr)
+        return 2
+    tickers = [columns[t.upper()] for t in wanted]
+    names = [g["id"] for g in report.catalog()] if args.generators == ["all"] else (args.generators or list(report.DEFAULT))
+    returns = bundle.prices[tickers].pct_change().dropna()
+    last = [0.0]
+
+    def progress(text: str) -> None:
+        if time.time() - last[0] > 10:
+            print(text, file=sys.stderr, flush=True)
+            last[0] = time.time()
+
+    try:
+        result = report.run(returns, names, args.n, args.horizon, args.seed, progress)
+    except report.ScenarioError as error:
+        print(error, file=sys.stderr)
+        return 2
+    ok = [g for g in result["generators"] if not g["error"]]
+    print(f"{len(tickers)} tickers ({', '.join(tickers)}), {result['days']} days {result['first']} to {result['last']}: {result['n']} scenarios of {result['horizon']} days from each generator\n")
+    keys = [m["id"] for m in result["metrics"] if any(g["quality"].get(m["id"]) is not None for g in ok)]
+    print(f"{'generator':22s} {'time':>6s} " + " ".join(f"{m['label'][:11]:>11s}" for m in result["metrics"] if m["id"] in keys))
+    for g in ok:
+        print(f"{g['label']:22s} {g['seconds']:5.1f}s " + " ".join(f"{('!' if g['flags'][k] == 'far' else ' ')}{g['quality'][k]:10.2f}" for k in keys))
+    print("perfect copy:           " + " ".join(f"{m['target']:11.1f}" for m in result["metrics"] if m["id"] in keys) + "   (! = further than a rule of thumb allows)")
+    for g in result["generators"]:
+        if g["error"]:
+            print(f"\n{g['label']} did not run: {g['error']}")
+    h = result["history"]
+    print(f"\nthe portfolio's return over {result['horizon']} days (equal weights): 5th percentile / median / 95th percentile, and the 95% expected shortfall")
+    for g in ok:
+        t = g["terminal"]
+        print(f"{g['label']:22s} {t['quantiles'][1] * 100:7.2f}% {t['quantiles'][3] * 100:7.2f}% {t['quantiles'][5] * 100:7.2f}%   ES {t['es5'] * 100:6.2f}%")
+    print(f"{'the history':22s} {h['quantiles'][1] * 100:7.2f}% {h['quantiles'][3] * 100:7.2f}% {h['quantiles'][5] * 100:7.2f}%   ES {h['es5'] * 100:6.2f}%")
+    for note in result["notes"]:
+        if "could not make scenarios" not in note:
+            print(f"\n{note}")
+    if args.json:
+        Path(args.json).write_text(json.dumps(clean(result), indent=1), encoding="utf-8")
+        print(f"\nwritten to {args.json}")
+    return 0
+
+
+def cmd_curve(args, config) -> int:
+    """A yield curve: fit a Nelson-Siegel or Svensson curve to yields (the Rates tab's first view), or follow the factors of a history of curves (its second), from the same functions."""
+    import json
+    from pathlib import Path
+
+    from .assets import rates
+    from .webapp.payload import clean
+
+    try:
+        if args.action == "fit":
+            if args.file:
+                text = Path(args.file).read_text()
+                tau, y = rates.parse_curve_text(text)
+            elif args.maturities and args.yields and len(args.maturities) == len(args.yields):
+                tau, y = [rates.parse_tenor(m) for m in args.maturities], [float(v) for v in args.yields]
+            else:
+                print("give --file with a maturity and a yield on each line, or --maturities and --yields of the same length (--maturities 3M 2Y 10Y --yields 5.1 4.3 4.2)")
+                return 2
+            rep = rates.curve_report(tau, y, args.model, args.lam, args.kind, percent=args.unit == "percent")
+            print(f"{rep['model'].replace('_', '-')} curve through {len(rep['fit']['points'])} points: it misses the yields by {rep['fit']['rmse_bp']:.1f} basis points on average (largest {rep['fit']['max_abs_bp']:.1f})")
+            for x in rep["shape"]:
+                print(f"  {x['name']:24s} {'' if x['value'] is None else format(x['value'], '.3f'):>8s}  {x['text']}")
+            print("  maturity   zero      forward   discount")
+            for k in rep["key_rates"]:
+                print(f"  {k['maturity']:7.2f}   {k['zero']:6.3f}%   {k['forward']:6.3f}%   {k['discount']:.4f}")
+            for w in rep["warnings"]:
+                print("WARNING:", w)
+            for n in rep["notes"]:
+                print("note:", n)
+            out = rep
+        else:
+            if args.panel:
+                panel = rates.parse_panel_text(Path(args.panel).read_text(), percent=args.unit == "percent")
+            else:
+                panel = rates.synthetic_curve_panel(n_days=1500, seed=args.seed)
+                print("No --panel given: using the simulated history (Nelson-Siegel factors moving as a VAR(1)); it says nothing about real rates.")
+            rep = rates.dynamic_report(panel, args.lam or 0.5, args.horizon, args.test_days, args.step)
+            lat = rep["latest"]
+            print(f"{rep['days']} days to {lat['date']}, decay {rep['lambda']}/year, the curve is fitted every day with an average miss of {rep['fit_rmse_bp']:.1f} bp")
+            print(f"latest factors: level {lat['factors']['level']:.2f}%  slope {lat['factors']['slope']:.2f}%  curvature {lat['factors']['curvature']:.2f}%   in {rep['horizon']} days: "
+                  f"{lat['forecast_factors']['level']:.2f}% {lat['forecast_factors']['slope']:.2f}% {lat['forecast_factors']['curvature']:.2f}%")
+            for p_ in rep["persistence"]:
+                print(f"  {p_['factor']:10s} autocorrelation {p_['ar1']:.4f}  mean {p_['mean']:.2f}%  sd {p_['std']:.2f}%")
+            wf = rep["walk_forward"]
+            if wf:
+                print(f"walk-forward at {wf['origins']} dates ({wf['first']} to {wf['last']}), {wf['horizon']} days ahead: factor forecast misses by {wf['rmse_bp']['dynamic_ns']:.1f} bp, the random walk by "
+                      f"{wf['rmse_bp']['random_walk']:.1f} bp; the forecast was closer on {wf['better_share'] * 100:.0f}% of the dates")
+            out = rep
+    except (ValueError, OSError) as error:
+        print(f"error: {error}")
+        return 2
+    if args.json:
+        Path(args.json).write_text(json.dumps(clean(out), indent=2))
+        print("written", args.json)
     return 0
 
 
@@ -696,6 +814,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--all", action="store_true", help="every method and their blend"); p.add_argument("--effort", choices=["quick", "standard", "thorough"], default="standard", help="how many past forecasts to test on (about 1, 3 and 10 minutes)")
     p.add_argument("--seed", type=int, default=0); p.add_argument("--prices", help="a CSV of prices (one date column and one column per asset) instead of the platform's ETFs"); p.add_argument("--json", help="also write the whole result to this file")
     p.set_defaults(func=cmd_forecast)
+    p = sub.add_parser("scenarios", help="make thousands of possible futures for some tickers with eight generators (resampling, statistical models, a GAN, a variational autoencoder, a diffusion model) and score each against the history")
+    p.add_argument("tickers", nargs="*", help="columns of the platform's ETFs, or of --prices (default: the first four); at most 12"); p.add_argument("--list", action="store_true", help="name the generators and stop")
+    p.add_argument("--generators", nargs="*", help="generator ids, or `all` (default: bootstrap, arima_garch, factor_vae; see --list)"); p.add_argument("--horizon", type=int, default=21, choices=[5, 10, 21, 63], help="trading days per scenario")
+    p.add_argument("--n", type=int, default=500, help="scenarios per generator (100 to 2000)"); p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--prices", help="a CSV of prices (one date column and one column per asset) instead of the platform's ETFs"); p.add_argument("--json", help="also write the whole result to this file")
+    p.set_defaults(func=cmd_scenarios)
     p = sub.add_parser("models", help="option-pricing models on a chain: fit Merton, Kou, variance gamma, NIG and Heston, price a digital, barrier, average-price or American option under each, and cost a hedge when trades cost money")
     p.add_argument("action", choices=["fit", "price", "hedge", "list"], help="fit the models to the chain; price one product under every fitted model; cost the hedging of an option; list what exists")
     p.add_argument("underlying", nargs="?", help="a column of the platform's ETFs (the chain is then a model at its real price: see the warning), or of --prices")
@@ -714,6 +838,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--steps", type=int, help="hedge: rebalancing dates (default every trading day)"); p.add_argument("--risk-aversion", type=float, default=1.0, help="hedge: in units of the option's price")
     p.add_argument("--notes", action="store_true", help="also print how the numbers were made"); p.add_argument("--json", help="also write the whole result to this file")
     p.set_defaults(func=cmd_models)
+    p = sub.add_parser("curve", help="a yield curve: fit a Nelson-Siegel or Svensson curve to yields, or follow the level, slope and curvature of a history of curves and test the forecast against the random walk")
+    p.add_argument("action", choices=["fit", "dynamic"], help="fit one curve; or the dynamic Nelson-Siegel analysis of a history (simulated unless --panel is given)")
+    p.add_argument("--file", help="fit: a text file with a maturity and a yield on each line (3M 5.1)"); p.add_argument("--maturities", nargs="*", help="fit: maturities, in years or as 3M 2Y 30Y"); p.add_argument("--yields", nargs="*", help="fit: the yields, one for each maturity")
+    p.add_argument("--model", choices=["nelson_siegel", "svensson"], default="nelson_siegel"); p.add_argument("--kind", choices=["zero", "par"], default="zero", help="fit: zero (spot) rates or par yields (bootstrapped first)")
+    p.add_argument("--lam", type=float, help="the decay per year: fixed for a Nelson-Siegel fit (found if omitted); 0.5 for `dynamic`"); p.add_argument("--unit", choices=["percent", "decimal"], default="percent", help="how the yields are written")
+    p.add_argument("--panel", help="dynamic: a CSV of dates by maturities (3M, 2Y, 10Y or years) of yields"); p.add_argument("--horizon", type=int, default=21, help="dynamic: days ahead to forecast"); p.add_argument("--test-days", type=int, default=750, help="dynamic: the walk-forward window")
+    p.add_argument("--step", type=int, default=5, help="dynamic: days between test dates"); p.add_argument("--seed", type=int, default=0, help="dynamic: seed of the simulated history"); p.add_argument("--json", help="also write the whole result to this file")
+    p.set_defaults(func=cmd_curve)
     p = sub.add_parser("benchmark", help="score time and peak memory of registered models on the default bundle")
     p.add_argument("--models", nargs="*"); p.add_argument("--repeats", type=int, default=1); p.add_argument("--prices"); p.add_argument("--csv"); p.set_defaults(func=cmd_benchmark)
     p = sub.add_parser("algo", help="execution algorithms: where every strategy of the taxonomy lives, simulated orders (VWAP, TWAP, IS, AIM ...), the cost-risk frontier, baskets and high-frequency simulations")

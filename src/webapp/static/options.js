@@ -408,12 +408,24 @@
     const flagsNow = ov.risk_flags || [];
     if (!flagsNow.length) W.hint(root, "Nothing in the chain trips a warning: spreads are tight, the term structure is normal and implied volatility is neither at the top nor at the bottom of its range.");
   }
+  /* The smile of one expiry in either of two units: the lognormal (Black-Scholes) implied volatility, a percentage a year, or the normal (Bachelier) one, the volatility of the price itself in price units
+     a year, which is what rates and spreads are quoted in and the form in which a price may be zero or negative. The choice is kept while the page is open. */
   function smileCard(parent, sm, spot, title) {
-    const p = sm.points, ks = p.map((x) => x.strike);
-    return chartCard(parent, title, `Implied volatility of the out-of-the-money options at each strike for ${sm.expiry} (${sm.dte} days). Higher on the left than the right is put skew.`, {
-      draw: (b) => C.line(b, { xs: ks, xLabel: "Strike", series: [{ name: "Implied volatility", color: css("--s1"), values: p.map((x) => x.iv), dots: true, dotSize: 3 }], yFormat: volFormat(p.map((x) => x.iv)), tipFormat: (v) => pct(v, 1),
-        xFormat: (v) => num(v, 0), tipTitle: (i) => `Strike ${num(ks[i], 2)} (${p[i].right === "P" ? "put" : "call"}, ${(p[i].moneyness * 100 - 100).toFixed(1)}% from the price)`, height: 250, label: "Volatility smile", vlines: [{ x: spot, label: "Price" }, { x: sm.forward, label: "Forward" }] }),
-      table: (b) => table(b, [{ label: "Strike", num: true, get: (x) => num(x.strike, 2) }, { label: "Strike ÷ price", num: true, get: (x) => num(x.moneyness, 3) }, { label: "Option", get: (x) => (x.right === "P" ? "put" : "call") }, { label: "Implied volatility", num: true, get: (x) => pct(x.iv, 2) }], p) });
+    const p = sm.points, ks = p.map((x) => x.strike), has = p.some((x) => x.normal_iv !== null && x.normal_iv !== undefined);
+    const card = chartCard(parent, title, `Implied volatility of the out-of-the-money options at each strike for ${sm.expiry} (${sm.dte} days). Higher on the left than the right is put skew.`, {
+      draw: (b) => {
+        const normal = O.volKind === "normal" && has, vals = p.map((x) => (normal ? x.normal_iv : x.iv));
+        C.line(b, { xs: ks, xLabel: "Strike", series: [{ name: normal ? "Normal (Bachelier) volatility" : "Implied volatility", color: css("--s1"), values: vals, dots: true, dotSize: 3 }], yFormat: normal ? (v) => num(v, 1) : volFormat(vals), tipFormat: normal ? (v) => num(v, 2) : (v) => pct(v, 1),
+          xFormat: (v) => num(v, 0), tipTitle: (i) => `Strike ${num(ks[i], 2)} (${p[i].right === "P" ? "put" : "call"}, ${(p[i].moneyness * 100 - 100).toFixed(1)}% from the price)`, height: 250, label: normal ? "Normal volatility smile" : "Volatility smile", vlines: [{ x: spot, label: "Price" }, { x: sm.forward, label: "Forward" }] });
+      },
+      table: (b) => table(b, [{ label: "Strike", num: true, get: (x) => num(x.strike, 2) }, { label: "Strike ÷ price", num: true, get: (x) => num(x.moneyness, 3) }, { label: "Option", get: (x) => (x.right === "P" ? "put" : "call") }, { label: "Implied volatility", num: true, get: (x) => pct(x.iv, 2) },
+        { label: "Normal volatility (price units)", num: true, get: (x) => (x.normal_iv === null || x.normal_iv === undefined ? "" : num(x.normal_iv, 2)) }], p) });
+    if (has) {
+      W.seg(card._extra, [["lognormal", "Lognormal"], ["normal", "Normal (Bachelier)"]], O.volKind === "normal" ? "normal" : "lognormal", (v) => { O.volKind = v; card._draw(); }).dataset.role = "options-vol-kind";
+      const cmp = sm.normal_vs_lognormal || {};
+      if (!Q.bad(cmp.lognormal_spread) && !Q.bad(cmp.normal_spread)) h("p", "hint", card, `Across these strikes the lognormal volatility moves by ${pct(cmp.lognormal_spread, 0)} of its level and the normal one by ${pct(cmp.normal_spread, 0)}. The normal (Bachelier) model prices an option on a price that may be zero or negative; ${Q.bad(sm.atm_normal_iv) ? "" : `at the forward its volatility is ${num(sm.atm_normal_iv, 2)} a year in price units (about the lognormal at-the-money volatility times the forward, ${num(sm.atm_normal_check, 2)}).`}`).dataset.role = "options-normal-note";
+    }
+    return card;
   }
 
   /* ---------- chain ---------- */

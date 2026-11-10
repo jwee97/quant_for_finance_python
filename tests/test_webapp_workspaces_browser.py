@@ -520,8 +520,8 @@ def test_an_app_without_the_data_routes_explains_the_card_instead_of_leaving_it_
 def test_an_app_behind_the_page_asks_for_a_restart_on_the_tabs_that_need_more_and_keeps_the_others(browser, live_ws):  # noqa: F811
     """Each tab needs the API version it was written for: iTick arrived with 6, the Futures tab's Yahoo search with 7, the signals board and strategy settings of the Futures and Crypto tabs with 12, the implied-distribution and open-interest views of the Options tab and the valuation bars of the Fundamentals tab with 13, the Tune tab and the Machine learning tab's beginner tuning with 8, the Forecast tab with 9. An older app
     says so on exactly the tabs that need a newer one, and the Backtest tab keeps working."""
-    needs = {"options": 13, "fundamentals": 14, "futures": 12, "crypto": 12, "ml": 8, "tune": 8, "forecast": 9}
-    for served in (5, 6, 7, 8, 9, 11, 12, 13, 14):
+    needs = {"options": 13, "fundamentals": 14, "rates": 15, "scenarios": 16, "futures": 12, "crypto": 12, "ml": 8, "tune": 8, "forecast": 9}
+    for served in (5, 6, 7, 8, 9, 11, 12, 13, 14, 15, 16):
         pg = _page_with(browser, live_ws, rewrite=lambda catalog, served=served: catalog.update(api_version=served))
         try:
             pg.wait_for_selector(".chip")
@@ -705,3 +705,72 @@ def test_the_new_tabs_fit_a_phone(browser, live_ws, tab, ready):  # noqa: F811
             assert pg.evaluate("document.documentElement.scrollWidth") <= 392, mode
     finally:
         pg.close()
+
+
+def test_the_options_smile_can_be_read_in_normal_bachelier_volatility(ws):
+    """The smile card draws lognormal volatility by default and, on a click, the normal (Bachelier) volatility of the same quotes in price units, with the table carrying both and a note on how far each moves."""
+    ws.click("#tab-options")
+    ws.wait_for_selector("#options-results .tile", timeout=90_000)
+    _mode(ws, "options", "smile")
+    ws.wait_for_selector("[data-role=options-vol-kind]", timeout=120_000)
+    seg = "[data-role=options-vol-kind]"
+    assert ws.locator(f"{seg} button[aria-pressed=true]").inner_text() == "Lognormal"
+    note = ws.inner_text("[data-role=options-normal-note]")
+    assert "normal (Bachelier) model" in note and "price units" in note
+    ws.click(f"{seg} button:has-text('Normal (Bachelier)')")
+    assert ws.locator(f"{seg} button[aria-pressed=true]").inner_text() == "Normal (Bachelier)"
+    ws.wait_for_selector("#options-results svg[aria-label*='Normal volatility smile'], #options-results [aria-label*='Normal volatility smile']", timeout=30_000)
+    card = ws.locator("#options-results .chartcard", has=ws.locator(seg))
+    card.locator(".seg button:has-text('Table')").first.click()
+    assert "Normal volatility (price units)" in card.inner_text() and not ws.problems
+
+
+def test_the_rates_tab_fits_a_curve_says_what_cannot_be_fitted_and_follows_the_factors_of_a_history(ws):
+    ws.click("#tab-rates")
+    ws.wait_for_selector("[data-role=rates-text]", timeout=60_000)
+    _wait_until(ws, "document.querySelector('[data-role=rates-text]').value.includes('3M 5.10')")          # the made-up example is in the box
+    run = "#rates .runbar button.primary"
+    ws.click(run)
+    ws.wait_for_selector("[data-role=rates-parameters]", timeout=60_000)
+    text = ws.inner_text("#rates-results")
+    assert "Nelson-Siegel curve" in text and "Hump at" in text and "Rates the curve implies" in text and ws.locator("#rates-results svg.chart").count() >= 2
+    ws.select_option("#rates select[data-key=model]", "svensson")
+    ws.click(run)
+    _wait_until(ws, "document.querySelector('#rates-results h2, #rates-results .labhead') && document.querySelector('#rates-results').textContent.includes('Svensson curve')")
+    ws.fill("[data-role=rates-text]", "2Y 4.5\n3Y 4.4")
+    ws.click(run)
+    ws.wait_for_selector("#rates-results .banner.err", timeout=30_000)
+    assert "at least" in ws.inner_text("#rates-results .banner.err")
+    assert ws.problems == ["console error: Failed to load resource: the server responded with a status of 400 (Bad Request)"]      # the refusal the page was asked for, and nothing else
+    ws.problems.clear()
+    ws.click("#rates .labtop button[data-mode=dynamic]")
+    ws.click(run)
+    ws.wait_for_selector("[data-role=rates-walk]", timeout=60_000)
+    text = ws.inner_text("#rates-results")
+    assert "Has the forecast beaten the random walk?" in text and ws.locator("[data-role=rates-simulated]").count() == 1 and "Level, slope and curvature" in text
+
+
+def test_the_scenarios_tab_makes_scenarios_with_the_chosen_generators_scores_them_and_will_not_run_with_none(ws):
+    ws.click("#tab-scenarios")
+    ws.wait_for_selector("input[data-value=bootstrap]", timeout=60_000)
+    run = "#scenarios .runbar button.primary"
+    assert "No tickers" not in ws.inner_text("[data-role=scenarios-tickers]") and ws.inner_text("[data-role=scenarios-summary]") == "3 generators ticked."
+    ws.click("#scenarios button:has-text('Fast ones only')")
+    ws.wait_for_selector("input[data-value=historical]:checked")
+    assert ws.inner_text("[data-role=scenarios-summary]") == "5 generators ticked." and ws.locator("input[data-value=wgan_gp]:checked").count() == 0
+    ws.select_option("#scenarios select[data-key=horizon]", "5")
+    ws.fill("#scenarios input[data-key=n]", "100")
+    for value in ("historical", "copula", "risk_factor", "arima_garch"):
+        ws.uncheck(f"input[data-value={value}]")
+    assert ws.inner_text("[data-role=scenarios-summary]") == "1 generator ticked."
+    ws.uncheck("input[data-value=bootstrap]")
+    assert ws.is_disabled(run) and "Tick at least one generator" in ws.inner_text("#scenarios .runbar")
+    ws.check("input[data-value=bootstrap]")
+    ws.check("input[data-value=copula]")
+    ws.click(run)
+    ws.wait_for_selector("[data-role=scenarios-quality]", timeout=120_000)
+    text = ws.inner_text("#scenarios-results")
+    assert "Block bootstrap" in text and "Copula" in text and "Return distributions" in text and "Risk over 5 days" in text and "The history" in text
+    assert ws.locator("#scenarios-results svg.chart").count() >= 1 and ws.locator("[data-role=scenarios-risk] tbody tr").count() == 3
+    assert "100 scenarios of 5 days" in ws.inner_text("#scenarios-results") and "Target for a perfect copy" in ws.inner_text("[data-role=scenarios-targets]")
+    assert ws.locator("[data-role=scenarios-failed]").count() == 0

@@ -24,7 +24,7 @@ import pandas as pd
 from scipy.stats import norm
 
 from ..derivatives.greeks import bsm_greeks
-from ..derivatives.iv import implied_vol
+from ..derivatives.iv import implied_vol, implied_vol_bachelier
 from ..derivatives.pricing import bsm_price
 from ..derivatives.schema import normalise_chain
 from ..derivatives.synthetic import SyntheticMarketSpec, chain_for_date
@@ -170,13 +170,42 @@ def atm_iv(g: pd.DataFrame) -> float:
     return float(np.interp(0.0, s["k"].to_numpy(), s["iv"].to_numpy()))
 
 
+def normal_vols(s: pd.DataFrame) -> np.ndarray:
+    """The Bachelier (normal-model) implied volatility of each quote of ``s``: the volatility in price units per square-root year that reproduces its mid under ``dF = sigma_n dW``, the model that lets a
+    price be zero or negative and that rates and spreads are quoted in. NaN where the mid is not above the option's intrinsic value."""
+    out = np.full(len(s), np.nan)
+    for right, call in (("C", True), ("P", False)):
+        sel = (s["right"] == right).to_numpy()
+        if sel.any():
+            g = s[sel]
+            out[sel] = implied_vol_bachelier(g["mid"].to_numpy(float), g["F"].to_numpy(float), g["strike"].to_numpy(float), g["T"].to_numpy(float), g["rate"].to_numpy(float), call)
+    return out
+
+
+def _spread(x: np.ndarray) -> float:
+    """How far a smile moves, relative to its level: (highest - lowest) / mean. A flat smile is 0."""
+    x = x[np.isfinite(x)]
+    return float((x.max() - x.min()) / x.mean()) if len(x) >= 2 and x.mean() > 0 else float("nan")
+
+
 def smile(chain: pd.DataFrame, expiry) -> dict:
-    """The volatility smile of one expiry: strike, moneyness (K / spot) and implied volatility of each OTM quote."""
+    """The volatility smile of one expiry: strike, moneyness (K / spot) and implied volatility of each OTM quote, and beside each the Bachelier (normal) implied volatility of the same quote.
+    ``atm_normal_iv`` is the normal volatility at the forward, and ``normal_vs_lognormal`` says how far each smile moves relative to its own level: a normal smile that is flatter than the lognormal one
+    says the market quotes in price terms, and one that is steeper says the lognormal view was the more natural parametrisation."""
     g = _expiry_slice(chain, expiry)
     s = otm_smile(g)
     spot = float(g["underlying"].iloc[0])
-    return {"expiry": str(pd.Timestamp(expiry).date()), "dte": int(round(float(g["T"].iloc[0]) * 365)), "forward": float(g["F"].iloc[0]), "spot": spot, "atm_iv": atm_iv(g),
-            "points": [{"strike": float(r.strike), "moneyness": float(r.strike / spot), "k": float(r.k), "iv": float(r.iv), "right": str(r.right)} for r in s.itertuples()]}
+    nv = normal_vols(s)
+    k = s["k"].to_numpy(float)
+    good = np.isfinite(nv)
+    atm_n = float(np.interp(0.0, k[good], nv[good])) if good.sum() >= 2 else float("nan")
+    forward = float(g["F"].iloc[0])
+    atm_ln = atm_iv(g)
+    return {"expiry": str(pd.Timestamp(expiry).date()), "dte": int(round(float(g["T"].iloc[0]) * 365)), "forward": forward, "spot": spot, "atm_iv": atm_ln,
+            "atm_normal_iv": atm_n, "atm_normal_check": float(atm_ln * forward) if np.isfinite(atm_ln) else float("nan"),
+            "normal_vs_lognormal": {"lognormal_spread": _spread(s["iv"].to_numpy(float)), "normal_spread": _spread(nv)},
+            "points": [{"strike": float(r.strike), "moneyness": float(r.strike / spot), "k": float(r.k), "iv": float(r.iv), "right": str(r.right), "normal_iv": None if not np.isfinite(n) else float(n)}
+                       for r, n in zip(s.itertuples(), nv)]}
 
 
 def iv_at_delta(g: pd.DataFrame, delta: float, put: bool = False) -> float:
