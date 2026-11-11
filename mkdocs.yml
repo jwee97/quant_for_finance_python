@@ -20,6 +20,7 @@ nav:
       - How to add a strategy: how_to_add_a_strategy.md
       - Free data for options, futures and crypto: free_data.md
       - Tuning a strategy's settings: tuning.md
+      - "Signals: what your rules say today, what changed, and a record you can trust": signals.md
       - Forecasting a stock's price, and how far to trust it: forecasting.md
       - "Scenarios: thousands of possible futures, and how far to trust each way of making them": scenarios.md
       - "Company fundamentals: studying factors, searching for alphas, and counting honestly": fundamentals.md

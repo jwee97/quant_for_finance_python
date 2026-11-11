@@ -69,17 +69,17 @@ SLOW = {"multi_period": "plans the next few months as a quadratic programme ever
         "timesfm": "runs a 200M-parameter model on CPU: many minutes on a long history", "es_policy": "trains a policy: about 10 seconds", "q_learning_exposure": "refits a small Q-function every month: several seconds"}
 DOC_ROOT_FILES = {"dashboard": "dashboard.md", "how_to_add_a_strategy": "how_to_add_a_strategy.md", "start_here": "START_HERE.md", "glossary": "glossary.md", "tour_of_a_backtest_day": "tour_of_a_backtest_day.md",
                   "roadmap_coverage": "roadmap_coverage.md", "algorithmic_trading": "algorithmic_trading.md", "quant_books_coverage": "quant_books_coverage.md", "platform_integration": "platform_integration.md", "feature_audit": "feature_audit.md",
-                  "free_data": "free_data.md", "tuning": "tuning.md", "forecasting": "forecasting.md", "fundamentals": "fundamentals.md", "scenarios": "scenarios.md"}
+                  "free_data": "free_data.md", "tuning": "tuning.md", "forecasting": "forecasting.md", "fundamentals": "fundamentals.md", "scenarios": "scenarios.md", "signals": "signals.md"}
 SAFE_SLUG = re.compile(r"^[a-z0-9][a-z0-9_-]{0,80}$")
 
 # What the page needs from this server. 1 was the first catalogue; 2 added data sources (``sources``), the ticker-count check (``/api/requirements``), earnings and trades; 3 added the Execution and
 # Cash flows tabs (``/api/exec``, ``/api/cash``); 4 added the Options, Futures, Crypto and Machine learning workspaces (``asset_api``, ``ml_api``); 5 added the Free data downloads of the Options, Futures and
 # Crypto tabs (``data_api``) and the ``downloaded`` source kind those tabs now read; 6 added iTick data to the Futures, Crypto and Options cards; 7 added the Yahoo futures search and the Clear buttons
 # of the background runs (``/api/jobs/clear``); 8 added the Tune tab (``tune_api``); 9 added the Forecast tab (``forecast_api``); 10 added the option-model modes of the Options tab (``models_api``); 11 added the Fundamentals tab (``fundamentals_api``); 12 added the signals board, the strategy settings and the curve views of the Futures tab and the new strategies and
-# views of the Crypto tab; 13 added the implied-distribution and open-interest views, the structure comparison and the backtest sweep of the Options tab and the new scores of the Fundamentals tab; 14 added the Enter reports mode of the Fundamentals tab (financial reports typed or pasted in by the person, stored in the database); 15 added the Rates tab (Nelson-Siegel and Svensson yield curves, the dynamic factors of a history of curves) and the normal (Bachelier) volatility of the Options tab's smile; 16 added the Scenarios tab (resampling, statistical and learned scenario generators, with a quality table). The page compares it with its own number and says so
+# views of the Crypto tab; 13 added the implied-distribution and open-interest views, the structure comparison and the backtest sweep of the Options tab and the new scores of the Fundamentals tab; 14 added the Enter reports mode of the Fundamentals tab (financial reports typed or pasted in by the person, stored in the database); 15 added the Rates tab (Nelson-Siegel and Svensson yield curves, the dynamic factors of a history of curves) and the normal (Bachelier) volatility of the Options tab's smile; 16 added the Scenarios tab (resampling, statistical and learned scenario generators, with a quality table); 17 added the Signals tab (follows, one run across markets, changes, a record of every signal issued, a daily schedule and alerts). The page compares it with its own number and says so
 # when the server behind it is older (the files were updated while the app was running, so it still runs the old code): the whole page needs 2, and the newer tabs ask for 3 or more on their own, so an
 # older app still runs the Backtest tab.
-API_VERSION = 16
+API_VERSION = 17
 CODE_ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -198,13 +198,15 @@ class App:
         from .models_api import ModelsApi
         from .rates_api import RatesApi
         from .scenarios_api import ScenariosApi
+        from .signals_api import SignalsApi
 
         self.extra_get: dict = {"/api/jobs": lambda q=None: self.jobs_list()}   # path -> fn(query: dict) for GET /api/...?a=1&b=2
         self.extra_post: dict = {"/api/jobs/clear": self.jobs_clear}           # path -> fn(body: dict) for POST /api/...
         self.data = DataApi(self)                                  # the free-data downloads of the three asset tabs (their own worker, apart from the backtests)
         assets = AssetApi(self)
         self.fundamentals = FundamentalsApi(self)                    # the Fundamentals tab: its own database, apart from the backtests' price files
-        for part in (assets, MlApi(self), self.data, TuneApi(self), ForecastApi(self), ModelsApi(self, assets), self.fundamentals, RatesApi(self), ScenariosApi(self)):
+        self.signals = SignalsApi(self, assets)                      # the Signals tab: kept, so the command line and the daily schedule reach the same book
+        for part in (assets, MlApi(self), self.data, TuneApi(self), ForecastApi(self), ModelsApi(self, assets), self.fundamentals, RatesApi(self), ScenariosApi(self), self.signals):
             self.extra_get.update(part.get_routes())
             self.extra_post.update(part.post_routes())
 

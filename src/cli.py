@@ -16,6 +16,7 @@
     quant forecast SPY --horizon 21       forecast a price as a distribution with Monte Carlo, Markov, Gaussian-process and other methods, and test each on the past (`--list` names them)
     quant models fit SPY                  fit Merton, Kou, variance gamma, NIG and Heston to an option chain; also `price` (a digital, barrier, average-price or American option under every model) and `hedge` (what hedging costs when trades cost money)
     quant scenarios SPY QQQ TLT --generators all   thousands of possible futures from eight generators (resampling, GARCH, a GAN, a variational autoencoder, a diffusion model) and how closely each resembles the history (`--list` names them)
+    quant signals run                     read every followed rule now (stocks, futures, crypto, options), say what changed and how past signals did; `follow`, `list`, `history` (put `quant signals run --refresh` in cron for a daily run)
     quant curve fit --file curve.txt      a Nelson-Siegel or Svensson yield curve (`--model svensson`); `quant curve dynamic` follows its level, slope and curvature through a history and tests the forecast
     quant benchmark --models tsmom momentum   score time and peak memory of models on the default bundle
     quant registry list                   versioned models: stages, lineage, promotion
@@ -276,6 +277,68 @@ def cmd_forecast(args, config) -> int:
     print(format_report(ticker, asof, float(history.close[-1]), args.horizon, evaluation, now, verdict))
     if args.json:
         Path(args.json).write_text(json.dumps({"ticker": ticker, "asof": asof, "horizon": args.horizon, "evaluation": evaluation, "now": now, "verdict": verdict}, indent=1), encoding="utf-8")
+        print(f"\nwritten to {args.json}")
+    return 0
+
+
+def cmd_signals(args, config) -> int:
+    """The signal book in the terminal: what is followed, a run of every follow (appended to the same ledger the Signals tab reads), and the snapshots issued."""
+    import json
+
+    from .webapp.api import ApiError, App
+    from .webapp.payload import clean
+
+    api = App(config).signals
+    try:
+        if args.action == "list":
+            view = api.view()
+            if not view["follows"]:
+                print("nothing is followed yet: quant signals follow --market equity --name \"My ETFs\" --assets SPY QQQ TLT")
+            for f in view["follows"]:
+                print(f"{f['id']}  {f['market']:8s} {f['name']:30s} {len(f['rules'])} rules, {f['snapshots']} snapshots")
+            return 0
+        if args.action == "follow":
+            key = {"equity": "tickers", "futures": "roots", "options": "underlyings"}.get(args.market)
+            cfg = {key: args.assets} if key and args.assets else {}
+            if args.market == "futures":
+                cfg["data"] = args.data
+            made = api.follow({"name": args.name or "", "market": args.market, "config": cfg, "rules": args.rules})["follow"]
+            print(f"following {made['name']} ({made['market']}, {len(made['rules'])} rules): id {made['id']}")
+            return 0
+        if args.action == "unfollow":
+            api.unfollow({"id": args.id or ""})
+            print("removed; the snapshots already issued stay in the ledger")
+            return 0
+        if args.action == "history":
+            for s in api.history({"id": args.id or ""})["snapshots"]:
+                print(f"{s['as_of']}  issued {s['issued']}  long {s['long']:3d}  short {s['short']:3d}  flat {s['flat']:3d}" + ("  stale" if s["stale"] else "") + ("  simulated" if s["simulated"] else ""))
+            return 0
+        result = api.run_now([args.id] if args.id else None, args.refresh, lambda text: print(text, file=sys.stderr, flush=True))
+    except ApiError as error:
+        print(error, file=sys.stderr)
+        return 2
+    for e in result["follows"]:
+        f = e["follow"]
+        print(f"\n{f['name']} ({f['market']})")
+        if e["error"]:
+            print(f"  could not be read: {e['error']}")
+            continue
+        snap = e["snapshot"]
+        print(f"  data to {snap['as_of']} ({snap['source']}), snapshot {e['snapshots']}")
+        for problem in snap["data"]["problems"]:
+            print(f"  ! {problem}")
+        for c in e["consensus"]:
+            print(f"  {c['asset']:12s} {c['view']:14s} long {c['long']:2d}  short {c['short']:2d}  no view {c['flat']:2d}")
+        for c in e["changes"]:
+            print(f"  changed: {c['asset']} {c['label']}: {c['from']} -> {c['to']}")
+        rec = e["record"]
+        if rec and rec["overall"]:
+            for h, v in rec["overall"].items():
+                print(f"  record at {h} day(s): {v['n']} signals, {v['hit_rate'] * 100:.0f}% right, average {v['mean'] * 100:+.2f}% against {v['baseline'] * 100:+.2f}% for always long")
+        elif rec is not None:
+            print("  record: no signal is old enough to score yet" + (f" ({rec['late']} snapshot(s) read on old data are left out)" if rec["late"] else ""))
+    if args.json:
+        Path(args.json).write_text(json.dumps(clean(result), indent=1), encoding="utf-8")
         print(f"\nwritten to {args.json}")
     return 0
 
@@ -814,6 +877,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--all", action="store_true", help="every method and their blend"); p.add_argument("--effort", choices=["quick", "standard", "thorough"], default="standard", help="how many past forecasts to test on (about 1, 3 and 10 minutes)")
     p.add_argument("--seed", type=int, default=0); p.add_argument("--prices", help="a CSV of prices (one date column and one column per asset) instead of the platform's ETFs"); p.add_argument("--json", help="also write the whole result to this file")
     p.set_defaults(func=cmd_forecast)
+    p = sub.add_parser("signals", help="the signal book: follow rules on stocks, futures, crypto and options, read them all now, see what changed and how past signals did")
+    p.add_argument("action", choices=["run", "list", "follow", "unfollow", "history"]); p.add_argument("--id", help="one follow (run, unfollow, history)")
+    p.add_argument("--market", choices=["equity", "futures", "crypto", "options"], default="equity", help="follow: the market"); p.add_argument("--name", help="follow: a name for it")
+    p.add_argument("--assets", nargs="*", help="follow: tickers, futures roots or option underlyings (default: the platform's)"); p.add_argument("--rules", nargs="*", help="follow: rule ids (default: all of the market's)")
+    p.add_argument("--data", choices=["simulated", "real"], default="simulated", help="follow futures: simulated roots or the curves you downloaded"); p.add_argument("--refresh", action="store_true", help="run: download new prices first")
+    p.add_argument("--json", help="run: also write the whole result to this file")
+    p.set_defaults(func=cmd_signals)
     p = sub.add_parser("scenarios", help="make thousands of possible futures for some tickers with eight generators (resampling, statistical models, a GAN, a variational autoencoder, a diffusion model) and score each against the history")
     p.add_argument("tickers", nargs="*", help="columns of the platform's ETFs, or of --prices (default: the first four); at most 12"); p.add_argument("--list", action="store_true", help="name the generators and stop")
     p.add_argument("--generators", nargs="*", help="generator ids, or `all` (default: bootstrap, arima_garch, factor_vae; see --list)"); p.add_argument("--horizon", type=int, default=21, choices=[5, 10, 21, 63], help="trading days per scenario")

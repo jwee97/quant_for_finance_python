@@ -520,8 +520,8 @@ def test_an_app_without_the_data_routes_explains_the_card_instead_of_leaving_it_
 def test_an_app_behind_the_page_asks_for_a_restart_on_the_tabs_that_need_more_and_keeps_the_others(browser, live_ws):  # noqa: F811
     """Each tab needs the API version it was written for: iTick arrived with 6, the Futures tab's Yahoo search with 7, the signals board and strategy settings of the Futures and Crypto tabs with 12, the implied-distribution and open-interest views of the Options tab and the valuation bars of the Fundamentals tab with 13, the Tune tab and the Machine learning tab's beginner tuning with 8, the Forecast tab with 9. An older app
     says so on exactly the tabs that need a newer one, and the Backtest tab keeps working."""
-    needs = {"options": 13, "fundamentals": 14, "rates": 15, "scenarios": 16, "futures": 12, "crypto": 12, "ml": 8, "tune": 8, "forecast": 9}
-    for served in (5, 6, 7, 8, 9, 11, 12, 13, 14, 15, 16):
+    needs = {"options": 13, "fundamentals": 14, "rates": 15, "scenarios": 16, "signals": 17, "futures": 12, "crypto": 12, "ml": 8, "tune": 8, "forecast": 9}
+    for served in (5, 6, 7, 8, 9, 11, 12, 13, 14, 15, 16, 17):
         pg = _page_with(browser, live_ws, rewrite=lambda catalog, served=served: catalog.update(api_version=served))
         try:
             pg.wait_for_selector(".chip")
@@ -774,3 +774,42 @@ def test_the_scenarios_tab_makes_scenarios_with_the_chosen_generators_scores_the
     assert ws.locator("#scenarios-results svg.chart").count() >= 1 and ws.locator("[data-role=scenarios-risk] tbody tr").count() == 3
     assert "100 scenarios of 5 days" in ws.inner_text("#scenarios-results") and "Target for a perfect copy" in ws.inner_text("[data-role=scenarios-targets]")
     assert ws.locator("[data-role=scenarios-failed]").count() == 0
+
+
+def test_the_signals_tab_follows_two_markets_reads_them_says_what_the_data_is_and_keeps_the_result(ws):
+    ws.click("#tab-signals")
+    ws.wait_for_selector("[data-role=signals-follows]", timeout=60_000)
+    run = "#signals .runbar button.primary"
+    assert ws.is_disabled(run) and "Follow a market first" in ws.inner_text("#signals .runbar") and "Nothing yet" in ws.inner_text("[data-role=signals-follows]")
+    ws.fill("#signals input[data-key=name]", "My tickers")
+    ws.click("[data-action=signals-follow]")
+    ws.wait_for_selector("[data-role=signals-follows] li[data-follow]")
+    ws.select_option("#signals select[data-key=market]", "futures")
+    ws.wait_for_selector("#signals select[data-key=data]")
+    ws.fill("#signals input[data-key=roots]", "ES, CL")
+    ws.click("[data-action=signals-follow]")
+    _wait_until(ws, "document.querySelectorAll('[data-role=signals-follows] li[data-follow]').length === 2")
+    assert not ws.is_disabled(run) and "0 snapshots in the ledger" in ws.inner_text("[data-role=signals-follows]")
+    ws.click(run)
+    ws.wait_for_selector("[data-role=signals-card]", timeout=180_000)
+    _wait_until(ws, "document.querySelectorAll('[data-role=signals-card]').length === 2")
+    text = ws.inner_text("#signals-results")
+    assert "What the rules agree on" in text and "Every rule" in text and "Trend, one year" in text and "first snapshot of this follow" in text and "No signal is old enough to score yet" in text
+    assert "simulated data" in text and "not today's" in text and ws.locator("[data-role=signals-banner]").count() == 1 and ws.locator("[data-role=signals-error]").count() == 0
+    assert any(mark in text for mark in ("▲", "▼")) and "1 snapshot in the ledger" in ws.inner_text("[data-role=signals-follows]")
+    ws.click(run)
+    _wait_until(ws, "document.querySelector('#signals-results') && document.querySelector('#signals-results').textContent.includes('Nothing changed side since the snapshot')")
+    ws.check("#signals input[data-key=enabled]")
+    ws.click("[data-action=signals-save-settings]")
+    _wait_until(ws, "document.querySelector('[data-role=signals-schedule]').textContent.includes('On: every weekday at 18:30')")
+    ws.uncheck("#signals input[data-key=enabled]")
+    ws.click("[data-action=signals-save-settings]")
+    _wait_until(ws, "document.querySelector('[data-role=signals-schedule]').textContent.startsWith('Off')")
+    ws.reload()
+    ws.wait_for_selector("body[data-ready]")
+    ws.click("#tab-signals")
+    ws.wait_for_selector("[data-role=signals-card]", timeout=60_000)                                # the last run is shown again without running anything
+    ws.click("[data-role=signals-follows] li[data-follow] [data-action=signals-unfollow]")
+    _wait_until(ws, "document.querySelectorAll('[data-role=signals-follows] li[data-follow]').length === 1")
+    ws.click("[data-role=signals-follows] li[data-follow] [data-action=signals-unfollow]")
+    _wait_until(ws, "document.querySelectorAll('[data-role=signals-follows] li[data-follow]').length === 0")
