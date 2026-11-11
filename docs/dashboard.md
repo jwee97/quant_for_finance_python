@@ -122,6 +122,12 @@ Under the headline numbers of a backtest, and under the tuned settings on the Tu
 * How often it has traded, so you know roughly when its next orders are due.
 * **When it bought and sold**: the price of a ticker with every buy and sell of the backtest marked on the day it was made. Choose the ticker above the chart, tap or point at a mark for its date and price, and zoom in to tell close ones apart.
 
+The same card is under a strategy backtest on the **Futures**, **Crypto** and **Options** tabs, in each market's own terms:
+
+* *Futures*: amounts on the account, with no count of units, because the prices behind a futures backtest are an index of holding the nearest contract; divide the amount by your contract's value for a number of contracts. On the built-in simulated roots it says the market is simulated.
+* *Crypto*: amounts and about how many coins at that day's price (the carry strategies trade an index, so they show amounts only).
+* *Options*: the contracts of the latest trading day (call or put, strike, expiry, how many, the fill price, the premium), the option positions that have not expired, and the underlying's price with a mark on each day options were bought or sold. The option market is simulated, so it shows how the strategy trades, not what to trade today.
+
 The card speaks for the **last day of the data**, and warns when that is more than five days ago: tick *Download new prices* before reading it as today's. It is what the rules did on past prices, not advice. For a strategy you want to follow every day, with a record of what it said, use the Signals tab.
 
 ## After your broker

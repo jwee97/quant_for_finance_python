@@ -90,7 +90,7 @@ def _risk_views(result, net: pd.Series, idx: pd.Index) -> dict:
 
 def run_strategy(bundle: MarketBundle, config, model: str, params: dict | None = None, rebalance: str | None = None, target_vol: float | None = None, regime: str | None = None,
                  cost_bps: float | None = None, label: str | None = None, allocator: str | None = None, min_assets: int = 1, n_trials: int = 1, validate: bool = False,
-                 holding_cost: dict | None = None, short_carry: pd.DataFrame | None = None) -> dict:
+                 holding_cost: dict | None = None, short_carry: pd.DataFrame | None = None, units: bool = True, capital: float = 100_000.0) -> dict:
     """Run ``model`` on ``bundle`` and return ``compact_result`` plus the spec that ran. ``rebalance`` daily/weekly/monthly (default: the model's own), ``target_vol`` an annual volatility target
     (default: the platform's), ``regime`` the name of a regime detector, which also switches the volatility target to the regime's, ``cost_bps`` the one-way cost of trading the whole book."""
     spec: dict = {"name": label or model, "models": [{"name": model, "params": dict(params or {})}], "execution": {"min_assets": int(min_assets)},
@@ -119,6 +119,15 @@ def run_strategy(bundle: MarketBundle, config, model: str, params: dict | None =
     result = pipeline.run(validate=validate)
     out = compact_result(result)
     out["spec"] = {k: spec[k] for k in ("models", "execution", "risk", "regime", "allocation") if k in spec}
+    try:                                                                                              # what it holds and last traded, in the terms of an account (see ``actions_section``)
+        from ..webapp.payload import actions_section
+
+        net = result.window.dropna()
+        first = max(int(result.weights.index.get_loc(net.index[0])) - 1, 0)                           # from the day before: the first return is earned by the position taken at the previous close
+        out["actions"] = actions_section(result.weights.iloc[first:], result.trades.iloc[first:], bundle.prices, float(capital * (1.0 + net).prod()), units=units)
+        out["actions"]["capital"] = float(capital)
+    except (KeyError, ValueError, IndexError):
+        out["actions"] = None
     out["universe"] = list(bundle.prices.columns)
     out["correlation"] = correlation_view(bundle.returns.loc[out["start"]:out["end"]])
     return out

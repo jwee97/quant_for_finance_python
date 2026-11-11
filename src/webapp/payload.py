@@ -232,7 +232,7 @@ def account_section(net: pd.Series, weights: pd.DataFrame, traded: pd.DataFrame,
             "note": "Not modelled: whole shares, taxes, interest earned on idle cash and margin calls. The borrow fee is one rate for every short; hard-to-borrow shares cost far more."}
 
 
-def actions_section(weights: pd.DataFrame, traded: pd.DataFrame, prices: pd.DataFrame, value_now: float, charts: int = 8, points: int = 700) -> dict:
+def actions_section(weights: pd.DataFrame, traded: pd.DataFrame, prices: pd.DataFrame, value_now: float, charts: int = 8, points: int = 700, units: bool = True) -> dict:
     """What the strategy says to do, in the terms of an account: what it holds on the last day of the data, the buys and sells of its latest rebalance, when it traded before, and for the tickers it
     traded most a price history with every buy and sell marked on it. ``weights`` are the positions held (fractions of the account), ``traded`` the changes the rebalancing made, ``value_now`` the
     account's value on the last day. A change under a quarter of a percent of the account is drift, not a decision, and is left out.
@@ -244,8 +244,8 @@ def actions_section(weights: pd.DataFrame, traded: pd.DataFrame, prices: pd.Data
     px = prices.reindex(index=w.index, columns=w.columns)
     last_px = px.ffill().iloc[-1]
 
-    def shares(amount: float, price) -> float | None:
-        return float(round(amount / price, 2)) if price is not None and np.isfinite(price) and price > 0 else None
+    def shares(amount: float, price) -> float | None:                                                # ``units`` False: the prices are an index, not something bought by the unit (a futures excess-return index)
+        return float(round(amount / price, 4 if price > 1000 else 2)) if units and price is not None and np.isfinite(price) and price > 0 else None
 
     holdings = []
     for ticker, weight in w.iloc[-1].items():
@@ -281,7 +281,7 @@ def actions_section(weights: pd.DataFrame, traded: pd.DataFrame, prices: pd.Data
         markers.append({"ticker": str(ticker), "dates": [str(d.date()) for d in keep], "price": [float(series[d]) for d in keep],
                         "buy": [float(series[d]) if d in buys else None for d in keep], "sell": [float(series[d]) if d in sells else None for d in keep],
                         "position": [float(w.at[d, ticker]) for d in keep], "buys": len(buys), "sells": len(sells)})
-    return clean({"as_of": str(w.index[-1].date()), "value": float(value_now), "holdings": holdings, "latest": latest, "trade_days": int(len(days)),
+    return clean({"as_of": str(w.index[-1].date()), "value": float(value_now), "holdings": holdings, "latest": latest, "trade_days": int(len(days)), "units": bool(units),
                   "typical_gap_days": float(np.median(gaps)) if len(gaps) else None, "markers": markers,
                   "note": "Positions and orders are as of the last day of the data and are taken at that day's close. Shares are the amount over the last price, before rounding to whole shares. "
                           "This is what the rules did on past prices, not advice to trade."})

@@ -193,14 +193,14 @@ def test_a_strategy_is_refused_the_roots_it_cannot_rank_and_run_with_the_paramet
     calls.runs.clear()
     fa.run_futures_strategy(config, "tsmom", curves=stand_in({"A": "commodity"}), lookback=60, frequency="weekly", target_vol=0.12, cost_bps=3)
     (bundle, model, params, kwargs), = calls.runs
-    assert bundle == ("real bundle", ("A",)) and model == "tsmom" and params == {"lookback": 60} and kwargs == {"rebalance": "weekly", "target_vol": 0.12, "cost_bps": 3.0, "label": "Trend", "allocator": "score_stack", "holding_cost": None}
+    assert bundle == ("real bundle", ("A",)) and model == "tsmom" and params == {"lookback": 60} and kwargs == {"rebalance": "weekly", "target_vol": 0.12, "cost_bps": 3.0, "label": "Trend", "allocator": "score_stack", "holding_cost": None, "units": False}
     calls.runs.clear()
     for strategy, expected in (("donchian", {"entry": 30}), ("carry_ts", {"smooth": 30}), ("carry_xs", {})):
         fa.run_futures_strategy(config, strategy, curves=stand_in({"A": "commodity", "B": "commodity"}), lookback=30)
     assert [call[2] for call in calls.runs] == [{"entry": 30}, {"smooth": 30}, {}], "the lookback is the parameter the strategy names, and a strategy with none ignores it"
     calls.runs.clear()
     fa.run_futures_strategy(config, "carry_ts", curves=stand_in({"A": "commodity"}))
-    assert calls.runs[0][2] == {} and calls.runs[0][3] == {"rebalance": None, "target_vol": None, "cost_bps": 2.0, "label": "Carry (time-series)", "allocator": "sleeves", "holding_cost": None}, "no lookback, no parameters; two basis points by default"
+    assert calls.runs[0][2] == {} and calls.runs[0][3] == {"rebalance": None, "target_vol": None, "cost_bps": 2.0, "label": "Carry (time-series)", "allocator": "sleeves", "holding_cost": None, "units": False}, "no lookback, no parameters; two basis points by default"
 
 
 def test_the_result_says_what_ran_and_on_what_and_a_simulation_is_not_called_a_backtest(monkeypatch):

@@ -1280,6 +1280,58 @@ def _backtest_result(name: str, params: dict | None, n_days: int, seed: int, cap
     return bt.run(_timed(make_strategy(name, **(params or {})), parse_timing(timing))), spot
 
 
+def option_actions(result, spot: pd.Series, multiplier: float = 100.0, charts_points: int = 700) -> dict:
+    """What an option strategy did, in the shape of the Backtest tab's buy-and-sell card: the contracts of its latest trading day, the option positions still open on the last day (the contracts
+    traded and not yet expired, netted by expiry, strike and right), how often it traded, and the underlying's price with every option sale and purchase marked. An amount is the premium: contracts
+    times the fill price times the contract multiplier. The hedge trades in the underlying are counted but not listed as contracts."""
+    trades = result.trades.copy() if len(result.trades) else pd.DataFrame(columns=["date", "kind", "expiry", "strike", "right", "quantity", "price", "cost"])
+    equity = result.equity.dropna()
+    last_day = equity.index[-1]
+    value = float(equity.iloc[-1])
+    opt = trades[trades["kind"] == "option"].copy()
+
+    def label(row) -> str:
+        return f"{'Call' if row['right'] == 'C' else 'Put'} {float(row['strike']):g} exp {pd.Timestamp(row['expiry']).date()}"
+
+    def order(row) -> dict:
+        qty, price = float(row["quantity"]), float(row["price"])
+        amount = abs(qty) * price * multiplier
+        return {"ticker": label(row), "side": "buy" if qty > 0 else "sell", "size": amount / value if value > 0 else 0.0, "amount": amount, "price": price, "shares": abs(qty), "to": None}
+
+    latest = None
+    if len(opt):
+        day = pd.Timestamp(opt["date"].max())
+        rows = [order(r) for _, r in opt[opt["date"] == day].iterrows()]
+        latest = {"date": str(day.date()), "days_ago": int((equity.index > day).sum()), "orders": sorted(rows, key=lambda r: -r["amount"])}
+    holdings = []
+    if len(opt):
+        live = opt[pd.to_datetime(opt["expiry"]) > last_day]
+        for (expiry, strike, right), g in live.groupby(["expiry", "strike", "right"]):
+            qty = float(g["quantity"].sum())
+            if abs(qty) < 1e-9:
+                continue
+            price = float(g["price"].iloc[-1])
+            amount = abs(qty) * price * multiplier
+            holdings.append({"ticker": label({"right": right, "strike": strike, "expiry": expiry}), "side": "long" if qty > 0 else "short", "weight": (amount / value if value > 0 else 0.0) * (1 if qty > 0 else -1),
+                             "amount": amount * (1 if qty > 0 else -1), "price": price, "shares": abs(qty)})
+    days = sorted(set(pd.to_datetime(opt["date"]))) if len(opt) else []
+    gaps = np.diff([equity.index.get_indexer([d])[0] for d in days]) if len(days) > 1 else np.array([])
+    markers = []
+    series = spot.reindex(equity.index).dropna()
+    if len(opt) and len(series) > 1:
+        net = opt.groupby("date")["quantity"].sum()
+        buys, sells = {pd.Timestamp(d) for d, q in net.items() if q > 0}, {pd.Timestamp(d) for d, q in net.items() if q < 0}
+        step = max(1, len(series) // charts_points)
+        keep = series.index[::step].union(pd.DatetimeIndex(sorted(buys | sells)).intersection(series.index)).union(series.index[-1:])
+        open_contracts = result.positions["open_contracts"].reindex(keep).fillna(0.0) if "open_contracts" in result.positions else pd.Series(0.0, index=keep)
+        markers.append({"ticker": "Underlying", "dates": [str(d.date()) for d in keep], "price": [float(series[d]) for d in keep], "buy": [float(series[d]) if d in buys else None for d in keep],
+                        "sell": [float(series[d]) if d in sells else None for d in keep], "position": [float(v) for v in open_contracts.to_numpy()], "buys": len(buys), "sells": len(sells), "contracts": True})
+    return {"as_of": str(last_day.date()), "value": value, "holdings": holdings, "latest": latest, "trade_days": int(len(days)), "units": True, "contracts": True, "simulated": True,
+            "typical_gap_days": float(np.median(gaps)) if len(gaps) else None, "markers": markers,
+            "note": "Amounts are premiums: contracts times the fill price times the contract multiplier of 100. A sale of options takes in premium and takes on the obligation; the positions shown are the "
+                    "contracts traded that have not expired. The market is simulated, so the dates are not calendar history: read this for how the strategy trades, not for what to trade today."}
+
+
 def run_strategy_backtest(name: str, params: dict | None = None, n_days: int = 252, seed: int = 0, capital: float = 100_000.0, premium: float = 0.25, commission: float = 0.65,
                           fill_fraction: float = 1.0, timing: dict | None = None) -> dict:
     """Backtest one of the rolling option strategies on the simulated option market and summarise it with the platform's own performance and tail-risk measures. The market is a MODEL: it pays the
@@ -1311,6 +1363,7 @@ def run_strategy_backtest(name: str, params: dict | None = None, n_days: int = 2
             "risk": performance.risk_metrics(returns), "share_in_market": in_market,
             "net_delta": [None if not np.isfinite(v) else round(float(v), 4) for v in greeks["delta"].to_numpy()[every]] if "delta" in greeks else [],
             "attribution": {c: float(result.attribution[c].sum()) for c in result.attribution.columns}, "trades": int(len(result.trades)), "skipped_orders": int(result.skipped_orders),
+            "actions": option_actions(result, spot),
             "recent_trades": [{k: (str(v.date()) if isinstance(v, pd.Timestamp) else (float(v) if isinstance(v, (int, float, np.floating, np.integer)) else str(v))) for k, v in row.items()}
                               for row in result.trades.tail(12).to_dict("records")],
             "notes": ["The option market is simulated (an SSVI surface with a built-in variance risk premium and jump risk); it is not historical data.",

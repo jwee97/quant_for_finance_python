@@ -816,3 +816,26 @@ def test_the_signals_tab_follows_two_markets_reads_them_says_what_the_data_is_an
     _wait_until(ws, "document.querySelectorAll('[data-role=signals-follows] li[data-follow]').length === 1")
     ws.click("[data-role=signals-follows] li[data-follow] [data-action=signals-unfollow]")
     _wait_until(ws, "document.querySelectorAll('[data-role=signals-follows] li[data-follow]').length === 0")
+
+
+@pytest.mark.parametrize("tab", ["futures", "crypto", "options"])
+def test_a_strategy_backtest_on_each_market_tab_says_what_it_bought_and_sold(ws, tab):
+    """The buy-and-sell card of the Backtest tab, on the Futures, Crypto and Options backtests: the latest orders, what is held, and the price with the trades marked, in each market's own terms."""
+    ws.click(f"#tab-{tab}")
+    ws.wait_for_selector(f"#{tab} .labtop button[data-mode=backtest]", timeout=120_000)
+    ws.click(f"#{tab} .labtop button[data-mode=backtest]")
+    ws.wait_for_selector(f"#{tab} .runbar button.primary:not(:disabled)", timeout=60_000)
+    ws.click(f"#{tab} .runbar button.primary")
+    ws.wait_for_selector(f"#{tab}-results [data-role=actions]", timeout=240_000)
+    card = ws.locator(f"#{tab}-results [data-role=actions]")
+    text = card.inner_text()
+    for part in ("What to buy and sell", "Its latest buys and sells", "When it bought and sold"):
+        assert part.lower() in text.lower(), part
+    assert any(mark in text for mark in ("▲ Buy", "▼ Sell"))
+    assert card.locator("[data-role=actions-chart] svg.chart").count() == 1 and card.locator("[data-role=actions-orders] tbody tr").count() >= 1
+    if tab == "futures":
+        assert "there is no count of units" in text and card.locator("[data-role=actions-simulated]").count() == 1 and "About how many" not in text
+    elif tab == "crypto":
+        assert "About how many" in text or "there is no count of units" in text
+    else:
+        assert "Contracts" in text and card.locator("[data-role=actions-simulated]").count() == 1 and ("Put " in text or "Call " in text) and "Open contracts" not in card.locator("[data-role=actions-orders]").inner_text()

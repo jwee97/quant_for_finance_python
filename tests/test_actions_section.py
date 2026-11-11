@@ -58,3 +58,39 @@ def test_a_strategy_that_never_traded_says_so():
     w = pd.DataFrame({"A": 0.0, "B": 0.0, "C": 0.0}, index=DAYS)
     a = actions_section(w, w * 0.0, PRICES, 1000.0)
     assert a["holdings"] == [] and a["latest"] is None and a["markers"] == [] and a["trade_days"] == 0 and a["typical_gap_days"] is None
+
+
+def test_an_index_has_amounts_but_no_count_of_units():
+    w, traded = frames([[0.5, 0.0, 0.0]] * 4 + [[0.2, -0.3, 0.0]] * 4)
+    a = actions_section(w, traded, PRICES, 1000.0, units=False)
+    assert a["units"] is False and all(h["shares"] is None for h in a["holdings"]) and all(o["shares"] is None for o in a["latest"]["orders"]) and a["holdings"][0]["amount"] == -300.0
+    assert actions_section(w, traded, PRICES, 1000.0)["units"] is True
+
+
+def test_the_futures_and_crypto_backtests_carry_the_card_in_their_own_terms():
+    from src.assets import crypto_analytics as ca
+    from src.assets import futures_analytics as fa
+    from src.utils.config import load_config
+
+    config = load_config()
+    fut = fa.run_futures_strategy(config, "carry_ts", ["CL", "NG", "ES"], as_of="2026-09-18")["actions"]
+    assert fut["units"] is False and fut["simulated"] is True and fut["capital"] == 100000.0 and fut["latest"]["orders"] and fut["markers"] and {m["ticker"] for m in fut["markers"]} <= {"CL", "NG", "ES"}
+    coin = ca.run_crypto_strategy(config, "spot_momentum", ["BTC", "ETH"])["actions"]
+    assert coin["units"] is True and "simulated" not in coin and coin["latest"]["orders"][0]["shares"] is not None
+    carry = ca.run_crypto_strategy(config, "funding_carry", ["BTC"])["actions"]
+    assert carry["units"] is False, "a carry index is not bought by the coin"
+
+
+def test_an_option_backtest_lists_contracts_the_open_positions_and_marks_the_underlying():
+    from src.assets import options_analytics as oa
+
+    out = oa.run_strategy_backtest("short_put", None, n_days=120, seed=1)
+    a = out["actions"]
+    json.dumps(a, allow_nan=False)
+    assert a["contracts"] is True and a["simulated"] is True and a["units"] is True and a["trade_days"] >= 2 and a["typical_gap_days"] > 0
+    first = a["latest"]["orders"][0]
+    assert first["ticker"].startswith(("Put ", "Call ")) and " exp " in first["ticker"] and first["side"] in ("buy", "sell") and first["shares"] > 0 and np.isclose(first["amount"], first["shares"] * first["price"] * 100.0)
+    m = a["markers"][0]
+    assert m["ticker"] == "Underlying" and m["contracts"] is True and m["sells"] >= 1 and sum(v is not None for v in m["sell"]) == m["sells"] and len(m["dates"]) == len(m["price"]) == len(m["position"])
+    for h in a["holdings"]:
+        assert h["side"] in ("long", "short") and h["ticker"].split(" exp ")[1] > a["as_of"], "only contracts that have not expired are held"

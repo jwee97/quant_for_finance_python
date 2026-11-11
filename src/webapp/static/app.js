@@ -726,34 +726,36 @@
     h("h2", "", card, "What to buy and sell");
     const today = new Date(), end = new Date(a.as_of + "T00:00:00"), old = Math.round((today - end) / 864e5);
     h("p", "sub", card, `${lead || "The strategy"}, as of ${a.as_of}, the last day of the data.`);
-    if (old > 5) { const w = h("div", "banner", card); h("strong", "", w, "Old data. "); w.appendChild(document.createTextNode(`The data ends ${old} days ago, so these are the positions and orders of that day, not today's. Tick "Download new prices" (or use the Signals tab's daily run) before acting on them.`)); w.dataset.role = "actions-stale"; }
+    if (a.simulated) h("p", "hint", card, "This market is simulated: the dates are the simulation's, so nothing here is an order for today.").dataset.role = "actions-simulated";
+    else if (old > 5) { const w = h("div", "banner", card); h("strong", "", w, "Old data. "); w.appendChild(document.createTextNode(`The data ends ${old} days ago, so these are the positions and orders of that day, not today's. Tick "Download new prices" (or use the Signals tab's daily run) before acting on them.`)); w.dataset.role = "actions-stale"; }
     const L = a.latest;
     h("h4", "subhead", card, L ? `Its latest buys and sells: ${L.date}` + (L.days_ago ? ` (${L.days_ago} trading day${L.days_ago === 1 ? "" : "s"} before the end of the data)` : " (the last day of the data)") : "It has not traded");
     if (L) {
       const t = h("div", "", card); t.dataset.role = "actions-orders";
       simpleTable(t, [{ label: "", get: (o) => (o.side === "buy" ? "▲ Buy" : "▼ Sell") }, { label: "Ticker", get: (o) => o.ticker }, { label: "Amount", num: true, get: (o) => money(o.amount) },
-        { label: "About how many", num: true, title: "The amount over that day's price, before rounding to whole shares", get: (o) => (o.shares === null ? "" : `${num(o.shares, o.shares >= 100 ? 0 : 2)} at ${num(o.price)}`) },
-        { label: "Share of the account", num: true, get: (o) => pct(o.size, 1) }, { label: "Position after", num: true, get: (o) => (Math.abs(o.to) < 1e-4 ? "none" : `${pct(Math.abs(o.to), 1)} ${o.to > 0 ? "long" : "short"}`) }], L.orders);
+        ...(a.units ? [{ label: a.contracts ? "Contracts" : "About how many", num: true, title: a.contracts ? "Contracts and the fill price of one" : "The amount over that day's price, before rounding to whole units", get: (o) => (o.shares === null ? "" : `${num(o.shares, o.shares >= 100 ? 0 : 2)} at ${num(o.price)}`) }] : []),
+        { label: "Share of the account", num: true, get: (o) => pct(o.size, 2) }, ...(a.contracts ? [] : [{ label: "Position after", num: true, get: (o) => (Math.abs(o.to) < 1e-4 ? "none" : `${pct(Math.abs(o.to), 1)} ${o.to > 0 ? "long" : "short"}`) }])], L.orders);
     }
-    h("h4", "subhead", card, a.holdings.length ? `What it holds (${a.holdings.length} position${a.holdings.length === 1 ? "" : "s"} on an account of ${money(a.value)})` : "It holds nothing: the account is in cash");
+    h("h4", "subhead", card, a.holdings.length ? `What it holds (${a.holdings.length} position${a.holdings.length === 1 ? "" : "s"} on an account of ${money(a.value)})` : a.contracts ? "It holds no option that has not expired" : "It holds nothing: the account is in cash");
+    if (!a.units && !a.contracts) h("p", "hint", card, "Amounts are the size of each position on the account. The prices behind them are an index of holding the instrument (for futures, the nearest contract rolled), so there is no count of units: divide the amount by your contract's value for a number of contracts.");
     if (a.holdings.length) {
       const t = h("div", "", card); t.dataset.role = "actions-holdings";
       simpleTable(t, [{ label: "Ticker", get: (x) => x.ticker }, { label: "Side", get: (x) => (x.side === "long" ? "▲ long" : "▼ short") }, { label: "Share of the account", num: true, get: (x) => pct(Math.abs(x.weight), 1) },
-        { label: "Amount", num: true, get: (x) => money(Math.abs(x.amount)) }, { label: "About how many", num: true, get: (x) => (x.shares === null ? "" : `${num(x.shares, x.shares >= 100 ? 0 : 2)} at ${num(x.price)}`) }], a.holdings);
+        { label: a.contracts ? "Premium" : "Amount", num: true, get: (x) => money(Math.abs(x.amount)) }, ...(a.units ? [{ label: a.contracts ? "Contracts" : "About how many", num: true, get: (x) => (x.shares === null ? "" : `${num(x.shares, x.shares >= 100 ? 0 : 2)} at ${num(x.price)}`) }] : [])], a.holdings);
     }
     if (a.trade_days) h("p", "hint", card, `It traded on ${a.trade_days.toLocaleString("en-US")} day${a.trade_days === 1 ? "" : "s"}` + (a.typical_gap_days ? `, typically every ${num(a.typical_gap_days, 0)} trading days: expect its next orders about that long after the latest.` : "."));
     if (a.markers.length) {
       if (!a.markers.some((m) => m.ticker === ACT.ticker[key])) ACT.ticker[key] = a.markers[0].ticker;
       const ch = h("div", "charts", card);
-      const cc = chartCard(ch, "When it bought and sold", "The ticker's price with every buy (▲) and sell (▼) of the backtest marked on the day it was made. Tap or point at a mark for the date and price; zoom in to tell close ones apart.", {
+      const cc = chartCard(ch, "When it bought and sold", a.contracts ? "The underlying's price with a mark on every day the strategy bought (▲) or sold (▼) options, net. Tap or point at a mark for the date; zoom in to tell close ones apart." : "The price with every buy (▲) and sell (▼) of the backtest marked on the day it was made. Tap or point at a mark for the date and price; zoom in to tell close ones apart.", {
         wide: true,
         draw: (b) => { const m = a.markers.find((x) => x.ticker === ACT.ticker[key]) || a.markers[0];
           C.line(b, { dates: m.dates, series: [{ name: "Price", color: css("--ink"), values: m.price, width: 1.5 }, { name: "▲ Buy", color: css("--pos"), values: m.buy, dots: true, dotSize: 4.5 }, { name: "▼ Sell", color: css("--neg"), values: m.sell, dots: true, dotSize: 4.5 }],
             yFormat: (v) => num(v), tipFormat: (v) => num(v), height: 300, endLabels: false, label: `${m.ticker} price with the strategy's buys and sells`,
-            tipExtra: (i) => [["Position after", Math.abs(m.position[i]) < 1e-4 ? "none" : `${pct(Math.abs(m.position[i]), 1)} ${m.position[i] > 0 ? "long" : "short"}`]] }); },
+            tipExtra: (i) => [m.contracts ? ["Open contracts", num(m.position[i], 0)] : ["Position after", Math.abs(m.position[i]) < 1e-4 ? "none" : `${pct(Math.abs(m.position[i]), 1)} ${m.position[i] > 0 ? "long" : "short"}`]] }); },
         table: (b) => { const m = a.markers.find((x) => x.ticker === ACT.ticker[key]) || a.markers[0], rows = m.dates.map((_, i) => i).filter((i) => m.buy[i] !== null || m.sell[i] !== null).reverse();
           simpleTable(b, [{ label: "Date", get: (i) => m.dates[i] }, { label: "", get: (i) => (m.buy[i] !== null ? "▲ Buy" : "▼ Sell") }, { label: "Price", num: true, get: (i) => num(m.price[i]) },
-            { label: "Position after", num: true, get: (i) => (Math.abs(m.position[i]) < 1e-4 ? "none" : `${pct(Math.abs(m.position[i]), 1)} ${m.position[i] > 0 ? "long" : "short"}`) }], rows); } });
+            { label: m.contracts ? "Open contracts" : "Position after", num: true, get: (i) => (m.contracts ? num(m.position[i], 0) : Math.abs(m.position[i]) < 1e-4 ? "none" : `${pct(Math.abs(m.position[i]), 1)} ${m.position[i] > 0 ? "long" : "short"}`) }], rows); } });
       cc.dataset.role = "actions-chart";
       const pick = h("select", "", cc._extra); pick.setAttribute("aria-label", "ticker shown"); pick.dataset.role = "actions-ticker";
       for (const m of a.markers) { const o = h("option", "", pick, `${m.ticker} (${m.buys} buys, ${m.sells} sells)`); o.value = m.ticker; if (m.ticker === ACT.ticker[key]) o.selected = true; }

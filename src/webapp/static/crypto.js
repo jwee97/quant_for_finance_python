@@ -334,6 +334,7 @@
     header(root, `${d.label} on ${d.assets.join(" and ")}`, `${d.text} · ${d.start} to ${d.end} · fees ${num(d.fees_bps, 1)} bps + slippage ${num(d.slippage_bps, 1)} bps one way`);
     W.provenance(root, d);
     W.pipelineResult(root, d);
+    if (d.actions) Q.actionsCard(root, d.actions, "crypto", d.label);
     const cr = d.correlation, info = strategyInfo(d.strategy);
     if (cr) chartCard(h("div", "charts", root), "How alike the assets are", "The correlation of the assets' daily returns over the backtest, with each asset's own annualised volatility beside its name.", {
       draw: (b) => C.matrix(b, { rows: cr.assets.map((a, i) => `${a} · ${cr.volatility[i] === null ? "n/a" : (cr.volatility[i] * 100).toFixed(0) + "%"}`), cols: cr.assets, values: cr.values, diverging: true, mid: 0, min: -1, max: 1, format: (v) => v.toFixed(2), name: "Correlation", cellHeight: 30, label: "Correlation of the assets" }),

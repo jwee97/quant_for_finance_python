@@ -761,6 +761,7 @@
       draw: (b) => C.line(b, { dates: d.dates, series: [{ name: "Net delta (shares)", color: css("--s1"), values: d.net_delta }], baseline: 0, include: 0, yFormat: (v) => num(v, 0), tipFormat: (v) => num(v, 1), height: 230, label: "Net delta" }),
       table: (b) => table(b, [{ label: "Date", get: (n) => d.dates[n] }, { label: "Net delta", num: true, get: (n) => (d.net_delta[n] === null ? "" : num(d.net_delta[n], 1)) }], d.dates.map((_, n) => n).filter((n) => n % 4 === 0)) });
     W.riskCharts(ch, d);
+    if (d.actions) Q.actionsCard(root, d.actions, "options", nameOfStrategy(d.strategy));
     const trades = h("div", "card", ch); h("h3", "", trades, "Latest trades");
     table(trades, [{ label: "Date", get: (x) => x.date }, { label: "Instrument", get: (x) => (x.kind === "option" ? `${x.right === "C" ? "Call" : "Put"} ${num(x.strike, 2)} ${x.expiry}` : x.kind) }, { label: "Qty", num: true, get: (x) => num(x.quantity, 0) }, { label: "Price", num: true, get: (x) => num(x.price, 2) }, { label: "Cost ($)", num: true, get: (x) => num(x.cost, 2) }], d.recent_trades);
     W.riskGrid(root, d, "Underlying");

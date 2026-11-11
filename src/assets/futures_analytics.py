@@ -646,9 +646,11 @@ def run_futures_strategy(config, strategy: str, roots: list[str] | None = None, 
     held = curves if real else {r: simulated_curve(r, as_of) for r in chosen}                         # the contract tables the front price is read from
     rolls = roll_costs({r: held[r].spec for r in chosen}, held) if roll_cost else {}
     out = run_strategy(sub, config, spec["model"], settings, rebalance=frequency, target_vol=target_vol, cost_bps=float(cost_bps), label=spec["label"],
-                       allocator=spec["allocator"], holding_cost={r: v["yearly"] for r, v in rolls.items()} or None)
+                       allocator=spec["allocator"], holding_cost={r: v["yearly"] for r, v in rolls.items()} or None, units=False)
     out.update({"strategy": strategy, "label": spec["label"], "text": spec["text"], "roots": sorted(chosen), "cost_bps": float(cost_bps), "source": "real" if real else "simulated",
                 "roll_costs": [{"root": r, **v} for r, v in sorted(rolls.items())]})
+    if out.get("actions") and not real:
+        out["actions"]["simulated"] = True
     if real:
         out["coverage"] = report
         out["notes"] = [f"{r}: {v['front_days']} days from {v['first']} to {v['last']} on which the nearest contract is the front of the market (of {v['file_days']} in the file, {v['contracts']} contracts)." for r, v in report.items()]

@@ -510,7 +510,7 @@ def run_crypto_strategy(config, strategy: str, assets: list[str] | None = None, 
     directional = spec["assets"] != "carry"
     carry = bundle.returns[[f"{a}_CARRY" for a in chosen]].rename(columns=lambda c: c[:-6]) if directional and short_funding else None
     out = run_strategy(subset_bundle(bundle, columns), config, spec["model"], params, rebalance=frequency, target_vol=target_vol, regime=regime or spec.get("regime"),
-                       cost_bps=float(fees_bps) + float(slippage_bps), label=spec["label"], allocator=spec.get("allocator"), short_carry=carry)
+                       cost_bps=float(fees_bps) + float(slippage_bps), label=spec["label"], allocator=spec.get("allocator"), short_carry=carry, units=directional)
     out.update({"strategy": strategy, "label": spec["label"], "text": spec["text"], "assets": chosen, "fees_bps": float(fees_bps), "slippage_bps": float(slippage_bps), "source": "platform",
                 "notes": ["Deribit BTC and ETH daily data, weekday marks; the carry strategies trade a synthetic delta-neutral index (long spot, short perpetual, linear approximation).",
                           "Fees and slippage are one-way basis points on the traded notional; funding is earned inside the carry index."

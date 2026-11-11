@@ -439,6 +439,7 @@
     header(root, `${d.label} on ${real ? "real" : "simulated"} futures`, `${d.text} · roots ${d.roots.join(", ")} · ${d.start} to ${d.end}`);
     W.provenance(root, d);
     W.pipelineResult(root, d);
+    if (d.actions) Q.actionsCard(root, d.actions, "futures", d.label);
     const cr = d.correlation, info = strategyInfo(d.strategy);
     if (cr) chartCard(h("div", "charts", root), "How alike the roots are", "The correlation of the roots' daily returns over the backtest, with each root's own annualised volatility beside its name. A book of roots that move together has fewer independent bets than it has positions.", { wide: cr.assets.length > 4,
       draw: (b) => C.matrix(b, { rows: cr.assets.map((a, i) => `${a} · ${cr.volatility[i] === null ? "n/a" : (cr.volatility[i] * 100).toFixed(0) + "%"}`), cols: cr.assets, values: cr.values, diverging: true, mid: 0, min: -1, max: 1, format: (v) => v.toFixed(2), name: "Correlation", cellHeight: 26, label: "Correlation of the roots" }),
