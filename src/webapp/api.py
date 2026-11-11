@@ -372,6 +372,30 @@ class App:
             raise ApiError("starting capital must be between $1 thousand and $1 trillion")
         return capital
 
+    @staticmethod
+    def _account(body: dict) -> dict:
+        """What the person's broker charges beyond the backtest's proportional cost (``account``: a fee per order in dollars, a borrow fee and a margin rate in per cent a year)."""
+        from .payload import ACCOUNT_DEFAULTS, ACCOUNT_LIMITS
+
+        raw = body.get("account") or {}
+        if not isinstance(raw, dict):
+            raise ApiError("account must be an object")
+        out = {}
+        for key, default in ACCOUNT_DEFAULTS.items():
+            value = raw.get(key)
+            if value in (None, ""):
+                out[key] = default
+                continue
+            try:
+                value = float(value)
+            except (TypeError, ValueError):
+                raise ApiError(f"{key.replace('_', ' ')} must be a number") from None
+            lo, hi = ACCOUNT_LIMITS[key]
+            if not np.isfinite(value) or not lo <= value <= hi:
+                raise ApiError(f"{key.replace('_', ' ')} must be between {lo:g} and {hi:g}")
+            out[key] = value
+        return out
+
     def submit(self, body: dict) -> dict:
         try:
             tickers = normalise(body.get("tickers") or self.builder.default_tickers())
@@ -380,6 +404,7 @@ class App:
             raise ApiError(str(error)) from None
         spec = self.build_spec(body, n_tickers=len(tickers))
         capital = self._capital(body)
+        self._account(body)                                                                             # a broker fee that makes no sense is refused before the run, not after it
         job = self._register(Job(spec["name"], "backtest"))
         self._pool.submit(self._run, job, spec, tickers, body, capital)
         return {"job": job.id}
@@ -469,7 +494,7 @@ class App:
             pipeline = Pipeline(PipelineSpec.from_dict(spec), self.config, bundle)
             result = pipeline.run(validate=bool(spec["evaluation"]["causality"]))
             spec_view = PipelineSpec.from_dict(spec).to_dict()
-            job.result = result_payload(result, bundle, red_flags(result), universe, spec_view, yaml.safe_dump(spec_view, sort_keys=False), time.perf_counter() - started, capital)
+            job.result = result_payload(result, bundle, red_flags(result), universe, spec_view, yaml.safe_dump(spec_view, sort_keys=False), time.perf_counter() - started, capital, self._account(body))
             job.result["trials_in_universe"] = len(seen)
             if job.result["held_days"] < 20 or not np.isfinite(result.metrics.get("sharpe", np.nan)):
                 job.result["warning"] = ("This strategy held (almost) no positions. With the calibrated forecast the framework holds nothing when a signal has not paid in the past; "

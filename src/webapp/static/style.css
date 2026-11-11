@@ -132,6 +132,11 @@ button.link { background: none; border: 0; padding: 0; color: var(--accent); cur
 .legend i { display: inline-block; width: 14px; height: 2px; border-radius: 2px; vertical-align: middle; margin-right: 6px; background: var(--c); }
 .legend.boxes i, .legend i.box { height: 10px; width: 10px; border-radius: 2px; }
 svg.chart { display: block; width: 100%; overflow: visible; }
+.zoombar { display: flex; gap: 4px; align-items: center; justify-content: flex-end; margin: 0 0 4px; font-size: 12px; color: var(--muted); }
+.zoombar button { min-width: 32px; min-height: 28px; padding: 2px 8px; border: 1px solid var(--axis); border-radius: 6px; background: var(--surface); color: var(--ink-2); font: inherit; cursor: pointer; }
+.zoombar button:disabled { opacity: 0.4; cursor: default; }
+.zoombar button:focus-visible { outline: 2px solid var(--s1); outline-offset: 1px; }
+@media (pointer: coarse) { .zoombar button { min-width: 40px; min-height: 36px; } }
 svg.chart text { fill: var(--muted); font-size: 11px; font-family: inherit; }
 svg.chart .grid { stroke: var(--grid); stroke-width: 1; }
 svg.chart .axis { stroke: var(--axis); stroke-width: 1; }

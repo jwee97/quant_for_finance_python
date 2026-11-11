@@ -188,6 +188,50 @@ def _episodes(sign: np.ndarray) -> list[tuple[int, int]]:
     return [(int(a), int(b)) for a, b in zip(starts, ends) if sign[a] != 0]
 
 
+ACCOUNT_DEFAULTS = {"fee_per_order": 0.0, "borrow_pct": 1.0, "margin_pct": 6.0}
+ACCOUNT_LIMITS = {"fee_per_order": (0.0, 100.0), "borrow_pct": (0.0, 100.0), "margin_pct": (0.0, 50.0)}
+
+
+def account_section(net: pd.Series, weights: pd.DataFrame, traded: pd.DataFrame, capital: float, fee_per_order: float = 0.0, borrow_pct: float = 1.0, margin_pct: float = 6.0) -> dict:
+    """What a personal brokerage account keeps of the backtest's net return. The backtest charges a cost in proportion to what is traded; a real account also pays
+
+    * a fixed fee on every order, which is a larger share of a small account (``fee_per_order`` dollars; 0 for a commission-free broker),
+    * a fee for borrowing the shares it is short (``borrow_pct`` a year of the short positions' value; easy-to-borrow shares cost under 1%, hard ones many times that),
+    * interest on the money it borrows when the long positions exceed the account (``margin_pct`` a year on the excess; the proceeds of shorts are not counted as cash).
+
+    ``weights`` are the positions held, as fractions of the account, and ``traded`` the daily changes; an order is one change of position in one asset. The account is walked forward day by day,
+    because a fixed fee depends on how much money is left. Not modelled: whole shares, taxes, interest earned on idle cash, a margin call."""
+    w = weights.shift(1).reindex(net.index).fillna(0.0)                                               # the position that earns day t is the one held at the previous close
+    short = (-w.clip(upper=0.0)).sum(axis=1).to_numpy()
+    borrowed = (w.clip(lower=0.0).sum(axis=1) - 1.0).clip(lower=0.0).to_numpy()
+    orders = (traded.reindex(net.index).fillna(0.0).abs() > 1e-4).sum(axis=1).to_numpy()
+    r = net.to_numpy(dtype=float)
+    value, path, paid = float(capital), [], {"fees": 0.0, "borrow": 0.0, "margin": 0.0}
+    ruined = None
+    for t in range(len(r)):
+        b, m, f = value * short[t] * borrow_pct / 100.0 / ANN, value * borrowed[t] * margin_pct / 100.0 / ANN, float(orders[t]) * fee_per_order
+        value = value * (1.0 + r[t]) - b - m - f
+        paid["borrow"] += b
+        paid["margin"] += m
+        paid["fees"] += f
+        if value <= 0.0:
+            value, ruined = 0.0, str(net.index[t].date())
+            path += [0.0] * (len(r) - t)
+            break
+        path.append(value)
+    series = pd.Series(path, index=net.index)
+    daily = series.pct_change().fillna(series.iloc[0] / capital - 1.0)
+    years = max(len(r) / ANN, 1e-9)
+    plain = float(capital * np.prod(1.0 + r))
+    std = float(daily.std(ddof=1))
+    return {"fee_per_order": float(fee_per_order), "borrow_pct": float(borrow_pct), "margin_pct": float(margin_pct), "end_value": float(series.iloc[-1]), "backtest_end_value": plain,
+            "kept": float(series.iloc[-1] - plain), "paid": {k: float(v) for k, v in paid.items()}, "orders": int(orders.sum()), "ruined": ruined,
+            "annual_return": float((series.iloc[-1] / capital) ** (1.0 / years) - 1.0) if series.iloc[-1] > 0 else -1.0, "backtest_annual_return": float((plain / capital) ** (1.0 / years) - 1.0) if plain > 0 else -1.0,
+            "sharpe": float(ANN ** 0.5 * daily.mean() / std) if std > 0 and ruined is None else None, "average_short": float(short.mean()), "average_borrowed": float(borrowed.mean()),
+            "values": _series(series, 2),
+            "note": "Not modelled: whole shares, taxes, interest earned on idle cash and margin calls. The borrow fee is one rate for every short; hard-to-borrow shares cost far more."}
+
+
 def trades_section(weights: pd.DataFrame, traded: pd.DataFrame, returns: pd.DataFrame, prices: pd.DataFrame, value: pd.Series, capital: float, listed: int = 200) -> dict:
     """The buys and sells behind the returns. A *round trip* is one stretch in which an asset is held on the same side (long or short): it opens when the position appears and closes when
     it goes to zero or flips. Its profit is the sum, over the days it was held, of the position times that day's return (before trading costs), in dollars on the account value of the
@@ -253,7 +297,7 @@ def _with_entry_day(result, start) -> tuple[pd.DataFrame, pd.DataFrame]:
     return result.weights.iloc[first:], result.trades.iloc[first:]
 
 
-def result_payload(result, bundle, flags: list[dict], universe: dict, spec: dict, yaml_text: str, seconds: float, capital: float = 100_000.0) -> dict:
+def result_payload(result, bundle, flags: list[dict], universe: dict, spec: dict, yaml_text: str, seconds: float, capital: float = 100_000.0, account: dict | None = None) -> dict:
     net = result.net_returns.loc[result.start:].dropna()
     active = net[net.abs() > 0]
     if len(active):                                   # a book that waits for enough assets earns exactly zero until it starts: do not chart or score the wait
@@ -298,4 +342,5 @@ def result_payload(result, bundle, flags: list[dict], universe: dict, spec: dict
         "tables": tables,
         "capital": float(capital), "earnings": earnings_section(net, gross, result.costs, capital, bench_returns, weights),
         "trades": trades_section(*_with_entry_day(result, start), bundle.returns, bundle.prices, capital * equity, capital),
+        "account": account_section(net, *_with_entry_day(result, start), capital, **{**ACCOUNT_DEFAULTS, **(account or {})}),
     })

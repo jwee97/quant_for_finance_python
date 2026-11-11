@@ -60,7 +60,7 @@
   /* ================================================================= state */
   const S = {
     catalog: null, tickers: [], start: "", models: [], combination: "equal", allocator: "", allocatorTouched: false, allocParams: {}, regime: "", regimeRisk: false,
-    aum: "", capital: "", source: "yahoo", guard: { ok: true, message: "" }, validate: false, refresh: false, label: "", runs: [], selected: new Set(), current: null, range: "all", busy: false, nextSlot: 0, trials: {},
+    aum: "", capital: "", account: { fee_per_order: "", borrow_pct: "", margin_pct: "" }, source: "yahoo", guard: { ok: true, message: "" }, validate: false, refresh: false, label: "", runs: [], selected: new Set(), current: null, range: "all", busy: false, nextSlot: 0, trials: {},
     view: freshView(),
   };
   /* What the user has chosen inside a result: which cards show their table, linear or log growth, which details tab is open. A redraw (new window size, theme change) rebuilds the page
@@ -372,6 +372,11 @@
     ai.addEventListener("input", () => { S.aum = ai.value; });
     const cl = h("label", "f", box, "Starting capital in dollars (the earnings numbers are shown on this)"), ci = h("input", "", cl); ci.type = "number"; ci.min = "1000"; ci.placeholder = "blank = the AUM above, else $100,000"; ci.value = S.capital;
     ci.addEventListener("input", () => { S.capital = ci.value; });
+    h("p", "hint", box, "Your broker, beyond the trading cost above. The Earnings tab shows what is left after these.");
+    for (const [key, label, ph] of [["fee_per_order", "Fee per order in dollars", "0 = commission-free"], ["borrow_pct", "Fee for borrowing shares you are short, % a year", "1"], ["margin_pct", "Interest on money you borrow, % a year", "6"]]) {
+      const l = h("label", "f", box, label), inp = h("input", "", l); inp.type = "number"; inp.min = "0"; inp.step = "any"; inp.placeholder = ph; inp.value = S.account[key] || ""; inp.dataset.account = key;
+      inp.addEventListener("input", () => { S.account[key] = inp.value; });
+    }
     refreshGuard();
   }
 
@@ -419,7 +424,7 @@
     if (!S.guard.ok) throw new Error(S.guard.message);
     return { ...universe, models: S.models.map((m) => ({ name: m.name, params: m.params })), combination: S.combination,
       allocator: S.allocator || null, allocator_params: S.allocParams, regime: S.regime || null, regime_risk: S.regimeRisk, aum: S.aum ? parseFloat(S.aum) : null,
-      validate: S.validate, label: S.label || null, capital: S.capital ? parseFloat(S.capital) : null };
+      validate: S.validate, label: S.label || null, capital: S.capital ? parseFloat(S.capital) : null, account: Object.fromEntries(Object.entries(S.account).filter(([, v]) => v !== "").map(([k, v]) => [k, parseFloat(v)])) };
   }
   /* Put one strategy with these settings into the Backtest tab (the Tune tab's "Use these settings") and open it. The tickers stay; the strategy list is replaced. */
   function useStrategy(name, params) {
@@ -718,6 +723,19 @@
       n.appendChild(document.createTextNode(`The strategy held up to ${num(e.exposure.peak, 1)}× your capital (${num(e.exposure.average, 1)}× on average; above 1× on ${pct(e.exposure.share_of_days_above_one, 0)} of days), so gains and losses are scaled the same way. Only trading costs are charged: no borrowing or short-selling fees.`));
     }
     h("p", "hint", b, `Dollars on ${money(e.capital)} of starting capital, compounded day by day after trading costs. They show what the historical rules would have earned, not what to expect.`);
+    if (r.account) {
+      const a = r.account, box = h("div", "card", b); box.dataset.role = "account";
+      h("h3", "", box, "After your broker");
+      h("p", "hint", box, `The backtest charges a cost in proportion to what is traded. A personal account also pays a fee on every order (${money(a.fee_per_order)}), a fee for borrowing the shares it is short (${num(a.borrow_pct, 1)}% a year) and interest on borrowed money (${num(a.margin_pct, 1)}% a year). Set yours under Portfolio.`);
+      if (a.ruined) { const w = h("div", "banner err", box); h("strong", "", w, "The account ran out of money. "); w.appendChild(document.createTextNode(`After these charges it reached zero on ${a.ruined}.`)); }
+      const k = h("div", "earnrow", box);
+      tile(k, "Ending value", money(a.end_value), { text: `the backtest says ${money(a.backtest_end_value)}`, dir: a.kept < -0.005 * a.backtest_end_value ? "down" : "flat" });
+      tile(k, "Return a year", fmt.spct(a.annual_return), { text: `the backtest says ${fmt.spct(a.backtest_annual_return)}` });
+      tile(k, "Order fees", money(a.paid.fees), { text: `${a.orders.toLocaleString("en-US")} orders` });
+      tile(k, "Borrowing shares", money(a.paid.borrow), { text: `short ${pct(a.average_short, 0)} of the account on average` });
+      tile(k, "Borrowing money", money(a.paid.margin), { text: `${pct(a.average_borrowed, 0)} of the account on average` });
+      h("p", "hint", box, a.note);
+    }
     const grid = h("div", "kvgrid", b);
     kvTable(grid, "Profit", [["Starting capital", money(e.capital)], ["Ending value", money(e.end_value)], ["Net profit", `${smoney(e.net_profit)} (${fmt.spct(e.total_return)})`],
       ["Average per year", smoney(e.profit_per_year)], ["Average per month", smoney(e.profit_per_month)], ["Average per trading day", smoney(e.profit_per_day)],

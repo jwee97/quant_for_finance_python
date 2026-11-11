@@ -113,6 +113,16 @@ You type the Yahoo-style symbol and the app translates it:
 - Today's bar is never used: it is still being drawn. If a refresh fails, the saved copy is used and the ticker carries a note saying so.
 - The depth of history the free plan returns is not documented; a short history is reported, and the strategies need at least 300 days.
 
+## After your broker
+
+A backtest charges a trading cost in proportion to what is traded. A personal account pays three more things, and the **Earnings** tab shows what is left after them under *After your broker*:
+
+* **A fee per order**, in dollars (0 for a commission-free broker). It is the same fee on a small account as on a large one, so a strategy that trades 15 tickers every month can be fine on $100,000 and lose money on $2,000.
+* **A fee for borrowing the shares you are short**, in per cent a year of the short positions (1% by default; shares that are hard to borrow cost many times that).
+* **Interest on borrowed money**, in per cent a year, on whatever the long positions exceed the account by (6% by default). The proceeds of a short sale are not counted as cash.
+
+Set them under *Portfolio*. The headline numbers and charts of the backtest are unchanged; the section shows the ending value and yearly return with these charges beside the backtest's own, what each charge came to in dollars, and says so if the account ran out of money. Whole shares, taxes, interest on idle cash and margin calls are not modelled.
+
 ## One ticker
 
 A strategy needs only as many tickers as its idea needs:
@@ -230,6 +240,12 @@ The Machine learning tab trains models **only inside the whole research pipeline
 **Runs in the background.** A training, a search or a re-backtest runs on the app's own worker, not in your browser: closing the tab or reloading the page does not stop it, and the experiment is saved when it ends. The app keeps a small record of every job under `data/user/jobs/`, and the tab lists in a card above the results the runs that are going or waiting and those that ended in the last six hours: it follows them until they end, opens the experiment a finished run made, and shows a run that was lost because the app stopped (*Stopped*, with the last thing it was doing, within about a minute of a crash; a page that was waiting for it is told, not left waiting). **Clear** takes a row off the list, and **Not running? Clear** takes off a run that still says running after a crash. Nothing is resumed: a training is not checkpointed, so a lost run is started again from the beginning. Jobs run in two lanes. In the compute lane one job runs at a time (they share data caches and process-wide model settings), so a long search delays whatever is queued behind it; fetching company statements and prices from a provider runs on a second worker, so it is not held up by a long search and does not hold one up (two fetches take turns, because they share one provider allowance). The card shows the queue. Whether a run survives you leaving depends on where the app runs: on your own computer, as long as the app does; **on Replit, only while the workspace stays alive**, which it does not promise once you close the tab. The section *Training in the background on Replit* of `replit.md`, in the repository's top folder, says what Replit does, what it costs to keep a run alive, and what the app cannot do about it.
 
 Experiments, datasets and models are saved under `artifacts/ml/` (SQLite for the records). The same pipeline is on the command line (`python -m src.cli ml-build-dataset | ml-train | ml-backtest | ml-report`) and the settings are in `config/ml_research.yaml`. [Guide](techniques/machine-learning-research-pipeline.md).
+
+## Charts: zoom, and phones
+
+Every chart shows its numbers when you point at it. On a phone or tablet, **tap** a chart: the tooltip appears and stays until you tap somewhere else, and on a line chart you can drag a finger sideways to move along it (up and down still scrolls the page). One tooltip is open at a time.
+
+Line charts of twenty points or more have a small bar above them: **+** and **−** zoom in and out around the middle, **◀** and **▶** move the window, **Reset** shows everything, and the bar says how many points are in view. Two fingers pinch to zoom on a touch screen; on a computer hold Ctrl (or pinch on a trackpad) and turn the wheel to zoom around the pointer; with the keyboard, focus the chart and press **+**, **−** or **0**. The y axis rescales to what is in view, so a quiet month is not flattened by a crash elsewhere in the history. The *Table* button of a chart card still gives every number.
 
 ## Keyboard and screen readers
 

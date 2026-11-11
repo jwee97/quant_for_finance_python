@@ -74,6 +74,21 @@
     if (!tip) { tip = html("div", "tip", host); tip.hidden = true; }
     return tip;
   }
+  /* Pointing at a mark. A mouse shows the tooltip while it is over the mark and hides it on leaving. A finger has no "over": a tap (or a drag along a line chart) shows the tooltip and it stays
+     until the next tap somewhere else, so that it can be read. One tooltip is open at a time. */
+  let sticky = null;
+  function release() { if (sticky && sticky._hide) sticky._hide(); sticky = null; }
+  function hoverIn(node, show) {
+    const on = (e) => { if (sticky && sticky !== node) release(); if (e.pointerType && e.pointerType !== "mouse") sticky = node; show(e); };
+    node.addEventListener("pointermove", on);
+    node.addEventListener("pointerdown", on);
+    if (node.style) node.style.touchAction = "pan-y";                                          // a finger dragged sideways moves the crosshair; up and down still scrolls the page
+  }
+  function hoverOut(node, hide) {
+    node._hide = hide;
+    node.addEventListener("pointerleave", (e) => { if (!e.pointerType || e.pointerType === "mouse") { hide(e); if (sticky === node) sticky = null; } });
+  }
+  document.addEventListener("pointerdown", (e) => { if (sticky && !sticky.contains(e.target)) release(); }, true);
   function place(tip, host, x, y) {
     tip.hidden = false;
     const w = tip.offsetWidth, h = tip.offsetHeight, hw = host.clientWidth;
@@ -95,7 +110,56 @@
    the baseline, blue where it is above and red where it is below (profit and loss). o.ylim = [low, high] fixes the vertical range and cuts every line and band off at the edges of the plot, so that one series that runs
    far beyond the others (a structure with unlimited profit drawn beside one without) does not flatten them. */
   let uid = 0;
+  /* A line chart that can be zoomed. The window is a range of positions along the x axis, kept on the chart's host so that a redraw (a new theme, a resize) keeps it. The buttons above the chart
+     zoom in and out around the middle, move the window and reset it; Ctrl (or a pinch on a trackpad) with the wheel zooms around the pointer; two fingers pinch on a touch screen. */
+  const MIN_WINDOW = 5, ZOOMABLE = 20;
   function line(host, o) {
+    const n = (Array.isArray(o.xs) ? o.xs : o.dates).length;
+    if (n < ZOOMABLE || o.zoom === false) { host._zoom = null; return drawLine(host, o); }
+    if (!host._zoom || host._zoom.n !== n) host._zoom = { n, a: 0, b: n - 1 };
+    const z = host._zoom, full = z.a === 0 && z.b === n - 1;
+    const cut = (arr) => (arr ? arr.slice(z.a, z.b + 1) : arr);
+    const view = full ? o : { ...o, dates: cut(o.dates), xs: Array.isArray(o.xs) ? cut(o.xs) : o.xs, series: o.series.map((s) => ({ ...s, values: cut(s.values) })), bands: (o.bands || []).map((b) => ({ ...b, lo: cut(b.lo), hi: cut(b.hi) })),
+      tipTitle: o.tipTitle ? (i) => o.tipTitle(i + z.a) : undefined, tipExtra: o.tipExtra ? (i) => o.tipExtra(i + z.a) : undefined };
+    const active = host.contains(document.activeElement) ? document.activeElement : null;       // a redraw replaces what had the focus: the keyboard must not lose its place
+    const refocus = active ? (active.matches("rect[tabindex]") ? "rect[tabindex]" : active.getAttribute("aria-label") ? `.zoombar button[aria-label="${active.getAttribute("aria-label")}"]` : null) : null;
+    drawLine(host, view);
+    const set = (a, b) => {
+      let w = Math.max(MIN_WINDOW - 1, Math.min(n - 1, Math.round(b - a)));
+      a = Math.max(0, Math.min(n - 1 - w, Math.round(a)));
+      if (a === z.a && a + w === z.b) return;
+      z.a = a; z.b = a + w; line(host, o);
+    };
+    const scale = (k, centre) => { const w = (z.b - z.a) * k, c = centre === undefined ? (z.a + z.b) / 2 : centre, share = (c - z.a) / Math.max(1, z.b - z.a); set(c - w * share, c - w * share + w); };
+    const bar = html("div", "zoombar"); host.prepend(bar);
+    const button = (text, name, fn, off) => { const b = html("button", "", bar, text); b.type = "button"; b.setAttribute("aria-label", name); b.title = name; b.disabled = !!off; b.addEventListener("click", fn); return b; };
+    const w = z.b - z.a;
+    button("+", "Zoom in", () => scale(0.5), w <= MIN_WINDOW - 1);
+    button("−", "Zoom out", () => scale(2), full);
+    button("◀", "Earlier", () => set(z.a - Math.max(1, Math.round(w / 4)), z.b - Math.max(1, Math.round(w / 4))), z.a === 0);
+    button("▶", "Later", () => set(z.a + Math.max(1, Math.round(w / 4)), z.b + Math.max(1, Math.round(w / 4))), z.b === n - 1);
+    button("Reset", "Show everything", () => set(0, n - 1), full);
+    if (!full) html("span", "", bar, `${w + 1} of ${n} points`);
+    const svg = host.querySelector("svg.chart"), overlay = svg && svg.querySelector("rect[tabindex]");
+    if (refocus) { const again = host.querySelector(refocus); if (again && !again.disabled) again.focus({ preventScroll: true }); else if (overlay) overlay.focus({ preventScroll: true }); }
+    if (!overlay) return;
+    const under = (clientX) => { const r = overlay.getBoundingClientRect(); return z.a + Math.max(0, Math.min(1, (clientX - r.left) / (r.width || 1))) * (z.b - z.a); };
+    overlay.addEventListener("wheel", (e) => { if (!e.ctrlKey && !e.metaKey) return; e.preventDefault(); scale(e.deltaY < 0 ? 0.8 : 1.25, under(e.clientX)); }, { passive: false });
+    overlay.addEventListener("keydown", (e) => { if (e.key === "+" || e.key === "=") scale(0.5); else if (e.key === "-") scale(2); else if (e.key === "0") set(0, n - 1); else return; e.preventDefault(); });
+    const fingers = new Map();
+    let pinch = null;
+    overlay.addEventListener("pointerdown", (e) => { if (e.pointerType !== "touch") return; fingers.set(e.pointerId, e.clientX); if (fingers.size === 2) { const xs = [...fingers.values()]; pinch = { gap: Math.abs(xs[0] - xs[1]) || 1, a: z.a, b: z.b, c: under((xs[0] + xs[1]) / 2) }; } });
+    overlay.addEventListener("pointermove", (e) => {
+      if (!fingers.has(e.pointerId)) return;
+      fingers.set(e.pointerId, e.clientX);
+      if (!pinch || fingers.size < 2) return;
+      const xs = [...fingers.values()], k = pinch.gap / (Math.abs(xs[0] - xs[1]) || 1), w0 = (pinch.b - pinch.a) * k, share = (pinch.c - pinch.a) / Math.max(1, pinch.b - pinch.a);
+      if (Math.abs(Math.round(w0) - (z.b - z.a)) >= 1) host._pinch = [pinch.c - w0 * share, pinch.c - w0 * share + w0];
+    });
+    const lift = (e) => { fingers.delete(e.pointerId); if (fingers.size < 2) { pinch = null; if (host._pinch) { const [a, b] = host._pinch; host._pinch = null; set(a, b); } } };
+    overlay.addEventListener("pointerup", lift); overlay.addEventListener("pointercancel", lift);
+  }
+  function drawLine(host, o) {
     const W = width(host);
     host.replaceChildren();
     const numeric = Array.isArray(o.xs), dates = numeric ? o.xs.slice() : o.dates.map((d) => Date.parse(d)), H = o.height || 280;
@@ -208,8 +272,8 @@
       place(tip, host, (x / W) * rect.width, m.t + 20);
     };
     const hide = () => { cross.setAttribute("visibility", "hidden"); dots.forEach((g) => g.setAttribute("visibility", "hidden")); tip.hidden = true; };
-    overlay.addEventListener("pointermove", (e) => show(e.clientX));
-    overlay.addEventListener("pointerleave", hide);
+    hoverIn(overlay, (e) => show(e.clientX));
+    hoverOut(overlay, hide);
     overlay.addEventListener("focus", () => show(svg.getBoundingClientRect().left + svg.getBoundingClientRect().width * 0.5));
     overlay.addEventListener("blur", hide);
   }
@@ -236,8 +300,8 @@
       if (iw / o.labels.length > 28 || i % 2 === 0) el("text", { x: cx, y: H - 8, "text-anchor": "middle" }, svg, String(lab));
       if (i === best || i === worst) el("text", { x: cx, y: up ? top - 4 : Y(0) - 4, "text-anchor": "middle", class: "ink" }, svg, o.yFormat(v));
       const hit = el("rect", { x: cx - slot / 2, y: m.t, width: slot, height: ih, fill: "transparent" }, svg);
-      hit.addEventListener("pointermove", () => { bar.setAttribute("opacity", 0.8); tip.replaceChildren(); html("div", "t", tip, o.tipLabel ? o.tipLabel(i) : String(lab)); const r2 = html("div", "r", tip); html("span", "k", r2, o.name || "Value"); html("b", "", r2, (o.tipFormat || o.yFormat)(v)); place(tip, host, cx, Y(Math.max(v, 0))); });
-      hit.addEventListener("pointerleave", () => { bar.setAttribute("opacity", 1); tip.hidden = true; });
+      hoverIn(hit, () => { bar.setAttribute("opacity", 0.8); tip.replaceChildren(); html("div", "t", tip, o.tipLabel ? o.tipLabel(i) : String(lab)); const r2 = html("div", "r", tip); html("span", "k", r2, o.name || "Value"); html("b", "", r2, (o.tipFormat || o.yFormat)(v)); place(tip, host, cx, Y(Math.max(v, 0))); });
+      hoverOut(hit, () => { bar.setAttribute("opacity", 1); tip.hidden = true; });
     });
   }
 
@@ -270,12 +334,12 @@
       if (down[i] > 0) { const hgt = Math.max(1, Y(-down[i]) - y0); bars.push(el("rect", { x, y: y0, width: bw, height: hgt, fill: downColor, rx: Math.min(2, bw / 2) }, svg)); }
       if (lab !== "" && lab !== null && lab !== undefined) el("text", { x: cx, y: H - 8, "text-anchor": "middle" }, svg, String(lab));
       const hit = el("rect", { x: cx - slot / 2, y: m.t, width: slot, height: ih, fill: "transparent" }, svg);
-      hit.addEventListener("pointermove", () => {
+      hoverIn(hit, () => {
         bars.forEach((b) => b.setAttribute("opacity", 0.75)); tip.replaceChildren(); html("div", "t", tip, o.tipTitle ? o.tipTitle(i) : String(lab));
         for (const [name, v, c] of [[o.upName, up[i], upColor], [o.downName, down[i], downColor]]) { const r = html("div", "r", tip), kk = html("span", "k", r), sw = html("i", "", kk); sw.style.setProperty("--c", c); kk.appendChild(document.createTextNode(name)); html("b", "", r, (o.tipFormat || fy)(v)); }
         place(tip, host, cx, m.t + 20);
       });
-      hit.addEventListener("pointerleave", () => { bars.forEach((b) => b.setAttribute("opacity", 1)); tip.hidden = true; });
+      hoverOut(hit, () => { bars.forEach((b) => b.setAttribute("opacity", 1)); tip.hidden = true; });
     });
   }
 
@@ -298,9 +362,9 @@
       el("text", { x: m.l - 8, y: y + 11, "text-anchor": "end", class: "ink" }, svg, r.label);
       el("text", { x: Math.max(x0, x1) + 5, y: y + 11, "text-anchor": "start", class: "ink" }, svg, r.text !== undefined ? r.text : o.format(r.value));
       const hit = el("rect", { x: 0, y: y - 3, width: W, height: rowH, fill: "transparent" }, svg);
-      hit.addEventListener("pointermove", (e) => { bar.setAttribute("opacity", 0.75); tip.replaceChildren(); html("div", "t", tip, r.label); const r2 = html("div", "r", tip); html("span", "k", r2, o.name || "Value"); html("b", "", r2, r.text !== undefined ? r.text : (o.tipFormat || o.format)(r.value));
+      hoverIn(hit, (e) => { bar.setAttribute("opacity", 0.75); tip.replaceChildren(); html("div", "t", tip, r.label); const r2 = html("div", "r", tip); html("span", "k", r2, o.name || "Value"); html("b", "", r2, r.text !== undefined ? r.text : (o.tipFormat || o.format)(r.value));
         for (const [k, v] of r.tip || []) { const r3 = html("div", "r", tip); html("span", "k", r3, k); html("b", "", r3, v); } const rect = svg.getBoundingClientRect(); place(tip, host, e.clientX - rect.left, y + 6); });
-      hit.addEventListener("pointerleave", () => { bar.setAttribute("opacity", 1); tip.hidden = true; });
+      hoverOut(hit, () => { bar.setAttribute("opacity", 1); tip.hidden = true; });
     });
   }
 
@@ -341,7 +405,7 @@
         el("line", { x1: X(point), x2: X(point), y1: y - 2, y2: y + h + 2, stroke: color, "stroke-width": 3, "stroke-linecap": "round" }, svg);
       }
       const hit = el("rect", { x: 0, y: y - 4, width: W, height: rowH, fill: "transparent" }, svg);
-      hit.addEventListener("pointermove", (e) => {
+      hoverIn(hit, (e) => {
         mark.setAttribute("opacity", 0.8); tip.replaceChildren(); html("div", "t", tip, r.label);
         const rows2 = r.low === r.high ? [["Value", fm(r.low)]] : [["Low", fm(r.low)], ["Middle", fm(point)], ["High", fm(r.high)]];
         if (o.ref) rows2.push(["Price against the middle", (o.ref.value / point - 1 >= 0 ? "+" : "−") + Math.abs((o.ref.value / point - 1) * 100).toFixed(0) + "%"]);
@@ -349,7 +413,7 @@
         if (r.text) html("div", "n", tip, r.text);
         const rect = svg.getBoundingClientRect(); place(tip, host, e.clientX - rect.left, y + 6);
       });
-      hit.addEventListener("pointerleave", () => { mark.setAttribute("opacity", 1); tip.hidden = true; });
+      hoverOut(hit, () => { mark.setAttribute("opacity", 1); tip.hidden = true; });
     });
   }
 
@@ -387,13 +451,13 @@
       if (iw / n > 28 || i % 2 === 0) el("text", { x: cx, y: H - 8, "text-anchor": "middle" }, svg, String(lab));
       if (o.total && ok(o.total.values[i])) el("circle", { cx, cy: Y(o.total.values[i]), r: 4, fill: css("--ink"), stroke: css("--surface"), "stroke-width": 1.5 }, svg);
       const hit = el("rect", { x: cx - slot / 2, y: m.t, width: slot, height: ih, fill: "transparent" }, svg);
-      hit.addEventListener("pointermove", () => {
+      hoverIn(hit, () => {
         tip.replaceChildren(); html("div", "t", tip, String(lab));
         for (const s of o.series) { if (!ok(s.values[i])) continue; const r = html("div", "r", tip), kk = html("span", "k", r), sw = html("i", "", kk); sw.style.setProperty("--c", s.color); kk.appendChild(document.createTextNode(s.name)); html("b", "", r, (o.tipFormat || fy)(s.values[i])); }
         if (o.total && ok(o.total.values[i])) { const r = html("div", "r", tip); html("span", "k", r, o.total.name); html("b", "", r, (o.tipFormat || fy)(o.total.values[i])); }
         place(tip, host, cx, m.t + 20);
       });
-      hit.addEventListener("pointerleave", () => { tip.hidden = true; });
+      hoverOut(hit, () => { tip.hidden = true; });
     });
   }
 
@@ -415,8 +479,8 @@
         const t = Math.min(1, Math.abs(c.value) / cap), fill = c.value >= 0 ? mix(mid, pos, t) : mix(mid, neg, t);
         const rect = el("rect", { x: m.l + cw * (k - 1) + 1, y: m.t + r * ch + 1, width: cw - 2, height: ch - 2, rx: 3, fill }, svg);
         if (cw >= 34) { const dark = t > 0.55; el("text", { x: m.l + cw * (k - 0.5), y: m.t + r * ch + 14, "text-anchor": "middle", style: `fill:${dark ? "#fff" : css("--ink-2")};font-size:10px` }, svg, (c.value * 100).toFixed(1)); }
-        rect.addEventListener("pointermove", (e) => { rect.setAttribute("stroke", css("--ink")); tip.replaceChildren(); html("div", "t", tip, `${y}-${String(k).padStart(2, "0")}`); const r2 = html("div", "r", tip); html("span", "k", r2, "Return"); html("b", "", r2, fmt.spct(c.value)); const b = svg.getBoundingClientRect(); place(tip, host, e.clientX - b.left, m.t + r * ch); });
-        rect.addEventListener("pointerleave", () => { rect.removeAttribute("stroke"); tip.hidden = true; });
+        hoverIn(rect, (e) => { rect.setAttribute("stroke", css("--ink")); tip.replaceChildren(); html("div", "t", tip, `${y}-${String(k).padStart(2, "0")}`); const r2 = html("div", "r", tip); html("span", "k", r2, "Return"); html("b", "", r2, fmt.spct(c.value)); const b = svg.getBoundingClientRect(); place(tip, host, e.clientX - b.left, m.t + r * ch); });
+        hoverOut(rect, () => { rect.removeAttribute("stroke"); tip.hidden = true; });
       }
     });
   }
@@ -460,13 +524,13 @@
         if (o.mark && o.mark(i, j)) el("rect", { x: x + 0.5, y: y + 0.5, width: Math.max(1, cw - 1), height: ch - 1, rx: 2, fill: "none", stroke: css("--ink"), "stroke-width": 1.5, "pointer-events": "none" }, svg);
         const text = o.cellText === false ? null : fm(v);
         if (text && cw >= 7 * text.length + 6) el("text", { x: x + cw / 2, y: y + ch / 2 + 4, "text-anchor": "middle", style: `fill:${dark(fill) ? "#fff" : css("--ink-2")};font-size:10px` }, svg, text);
-        cell.addEventListener("pointermove", (e) => {
+        hoverIn(cell, (e) => {
           cell.setAttribute("stroke", css("--ink")); tip.replaceChildren(); html("div", "t", tip, `${rl} · ${cl}`);
           const r2 = html("div", "r", tip); html("span", "k", r2, o.name || "Value"); html("b", "", r2, (o.tipFormat || fm)(v));
           for (const [k, t] of (o.tipRows ? o.tipRows(i, j) : [])) { const r3 = html("div", "r", tip); html("span", "k", r3, k); html("b", "", r3, t); }
           const b = svg.getBoundingClientRect(); place(tip, host, e.clientX - b.left, y);
         });
-        cell.addEventListener("pointerleave", () => { cell.removeAttribute("stroke"); tip.hidden = true; });
+        hoverOut(cell, () => { cell.removeAttribute("stroke"); tip.hidden = true; });
       });
     });
     // the scale: a gradient bar under the grid with its two ends and, for a diverging scale, the middle
@@ -522,12 +586,12 @@
     };
     const hide = () => { ring.setAttribute("visibility", "hidden"); tip.hidden = true; };
     let focus = 0;
-    overlay.addEventListener("pointermove", (e) => {
+    hoverIn(overlay, (e) => {
       const b = svg.getBoundingClientRect(), px = ((e.clientX - b.left) / b.width) * W, py = ((e.clientY - b.top) / b.height) * H;
       let best = -1, bd = 28 * 28; pts.forEach((p, i) => { const d = (X(p.x) - px) ** 2 + (Y(p.y) - py) ** 2; if (d < bd) { bd = d; best = i; } });
       if (best < 0) hide(); else show(best);
     });
-    overlay.addEventListener("pointerleave", hide);
+    hoverOut(overlay, hide);
     overlay.addEventListener("focus", () => show(focus));
     overlay.addEventListener("blur", hide);
     overlay.addEventListener("keydown", (e) => { if (e.key === "ArrowRight" || e.key === "ArrowDown") focus = (focus + 1) % pts.length; else if (e.key === "ArrowLeft" || e.key === "ArrowUp") focus = (focus + pts.length - 1) % pts.length; else return; e.preventDefault(); show(focus); });
@@ -569,7 +633,7 @@
       place(tip, host, px, m.t + 20);
     };
     const hide = () => { cross.setAttribute("visibility", "hidden"); tip.hidden = true; };
-    overlay.addEventListener("pointermove", (e) => show(e.clientX)); overlay.addEventListener("pointerleave", hide);
+    hoverIn(overlay, (e) => show(e.clientX)); hoverOut(overlay, hide);
     overlay.addEventListener("focus", () => show(svg.getBoundingClientRect().left + svg.getBoundingClientRect().width * 0.5)); overlay.addEventListener("blur", hide);
   }
 

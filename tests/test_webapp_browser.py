@@ -418,7 +418,7 @@ def test_a_strategy_that_ranks_tickers_cannot_be_run_on_one_ticker_and_one_that_
     assert "Works on each ticker alone" in page.inner_text("#s-body") and "Trades tab" in page.inner_text("#s-body")
     _run_and_wait(page)
     assert "1 ticker ·" in page.inner_text(".head .sub") and "buy and hold" in page.inner_text(".kpis")
-    assert page.locator(".kpis .tile").count() == 12 and page.locator(".earnrow .tile").count() == 6          # six headline tiles and six more measures of risk; the earnings row is the other six
+    assert page.locator(".kpis .tile").count() == 12 and page.locator(".earnrow .tile").count() == 11 and page.locator("[data-role=account] .tile").count() == 5          # six headline tiles and six more measures of risk; the earnings row is six more and "After your broker" five
 
 
 def test_the_earnings_and_trades_tabs_show_dollars_round_trips_and_buys_and_sells(page):
