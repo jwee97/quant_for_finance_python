@@ -25,6 +25,7 @@ nav:
       - "Scenarios: thousands of possible futures, and how far to trust each way of making them": scenarios.md
       - "Company fundamentals: studying factors, searching for alphas, and counting honestly": fundamentals.md
       - "Option models: what a chain implies, what an exotic is worth, what a hedge costs": option_models.md
+      - "Review of the tabs' algorithms for personal use": algorithm_review_2026_11.md
       - Glossary: glossary.md
       - Chapter map: chapter_map.md
   - Technique guides: techniques/index.md

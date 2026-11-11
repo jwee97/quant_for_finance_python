@@ -110,6 +110,8 @@ def _engine(config, spec: PipelineSpec, models=()) -> BacktestEngine:
         overrides["min_assets"] = int(spec.execution["min_assets"])
     if spec.execution.get("cost_bps") is not None:                         # one-way cost (fees plus slippage) of trading the whole book, in place of the platform's per-asset costs
         overrides["cost_model"] = LinearCostModel(cost_bps=float(spec.execution["cost_bps"]))
+    if spec.execution.get("holding_cost"):                                 # asset -> yearly cost of holding a position of either side (a fraction of its size)
+        overrides["holding_cost"] = {str(k): float(v) for k, v in dict(spec.execution["holding_cost"]).items()}
     return replace(engine, **overrides) if overrides else engine
 
 

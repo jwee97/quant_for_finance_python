@@ -136,6 +136,7 @@ class BacktestEngine:
     target_vol: float | None = None
     vol_lookback: int = 63
     max_leverage: float = 1.5
+    holding_cost: dict | None = None        # asset -> a yearly cost of HOLDING a position of either side, as a fraction of its size (the rolls of a futures contract); charged daily on |weight held|
 
     @classmethod
     def from_config(cls, config) -> "BacktestEngine":
@@ -197,6 +198,10 @@ class BacktestEngine:
         gross = gross.where(valid)
 
         net, costs = self.cost_model.apply(gross, traded)
+        if self.holding_cost:                                                    # a cost of being in a position, long or short, whatever is traded: unlike a return it never helps a short
+            rate = pd.Series(self.holding_cost, dtype=float).reindex(held.columns).fillna(0.0).clip(lower=0.0) / float(self.annualisation)
+            drag = (held.shift(1).abs() * rate).sum(axis=1, skipna=True).reindex(net.index).fillna(0.0)
+            net, costs = net - drag, costs + drag
         gross, _ = stop_at_ruin(gross)
         net, ruined_on = stop_at_ruin(net)
         if ruined_on is not None:                                                # nothing is traded, held or paid for after the account is gone

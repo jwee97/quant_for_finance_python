@@ -580,8 +580,27 @@ def _real_bundle_for(curves: dict[str, CurveData]):
     return built
 
 
+def roll_costs(specs: dict, curves: dict | None = None) -> dict:
+    """What rolling a position costs for each root, as a yearly fraction of the position: every roll pays the bid-ask of the calendar spread (``spread_ticks`` ticks) and a commission on each of its
+    two legs, per contract, and a root rolls once for each contract month it lists. The contract's value is the latest front price times the multiplier. A cost of holding either side: a short
+    pays it too. A root whose contract value is unknown (no multiplier) is left out."""
+    out = {}
+    for root, spec in specs.items():
+        if not all(hasattr(spec, k) for k in ("spread_ticks", "tick_size", "multiplier", "commission", "months")):
+            continue                                                                                # contract terms unknown: nothing to work a roll cost out from
+        table = getattr((curves or {}).get(root), "long", None)                                       # a root with no contract table has no price to value a contract at, and pays nothing here
+        last = table.sort_values(["date", "ttm"]).groupby("date").first()["price"].iloc[-1] if table is not None and len(table) else None
+        value = float(last) * spec.multiplier if last is not None and np.isfinite(last) and last > 0 and spec.multiplier > 0 else None
+        per_roll = spec.spread_ticks * spec.tick_size * spec.multiplier + 2.0 * spec.commission
+        rolls = max(len(spec.months), 1)
+        if value is None or value <= 0:
+            continue
+        out[root] = {"per_roll_dollars": float(per_roll), "contract_value": value, "rolls_a_year": int(rolls), "yearly": float(per_roll / value * rolls)}
+    return out
+
+
 def run_futures_strategy(config, strategy: str, roots: list[str] | None = None, frequency: str | None = None, lookback: int | None = None, target_vol: float | None = None, cost_bps: float = 2.0,
-                         as_of=None, curves: dict[str, CurveData] | None = None, params: dict | None = None) -> dict:
+                         as_of=None, curves: dict[str, CurveData] | None = None, params: dict | None = None, roll_cost: bool = True) -> dict:
     """Run one of ``FUTURES_STRATEGIES`` through the platform pipeline: on the SIMULATED roots, or, given ``curves`` (``{root: CurveData}`` of downloaded or user files), on those real contract tables.
     The signal is traded as written (the calibrated forecast needs more history than the simulation has); ``cost_bps`` is the one-way cost of trading the whole book. On simulated prices the result
     checks the machinery, not the strategy; on real ones it is a backtest of the excess return of holding the nearest contract, with the limits listed in its notes."""
@@ -623,20 +642,25 @@ def run_futures_strategy(config, strategy: str, roots: list[str] | None = None, 
         MODELS.create(spec["model"], **settings)
     except (TypeError, ValueError, KeyError) as error:
         raise ValueError(f"{spec['label']}: {error}") from None
-    out = run_strategy(subset_bundle(bundle, sorted(chosen)), config, spec["model"], settings, rebalance=frequency, target_vol=target_vol, cost_bps=float(cost_bps), label=spec["label"],
-                       allocator=spec["allocator"])
-    out.update({"strategy": strategy, "label": spec["label"], "text": spec["text"], "roots": sorted(chosen), "cost_bps": float(cost_bps), "source": "real" if real else "simulated"})
+    sub = subset_bundle(bundle, sorted(chosen))
+    held = curves if real else {r: simulated_curve(r, as_of) for r in chosen}                         # the contract tables the front price is read from
+    rolls = roll_costs({r: held[r].spec for r in chosen}, held) if roll_cost else {}
+    out = run_strategy(sub, config, spec["model"], settings, rebalance=frequency, target_vol=target_vol, cost_bps=float(cost_bps), label=spec["label"],
+                       allocator=spec["allocator"], holding_cost={r: v["yearly"] for r, v in rolls.items()} or None)
+    out.update({"strategy": strategy, "label": spec["label"], "text": spec["text"], "roots": sorted(chosen), "cost_bps": float(cost_bps), "source": "real" if real else "simulated",
+                "roll_costs": [{"root": r, **v} for r, v in sorted(rolls.items())]})
     if real:
         out["coverage"] = report
         out["notes"] = [f"{r}: {v['front_days']} days from {v['first']} to {v['last']} on which the nearest contract is the front of the market (of {v['file_days']} in the file, {v['contracts']} contracts)." for r, v in report.items()]
         out["notes"] += ["The result is the excess return of holding the nearest contract of each root and rolling it 5 days before it expires, from the prices in the files (settlements where the source gives them): "
                          "a backtest on real prices, not a forecast.",
-                         "Costs are the one-way basis points above on the traded notional; margin, funding, the bid-ask spread of the roll and the capacity of each market are not modelled.",
+                         "Costs are the one-way basis points above on the traded notional" + (", plus the cost of rolling each contract (the calendar spread's bid-ask and two commissions, every roll, on the size held)"
+                                                                                               if rolls else "") + "; margin, funding and the capacity of each market are not modelled.",
                          "Weekends are folded into Monday's return and an exchange holiday is held flat for at most 5 days. Only the dates on which the file shows the front of the market are used, so a gap in a file "
                          "is a gap in the backtest."]
     else:
         out["notes"] = ["The futures are a Schwartz-Smith model simulation: the result checks that carry, roll and costs are booked correctly, not whether the strategy earns money.",
-                        "Returns are the excess return of holding the front contract and rolling it; margin and funding are not modelled."]
+                        "Returns are the excess return of holding the front contract and rolling it" + (", less the cost of each roll on the size held" if rolls else "") + "; margin and funding are not modelled."]
     return out
 
 

@@ -89,7 +89,8 @@ def _risk_views(result, net: pd.Series, idx: pd.Index) -> dict:
 
 
 def run_strategy(bundle: MarketBundle, config, model: str, params: dict | None = None, rebalance: str | None = None, target_vol: float | None = None, regime: str | None = None,
-                 cost_bps: float | None = None, label: str | None = None, allocator: str | None = None, min_assets: int = 1, n_trials: int = 1, validate: bool = False) -> dict:
+                 cost_bps: float | None = None, label: str | None = None, allocator: str | None = None, min_assets: int = 1, n_trials: int = 1, validate: bool = False,
+                 holding_cost: dict | None = None) -> dict:
     """Run ``model`` on ``bundle`` and return ``compact_result`` plus the spec that ran. ``rebalance`` daily/weekly/monthly (default: the model's own), ``target_vol`` an annual volatility target
     (default: the platform's), ``regime`` the name of a regime detector, which also switches the volatility target to the regime's, ``cost_bps`` the one-way cost of trading the whole book."""
     spec: dict = {"name": label or model, "models": [{"name": model, "params": dict(params or {})}], "execution": {"min_assets": int(min_assets)},
@@ -102,6 +103,8 @@ def run_strategy(bundle: MarketBundle, config, model: str, params: dict | None =
         if not 0.0 <= float(cost_bps) <= 500.0:
             raise ValueError("fees plus slippage must be between 0 and 500 basis points")
         spec["execution"]["cost_bps"] = float(cost_bps)
+    if holding_cost:
+        spec["execution"]["holding_cost"] = {str(k): float(v) for k, v in holding_cost.items()}
     if allocator:
         spec["allocation"] = {"allocator": allocator}
     if regime:
