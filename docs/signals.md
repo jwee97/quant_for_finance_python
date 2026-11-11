@@ -53,7 +53,7 @@ The platform's own 15 ETF files are a fixed dataset that ends when it was built.
 * The tiles show the paper value, the same instruments held in equal weights over the same days, the worst fall, the costs paid and a Sharpe ratio, which is withheld until there are 60 days.
 * The table shows what the latest snapshot says to hold and the trade that would take the paper holdings there. It is a calculation, not an order.
 
-Fills are at the close with no slippage beyond the cost, no borrowing cost for shorts and no margin, so a real account would do somewhat worse. Set the capital, cost and long-only choice under *4. Paper portfolio*; they apply from the next run and the whole paper history is recomputed with them.
+Shorts of stocks and ETFs pay a fee for borrowing the shares (1% a year of the short positions by default; futures have none). Fills are at the close with no slippage beyond the cost and no margin, and a crypto short is scored on the coin's price alone, so a real account would do somewhat differently. Set the capital, cost, borrow fee and long-only choice under *4. Paper portfolio*; they apply from the next run and the whole paper history is recomputed with them.
 
 ## The rules
 

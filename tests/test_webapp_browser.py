@@ -115,15 +115,17 @@ def test_a_backtest_draws_every_chart_and_the_controls_work(page):
     assert page.locator(".kpis .tile").count() == 12 and page.locator(".tile.hero .value").inner_text() not in ("", "n/a")          # six headline tiles and six more measures of risk
     assert page.locator("svg.chart").count() >= 7
     assert page.locator("#results .legend").count() >= 1 and page.locator(".flag").count() >= 5
-    first_equity = page.locator("svg.chart").first.inner_html()
+    equity = page.locator(".chartcard:has(.seg button:has-text('Log')) svg.chart").first                 # the growth chart is the one with the Log switch (the buy-and-sell chart sits above it)
+    first_equity = equity.inner_html()
     page.click(".chartcard .seg button:has-text('Log')")
-    assert page.locator("svg.chart").first.inner_html() != first_equity
+    assert equity.inner_html() != first_equity
     page.click("button:has-text('5y')")
     page.wait_for_selector(".kpis")
     assert "Window starts" in page.inner_text("#results")
     page.click(".chartcard:nth-of-type(2) .seg button:has-text('Table')")
     assert page.locator(".chartcard table.data").count() >= 1
-    box = page.locator("svg.chart").first.bounding_box()
+    equity.scroll_into_view_if_needed()
+    box = equity.bounding_box()
     page.mouse.move(box["x"] + box["width"] * 0.5, box["y"] + 100)
     page.wait_for_selector(".tip:not([hidden])")
     assert "$" in page.inner_text(".tip:not([hidden])")
@@ -418,6 +420,10 @@ def test_a_strategy_that_ranks_tickers_cannot_be_run_on_one_ticker_and_one_that_
     assert "Works on each ticker alone" in page.inner_text("#s-body") and "Trades tab" in page.inner_text("#s-body")
     _run_and_wait(page)
     assert "1 ticker ·" in page.inner_text(".head .sub") and "buy and hold" in page.inner_text(".kpis")
+    act = page.locator("[data-role=actions]")
+    assert act.count() == 1 and "What to buy and sell" in act.inner_text() and "the last day of the data" in act.inner_text() and act.locator("[data-role=actions-stale]").count() == 1, "the test prices end years ago, and the card says so"
+    assert any(mark in act.locator("[data-role=actions-orders]").inner_text() for mark in ("▲ Buy", "▼ Sell")) and "When it bought and sold" in act.inner_text() and act.locator("[data-role=actions-chart] svg.chart").count() == 1
+    assert act.locator("select[data-role=actions-ticker] option").count() >= 1 and ("It holds nothing" in act.inner_text() or act.locator("[data-role=actions-holdings] tbody tr").count() >= 1)
     assert page.locator(".kpis .tile").count() == 12 and page.locator(".earnrow .tile").count() == 11 and page.locator("[data-role=account] .tile").count() == 5          # six headline tiles and six more measures of risk; the earnings row is six more and "After your broker" five
 
 

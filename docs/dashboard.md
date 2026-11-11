@@ -113,6 +113,17 @@ You type the Yahoo-style symbol and the app translates it:
 - Today's bar is never used: it is still being drawn. If a refresh fails, the saved copy is used and the ticker carries a note saying so.
 - The depth of history the free plan returns is not documented; a short history is reported, and the strategies need at least 300 days.
 
+## What to buy and sell
+
+Under the headline numbers of a backtest, and under the tuned settings on the Tune tab, a card says what the rules do in the terms of an account:
+
+* **Its latest buys and sells**: the date of the last rebalance and each order of it, ▲ Buy or ▼ Sell, with the dollar amount on your capital, about how many shares that is at that day's price, and the position afterwards.
+* **What it holds** on the last day of the data: each position, long or short, as a share of the account, in dollars and in shares.
+* How often it has traded, so you know roughly when its next orders are due.
+* **When it bought and sold**: the price of a ticker with every buy and sell of the backtest marked on the day it was made. Choose the ticker above the chart, tap or point at a mark for its date and price, and zoom in to tell close ones apart.
+
+The card speaks for the **last day of the data**, and warns when that is more than five days ago: tick *Download new prices* before reading it as today's. It is what the rules did on past prices, not advice. For a strategy you want to follow every day, with a record of what it said, use the Signals tab.
+
 ## After your broker
 
 A backtest charges a trading cost in proportion to what is traded. A personal account pays three more things, and the **Earnings** tab shows what is left after them under *After your broker*:
@@ -245,7 +256,7 @@ Experiments, datasets and models are saved under `artifacts/ml/` (SQLite for the
 
 Every chart shows its numbers when you point at it. On a phone or tablet, **tap** a chart: the tooltip appears and stays until you tap somewhere else, and on a line chart you can drag a finger sideways to move along it (up and down still scrolls the page). One tooltip is open at a time.
 
-Line charts of twenty points or more have a small bar above them: **+** and **−** zoom in and out around the middle, **◀** and **▶** move the window, **Reset** shows everything, and the bar says how many points are in view. Two fingers pinch to zoom on a touch screen; on a computer hold Ctrl (or pinch on a trackpad) and turn the wheel to zoom around the pointer; with the keyboard, focus the chart and press **+**, **−** or **0**. The y axis rescales to what is in view, so a quiet month is not flattened by a crash elsewhere in the history. The *Table* button of a chart card still gives every number.
+Line charts of twenty points or more have a small bar above them: **+** and **−** zoom in and out around the middle, **◀** and **▶** move the window, **Reset** shows everything, and the bar says how many points are in view. Two fingers pinch to zoom on a touch screen; on a computer hold Ctrl (or pinch on a trackpad) and turn the wheel to zoom around the pointer; with the keyboard, focus the chart and press **+**, **−** or **0**. The y axis rescales to what is in view, so a quiet month is not flattened by a crash elsewhere in the history. The Forecast tab's fan opens already zoomed on the forecast and the weeks before it; *Reset* shows the whole history. The *Table* button of a chart card still gives every number.
 
 ## Keyboard and screen readers
 

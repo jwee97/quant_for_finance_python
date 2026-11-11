@@ -186,7 +186,7 @@ def snapshot(follow: dict, rows: list[dict], skipped: list[dict], fresh: dict, i
 
 
 # ------------------------------------------------------------------------------------------------------------------ the paper portfolio
-PAPER_DEFAULTS = {"cost_bps": 5.0, "long_only": False, "capital": 100_000.0}
+PAPER_DEFAULTS = {"cost_bps": 5.0, "long_only": False, "capital": 100_000.0, "borrow_pct": 1.0}
 MIN_DAYS_FOR_SHARPE = 60
 
 
@@ -208,10 +208,11 @@ def target_weights(rows: list[dict], long_only: bool = False) -> dict:
     return {k: (v / gross if gross > 0 else 0.0) for k, v in net.items()}
 
 
-def paper_portfolio(snapshots: list[dict], prices: pd.DataFrame, cost_bps: float = 5.0, long_only: bool = False, capital: float = 100_000.0) -> dict:
+def paper_portfolio(snapshots: list[dict], prices: pd.DataFrame, cost_bps: float = 5.0, long_only: bool = False, capital: float = 100_000.0, borrow_pct: float = 0.0) -> dict:
     """The follow traded on paper, from the ledger alone. Each snapshot that could have been traded (the first of its data day, issued before its entry close, as in ``track_record``) sets the
     target weights; they are bought at the close after the snapshot's data day and held until the next snapshot's entry. Every change of weight pays ``cost_bps`` of what is traded. ``baseline`` is
-    the same instruments held in equal weights over the same days. ``target`` is what the latest snapshot says to hold and ``trades`` what that changes, whether or not it could be scored yet."""
+    the same instruments held in equal weights over the same days. ``target`` is what the latest snapshot says to hold and ``trades`` what that changes, whether or not it could be scored yet.
+    ``borrow_pct`` is a yearly fee, in per cent of the short positions, for borrowing the shares held short (stocks and ETFs; futures and perpetuals have none)."""
     index = prices.index
     rets = prices.pct_change().replace([np.inf, -np.inf], np.nan).fillna(0.0)
     seen, plan = set(), []
@@ -228,9 +229,9 @@ def paper_portfolio(snapshots: list[dict], prices: pd.DataFrame, cost_bps: float
     held = plan[-1][1] if plan else {}
     keys = sorted(set(target) | set(held))
     trades = [{"asset": k, "from": held.get(k, 0.0), "to": target.get(k, 0.0), "change": target.get(k, 0.0) - held.get(k, 0.0), "amount": (target.get(k, 0.0) - held.get(k, 0.0)) * capital} for k in keys]
-    out = {"cost_bps": float(cost_bps), "long_only": bool(long_only), "capital": float(capital), "target": [{"asset": k, "weight": target[k], "amount": target[k] * capital} for k in sorted(target)],
+    out = {"cost_bps": float(cost_bps), "long_only": bool(long_only), "capital": float(capital), "borrow_pct": float(borrow_pct), "target": [{"asset": k, "weight": target[k], "amount": target[k] * capital} for k in sorted(target)],
            "trades": [t for t in trades if abs(t["change"]) > 1e-9], "target_as_of": latest["as_of"] if latest else None, "days": 0, "curve": None, "stats": None,
-           "note": "Sizes are the net share of rules long or short, scaled to be fully invested without leverage. Fills are at the close, with no slippage beyond the cost per trade, no borrowing cost for shorts and no margin."}
+           "note": "Sizes are the net share of rules long or short, scaled to be fully invested without leverage. Fills are at the close, with no slippage beyond the cost per trade and no margin; shorts of stocks pay the borrow fee, and a crypto short is scored on the coin's price alone."}
     if not plan or plan[0][0] + 1 >= len(index):
         return out
     start = plan[0][0]
@@ -240,8 +241,11 @@ def paper_portfolio(snapshots: list[dict], prices: pd.DataFrame, cost_bps: float
     k, current, previous = 0, plan[0][1], {}
     pending_cost = sum(abs(current.get(c, 0.0)) for c in cols) * cost_bps / 1e4
     turnover += sum(abs(current.get(c, 0.0)) for c in cols)
+    borrow = 0.0
     for t in days:
-        r = sum(current.get(c, 0.0) * float(rets[c].iloc[t]) for c in cols) - pending_cost
+        fee = sum(-min(current.get(c, 0.0), 0.0) for c in cols) * borrow_pct / 100.0 / 252.0
+        borrow += fee
+        r = sum(current.get(c, 0.0) * float(rets[c].iloc[t]) for c in cols) - pending_cost - fee
         costs += pending_cost
         pending_cost = 0.0
         value.append(value[-1] * (1.0 + r))
@@ -258,6 +262,6 @@ def paper_portfolio(snapshots: list[dict], prices: pd.DataFrame, cost_bps: float
     sharpe = float(daily.mean() / daily.std(ddof=1) * np.sqrt(252)) if n >= MIN_DAYS_FOR_SHARPE and daily.std(ddof=1) > 0 else None
     out.update(days=n, curve={"dates": [str(index[start].date())] + [str(index[t].date()) for t in days], "portfolio": [float(v) for v in value], "baseline": [float(v) for v in base]},
                stats={"total_return": float(value[-1] - 1.0), "baseline_return": float(base[-1] - 1.0), "volatility": float(daily.std(ddof=1) * np.sqrt(252)) if n > 1 else None, "sharpe": sharpe,
-                      "max_drawdown": float(np.min(np.asarray(value) / peak - 1.0)), "turnover": float(turnover), "costs": float(costs), "rebalances": len(plan), "value": float(value[-1] * capital),
+                      "max_drawdown": float(np.min(np.asarray(value) / peak - 1.0)), "turnover": float(turnover), "costs": float(costs), "borrow": float(borrow), "rebalances": len(plan), "value": float(value[-1] * capital),
                       "sharpe_needs_days": MIN_DAYS_FOR_SHARPE})
     return out

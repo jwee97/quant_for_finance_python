@@ -250,7 +250,7 @@
         if (rw && id !== d.evaluation.baseline) bands.push({ name: `Random walk, ${F.show.range}% range`, color: css("--muted"), opacity: 0.1, lo: mk(d.evaluation.baseline).q(lowQ), hi: mk(d.evaluation.baseline).q(highQ) });
         bands.push({ name: `${F.show.range}% range`, color: css("--s1"), opacity: 0.14, lo: m.q(lowQ), hi: m.q(highQ) }, { name: "Middle 50%", color: css("--s1"), opacity: 0.26, lo: m.q("0.25"), hi: m.q("0.75") });
         C.line(b, { dates, series: [{ name: "Price", color: css("--ink"), values: closes.concat(Array(d.horizon).fill(null)) }, { name: "Median forecast", color: css("--s1"), values: m.q("0.5") }], bands,
-          vlines: [{ x: d.asof, label: "today" }], yFormat: money, tipFormat: money, height: 330, label: `${d.ticker} price and the forecast range of ${shortOf(id, d)}`, legend: true });
+          vlines: [{ x: d.asof, label: "today" }], yFormat: money, tipFormat: money, height: 330, window: [Math.max(0, nh - 1 - Math.max(d.horizon, 10)), dates.length - 1], label: `${d.ticker} price and the forecast range of ${shortOf(id, d)}`, legend: true });
       },
       table: (b) => {
         const f = d.now.methods[F.show.method].fan, steps = [1, 2, 3, 5, 10, 15, 21, 42, 63].filter((n) => n <= d.horizon);

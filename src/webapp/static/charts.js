@@ -79,11 +79,13 @@
   let sticky = null;
   function release() { if (sticky && sticky._hide) sticky._hide(); sticky = null; }
   function hoverIn(node, show) {
-    const on = (e) => { if (sticky && sticky !== node) release(); if (e.pointerType && e.pointerType !== "mouse") sticky = node; show(e); };
+    const on = (e) => { if (sticky && sticky !== node) release(); if (e.pointerType && e.pointerType !== "mouse") sticky = node; if (e.type === "pointerdown") node._pointed = performance.now(); show(e); };
     node.addEventListener("pointermove", on);
     node.addEventListener("pointerdown", on);
     if (node.style) node.style.touchAction = "pan-y";                                          // a finger dragged sideways moves the crosshair; up and down still scrolls the page
   }
+  /* The focus a chart gets from the keyboard shows a tooltip at a default place. A click or a tap focuses the chart too, and must not: the pointer has just said where to look. */
+  const pointed = (node) => performance.now() - (node._pointed || 0) < 800;
   function hoverOut(node, hide) {
     node._hide = hide;
     node.addEventListener("pointerleave", (e) => { if (!e.pointerType || e.pointerType === "mouse") { hide(e); if (sticky === node) sticky = null; } });
@@ -116,7 +118,10 @@
   function line(host, o) {
     const n = (Array.isArray(o.xs) ? o.xs : o.dates).length;
     if (n < ZOOMABLE || o.zoom === false) { host._zoom = null; return drawLine(host, o); }
-    if (!host._zoom || host._zoom.n !== n) host._zoom = { n, a: 0, b: n - 1 };
+    if (!host._zoom || host._zoom.n !== n) {                                                   // ``o.window`` ([first, last] positions) is where a chart opens: the part worth reading first, with the rest a zoom out away
+      const w = Array.isArray(o.window) ? [Math.max(0, Math.min(n - MIN_WINDOW, Math.round(o.window[0]))), Math.max(MIN_WINDOW - 1, Math.min(n - 1, Math.round(o.window[1])))] : [0, n - 1];
+      host._zoom = { n, a: Math.min(w[0], w[1] - (MIN_WINDOW - 1)), b: w[1] };
+    }
     const z = host._zoom, full = z.a === 0 && z.b === n - 1;
     const cut = (arr) => (arr ? arr.slice(z.a, z.b + 1) : arr);
     const view = full ? o : { ...o, dates: cut(o.dates), xs: Array.isArray(o.xs) ? cut(o.xs) : o.xs, series: o.series.map((s) => ({ ...s, values: cut(s.values) })), bands: (o.bands || []).map((b) => ({ ...b, lo: cut(b.lo), hi: cut(b.hi) })),
@@ -274,7 +279,7 @@
     const hide = () => { cross.setAttribute("visibility", "hidden"); dots.forEach((g) => g.setAttribute("visibility", "hidden")); tip.hidden = true; };
     hoverIn(overlay, (e) => show(e.clientX));
     hoverOut(overlay, hide);
-    overlay.addEventListener("focus", () => show(svg.getBoundingClientRect().left + svg.getBoundingClientRect().width * 0.5));
+    overlay.addEventListener("focus", () => !pointed(overlay) && show(svg.getBoundingClientRect().left + svg.getBoundingClientRect().width * 0.5));
     overlay.addEventListener("blur", hide);
   }
 
@@ -592,7 +597,7 @@
       if (best < 0) hide(); else show(best);
     });
     hoverOut(overlay, hide);
-    overlay.addEventListener("focus", () => show(focus));
+    overlay.addEventListener("focus", () => !pointed(overlay) && show(focus));
     overlay.addEventListener("blur", hide);
     overlay.addEventListener("keydown", (e) => { if (e.key === "ArrowRight" || e.key === "ArrowDown") focus = (focus + 1) % pts.length; else if (e.key === "ArrowLeft" || e.key === "ArrowUp") focus = (focus + pts.length - 1) % pts.length; else return; e.preventDefault(); show(focus); });
     void dots;
@@ -634,7 +639,7 @@
     };
     const hide = () => { cross.setAttribute("visibility", "hidden"); tip.hidden = true; };
     hoverIn(overlay, (e) => show(e.clientX)); hoverOut(overlay, hide);
-    overlay.addEventListener("focus", () => show(svg.getBoundingClientRect().left + svg.getBoundingClientRect().width * 0.5)); overlay.addEventListener("blur", hide);
+    overlay.addEventListener("focus", () => !pointed(overlay) && show(svg.getBoundingClientRect().left + svg.getBoundingClientRect().width * 0.5)); overlay.addEventListener("blur", hide);
   }
 
   window.Charts = { line, columns, mirror, hbars, ranges, stack, heatmap, matrix, scatter, histogram, fmt, html, el, niceTicks };

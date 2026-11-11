@@ -51,3 +51,40 @@ def test_a_futures_backtest_pays_for_its_rolls_and_says_so():
     assert with_rolls["metrics"]["cagr"] < without["metrics"]["cagr"] and with_rolls["metrics"]["ann_cost_bps"] > without["metrics"]["ann_cost_bps"]
     assert with_rolls["metrics"]["gross_sharpe"] == pytest.approx(without["metrics"]["gross_sharpe"]), "the gross return is the same book"
     assert "less the cost of each roll" in " ".join(with_rolls["notes"]) and "less the cost of each roll" not in " ".join(without["notes"])
+
+
+def test_a_short_earns_its_carry_and_a_long_does_not():
+    """What a short held through a perpetual future collects (its funding) is credited to the short positions only, on the size held the day before, and is part of the return before costs."""
+    days = pd.bdate_range("2024-01-01", periods=40)
+    prices = pd.DataFrame({"A": 100.0 * np.cumprod(np.full(40, 1.001)), "B": 50.0 * np.cumprod(np.full(40, 0.999))}, index=days)
+    weights = pd.DataFrame({"A": 0.5, "B": -0.5}, index=days)
+    carry = pd.DataFrame({"A": 0.0004, "B": 0.0002}, index=days)
+
+    def run(short_carry):
+        engine = BacktestEngine(signal_lag=0, rebalance="daily", weight_drift=False, min_assets=1, cost_model=LinearCostModel(cost_bps=0.0), short_carry=short_carry)
+        return engine.run(weights, prices.pct_change(), name="t")
+
+    plain, funded = run(None), run(carry)
+    gap = (funded.net_returns - plain.net_returns).dropna()
+    assert gap[gap != 0].to_numpy() == pytest.approx(0.5 * 0.0002), "only B is short, so only B's carry is earned, on half the book"
+    assert (funded.gross_returns - plain.gross_returns).dropna().abs().sum() == pytest.approx(gap.abs().sum()) and float(funded.costs.sum()) == 0.0
+    paying = (run(-carry).net_returns - plain.net_returns).dropna()
+    assert paying[paying != 0].to_numpy() == pytest.approx(-0.5 * 0.0002), "negative funding is paid by the short"
+    long_only = BacktestEngine(signal_lag=0, rebalance="daily", weight_drift=False, min_assets=1, cost_model=LinearCostModel(cost_bps=0.0), short_carry=carry).run(weights.abs(), prices.pct_change(), name="t")
+    assert (long_only.net_returns - BacktestEngine(signal_lag=0, rebalance="daily", weight_drift=False, min_assets=1, cost_model=LinearCostModel(cost_bps=0.0)).run(weights.abs(), prices.pct_change(), name="t").net_returns).abs().max() == 0.0
+
+
+def test_a_crypto_short_is_scored_through_the_perpetual_and_a_long_only_strategy_is_unchanged():
+    from src.assets import crypto_analytics as ca
+    from src.framework.crypto_bundle import load_crypto_bundle
+
+    config = load_config()
+    with_funding = ca.run_crypto_strategy(config, "spot_momentum", ["BTC", "ETH"])
+    without = ca.run_crypto_strategy(config, "spot_momentum", ["BTC", "ETH"], short_funding=False)
+    assert with_funding["short_funding"] is True and without["short_funding"] is False and "held through the perpetual" in " ".join(with_funding["notes"])
+    net_short = min(with_funding["exposure"]["net"]) < -1e-6
+    assert (with_funding["equity"] != without["equity"]) == net_short, "funding changes the result exactly when the strategy was ever net short"
+    carry = ca.run_crypto_strategy(config, "funding_carry", ["BTC"])
+    assert carry["short_funding"] is False, "the carry strategies already trade the index that holds the funding"
+    returns = load_crypto_bundle(config).returns
+    assert {"BTC_CARRY", "ETH_CARRY"} <= set(returns.columns) and returns["BTC_CARRY"].abs().max() < 0.2

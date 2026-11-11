@@ -247,7 +247,10 @@ class SignalsApi:
                 previous = next((s for s in reversed(earlier) if s["as_of"] != snap["as_of"]), None) or (earlier[-1] if earlier else None)
                 self.book.record(snap)
                 record = sb.track_record(earlier + [snap], prices) if prices is not None else None
-                paper = sb.paper_portfolio(earlier + [snap], prices, **self.book.settings()["paper"]) if prices is not None else None
+                rules = dict(self.book.settings()["paper"])
+                if follow["market"] != "equity":
+                    rules["borrow_pct"] = 0.0                                                         # borrowing shares is a cost of shorting stocks; a futures or perpetual short has none
+                paper = sb.paper_portfolio(earlier + [snap], prices, **rules) if prices is not None else None
                 entry.update(paper=paper, snapshot=snap, consensus=sb.consensus(rows), changes=sb.changes(previous, snap), compared_with=previous and {"issued": previous["issued"], "as_of": previous["as_of"]},
                              record=record, snapshots=len(earlier) + 1)
             except (ApiError, UniverseError, BookError, ValueError, KeyError, OSError) as error:

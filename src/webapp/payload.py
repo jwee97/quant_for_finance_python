@@ -232,6 +232,61 @@ def account_section(net: pd.Series, weights: pd.DataFrame, traded: pd.DataFrame,
             "note": "Not modelled: whole shares, taxes, interest earned on idle cash and margin calls. The borrow fee is one rate for every short; hard-to-borrow shares cost far more."}
 
 
+def actions_section(weights: pd.DataFrame, traded: pd.DataFrame, prices: pd.DataFrame, value_now: float, charts: int = 8, points: int = 700) -> dict:
+    """What the strategy says to do, in the terms of an account: what it holds on the last day of the data, the buys and sells of its latest rebalance, when it traded before, and for the tickers it
+    traded most a price history with every buy and sell marked on it. ``weights`` are the positions held (fractions of the account), ``traded`` the changes the rebalancing made, ``value_now`` the
+    account's value on the last day. A change under a quarter of a percent of the account is drift, not a decision, and is left out.
+
+    The last day is the last day of the DATA: a position shown here was taken at that day's close. Whether it is still what the strategy would hold today depends on how old the data is."""
+    eps, decision = 1e-4, 0.0025
+    w = weights.fillna(0.0)
+    orders = traded.reindex(index=w.index, columns=w.columns).fillna(0.0)
+    px = prices.reindex(index=w.index, columns=w.columns)
+    last_px = px.ffill().iloc[-1]
+
+    def shares(amount: float, price) -> float | None:
+        return float(round(amount / price, 2)) if price is not None and np.isfinite(price) and price > 0 else None
+
+    holdings = []
+    for ticker, weight in w.iloc[-1].items():
+        if abs(weight) > eps:
+            price = float(last_px[ticker]) if np.isfinite(last_px[ticker]) else None
+            holdings.append({"ticker": str(ticker), "side": "long" if weight > 0 else "short", "weight": float(weight), "amount": float(weight * value_now), "price": price, "shares": shares(abs(weight) * value_now, price)})
+    holdings.sort(key=lambda h: -abs(h["weight"]))
+    big = orders.abs() >= decision
+    days = w.index[big.any(axis=1).to_numpy()]
+    latest = None
+    if len(days):
+        day = days[-1]
+        rows = []
+        for ticker, x in orders.loc[day].items():
+            if abs(x) >= decision:
+                price = px.at[day, ticker]
+                price = float(price) if np.isfinite(price) else None
+                rows.append({"ticker": str(ticker), "side": "buy" if x > 0 else "sell", "size": float(abs(x)), "amount": float(abs(x) * value_now), "price": price, "shares": shares(abs(x) * value_now, price),
+                             "to": float(w.at[day, ticker])})
+        latest = {"date": str(day.date()), "days_ago": int(len(w.index) - 1 - w.index.get_loc(day)), "orders": sorted(rows, key=lambda r: -r["size"])}
+    gaps = np.diff([w.index.get_loc(d) for d in days]) if len(days) > 1 else np.array([])
+    markers = []
+    for ticker in big.sum().sort_values(ascending=False).index[:charts]:
+        if not big[ticker].any():
+            continue
+        series = px[ticker].dropna()
+        if len(series) < 2:
+            continue
+        marked = orders.index[big[ticker].to_numpy()].intersection(series.index)
+        step = max(1, len(series) // points)
+        keep = series.index[::step].union(marked).union(series.index[-1:])
+        buys, sells = set(marked[(orders.loc[marked, ticker] > 0).to_numpy()]), set(marked[(orders.loc[marked, ticker] < 0).to_numpy()])
+        markers.append({"ticker": str(ticker), "dates": [str(d.date()) for d in keep], "price": [float(series[d]) for d in keep],
+                        "buy": [float(series[d]) if d in buys else None for d in keep], "sell": [float(series[d]) if d in sells else None for d in keep],
+                        "position": [float(w.at[d, ticker]) for d in keep], "buys": len(buys), "sells": len(sells)})
+    return clean({"as_of": str(w.index[-1].date()), "value": float(value_now), "holdings": holdings, "latest": latest, "trade_days": int(len(days)),
+                  "typical_gap_days": float(np.median(gaps)) if len(gaps) else None, "markers": markers,
+                  "note": "Positions and orders are as of the last day of the data and are taken at that day's close. Shares are the amount over the last price, before rounding to whole shares. "
+                          "This is what the rules did on past prices, not advice to trade."})
+
+
 def trades_section(weights: pd.DataFrame, traded: pd.DataFrame, returns: pd.DataFrame, prices: pd.DataFrame, value: pd.Series, capital: float, listed: int = 200) -> dict:
     """The buys and sells behind the returns. A *round trip* is one stretch in which an asset is held on the same side (long or short): it opens when the position appears and closes when
     it goes to zero or flips. Its profit is the sum, over the days it was held, of the position times that day's return (before trading costs), in dollars on the account value of the
@@ -342,5 +397,6 @@ def result_payload(result, bundle, flags: list[dict], universe: dict, spec: dict
         "tables": tables,
         "capital": float(capital), "earnings": earnings_section(net, gross, result.costs, capital, bench_returns, weights),
         "trades": trades_section(*_with_entry_day(result, start), bundle.returns, bundle.prices, capital * equity, capital),
+        "actions": actions_section(*_with_entry_day(result, start), bundle.prices, float(capital * equity.iloc[-1])),
         "account": account_section(net, *_with_entry_day(result, start), capital, **{**ACCOUNT_DEFAULTS, **(account or {})}),
     })

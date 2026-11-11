@@ -311,6 +311,7 @@
     Q.labHead(root, `Best settings for ${d.strategy}`, `${d.universe.tickers.length} ticker${d.universe.tickers.length === 1 ? "" : "s"} · ${d.universe.source} · ${s.tried} setting${s.tried === 1 ? "" : "s"} tried in ${secs(s.seconds)} · tuned on ${w.tuning[0]} to ${w.tuning[1]}, checked on ${w.holdout[0]} to ${w.holdout[1]}`, GUIDE);
     verdictCard(root, d);
     settingsCard(root, d);
+    if (d.actions) Q.actionsCard(root, d.actions, "tune", `${d.strategy} with the tuned settings`);
     const cmp = h("div", "charts", root);
     comparison(cmp, d, "On the days the search could see", `${w.tuning[0]} to ${w.tuning[1]} (${w.tuning_days.toLocaleString("en-US")} trading days). The winner was picked on these, so it is expected to look good here.`, "tuning", false);
     comparison(cmp, d, "On the days it never saw: the honest test", `${w.holdout[0]} to ${w.holdout[1]} (${w.holdout_days.toLocaleString("en-US")} trading days), ${Math.round(w.holdout_share * 100)}% of the history. No setting was chosen using these days.`, "holdout", true);

@@ -470,7 +470,7 @@ def run_crypto_signals(config) -> dict:
 
 
 def run_crypto_strategy(config, strategy: str, assets: list[str] | None = None, frequency: str | None = None, lookback: int | None = None, target_vol: float | None = None,
-                        fees_bps: float = 5.0, slippage_bps: float = 2.0, regime: str | None = None, settings: dict | None = None) -> dict:
+                        fees_bps: float = 5.0, slippage_bps: float = 2.0, regime: str | None = None, settings: dict | None = None, short_funding: bool = True) -> dict:
     """Run one of ``CRYPTO_STRATEGIES`` on the Deribit-based crypto bundle through the platform pipeline. ``assets`` picks BTC and/or ETH (the carry strategies trade the matching ``_CARRY`` index);
     ``fees_bps`` plus ``slippage_bps`` is the one-way cost of trading the whole book; ``regime`` overrides the strategy's detector. Weekday marks and 252-day annualisation, like every other backtest."""
     from ..framework import MODELS, load_library
@@ -505,9 +505,15 @@ def run_crypto_strategy(config, strategy: str, assets: list[str] | None = None, 
         MODELS.create(spec["model"], **params)
     except (TypeError, ValueError, KeyError) as error:
         raise ValueError(f"{spec['label']}: {error}") from None
+    # A short of a coin is held through its perpetual future, which earns minus the perpetual's return plus the funding it collects. That is minus the spot return plus the return of the coin's
+    # carry index (long spot, short perpetual), so the carry index's daily return is what a short earns beyond minus the coin's own return. The carry strategies already trade that index.
+    directional = spec["assets"] != "carry"
+    carry = bundle.returns[[f"{a}_CARRY" for a in chosen]].rename(columns=lambda c: c[:-6]) if directional and short_funding else None
     out = run_strategy(subset_bundle(bundle, columns), config, spec["model"], params, rebalance=frequency, target_vol=target_vol, regime=regime or spec.get("regime"),
-                       cost_bps=float(fees_bps) + float(slippage_bps), label=spec["label"], allocator=spec.get("allocator"))
+                       cost_bps=float(fees_bps) + float(slippage_bps), label=spec["label"], allocator=spec.get("allocator"), short_carry=carry)
     out.update({"strategy": strategy, "label": spec["label"], "text": spec["text"], "assets": chosen, "fees_bps": float(fees_bps), "slippage_bps": float(slippage_bps), "source": "platform",
                 "notes": ["Deribit BTC and ETH daily data, weekday marks; the carry strategies trade a synthetic delta-neutral index (long spot, short perpetual, linear approximation).",
-                          "Fees and slippage are one-way basis points on the traded notional; funding is earned inside the carry index."]})
+                          "Fees and slippage are one-way basis points on the traded notional; funding is earned inside the carry index."
+                          + (" A short position is held through the perpetual future: it earns minus the coin's return plus the funding the perpetual paid (and pays it when funding is negative)." if carry is not None else "")],
+                "short_funding": carry is not None})
     return out

@@ -38,9 +38,10 @@ Still not modelled: margin and the interest earned on it, limit moves, the capac
 
 Sound: fees plus slippage on every trade (7 basis points one way by default; a small account on a retail exchange can pay several times that, so set your own); the carry strategies trade an index that is long spot and short the perpetual and collects the funding actually paid.
 
+Changed (after this review was first written): a directional strategy that goes **short** was scored on the spot return alone. A short is in practice held through the perpetual future, which earns minus the perpetual's return plus the funding it collects, and pays the funding when it is negative. The backtest now credits exactly that to short positions, using the same spot, perpetual and funding series the carry index is built from (`tests/test_holding_cost.py`). Long positions are unchanged: they are scored as holding the coin.
+
 Not changed, and worth knowing:
 
-* A directional strategy that goes **short** is scored on the spot return alone. In practice a short is held through the perpetual and receives or pays funding. Funding has been positive most of the time, so this understates a short's result more often than it overstates it, but it is not what you would get.
 * Marks are weekdays only: the weekend's move is folded into Monday. Sharpe ratios are annualised on 252 days to match the other tabs.
 * Only BTC and ETH have data deep enough to backtest.
 
@@ -76,4 +77,5 @@ Limits: the demo database is simulated; real data depends on your provider's cov
 
 1. Set the costs to your own: the fee per order and the borrow and margin rates on the Backtest tab, the fees on the Crypto tab, the commission on the Options tab.
 2. Prefer results on real data to results on simulated data; every page says which it is.
-3. Follow the strategy on the Signals tab and let its record and paper portfolio build before committing money. A backtest is the past; the ledger is the only out-of-sample evidence the app can give you.
+3. Read *What to buy and sell* on the Backtest tab for what the rules hold and last traded, and check the date of the data it speaks for.
+4. Follow the strategy on the Signals tab and let its record and paper portfolio build before committing money. A backtest is the past; the ledger is the only out-of-sample evidence the app can give you.

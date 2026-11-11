@@ -619,6 +619,7 @@
       tile(k2, "Track record needed", na(rk.min_track_record_years, (v) => `${num(v, 1)} years`), { text: "for 95% confidence" }, "", "Bailey and Lopez de Prado (2012): how many years of returns with this Sharpe ratio, skewness and kurtosis it takes before luck can be ruled out at 95%. Compare it with the length of the backtest");
     }
     if (r.earnings) earningsTiles(root, r);
+    if (r.actions) actionsCard(root, r.actions, "backtest", r.name);
     const ch = h("div", "charts", root);
     const cap = r.capital || 100000, dollars = (arr) => arr.map((v) => (v === null ? null : v * cap));
     const series = [{ name: "Strategy", color: css("--s1"), values: dollars(w.equity) }];
@@ -715,6 +716,51 @@
   function kvTable(parent, title, rows) {
     const box = h("div", "kv", parent); h("h4", "", box, title);
     simpleTable(box, [{ label: "Measure", get: (x) => x[0] }, { label: "Value", num: true, get: (x) => x[1] }], rows.filter((x) => x[1] !== null && x[1] !== undefined));
+  }
+  /* What the strategy says to buy and sell: what it holds on the last day of the data, the orders of its latest rebalance, and a price chart of each ticker it traded most with every buy and sell
+     marked. Shared by the Backtest and Tune tabs. ``a`` is the server's ``actions`` section; ``key`` keeps the ticker chosen for the chart apart for each tab. */
+  const ACT = { ticker: {} };
+  function actionsCard(root, a, key, lead) {
+    if (!a) return null;
+    const card = h("div", "card", root); card.dataset.role = "actions";
+    h("h2", "", card, "What to buy and sell");
+    const today = new Date(), end = new Date(a.as_of + "T00:00:00"), old = Math.round((today - end) / 864e5);
+    h("p", "sub", card, `${lead || "The strategy"}, as of ${a.as_of}, the last day of the data.`);
+    if (old > 5) { const w = h("div", "banner", card); h("strong", "", w, "Old data. "); w.appendChild(document.createTextNode(`The data ends ${old} days ago, so these are the positions and orders of that day, not today's. Tick "Download new prices" (or use the Signals tab's daily run) before acting on them.`)); w.dataset.role = "actions-stale"; }
+    const L = a.latest;
+    h("h4", "subhead", card, L ? `Its latest buys and sells: ${L.date}` + (L.days_ago ? ` (${L.days_ago} trading day${L.days_ago === 1 ? "" : "s"} before the end of the data)` : " (the last day of the data)") : "It has not traded");
+    if (L) {
+      const t = h("div", "", card); t.dataset.role = "actions-orders";
+      simpleTable(t, [{ label: "", get: (o) => (o.side === "buy" ? "▲ Buy" : "▼ Sell") }, { label: "Ticker", get: (o) => o.ticker }, { label: "Amount", num: true, get: (o) => money(o.amount) },
+        { label: "About how many", num: true, title: "The amount over that day's price, before rounding to whole shares", get: (o) => (o.shares === null ? "" : `${num(o.shares, o.shares >= 100 ? 0 : 2)} at ${num(o.price)}`) },
+        { label: "Share of the account", num: true, get: (o) => pct(o.size, 1) }, { label: "Position after", num: true, get: (o) => (Math.abs(o.to) < 1e-4 ? "none" : `${pct(Math.abs(o.to), 1)} ${o.to > 0 ? "long" : "short"}`) }], L.orders);
+    }
+    h("h4", "subhead", card, a.holdings.length ? `What it holds (${a.holdings.length} position${a.holdings.length === 1 ? "" : "s"} on an account of ${money(a.value)})` : "It holds nothing: the account is in cash");
+    if (a.holdings.length) {
+      const t = h("div", "", card); t.dataset.role = "actions-holdings";
+      simpleTable(t, [{ label: "Ticker", get: (x) => x.ticker }, { label: "Side", get: (x) => (x.side === "long" ? "▲ long" : "▼ short") }, { label: "Share of the account", num: true, get: (x) => pct(Math.abs(x.weight), 1) },
+        { label: "Amount", num: true, get: (x) => money(Math.abs(x.amount)) }, { label: "About how many", num: true, get: (x) => (x.shares === null ? "" : `${num(x.shares, x.shares >= 100 ? 0 : 2)} at ${num(x.price)}`) }], a.holdings);
+    }
+    if (a.trade_days) h("p", "hint", card, `It traded on ${a.trade_days.toLocaleString("en-US")} day${a.trade_days === 1 ? "" : "s"}` + (a.typical_gap_days ? `, typically every ${num(a.typical_gap_days, 0)} trading days: expect its next orders about that long after the latest.` : "."));
+    if (a.markers.length) {
+      if (!a.markers.some((m) => m.ticker === ACT.ticker[key])) ACT.ticker[key] = a.markers[0].ticker;
+      const ch = h("div", "charts", card);
+      const cc = chartCard(ch, "When it bought and sold", "The ticker's price with every buy (▲) and sell (▼) of the backtest marked on the day it was made. Tap or point at a mark for the date and price; zoom in to tell close ones apart.", {
+        wide: true,
+        draw: (b) => { const m = a.markers.find((x) => x.ticker === ACT.ticker[key]) || a.markers[0];
+          C.line(b, { dates: m.dates, series: [{ name: "Price", color: css("--ink"), values: m.price, width: 1.5 }, { name: "▲ Buy", color: css("--pos"), values: m.buy, dots: true, dotSize: 4.5 }, { name: "▼ Sell", color: css("--neg"), values: m.sell, dots: true, dotSize: 4.5 }],
+            yFormat: (v) => num(v), tipFormat: (v) => num(v), height: 300, endLabels: false, label: `${m.ticker} price with the strategy's buys and sells`,
+            tipExtra: (i) => [["Position after", Math.abs(m.position[i]) < 1e-4 ? "none" : `${pct(Math.abs(m.position[i]), 1)} ${m.position[i] > 0 ? "long" : "short"}`]] }); },
+        table: (b) => { const m = a.markers.find((x) => x.ticker === ACT.ticker[key]) || a.markers[0], rows = m.dates.map((_, i) => i).filter((i) => m.buy[i] !== null || m.sell[i] !== null).reverse();
+          simpleTable(b, [{ label: "Date", get: (i) => m.dates[i] }, { label: "", get: (i) => (m.buy[i] !== null ? "▲ Buy" : "▼ Sell") }, { label: "Price", num: true, get: (i) => num(m.price[i]) },
+            { label: "Position after", num: true, get: (i) => (Math.abs(m.position[i]) < 1e-4 ? "none" : `${pct(Math.abs(m.position[i]), 1)} ${m.position[i] > 0 ? "long" : "short"}`) }], rows); } });
+      cc.dataset.role = "actions-chart";
+      const pick = h("select", "", cc._extra); pick.setAttribute("aria-label", "ticker shown"); pick.dataset.role = "actions-ticker";
+      for (const m of a.markers) { const o = h("option", "", pick, `${m.ticker} (${m.buys} buys, ${m.sells} sells)`); o.value = m.ticker; if (m.ticker === ACT.ticker[key]) o.selected = true; }
+      pick.addEventListener("change", () => { ACT.ticker[key] = pick.value; cc._draw(); });
+    }
+    h("p", "hint", card, a.note);
+    return card;
   }
   function earningsTab(b, r) {
     const e = r.earnings, single = r.universe.tickers.length === 1, d = e.drawdown, sp = (x) => (x ? `${x.period}: ${smoney(x.pnl)} (${fmt.spct(x.ret)})` : "n/a");
@@ -1579,7 +1625,7 @@
     $("#tab-" + name).addEventListener("click", () => { if (S.catalog) showTab(name); });
     if (booted && store("tab") === name) showTab(name);
   }
-  window.QL = { C, h, fmt, $, api, css, store, toast, copy, download, num, pct, money, smoney, axisMoney, bad, bps, grouped, plain, unsign, colorOf, SLOTS, tile, chartCard, simpleTable, sampleRows, keepScroll, labField, checkList, numbers,
+  window.QL = { C, h, fmt, $, api, css, store, toast, copy, download, num, pct, money, smoney, axisMoney, bad, bps, grouped, plain, unsign, colorOf, SLOTS, tile, chartCard, actionsCard, simpleTable, sampleRows, keepScroll, labField, checkList, numbers,
     labHead, labBanner, labEmpty, labOld, syncLab, renderLab, drawLab, openGuide, serverApi, RESTART, notice, registerWorkspace, labelPx, running, S, setupGuide, waitJob, keyHistory,
     universeBody, pickAllocator, useStrategy, setTrials, showTab, refsLine, fieldFor };
   boot();

@@ -133,6 +133,8 @@ def test_a_search_runs_the_result_reads_in_words_and_the_winner_goes_to_the_back
                         "Every try, in order", "The best tries", "How much to trust it", "Read before relying on it"):
             assert heading in text, heading
         assert "6 settings tried" in text and "level noise" in text and "Sharpe ratio" in text and "Swings a year" in text and "Holding every ticker equally" in text
+        act = page.locator("#tune-results [data-role=actions]")
+        assert act.count() == 1 and "with the tuned settings" in act.inner_text() and "What to buy and sell" in act.inner_text() and act.locator("[data-role=actions-chart] svg.chart").count() == 1
         assert page.locator("#tune-results .card.compare").count() == 2 and page.locator("#tune-results .card.compare.honest").count() == 1
         assert page.locator("#tune-results svg.chart").count() >= 6, "the growth curve, one chart for each of the four ticked settings, and every try"
         assert page.locator("#tune-results .tile", has_text="Settings tried").count() == 1

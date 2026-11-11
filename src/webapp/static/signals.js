@@ -19,7 +19,7 @@
     modes: [["signals", "Signal book"]], runLabel: { signals: "Read the signals now" },
     blurb: { signals: "Each run writes what every rule said into a ledger. The record below it is scored only on prices that came after each signal was written down." },
     plan: null, book: null, planError: "", loading: false, note: "",
-    form: { market: "equity", name: "", roots: "", data: "simulated", underlyings: "SPY", refresh: false, time: "18:30", enabled: false, weekdays_only: true, sched_refresh: true, webhook: "", cost_bps: "5", capital: "100000", long_only: false },
+    form: { market: "equity", name: "", roots: "", data: "simulated", underlyings: "SPY", refresh: false, time: "18:30", enabled: false, weekdays_only: true, sched_refresh: true, webhook: "", cost_bps: "5", capital: "100000", long_only: false, borrow_pct: "1" },
   };
 
   /* ---------- loading ---------- */
@@ -28,7 +28,7 @@
     S.loading = true; S.planError = "";
     try {
       [S.plan, S.book] = await Promise.all([api("/api/signals/plan"), api("/api/signals/book")]);
-      const pp = S.book.settings.paper; Object.assign(S.form, { cost_bps: String(pp.cost_bps), capital: String(pp.capital), long_only: pp.long_only });
+      const pp = S.book.settings.paper; Object.assign(S.form, { cost_bps: String(pp.cost_bps), capital: String(pp.capital), long_only: pp.long_only, borrow_pct: String(pp.borrow_pct) });
       const sc = S.book.settings.schedule; Object.assign(S.form, { time: sc.time, enabled: sc.enabled, weekdays_only: sc.weekdays_only, sched_refresh: sc.refresh });
       if (S.book.latest && !S.results.signals) S.results.signals = { data: S.book.latest, body: {} };
     } catch (e) { S.planError = e.status === 404 ? "The app behind this page has no signal book: it is older than the page. " + Q.RESTART : e.message; }
@@ -118,10 +118,11 @@
     h("p", "hint", pp, "Each follow is also traded on paper from the ledger: the rules' net view sets the weights, bought at the close after each snapshot. No money moves.");
     Q.labField(pp, { key: "capital", label: "Paper capital", kind: "number", min: 100, step: 1000 }, f, () => {});
     Q.labField(pp, { key: "cost_bps", label: "Cost per trade (basis points of what is traded)", kind: "number", min: 0, max: 200, step: 1 }, f, () => {});
+    Q.labField(pp, { key: "borrow_pct", label: "Fee for borrowing shares held short, % a year (stocks and ETFs)", kind: "number", min: 0, max: 100, step: 0.5 }, f, () => {});
     Q.labField(pp, { key: "long_only", label: "Long only (a short view holds cash)", kind: "bool" }, f, () => {});
     const ps = h("button", "btn", pp, "Save"); ps.type = "button"; ps.dataset.action = "signals-save-paper";
     ps.addEventListener("click", async () => {
-      try { S.book.settings = await api("/api/signals/settings", { paper: { capital: Number(f.capital), cost_bps: Number(f.cost_bps), long_only: !!f.long_only } }); Q.toast("Saved. It applies from the next run."); } catch (e) { Q.toast(e.message); }
+      try { S.book.settings = await api("/api/signals/settings", { paper: { capital: Number(f.capital), cost_bps: Number(f.cost_bps), long_only: !!f.long_only, borrow_pct: Number(f.borrow_pct) } }); Q.toast("Saved. It applies from the next run."); } catch (e) { Q.toast(e.message); }
     });
 
     const d = sec("5. This run");
@@ -200,6 +201,7 @@
       tile(k, "Worst fall", pct(st.max_drawdown), { text: "from a peak" });
       tile(k, "Sharpe ratio", st.sharpe === null ? "too soon" : num(st.sharpe, 2), { text: st.sharpe === null ? `needs ${st.sharpe_needs_days} days` : "annualised, after costs" });
       tile(k, "Costs paid", w(st.costs), { text: `${plural(st.rebalances, "rebalance")}, ${num(st.turnover, 1)} times the book traded` });
+      if (p.borrow_pct > 0) tile(k, "Borrowing shares", w(st.borrow), { text: `${num(p.borrow_pct, 1)}% a year on the shorts` });
       if (p.curve.dates.length > 2) {
         const ch = h("div", "charts", box), cv = p.curve;
         chartCard(ch, "Paper value", "One unit invested when the first signal could be traded, after costs, beside the same instruments held in equal weights.", {

@@ -213,9 +213,22 @@ def test_the_paper_portfolio_trades_only_what_could_have_been_traded_and_says_wh
 
 def test_the_paper_settings_are_checked(tmp_path):
     book = Book(tmp_path)
-    assert book.settings()["paper"] == {"cost_bps": 5.0, "long_only": False, "capital": 100000.0}
-    assert book.save_settings(paper={"cost_bps": 12, "long_only": True})["paper"] == {"cost_bps": 12.0, "long_only": True, "capital": 100000.0}
-    for bad, why in [({"cost_bps": -1}, "between 0 and 200"), ({"cost_bps": "x"}, "must be numbers"), ({"capital": 5}, "between 100 and"), ("all", "must be an object")]:
+    assert book.settings()["paper"] == {"cost_bps": 5.0, "long_only": False, "capital": 100000.0, "borrow_pct": 1.0}
+    assert book.save_settings(paper={"cost_bps": 12, "long_only": True})["paper"] == {"cost_bps": 12.0, "long_only": True, "capital": 100000.0, "borrow_pct": 1.0}
+    for bad, why in [({"cost_bps": -1}, "between 0 and 200"), ({"cost_bps": "x"}, "must be numbers"), ({"capital": 5}, "between 100 and"), ({"borrow_pct": 150}, "between 0 and 100 per cent"), ("all", "must be an object")]:
         with pytest.raises(BookError, match=why):
             book.save_settings(paper=bad)
     assert book.save_settings({"enabled": False})["paper"]["cost_bps"] == 12.0
+
+
+def test_the_paper_portfolio_charges_a_borrow_fee_on_its_shorts_only():
+    days = pd.bdate_range("2026-01-05", periods=6)
+    prices = pd.DataFrame({"A": [100.0] * 6, "B": [10.0] * 6}, index=days)
+    d = [str(x.date()) for x in days]
+    snaps = [snap(d[0], {"r": (1.0, -1.0)})]                                                     # half long A, half short B, from the close of day 1
+    free = sb.paper_portfolio(snaps, prices, cost_bps=0.0)
+    charged = sb.paper_portfolio(snaps, prices, cost_bps=0.0, borrow_pct=25.2)
+    fee = 0.5 * 0.252 / 252                                                                      # a day's fee on the short half
+    assert free["curve"]["portfolio"] == pytest.approx([1.0] * 5) and charged["curve"]["portfolio"] == pytest.approx([(1 - fee) ** k for k in range(5)])
+    assert charged["stats"]["borrow"] == pytest.approx(4 * fee) and free["stats"]["borrow"] == 0.0 and charged["borrow_pct"] == 25.2
+    assert sb.paper_portfolio(snaps, prices, cost_bps=0.0, borrow_pct=25.2, long_only=True)["stats"]["borrow"] == 0.0

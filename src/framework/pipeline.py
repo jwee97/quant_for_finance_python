@@ -137,6 +137,7 @@ class Pipeline:
     def __init__(self, spec: PipelineSpec | dict, config, bundle: MarketBundle):
         self.spec = spec if isinstance(spec, PipelineSpec) else PipelineSpec.from_dict(spec)
         self.config, self.bundle = config, bundle
+        self.short_carry = None                                               # set by a caller that knows what a short earns beyond minus the asset's return (see ``BacktestEngine.short_carry``)
         self._decay_table = None
         self._ic_table = None
         from . import load_library
@@ -240,6 +241,8 @@ class Pipeline:
         timings: dict = {}
         models = self._models()
         engine = _engine(config, spec, models)
+        if getattr(self, "short_carry", None) is not None:
+            engine = replace(engine, short_carry=self.short_carry)
         regimes = None
         if spec.regime:
             regimes = DETECTORS.create(spec.regime["detector"], **(spec.regime.get("params") or {})).detect(bundle)

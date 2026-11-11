@@ -136,6 +136,7 @@ class BacktestEngine:
     target_vol: float | None = None
     vol_lookback: int = 63
     max_leverage: float = 1.5
+    short_carry: pd.DataFrame | None = None  # per asset, the daily return a SHORT position earns on top of minus the asset's return (the funding of a perpetual future); it can be negative
     holding_cost: dict | None = None        # asset -> a yearly cost of HOLDING a position of either side, as a fraction of its size (the rolls of a futures contract); charged daily on |weight held|
 
     @classmethod
@@ -197,6 +198,9 @@ class BacktestEngine:
         valid = held.shift(1).notna().any(axis=1) & aligned_returns.notna().any(axis=1)
         gross = gross.where(valid)
 
+        if self.short_carry is not None:                                        # a short held through a perpetual future collects (or pays) funding: part of the return, before costs
+            carry = self.short_carry.reindex(index=held.index, columns=held.columns).fillna(0.0)
+            gross = gross + ((-held.shift(1).clip(upper=0.0)) * carry).sum(axis=1, skipna=True).where(valid, 0.0).reindex(gross.index).fillna(0.0)
         net, costs = self.cost_model.apply(gross, traded)
         if self.holding_cost:                                                    # a cost of being in a position, long or short, whatever is traded: unlike a return it never helps a short
             rate = pd.Series(self.holding_cost, dtype=float).reindex(held.columns).fillna(0.0).clip(lower=0.0) / float(self.annualisation)

@@ -90,7 +90,7 @@ def _risk_views(result, net: pd.Series, idx: pd.Index) -> dict:
 
 def run_strategy(bundle: MarketBundle, config, model: str, params: dict | None = None, rebalance: str | None = None, target_vol: float | None = None, regime: str | None = None,
                  cost_bps: float | None = None, label: str | None = None, allocator: str | None = None, min_assets: int = 1, n_trials: int = 1, validate: bool = False,
-                 holding_cost: dict | None = None) -> dict:
+                 holding_cost: dict | None = None, short_carry: pd.DataFrame | None = None) -> dict:
     """Run ``model`` on ``bundle`` and return ``compact_result`` plus the spec that ran. ``rebalance`` daily/weekly/monthly (default: the model's own), ``target_vol`` an annual volatility target
     (default: the platform's), ``regime`` the name of a regime detector, which also switches the volatility target to the regime's, ``cost_bps`` the one-way cost of trading the whole book."""
     spec: dict = {"name": label or model, "models": [{"name": model, "params": dict(params or {})}], "execution": {"min_assets": int(min_assets)},
@@ -114,7 +114,9 @@ def run_strategy(bundle: MarketBundle, config, model: str, params: dict | None =
         if not 0.01 <= float(target_vol) <= 1.0:
             raise ValueError("the volatility target must be between 1% and 100%")
         spec["risk"] = {"mode": "constant", "target_vol": float(target_vol)}
-    result = Pipeline(PipelineSpec.from_dict(spec), config, bundle).run(validate=validate)
+    pipeline = Pipeline(PipelineSpec.from_dict(spec), config, bundle)
+    pipeline.short_carry = short_carry
+    result = pipeline.run(validate=validate)
     out = compact_result(result)
     out["spec"] = {k: spec[k] for k in ("models", "execution", "risk", "regime", "allocation") if k in spec}
     out["universe"] = list(bundle.prices.columns)

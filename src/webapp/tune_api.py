@@ -216,6 +216,21 @@ class TuneApi:
             with app._lock:
                 total = len(app.trials.get(key, ()))
             best = {**base, **{k: v for k, v in out["best"]["params"].items() if k not in library or v != library[k]}}
+            try:                                                               # what the tuned settings hold and last traded: one more run of the winner, which counts as no new trial (it was one)
+                from .payload import actions_section
+
+                winner = copy.deepcopy(spec)
+                winner["models"][0]["params"] = {k: v for k, v in {**base, **out["best"]["params"]}.items() if k not in library or v != library[k]}     # as a try sends them
+                if small:
+                    winner.setdefault("execution", {})["min_assets"] = 1
+                with tuning.quiet("src.backtest.engine"):
+                    res = Pipeline(PipelineSpec.from_dict(winner), app.config, bundle).run(validate=False)
+                capital = app._capital(body)
+                out["actions"] = actions_section(res.weights.loc[res.start:], res.trades.loc[res.start:], bundle.prices, float(capital * (1.0 + res.window.dropna()).prod()))
+                out["actions"]["capital"] = capital
+            except Exception as error:                                         # the search's result stands without it
+                out["actions"] = None
+                notes.append(f"What the tuned settings hold now could not be worked out ({type(error).__name__}: {error}).")
             out.update(strategy=name, description=entry.description, universe=universe, fixed=base, trials_in_universe=total, notes=notes,
                        use={"models": [{"name": name, "params": best}]}, effort=effort, label=f"{name} · {len(universe['tickers'])} tickers")
             return out

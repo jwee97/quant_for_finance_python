@@ -6,6 +6,7 @@ from __future__ import annotations
 import pytest
 
 from tests.test_webapp_browser import browser  # noqa: F401  (the module's Chromium fixture)
+from tests.test_webapp_forecast_browser import _only, _open, live_forecast  # noqa: F401
 from tests.test_webapp_workspaces_browser import _wait_until, live_ws  # noqa: F401
 
 pytest.importorskip("playwright.sync_api")
@@ -99,3 +100,33 @@ def test_a_bar_chart_answers_a_tap_too(phone):
     _wait_until(phone, "[...document.querySelectorAll('#futures-results .tip')].some((t) => !t.hidden)")
     phone.wait_for_timeout(500)
     assert phone.evaluate("[...document.querySelectorAll('#futures-results .tip')].filter((t) => !t.hidden).length") == 1, "one tooltip at a time, and it stays"
+
+
+def test_a_tap_on_the_forecast_part_of_the_fan_reads_the_forecast(browser, live_forecast):  # noqa: F811
+    """The forecast is the right-hand part of the fan chart. On a phone it must be wide enough to tap, and a tap there must read the forecast (the median and the ranges), not only the past price."""
+    context = browser.new_context(viewport={"width": 390, "height": 800}, has_touch=True, is_mobile=True)
+    page = context.new_page()
+    try:
+        page.goto(live_forecast.url)
+        page.wait_for_selector("body[data-ready]")
+        _open(page)
+        _only(page, ["riskmetrics"])
+        page.locator("#forecast [data-role=forecast-effort] button", has_text="Quick").click()
+        page.click("#forecast .runbar button.primary")
+        page.wait_for_selector("[data-role=forecast-fan] svg.chart", timeout=240_000)
+        card = page.locator("[data-role=forecast-fan]")
+        card.scroll_into_view_if_needed()
+        box = card.locator("svg.chart rect[tabindex]").bounding_box()
+        share = page.evaluate("""() => { const s = document.querySelector('[data-role=forecast-fan] svg.chart'), r = s.querySelector('rect[tabindex]').getBoundingClientRect(), v = s.querySelector('line.ref').getBoundingClientRect(); return (r.right - v.left) / r.width; }""")
+        assert share > 0.3, f"the forecast is {share:.0%} of the chart: too narrow to tap on a phone"
+        page.touchscreen.tap(box["x"] + box["width"] * 0.9, box["y"] + box["height"] * 0.5)
+        tip = card.locator(".tip")
+        tip.wait_for(state="visible")
+        text = tip.inner_text()
+        assert "Median forecast" in text and "90% range" in text and "Middle 50%" in text and " to " in text, text
+        assert "Price" not in text.replace("Median forecast", ""), "a future date has no price yet"
+        assert card.locator(".zoombar span").count() == 1 and card.locator("button[aria-label='Show everything']").is_enabled(), "it opens zoomed on the forecast; the whole history is one tap away"
+        page.touchscreen.tap(box["x"] + box["width"] * 0.1, box["y"] + box["height"] * 0.5)
+        _wait_until(page, "document.querySelector('[data-role=forecast-fan] .tip').textContent.includes('Price')")
+    finally:
+        context.close()
