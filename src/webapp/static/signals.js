@@ -4,7 +4,7 @@
    Whatever the server sends goes in with textContent. */
 (function () {
   "use strict";
-  const Q = window.QL, W = window.WS, h = Q.h, css = Q.css, num = Q.num, table = Q.simpleTable, api = Q.api;
+  const Q = window.QL, W = window.WS, C = Q.C, h = Q.h, css = Q.css, num = Q.num, table = Q.simpleTable, chartCard = Q.chartCard, tile = Q.tile, api = Q.api;
   const GUIDE = "signals";
   const isOpen = () => !Q.$(S.view).hidden;
   const tickersNow = () => Q.S.tickers.filter((x) => x.status !== "bad").map((x) => x.t);
@@ -19,7 +19,7 @@
     modes: [["signals", "Signal book"]], runLabel: { signals: "Read the signals now" },
     blurb: { signals: "Each run writes what every rule said into a ledger. The record below it is scored only on prices that came after each signal was written down." },
     plan: null, book: null, planError: "", loading: false, note: "",
-    form: { market: "equity", name: "", roots: "", data: "simulated", underlyings: "SPY", refresh: false, time: "18:30", enabled: false, weekdays_only: true, sched_refresh: true, webhook: "" },
+    form: { market: "equity", name: "", roots: "", data: "simulated", underlyings: "SPY", refresh: false, time: "18:30", enabled: false, weekdays_only: true, sched_refresh: true, webhook: "", cost_bps: "5", capital: "100000", long_only: false },
   };
 
   /* ---------- loading ---------- */
@@ -28,6 +28,7 @@
     S.loading = true; S.planError = "";
     try {
       [S.plan, S.book] = await Promise.all([api("/api/signals/plan"), api("/api/signals/book")]);
+      const pp = S.book.settings.paper; Object.assign(S.form, { cost_bps: String(pp.cost_bps), capital: String(pp.capital), long_only: pp.long_only });
       const sc = S.book.settings.schedule; Object.assign(S.form, { time: sc.time, enabled: sc.enabled, weekdays_only: sc.weekdays_only, sched_refresh: sc.refresh });
       if (S.book.latest && !S.results.signals) S.results.signals = { data: S.book.latest, body: {} };
     } catch (e) { S.planError = e.status === 404 ? "The app behind this page has no signal book: it is older than the page. " + Q.RESTART : e.message; }
@@ -113,7 +114,17 @@
     state.dataset.role = "signals-schedule";
     S.note = "";
 
-    const d = sec("4. This run");
+    const pp = sec("4. Paper portfolio");
+    h("p", "hint", pp, "Each follow is also traded on paper from the ledger: the rules' net view sets the weights, bought at the close after each snapshot. No money moves.");
+    Q.labField(pp, { key: "capital", label: "Paper capital", kind: "number", min: 100, step: 1000 }, f, () => {});
+    Q.labField(pp, { key: "cost_bps", label: "Cost per trade (basis points of what is traded)", kind: "number", min: 0, max: 200, step: 1 }, f, () => {});
+    Q.labField(pp, { key: "long_only", label: "Long only (a short view holds cash)", kind: "bool" }, f, () => {});
+    const ps = h("button", "btn", pp, "Save"); ps.type = "button"; ps.dataset.action = "signals-save-paper";
+    ps.addEventListener("click", async () => {
+      try { S.book.settings = await api("/api/signals/settings", { paper: { capital: Number(f.capital), cost_bps: Number(f.cost_bps), long_only: !!f.long_only } }); Q.toast("Saved. It applies from the next run."); } catch (e) { Q.toast(e.message); }
+    });
+
+    const d = sec("5. This run");
     Q.labField(d, { key: "refresh", label: "Download new prices first", kind: "bool", help: "Without it the run reads the prices the app already has, which may be days old; the result says how old." }, f, () => {});
   };
 
@@ -172,6 +183,35 @@
       const data = [["Every rule", rec.overall], ...rec.rules.map((r) => [r.label, r.horizons])].map(([name, hz]) => [name, ...line(name, hz)]);
       h("p", "hint", rc, `From ${plural(rec.snapshots, "data day")} in the ledger (${rec.first} to ${rec.last}). Each cell: signals scored · share that were right · average result (and how far that is above always holding the asset). ${rec.note}${rec.late ? ` ${plural(rec.late, "snapshot")} read on old data left out.` : ""}`);
       table(rc, [{ label: "Rule", get: (r) => r[0] }, ...rec.horizons.map((d, i) => ({ label: `After ${plural(d, "day")}`, get: (r) => r[i + 1] }))], data);
+    }
+    paperBlock(card, e);
+  }
+  function paperBlock(card, e) {
+    const p = e.paper; if (!p) return;
+    h("h4", "", card, "Paper portfolio");
+    const box = h("div", "", card); box.dataset.role = "signals-paper";
+    const money = (v) => (Q.bad(v) ? "n/a" : (v < 0 ? "−" : "") + Math.abs(v).toLocaleString("en-US", { maximumFractionDigits: 0 }));
+    const w = (v) => (Q.bad(v) ? "n/a" : (v * 100).toFixed(1) + "%");
+    h("p", "hint", box, `${money(p.capital)} of paper capital, ${p.cost_bps} basis points per trade${p.long_only ? ", long only" : ""}. ${p.note}`);
+    if (p.stats) {
+      const st = p.stats, k = h("div", "earnrow", box);
+      tile(k, "Value", money(st.value), { text: `${pct(st.total_return)} over ${plural(p.days, "day")}` });
+      tile(k, "Holding them all equally", pct(st.baseline_return), { text: "the same instruments, equal weights" });
+      tile(k, "Worst fall", pct(st.max_drawdown), { text: "from a peak" });
+      tile(k, "Sharpe ratio", st.sharpe === null ? "too soon" : num(st.sharpe, 2), { text: st.sharpe === null ? `needs ${st.sharpe_needs_days} days` : "annualised, after costs" });
+      tile(k, "Costs paid", w(st.costs), { text: `${plural(st.rebalances, "rebalance")}, ${num(st.turnover, 1)} times the book traded` });
+      if (p.curve.dates.length > 2) {
+        const ch = h("div", "charts", box), cv = p.curve;
+        chartCard(ch, "Paper value", "One unit invested when the first signal could be traded, after costs, beside the same instruments held in equal weights.", {
+          wide: true, draw: (b) => C.line(b, { dates: cv.dates, series: [{ name: "Paper portfolio", color: css("--s1"), values: cv.portfolio }, { name: "Equal weights", color: css("--s2"), values: cv.baseline, dash: "5 4" }], yFormat: (v) => v.toFixed(2), tipFormat: (v) => v.toFixed(4), height: 240, label: "Paper portfolio value" }),
+          table: (b) => table(b, [{ label: "Date", get: (i) => cv.dates[i] }, { label: "Paper portfolio", num: true, get: (i) => cv.portfolio[i].toFixed(4) }, { label: "Equal weights", num: true, get: (i) => cv.baseline[i].toFixed(4) }], cv.dates.map((_, i) => i)) });
+      }
+    } else h("p", "hint", box, "No result yet: the first signal is bought at the close after its data day, and needs a day of prices after that.");
+    if (p.target.length) {
+      h("p", "hint", box, `What the snapshot for ${p.target_as_of} says to hold, and what that changes from the paper holdings:`);
+      const change = new Map(p.trades.map((t) => [t.asset, t]));
+      table(box, [{ label: "Instrument", get: (t) => t.asset }, { label: "Target weight", num: true, get: (t) => w(t.weight) }, { label: "Target amount", num: true, get: (t) => money(t.amount) },
+        { label: "Trade", num: true, get: (t) => { const c = change.get(t.asset); return c ? `${c.change > 0 ? "buy" : "sell"} ${money(Math.abs(c.amount))}` : "none"; } }], p.target);
     }
   }
   S.build = (root, d) => {

@@ -152,6 +152,9 @@ def test_a_later_data_day_shows_what_changed_and_scores_the_earlier_signals(tmp_
     views = [r for r in first["snapshot"]["rows"] if r["side"] != "flat"]
     assert rec["overall"]["1"]["n"] == len(views), "every long or short signal of the first day was scored once at one day, and the new day's are too young"
     assert f["id"] == later["follow"]["id"] and rec["late"] == 0
+    paper = later["paper"]
+    assert paper["days"] == 39 and paper["stats"]["rebalances"] == 1 and paper["curve"]["dates"][0] > first["snapshot"]["as_of"] and len(paper["target"]) == 4, "bought the day after the first snapshot; the new one is still an order"
+    assert abs(sum(abs(t["weight"]) for t in paper["target"]) - 1.0) < 1e-9 and paper["stats"]["sharpe"] is None and first["paper"]["curve"] is None
     app.signals.clock = lambda: pd.Timestamp("2026-11-09 22:00").to_pydatetime()                        # the same data read years later: in the ledger, never in the record
     stale = app.signals.run_now()["follows"][0]
     assert stale["record"]["snapshots"] == 2 and stale["record"]["overall"] == rec["overall"]

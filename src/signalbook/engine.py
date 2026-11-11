@@ -183,3 +183,81 @@ def track_record(snapshots: list[dict], prices: pd.DataFrame, horizons=HORIZONS)
 
 def snapshot(follow: dict, rows: list[dict], skipped: list[dict], fresh: dict, issued: str, source: str) -> dict:
     return {"follow": follow["id"], "market": follow["market"], "issued": issued, "as_of": fresh["last_day"], "source": source, "data": fresh, "rows": rows, "skipped": skipped}
+
+
+# ------------------------------------------------------------------------------------------------------------------ the paper portfolio
+PAPER_DEFAULTS = {"cost_bps": 5.0, "long_only": False, "capital": 100_000.0}
+MIN_DAYS_FOR_SHARPE = 60
+
+
+def target_weights(rows: list[dict], long_only: bool = False) -> dict:
+    """What a snapshot says to hold: for each instrument the share of its rules that are long less the share that are short, scaled so the sizes add up to 1 (fully invested, no leverage).
+    ``long_only`` drops the shorts before scaling. Signals with nothing to score them against (options) are left out; a snapshot with no view holds cash."""
+    tally = {}
+    for r in rows:
+        key = r.get("price_key")
+        if key is None:
+            continue
+        t = tally.setdefault(key, [0, 0])
+        t[0] += (r["side"] == "long") - (r["side"] == "short")
+        t[1] += 1
+    net = {k: v[0] / v[1] for k, v in tally.items() if v[1]}
+    if long_only:
+        net = {k: max(v, 0.0) for k, v in net.items()}
+    gross = sum(abs(v) for v in net.values())
+    return {k: (v / gross if gross > 0 else 0.0) for k, v in net.items()}
+
+
+def paper_portfolio(snapshots: list[dict], prices: pd.DataFrame, cost_bps: float = 5.0, long_only: bool = False, capital: float = 100_000.0) -> dict:
+    """The follow traded on paper, from the ledger alone. Each snapshot that could have been traded (the first of its data day, issued before its entry close, as in ``track_record``) sets the
+    target weights; they are bought at the close after the snapshot's data day and held until the next snapshot's entry. Every change of weight pays ``cost_bps`` of what is traded. ``baseline`` is
+    the same instruments held in equal weights over the same days. ``target`` is what the latest snapshot says to hold and ``trades`` what that changes, whether or not it could be scored yet."""
+    index = prices.index
+    rets = prices.pct_change().replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    seen, plan = set(), []
+    for snap in snapshots:
+        if snap["as_of"] in seen:
+            continue
+        seen.add(snap["as_of"])
+        i = int(index.searchsorted(pd.Timestamp(snap["as_of"]), side="right")) - 1
+        if i < 0 or i + 1 >= len(index) or index[i + 1] < pd.Timestamp(str(snap["issued"])[:10]):
+            continue                                                                                # not yet enterable, or written down after its entry close
+        plan.append((i + 1, target_weights(snap["rows"], long_only)))
+    latest = snapshots[-1] if snapshots else None
+    target = target_weights(latest["rows"], long_only) if latest else {}
+    held = plan[-1][1] if plan else {}
+    keys = sorted(set(target) | set(held))
+    trades = [{"asset": k, "from": held.get(k, 0.0), "to": target.get(k, 0.0), "change": target.get(k, 0.0) - held.get(k, 0.0), "amount": (target.get(k, 0.0) - held.get(k, 0.0)) * capital} for k in keys]
+    out = {"cost_bps": float(cost_bps), "long_only": bool(long_only), "capital": float(capital), "target": [{"asset": k, "weight": target[k], "amount": target[k] * capital} for k in sorted(target)],
+           "trades": [t for t in trades if abs(t["change"]) > 1e-9], "target_as_of": latest["as_of"] if latest else None, "days": 0, "curve": None, "stats": None,
+           "note": "Sizes are the net share of rules long or short, scaled to be fully invested without leverage. Fills are at the close, with no slippage beyond the cost per trade, no borrowing cost for shorts and no margin."}
+    if not plan or plan[0][0] + 1 >= len(index):
+        return out
+    start = plan[0][0]
+    cols = [c for c in prices.columns if any(c in w for _, w in plan)]
+    days = range(start + 1, len(index))
+    value, base, turnover, costs = [1.0], [1.0], 0.0, 0.0
+    k, current, previous = 0, plan[0][1], {}
+    pending_cost = sum(abs(current.get(c, 0.0)) for c in cols) * cost_bps / 1e4
+    turnover += sum(abs(current.get(c, 0.0)) for c in cols)
+    for t in days:
+        r = sum(current.get(c, 0.0) * float(rets[c].iloc[t]) for c in cols) - pending_cost
+        costs += pending_cost
+        pending_cost = 0.0
+        value.append(value[-1] * (1.0 + r))
+        base.append(base[-1] * (1.0 + float(np.mean([rets[c].iloc[t] for c in cols])) if cols else base[-1]))
+        while k + 1 < len(plan) and plan[k + 1][0] <= t:                                              # the next snapshot's weights are bought at this close
+            k += 1
+            previous, current = current, plan[k][1]
+            traded = sum(abs(current.get(c, 0.0) - previous.get(c, 0.0)) for c in cols)
+            turnover += traded
+            pending_cost += traded * cost_bps / 1e4
+    daily = np.diff(value) / np.asarray(value[:-1])
+    n = len(daily)
+    peak = np.maximum.accumulate(value)
+    sharpe = float(daily.mean() / daily.std(ddof=1) * np.sqrt(252)) if n >= MIN_DAYS_FOR_SHARPE and daily.std(ddof=1) > 0 else None
+    out.update(days=n, curve={"dates": [str(index[start].date())] + [str(index[t].date()) for t in days], "portfolio": [float(v) for v in value], "baseline": [float(v) for v in base]},
+               stats={"total_return": float(value[-1] - 1.0), "baseline_return": float(base[-1] - 1.0), "volatility": float(daily.std(ddof=1) * np.sqrt(252)) if n > 1 else None, "sharpe": sharpe,
+                      "max_drawdown": float(np.min(np.asarray(value) / peak - 1.0)), "turnover": float(turnover), "costs": float(costs), "rebalances": len(plan), "value": float(value[-1] * capital),
+                      "sharpe_needs_days": MIN_DAYS_FOR_SHARPE})
+    return out

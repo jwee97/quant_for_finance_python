@@ -45,6 +45,16 @@ The platform's own 15 ETF files are a fixed dataset that ends when it was built.
 * Signals a day apart overlap when held longer than a day, so the count overstates the number of independent bets. Weeks of record are an anecdote; it takes many months before the numbers mean much.
 * Option signals are not scored: a volatility position's result needs a history of option prices, and a chain is one day's snapshot.
 
+**Paper portfolio.** Each follow of stocks, futures or crypto is also traded on paper, from the ledger alone:
+
+* The weight of an instrument is the share of its rules that are long less the share that are short, scaled so the sizes add up to 100% of the paper capital (fully invested, no leverage). *Long only* drops the shorts; with no view at all the portfolio holds cash.
+* The weights of a snapshot are bought at the close after its data day and held until the next snapshot's weights are bought. Every change pays the cost you set (5 basis points of what is traded by default).
+* Only snapshots that could have been traded count, by the same rule as the record: the first of its data day, written down before its entry close.
+* The tiles show the paper value, the same instruments held in equal weights over the same days, the worst fall, the costs paid and a Sharpe ratio, which is withheld until there are 60 days.
+* The table shows what the latest snapshot says to hold and the trade that would take the paper holdings there. It is a calculation, not an order.
+
+Fills are at the close with no slippage beyond the cost, no borrowing cost for shorts and no margin, so a real account would do somewhat worse. Set the capital, cost and long-only choice under *4. Paper portfolio*; they apply from the next run and the whole paper history is recomputed with them.
+
 ## The rules
 
 | Market | Rules |
@@ -70,7 +80,7 @@ Everything is in `data/user/signals/` on the app's computer: `follows.json`, `le
 
 ## What is not here
 
-* No orders, no broker, no position sizes. The page says what rules say, not how much to hold.
-* No costs in the record: a result is the asset's raw return over the holding period.
+* No orders and no broker. The paper portfolio is a calculation; nothing is sent anywhere.
+* No costs in the per-rule record (a result there is the asset's raw return over the holding period); the paper portfolio does pay costs.
 * No custom rules or settings yet: a follow uses each rule's defaults.
 * No intraday data: signals are read on daily closes.

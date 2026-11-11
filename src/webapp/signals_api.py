@@ -67,7 +67,7 @@ class SignalsApi:
 
     def _settings_view(self) -> dict:
         s = self.book.settings()
-        return {"schedule": s["schedule"], "webhook_set": bool(s["webhook"]), "webhook_host": urlparse(s["webhook"]).hostname if s["webhook"] else None, "last_scheduled": s["last_scheduled"],
+        return {"schedule": s["schedule"], "paper": s["paper"], "webhook_set": bool(s["webhook"]), "webhook_host": urlparse(s["webhook"]).hostname if s["webhook"] else None, "last_scheduled": s["last_scheduled"],
                 "running": bool(self._thread and self._thread.is_alive())}
 
     def plan(self, q: dict | None = None) -> dict:
@@ -247,7 +247,8 @@ class SignalsApi:
                 previous = next((s for s in reversed(earlier) if s["as_of"] != snap["as_of"]), None) or (earlier[-1] if earlier else None)
                 self.book.record(snap)
                 record = sb.track_record(earlier + [snap], prices) if prices is not None else None
-                entry.update(snapshot=snap, consensus=sb.consensus(rows), changes=sb.changes(previous, snap), compared_with=previous and {"issued": previous["issued"], "as_of": previous["as_of"]},
+                paper = sb.paper_portfolio(earlier + [snap], prices, **self.book.settings()["paper"]) if prices is not None else None
+                entry.update(paper=paper, snapshot=snap, consensus=sb.consensus(rows), changes=sb.changes(previous, snap), compared_with=previous and {"issued": previous["issued"], "as_of": previous["as_of"]},
                              record=record, snapshots=len(earlier) + 1)
             except (ApiError, UniverseError, BookError, ValueError, KeyError, OSError) as error:
                 entry["error"] = str(error.args[0] if isinstance(error, KeyError) and error.args else error)
@@ -271,7 +272,7 @@ class SignalsApi:
     # ---------------------------------------------------------------------------------------------------------- the schedule and alerts
     def settings(self, body: dict) -> dict:
         try:
-            self.book.save_settings(body.get("schedule"), body.get("webhook"))
+            self.book.save_settings(body.get("schedule"), body.get("webhook"), paper=body.get("paper"))
         except BookError as error:
             raise ApiError(str(error)) from None
         if self.book.settings()["schedule"]["enabled"]:

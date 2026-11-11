@@ -796,6 +796,9 @@ def test_the_signals_tab_follows_two_markets_reads_them_says_what_the_data_is_an
     text = ws.inner_text("#signals-results")
     assert "What the rules agree on" in text and "Every rule" in text and "Trend, one year" in text and "first snapshot of this follow" in text and "No signal is old enough to score yet" in text
     assert "simulated data" in text and "not today's" in text and ws.locator("[data-role=signals-banner]").count() == 1 and ws.locator("[data-role=signals-error]").count() == 0
+    paper = ws.inner_text("[data-role=signals-paper] >> nth=0")
+    assert "No result yet" in paper and "Target weight" in paper and ("buy" in paper or "sell" in paper or "none" in paper) and ws.locator("[data-role=signals-paper]").count() == 2
+    assert ws.input_value("#signals input[data-key=cost_bps]") == "5"
     assert any(mark in text for mark in ("▲", "▼")) and "1 snapshot in the ledger" in ws.inner_text("[data-role=signals-follows]")
     ws.click(run)
     _wait_until(ws, "document.querySelector('#signals-results') && document.querySelector('#signals-results').textContent.includes('Nothing changed side since the snapshot')")

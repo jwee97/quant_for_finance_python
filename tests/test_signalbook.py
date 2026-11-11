@@ -161,3 +161,61 @@ def test_settings_are_checked_and_the_alert_address_must_be_https(tmp_path):
     book.alert({"at": "a", "text": "one"})
     book.alert({"at": "b", "text": "two"})
     assert [a["text"] for a in book.alerts()] == ["two", "one"]
+
+
+# ------------------------------------------------------------------------------------------------------------------------------ the paper portfolio
+def test_target_weights_are_the_net_share_of_rules_scaled_to_be_fully_invested():
+    rows, _ = sb.board_rows(board({"r1": (1.0, -1.0), "r2": (1.0, -1.0), "r3": (1.0, 0.0), "r4": (0.0, 0.0)}))
+    assert sb.target_weights(rows) == pytest.approx({"A": 0.6, "B": -0.4})                      # nets of 3/4 and -2/4, over 5/4
+    assert sb.target_weights(rows, long_only=True) == {"A": 1.0, "B": 0.0}
+    flat, _ = sb.board_rows(board({"r1": (0.0, 0.0)}))
+    assert sb.target_weights(flat) == {"A": 0.0, "B": 0.0}, "no view holds cash"
+    assert sb.target_weights([{**rows[0], "price_key": None}]) == {}, "a signal with nothing to trade is left out"
+
+
+def test_the_paper_portfolio_is_bought_at_the_next_close_pays_for_every_trade_and_matches_a_hand_calculation():
+    days = pd.bdate_range("2026-01-05", periods=6)
+    prices = pd.DataFrame({"A": [100.0, 100, 110, 121, 121, 133.1], "B": [50.0, 50, 50, 55, 55, 55]}, index=days)
+    d = [str(x.date()) for x in days]
+    snaps = [snap(d[0], {"r": (1.0, 0.0)}), snap(d[2], {"r": (0.0, 1.0)})]                       # all in A from the close of day 1; all in B from the close of day 3
+    p = sb.paper_portfolio(snaps, prices, cost_bps=10.0, capital=1000.0)
+    by_hand = [1.0, 1.10 - 0.001, None, None, None]
+    by_hand[2] = by_hand[1] * 1.10                                                             # day 3: still A (+10%); B is bought at that close
+    by_hand[3] = by_hand[2] * (1.0 - 0.002)                                                    # day 4: B flat, and the switch traded 200% of the book at 10 bp
+    by_hand[4] = by_hand[3] * 1.0                                                              # day 5: B flat
+    assert p["curve"]["dates"] == d[1:] and p["curve"]["portfolio"] == pytest.approx(by_hand) and p["days"] == 4
+    assert p["curve"]["baseline"] == pytest.approx([1.0, 1.05, 1.05 * 1.10, 1.05 * 1.10, 1.05 * 1.10 * 1.05]), "equal weights of A and B over the same days"
+    st = p["stats"]
+    assert st["turnover"] == pytest.approx(3.0) and st["costs"] == pytest.approx(0.003) and st["rebalances"] == 2 and st["total_return"] == pytest.approx(by_hand[4] - 1) and st["value"] == pytest.approx(1000 * by_hand[4])
+    assert st["sharpe"] is None and st["sharpe_needs_days"] == 60, "four days are not a Sharpe ratio"
+    assert st["max_drawdown"] == pytest.approx(-0.002)
+    assert p["target"] == [{"asset": "A", "weight": 0.0, "amount": 0.0}, {"asset": "B", "weight": 1.0, "amount": 1000.0}] and p["trades"] == []
+    free = sb.paper_portfolio(snaps, prices, cost_bps=0.0)["curve"]["portfolio"]
+    assert free == pytest.approx([1.0, 1.10, 1.21, 1.21, 1.21])
+
+
+def test_the_paper_portfolio_trades_only_what_could_have_been_traded_and_says_what_the_latest_snapshot_would_change():
+    days = pd.bdate_range("2026-01-05", periods=6)
+    prices = pd.DataFrame({"A": [100.0, 101, 102, 103, 104, 105], "B": [10.0] * 6}, index=days)
+    d = [str(x.date()) for x in days]
+    assert sb.paper_portfolio([], prices)["curve"] is None and sb.paper_portfolio([], prices)["target"] == []
+    newest = sb.paper_portfolio([snap(d[5], {"r": (1.0, 0.0)})], prices, capital=1000.0)
+    assert newest["curve"] is None and newest["days"] == 0 and newest["trades"] == [{"asset": "A", "from": 0.0, "to": 1.0, "change": 1.0, "amount": 1000.0}], "today's snapshot: an order to place, no result yet"
+    late = snap(d[0], {"r": (1.0, 0.0)}, f"{d[3]}T08:00:00Z")
+    assert sb.paper_portfolio([late], prices)["curve"] is None, "written down after its entry close: never traded on paper"
+    mixed = sb.paper_portfolio([snap(d[1], {"r": (1.0, 0.0)}), snap(d[5], {"r": (-1.0, 0.0)})], prices, cost_bps=0.0)
+    assert mixed["curve"]["portfolio"] == pytest.approx([1.0, 103 / 102, 104 / 102, 105 / 102]) and mixed["trades"][0]["from"] == 1.0 and mixed["trades"][0]["to"] == -1.0
+    assert sb.paper_portfolio([snap(d[1], {"r": (-1.0, 0.0)})], prices, cost_bps=0.0, long_only=True)["curve"]["portfolio"] == pytest.approx([1.0] * 4), "long only: a short view holds cash"
+    moved = prices.copy()
+    moved.iloc[:2] *= 3.0                                                                      # prices before the entry change nothing
+    assert sb.paper_portfolio([snap(d[1], {"r": (1.0, 0.0)})], moved, cost_bps=0.0)["curve"]["portfolio"] == pytest.approx([1.0, 103 / 102, 104 / 102, 105 / 102])
+
+
+def test_the_paper_settings_are_checked(tmp_path):
+    book = Book(tmp_path)
+    assert book.settings()["paper"] == {"cost_bps": 5.0, "long_only": False, "capital": 100000.0}
+    assert book.save_settings(paper={"cost_bps": 12, "long_only": True})["paper"] == {"cost_bps": 12.0, "long_only": True, "capital": 100000.0}
+    for bad, why in [({"cost_bps": -1}, "between 0 and 200"), ({"cost_bps": "x"}, "must be numbers"), ({"capital": 5}, "between 100 and"), ("all", "must be an object")]:
+        with pytest.raises(BookError, match=why):
+            book.save_settings(paper=bad)
+    assert book.save_settings({"enabled": False})["paper"]["cost_bps"] == 12.0

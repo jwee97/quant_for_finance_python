@@ -337,6 +337,12 @@ def cmd_signals(args, config) -> int:
                 print(f"  record at {h} day(s): {v['n']} signals, {v['hit_rate'] * 100:.0f}% right, average {v['mean'] * 100:+.2f}% against {v['baseline'] * 100:+.2f}% for always long")
         elif rec is not None:
             print("  record: no signal is old enough to score yet" + (f" ({rec['late']} snapshot(s) read on old data are left out)" if rec["late"] else ""))
+        paper = e.get("paper")
+        if paper and paper["stats"]:
+            st = paper["stats"]
+            print(f"  paper portfolio: {st['total_return'] * 100:+.2f}% over {paper['days']} day(s) after costs, against {st['baseline_return'] * 100:+.2f}% for holding them equally; worst fall {st['max_drawdown'] * 100:.2f}%")
+        for t in (paper or {}).get("trades", []):
+            print(f"  paper trade: {'buy' if t['change'] > 0 else 'sell'} {t['asset']} {abs(t['amount']):,.0f} (weight {t['from'] * 100:.0f}% -> {t['to'] * 100:.0f}%)")
     if args.json:
         Path(args.json).write_text(json.dumps(clean(result), indent=1), encoding="utf-8")
         print(f"\nwritten to {args.json}")

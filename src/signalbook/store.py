@@ -21,7 +21,7 @@ from .engine import MARKETS
 MAX_FOLLOWS = 30
 NAME = re.compile(r"^[^\x00-\x1f<>]{1,60}$")
 TIME = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
-DEFAULT_SETTINGS = {"schedule": {"enabled": False, "time": "18:30", "weekdays_only": True, "refresh": True}, "webhook": "", "last_scheduled": ""}
+DEFAULT_SETTINGS = {"schedule": {"enabled": False, "time": "18:30", "weekdays_only": True, "refresh": True}, "webhook": "", "last_scheduled": "", "paper": {"cost_bps": 5.0, "long_only": False, "capital": 100000.0}}
 
 
 class BookError(ValueError):
@@ -128,10 +128,23 @@ class Book:
         out["schedule"].update({k: v for k, v in (saved.get("schedule") or {}).items() if k in out["schedule"]})
         out["webhook"] = saved.get("webhook") or ""
         out["last_scheduled"] = saved.get("last_scheduled") or ""
+        out["paper"].update({k: v for k, v in (saved.get("paper") or {}).items() if k in out["paper"]})
         return out
 
-    def save_settings(self, schedule: dict | None = None, webhook: str | None = None, last_scheduled: str | None = None) -> dict:
+    def save_settings(self, schedule: dict | None = None, webhook: str | None = None, last_scheduled: str | None = None, paper: dict | None = None) -> dict:
         current = self.settings()
+        if paper is not None:
+            if not isinstance(paper, dict):
+                raise BookError("paper must be an object")
+            try:
+                cost, capital = float(paper.get("cost_bps", current["paper"]["cost_bps"])), float(paper.get("capital", current["paper"]["capital"]))
+            except (TypeError, ValueError):
+                raise BookError("the cost and the capital must be numbers") from None
+            if not 0 <= cost <= 200:
+                raise BookError("the cost per trade must be between 0 and 200 basis points")
+            if not 100 <= capital <= 1e10:
+                raise BookError("the paper capital must be between 100 and 10 billion")
+            current["paper"] = {"cost_bps": cost, "long_only": bool(paper.get("long_only", current["paper"]["long_only"])), "capital": capital}
         if schedule is not None:
             if not isinstance(schedule, dict):
                 raise BookError("schedule must be an object")
