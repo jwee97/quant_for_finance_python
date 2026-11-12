@@ -8,6 +8,7 @@ import pytest
 import statsmodels.api as sm
 from arch.unitroot import PhillipsPerron, VarianceRatio
 from statsmodels.stats.multitest import multipletests
+from statsmodels.tsa.adfvalues import mackinnonp
 from statsmodels.tsa.stattools import adfuller, coint, grangercausalitytests, kpss
 
 from src.probability.resampling import (bootstrap_indices, circular_block_indices, moving_block_indices, optimal_block_length, stationary_indices,
@@ -288,7 +289,10 @@ def test_kpss_matches_statsmodels(series, reg):
 def test_phillips_perron_matches_arch(series, reg):
     for x in series:
         mine, ref = phillips_perron(x, reg, lags=8), PhillipsPerron(x, lags=8, trend=reg)
-        assert mine.statistic == pytest.approx(ref.stat, abs=1e-8) and mine.pvalue == pytest.approx(ref.pvalue, abs=1e-8)
+        assert mine.statistic == pytest.approx(ref.stat, abs=1e-8)
+        # The p-value here is MacKinnon's (1994) approximation, as statsmodels computes it. arch used the same one up to version 8 and a different response surface from version 9, so the two
+        # agree to the last digit on the older versions and to a few thousandths on the newer: the statistic is the same number either way.
+        assert mine.pvalue == pytest.approx(float(mackinnonp(ref.stat, regression=reg, N=1)), abs=1e-10) and mine.pvalue == pytest.approx(ref.pvalue, abs=5e-3)
     assert phillips_perron(series[1], "c", lags=8, test_type="rho").statistic == pytest.approx(PhillipsPerron(series[1], lags=8, test_type="rho").stat, abs=1e-6)
 
 
