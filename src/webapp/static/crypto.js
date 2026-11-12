@@ -123,9 +123,9 @@
         }
         h("p", "hint", b, "Only what you change is sent; the rest is the strategy's own default.");
       }
-      const a = sec("2. Assets"), box = h("div", "checks", a); h("span", "hint", box, "The platform's data covers:");
-      for (const s of ["BTC", "ETH"]) { const label = h("label", "f inline", box), c = h("input", "", label); c.type = "checkbox"; c.checked = f.assets.has(s); label.appendChild(document.createTextNode(s)); c.addEventListener("change", () => { if (c.checked) f.assets.add(s); else f.assets.delete(s); after(); }); }
-      h("p", "hint", a, "The carry and basis strategies trade the long-spot, short-perpetual index of each coin.");
+      const a = sec("2. Assets"), box = h("div", "checks", a); h("span", "hint", box, "Coins (BTC and ETH have perpetual and funding data; the others are spot only):");
+      for (const s of symbols().map((x) => x.id)) { const label = h("label", "f inline", box), c = h("input", "", label); c.type = "checkbox"; c.checked = f.assets.has(s); label.appendChild(document.createTextNode(s)); c.addEventListener("change", () => { if (c.checked) f.assets.add(s); else f.assets.delete(s); after(); }); }
+      h("p", "hint", a, "The carry, basis and stablecoin strategies are for BTC and ETH only (they use perpetual funding, basis and the stablecoin supply); the trend and breakout strategies run on any coin. A coin marked simulated is a model of BTC, not a market.");
       const c = sec("3. Trading");
       Q.labField(c, { key: "frequency", label: "Rebalance", kind: "choice", options: [["daily", "Daily"], ["weekly", "Weekly"], ["monthly", "Monthly"]] }, f, after);
       Q.labField(c, { key: "regime", label: "Regime filter", kind: "choice", options: [["", "The strategy's own"], ["vol_state", "Volatility state"], ["hmm", "Hidden Markov model"], ["gmm", "Gaussian mixture"]], help: "Sets the volatility target by market regime (lower in the stressed one)" }, f, after);

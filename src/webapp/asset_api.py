@@ -826,9 +826,13 @@ class AssetApi:
             raise ApiError(f"strategy must be one of {sorted(ca.CRYPTO_STRATEGIES)}")
         if ca.CRYPTO_STRATEGIES[name]["model"] is None:
             raise ApiError("the exchange-flow strategy needs exchange net-flow data, which the platform does not hold; use stablecoin_flow (the on-chain signal that is available) or load your own data")
-        assets = [a.upper() for a in _list(body.get("assets") or "BTC,ETH", 2)]
-        if not assets or any(a not in ca.REAL_SYMBOLS for a in assets):
-            raise ApiError(f"the strategy backtests use the platform's data: choose from {list(ca.REAL_SYMBOLS)}")
+        assets = [a.upper() for a in _list(body.get("assets") or "BTC,ETH", 6)]
+        if not assets:
+            raise ApiError("choose at least one coin")
+        series = {}
+        for a in assets:
+            if a not in ca.REAL_SYMBOLS:                                                         # any coin the tab can show: a download, your file, or the simulated ones
+                series[a] = self._series(a)
         lookback = None if body.get("lookback") in (None, "") else _number(body, "lookback", 90, 5, 756, integer=True)
         target = None if body.get("target_vol") in (None, "") else _number(body, "target_vol", 0.2, 0.01, 2.0)
         freq = _choice(body, "frequency", "weekly", ("daily", "weekly", "monthly"))
@@ -839,7 +843,10 @@ class AssetApi:
 
         def work(progress):
             progress("running the strategy through the pipeline")
-            out = ca.run_crypto_strategy(self.app.config, name, assets, freq, lookback, target, fees, slip, regime, settings)
+            try:
+                out = ca.run_crypto_strategy(self.app.config, name, assets, freq, lookback, target, fees, slip, regime, settings, series=series)
+            except ValueError as exc:
+                raise ApiError(str(exc)) from None
             return _wrap("crypto_backtest", out, {"prices": "platform"}, [], out["end"], out.pop("notes"))
 
         return self.app.submit_task(f"crypto: {name}", work)

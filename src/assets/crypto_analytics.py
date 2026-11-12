@@ -469,8 +469,26 @@ def run_crypto_signals(config) -> dict:
     return out
 
 
+def with_coins(bundle, coins: dict):
+    """``bundle`` with each coin of ``coins`` (``{symbol: CryptoSeries}``) added as a spot asset on the weekdays the bundle already has. A coin's price before it starts trading is missing, so a strategy
+    reads it only from the day it has history. Its perpetual and funding are not used here: the strategies that need them stay with BTC and ETH."""
+    from dataclasses import replace
+
+    from ..framework.data import bundle_from_prices
+
+    prices = bundle.prices.copy()
+    for symbol, s in coins.items():
+        spot = _naive(s.spot).dropna()
+        spot = spot[spot.index.dayofweek < 5]
+        prices[symbol] = spot.reindex(prices.index.union(spot.index)).reindex(prices.index)
+    classes = {**bundle.asset_class, **{c: "crypto" for c in coins}}
+    out = bundle_from_prices(prices, asset_class=classes, macro=bundle.macro, name=bundle.name, min_history=60)
+    return replace(out, name=bundle.name + "+" + "+".join(sorted(coins)))
+
+
 def run_crypto_strategy(config, strategy: str, assets: list[str] | None = None, frequency: str | None = None, lookback: int | None = None, target_vol: float | None = None,
-                        fees_bps: float = 5.0, slippage_bps: float = 2.0, regime: str | None = None, settings: dict | None = None, short_funding: bool = True) -> dict:
+                        fees_bps: float = 5.0, slippage_bps: float = 2.0, regime: str | None = None, settings: dict | None = None, short_funding: bool = True,
+                        series: dict | None = None) -> dict:
     """Run one of ``CRYPTO_STRATEGIES`` on the Deribit-based crypto bundle through the platform pipeline. ``assets`` picks BTC and/or ETH (the carry strategies trade the matching ``_CARRY`` index);
     ``fees_bps`` plus ``slippage_bps`` is the one-way cost of trading the whole book; ``regime`` overrides the strategy's detector. Weekday marks and 252-day annualisation, like every other backtest."""
     from ..framework import MODELS, load_library
@@ -485,10 +503,14 @@ def run_crypto_strategy(config, strategy: str, assets: list[str] | None = None, 
     if spec["model"] is None:
         raise ValueError("the exchange-flow strategy needs exchange net-flow data, which the platform does not hold; use the stablecoin-flow strategy (the on-chain signal that is available) or load your own data")
     chosen = [a.upper() for a in (assets or ["BTC", "ETH"])]
-    bad = [a for a in chosen if a not in REAL_SYMBOLS]
-    if bad or not chosen:
-        raise ValueError(f"the strategy backtests use the platform's data, which covers {list(REAL_SYMBOLS)} (asked for {bad or 'nothing'})")
+    other = [a for a in chosen if a not in REAL_SYMBOLS]
+    if not chosen or (other and not series):
+        raise ValueError(f"the strategy backtests use the platform's data, which covers {list(REAL_SYMBOLS)} (asked for {other or 'nothing'})")
+    if other and spec["model"] in ("funding_carry", "basis_reversion", "stablecoin_flow"):
+        raise ValueError(f"{spec['label']} is written for BTC and ETH (their perpetual funding, basis and the stablecoin supply); for {', '.join(other)} choose a trend or breakout strategy")
     bundle = load_crypto_bundle(config)
+    if other:                                                                                       # coins beyond the platform's two: their spot history (a download, your file, or a simulation) joins the bundle
+        bundle = with_coins(bundle, {a: series[a] for a in other})
     columns = [f"{a}_CARRY" for a in chosen] if spec["assets"] == "carry" else chosen
     params = dict(spec["params"])
     if lookback is not None and strategy == "spot_momentum":
@@ -508,7 +530,7 @@ def run_crypto_strategy(config, strategy: str, assets: list[str] | None = None, 
     # A short of a coin is held through its perpetual future, which earns minus the perpetual's return plus the funding it collects. That is minus the spot return plus the return of the coin's
     # carry index (long spot, short perpetual), so the carry index's daily return is what a short earns beyond minus the coin's own return. The carry strategies already trade that index.
     directional = spec["assets"] != "carry"
-    carry = bundle.returns[[f"{a}_CARRY" for a in chosen]].rename(columns=lambda c: c[:-6]) if directional and short_funding else None
+    carry = bundle.returns[[f"{a}_CARRY" for a in chosen if a in REAL_SYMBOLS]].rename(columns=lambda c: c[:-6]) if directional and short_funding and any(a in REAL_SYMBOLS for a in chosen) else None
     out = run_strategy(subset_bundle(bundle, columns), config, spec["model"], params, rebalance=frequency, target_vol=target_vol, regime=regime or spec.get("regime"),
                        cost_bps=float(fees_bps) + float(slippage_bps), label=spec["label"], allocator=spec.get("allocator"), short_carry=carry, units=directional)
     out.update({"strategy": strategy, "label": spec["label"], "text": spec["text"], "assets": chosen, "fees_bps": float(fees_bps), "slippage_bps": float(slippage_bps), "source": "platform",
@@ -516,4 +538,6 @@ def run_crypto_strategy(config, strategy: str, assets: list[str] | None = None, 
                           "Fees and slippage are one-way basis points on the traded notional; funding is earned inside the carry index."
                           + (" A short position is held through the perpetual future: it earns minus the coin's return plus the funding the perpetual paid (and pays it when funding is negative)." if carry is not None else "")],
                 "short_funding": carry is not None})
+    if other:
+        out["notes"].append(f"{', '.join(other)}: spot prices only, from {', '.join(sorted({series[a].source for a in other}))} data. A short in these is scored on the spot price alone (their perpetual funding is not used here), and a simulated coin is a model of BTC, not a market.")
     return out

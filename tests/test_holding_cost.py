@@ -88,3 +88,20 @@ def test_a_crypto_short_is_scored_through_the_perpetual_and_a_long_only_strategy
     assert carry["short_funding"] is False, "the carry strategies already trade the index that holds the funding"
     returns = load_crypto_bundle(config).returns
     assert {"BTC_CARRY", "ETH_CARRY"} <= set(returns.columns) and returns["BTC_CARRY"].abs().max() < 0.2
+
+
+def test_a_trend_strategy_runs_on_other_coins_and_the_carry_strategies_say_they_are_for_bitcoin_and_ether():
+
+    from src.assets import crypto_analytics as ca
+    from src.framework.crypto_bundle import load_crypto_bundle
+
+    config = load_config()
+    btc = load_crypto_bundle(config).prices["BTC"]
+    alt = ca.CryptoSeries("SOL", btc * 0.05 * (1 + 0.1 * np.sin(np.arange(len(btc)) / 20.0)), None, None, "user_file")
+    out = ca.run_crypto_strategy(config, "spot_momentum", ["BTC", "SOL"], series={"SOL": alt})
+    assert out["assets"] == ["BTC", "SOL"] and out["n_days"] > 100 and "SOL: spot prices only" in " ".join(out["notes"]) and out["actions"]["units"] is True
+    assert out["universe"] == ["BTC", "SOL"] and out["metrics"]["gross_exposure_mean"] > 0
+    with pytest.raises(ValueError, match="written for BTC and ETH"):
+        ca.run_crypto_strategy(config, "funding_carry", ["BTC", "SOL"], series={"SOL": alt})
+    with pytest.raises(ValueError, match="covers"):
+        ca.run_crypto_strategy(config, "spot_momentum", ["SOL"])

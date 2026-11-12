@@ -352,8 +352,15 @@ def test_a_crypto_strategy_backtest_runs_through_the_pipeline_and_refuses_data_i
     assert out["source"] == "platform" and out["metrics"]["sharpe"] == pytest.approx(out["metrics"]["sharpe"]) and len(out["equity"]) == len(out["dates"]) and out["fees_bps"] == 5.0
     with pytest.raises(ApiError, match="exchange net-flow"):
         assets.extra_post["/api/crypto/strategy/backtest"]({"strategy": "exchange_flow"})
-    with pytest.raises(ApiError, match="platform's data"):
-        assets.extra_post["/api/crypto/strategy/backtest"]({"strategy": "spot_momentum", "assets": ["SOL"]})
+    with pytest.raises(ApiError, match="unknown symbol"):
+        assets.extra_post["/api/crypto/strategy/backtest"]({"strategy": "spot_momentum", "assets": ["ZZZ"]})
+    job = assets.job(assets.extra_post["/api/crypto/strategy/backtest"]({"strategy": "funding_carry", "assets": ["SOL"]})["job"])
+    for _ in range(600):
+        job = assets.job(job["id"])
+        if job["status"] in ("done", "error"):
+            break
+        time.sleep(0.1)
+    assert job["status"] == "error" and "written for BTC and ETH" in job["error"], "the carry strategies are for the two coins with perpetual data"
 
 
 def test_the_catalog_lists_the_crypto_strategies_by_group_with_their_settings_and_sources(assets):
