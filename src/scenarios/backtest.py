@@ -27,7 +27,7 @@ def evaluate_path(returns: pd.DataFrame, weights: pd.DataFrame, cost_bps: float 
 
 def summarise(net: np.ndarray, periods: int = 252) -> dict:
     wealth = np.cumprod(1.0 + net)
-    dd = float((wealth / np.maximum.accumulate(wealth) - 1.0).min())
+    dd = float((wealth / np.maximum(np.maximum.accumulate(wealth), 1.0) - 1.0).min())                # the starting capital is the first peak
     sd = net.std(ddof=1) if len(net) > 1 else np.nan
     return {"return": float(net.mean() * periods), "volatility": float(sd * np.sqrt(periods)), "sharpe": float(net.mean() / sd * np.sqrt(periods)) if sd and sd > 0 else float("nan"),
             "max_drawdown": dd, "terminal_wealth": float(wealth[-1])}

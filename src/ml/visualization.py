@@ -32,7 +32,7 @@ def equity_payload(net: pd.Series, benchmark: pd.Series | None, labels: pd.Serie
     eq = (1.0 + net.fillna(0.0)).cumprod()
     keep = thin(len(eq), max_points)
     out = {"dates": [str(d.date()) for d in eq.index[keep]], "strategy": [_num(v) for v in eq.to_numpy()[keep]],
-           "segment": [str(s) for s in labels.reindex(eq.index).ffill().to_numpy()[keep]], "drawdown": [_num(v) for v in (eq / eq.cummax() - 1.0).to_numpy()[keep]]}
+           "segment": [str(s) for s in labels.reindex(eq.index).ffill().to_numpy()[keep]], "drawdown": [_num(v) for v in (eq / eq.cummax().clip(lower=1.0) - 1.0).to_numpy()[keep]]}
     if benchmark is not None:
         b = (1.0 + benchmark.reindex(eq.index).fillna(0.0)).cumprod()
         out["benchmark"] = [_num(v) for v in b.to_numpy()[keep]]

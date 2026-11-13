@@ -349,6 +349,23 @@ def cmd_signals(args, config) -> int:
     return 0
 
 
+def cmd_replicate(args, config) -> int:
+    """Run the replication benchmarks: the platform's implementations of published methods against the publications (see ``validation.replication``). Exit status 1 if one does not hold."""
+    import json
+
+    from .validation import replication
+
+    rows = replication.run_all(tuple(args.only) if args.only else None)
+    if not rows:
+        print("no benchmark matches: " + ", ".join(args.only))
+        return 2
+    print(replication.format_table(rows))
+    if args.json:
+        with open(args.json, "w", encoding="utf-8") as handle:
+            json.dump(rows, handle, indent=1)
+    return 0 if all(r["passed"] for r in rows) else 1
+
+
 def cmd_scenarios(args, config) -> int:
     """Make scenarios of a portfolio's returns with several generators and score each against the history: the Scenarios tab, in the terminal."""
     import json
@@ -890,6 +907,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--data", choices=["simulated", "real"], default="simulated", help="follow futures: simulated roots or the curves you downloaded"); p.add_argument("--refresh", action="store_true", help="run: download new prices first")
     p.add_argument("--json", help="run: also write the whole result to this file")
     p.set_defaults(func=cmd_signals)
+    p = sub.add_parser("replicate", help="check the platform's implementations of published methods against the publications (Ledoit-Wolf, Bailey and Lopez de Prado, White, Hansen, Almgren-Chriss, Gu-Kelly-Xiu), each labelled exact, simulation, approximate or method only")
+    p.add_argument("only", nargs="*", help="run only the benchmarks whose name contains one of these words (for example ledoit almgren)"); p.add_argument("--json", help="also write the rows to this file")
+    p.set_defaults(func=cmd_replicate)
     p = sub.add_parser("scenarios", help="make thousands of possible futures for some tickers with eight generators (resampling, statistical models, a GAN, a variational autoencoder, a diffusion model) and score each against the history")
     p.add_argument("tickers", nargs="*", help="columns of the platform's ETFs, or of --prices (default: the first four); at most 12"); p.add_argument("--list", action="store_true", help="name the generators and stop")
     p.add_argument("--generators", nargs="*", help="generator ids, or `all` (default: bootstrap, arima_garch, factor_vae; see --list)"); p.add_argument("--horizon", type=int, default=21, choices=[5, 10, 21, 63], help="trading days per scenario")

@@ -69,7 +69,7 @@ class BacktestResult:
         return cumulative_returns(self.gross_returns.dropna())
 
     def drawdown(self) -> pd.Series:
-        return drawdown(self.equity_curve)
+        return drawdown(self.equity_curve, 1.0)
 
     def summary(self, risk_free=0.0, benchmark: pd.Series | None = None) -> dict:
         gross = performance_summary(self.gross_returns, risk_free, benchmark=benchmark)

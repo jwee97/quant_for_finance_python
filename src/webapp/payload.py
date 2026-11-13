@@ -60,7 +60,7 @@ def _headline(net: pd.Series, gross: pd.Series) -> dict:
     equity = (1.0 + net).cumprod()
     gsd = gross.std(ddof=1)
     return {"sharpe": ANN ** 0.5 * net.mean() / sd if sd > 0 else float("nan"), "gross_sharpe": ANN ** 0.5 * gross.mean() / gsd if gsd > 0 else float("nan"),
-            "cagr": float(equity.iloc[-1] ** (ANN / len(net)) - 1.0), "ann_vol": float(sd * ANN ** 0.5), "max_drawdown": float((equity / equity.cummax() - 1.0).min()),
+            "cagr": float(equity.iloc[-1] ** (ANN / len(net)) - 1.0), "ann_vol": float(sd * ANN ** 0.5), "max_drawdown": float((equity / equity.cummax().clip(lower=1.0) - 1.0).min()),
             "n_days": int(len(net)), "start": str(net.index[0].date())}
 
 
@@ -360,7 +360,7 @@ def result_payload(result, bundle, flags: list[dict], universe: dict, spec: dict
     start = net.index[0]
     gross = result.gross_returns.reindex(net.index).fillna(0.0)
     equity = (1.0 + net).cumprod()
-    drawdown = equity / equity.cummax() - 1.0
+    drawdown = equity / equity.cummax().clip(lower=1.0) - 1.0                                # the starting capital is the first peak
     rolling = net.rolling(int(ANN)).apply(lambda x: ANN ** 0.5 * x.mean() / x.std(ddof=1) if x.std(ddof=1) > 0 else np.nan, raw=True)
     benches, bench_returns = {}, {}
     for name, r in result.benchmarks.items():

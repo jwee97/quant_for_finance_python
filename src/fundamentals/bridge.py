@@ -540,7 +540,7 @@ def backtest(ctx: ResearchContext, signal: pd.DataFrame, spec: PortfolioSpec | d
                   "sensitivity": [{"cost_bps": float(b), **clean(r)} for b, r in sensitivity.iterrows()]},
         "exposure": {"gross_average": float(gross_exposure.mean()), "net_average": float(exposure_k.sum(axis=1).mean()), "cash_average": float((1.0 - exposure_k.clip(lower=0.0).sum(axis=1)).mean())},
         "limits": clean(limits), "series": {"equity": series_points(equity), "gross_equity": series_points((1.0 + gross).cumprod()), "benchmark": series_points((1.0 + benchmark).cumprod()),
-                                          "drawdown": series_points(equity / equity.cummax() - 1.0), "exposure": series_points(gross_exposure), "turnover": series_points(turnover[turnover > 0])},
+                                          "drawdown": series_points(equity / equity.cummax().clip(lower=1.0) - 1.0), "exposure": series_points(gross_exposure), "turnover": series_points(turnover[turnover > 0])},
         "holdings": [{"security_id": int(s), "ticker": str(ctx.info.loc[s, "ticker"]), "name": str(ctx.info.loc[s, "company_name"] or ""), "weight": float(w), "sector": labels["sector"].get(s),
                       "country": labels["country"].get(s)} for s, w in held_now.head(40).items()],
         "as_of": str(book.weights.index[-1].date()), "first_trade": str(first.date()), "warnings": warnings,

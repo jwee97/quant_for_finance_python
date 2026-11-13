@@ -65,18 +65,31 @@ def cumulative_returns(returns: pd.DataFrame | pd.Series, initial: float = 1.0) 
     return initial * (1.0 + returns.fillna(0.0)).cumprod()
 
 
-def drawdown(curve: pd.Series | pd.DataFrame) -> pd.Series | pd.DataFrame:
-    """Drawdown from the running maximum of an equity curve."""
-    return curve / curve.cummax() - 1.0
+def drawdown(curve: pd.Series | pd.DataFrame, initial: float | None = None) -> pd.Series | pd.DataFrame:
+    """Drawdown from the running maximum of an equity curve.
+
+    ``initial`` is the capital the curve grew from. A curve built from returns starts at ``initial * (1 + r_1)``: its first point is already AFTER the first return, so the starting capital is not on
+    it. Give ``initial`` and the starting capital counts as the first peak, which it is: an account that loses 5% on each of its first two days is 9.75% under water, not 5%. Without it (a price series,
+    which has no capital before its first point) the first point is the first peak.
+    """
+    peak = curve.cummax()
+    if initial is not None:
+        peak = peak.clip(lower=float(initial))
+    return curve / peak - 1.0
 
 
-def max_drawdown(curve: pd.Series) -> float:
-    return float(drawdown(curve).min())
+def max_drawdown(curve: pd.Series, initial: float | None = None) -> float:
+    return float(drawdown(curve, initial).min())
 
 
-def drawdown_table(curve: pd.Series, top: int = 5) -> pd.DataFrame:
-    """The ``top`` deepest peak-to-trough episodes, with recovery dates."""
-    dd = drawdown(curve)
+def returns_drawdown(returns: pd.Series | pd.DataFrame) -> pd.Series | pd.DataFrame:
+    """The drawdown of the account that earned ``returns``, from its starting capital onwards (see ``drawdown``): what every report of a strategy's drawdown should use."""
+    return drawdown(cumulative_returns(returns), 1.0)
+
+
+def drawdown_table(curve: pd.Series, top: int = 5, initial: float | None = None) -> pd.DataFrame:
+    """The ``top`` deepest peak-to-trough episodes, with recovery dates. ``initial`` as in ``drawdown``."""
+    dd = drawdown(curve, initial)
     under = dd < -1e-12
     if not under.any():
         return pd.DataFrame(columns=["start", "trough", "end", "depth", "length_days", "recovery_days"])
@@ -132,7 +145,7 @@ def describe_returns(returns: pd.DataFrame, periods_per_year: int = TRADING_DAYS
         jb_stat, jb_p = stats.jarque_bera(series.to_numpy()) if dispersed else (np.nan, np.nan)
         ann_vol = annualised_volatility(series, periods_per_year)
         ann_ret = annualised_return(series, periods_per_year)
-        downside = series[series < 0.0]
+        shortfall = np.minimum(series.to_numpy(dtype=float), 0.0)                              # a day that did not lose contributes a zero: the mean below is over every day
         rows[column] = {
             "n_obs": int(len(series)),
             "mean_ann": float(series.mean() * periods_per_year),
@@ -148,8 +161,8 @@ def describe_returns(returns: pd.DataFrame, periods_per_year: int = TRADING_DAYS
             "median": float(series.median()),
             "q99": float(series.quantile(0.99)),
             "max": float(series.max()),
-            "downside_vol_ann": float(downside.std(ddof=1) * np.sqrt(periods_per_year)) if len(downside) > 2 else np.nan,
-            "max_drawdown": max_drawdown(curve),
+            "downside_vol_ann": float(np.sqrt(np.mean(shortfall ** 2)) * np.sqrt(periods_per_year)),     # the downside deviation about zero (Sortino and Price 1994), annualised
+            "max_drawdown": max_drawdown(curve, 1.0),
             "hit_rate": float((series > 0).mean()),
             "autocorr_lag1": float(series.autocorr(1)) if dispersed else np.nan,                  # no correlation to speak of when nothing moves (older pandas warns about the division by zero)
         }

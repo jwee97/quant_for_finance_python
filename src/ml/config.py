@@ -96,6 +96,12 @@ def validate(cfg: dict) -> dict:
     _check(sig.get("cov_method", "lw_constant_correlation") in COV_METHODS, f"signal.cov_method must be one of {COV_METHODS}")
     _check(60 <= int(sig.get("cov_window", 252)) <= 1000 and 1 <= int(sig.get("opt_every") or 1) <= 60, "signal.cov_window in [60, 1000] and signal.opt_every in [1, 60]")
     _check(sig.get("alloc_fallback", "none") in ("none", "hold", "equal_weight"), "signal.alloc_fallback must be none, hold or equal_weight")
+    if sig.get("capital") is not None or sig.get("max_participation") is not None or sig.get("impact") is not None:
+        _check(sig["method"] == "cost_aware_mean_variance", "signal.capital, signal.max_participation and signal.impact belong to the cost_aware_mean_variance method")
+        _check(sig.get("capital") is not None and float(sig["capital"]) > 0, "signal.capital must be given and positive when a participation limit or an impact cost is set")
+        _check(sig.get("max_participation") is None or 0.0 < float(sig["max_participation"]) <= 1.0, "signal.max_participation is a share of a day's volume in (0, 1]")
+        _check(sig.get("impact") is None or 0.0 <= float(sig["impact"]) <= 10.0, "signal.impact (the coefficient of the square-root law) is between 0 and 10")
+        _check(2 <= int(sig.get("adv_window", 20)) <= 252, "signal.adv_window is between 2 and 252 sessions")
     if sig["method"] == "cost_aware_mean_variance":
         _check(int(sig["holding_period"]) == 1, "the cost-aware optimiser trades edge against cost itself: averaging its books over a holding period would change the units of its cost term (set signal.holding_period to 1)")
     if sig.get("no_trade_margin") is not None:

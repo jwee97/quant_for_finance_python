@@ -226,7 +226,7 @@ def compare_methods(R: pd.DataFrame, methods: tuple = METHODS, regimes: pd.Serie
     for m, c in results.items():
         r = c.returns.loc[start:]
         eq = (1.0 + r).cumprod()
-        rows.append({"method": m, "sharpe": sharpe_of(r), "ann_return": float(r.mean() * ANN), "ann_vol": float(r.std(ddof=1) * math.sqrt(ANN)), "max_drawdown": float((eq / eq.cummax() - 1.0).min()),
+        rows.append({"method": m, "sharpe": sharpe_of(r), "ann_return": float(r.mean() * ANN), "ann_vol": float(r.std(ddof=1) * math.sqrt(ANN)), "max_drawdown": float((eq / eq.cummax().clip(lower=1.0) - 1.0).min()),
                      "turnover": c.turnover, "final_weights": {k: float(v) for k, v in c.weights.iloc[-1].items()}, "segments": _segment_sharpes(r, labels)})
         curves[m] = eq
     singles = {col: sharpe_of(R[col].loc[start:]) for col in R.columns}
@@ -270,7 +270,7 @@ def mixture_study(R: pd.DataFrame, *, development_end, regimes: pd.Series | None
     for m, c in runs.items():
         r = c.returns.reindex(evaluation.index).dropna()
         eq = (1.0 + r).cumprod()
-        rows.append({"method": m, "sharpe": sharpe_of(r), "ann_return": float(r.mean() * ANN) if len(r) else None, "max_drawdown": float((eq / eq.cummax() - 1.0).min()) if len(r) else None,
+        rows.append({"method": m, "sharpe": sharpe_of(r), "ann_return": float(r.mean() * ANN) if len(r) else None, "max_drawdown": float((eq / eq.cummax().clip(lower=1.0) - 1.0).min()) if len(r) else None,
                      "turnover": c.turnover, "evaluation_days": int(len(r)), "mean_weights": {k: float(v) for k, v in c.weights.reindex(evaluation.index).dropna(how="all").mean().items()},
                      "vs_best_single": paired(r, best_eval, f"{m} minus the best single member ({best})"),
                      "vs_equal_weight": paired(r, equal_eval, f"{m} minus the equal-weight mixture") if equal_eval is not None and m != "equal" else None})

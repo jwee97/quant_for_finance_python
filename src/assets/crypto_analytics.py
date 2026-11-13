@@ -281,7 +281,7 @@ def basis_dashboard(s: CryptoSeries, fee_bps: float = 5.0, days: int = 365) -> d
     add_flag(flags, abs(float(frame["basis"].iloc[-1])) > 0.01, "the basis is wide: mark-to-market risk on the short leg until it converges")
     return {"symbol": s.symbol, "source": s.source, "basis": float(frame["basis"].iloc[-1]), "basis_zscore": last_zscore(frame["basis"], 90), "basis_percentile_1y": percentile_rank(frame["basis"].tail(365), float(frame["basis"].iloc[-1])),
             "funding_annualised_30d": funding_ann, "carry_annualised": float(carry_daily.mean() * ANN), "carry_vol": float(sd * math.sqrt(ANN)), "carry_sharpe": float(carry_daily.mean() / sd * math.sqrt(ANN)) if sd > 0 else None,
-            "carry_max_drawdown": float((np.cumprod(1.0 + carry_daily) / np.cumprod(1.0 + carry_daily).cummax() - 1.0).min()), "breakeven_days": float(round_trip / daily_edge) if daily_edge > 0 else None, "fee_bps": float(fee_bps),
+            "carry_max_drawdown": float((np.cumprod(1.0 + carry_daily) / np.cumprod(1.0 + carry_daily).cummax().clip(lower=1.0) - 1.0).min()), "breakeven_days": float(round_trip / daily_edge) if daily_edge > 0 else None, "fee_bps": float(fee_bps),
             "dates": [str(d.date()) for d in frame.index[-days:]], "basis_series": [round(float(v), 6) for v in frame["basis"].tail(days)], "carry_cumulative": [round(float(v), 5) for v in (np.cumprod(1.0 + carry_daily) - 1.0)],
             "risk_flags": flags, "note": "A linear approximation of the inverse perpetual; funding and the basis are as the data states them."}
 

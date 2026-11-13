@@ -122,12 +122,20 @@ def test_the_analytic_intensity_is_the_estimation_error_of_the_sample_matrix_net
     s = np.cov(a.T, ddof=1)
     target = constant_correlation_target(x).to_numpy()
     c = a - a.mean(axis=0)
-    pi = np.array([[np.mean((c[:, i] * c[:, j] - s[i, j]) ** 2) for j in range(p)] for i in range(p)])        # the variance of each entry of the sample covariance matrix
-    rho = np.trace(pi)                                                                                     # the diagonal terms only, as the implementation says
-    gamma = ((target - s) ** 2).sum()
+    # Ledoit and Wolf (2004), "Honey, I shrunk the sample covariance matrix", Appendix B, entry by entry and with the paper's 1/T moments. This test used to keep the diagonal of rho only, "as the
+    # implementation says": the implementation was wrong to (the paper's rho has an off-diagonal part for this target), and the intensity came out too high. See tests/test_replication.py.
+    s_n = c.T @ c / n
+    f_n = target * (n - 1) / n
+    pi = np.array([[np.mean((c[:, i] * c[:, j] - s_n[i, j]) ** 2) for j in range(p)] for i in range(p)])      # the variance of each entry of the sample covariance matrix
+    sd = np.sqrt(np.diag(s_n))
+    rbar = np.mean([s_n[i, j] / (sd[i] * sd[j]) for i in range(p) for j in range(p) if i != j])
+    theta = lambda k, i, j: np.mean((c[:, k] ** 2 - s_n[k, k]) * (c[:, i] * c[:, j] - s_n[i, j]))            # noqa: E731
+    rho = np.trace(pi) + sum(rbar / 2 * (sd[j] / sd[i] * theta(i, i, j) + sd[i] / sd[j] * theta(j, i, j)) for i in range(p) for j in range(p) if i != j)
+    gamma = ((f_n - s_n) ** 2).sum()
     expected = float(np.clip((pi.sum() - rho) / gamma / n, 0.0, 1.0))
     delta = ledoit_wolf_shrinkage(x)[1]
-    assert 0.0 < expected < 1.0 and delta == pytest.approx(expected)
+    assert 0.0 < expected < 1.0 and delta == pytest.approx(expected, rel=1e-10)
+    assert float(np.clip((pi.sum() - np.trace(pi)) / gamma / n, 0.0, 1.0)) > expected, "leaving the off-diagonal part of rho out overstates the intensity"
     shrunk = ledoit_wolf_shrinkage(x, annualise=False)[0].to_numpy()
     assert shrunk == pytest.approx(delta * target + (1.0 - delta) * s)
     two = returns_of(90, 2, seed=4)

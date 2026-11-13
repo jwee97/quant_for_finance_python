@@ -48,7 +48,11 @@ def bootstrap_means(matrix: np.ndarray, n_samples: int = 2000, mean_block: float
 
 def white_reality_check(matrix: np.ndarray, n_samples: int = 2000, mean_block: float = 21.0, seed: int = 7,
                         boot: np.ndarray | None = None) -> dict:
-    """p-value of H0: no candidate has a positive expected excess return (White, 2000)."""
+    """p-value of H0: no candidate has a positive expected excess return (White, 2000).
+
+    The test is right in large samples. In small ones it rejects a true null too often, the more so the more candidates there are and the longer the blocks are relative to the sample: with ten candidates
+    over 250 days it rejected 12% (blocks of 1), 13% (5) and 16% (21) of true nulls at the 10% level, and 9% over 1,000 days with blocks of 5 (``replication.SMALL_SAMPLE_SIZE``). The default block of 21
+    suits several years of daily data; for one year pass a shorter one, as ``ml.selection`` does (``max(5, T^(1/3))``)."""
     x = np.asarray(matrix, dtype=float)
     n = x.shape[0]
     mean = x.mean(axis=0)
@@ -66,6 +70,9 @@ def hansen_spa(matrix: np.ndarray, n_samples: int = 2000, mean_block: float = 21
     ``p_consistent`` is the one to report. The upper p-value equals the studentised Reality Check;
     the consistent one recentres only candidates that are clearly worse than the benchmark
     (``sqrt(n) * mean / sigma <= -sqrt(2 log log n)``).
+
+    Like the Reality Check it over-rejects in small samples with long blocks, and somewhat more (15% and 23% of true nulls at the 10% level for ten candidates over 250 days with blocks of 5 and 21; 10% over
+    1,000 days with blocks of 5): see ``white_reality_check`` and ``replication.SMALL_SAMPLE_SIZE``.
     """
     x = np.asarray(matrix, dtype=float)
     n = x.shape[0]

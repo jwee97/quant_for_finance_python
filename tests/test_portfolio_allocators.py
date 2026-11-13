@@ -164,7 +164,7 @@ def test_risk_based_books_are_fully_invested_flat_before_history_and_causal(bund
 
 def test_min_variance_favours_the_calm_asset_and_max_diversification_spreads_more_widely(bundle):
     mv, md = _build("min_variance", bundle).iloc[-1], _build("max_diversification", bundle).iloc[-1]
-    assert mv["V0"] == mv.max() and mv["V5"] == mv.min()
+    assert mv["V0"] == pytest.approx(mv.max(), abs=1e-9) and mv["V5"] == mv.min()          # the calm assets sit at the position cap together: equal to rounding
     assert (md ** 2).sum() < (mv ** 2).sum() + 1e-9                           # max diversification is less concentrated in the calmest asset
 
 

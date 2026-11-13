@@ -334,6 +334,10 @@ what it shows about Release 2 is that the new checks pass on the CI environment 
   re-evaluated: experiments and forward signals saved earlier keep their stored numbers, and a forward test without commitments says so.
 - Release 1's items (RL state schema 2, output contracts, the `QFM1` envelope, the registry migrations) are as described in the Release 1 section of the architecture note.
 
+## Review of November 2026 (correctness and research standard)
+
+A review of sixteen items against the code, reported in `docs/improvement_report_2026_11.md`. Five defects were found by independent recomputation and fixed: the maximum drawdown of a series that loses from its first day (the starting capital was not a peak; 24 call sites), the Sortino ratio of `backtest.metrics` (squared shortfalls averaged over losing days only), the Ledoit-Wolf constant-correlation intensity (the paper's off-diagonal part of `rho` was missing), and two rounding faults of the realistic mode with fractional lots. Added: the reconciliation of all three engines (`tests/test_engine_reconciliation.py`), independent-reference tests of the statistics (`tests/test_performance_statistics.py`), eleven replication benchmarks labelled exact, simulation, approximate or method only (`src/validation/replication.py`, `python -m src replicate`), and capital and volume inside the cost-aware optimiser, which closes P2-16. Requirement counts after it: 77 verified, 9 in progress (P0-02, P0-06, P0-13, P0-15, P0-16, P0-29, P1-10, P1-12, P1-13).
+
 ## Data and optional dependency limitations
 
 See `ASSUMPTIONS_AND_LIMITATIONS.md`.
@@ -345,7 +349,7 @@ The 10 requirements that are still `in_progress` after the second follow-up are 
 | Requirement | Depends on | What it needs | Executable now |
 | --- | --- | --- | --- |
 | P1-10 (stale-expiry and over-long-halt write-down in the adapter) | `realism.MarkPolicy` (done) | code and fixtures with closed, halted, stale and delisted sequences, reconciled with the shadow ledger | yes |
-| P2-16 (capital, volume and impact inside the optimiser's choice) | P1-03 and P1-09 (done); P1-10 for holdings | code; the reference is an independent solve with a participation limit; volume is refused when missing, never assumed | yes (synthetic volume); real capacity numbers need a volume feed |
+| ~~P2-16~~ done in the review of November 2026 (capital, volume and impact inside the optimiser's choice) | P1-03 and P1-09 (done); P1-10 for holdings | code; the reference is an independent solve with a participation limit; volume is refused when missing, never assumed | yes (synthetic volume); real capacity numbers need a volume feed |
 | P0-02 (stepwise stepping with persisted recurrent state) | the RL state schema, the forward tracker (done) | code; chunked, single-pass and stepwise replay equal within 1e-9 for the recurrent families | yes (the torch and SB3 lanes) |
 | P0-16 (macro release instants in the loader; per-ticker sessions beyond the table) | `pit.py` (done) | code; the loader must use release instants, not day-level lags | yes |
 | P0-13 (selectable executable-price conventions) | nothing new | daily conventions on OHLC are code and fixtures; **intraday bars are data the repository does not hold** | daily part only |

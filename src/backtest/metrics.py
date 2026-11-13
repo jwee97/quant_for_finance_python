@@ -52,17 +52,25 @@ def sharpe_ratio(returns: pd.Series, risk_free: pd.Series | float = 0.0,
     return float(excess.mean() / vol * np.sqrt(periods_per_year)) if vol > FLAT else float("nan")
 
 
+def downside_deviation(returns: pd.Series, target: float = 0.0) -> float:
+    """The root of the mean squared shortfall below ``target``, the mean taken over EVERY observation: ``sqrt(mean(min(r - target, 0)^2))``, the second lower partial moment (Sortino and van der Meer 1991;
+    Sortino and Price 1994). A day at or above the target contributes a zero, it is not left out: leaving it out measures how bad a bad day is, not how much downside the series has, and overstates the
+    deviation by ``sqrt(days / losing days)``, about 1.4 for a series that loses on half its days."""
+    clean = returns.dropna().to_numpy(dtype=float)
+    return float(np.sqrt(np.mean(np.minimum(clean - target, 0.0) ** 2))) if len(clean) else float("nan")
+
+
 def sortino_ratio(returns: pd.Series, target: float = 0.0, periods_per_year: int = ANN) -> float:
+    """Mean return above ``target`` (per period) over the downside deviation, annualised. Not a number for a series that never falls below the target (there is no downside to divide by)."""
     clean = returns.dropna()
-    downside = clean[clean < target]
-    if len(downside) < 2:
+    if len(clean) < 2:
         return float("nan")
-    downside_dev = np.sqrt(np.mean((downside - target) ** 2))
-    return float((clean.mean() - target) / downside_dev * np.sqrt(periods_per_year)) if downside_dev > FLAT else np.nan
+    downside_dev = downside_deviation(clean, target)
+    return float((clean.mean() - target) / downside_dev * np.sqrt(periods_per_year)) if downside_dev > FLAT else float("nan")
 
 
 def calmar_ratio(returns: pd.Series, periods_per_year: int = ANN) -> float:
-    drop = abs(max_drawdown(cumulative_returns(returns.dropna())))
+    drop = abs(max_drawdown(cumulative_returns(returns.dropna()), 1.0))
     return float(cagr(returns, periods_per_year) / drop) if drop > 1e-12 else float("nan")
 
 
@@ -103,7 +111,7 @@ def performance_summary(returns: pd.Series, risk_free: pd.Series | float = 0.0,
     if clean.empty:
         return {}
     curve = cumulative_returns(clean)
-    dd = drawdown(curve)
+    dd = drawdown(curve, 1.0)                                                       # the starting capital is the first peak
     vol = annualised_volatility(clean, periods_per_year)
     # The third and fourth moments are undefined for a constant series, and
     # scipy warns about catastrophic cancellation rather than returning NaN.
@@ -191,8 +199,13 @@ def monthly_return_table(returns: pd.Series) -> pd.DataFrame:
 
 def deflated_sharpe_ratio(observed_sharpe: float, n_trials: int, n_obs: int,
                           skew: float = 0.0, kurtosis: float = 3.0,
-                          periods_per_year: int = ANN) -> float:
+                          periods_per_year: int = ANN, trial_sharpe_variance: float | None = None) -> float:
     """Probability that a Sharpe ratio survives the number of trials run.
+
+    The benchmark is the expected maximum of ``n_trials`` Sharpe ratios of no skill, ``sqrt(V) ((1 - g) Z^-1(1 - 1/N) + g Z^-1(1 - 1/(N e)))`` (Bailey and Lopez de Prado 2014, equation 7), where ``V``
+    is the variance of the trials' per-period Sharpe ratios. Give that variance as ``trial_sharpe_variance`` when the trials' Sharpe ratios are known (``stats.inference.deflated_sharpe_ratio`` takes them
+    directly). Without it ``V`` is taken to be ``1 / n_obs``, the sampling variance of a Sharpe ratio whose true value is zero. That is an APPROXIMATION of the paper's formula: it treats the trials as
+    independent, and trials that are variations of one idea are correlated and spread less, so it sets the bar higher than the exact form would (it errs toward rejecting).
 
     Bailey and Lopez de Prado. The intuition is the one Ch. 22 §22.2.4 keeps
     returning to: if you tried 72 parameter combinations, the best one is
@@ -213,7 +226,8 @@ def deflated_sharpe_ratio(observed_sharpe: float, n_trials: int, n_obs: int,
         expected_max = (1.0 - euler) * quantile_a + euler * quantile_b
 
     sr = observed_sharpe / np.sqrt(periods_per_year)      # per-period
-    threshold = expected_max / np.sqrt(n_obs)             # per-period benchmark
+    spread = np.sqrt(trial_sharpe_variance) if trial_sharpe_variance is not None else 1.0 / np.sqrt(n_obs)
+    threshold = expected_max * spread                     # per-period benchmark
     variance = (1.0 - skew * sr + (kurtosis - 1.0) / 4.0 * sr ** 2) / (n_obs - 1)
     if variance <= 0:
         return float("nan")

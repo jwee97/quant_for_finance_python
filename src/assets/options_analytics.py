@@ -1346,7 +1346,7 @@ def run_strategy_backtest(name: str, params: dict | None = None, n_days: int = 2
     returns = result.returns.dropna()
     summary = performance_summary(returns)
     equity = (1.0 + returns).cumprod()
-    drawdown = equity / equity.cummax() - 1.0
+    drawdown = equity / equity.cummax().clip(lower=1.0) - 1.0
     bench = spot / spot.iloc[0]
     greeks = result.greeks.reindex(equity.index)
     every = slice(None, None, 2)

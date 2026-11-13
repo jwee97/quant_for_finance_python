@@ -128,7 +128,7 @@ def check_returns(limits: RiskLimits, returns: pd.Series) -> list[dict]:
         out.append({"limit": "max_daily_loss", "value": float(-r.min()), "bound": lim["max_daily_loss"], "message": f"max_daily_loss: a one-day loss of {-r.min():.2%} on {r.idxmin()} exceeds {lim['max_daily_loss']:.2%}"})
     if "max_drawdown" in lim:
         eq = (1.0 + r).cumprod()
-        dd = float((1.0 - eq / eq.cummax()).max())
+        dd = float((1.0 - eq / eq.cummax().clip(lower=1.0)).max())
         if dd > lim["max_drawdown"] + 1e-12:
             out.append({"limit": "max_drawdown", "value": dd, "bound": lim["max_drawdown"], "message": f"max_drawdown: a drawdown of {dd:.2%} exceeds {lim['max_drawdown']:.2%}"})
     return out

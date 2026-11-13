@@ -168,7 +168,7 @@ def test_the_description_of_a_return_series_states_each_statistic_it_names():
     assert row["n_obs"] == 80 and row["mean_ann"] == pytest.approx(a.mean() * 252) and row["vol_ann"] == pytest.approx(a.std(ddof=1) * np.sqrt(252))
     assert row["cagr"] == pytest.approx((1.0 + a).prod() ** (252 / 80) - 1) and row["sharpe_naive"] == pytest.approx(row["cagr"] / row["vol_ann"])
     assert row["min"] == a.min() and row["max"] == a.max() and row["median"] == pytest.approx(np.median(a)) and row["q01"] == pytest.approx(np.quantile(a, 0.01)) and row["q99"] == pytest.approx(np.quantile(a, 0.99))
-    assert row["hit_rate"] == pytest.approx((a > 0).mean()) and row["downside_vol_ann"] == pytest.approx(losses.std(ddof=1) * np.sqrt(252)) and row["max_drawdown"] == pytest.approx((curve / curve.cummax() - 1).min())
+    assert row["hit_rate"] == pytest.approx((a > 0).mean()) and row["downside_vol_ann"] == pytest.approx(np.sqrt((losses ** 2).sum() / len(a)) * np.sqrt(252)) and row["max_drawdown"] == pytest.approx((curve / curve.cummax().clip(lower=1.0) - 1).min())
     assert row["autocorr_lag1"] == pytest.approx(np.corrcoef(a[:-1], a[1:])[0, 1])
     d = a.to_numpy() - a.mean()
     assert row["skew"] == pytest.approx(np.sqrt(80 * 79) / 78 * np.mean(d ** 3) / np.mean(d ** 2) ** 1.5), "the adjusted Fisher-Pearson skewness"
@@ -179,13 +179,13 @@ def test_the_description_of_a_return_series_states_each_statistic_it_names():
     assert annual["mean_ann"] == pytest.approx(a.mean() * 12) and annual["vol_ann"] == pytest.approx(a.std(ddof=1) * np.sqrt(12))
     sparse = r.copy()
     sparse["B"] = np.where(np.arange(80) % 40 == 7, -0.01, 0.01)
-    assert np.isnan(describe_returns(sparse).loc["B", "downside_vol_ann"]), "two losing days are too few for a downside deviation"
+    assert describe_returns(sparse).loc["B", "downside_vol_ann"] == pytest.approx(np.sqrt(2 * 0.01 ** 2 / 80) * np.sqrt(252)), "two losing days of 1% in eighty: the squared shortfalls averaged over every day"
     sparse["B"] = np.where(np.arange(80) % 27 == 7, -0.01, 0.01)
-    assert abs(describe_returns(sparse).loc["B", "downside_vol_ann"]) < 1e-9, "three losing days, all alike, are enough for a deviation, and it is nil"
+    assert describe_returns(sparse).loc["B", "downside_vol_ann"] == pytest.approx(np.sqrt(3 * 0.01 ** 2 / 80) * np.sqrt(252)), "three losing days that are all alike are still downside: the deviation is about zero, not about their own mean"
     with_zeros = pd.DataFrame({"Z": [0.01, 0.0, -0.02, 0.03, 0.0, -0.01, 0.02, 0.0, -0.03, 0.01] * 4}, index=pd.bdate_range("2020-01-01", periods=40))
     z = describe_returns(with_zeros).loc["Z"]
     assert z["hit_rate"] == pytest.approx(16 / 40), "a day of exactly zero is not a gain"
-    assert z["downside_vol_ann"] == pytest.approx(np.std([-0.02, -0.01, -0.03] * 4, ddof=1) * np.sqrt(252)), "nor is it a loss: the downside is the losing days only"
+    assert z["downside_vol_ann"] == pytest.approx(np.sqrt(4 * (0.02 ** 2 + 0.01 ** 2 + 0.03 ** 2) / 40) * np.sqrt(252)), "nor is it a loss: a day of zero adds nothing to the shortfall and still counts as a day"
     flat = pd.DataFrame({"C": np.full(40, 0.0003)}, index=pd.bdate_range("2020-01-01", periods=40))
     with warnings.catch_warnings():
         warnings.simplefilter("error")                                                       # no complaint from scipy about moments of data that are all alike

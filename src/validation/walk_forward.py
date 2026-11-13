@@ -181,7 +181,7 @@ def run_walk_forward(
                 "test_vol": vol,
                 "test_sharpe": float(clean.mean() * periods_per_year / vol) if spread > FLAT else np.nan,       # a fold that never moves has no Sharpe ratio, not 1e16 from rounding noise
                 "test_max_drawdown": float(
-                    (lambda c: (c / c.cummax() - 1.0).min())((1.0 + clean).cumprod())
+                    (lambda c: (c / c.cummax().clip(lower=1.0) - 1.0).min())((1.0 + clean).cumprod())
                 ),
                 "test_hit_rate": float((clean > 0).mean()),
             }

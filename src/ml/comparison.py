@@ -355,7 +355,7 @@ def _max_drawdown(r: pd.Series) -> float:
     if r.empty:
         return float("nan")
     eq = (1.0 + r.fillna(0.0)).cumprod()
-    return float((eq / eq.cummax() - 1.0).min())
+    return float((eq / eq.cummax().clip(lower=1.0) - 1.0).min())
 
 
 def _n_features(exp) -> float:

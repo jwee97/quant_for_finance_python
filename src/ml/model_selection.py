@@ -193,7 +193,7 @@ def naive_fold_sharpe(folds) -> float | None:
 def max_drawdown(r: pd.Series) -> float:
     """The largest peak-to-trough fall of the compounded equity, as a positive fraction."""
     eq = (1.0 + r.fillna(0.0)).cumprod()
-    return float(-(eq / eq.cummax() - 1.0).min()) if len(eq) else float("nan")
+    return float(-(eq / eq.cummax().clip(lower=1.0) - 1.0).min()) if len(eq) else float("nan")
 
 
 def block_sharpes(r: pd.Series, blocks: int = 4, min_days: int = 20) -> list[float]:

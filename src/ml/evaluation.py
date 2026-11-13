@@ -118,7 +118,7 @@ def segment_stats(net: pd.Series, labels: pd.Series, insample_net: pd.Series | N
         if len(r) < 5:
             continue
         eq = (1.0 + r).cumprod()
-        out[seg] = {"n_days": int(len(r)), "ann_return": float(r.mean() * ANN), "ann_vol": float(r.std(ddof=1) * math.sqrt(ANN)), "sharpe": sharpe_of(r), "max_drawdown": float((eq / eq.cummax() - 1.0).min()),
+        out[seg] = {"n_days": int(len(r)), "ann_return": float(r.mean() * ANN), "ann_vol": float(r.std(ddof=1) * math.sqrt(ANN)), "sharpe": sharpe_of(r), "max_drawdown": float((eq / eq.cummax().clip(lower=1.0) - 1.0).min()),
                     "hit_rate": float((r > 0).mean()), "total_return": float(eq.iloc[-1] - 1.0)}
     return out
 

@@ -324,7 +324,7 @@ def metrics(returns: pd.Series) -> dict:
         return {"days": int(len(r)), "sharpe": None, "sortino": None, "calmar": None, "cagr": None, "cautious": None, "vol": None, "max_drawdown": None, "total_return": None}
     curve = cumulative_returns(r)
     return {"days": int(len(r)), "sharpe": sharpe_ratio(r), "sortino": sortino_ratio(r), "calmar": calmar_ratio(r), "cagr": cagr(r), "cautious": cautious_sharpe(r), "vol": annualised_volatility(r),
-            "max_drawdown": max_drawdown(curve), "total_return": float(curve.iloc[-1] - 1.0)}
+            "max_drawdown": max_drawdown(curve, 1.0), "total_return": float(curve.iloc[-1] - 1.0)}
 
 
 def score(returns: pd.Series, objective: str, stable: bool = True) -> float:

@@ -79,9 +79,11 @@ def ledoit_wolf_shrinkage(returns: pd.DataFrame, target: str = "constant_correla
 
     With ``delta=None`` the intensity is estimated analytically: the optimal
     delta trades the estimation error of the sample matrix against the
-    specification error of the target, and scikit-learn's implementation is
-    used for the identity target while the constant-correlation target uses
-    the closed form of Ledoit and Wolf (2004).
+    specification error of the target. scikit-learn's implementation is
+    used for the identity target (Ledoit and Wolf 2004, "A well-conditioned
+    estimator"); the constant-correlation and diagonal targets use the closed
+    form of Ledoit and Wolf (2004, "Honey, I shrunk the sample covariance
+    matrix"), see ``_shrinkage_intensity``.
     """
     clean = returns.dropna(how="any")
     if len(clean) < 30:
@@ -113,31 +115,47 @@ def ledoit_wolf_shrinkage(returns: pd.DataFrame, target: str = "constant_correla
 
 def _shrinkage_intensity(returns: pd.DataFrame, sample: pd.DataFrame,
                          target: pd.DataFrame) -> float:
-    """Analytic shrinkage intensity ``delta* = (pi - rho) / gamma / n``.
+    """Analytic shrinkage intensity ``delta* = max(0, min(1, (pi - rho) / gamma / T))`` of Ledoit and Wolf (2004), "Honey, I shrunk the sample covariance matrix", Appendix B.
 
-    ``pi``    sum of asymptotic variances of the sample covariance entries
-    ``gamma`` squared distance between the sample matrix and the target
-    ``rho``   covariance between the estimation errors of the two, which is
-              approximated by its diagonal term (Ledoit-Wolf's own
-              simplification for the constant-correlation target).
+    ``pi``    the sum of the asymptotic variances of the entries of the sample covariance matrix
+    ``gamma`` the squared distance between the sample matrix and the target
+    ``rho``   the sum of the asymptotic covariances between the entries of the target and of the sample matrix. Its diagonal part is the diagonal of ``pi`` (the target's variances ARE the sample's).
+              For the constant-correlation target its off-diagonal part is the paper's
+              ``(rbar / 2) (sqrt(s_jj / s_ii) theta_ii,ij + sqrt(s_ii / s_jj) theta_jj,ij)`` summed over ``i != j``; for the diagonal target it is zero, since those entries of the target are constants.
+
+    The moments are taken with the paper's ``1 / T`` (the intensity is a ratio, and this is the ratio the paper derives); the matrices the intensity then mixes keep the unbiased ``1 / (T - 1)``.
+
+    Until this was corrected ``rho`` kept its diagonal part only for every target. For the constant-correlation target that leaves out a positive term, so the intensity came out too high: on twelve
+    of the platform's ETFs, 0.156 where the paper's formula gives 0.093 (one year of days). ``tests/test_replication.py`` holds an independent transcription of the paper's formula.
     """
     x = returns.to_numpy(dtype=float)
-    n, p = x.shape
+    t, _ = x.shape
     centred = x - x.mean(axis=0)
-    s = sample.to_numpy(dtype=float)
-
-    # pi: variance of each entry of the sample covariance matrix
+    s = centred.T @ centred / t                                                  # the paper's sample matrix (1 / T)
+    f = target.to_numpy(dtype=float) * (t - 1.0) / t                             # the target on the same normalisation
     squared = centred ** 2
-    pi_matrix = (squared.T @ squared) / n - 2.0 * (centred.T @ centred) / n * s + s ** 2
+    pi_matrix = squared.T @ squared / t - s ** 2                                 # pi_ij = mean((x_i x_j - s_ij)^2)
     pi = float(pi_matrix.sum())
+    gamma = float(np.sum((f - s) ** 2))
+    rho = float(np.trace(pi_matrix))
+    off_diagonal = f[~np.eye(len(f), dtype=bool)]
+    if off_diagonal.size and np.abs(off_diagonal).max() > 0.0:                   # a target whose off-diagonal entries are estimated (the constant correlation): their errors co-move with the sample's
+        var = np.diag(s)
+        moving = var > FLAT ** 2                                                 # an asset that never moved has no correlation and adds nothing here (it keeps its zero variance)
+        sd = np.sqrt(var[moving])
+        n = int(moving.sum())
+        if n > 1:
+            sm = s[np.ix_(moving, moving)]
+            rbar = ((sm / np.outer(sd, sd)).sum() - n) / (n * (n - 1))
+            cm = centred[:, moving]
+            theta = (cm ** 3).T @ cm / t - var[moving][:, None] * sm             # theta_ii,ij = mean((x_i^2 - s_ii)(x_i x_j - s_ij))
+            np.fill_diagonal(theta, 0.0)
+            rho += float(rbar * (np.outer(1.0 / sd, sd) * theta).sum())          # each (i, j) and (j, i) pair gives the paper's two half-terms
 
-    gamma = float(np.sum((target.to_numpy(dtype=float) - s) ** 2))
-    rho = float(np.trace(pi_matrix))  # diagonal terms only
-
-    if gamma <= 1e-18:
+    if gamma <= 1e-18 * max(float(np.sum(s ** 2)), 1e-300):
         return 1.0
     kappa = (pi - rho) / gamma
-    return float(np.clip(kappa / n, 0.0, 1.0))
+    return float(np.clip(kappa / t, 0.0, 1.0))
 
 
 def pca_denoised_covariance(returns: pd.DataFrame, n_components: int | None = None,

@@ -55,7 +55,7 @@ class Context:
 def _row(name: str, net: pd.Series, **extra) -> dict:
     r = net.dropna()
     eq = (1.0 + r).cumprod()
-    return {"scenario": name, "sharpe": sharpe_of(r), "ann_return": float(r.mean() * ANN) if len(r) else float("nan"), "max_drawdown": float((eq / eq.cummax() - 1.0).min()) if len(r) else float("nan"),
+    return {"scenario": name, "sharpe": sharpe_of(r), "ann_return": float(r.mean() * ANN) if len(r) else float("nan"), "max_drawdown": float((eq / eq.cummax().clip(lower=1.0) - 1.0).min()) if len(r) else float("nan"),
             "n_days": int(len(r)), **extra}
 
 

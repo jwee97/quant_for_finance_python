@@ -41,7 +41,7 @@ def compact_result(result, top_weights: int = 8) -> dict:
     if len(net) < 20:
         raise ValueError("the strategy has fewer than 20 evaluated days (its signal needs more history than the data has)")
     equity = (1.0 + net).cumprod()
-    dd = equity / equity.cummax() - 1.0
+    dd = equity / equity.cummax().clip(lower=1.0) - 1.0
     idx = _sample(equity).index
     years = [{"year": int(y), "value": float(((1.0 + r).prod() - 1.0)), "days": int(len(r))} for y, r in net.groupby(net.index.year)]
     benches = {}

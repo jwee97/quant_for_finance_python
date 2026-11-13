@@ -536,7 +536,7 @@ def _hist(ic: pd.Series, bins: int = 20) -> dict:
 
 def _drawdown(returns: pd.Series) -> pd.Series:
     curve = (1.0 + returns.fillna(0.0)).cumprod()
-    return curve / curve.cummax() - 1.0
+    return curve / curve.cummax().clip(lower=1.0) - 1.0
 
 
 EVIDENCE_WORDS = {"good": "Strong in this sample", "mixed": "Some evidence", "bad": "No clear evidence"}

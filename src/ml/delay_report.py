@@ -88,7 +88,7 @@ def book_at_delay(positions: pd.DataFrame, returns: pd.DataFrame, investable: pd
         return {**out, "eligibility": "insufficient", "reason": f"{n} days on the {segment} segment", "weights": parts["weights"]}
     eq = (1.0 + net.fillna(0.0)).cumprod()
     out.update(eligibility="applied", gross_ann_return=float(gross.mean() * ANN), net_ann_return=float(net.mean() * ANN), costs_ann=float(costs.mean() * ANN), sharpe=ev.sharpe_of(net.dropna()),
-               max_drawdown=float((eq / eq.cummax() - 1.0).min()), ann_turnover=float(annualised_turnover(turn)),
+               max_drawdown=float((eq / eq.cummax().clip(lower=1.0) - 1.0).min()), ann_turnover=float(annualised_turnover(turn)),
                breakeven_cost_bps=float(1e4 * gross.sum() / turn.sum()) if float(turn.sum()) > 0 else None)
     out["weights"] = parts["weights"]
     return out

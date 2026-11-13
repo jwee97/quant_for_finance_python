@@ -30,7 +30,7 @@ def _ratio(num: float, den: float) -> float | None:
 
 def drawdown_series(net: pd.Series) -> pd.Series:
     equity = (1.0 + _clean(net)).cumprod()
-    return equity / equity.cummax() - 1.0
+    return equity / equity.cummax().clip(lower=1.0) - 1.0
 
 
 def cornish_fisher_var(mean: float, sd: float, skew: float, excess_kurtosis: float, level: float = 0.95) -> float:
@@ -61,7 +61,7 @@ def risk_metrics(net: pd.Series) -> dict:
         return {}
     mean, sd = float(r.mean()), float(r.std(ddof=1))
     equity = (1.0 + r).cumprod()
-    dd = equity / equity.cummax() - 1.0
+    dd = equity / equity.cummax().clip(lower=1.0) - 1.0
     cagr = float(equity.iloc[-1] ** (ANN / n) - 1.0)
     downside = float(np.sqrt(np.mean(np.minimum(r.to_numpy(), 0.0) ** 2)))
     gains, losses = float(r[r > 0].sum()), float(-r[r < 0].sum())

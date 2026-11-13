@@ -425,12 +425,21 @@ class OrderBook:
         o = self.orders[order_id]
         if fill_id in o.fill_ids:
             return o                                                                              # a retry of a fill already applied
-        if np.sign(quantity) != np.sign(o.quantity) or abs(quantity) > abs(o.remaining) + 1e-12:
+        tol = self.tolerance(o.quantity)
+        if np.sign(quantity) != np.sign(o.quantity) or abs(quantity) > abs(o.remaining) + tol:
             raise OrderError(f"order {order_id}: a fill of {quantity:g} does not fit the remaining {o.remaining:g}")
         o.fill_ids.add(fill_id)
         o.filled += quantity
-        self._move(o, "filled" if abs(o.remaining) < 1e-12 else "partial", ts)
+        if abs(o.remaining) <= tol:
+            o.filled = o.quantity                                                                 # rounding noise is not an open remainder: the order is complete, exactly
+        self._move(o, "filled" if o.remaining == 0.0 else "partial", ts)
         return o
+
+    @staticmethod
+    def tolerance(quantity: float) -> float:
+        """How far two share counts of this size may differ and still be the same number: a few units in the last place of a double. An absolute 1e-12 is right for whole shares up to about a thousand and
+        wrong for six million shares in lots of a millionth (a crypto or fractional-share order), where rounding to the lot alone moves the count by about 1e-9."""
+        return max(1e-12, 8.0 * np.finfo(float).eps * abs(quantity))
 
     def amend(self, order_id: int, quantity: float, ts, reason: str) -> TrackedOrder:
         """Change the size of an order that has not been filled at all (same side). Recorded as an event; a filled or part-filled order cannot be re-sized."""
@@ -523,7 +532,8 @@ def fill_with_limits(order_shares: float, adv_shares: float, max_participation: 
     else:
         cap = max_participation * adv_shares
     take = min(abs(order_shares), cap)
-    take = np.floor(take / lot) * lot
+    lots = take / lot
+    take = np.floor(lots + max(1e-9, 4.0 * np.finfo(float).eps * lots)) * lot                    # a count that is a whole number of lots up to rounding (0.3 / 0.1 is 2.9999...) is that whole number, not one lot less
     filled = float(np.sign(order_shares) * take)
     return {"filled": filled, "remaining": float(order_shares - filled), "status": "full" if abs(order_shares - filled) < 1e-9 else ("partial" if take > 0 else "blocked_lot_or_cap")}
 

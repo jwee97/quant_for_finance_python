@@ -50,16 +50,18 @@ def test_sharpe_is_the_mean_excess_return_over_its_volatility_scaled_to_the_year
 
 
 def test_sortino_divides_by_the_root_mean_square_of_the_returns_below_the_target():
-    # the four losses are -1%, -2%, -0.5% and -1%: their mean square is 0.000625 / 4, whose root is exactly 1.25%; the mean return is 0.4%
-    assert m.sortino_ratio(series()) == pytest.approx(0.004 / 0.0125 * math.sqrt(252))
-    assert m.sortino_ratio(series(), periods_per_year=12) == pytest.approx(0.004 / 0.0125 * math.sqrt(12))
-    below = np.array([r for r in R if r < 0.01])                                                               # a higher target counts more days as shortfalls
-    expected = (np.mean(R) - 0.01) / math.sqrt(np.mean((below - 0.01) ** 2)) * math.sqrt(252)
+    # the four losses are -1%, -2%, -0.5% and -1%: their squares sum to 0.000625, and the mean is over all TEN days (Sortino and Price 1994), 0.0000625, whose root is 0.79057%; the mean return is 0.4%.
+    # This test used to divide by the four losing days (a root of 1.25%), which was the function's defect: see tests/test_performance_statistics.py
+    downside = math.sqrt(0.000625 / 10)
+    assert m.sortino_ratio(series()) == pytest.approx(0.004 / downside * math.sqrt(252))
+    assert m.sortino_ratio(series(), periods_per_year=12) == pytest.approx(0.004 / downside * math.sqrt(12))
+    shortfall = np.minimum(np.array(R) - 0.01, 0.0)                                                            # a higher target counts more days as shortfalls
+    expected = (np.mean(R) - 0.01) / math.sqrt(np.mean(shortfall ** 2)) * math.sqrt(252)
     assert m.sortino_ratio(series(), target=0.01) == pytest.approx(expected)
-    assert math.isnan(m.sortino_ratio(series([0.01, -0.01, 0.02, 0.03])))                                      # one loss is not a deviation
-    two = series([0.02, -0.01, -0.02, 0.03])                                                                    # two are: root mean square of 1% and 2% is sqrt(0.00025)
-    assert m.sortino_ratio(two) == pytest.approx(0.005 / math.sqrt(0.00025) * math.sqrt(252))
-    assert math.isnan(m.sortino_ratio(series([0.01, 0.02, 0.03])))
+    assert m.sortino_ratio(series([0.01, -0.01, 0.02, 0.03])) == pytest.approx(0.0125 / math.sqrt(0.0001 / 4) * math.sqrt(252))      # one losing day is downside enough
+    two = series([0.02, -0.01, -0.02, 0.03])                                                                    # two: the squares of 1% and 2% over four days
+    assert m.sortino_ratio(two) == pytest.approx(0.005 / math.sqrt(0.0005 / 4) * math.sqrt(252))
+    assert math.isnan(m.sortino_ratio(series([0.01, 0.02, 0.03])))                                             # no day below the target: nothing to divide by
 
 
 def test_calmar_is_the_annual_growth_over_the_worst_fall_and_omega_is_gains_over_losses():
@@ -108,7 +110,7 @@ def test_the_summary_block_holds_each_figure_the_comparison_tables_show():
     curve = np.cumprod(1 + np.array(R))
     assert (s["start"], s["end"], s["n_obs"], s["label"]) == ("2021-01-04", "2021-01-15", 10, "x")
     assert s["ann_return_arith"] == pytest.approx(0.004 * 252) and s["ann_vol"] == pytest.approx(np.std(R, ddof=1) * math.sqrt(252))
-    assert s["sharpe"] == pytest.approx(m.sharpe_ratio(series())) and s["sortino"] == pytest.approx(0.32 * math.sqrt(252)) and s["omega"] == pytest.approx(0.085 / 0.045)
+    assert s["sharpe"] == pytest.approx(m.sharpe_ratio(series())) and s["sortino"] == pytest.approx(0.004 / math.sqrt(0.000625 / 10) * math.sqrt(252)) and s["omega"] == pytest.approx(0.085 / 0.045)
     assert s["max_drawdown"] == pytest.approx(-0.02) and s["max_drawdown_date"] == "2021-01-07" and s["calmar"] == pytest.approx(s["cagr"] / 0.02)
     assert s["time_underwater_share"] == pytest.approx(0.6) and s["hit_rate"] == pytest.approx(0.5)                # under water on days 2, 4, 5, 6, 8 and 10; up on five of ten days
     assert s["best_day"] == 0.03 and s["worst_day"] == -0.02 and s["total_return"] == pytest.approx(curve[-1] - 1.0)

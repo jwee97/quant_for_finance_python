@@ -28,7 +28,7 @@ def drawdown_series(returns: pd.Series, log: bool = False) -> pd.Series:
     """Fractional drawdown from the running peak of the compounded wealth curve (0 at a peak, negative below)."""
     r = returns.fillna(0.0)
     wealth = np.exp(r.cumsum()) if log else (1.0 + r).cumprod()
-    return wealth / wealth.cummax() - 1.0
+    return wealth / wealth.cummax().clip(lower=1.0) - 1.0                                              # the starting wealth (1) is the first peak
 
 
 def drawdown_episodes(returns: pd.Series) -> pd.DataFrame:
@@ -56,7 +56,7 @@ def drawdown_episodes(returns: pd.Series) -> pd.DataFrame:
 def max_drawdown_of_paths(paths: np.ndarray) -> np.ndarray:
     """Maximum drawdown of each row of a returns matrix (simple returns)."""
     wealth = np.cumprod(1.0 + paths, axis=1)
-    peak = np.maximum.accumulate(wealth, axis=1)
+    peak = np.maximum(np.maximum.accumulate(wealth, axis=1), 1.0)                     # the starting wealth is the first peak
     return (wealth / peak - 1.0).min(axis=1)
 
 

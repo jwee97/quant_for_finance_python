@@ -85,7 +85,7 @@ class OptionBacktestResult:
         sd = r.std(ddof=1)
         eq = (1 + r).cumprod()
         return pd.Series({"total_return": float(eq.iloc[-1] - 1), "annual_return": float(r.mean() * periods_per_year), "annual_vol": float(sd * np.sqrt(periods_per_year)),
-                          "sharpe": float(r.mean() / sd * np.sqrt(periods_per_year)) if sd > 0 else float("nan"), "max_drawdown": float((eq / eq.cummax() - 1).min()),
+                          "sharpe": float(r.mean() / sd * np.sqrt(periods_per_year)) if sd > 0 else float("nan"), "max_drawdown": float((eq / eq.cummax().clip(lower=1.0) - 1).min()),
                           "worst_day": float(r.min()), "costs_total": float(self.costs.sum()), "n_trades": int(len(self.trades))})
 
 

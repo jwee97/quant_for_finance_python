@@ -44,7 +44,7 @@ def regime_statistics(returns: pd.Series, window: DateWindow, alpha: float = 0.9
         "ann_return": float(block.mean() * periods_per_year),
         "ann_vol": vol,
         "sharpe": float(block.mean() * periods_per_year / vol) if vol > 0 else np.nan,
-        "max_drawdown": max_drawdown(curve),
+        "max_drawdown": max_drawdown(curve, 1.0),
         "worst_day": float(block.min()),
         "best_day": float(block.max()),
         "var_95": historical_var(block, alpha),

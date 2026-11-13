@@ -85,7 +85,7 @@ def _figure(result, path: Path) -> None:
     ax.set_title("Growth of 1 (log); shaded = regimes")
     ax.legend(fontsize=7)
     ax = axes[0, 1]
-    dd = curve / curve.cummax() - 1
+    dd = curve / curve.cummax().clip(lower=1.0) - 1
     ax.fill_between(dd.index, dd, 0, color=PALETTE[0], alpha=0.5)
     ax.set_title(f"Drawdown (max {dd.min():.1%})")
     ax = axes[0, 2]

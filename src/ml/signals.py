@@ -219,17 +219,37 @@ def uncertainty_mean_variance(score: pd.DataFrame, std: pd.DataFrame, returns: p
     return pd.DataFrame(out, index=score.index, columns=score.columns)
 
 
-def cost_aware_mean_variance(score: pd.DataFrame, returns: pd.DataFrame, investable: pd.DataFrame | None, cfg: dict, groups: dict | None = None) -> tuple[pd.DataFrame, dict]:
+def cost_aware_mean_variance(score: pd.DataFrame, returns: pd.DataFrame, investable: pd.DataFrame | None, cfg: dict, groups: dict | None = None,
+                             dollar_volume: pd.DataFrame | None = None) -> tuple[pd.DataFrame, dict]:
     """The cost-aware allocation (``allocation.solve``) at every ``opt_every``-th decision date, held between. ``score`` is read as the expected return over ``window_days`` (the dataset's horizon) and the daily
     covariance of each date's fit is scaled to the same window. The book held before each solve is the previous solution, so the trading cost and the turnover penalty act on real trades. Returns the weights and a
-    log of every solve: how many were optimal, infeasible or failed, how many were no-trade, and what was done when a solve gave no book (the previous book is held and the event is counted, never hidden)."""
+    log of every solve: how many were optimal, infeasible or failed, how many were no-trade, and what was done when a solve gave no book (the previous book is held and the event is counted, never hidden).
+
+    **Capital and liquidity inside the choice.** With ``capital`` set, the optimiser is told how large the account is and what each name trades: ``max_participation`` caps each trade at that share of the
+    name's average daily dollar volume, and ``impact`` adds the square-root market-impact cost to the objective, so a large account chooses a different book, not the same book filled more slowly.
+    The average volume and the volatility are those of the ``adv_window`` sessions up to and including the decision date: nothing later. ``dollar_volume`` (date by asset) is then required: asking for a
+    liquidity-aware book without volume is refused, never ignored."""
     from . import allocation as alloc
     from . import risk_models as rm
 
     net = float(cfg.get("net", 0.0))
+    capital = None if cfg.get("capital") in (None, "") else float(cfg["capital"])
+    participation = None if cfg.get("max_participation") in (None, "") else float(cfg["max_participation"])
+    impact = None if cfg.get("impact") in (None, "") else float(cfg["impact"])
+    adv_window = int(cfg.get("adv_window", 20))
+    if capital is None and (participation is not None or impact is not None):
+        raise ValueError("a participation limit or a market-impact cost needs signal.capital: the size of the account decides how large a trade is next to the market's volume")
+    if capital is not None:
+        if capital <= 0 or adv_window < 2:
+            raise ValueError("signal.capital must be positive and signal.adv_window at least 2 sessions")
+        if participation is None and impact is None:
+            raise ValueError("signal.capital does nothing on its own: set signal.max_participation, signal.impact or both")
+        if dollar_volume is None:
+            raise ValueError("a liquidity-aware allocation needs the traded volume of the universe, and this dataset has none: the request is refused, not answered as if liquidity were unlimited")
+        dollar_volume = dollar_volume.reindex(index=score.index, columns=score.columns)
     spec = alloc.AllocationSpec(risk_aversion=float(cfg.get("risk_aversion", 5.0)), cost=float(cfg["cost_bps"]) / 1e4, turnover_penalty=float(cfg.get("turnover_penalty", 0.0)),
                                 gross_max=float(cfg.get("gross", 1.0)), position_max=float(cfg.get("max_weight") or 0.35), net_min=net, net_max=net, group_max=cfg.get("sector_cap") or None,
-                                fallback=str(cfg.get("alloc_fallback", "none")))
+                                fallback=str(cfg.get("alloc_fallback", "none")), impact=impact, max_participation=participation)
     cov_spec = rm.CovSpec(str(cfg.get("cov_method", "lw_constant_correlation")), window=int(cfg.get("cov_window", 252)))
     days = int(cfg["window_days"])
     every = int(cfg.get("opt_every") or days)
@@ -237,7 +257,9 @@ def cost_aware_mean_variance(score: pd.DataFrame, returns: pd.DataFrame, investa
     last = pd.Series(0.0, index=score.columns)
     log = {"method": "cost_aware_mean_variance", "spec": spec.content(), "covariance": cov_spec.content(), "window_days": days, "opt_every": every, "solves": 0, "optimal": 0, "infeasible": 0, "failed": 0,
            "fallback_used": 0, "held_after_failure": 0, "no_trade": 0, "skipped_too_few_assets": 0, "skipped_no_covariance": 0, "repaired_covariances": 0,
-           "note": "a solve with no book holds the previous book and is counted; a configured fallback is labelled in the solve and counted under fallback_used"}
+           "note": "a solve with no book holds the previous book and is counted; a configured fallback is labelled in the solve and counted under fallback_used",
+           "liquidity": None if capital is None else {"capital": capital, "max_participation": participation, "impact": impact, "adv_window": adv_window, "names_without_volume": 0, "solves_at_a_trade_limit": 0,
+                                                      "as_of": "the sessions up to and including the decision date"}}
     for i, date in enumerate(score.index):
         if i % every == 0:
             row = score.iloc[i].dropna()
@@ -256,7 +278,16 @@ def cost_aware_mean_variance(score: pd.DataFrame, returns: pd.DataFrame, investa
                 else:
                     mu_w, cov_w = alloc.window_inputs(row[names], fit.matrix.loc[names, names], days)
                     log["repaired_covariances"] += int(fit.repaired)
-                    sol = alloc.solve(mu_w, cov_w, last.reindex(names).fillna(0.0), spec, groups=groups)
+                    liquidity = {}
+                    if capital is not None:
+                        adv = dollar_volume.iloc[max(0, i - adv_window + 1):i + 1][names].mean(skipna=True)             # what each name traded, on average, up to today
+                        sigma = returns.reindex(index=score.index, columns=score.columns).iloc[max(0, i - adv_window + 1):i + 1][names].std(ddof=1)
+                        log["liquidity"]["names_without_volume"] += int((~(adv > 0)).sum())                              # such a name cannot be traded at this date: its limit is zero
+                        liquidity = {"capital": capital, "adv": adv.fillna(0.0), "sigma": sigma}
+                    sol = alloc.solve(mu_w, cov_w, last.reindex(names).fillna(0.0), spec, groups=groups, **liquidity)
+                    if capital is not None and participation is not None and sol.trades is not None:
+                        limit = (participation * liquidity["adv"] / capital).reindex(sol.trades.index)
+                        log["liquidity"]["solves_at_a_trade_limit"] += int((sol.trades.abs() >= limit - 1e-9).any() and bool((limit < 10.0).any()))
                     log["solves"] += 1
                     log[sol.status if sol.status in ("optimal", "infeasible", "failed") else "failed"] += 1
                     log["fallback_used"] += int(sol.fallback_used is not None)
@@ -277,7 +308,7 @@ def target_weights(score: pd.DataFrame, gross: float = 1.0) -> pd.DataFrame:
 
 
 def build_weights(score: pd.DataFrame, cfg: dict, vol: pd.DataFrame | None = None, confidence: pd.DataFrame | None = None, regime_on: pd.Series | None = None, groups: dict | None = None,
-                  investable: pd.DataFrame | None = None, uncertainty: pd.DataFrame | None = None, returns: pd.DataFrame | None = None) -> pd.DataFrame:
+                  investable: pd.DataFrame | None = None, uncertainty: pd.DataFrame | None = None, returns: pd.DataFrame | None = None, dollar_volume: pd.DataFrame | None = None) -> pd.DataFrame:
     """Target weights for a panel of scores according to the ``signal`` section of an experiment configuration (method and its settings, ``max_weight``, ``sector_cap``, ``holding_period``)."""
     method = cfg["method"]
     if method not in METHODS:
@@ -315,7 +346,7 @@ def build_weights(score: pd.DataFrame, cfg: dict, vol: pd.DataFrame | None = Non
     elif method == "cost_aware_mean_variance":
         if returns is None:
             raise ValueError("the cost_aware_mean_variance method needs the assets' returns")
-        w, alloc_log = cost_aware_mean_variance(s, returns, investable, cfg, groups)
+        w, alloc_log = cost_aware_mean_variance(s, returns, investable, cfg, groups, dollar_volume)
     elif method == "calibrated_sizing":
         if returns is None:
             raise ValueError("the calibrated_sizing method needs the assets' returns")

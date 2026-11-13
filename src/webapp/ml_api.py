@@ -104,6 +104,7 @@ SPEC = {
                "sector_cap": ("float", 0.05, 1.0), "holding_period": ("int", 1, 60), "regime_on_states": ("states",), "reinterpret_outputs": ("bool",), "kappa": ("float", 0.0, 10.0), "uncertainty_power": ("float", 0.0, 3.0), "mv_lookback": ("int", 40, 504),
                "mv_rebalance": ("int", 1, 60), "risk_aversion": ("float", 0.0, 100.0), "cov_method": ("choice", ("sample", "ewma", "lw_constant_correlation", "lw_identity", "pca_denoised", "factor")),
                "cov_window": ("int", 60, 1000), "opt_every": ("int", 1, 60), "turnover_penalty": ("float", 0.0, 10.0), "alloc_fallback": ("choice", ("none", "hold", "equal_weight")),
+               "capital": ("float", 1e3, 1e12), "max_participation": ("float", 0.001, 1.0), "impact": ("float", 0.0, 10.0), "adv_window": ("int", 2, 252),
                "no_trade_margin": ("float", 0.0, 50.0), "no_trade_hold_margin": ("float", 0.0, 50.0), "trade_filter_k": ("float", 0.0, 10.0), "trade_filter_cost_margin": ("float", 0.0, 50.0),
                "trade_filter_window": ("int", 40, 1000), "calib_window": ("int", 60, 2000), "calib_min_t": ("float", 0.0, 10.0), "stability_window": ("int", 5, 250),
                "regime_exposure": ("choice", ("vol_quantile", "hmm", "markov_switching")), "regime_states": ("int", 2, 5), "regime_floor": ("float", 0.0, 1.0), "regime_cap": ("float", 0.05, 1.0),

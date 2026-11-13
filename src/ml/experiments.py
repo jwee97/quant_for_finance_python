@@ -130,9 +130,9 @@ def realistic_requested(cfg: dict) -> bool:
 
 
 def _market(cfg: dict, bundle=None, config=None, builder=None, info: dict | None = None, market: dict | None = None) -> dict | None:
-    """The market data the realistic mode needs beyond the dataset (the traded volume), from the bundle given or resolved for the configuration's universe. ``None`` when the run did not ask for the mode;
-    a missing universe is an error, not a silent fall-back to the vectorized engine."""
-    if not realistic_requested(cfg):
+    """The market data a run needs beyond the dataset (the traded volume), from the bundle given or resolved for the configuration's universe: the realistic execution mode needs it, and so does a
+    liquidity-aware allocation (``signal.capital``). ``None`` when the run asked for neither; a missing universe is an error, not a silent fall-back to a run without liquidity."""
+    if not realistic_requested(cfg) and cfg.get("signal", {}).get("capital") is None:
         return None
     if market is not None:
         return market
@@ -140,7 +140,8 @@ def _market(cfg: dict, bundle=None, config=None, builder=None, info: dict | None
         try:
             bundle, info = resolve_bundle(config, cfg["dataset"]["universe"], builder)
         except (FileNotFoundError, KeyError, ValueError) as exc:
-            raise ExperimentError(f"realistic execution needs the market data (volume) for universe '{cfg['dataset']['universe']}': {exc}") from None
+            what = "realistic execution" if realistic_requested(cfg) else "a liquidity-aware allocation (signal.capital)"
+            raise ExperimentError(f"{what} needs the market data (volume) for universe '{cfg['dataset']['universe']}': {exc}") from None
     return {"volume": getattr(bundle, "volume", None), "status": str((info or {}).get("source", "unknown"))}
 
 
@@ -249,7 +250,9 @@ def evaluate_run(cfg: dict, ds: Dataset, train: TrainResult, info: dict, registr
     unc_wide = None if dist is None else dist["std"].unstack("asset").reindex(index=ds.dates, columns=ds.assets)          # the model's own predictive standard deviation, for the uncertainty-aware rules
     progress("building positions and backtesting")
     try:
-        weights = build_weights(scores, cfg["signal"], vol, conf, regime_on, groups, ds.investable, unc_wide, ds.returns)
+        volume = (market or {}).get("volume")                                               # shares traded, where the universe has them: the liquidity-aware allocation is refused without
+        dollars = None if volume is None else volume.reindex(index=ds.dates, columns=ds.assets) * ds.prices.reindex(index=ds.dates, columns=ds.assets)
+        weights = build_weights(scores, cfg["signal"], vol, conf, regime_on, groups, ds.investable, unc_wide, ds.returns, dollars)
     except ValueError as exc:
         raise ExperimentError(str(exc)) from None
     result = run_backtest(weights, ds.returns, ds.investable, cfg["backtest"], lag, cfg["name"])
