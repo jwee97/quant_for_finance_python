@@ -229,7 +229,7 @@ def _members(text: str, path: str) -> None:
 
 
 # ---------------------------------------------------------------------------------------------------------------------- the ranges
-DEEP_KINDS = ("lstm", "gru", "tcn", "patchtst", "nbeats", "nhits", "tft", "autoencoder", "vae")
+DEEP_KINDS = ("lstm", "gru", "tcn", "patchtst", "nbeats", "nhits", "itransformer", "dlinear", "tft", "autoencoder", "vae")
 GRAPH_KINDS = ("gcn", "gat")
 AGENT_KINDS = ("ppo", "sac", "recurrent_ppo")
 
@@ -246,7 +246,7 @@ RANGES: dict[str, str] = {
     "num_leaves": "[2,131072]", "num_threads": "[0,1024]", "patch_len": "[1,2000]", "patience": "[1,10000]", "pi": "(0,1]", "q": "[0,)", "r": "(0,)", "reg_lambda": "[0,)", "regimes": "[2,4]",
     "relevance_levels": "[2,10]", "ridge_alpha": "[0,)", "risk_aversion": "[0,)", "sector_weight": "[0,)", "selector_alpha": "[0,)", "shrink": "[0,1]", "stride": "[1,2000]", "subsample": "(0,1]",
     "subsamples": "[10,10000]", "tau": "(0,1]", "temperature": "[0,)", "top_k": "[0,1000]", "total_timesteps": "[64,100000000]", "turnover_penalty": "[0,)", "val_fraction": "[0.05,0.5]",
-    "weight_decay": "[0,)", "width": "[1,8192]", "halflife_days": "[0,)",
+    "weight_decay": "[0,)", "width": "[1,8192]", "halflife_days": "[0,)", "rank_weight": "[0,)", "components": "[2,20000]", "bandwidth": "(0,)", "draws": "[1,64]",
     "random_forest.max_features": "(0,1]", "kalman.max_features": "[1,1000]", "model_ensemble.val_fraction": "[0.1,0.5]",
 }
 RANGES.update({f"{k}.batch_size": "[8,1000000]" for k in DEEP_KINDS})                  # the networks' own check: a batch of at least 8
@@ -279,6 +279,7 @@ def _relation_at_least(big: str, small: str):
 # The relations the networks themselves enforce when they are built, stated here so that a request that could not build is refused before it is queued.
 RELATIONS = {
     "patchtst": (_relation_at_least("lookback", "patch_len"), _relation_multiple("d_model", "n_heads")),
+    "itransformer": (_relation_multiple("d_model", "n_heads"),),
     "tft": (_relation_multiple("hidden", "n_heads"),),
     "gat": (_relation_multiple("hidden", "heads"),),
 }

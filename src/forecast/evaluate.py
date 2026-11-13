@@ -60,7 +60,7 @@ class _Tape:
 
     def __init__(self, n_origins: int, n_h: int):
         shape = (n_origins, n_h)
-        self.crps, self.hit50, self.hit90, self.below5, self.pit, self.mean, self.p_up = (np.full(shape, np.nan) for _ in range(7))
+        self.crps, self.hit50, self.hit90, self.below5, self.pit, self.mean, self.p_up, self.miss90 = (np.full(shape, np.nan) for _ in range(8))
         self.pinball = np.full(shape + (len(LEVELS),), np.nan)
         self.failures, self.fits, self.seconds = 0, 0, 0.0
         self.last_info: dict = {}
@@ -161,6 +161,7 @@ def evaluate(history: History, names: list[str], horizon: int = 21, effort: str 
             t.pinball[oi, j] = S.pinball(x, y)[0]
             t.hit50[oi, j] = float(S.interval_hits(x, y, 0.5)[0])
             t.hit90[oi, j] = float(S.interval_hits(x, y, 0.9)[0])
+            t.miss90[oi, j] = float(S.interval_miss(x, y, 0.9)[0])
             t.below5[oi, j] = float(S.below_quantile(x, y, 0.05)[0])
             t.pit[oi, j] = S.pit(x, y)[0]
         for j, hz in enumerate(hs):                                          # the predictive mean and the chance of a rise do not need the outcome
@@ -237,6 +238,7 @@ def _summarize(history: History, run: list[str], tapes: dict[str, _Tape], realis
                 e["p"] = _f(cmp["p"])
                 e["coverage"] = {"50": _f(np.nanmean(t.hit50[:done, j][ok])), "90": _f(np.nanmean(t.hit90[:done, j][ok]))}
                 e["coverage_p"] = {"50": _f(S.binomial_p(t.hit50[:done, j][ok], 0.5, stride)), "90": _f(S.binomial_p(t.hit90[:done, j][ok], 0.9, stride))}
+                e["stretch90"] = _f(S.conformal_stretch(t.miss90[:done, j][ok], 0.9))
                 e["var5"] = _f(np.nanmean(t.below5[:done, j][ok]))
                 e["var5_p"] = _f(S.binomial_p(t.below5[:done, j][ok], 0.05, stride))
                 e["pit"] = [_f(v) for v in S.pit_histogram(t.pit[:done, j][ok])]

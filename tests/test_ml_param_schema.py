@@ -21,7 +21,7 @@ from tests.ml_param_cases import invalid_values, request_params, valid_values
 INFO = {m.kind: m for m in md.MODEL_INFO}
 KINDS = list(INFO)
 RELATION = ("must be a multiple of", "must be at least")
-DEEP = ("lstm", "gru", "tcn", "patchtst", "nbeats", "nhits", "tft", "autoencoder", "vae")
+DEEP = ("lstm", "gru", "tcn", "patchtst", "nbeats", "nhits", "itransformer", "dlinear", "tft", "autoencoder", "vae")
 AGENTS = ("ppo", "sac", "recurrent_ppo")
 
 

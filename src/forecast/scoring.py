@@ -61,6 +61,29 @@ def interval_hits(samples, y, coverage: float = 0.9) -> np.ndarray:
     return (y >= lo) & (y <= hi)
 
 
+def interval_miss(samples, y, coverage: float = 0.9) -> np.ndarray:
+    """How far each outcome fell outside the central ``coverage`` interval of its draws, in half-widths of that interval: negative inside (minus one at the middle of a symmetric interval), zero on an
+    edge, one when the outcome is a whole half-width beyond it. This is the conformity score of conformalised quantile regression (Romano, Patterson and Candes 2019), divided by the half-width so that
+    forecasts made in calm and in volatile times can be pooled."""
+    x = _rows(samples)
+    y = np.atleast_1d(np.asarray(y, dtype=float))
+    lo, hi = np.quantile(x, [(1.0 - coverage) / 2.0, 1.0 - (1.0 - coverage) / 2.0], axis=1)
+    half = np.maximum((hi - lo) / 2.0, 1e-300)
+    return np.maximum(lo - y, y - hi) / half
+
+
+def conformal_stretch(misses, coverage: float = 0.9) -> float:
+    """The factor by which a method's intervals must be stretched about their middle for ``coverage`` of the past outcomes to have fallen inside them, with the finite-sample correction of split conformal
+    prediction: one plus the ``ceil((n + 1) * coverage) / n`` empirical quantile of the misses. One means the intervals were the right width; 1.3 means 30% too narrow; below one means too wide. NaN with
+    fewer than 20 outcomes, or when the correction asks for more than the largest miss seen."""
+    s = np.sort(np.asarray(misses, dtype=float)[np.isfinite(misses)])
+    n = len(s)
+    k = int(np.ceil((n + 1) * coverage))
+    if n < 20 or k > n:
+        return float("nan")
+    return float(max(1.0 + s[k - 1], 0.0))
+
+
 def below_quantile(samples, y, level: float = 0.05) -> np.ndarray:
     """Whether each outcome fell below the ``level`` quantile of its draws (a value-at-risk exceedance when the level is small)."""
     x = _rows(samples)

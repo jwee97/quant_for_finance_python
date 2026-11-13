@@ -20,9 +20,9 @@ import numpy as np
 VERSION = "parsimony-v1"
 RULES = ("one_se", "penalty")
 COMPLEXITY = ("n_features", "family_rank", "lexicographic")
-FAMILY_RANK = {"linear": 1, "ridge": 1, "lasso": 1, "elasticnet": 1, "logistic": 1, "ar": 1, "stable_select": 2, "kalman": 2, "online_ridge": 2, "online_logistic": 2, "regime_ridge": 2, "hmm_regime": 3,
+FAMILY_RANK = {"linear": 1, "ridge": 1, "lasso": 1, "elasticnet": 1, "logistic": 1, "ar": 1, "stable_select": 2, "kalman": 2, "online_ridge": 2, "online_logistic": 2, "regime_ridge": 2, "rff_ridge": 3, "hmm_regime": 3,
                "markov_switching": 3, "random_forest": 4, "hist_gb": 4, "xgboost": 4, "lightgbm": 4, "catboost": 4, "lgbm_ranker": 4, "xgb_ranker": 4, "lgbm_quantile": 4, "ngboost": 4, "autoencoder": 5, "vae": 5,
-               "lstm": 6, "gru": 6, "tcn": 6, "patchtst": 6, "nbeats": 6, "nhits": 6, "tft": 6, "gcn": 6, "gat": 6, "model_ensemble": 7, "ppo": 8, "sac": 8, "recurrent_ppo": 8}
+               "lstm": 6, "gru": 6, "tcn": 6, "patchtst": 6, "nbeats": 6, "nhits": 6, "itransformer": 6, "dlinear": 5, "tft": 6, "gcn": 6, "gat": 6, "model_ensemble": 7, "ppo": 8, "sac": 8, "recurrent_ppo": 8}
 
 
 class ParsimonyError(ValueError):

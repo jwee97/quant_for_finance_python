@@ -89,6 +89,58 @@ class PatchTST(nn.Module):
         return self.mix(self.drop(per_channel))
 
 
+class ITransformer(nn.Module):
+    """iTransformer (Liu et al., ICLR 2024): the transformer is turned on its side. Each FEATURE's whole window is one token (a linear embedding of its ``lookback`` values), and self-attention runs among the
+    features, so the network learns which features to read together; time inside a window is handled by the embedding, which is a linear map and cheap. The paper forecasts every variate's own future from its
+    token. Here the tokens predict a panel target, so each token gets a learned identity embedding (the embedding weights are shared and a token would otherwise not know which feature it is), is summarised
+    to one number, and a linear layer mixes the features into the outputs."""
+
+    def __init__(self, n_features: int, lookback: int, n_out: int, d_model: int = 32, n_heads: int = 4, ff_dim: int = 64, layers: int = 2, dropout: float = 0.1, **_):
+        super().__init__()
+        if d_model % n_heads:
+            raise ValueError("d_model must be a multiple of n_heads")
+        self.embed = nn.Linear(lookback, d_model)
+        self.identity = nn.Parameter(torch.randn(1, n_features, d_model) * 0.02)
+        layer = nn.TransformerEncoderLayer(d_model, n_heads, ff_dim, dropout, batch_first=True, norm_first=True)
+        self.encoder = nn.TransformerEncoder(layer, layers, enable_nested_tensor=False)
+        self.norm = nn.LayerNorm(d_model)
+        self.summary = nn.Linear(d_model, 1)
+        self.drop = nn.Dropout(dropout)
+        self.mix = nn.Linear(n_features, n_out)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        tokens = self.embed(x.transpose(1, 2)) + self.identity                                              # [batch, features, d_model]: one token per feature
+        h = self.norm(self.encoder(tokens))
+        return self.mix(self.drop(self.summary(h).squeeze(-1)))
+
+
+class DLinear(nn.Module):
+    """DLinear (Zeng et al., AAAI 2023): the window is split into a moving-average trend and what is left, and each part goes through ONE linear layer. No hidden layer, no attention. It is the baseline the
+    transformer papers since 2023 are measured against, and on noisy series it often wins. Each feature has its own weights over the window (the paper's ``individual`` variant); a linear layer mixes the
+    features into the outputs, so the whole network is one linear map of the window, split by frequency."""
+
+    def __init__(self, n_features: int, lookback: int, n_out: int, kernel_size: int = 5, dropout: float = 0.0, **_):
+        super().__init__()
+        self.kernel = max(1, min(int(kernel_size), lookback))
+        self.trend = nn.Parameter(torch.full((n_features, lookback), 1.0 / lookback))
+        self.rest = nn.Parameter(torch.full((n_features, lookback), 1.0 / lookback))
+        self.drop = nn.Dropout(dropout)
+        self.mix = nn.Linear(n_features, n_out)
+
+    def decompose(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """``(trend, rest)``, both [batch, features, time]: a centred moving average with the ends repeated (as the paper pads), and the remainder."""
+        z = x.transpose(1, 2)
+        front, back = (self.kernel - 1) // 2, self.kernel // 2
+        padded = torch.cat([z[:, :, :1].expand(-1, -1, front), z, z[:, :, -1:].expand(-1, -1, back)], dim=2)
+        trend = nn.functional.avg_pool1d(padded, self.kernel, stride=1)
+        return trend, z - trend
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        trend, rest = self.decompose(x)
+        per_feature = (trend * self.trend).sum(dim=2) + (rest * self.rest).sum(dim=2)
+        return self.mix(self.drop(per_feature))
+
+
 class _MLP(nn.Module):
     def __init__(self, d_in: int, width: int, layers: int, dropout: float):
         super().__init__()
@@ -219,7 +271,7 @@ class AutoEncoder(nn.Module):
         return self.decoder(z).view_as(x), mu, logvar
 
 
-FORECASTERS = ("lstm", "gru", "tcn", "patchtst", "nbeats", "nhits", "tft")
+FORECASTERS = ("lstm", "gru", "tcn", "patchtst", "nbeats", "nhits", "tft", "itransformer", "dlinear")
 
 
 def build_net(arch: str, n_features: int, lookback: int, n_out: int, cfg: dict) -> nn.Module:
@@ -232,6 +284,10 @@ def build_net(arch: str, n_features: int, lookback: int, n_out: int, cfg: dict) 
         return TCNNet(n_features, n_out, hidden, layers, int(p.get("kernel_size", 3)), dropout)
     if arch == "patchtst":
         return PatchTST(n_features, lookback, n_out, int(p.get("patch_len", 4)), int(p.get("stride", 2)), int(p.get("d_model", 32)), int(p.get("n_heads", 4)), int(p.get("ff_dim", 64)), layers, dropout, int(p.get("channels", 8)))
+    if arch == "itransformer":
+        return ITransformer(n_features, lookback, n_out, int(p.get("d_model", 32)), int(p.get("n_heads", 4)), int(p.get("ff_dim", 64)), layers, dropout)
+    if arch == "dlinear":
+        return DLinear(n_features, lookback, n_out, int(p.get("kernel_size", 5)), dropout)
     if arch == "nbeats":
         return NBeats(n_features, lookback, n_out, int(p.get("blocks", 3)), int(p.get("width", 64)), layers, dropout)
     if arch == "nhits":

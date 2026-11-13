@@ -22,8 +22,17 @@ def _deep(**over) -> dict:
     return base
 
 
+def _seq(**over) -> dict:
+    """The networks that score with one number per horizon also choose their loss (``ml.deep.losses``)."""
+    return _deep(loss="mse", rank_weight=1.0, **over)
+
+
+LOSS = {"type": "choice", "choices": ["mse", "ic", "mse_rank"],
+        "help": "mse: the squared error of each asset's return. ic: the correlation of score and return across the assets of each day (what a long-short book is paid for), with a small squared error that keeps the scale. "
+                "mse_rank: the squared error plus rank_weight times a penalty on each pair of assets of a day that is ordered the wrong way round. ic and mse_rank train on batches of whole days"}
 DEEP_SPECS = {"device": DEVICE, "horizons": HORIZONS, "checkpoint_dir": {"type": "text", "help": "A folder for checkpoints (empty: none). Each refit writes best.pt and last.pt to a sub-folder of its own, named for its training window"},
               "resume": {"type": "bool", "help": "Continue an interrupted fit from its last.pt (the same training window) when it exists"}}
+SEQ_SPECS = {**DEEP_SPECS, "loss": LOSS, "rank_weight": {"type": "float", "help": "Weight of the pairwise ranking term of the mse_rank loss"}}
 BOOST = {"n_estimators": 300, "num_leaves": 15, "learning_rate": 0.03, "subsample": 0.7, "colsample_bytree": 0.7, "min_child_samples": 100, "reg_lambda": 5.0}
 RL_COMMON = {"total_timesteps": 20000, "learning_rate": 0.0003, "gamma": 0.99, "batch_size": 64, "hidden": 64, "reward": "risk_adjusted", "risk_aversion": 0.5, "turnover_penalty": 0.0,
              "drawdown_penalty": 0.0, "max_weight": 0.3, "gross": 1.0, "long_only": 0, "device": "cpu", "episode_days": 252, "cost_bps": 7.0, "impact": 0.0, "max_turnover": 0.0}
@@ -57,20 +66,28 @@ EXTRA_INFO = [
               {"switching_variance": {"type": "bool", "help": "Let the variance switch with the regime as well as the mean"}}, ("statsmodels",), ("regimes",)),
     ModelInfo("lstm", "LSTM", "deep sequence", ("regression",),
               "A long short-term memory network over the last `lookback` days of each asset's features (PyTorch), trained with early stopping on a chronological validation tail and gradient clipping",
-              _deep(), 63, None, DEEP_SPECS, ("torch",), ("training", "heads")),
-    ModelInfo("gru", "GRU", "deep sequence", ("regression",), "A gated recurrent unit network over the last `lookback` days of each asset's features (PyTorch)", _deep(), 63, None, DEEP_SPECS, ("torch",), ("training", "heads")),
+              _seq(), 63, None, SEQ_SPECS, ("torch",), ("training", "heads")),
+    ModelInfo("gru", "GRU", "deep sequence", ("regression",), "A gated recurrent unit network over the last `lookback` days of each asset's features (PyTorch)", _seq(), 63, None, SEQ_SPECS, ("torch",), ("training", "heads")),
     ModelInfo("tcn", "Temporal convolutional network", "deep sequence", ("regression",),
-              "Stacked dilated causal convolutions with residual connections (Bai, Kolter and Koltun): a receptive field that grows with depth, no recurrence", _deep(kernel_size=3, layers=3), 63, None, DEEP_SPECS,
+              "Stacked dilated causal convolutions with residual connections (Bai, Kolter and Koltun): a receptive field that grows with depth, no recurrence", _seq(kernel_size=3, layers=3), 63, None, SEQ_SPECS,
               ("torch",), ("training", "heads")),
     ModelInfo("patchtst", "PatchTST", "forecasting", ("regression",),
               "Patch time-series transformer (Nie et al. 2023): the window is cut into patches, each channel is embedded on its own, and a transformer encoder reads the patches",
-              _deep(patch_len=4, stride=2, d_model=32, n_heads=4, ff_dim=64, channels=8, layers=2, lookback=24), 63, None, DEEP_SPECS, ("torch",), ("training", "heads")),
+              _seq(patch_len=4, stride=2, d_model=32, n_heads=4, ff_dim=64, channels=8, layers=2, lookback=24), 63, None, SEQ_SPECS, ("torch",), ("training", "heads")),
+    ModelInfo("itransformer", "iTransformer", "forecasting", ("regression",),
+              "Inverted transformer (Liu et al. 2024): each feature's whole window is one token and attention runs among the features, so the network learns which features to read together. "
+              "Light on a CPU: the number of tokens is the number of features, whatever the lookback",
+              _seq(d_model=32, n_heads=4, ff_dim=64, layers=2, lookback=24), 63, None, SEQ_SPECS, ("torch",), ("training", "heads")),
+    ModelInfo("dlinear", "DLinear", "forecasting", ("regression",),
+              "Decomposition-linear (Zeng et al. 2023): the window is split into a moving-average trend and the remainder, with one linear layer on each. No hidden layer. The baseline every transformer since 2023 is "
+              "measured against, and on noisy returns it is often the one to beat: run it beside any network you train",
+              _seq(kernel_size=5, dropout=0.0, lookback=24, weight_decay=0.001), 63, None, SEQ_SPECS, ("torch",), ("training", "heads")),
     ModelInfo("nbeats", "N-BEATS", "forecasting", ("regression",),
               "Neural basis expansion (Oreshkin et al. 2020): residual blocks of fully connected layers, each subtracting its backcast from the window and adding a forecast; one forecast per horizon",
-              _deep(blocks=3, width=64, layers=3, lookback=24), 63, None, DEEP_SPECS, ("torch",), ("training", "heads")),
+              _seq(blocks=3, width=64, layers=3, lookback=24), 63, None, SEQ_SPECS, ("torch",), ("training", "heads")),
     ModelInfo("nhits", "N-HiTS", "forecasting", ("regression",),
               "N-HiTS (Challu et al. 2023): N-BEATS blocks that read the window at several resolutions (max-pooling) and forecast with interpolated coefficients",
-              _deep(blocks=3, width=64, layers=2, pool_sizes="4,2,1", lookback=24), 63, None, {**DEEP_SPECS, "pool_sizes": {"type": "text", "help": "Pooling kernel of each block, coarse to fine, comma separated (the number of blocks follows)"}},
+              _seq(blocks=3, width=64, layers=2, pool_sizes="4,2,1", lookback=24), 63, None, {**SEQ_SPECS, "pool_sizes": {"type": "text", "help": "Pooling kernel of each block, coarse to fine, comma separated (the number of blocks follows)"}},
               ("torch",), ("training", "heads")),
     ModelInfo("tft", "Temporal Fusion Transformer", "forecasting", ("regression",),
               "A compact Temporal Fusion Transformer (Lim et al. 2021): gated residual networks, variable selection, an LSTM encoder, interpretable multi-head attention and quantile outputs (low, median, high)",
@@ -120,7 +137,7 @@ EXTRA_INFO = [
 ]
 
 EXTRA_MODULE = {"lgbm_ranker": "boosting", "xgb_ranker": "boosting", "lgbm_quantile": "boosting", "ngboost": "boosting", "hmm_regime": "regimes", "markov_switching": "regimes", "lstm": "deep.model",
-                "gru": "deep.model", "tcn": "deep.model", "patchtst": "deep.model", "nbeats": "deep.model", "nhits": "deep.model", "tft": "deep.model", "autoencoder": "deep.model", "vae": "deep.model",
+                "gru": "deep.model", "tcn": "deep.model", "patchtst": "deep.model", "nbeats": "deep.model", "nhits": "deep.model", "itransformer": "deep.model", "dlinear": "deep.model", "tft": "deep.model", "autoencoder": "deep.model", "vae": "deep.model",
                 "gcn": "graph", "gat": "graph", "stable_select": "featsel", "model_ensemble": "ensemble_models", "ppo": "rl.agent", "sac": "rl.agent", "recurrent_ppo": "rl.agent"}
 
 _BOOST_SPACE = {"num_leaves": Int(4, 31), "learning_rate": LogFloat(0.01, 0.1), "n_estimators": Int(100, 400), "reg_lambda": LogFloat(1.0, 50.0)}
@@ -132,6 +149,8 @@ EXTRA_SPACES = {
     "hmm_regime": {"n_states": Int(2, 4), "alpha": LogFloat(0.1, 1000.0)}, "markov_switching": {"alpha": LogFloat(0.1, 1000.0)},
     "lstm": _DEEP_SPACE, "gru": _DEEP_SPACE, "tcn": {**_DEEP_SPACE, "kernel_size": Categorical(2, 3, 5)},
     "patchtst": {"d_model": Categorical(16, 32, 64), "dropout": Float(0.0, 0.4), "learning_rate": LogFloat(0.0003, 0.01), "patch_len": Categorical(4, 6, 8)},
+    "itransformer": {"d_model": Categorical(16, 32, 64), "dropout": Float(0.0, 0.4), "learning_rate": LogFloat(0.0003, 0.01), "layers": Int(1, 3)},
+    "dlinear": {"kernel_size": Categorical(3, 5, 9), "learning_rate": LogFloat(0.0003, 0.01), "weight_decay": LogFloat(1e-5, 1e-1), "lookback": Categorical(10, 20, 40)},
     "nbeats": {"width": Categorical(32, 64, 128), "blocks": Int(2, 4), "learning_rate": LogFloat(0.0003, 0.01), "dropout": Float(0.0, 0.4)},
     "nhits": {"width": Categorical(32, 64, 128), "blocks": Int(2, 4), "learning_rate": LogFloat(0.0003, 0.01), "dropout": Float(0.0, 0.4)},
     "tft": {"hidden": Categorical(16, 32, 64), "dropout": Float(0.0, 0.4), "learning_rate": LogFloat(0.0003, 0.01), "n_heads": Categorical(1, 2, 4)},

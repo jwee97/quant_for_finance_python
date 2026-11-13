@@ -246,7 +246,7 @@ def family_tolerance(kind: str, backend: str = "cpu") -> float:
     """The tolerance a repeated run of this model family may differ by on this device: exact for the deterministic CPU families, looser for neural and reinforcement learning ones."""
     if kind in ("ppo", "sac", "recurrent_ppo", "rl_ppo", "rl_sac"):
         return TOLERANCES["rl"]
-    if kind in ("lstm", "gru", "tcn", "patchtst", "nbeats", "nhits", "tft", "ae", "vae", "gcn", "gat", "mlp"):
+    if kind in ("lstm", "gru", "tcn", "patchtst", "nbeats", "nhits", "itransformer", "dlinear", "tft", "ae", "vae", "gcn", "gat", "mlp"):
         return TOLERANCES["torch_gpu"] if backend == "cuda" else TOLERANCES["torch_cpu"]
     return TOLERANCES["default"]
 

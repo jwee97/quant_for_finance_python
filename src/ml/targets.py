@@ -18,6 +18,9 @@ Names (``h`` is the horizon in days; the default horizons are 1, 5 and 20):
 ``topbottom_h``    1 for the top quantile of ``fwd_ret_h`` on a date, 0 for the bottom quantile, missing in between (a classification target)
 ``direction_h``    1 if ``fwd_ret_h`` is positive, else 0
 ``riskadj_h``      ``fwd_ret_h`` over the asset's trailing 63-day volatility scaled to the horizon (the trailing volatility is known at ``t``)
+``barrier_h``      the triple-barrier label (Lopez de Prado 2018): two price barriers are set ``BARRIER_WIDTH`` trailing standard deviations of an ``h``-day move above and below the entry price; 1 if the upper
+                   one is touched first inside the window, 0 if the lower one is; if neither is touched by day ``h`` the sign of the return at day ``h`` decides (a classification target). It asks the question a
+                   trade with a profit target and a stop asks, where ``direction_h`` only looks at the last day
 """
 
 from __future__ import annotations
@@ -36,8 +39,11 @@ KINDS = {
     "resid_ret": "forward return minus beta times the benchmark's (beta from the trailing daily returns known at the decision)",
     "rank": "cross-sectional rank of the forward return", "topbottom": "top versus bottom quantile of the forward return (classification)", "direction": "sign of the forward return (classification)",
     "riskadj": "forward return per unit of trailing volatility",
+    "barrier": "which of two volatility-scaled price barriers is touched first, a profit target or a stop (classification)",
 }
-CLASSIFICATION = ("topbottom", "direction")
+CLASSIFICATION = ("topbottom", "direction", "barrier")
+BARRIER_WIDTH = 1.0          # barriers at this many trailing standard deviations of an h-day move
+BARRIER_VOL_WINDOW = 63
 _NAME = re.compile(r"^(?P<kind>[a-z_]+?)_(?P<h>\d+)$")
 
 
@@ -77,6 +83,27 @@ def forward_drawdown(prices: pd.DataFrame, h: int, lag: int) -> pd.DataFrame:
     """The lowest price in ``t + lag .. t + lag + h`` over the price at ``t + lag``, minus 1."""
     low = prices.rolling(h + 1, min_periods=h + 1).min().shift(-(lag + h))
     return low / prices.shift(-lag) - 1.0
+
+
+def triple_barrier(prices: pd.DataFrame, returns: pd.DataFrame, h: int, lag: int, width: float = BARRIER_WIDTH) -> pd.DataFrame:
+    """1 where the upper barrier is touched first after the entry at the close of ``t + lag``, 0 where the lower one is, and the sign of the ``h``-day return where neither is touched. The barriers sit
+    ``width`` times the trailing daily volatility (known at ``t``) times ``sqrt(h)`` either side of the entry price. A row has a label only when its whole window exists, whether or not a barrier was
+    touched early, so that which rows are labelled never depends on what happened."""
+    vol = returns.rolling(BARRIER_VOL_WINDOW, min_periods=40).std(ddof=1)
+    band = (width * vol * np.sqrt(h)).to_numpy(dtype=float)
+    entry = prices.shift(-lag).to_numpy(dtype=float)
+    label = np.full(entry.shape, np.nan)
+    open_ = np.ones(entry.shape, dtype=bool)
+    ratio = np.full(entry.shape, np.nan)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        for j in range(1, h + 1):
+            ratio = prices.shift(-(lag + j)).to_numpy(dtype=float) / entry - 1.0
+            up, down = open_ & (ratio >= band), open_ & (ratio <= -band)
+            label[up], label[down] = 1.0, 0.0
+            open_ &= ~(up | down)
+        label[open_] = (ratio[open_] > 0).astype(float)
+    complete = np.isfinite(ratio) & np.isfinite(band) & (band > 0)                                   # ``ratio`` is now the h-day return: finite only when the whole window exists
+    return pd.DataFrame(np.where(complete, label, np.nan), index=prices.index, columns=prices.columns)
 
 
 def benchmark_return(prices: pd.DataFrame, h: int, lag: int, benchmark: str = "equal_weight") -> pd.Series:
@@ -161,6 +188,8 @@ def make_target(name: str, prices: pd.DataFrame, returns: pd.DataFrame, lag: int
         return fwd.rank(axis=1, pct=True)
     if kind == "direction":
         return (fwd > 0).astype(float).where(fwd.notna())
+    if kind == "barrier":
+        return triple_barrier(prices, returns, h, lag)
     if kind == "topbottom":
         pct = fwd.rank(axis=1, pct=True)
         usable = fwd.notna().to_numpy() & (fwd.notna().sum(axis=1).to_numpy() >= 4)[:, None]                  # a ranking of fewer than four assets says little

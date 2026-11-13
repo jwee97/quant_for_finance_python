@@ -3,6 +3,9 @@
 The caller supplies the data as two things, ``batch_fn(split, rows)`` (tensors for those rows of the ``"train"`` or ``"val"`` split, already on the device) and ``loss_fn(net, batch)`` (a scalar). The
 loop shuffles the training rows each epoch, clips the gradient norm, steps AdamW, halves the learning rate when the validation loss stalls, keeps the best weights and stops after ``patience`` epochs
 without an improvement. The validation rows are the caller's choice and must come AFTER the training rows in time (``DeepModel`` cuts the tail of the training window, with a purge gap).
+
+``groups`` (optional) names the group of each row of each split, in practice its day. A batch is then made of WHOLE groups, shuffled as groups, which is what a loss that compares the assets of one day
+with each other needs (a daily correlation, a pairwise ranking). Without it the rows are shuffled one by one, as before.
 """
 
 from __future__ import annotations
@@ -99,7 +102,27 @@ def load_checkpoint(path: Path, net, opt=None, device="cpu") -> dict:
     return blob
 
 
-def fit_network(net: torch.nn.Module, batch_fn, loss_fn, n_train: int, n_val: int, cfg: TrainConfig) -> History:
+def batches(n: int, size: int, rng: np.random.Generator | None, groups: np.ndarray | None = None) -> list[np.ndarray]:
+    """The rows of each batch. Without ``groups``: ``size`` rows at a time, shuffled when a generator is given. With them: whole groups, added until the batch holds at least ``size`` rows."""
+    if groups is None:
+        order = rng.permutation(n) if rng is not None else np.arange(n)
+        return [order[i:i + size] for i in range(0, n, size)]
+    ids, inverse = np.unique(np.asarray(groups)[:n], return_inverse=True)
+    by_group = np.argsort(inverse, kind="stable")
+    bounds = np.concatenate([[0], np.cumsum(np.bincount(inverse, minlength=len(ids)))])
+    out, current, held = [], [], 0
+    for g in (rng.permutation(len(ids)) if rng is not None else np.arange(len(ids))):
+        current.append(by_group[bounds[g]:bounds[g + 1]])
+        held += len(current[-1])
+        if held >= size:
+            out.append(np.concatenate(current))
+            current, held = [], 0
+    if current:
+        out.append(np.concatenate(current))
+    return out
+
+
+def fit_network(net: torch.nn.Module, batch_fn, loss_fn, n_train: int, n_val: int, cfg: TrainConfig, groups: dict | None = None) -> History:
     """Train ``net`` in place and return its history; the net ends up with its best validation weights. ``batch_fn`` must move its tensors to ``net``'s device (``net`` is already there)."""
     t0 = time.perf_counter()
     set_seed(cfg.seed)
@@ -121,10 +144,8 @@ def fit_network(net: torch.nn.Module, batch_fn, loss_fn, n_train: int, n_val: in
         for epoch in range(start, cfg.epochs):
             e0 = time.perf_counter()
             net.train()
-            order = rng.permutation(n_train)
             total, seen, norms = 0.0, 0, []
-            for i in range(0, n_train, cfg.batch_size):
-                rows = order[i:i + cfg.batch_size]
+            for rows in batches(n_train, cfg.batch_size, rng, None if groups is None else groups["train"]):
                 loss = loss_fn(net, batch_fn("train", rows))
                 if not torch.isfinite(loss):
                     raise ValueError("training diverged (the loss is not finite); lower the learning rate")
@@ -135,7 +156,7 @@ def fit_network(net: torch.nn.Module, batch_fn, loss_fn, n_train: int, n_val: in
                 total += float(loss.detach()) * len(rows)
                 seen += len(rows)
             train_loss = total / max(seen, 1)
-            val_loss = _evaluate(net, batch_fn, loss_fn, n_val, cfg.batch_size * 2) if n_val else train_loss
+            val_loss = _evaluate(net, batch_fn, loss_fn, n_val, cfg.batch_size * 2, None if groups is None else groups["val"]) if n_val else train_loss
             hist.train_loss.append(train_loss)
             hist.val_loss.append(val_loss)
             hist.lr.append(float(opt.param_groups[0]["lr"]))
@@ -165,11 +186,10 @@ def fit_network(net: torch.nn.Module, batch_fn, loss_fn, n_train: int, n_val: in
 
 
 @torch.no_grad()
-def _evaluate(net, batch_fn, loss_fn, n_val: int, chunk: int) -> float:
+def _evaluate(net, batch_fn, loss_fn, n_val: int, chunk: int, groups: np.ndarray | None = None) -> float:
     net.eval()
     total, seen = 0.0, 0
-    for i in range(0, n_val, chunk):
-        rows = np.arange(i, min(i + chunk, n_val))
+    for rows in batches(n_val, chunk, None, groups):
         total += float(loss_fn(net, batch_fn("val", rows))) * len(rows)
         seen += len(rows)
     return total / max(seen, 1)

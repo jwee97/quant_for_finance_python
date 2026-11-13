@@ -15,6 +15,7 @@
   const spct = (v, d = 1) => { if (Q.bad(v)) return "n/a"; const t = Math.abs(v * 100).toFixed(d); return (+t === 0 ? "" : v >= 0 ? "+" : "−") + t + "%"; };      // a signed percentage; a zero has no sign
   const money = (v) => (Q.bad(v) ? "n/a" : v >= 1000 ? v.toFixed(0) : v.toFixed(2));
   const pval = (v) => (Q.bad(v) ? "n/a" : v < 0.001 ? "<0.001" : v.toFixed(3));
+  const stretch = (v) => (Q.bad(v) ? "n/a" : "×" + v.toFixed(2));
   const isOpen = () => !Q.$(F.view).hidden;
   const tickersNow = () => Q.S.tickers.filter((x) => x.status !== "bad");
   const human = (k) => String(k).replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase());
@@ -303,7 +304,8 @@
       table: (b) => {
         const cols = [{ label: "Method", get: (m) => shortOf(m.id, d) }];
         for (const n of d.evaluation.horizons) cols.push({ label: `Skill at ${n} day${n === 1 ? "" : "s"}`, num: true, get: (m) => { const s = scores(d, m.id, n); return Q.bad(s.skill) ? "n/a" : spct(s.skill, 1) + (s.beats_baseline ? " ✓" : ""); } });
-        cols.push({ label: "90% range held", num: true, get: (m) => pct((scores(d, m.id, d.horizon).coverage || {})["90"], 0) }, { label: "Below 5% quantile", num: true, get: (m) => pct(scores(d, m.id, d.horizon).var5, 0), title: "How often the outcome fell below the method's 5% quantile: 5% is right" },
+        cols.push({ label: "90% range held", num: true, get: (m) => pct((scores(d, m.id, d.horizon).coverage || {})["90"], 0) }, { label: "Stretch to hold 90%", num: true, get: (m) => stretch(scores(d, m.id, d.horizon).stretch90), title: "The factor the method's 90% range needed to be widened by, about its middle, to have held 90% of the past outcomes (split conformal calibration). 1.00 is the right width; above 1 the range was too narrow" },
+          { label: "Below 5% quantile", num: true, get: (m) => pct(scores(d, m.id, d.horizon).var5, 0), title: "How often the outcome fell below the method's 5% quantile: 5% is right" },
           { label: "Calibration p", num: true, get: (m) => pval(scores(d, m.id, d.horizon).pit_p), title: "Kolmogorov-Smirnov p-value that the PIT values are uniform; small means not calibrated" },
           { label: "Seconds", num: true, get: (m) => String(m.seconds), title: "Time spent on this method in the whole evaluation" }, { label: "Could not forecast", num: true, get: (m) => String(m.failures) });
         table(b, cols, ms);
@@ -403,6 +405,7 @@
     const facts = () => {
       k.replaceChildren(); const s = scores(d, F.show.pit, hz), cov = s.coverage || {}, cp = s.coverage_p || {};
       tile(k, "90% range held the outcome", pct(cov["90"], 0), { text: `90% is right (p = ${pval(cp["90"])})`, dir: cp["90"] !== null && cp["90"] < 0.05 ? "down" : "up" }, "", "How often the realised return fell inside the central 90% of the method's simulated futures, tested with the forecasts one horizon apart so that they are independent.");
+      tile(k, "Stretch to hold 90%", stretch(s.stretch90), { text: Q.bad(s.stretch90) ? "too few forecasts" : s.stretch90 > 1.1 ? "the range was too narrow" : s.stretch90 < 0.9 ? "the range was too wide" : "about the right width", dir: !Q.bad(s.stretch90) && s.stretch90 > 1.1 ? "down" : "up" }, "", "Conformal calibration: widen (or narrow) the method's 90% range about its middle by this factor and it would have held 90% of the past outcomes. Read today's range on the fan with it: at 1.25, the honest range is a quarter wider than drawn. Forecasts overlap in time, so treat it as a guide.");
       tile(k, "50% range held the outcome", pct(cov["50"], 0), { text: `50% is right (p = ${pval(cp["50"])})`, dir: cp["50"] !== null && cp["50"] < 0.05 ? "down" : "up" }, "", "The same for the central half.");
       tile(k, "Fell below the 5% quantile", pct(s.var5, 1), { text: `5% is right (p = ${pval(s.var5_p)})`, dir: s.var5_p !== null && s.var5_p < 0.05 ? "down" : "up" }, "", "The value-at-risk check: how often the outcome was worse than the method's 5% worst case. Too often means the method understates the risk of a fall.");
       tile(k, "Calibration test", pval(s.pit_p), { text: "small means not calibrated" }, "", "Kolmogorov-Smirnov test that the outcomes are spread evenly across the forecast ranges.");

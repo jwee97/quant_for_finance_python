@@ -58,7 +58,9 @@ HEDGE_RULES = {
     "delta": "Trade to the Black-Scholes delta on every date.",
     "leland": "The same, sold at Leland's price and hedged with the adjusted volatility, so that the premium pays for the hedging cost.",
     "band": "Trade only when the holding leaves the Whalley-Wilmott no-trade band, and then only to its edge.",
+    "deep": "A neural network trained on simulated paths to place its own no-trade band (deep hedging), sold at the Black-Scholes price.",
 }
+DEEP_HEDGE = {"iterations": 150, "min_iterations": 40, "batch": 2048, "max_work": 150 * 2048 * 63}            # the training budget; with more dates than 63 the iterations fall so that the time stays about the same
 
 
 class Unavailable(Exception):
@@ -462,9 +464,17 @@ def hedge_inputs(chain: pd.DataFrame, spec: dict, vol_pct: float | None = None, 
             "paths": int(check_range("paths", paths, *LIMITS["hedge_paths"])), "seed": int(check_range("seed", seed, *LIMITS["seed"]))}
 
 
+def _certainty_equivalent(pnl: np.ndarray, risk_aversion: float) -> float:
+    """``-(1/a) log mean(exp(-a pnl))``: the sure amount an investor with exponential utility values the uncertain profit and loss at (higher is better)."""
+    x = -float(risk_aversion) * np.asarray(pnl, dtype=float)
+    top = float(x.max())
+    return float(-(top + np.log(np.mean(np.exp(x - top)))) / float(risk_aversion))
+
+
 def hedge_report(name: str, spec: dict, inputs: dict, progress=None) -> tuple[dict, list[str], list[str]]:
     """What hedging the option of ``spec`` costs under ``inputs`` (from ``hedge_inputs``), as ``(data, warnings, notes)``: Leland's price at several rebalancing frequencies, the Whalley-Wilmott band
-    around the delta, three hedging rules simulated on the same paths (with the distribution of their profit and loss) and the utility-based writer's and buyer's prices."""
+    around the delta, three hedging rules and (with PyTorch) a trained network simulated on the same paths, with the distribution of their profit and loss and their certainty equivalents, and the utility-based
+    writer's and buyer's prices."""
     say = progress or (lambda text: None)
     S, K, T, call = spec["S"], spec["K"], spec["T"], spec["call"]
     r, q, sigma, cost, steps, ra, paths, seed = (inputs[k] for k in ("r", "q", "sigma", "cost", "steps", "ra", "paths", "seed"))
@@ -490,6 +500,24 @@ def hedge_report(name: str, spec: dict, inputs: dict, progress=None) -> tuple[di
         raw[rule] = res.pop("pnl")
         res.update(q05=float(np.quantile(raw[rule], 0.05)), q50=float(np.quantile(raw[rule], 0.5)), q95=float(np.quantile(raw[rule], 0.95)), text=HEDGE_RULES[rule])
         sims.append(res)
+    deep, deep_note = None, None
+    try:
+        from ..derivatives import deep_hedging
+    except ImportError:
+        deep_note = "The neural-network hedge (deep hedging) needs PyTorch, which is not installed here: the three classical rules are shown."
+    else:
+        iterations = int(min(DEEP_HEDGE["iterations"], max(DEEP_HEDGE["min_iterations"], DEEP_HEDGE["max_work"] // (DEEP_HEDGE["batch"] * steps))))
+        say(f"training the hedging network: {iterations} iterations of {DEEP_HEDGE['batch']:,} fresh paths")
+        policy, curve = deep_hedging.train(S, K, T, r, q, sigma, cost, steps, call, gamma, premium, iterations, DEEP_HEDGE["batch"], seed=seed, progress=say)
+        same_paths = costs.gbm_hedging_paths(S, r - q, sigma, T, steps, paths, np.random.default_rng(seed))        # the paths the three rules above were run on
+        res = deep_hedging.evaluate(policy, same_paths, K, T, r, q, sigma, cost, call, premium)
+        raw["deep"] = res.pop("pnl")
+        res.update(q05=float(np.quantile(raw["deep"], 0.05)), q50=float(np.quantile(raw["deep"], 0.5)), q95=float(np.quantile(raw["deep"], 0.95)), text=HEDGE_RULES["deep"])
+        sims.append(res)
+        low, high = deep_hedging.band_curve(policy, spots, K, T, T, r, q, sigma, call)
+        deep = {"iterations": iterations, "batch": DEEP_HEDGE["batch"], "training": [float(v) for v in curve], "band_low": low, "band_high": high}
+    for res in sims:                                                           # what an investor with this risk aversion would pay to be rid of each rule's outcome: the one number that weighs the mean against the spread
+        res["ce"] = _certainty_equivalent(raw[res["strategy"]], gamma)
     allp = np.concatenate(list(raw.values()))
     lo, hi = float(np.quantile(allp, 0.001)), float(np.quantile(allp, 0.999))
     edges, counts, outside = np.linspace(lo, hi, 31), {}, {}
@@ -513,7 +541,15 @@ def hedge_report(name: str, spec: dict, inputs: dict, progress=None) -> tuple[di
              "The binomial tree has no dividend: it hedges with the prepaid forward S e^(-qT), which pays none, so its frictionless price is the Cox-Ross-Rubinstein price of the same option (about the Black-Scholes price, to within the 40-step tree's error)."]
     data = {"underlying": name, "inputs": {"spot": S, "strike": K, "expiry": spec["expiry"], "dte": spec["dte"], "call": call, "rate": r, "dividend": q, "vol": sigma, "cost": cost, "cost_bp": cost * 1e4, "steps": steps,
                                           "risk_aversion": ra, "gamma": gamma, "paths": paths, "seed": seed},
-            "premium": premium, "leland": leland, "band": band, "simulation": sims, "histogram": {"edges": edges, "share": counts, "outside": outside}, "dpz": dpz}
+            "premium": premium, "leland": leland, "band": band, "simulation": sims, "histogram": {"edges": edges, "share": counts, "outside": outside}, "dpz": dpz, "deep": deep}
+    if deep is not None:
+        notes.append(f"Deep hedging (Buehler, Gonon, Teichmann and Wood 2019) with a no-transaction band network (Imaki and others 2021): a small network places a band around the delta and is trained for "
+                     f"{deep['iterations']} iterations of {deep['batch']:,} fresh simulated paths to maximise the certainty equivalent at the risk aversion above. It is then run on the paths of the other rules, "
+                     "which it never saw. It learns for THIS option, cost and volatility and for the model the paths come from: on real prices it is only as good as that model.")
+        notes.append("Certainty equivalent: the sure amount an investor with this risk aversion values each rule's uncertain profit and loss at, -(1/a) log E[exp(-a P&L)]. It is the criterion the "
+                     "Whalley-Wilmott band and the network both aim at; the delta and Leland rules do not aim at it. Leland's rule is sold at a higher premium, so its number is not comparable with the others'.")
+    elif deep_note:
+        notes.append(deep_note)
     return data, warnings, notes
 
 
@@ -580,8 +616,10 @@ def format_hedge(data: dict, warnings: list[str] = ()) -> str:
     for x in data["leland"]:
         lines.append(f"{x['steps']:18d} {x['le']:10.3f} {_money(x['seller_price']):>12s} {_money(x['buyer_price']) if x['buyer_price'] is not None else 'cannot hedge':>11s}" + ("   <- yours" if x["steps"] == i["steps"] else ""))
     lines += ["", f"Whalley-Wilmott no-trade band at today's price: ±{data['band']['half_width_at_spot']:.3f} shares around the delta", "", "Simulated hedging of one sold option:",
-              f"{'rule':14s} {'premium':>9s} {'mean P&L':>9s} {'std':>7s} {'5th pct':>8s} {'95th pct':>9s} {'cost':>7s} {'trades':>7s}"]
+              f"{'rule':14s} {'premium':>9s} {'mean P&L':>9s} {'std':>7s} {'5th pct':>8s} {'95th pct':>9s} {'cost':>7s} {'trades':>7s} {'cert. equiv.':>13s}"]
     for x in data["simulation"]:
-        lines.append(f"{x['strategy']:14s} {_money(x['premium'], 2):>9s} {x['mean']:9.2f} {x['std']:7.2f} {x['q05']:8.2f} {x['q95']:9.2f} {x['cost']:7.2f} {x['trades']:7.1f}")
+        lines.append(f"{x['strategy']:14s} {_money(x['premium'], 2):>9s} {x['mean']:9.2f} {x['std']:7.2f} {x['q05']:8.2f} {x['q95']:9.2f} {x['cost']:7.2f} {x['trades']:7.1f} {x['ce']:13.3f}")
+    if data.get("deep"):
+        lines.append(f"'deep' is a network trained for this option ({data['deep']['iterations']} iterations of {data['deep']['batch']:,} simulated paths) to place its own no-trade band; the certainty equivalent is what the band and the network aim at")
     lines += ["", f"Utility-based prices (binomial market): writer {_money(dpz['writer'])}, buyer {_money(dpz['buyer'])}, frictionless {_money(dpz['crr'])}; the writer's best holding is not to trade between {dpz['band'][0]:.3f} and {dpz['band'][1]:.3f} shares"]
     return "\n".join(lines + [""] + [f"Watch: {w}" for w in warnings])

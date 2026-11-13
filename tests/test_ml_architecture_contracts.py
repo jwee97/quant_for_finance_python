@@ -20,7 +20,7 @@ def net(arch, **over):
 
 def test_the_manifest_covers_every_network_and_labels_the_reduced_ones():
     assert set(FORECASTERS) <= set(ARCHITECTURES) and {"autoencoder", "vae"} <= set(ARCHITECTURES)
-    assert {k for k, v in ARCHITECTURES.items() if v["reduced"]} == {"patchtst", "nbeats", "nhits", "tft"}
+    assert {k for k, v in ARCHITECTURES.items() if v["reduced"]} == {"patchtst", "nbeats", "nhits", "tft", "itransformer"}
     for kind, entry in ARCHITECTURES.items():
         assert {"variant", "reference", "input_axes", "output_axes", "masking", "normalization", "residuals", "attention", "horizon_mapping"} <= set(entry), kind
         assert (not entry["reduced"]) or entry.get("differences"), f"{kind} is a reduction and must say what it leaves out"

@@ -23,7 +23,7 @@ import numpy as np
 import pandas as pd
 
 ANN = 252.0
-GROUPS = ("price", "momentum", "mean_reversion", "volatility", "volume", "relative", "macro", "futures", "options", "crypto")
+GROUPS = ("price", "momentum", "mean_reversion", "volatility", "volume", "relative", "macro", "futures", "options", "crypto", "fracdiff")
 # The implied-volatility index of the underlying, where the platform has one (the same mapping the options workspace uses).
 IV_INDEX = {"SPY": "VIX", "QQQ": "VXN", "GLD": "GVZ", "DBC": "OVX"}
 
@@ -120,6 +120,42 @@ for _w in (20, 50, 200):
     feature(f"ma_ratio_{_w}", "price", f"price over its {_w}-day average, minus 1", lookback=_w)(lambda x, w=_w: x.prices / x.prices.rolling(w, min_periods=int(w * 0.8)).mean() - 1.0)
 feature("dist_high_252", "price", "price over its 252-day high, minus 1 (0 at a new high)", lookback=252)(lambda x: x.prices / x.prices.rolling(252, min_periods=126).max() - 1.0)
 feature("dist_low_252", "price", "price over its 252-day low, minus 1 (0 at a new low)", lookback=252)(lambda x: x.prices / x.prices.rolling(252, min_periods=126).min() - 1.0)
+
+
+# ------------------------------------------------------------------------------------------------------------------ fractional differencing
+FRACDIFF_WINDOW = 126
+
+
+def fracdiff_weights(d: float, window: int = FRACDIFF_WINDOW) -> np.ndarray:
+    """The first ``window + 1`` weights of ``(1 - L)^d``: ``w_0 = 1`` and ``w_k = -w_{k-1} (d - k + 1) / k`` (Hosking 1981). ``d = 1`` gives ``[1, -1, 0, ...]``, the plain difference; ``d = 0`` leaves the series alone."""
+    w = np.ones(window + 1)
+    for k in range(1, window + 1):
+        w[k] = -w[k - 1] * (d - k + 1) / k
+    return w
+
+
+def fracdiff(prices: pd.DataFrame, d: float, window: int = FRACDIFF_WINDOW) -> pd.DataFrame:
+    """The fractional difference of order ``d`` of the log price over a fixed trailing window (Lopez de Prado 2018, chapter 5), with the log price measured from its value at the start of the window, so the
+    feature has no unit and an asset's price level does not enter. A return (``d = 1``) forgets the level entirely and a price (``d = 0``) is not stationary; an order in between keeps part of the memory of
+    the level while staying close to stationary. NaN when any price of the window is missing."""
+    w = fracdiff_weights(d, window)
+    w[-1] -= w.sum()                                                                     # subtracting the window's first log price from every term is the same as taking the weights' sum off the last one
+    logp = np.log(prices.where(prices > 0)).to_numpy(dtype=float)
+    out = np.full_like(logp, np.nan)
+    for j in range(logp.shape[1]):
+        col = logp[:, j]
+        if len(col) <= window:
+            continue
+        bad = np.isnan(col)
+        conv = np.convolve(np.where(bad, 0.0, col), w, mode="valid")
+        n_bad = pd.Series(bad.astype(float)).rolling(window + 1).sum().to_numpy()[window:]
+        out[window:, j] = np.where(n_bad == 0, conv, np.nan)
+    return pd.DataFrame(out, index=prices.index, columns=prices.columns)
+
+
+for _d in (0.3, 0.5, 0.7):
+    feature(f"fracdiff_{int(_d * 10):02d}", "fracdiff", f"fractional difference of order {_d} of the log price over {FRACDIFF_WINDOW} days: between a price (order 0) and a return (order 1), it keeps part of the "
+            "level's memory", lookback=FRACDIFF_WINDOW + 1)(lambda x, d=_d: fracdiff(x.prices, d))
 
 
 # ------------------------------------------------------------------------------------------------------------------ momentum

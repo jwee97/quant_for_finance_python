@@ -29,7 +29,7 @@ ITEM_STATUS = ("ok", "failed", "missing", "stale", "blocked", "not_applicable")
 RL_KINDS = {"ppo", "sac", "recurrent_ppo", "rl_ppo", "rl_sac", "rl_recurrent_ppo"}
 RANKER_KINDS = {"lambdamart", "xgb_ranker", "lgbm_ranker"}
 GRAPH_KINDS = {"gcn", "gat"}
-DEEP_KINDS = {"lstm", "gru", "tcn", "patchtst", "nbeats", "nhits", "tft", "ae", "vae", "gcn", "gat"}
+DEEP_KINDS = {"lstm", "gru", "tcn", "patchtst", "nbeats", "nhits", "itransformer", "dlinear", "tft", "ae", "vae", "gcn", "gat"}
 REGIME_KINDS = {"hmm", "gaussian_hmm", "markov_switching", "regime_ridge"}
 COMMON_REQUIREMENTS = ["P0-09", "P0-11", "P0-12"] + [f"P0-{n:02d}" for n in range(13, 23)]                  # the output contracts, serialization and the causal/data/inference pipeline apply to every model
 

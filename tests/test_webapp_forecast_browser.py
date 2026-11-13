@@ -133,7 +133,7 @@ def test_a_forecast_reads_in_words_draws_the_fan_and_leaves_a_table_behind_every
         board.locator(".seg button:has-text('Table')").click()
         assert board.locator("table.data tbody tr").count() == 3 and "Skill at 21 days" in board.inner_text()
         cal = page.locator("[data-role=forecast-calibration]")
-        assert cal.locator("svg.chart").count() == 1 and cal.locator(".tile").count() == 4 and "90% range held the outcome" in cal.inner_text()
+        assert cal.locator("svg.chart").count() == 1 and cal.locator(".tile").count() == 5 and "90% range held the outcome" in cal.inner_text() and "stretch to hold 90%" in cal.inner_text().lower()
         cal.locator(".tabsmall button[data-value=garch]").click()
         assert cal.locator(".tabsmall button[data-value=garch]").get_attribute("aria-pressed") == "true"
         assert "What each method assumes" in page.inner_text("#forecast-results") and "What the methods learned" in page.inner_text("#forecast-results")

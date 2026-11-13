@@ -276,6 +276,12 @@ def _build_sklearn(kind: str, task: str, p: dict, seed: int) -> SklearnModel:
         if kind == "elasticnet":
             return SklearnModel(kind, task, p, seed, ElasticNet(alpha=float(p.get("alpha", 0.02)), l1_ratio=float(p.get("l1_ratio", 0.5)), max_iter=5000, random_state=seed), True, False)
         raise ValueError("logistic regression needs a classification target (direction_h or topbottom_h)")
+    if kind == "rff_ridge":
+        if clf:
+            raise ValueError("rff_ridge is a regression")
+        from .complexity import RandomFeatureRidge
+
+        return SklearnModel(kind, task, p, seed, RandomFeatureRidge(int(p.get("components", 1024)), float(p.get("bandwidth", 1.0)), float(p.get("alpha", 100.0)), int(p.get("draws", 3)), seed), True, False)
     if kind == "random_forest":
         kw = dict(n_estimators=int(p.get("n_estimators", 200)), max_depth=int(p.get("max_depth", 6)), min_samples_leaf=int(p.get("min_samples_leaf", 200)), max_features=float(p.get("max_features", 0.5)),
                   n_jobs=1, random_state=seed)
@@ -529,6 +535,9 @@ MODEL_INFO = [
     ModelInfo("lasso", "Lasso", "linear", ("regression", "classification"), "L1-penalised linear model: sets weak features to zero", {"alpha": 0.02}, 21),
     ModelInfo("elasticnet", "Elastic net", "linear", ("regression", "classification"), "A mix of L1 and L2 penalties", {"alpha": 0.02, "l1_ratio": 0.5}, 21),
     ModelInfo("logistic", "Logistic regression", "linear", ("classification",), "L2 logistic regression for direction and top-versus-bottom targets", {"alpha": 1.0}, 21),
+    ModelInfo("rff_ridge", "Random-feature ridge", "linear", ("regression",),
+              "The 'virtue of complexity' model (Kelly, Malamud and Zhou 2024): a ridge on thousands of random sine and cosine features of the inputs, a kernel regression in effect. The claim is that more features than "
+              "observations helps as long as the penalty stays; it is disputed, so compare it with the plain ridge on the same data", {"components": 1024, "bandwidth": 1.0, "alpha": 100.0, "draws": 3}, 21),
     ModelInfo("random_forest", "Random forest", "trees", ("regression", "classification"), "Bagged deep-ish trees with large leaves (panel data is noisy)", {"n_estimators": 200, "max_depth": 6, "min_samples_leaf": 200, "max_features": 0.5}, 63),
     ModelInfo("hist_gb", "Gradient boosting", "trees", ("regression", "classification"), "scikit-learn histogram gradient boosting with shallow trees and a small learning rate", {"max_iter": 200, "learning_rate": 0.05, "max_depth": 3, "min_samples_leaf": 200, "l2_regularization": 1.0}, 63),
     ModelInfo("xgboost", "XGBoost", "trees", ("regression", "classification"), "Gradient-boosted trees (xgboost)", {"n_estimators": 300, "max_depth": 3, "learning_rate": 0.03, "subsample": 0.7, "colsample_bytree": 0.7, "min_child_weight": 50, "reg_lambda": 5.0}, 63, "xgboost"),
@@ -577,7 +586,7 @@ def make_model(kind: str, params: dict | None = None, task: str = "regression", 
     if unknown:
         raise ValueError(f"{kind} has no parameter(s) {sorted(unknown)}; its parameters are {sorted(info.params) + ['halflife_days']}")
     merged = {**info.params, **params}
-    if kind in ("ridge", "lasso", "elasticnet", "online_ridge", "regime_ridge") and float(merged.get("alpha", 1.0)) < 0:
+    if kind in ("ridge", "lasso", "elasticnet", "online_ridge", "regime_ridge", "rff_ridge") and float(merged.get("alpha", 1.0)) < 0:
         raise ValueError("alpha must be non-negative")
     if kind == "online_ridge":
         return OnlineRidge(kind, task, merged, seed)
@@ -602,7 +611,7 @@ def search_space(kind: str) -> dict:
     """The hyperparameter search space of a model kind, for ``ops.hpo.Study``."""
     spaces = {
         "ridge": {"alpha": LogFloat(0.1, 1000.0)}, "lasso": {"alpha": LogFloat(0.001, 1.0)}, "elasticnet": {"alpha": LogFloat(0.001, 1.0), "l1_ratio": Float(0.1, 0.9)},
-        "logistic": {"alpha": LogFloat(0.01, 100.0)}, "linear": {}, "ar": {"alpha": LogFloat(0.1, 1000.0)},
+        "logistic": {"alpha": LogFloat(0.01, 100.0)}, "linear": {}, "ar": {"alpha": LogFloat(0.1, 1000.0)}, "rff_ridge": {"alpha": LogFloat(1.0, 10000.0), "bandwidth": LogFloat(0.25, 4.0)},
         "random_forest": {"max_depth": Int(2, 8), "min_samples_leaf": Categorical(50, 100, 200, 400), "max_features": Float(0.2, 0.9)},
         "hist_gb": {"max_depth": Int(2, 5), "learning_rate": LogFloat(0.01, 0.15), "max_iter": Int(50, 300), "l2_regularization": LogFloat(0.1, 20.0)},
         "xgboost": {"max_depth": Int(2, 5), "learning_rate": LogFloat(0.01, 0.1), "n_estimators": Int(100, 400), "reg_lambda": LogFloat(1.0, 50.0)},

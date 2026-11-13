@@ -152,3 +152,31 @@ def test_the_normal_scoring_of_a_gaussian_forecast_agrees_with_the_pit_of_its_dr
     y = np.array([-1.5, 0.1, 2.2])
     draws = rng.normal(0.0, 1.0, size=(3, 100_000))
     assert np.allclose(S.pit(draws, y), stats.norm.cdf(y), atol=0.005)
+
+
+# ---------------------------------------------------------------------------------------------------------------------------------- conformal stretch
+def test_the_interval_miss_is_measured_in_half_widths_and_is_negative_inside():
+    draws = np.tile(np.linspace(-1.0, 1.0, 2001), (4, 1))                                 # central 90%: -0.9 to 0.9, half-width 0.9
+    miss = S.interval_miss(draws, [0.0, 0.9, 1.8, -1.35], 0.9)
+    assert np.allclose(miss, [-1.0, 0.0, 1.0, 0.5], atol=1e-9)
+    assert list(S.interval_hits(draws, [0.0, 0.9, 1.8, -1.35], 0.9)) == [bool(m <= 0) for m in miss]
+
+
+def test_the_conformal_stretch_is_one_for_calibrated_intervals_and_the_ratio_of_spreads_for_narrow_ones():
+    rng = np.random.default_rng(0)
+    n = 1500
+    y = rng.standard_normal(n)
+    right, narrow, wide = (rng.standard_normal((n, 800)) * k for k in (1.0, 0.5, 2.0))
+    stretch = lambda d: S.conformal_stretch(S.interval_miss(d, y, 0.9), 0.9)              # noqa: E731
+    assert stretch(right) == pytest.approx(1.0, abs=0.08) and stretch(narrow) == pytest.approx(2.0, abs=0.15) and stretch(wide) == pytest.approx(0.5, abs=0.05)
+    k = stretch(narrow)
+    lo, hi = np.quantile(narrow, [0.05, 0.95], axis=1)
+    mid, half = (lo + hi) / 2, (hi - lo) / 2
+    assert np.mean((y >= mid - k * half) & (y <= mid + k * half)) == pytest.approx(0.9, abs=0.01)       # stretched by it, the intervals hold what they say
+
+
+def test_the_conformal_stretch_uses_the_finite_sample_rank_and_refuses_too_few_outcomes():
+    misses = np.arange(1, 31) / 10.0 - 2.0                                                # 30 scores: -1.9 ... 1.0
+    assert S.conformal_stretch(misses, 0.9) == pytest.approx(1.0 + np.sort(misses)[int(np.ceil(31 * 0.9)) - 1])
+    assert np.isnan(S.conformal_stretch(misses[:19], 0.9)) and np.isnan(S.conformal_stretch(np.r_[misses[:25], [np.nan] * 5][:25], 0.99))
+    assert S.conformal_stretch(np.full(40, -5.0), 0.9) == 0.0

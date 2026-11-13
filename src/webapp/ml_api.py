@@ -78,7 +78,8 @@ GROUP_TEXT = {"price": "Trailing returns, distance from highs and lows, moving-a
               "volatility": "Realised volatility over several windows, its ratio, range-based estimates, downside volatility", "volume": "Dollar volume and its surprise; only where the data has volume",
               "relative": "Each asset's return and volatility relative to the universe", "macro": "Rates, spreads and the volatility index at the date, lagged by their publication delay",
               "futures": "Carry, roll yield and curve slope; only for the futures universe", "options": "Implied volatility level, skew and term structure; only where the platform has the index",
-              "crypto": "Funding, basis and stablecoin growth; only for the crypto universe"}
+              "crypto": "Funding, basis and stablecoin growth; only for the crypto universe",
+              "fracdiff": "Fractional differences of the log price (orders 0.3, 0.5, 0.7): between a price and a return, they keep part of the level's memory"}
 SIGNAL_TEXT = {"top_n_long_short": "Long the n highest scores, short the n lowest, dollar neutral", "long_only_top_quantile": "Long the top quantile of scores, equal weight", "proportional": "Weight each asset in proportion to its score",
                "vol_scaled": "Proportional to score divided by volatility, so each position carries similar risk", "rank_normalised": "Weight by the cross-sectional rank of the score (robust to outliers)",
                "threshold": "Long above the threshold, short below its negative", "regime_filtered": "Trade the book only in the calm regime of the dataset's regime detector",

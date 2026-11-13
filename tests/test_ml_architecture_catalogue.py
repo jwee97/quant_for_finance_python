@@ -28,7 +28,7 @@ def catalog(tmp_path_factory):
 def test_the_catalog_carries_the_architecture_manifest_with_the_reduced_networks_labelled(catalog):
     arch, kinds = catalog["architectures"], {m["kind"] for m in catalog["models"]}
     assert {"lstm", "gru", "tcn", "patchtst", "nbeats", "nhits", "tft"} <= set(arch) <= kinds
-    assert set(arch) == set(ARCHITECTURES) and {k for k, a in arch.items() if a["reduced"]} == {"patchtst", "nbeats", "nhits", "tft"}
+    assert set(arch) == set(ARCHITECTURES) and {k for k, a in arch.items() if a["reduced"]} == {"patchtst", "nbeats", "nhits", "tft", "itransformer"}
     for kind, a in arch.items():
         assert a["kind"] == kind and a["manifest_version"] == 1
         assert all(isinstance(a[key], str) and a[key] for key in FIELDS), kind

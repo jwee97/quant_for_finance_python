@@ -23,6 +23,15 @@ def _no_finzdata_key(monkeypatch):
     monkeypatch.delenv("FINZDATA_API_KEY", raising=False)
 
 
+@pytest.fixture(autouse=True)
+def _short_deep_hedge(monkeypatch):
+    """The hedging report trains a network (about half a minute at the app's budget). Tests that only read the report get a few steps; the tests of the network itself set their own budget."""
+    from src.assets import option_models
+
+    for key, value in (("iterations", 12), ("min_iterations", 4), ("batch", 256)):
+        monkeypatch.setitem(option_models.DEEP_HEDGE, key, value)
+
+
 @pytest.fixture(scope="session")
 def rng():
     return np.random.default_rng(20240101)

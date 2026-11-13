@@ -135,6 +135,10 @@ def test_the_hedging_view_prices_the_cost_and_draws_the_band_and_the_outcomes(mp
         assert phrase in text, phrase
     assert mp.locator("#options-results svg.chart").count() >= 3 and mp.locator("#options-results .banner.err").count() == 0
     assert mp.locator("#options-results table").count() >= 2, "the three rules and the utility-based prices are tables"
+    low = text.lower()
+    for phrase in ("the band the network learned, beside the theory's", "the network learning to hedge", "the four rules on the same simulated paths", "certainty equivalent", "neural network (deep hedging)"):
+        assert phrase in low, phrase                                                      # PyTorch is installed where the browser tests run: the trained hedge is a fourth rule
+    assert mp.locator("#options-results svg.chart").count() >= 5
     mp.fill("#options input[data-key=hCost]", "0")
     _run(mp, "options")
     _wait_until(mp, "document.querySelector('#options-results').innerText.includes('Leland number 0.00')", 120)

@@ -168,6 +168,7 @@ HESTON = paper("Heston", 1993, "A closed-form solution for options with stochast
 MERTON_76 = paper("Merton", 1976, "Option pricing when underlying stock returns are discontinuous", "Journal of Financial Economics 3(1-2)", "10.1016/0304-405x(76)90022-2")
 HARVEY_RUIZ_SHEPHARD = paper("Harvey, Ruiz and Shephard", 1994, "Multivariate stochastic variance models", "Review of Economic Studies 61(2)")
 CORSI = paper("Corsi", 2009, "A simple approximate long-memory model of realized volatility", "Journal of Financial Econometrics 7(2)", "10.1093/jjfinec/nbp001")
+GUYON_LEKEUFACK = paper("Guyon and Lekeufack", 2023, "Volatility is (mostly) path-dependent", "Quantitative Finance 23(9)", "10.1080/14697688.2023.2221281")
 PARKINSON = paper("Parkinson", 1980, "The extreme value method for estimating the variance of the rate of return", "Journal of Business 53(1)", "10.1086/296071")
 HAMILTON = paper("Hamilton", 1989, "A new approach to the economic analysis of nonstationary time series and the business cycle", "Econometrica 57(2)", "10.2307/1912559")
 BOX_JENKINS = book("Box and Jenkins", 1970, "Time Series Analysis: Forecasting and Control", "Holden-Day")
@@ -285,7 +286,7 @@ ALLOCATORS: dict[str, tuple[Ref, ...]] = {
 FORECASTERS: dict[str, tuple[Ref, ...]] = {
     "riskmetrics": (RISKMETRICS,), "hull_white": (HULL_WHITE_98,), "gbm": (BLACK_SCHOLES,), "bootstrap": (POLITIS_ROMANO,), "garch11": (BOLLERSLEV_86, HANSEN_LUNDE), "garch": (GJR, BOLLERSLEV_86, HANSEN_LUNDE),
     "egarch": (NELSON, HANSEN_LUNDE), "fhs": (BGV, BARONE_ADESI), "evt": (MCNEIL_FREY, MCNEIL_QRM), "garch_vg": (MADAN_CARR_CHANG,), "garch_nig": (BARNDORFF_NIELSEN,), "heston": (HESTON,), "jump": (MERTON_76,),
-    "sv_kalman": (HARVEY_RUIZ_SHEPHARD,), "har": (CORSI, PARKINSON), "markov_returns": (HAMILTON,), "markov_volatility": (HAMILTON,), "hmm": (HAMILTON,), "gp_returns": (RASMUSSEN,), "gp_drift": (RASMUSSEN,),
+    "sv_kalman": (HARVEY_RUIZ_SHEPHARD,), "har": (CORSI, PARKINSON), "pdv": (GUYON_LEKEUFACK, PARKINSON), "markov_returns": (HAMILTON,), "markov_volatility": (HAMILTON,), "hmm": (HAMILTON,), "gp_returns": (RASMUSSEN,), "gp_drift": (RASMUSSEN,),
     "gp_price": (RASMUSSEN,), "kalman": (HARVEY_KF,), "theta": (ASSIMAKOPOULOS, HYNDMAN_BILLAH, FPP3), "arma": (BOX_JENKINS,), "analog": (FARMER_SIDOROWICH,),
     "blend": (BATES_GRANGER, TIMMERMANN, SMITH_WALLIS), "blend_weighted": (BATES_GRANGER, TIMMERMANN, SMITH_WALLIS),
 }

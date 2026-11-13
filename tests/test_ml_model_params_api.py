@@ -24,7 +24,7 @@ from tests.test_webapp_assets_ml import _app, _safe, finished
 warnings.filterwarnings("ignore")
 CATALOGUE = {m["kind"]: m for m in md.model_catalog()}
 AVAILABLE = [k for k, m in CATALOGUE.items() if m["available"]]
-RELATED = {"patchtst": ("lookback", "patch_len", "d_model", "n_heads"), "tft": ("hidden", "n_heads"), "gat": ("hidden", "heads")}                      # settings that must agree with each other
+RELATED = {"patchtst": ("lookback", "patch_len", "d_model", "n_heads"), "itransformer": ("d_model", "n_heads"), "tft": ("hidden", "n_heads"), "gat": ("hidden", "heads")}                      # settings that must agree with each other
 
 
 @pytest.fixture(scope="module")

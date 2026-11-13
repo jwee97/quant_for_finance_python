@@ -52,7 +52,7 @@ def test_the_plan_lists_the_models_products_and_what_the_forms_choose_among(app)
     heston = next(m for m in plan["models"] if m["id"] == "heston")
     assert not heston["american"] and next(m for m in plan["models"] if m["id"] == "nig")["american"]
     assert {p["id"] for p in plan["products"]} == {"vanilla", "digital", "barrier", "asian", "american"} and plan["barriers"] == ["down-out", "up-out", "down-in", "up-in"]
-    assert plan["defaults"]["paths"] == 50_000 and {h["id"] for h in plan["hedge_rules"]} == {"delta", "leland", "band"}
+    assert plan["defaults"]["paths"] == 50_000 and {h["id"] for h in plan["hedge_rules"]} == {"delta", "leland", "band", "deep"}
 
 
 def test_the_routes_are_in_the_app_and_the_api_version_says_so(app):
@@ -200,13 +200,14 @@ def test_the_hedging_report_prices_the_cost_of_rebalancing_and_the_band_around_d
     band = rep["band"]
     assert np.all(np.asarray(band["low"]) < np.asarray(band["delta"])) and np.all(np.asarray(band["delta"]) < np.asarray(band["high"])) and band["half_width_at_spot"] > 0
     sims = {s["strategy"]: s for s in rep["simulation"]}
-    assert set(sims) == {"delta", "leland", "band"} and sims["band"]["trades"] < sims["delta"]["trades"] and sims["band"]["cost"] < sims["delta"]["cost"], "a no-trade band trades less and pays less"
+    assert set(sims) == {"delta", "leland", "band", "deep"} and all(np.isfinite(x["ce"]) for x in sims.values()) and len(rep["deep"]["training"]) == rep["deep"]["iterations"]
+    assert sims["band"]["trades"] < sims["delta"]["trades"] and sims["band"]["cost"] < sims["delta"]["cost"], "a no-trade band trades less and pays less"
     assert sims["leland"]["premium"] > sims["delta"]["premium"] and sims["leland"]["mean"] > sims["delta"]["mean"], "Leland's higher price pays for the hedging cost"
     dpz = rep["dpz"]
     assert dpz["buyer"] < dpz["crr"] < dpz["writer"] and dpz["band"][0] <= dpz["crr_delta"] <= dpz["band"][1] + 1e-9, "with costs the option has a bid and an ask around the frictionless price"
     h = rep["histogram"]
-    assert len(h["edges"]) == 31 and set(h["share"]) == {"delta", "leland", "band"} and all(sum(v) == pytest.approx(1.0) for v in h["share"].values())
-    assert set(h["outside"]) == {"delta", "leland", "band"} and all(0.0 <= v < 0.03 for v in h["outside"].values()), "only the extremes are left off the picture, and they are counted"
+    assert len(h["edges"]) == 31 and set(h["share"]) == {"delta", "leland", "band", "deep"} and all(sum(v) == pytest.approx(1.0) for v in h["share"].values())
+    assert set(h["outside"]) == {"delta", "leland", "band", "deep"} and all(0.0 <= v < 0.03 for v in h["outside"].values()), "only the extremes are left off the picture, and they are counted"
     assert dpz["crr"] == pytest.approx(rep["premium"], rel=0.02), "the tree hedges with the prepaid forward, so with a dividend its frictionless price is still the Black-Scholes one"
     assert rep["inputs"]["cost_bp"] == pytest.approx(10.0) and rep["inputs"]["gamma"] == pytest.approx(rep["inputs"]["risk_aversion"] / rep["premium"])
 

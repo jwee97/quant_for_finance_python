@@ -126,6 +126,13 @@ def whalley_wilmott_band(S, K: float, tau: float, r: float, q: float, sigma: flo
 
 
 # ------------------------------------------------------------------------------------------------------------------------------------ hedging
+def gbm_hedging_paths(S: float, growth: float, sigma: float, T: float, steps: int, n_paths: int, rng: np.random.Generator) -> np.ndarray:
+    """``[n_paths, steps + 1]`` prices of a geometric Brownian motion at the hedging dates, starting at ``S``: the paths ``simulate_hedging`` uses, so that another rule can be judged on the very same ones."""
+    z = rng.standard_normal((n_paths, steps))
+    dt = T / steps
+    return np.concatenate([np.full((n_paths, 1), S), S * np.exp(np.cumsum((growth - 0.5 * sigma ** 2) * dt + sigma * np.sqrt(dt) * z, axis=1))], axis=1)
+
+
 def simulate_hedging(S: float, K: float, T: float, r: float, q: float, sigma: float, cost: float, steps: int, n_paths: int = 20_000, strategy: str = "delta", call: bool = True,
                      risk_aversion: float = 1.0, mu: float | None = None, hedge_sigma: float | None = None, seed: int = 0, model: levy.Model | None = None) -> dict:
     """Sell one option at its Black-Scholes price (at ``hedge_sigma``, default ``sigma``) and hedge it at ``steps`` equally spaced dates, paying ``cost`` on every trade (including the first
@@ -145,8 +152,7 @@ def simulate_hedging(S: float, K: float, T: float, r: float, q: float, sigma: fl
     growth = (r - q) if mu is None else mu                                         # the expected growth of the price, ex dividends
     rng = np.random.default_rng(seed)
     if model is None:
-        z = rng.standard_normal((n_paths, steps))
-        paths = np.concatenate([np.full((n_paths, 1), S), S * np.exp(np.cumsum((growth - 0.5 * sigma ** 2) * dt + sigma * np.sqrt(dt) * z, axis=1))], axis=1)
+        paths = gbm_hedging_paths(S, growth, sigma, T, steps, n_paths, rng)
     else:
         paths = levy.simulate_paths(model, S, growth + q, q, T, steps, n_paths, seed)
     sig_used = leland_sigma(hs, dt, cost, "sell") if strategy == "leland" else hs

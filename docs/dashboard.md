@@ -258,6 +258,10 @@ The Machine learning tab trains models **only inside the whole research pipeline
 
 Experiments, datasets and models are saved under `artifacts/ml/` (SQLite for the records). The same pipeline is on the command line (`python -m src.cli ml-build-dataset | ml-train | ml-backtest | ml-report`) and the settings are in `config/ml_research.yaml`. [Guide](techniques/machine-learning-research-pipeline.md).
 
+## Recent methods in the tabs
+
+Methods from the research of 2023 to 2026 sit in three tabs: in **Machine learning**, a `loss` setting on the sequence networks (the daily correlation across assets, or a pairwise ranking), the `itransformer`, `dlinear` and `rff_ridge` models, the `barrier_h` target and the `fracdiff` feature group; in **Forecast**, *Path-dependent volatility* and the *Stretch to hold 90%* column; in **Options → Hedging cost**, a neural network that learns its own no-trade band, scored beside the classical rules by certainty equivalent. What each is, how to try it, and what a firm has that this app does not: [How close the app is to current quantitative practice](modern_practice_2026_11.md).
+
 ## Charts: zoom, and phones
 
 Every chart shows its numbers when you point at it. On a phone or tablet, **tap** a chart: the tooltip appears and stays until you tap somewhere else, and on a line chart you can drag a finger sideways to move along it (up and down still scrolls the page). One tooltip is open at a time.

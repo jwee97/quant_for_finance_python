@@ -1,4 +1,7 @@
-"""The networks as models of the zoo: ``lstm``, ``gru``, ``tcn``, ``patchtst``, ``nbeats``, ``nhits``, ``tft``, ``autoencoder`` and ``vae``.
+"""The networks as models of the zoo: ``lstm``, ``gru``, ``tcn``, ``patchtst``, ``nbeats``, ``nhits``, ``itransformer``, ``dlinear``, ``tft``, ``autoencoder`` and ``vae``.
+
+**Loss.** ``loss`` is ``mse`` (the squared error, rows shuffled one by one), ``ic`` (the daily correlation of score and return across the assets) or ``mse_rank`` (the squared error plus a pairwise
+ranking term); the last two are trained on batches of whole days (``ml.deep.losses``). ``tft`` keeps its quantile loss and the autoencoders their reconstruction loss.
 
 **Look-ahead.** A row's window holds that asset's features on the row's day and the days before it, nothing later. The model is bound to the dataset by the trainer so that the first days of a test block
 still find their lookback in the dataset's feature history. The scaler is fitted on the training rows. The last ``val_fraction`` of the training dates is held out for early stopping, separated from the
@@ -28,6 +31,7 @@ from ..causal import CausalView
 from ..models import Model
 from ..targets import forward_return
 from .data import FeatureScaler, SeqAccessor
+from .losses import CROSS_SECTIONAL, LOSSES, cross_sectional
 from .nets import FORECASTERS, build_net
 from .trainer import TrainConfig, fit_network, resolve_device
 
@@ -73,6 +77,12 @@ class DeepModel(Model):
         if kind == "tft" and not 0.0 < float(p["alpha_low"]) < 0.5 < float(p["alpha_high"]) < 1.0:
             raise ValueError("alpha_low must be below 0.5 and alpha_high above it")
         resolve_device(str(p["device"]))
+        if str(p.get("loss", "mse")) not in LOSSES:
+            raise ValueError(f"loss must be one of {list(LOSSES)}")
+        if str(p.get("loss", "mse")) != "mse" and kind in AUTOENCODERS + ("tft",):
+            raise ValueError(f"{kind} has a loss of its own; 'loss' is a setting of the other networks")
+        if float(p.get("rank_weight", 1.0)) < 0:
+            raise ValueError("rank_weight cannot be negative")
         self.arch = kind
         self._ds = self._base = None
         self.net_ = self.scaler_ = self.history_ = None
@@ -133,11 +143,27 @@ class DeepModel(Model):
         if len(train) < MIN_ROWS or len(val) < MIN_ROWS // 4:
             raise ValueError(f"too few rows for a network ({len(train)} to train on, {len(val)} to validate); use more history")
         cap = int(self.params["max_rows"])
+        if self._cross_sectional:                                                              # whole days are kept or left out: a day with some of its assets missing is not the cross-section the loss compares
+            train, val = self._thin_days(train, pos, cap, rng), self._thin_days(val, pos, cap // 3, rng)
+            return train, val
         if 0 < cap < len(train):
             train = np.sort(rng.choice(train, cap, replace=False))
         if 0 < cap // 3 < len(val):
             val = np.sort(rng.choice(val, cap // 3, replace=False))
         return train, val
+
+    @property
+    def _cross_sectional(self) -> bool:
+        return str(self.params.get("loss", "mse")) in CROSS_SECTIONAL
+
+    @staticmethod
+    def _thin_days(rows: np.ndarray, pos: np.ndarray, cap: int, rng: np.random.Generator) -> np.ndarray:
+        """At most about ``cap`` of ``rows``, chosen as whole days at random."""
+        if not 0 < cap < len(rows):
+            return rows
+        days = np.unique(pos[rows])
+        keep = rng.choice(days, max(1, int(len(days) * cap / len(rows))), replace=False)
+        return rows[np.isin(pos[rows], keep)]
 
     def fit(self, X: pd.DataFrame, y: pd.Series, dates: np.ndarray | None = None) -> "DeepModel":
         Xs = self._select(X)
@@ -164,6 +190,8 @@ class DeepModel(Model):
         finite = np.isfinite(Y)
         Yz = np.nan_to_num(Y)
         is_ae = self.arch in AUTOENCODERS
+        cross = self._cross_sectional
+        day = np.asarray(pos, dtype=np.int64)
 
         def batch_fn(split, idx):
             r = rows[split][idx]
@@ -171,11 +199,13 @@ class DeepModel(Model):
             x = torch.from_numpy(self.scaler_.transform(raw)).to(device)
             if is_ae:
                 return x, torch.from_numpy(np.isfinite(raw).astype(np.float32)).to(device)
-            return x, torch.from_numpy(Yz[r]).to(device), torch.from_numpy(finite[r].astype(np.float32)).to(device)
+            batch = (x, torch.from_numpy(Yz[r]).to(device), torch.from_numpy(finite[r].astype(np.float32)).to(device))
+            return batch + (torch.from_numpy(day[r]).to(device),) if cross else batch
 
-        loss_fn = self._ae_loss if is_ae else (self._pinball_loss if self.arch == "tft" else self._mse_loss)
+        loss_fn = self._ae_loss if is_ae else (self._pinball_loss if self.arch == "tft" else (self._cross_loss if cross else self._mse_loss))
         key = hashlib.sha1(f"{pos.min()}|{pos.max()}|{len(train)}|{len(val)}|{self.seed}|{len(self.features_)}".encode()).hexdigest()[:10]       # the fit's training window, so that a resumed run is the same fit
-        self.history_ = fit_network(net, batch_fn, loss_fn, len(train), len(val), self._config(key))
+        extra = {"groups": {"train": day[train], "val": day[val]}} if cross else {}                  # whole days to a batch, for a loss that compares the assets of a day
+        self.history_ = fit_network(net, batch_fn, loss_fn, len(train), len(val), self._config(key), **extra)
         self.history_.device_note = note
         self.net_ = net
         if is_ae:
@@ -188,6 +218,10 @@ class DeepModel(Model):
     def _mse_loss(self, net, batch):
         x, y, m = batch
         return (((net(x) - y) ** 2) * m).sum() / m.sum().clamp(min=1.0)
+
+    def _cross_loss(self, net, batch):
+        x, y, m, day = batch
+        return cross_sectional(str(self.params["loss"]), net(x), y, m, day, float(self.params.get("rank_weight", 1.0)))
 
     def _pinball_loss(self, net, batch):
         x, y, m = batch
@@ -297,7 +331,7 @@ class DeepModel(Model):
 
     def diagnostics(self) -> dict:
         h = self.history_.to_dict()
-        d = {"arch": self.arch, "lookback": int(self.params["lookback"]), "heads": list(self.heads_), "windows": list(self.n_windows_), **{k: h[k] for k in (
+        d = {"arch": self.arch, "loss": str(self.params.get("loss", "mse")) if self.arch not in AUTOENCODERS + ("tft",) else {"tft": "pinball"}.get(self.arch, "reconstruction"), "lookback": int(self.params["lookback"]), "heads": list(self.heads_), "windows": list(self.n_windows_), **{k: h[k] for k in (
             "train_loss", "val_loss", "lr", "grad_norm", "best_epoch", "stopped_early", "device", "device_note", "n_params", "seconds", "peak_memory_mb", "epochs_run")}}
         if self.arch == "tft":
             d["interval_level"] = float(self.params["alpha_high"]) - float(self.params["alpha_low"])
