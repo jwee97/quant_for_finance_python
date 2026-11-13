@@ -123,8 +123,9 @@ def test_barrier_labels_do_not_change_when_later_prices_are_appended():
     full = tg.make_target("barrier_10", p, p.pct_change(), 1)
     part = tg.make_target("barrier_10", p.iloc[:300], p.iloc[:300].pct_change(), 1)
     known = part.notna().to_numpy()
-    assert known.sum() > 600 and (full.iloc[:300].to_numpy()[known] == part.to_numpy()[known]).all() and set(np.unique(part.stack())) == {0.0, 1.0}
-    assert 0.3 < part.stack().mean() < 0.7
+    labels = part.to_numpy()[known]                                                       # the labelled values themselves: a stacked frame keeps the missing ones on pandas 3 and drops them on pandas 2
+    assert known.sum() > 600 and (full.iloc[:300].to_numpy()[known] == labels).all() and set(labels.tolist()) == {0.0, 1.0}
+    assert 0.3 < labels.mean() < 0.7
 
 
 # ------------------------------------------------------------------------------------------------------------ fractional differencing
