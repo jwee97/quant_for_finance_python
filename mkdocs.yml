@@ -29,6 +29,7 @@ nav:
       - "How close the app is to current quantitative practice": modern_practice_2026_11.md
       - "Correctness and research-standard review": improvement_report_2026_11.md
       - "The research workspace: sessions, regimes and comparison": research_workspace.md
+      - "Financial machine learning: triple barriers, meta-labelling and honest evidence": finml.md
       - "Redesign audit and plan": ui_redesign_audit.md
       - Glossary: glossary.md
       - Chapter map: chapter_map.md

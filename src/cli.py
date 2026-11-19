@@ -16,6 +16,7 @@
     quant forecast SPY --horizon 21       forecast a price as a distribution with Monte Carlo, Markov, Gaussian-process and other methods, and test each on the past (`--list` names them)
     quant models fit SPY                  fit Merton, Kou, variance gamma, NIG and Heston to an option chain; also `price` (a digital, barrier, average-price or American option under every model) and `hedge` (what hedging costs when trades cost money)
     quant scenarios SPY QQQ TLT --generators all   thousands of possible futures from eight generators (resampling, GARCH, a GAN, a variational autoencoder, a diffusion model) and how closely each resembles the history (`--list` names them)
+    quant finml SPY                       financial ML pipeline on one ticker: triple-barrier labels, meta-labelling, purged validation, untouched holdout, evidence (docs/finml.md)
     quant signals run                     read every followed rule now (stocks, futures, crypto, options), say what changed and how past signals did; `follow`, `list`, `history` (put `quant signals run --refresh` in cron for a daily run)
     quant curve fit --file curve.txt      a Nelson-Siegel or Svensson yield curve (`--model svensson`); `quant curve dynamic` follows its level, slope and curvature through a history and tests the forecast
     quant benchmark --models tsmom momentum   score time and peak memory of models on the default bundle
@@ -278,6 +279,40 @@ def cmd_forecast(args, config) -> int:
     if args.json:
         Path(args.json).write_text(json.dumps({"ticker": ticker, "asof": asof, "horizon": args.horizon, "evaluation": evaluation, "now": now, "verdict": verdict}, indent=1), encoding="utf-8")
         print(f"\nwritten to {args.json}")
+    return 0
+
+
+def cmd_finml(args, config) -> int:
+    """The financial machine-learning pipeline on one ticker (see docs/finml.md): events, triple-barrier labels, meta-labelling, purged validation, an untouched holdout and the evidence."""
+    import json
+
+    from .finml.pipeline import PipelineError, run_pipeline
+    from .webapp.api import App
+    from .webapp.payload import clean
+
+    builder = App(config).builder
+    bundle, _ = builder.resolve([args.ticker.upper()], None, args.start, args.refresh, None, None)
+    close = bundle.prices[args.ticker.upper()].dropna()
+    cfg = {"primary": args.primary, "holdout": args.holdout, "cost_bps": args.cost_bps, "n_trials": args.n_trials, "entry_lag": args.entry_lag, "importance": False}
+    try:
+        r = run_pipeline(close, cfg)
+    except PipelineError as error:
+        print(f"cannot run: {error}")
+        return 2
+    print(f"{args.ticker.upper()}: {r['labels']['events']} labelled events ({r['quality']['effective_sample_size']:.0f} effectively independent); purging leak-free: {r['validation']['purging_leak_free']}; meta-model AUC {r['validation']['auc']:.3f}")
+    for block in ("development", "holdout"):
+        b = r.get(block)
+        if not b:
+            continue
+        label = block if block == "development" else f"holdout {b['window']['start']} to {b['window']['end']}"
+        print(f"  {label}: Sharpe primary {b['primary']['sharpe']:.2f}, filtered {b['meta_filter']['sharpe']:.2f} ({b['meta_filter']['taken']}/{b['meta_filter']['signals']} signals), sized {b['meta_sized']['sharpe']:.2f}, random filters {b['random_filter']['sharpe']:.2f}, buy and hold {b['buy_and_hold']['sharpe']:.2f}")
+    cp = r["cpcv"]
+    print(f"  CPCV: {cp['n_paths']} paths, Sharpe {cp['mean']:.2f} +/- {cp['std'] or 0:.2f}, negative in {cp['prob_negative'] * 100:.0f}%  (a research evaluation, not a prospective test)")
+    print(r["verdict"])
+    if args.json:
+        with open(args.json, "w", encoding="utf-8") as f:
+            json.dump(clean(r), f, indent=1)
+        print(f"wrote {args.json}")
     return 0
 
 
@@ -900,6 +935,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--all", action="store_true", help="every method and their blend"); p.add_argument("--effort", choices=["quick", "standard", "thorough"], default="standard", help="how many past forecasts to test on (about 1, 3 and 10 minutes)")
     p.add_argument("--seed", type=int, default=0); p.add_argument("--prices", help="a CSV of prices (one date column and one column per asset) instead of the platform's ETFs"); p.add_argument("--json", help="also write the whole result to this file")
     p.set_defaults(func=cmd_forecast)
+    p = sub.add_parser("finml", help="the financial machine-learning pipeline on one ticker: CUSUM events, triple-barrier labels, meta-labelling, purged validation, an untouched holdout and the evidence (docs/finml.md)")
+    p.add_argument("ticker"); p.add_argument("--primary", choices=["momentum", "mean_reversion", "ma_cross", "always_long"], default="momentum"); p.add_argument("--start"); p.add_argument("--refresh", action="store_true")
+    p.add_argument("--holdout", type=float, default=0.2, help="share of the history never used to fit or choose anything"); p.add_argument("--cost-bps", type=float, default=5.0, dest="cost_bps"); p.add_argument("--entry-lag", type=int, default=1, dest="entry_lag")
+    p.add_argument("--n-trials", type=int, default=1, dest="n_trials", help="how many configurations you tried before this one (deflates the Sharpe ratio)"); p.add_argument("--json", help="also write the whole report to this file"); p.set_defaults(func=cmd_finml)
     p = sub.add_parser("signals", help="the signal book: follow rules on stocks, futures, crypto and options, read them all now, see what changed and how past signals did")
     p.add_argument("action", choices=["run", "list", "follow", "unfollow", "history"]); p.add_argument("--id", help="one follow (run, unfollow, history)")
     p.add_argument("--market", choices=["equity", "futures", "crypto", "options"], default="equity", help="follow: the market"); p.add_argument("--name", help="follow: a name for it")

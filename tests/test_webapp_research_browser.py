@@ -425,7 +425,7 @@ def test_every_page_old_and_new_fits_a_phone_in_both_themes(browser, live_resear
     page = _open(browser, live_research, width=390, height=800)
     try:
         tabs = page.eval_on_selector_all("nav.tabs [role=tab]", "(e) => e.map((x) => x.id.slice(4))")
-        assert len(tabs) == 24
+        assert len(tabs) == 25
         for theme in ("dark", "light"):
             page.evaluate(f"QL.setTheme('{theme}')")
             for tab in tabs:
@@ -477,4 +477,33 @@ def test_a_strategy_setup_is_saved_as_a_configuration_and_loaded_back_without_ru
         assert page.text_content("#runcount") == "1", "loading a configuration does not start a run"
         assert not page.problems, page.problems
     finally:
+        page.close()
+
+
+def test_the_financial_ml_lab_runs_the_pipeline_and_says_what_it_does_and_does_not_show(browser, live_research):  # noqa: F811
+    page = _open(browser, live_research)
+    try:
+        open_tab(page, "finml")
+        page.wait_for_selector("[data-role=finml-form]")
+        assert _hash(page) == "#/finml" and "Financial ML Lab" in page.inner_text("#finml h2")
+        assert "individual trades" in page.inner_text("[data-role=finml-form]") and "prospective test" in page.inner_text("[data-role=finml-form]")
+        page.fill("#finml input[data-key=ticker]", "A00")
+        page.fill("#finml input[data-key=cusum_k]", "0.8")
+        page.fill("#finml input[data-key=lookback]", "20")
+        page.click("#finml button:text-is('Run the pipeline')")
+        page.wait_for_selector("[data-role=finml-verdict]", timeout=240_000)
+        verdict = page.inner_text("[data-role=finml-verdict]")
+        assert "Probabilistic Sharpe" in verdict and "Deflated Sharpe" in verdict and "holdout" in verdict.lower() and ("not shown to improve" in verdict or "beat the primary" in verdict)
+        evidence = page.inner_text("[data-role=finml-evidence]")
+        assert "Passed" in evidence and "Prospective test" in evidence and "Not completed" in evidence and "Independent replication" in evidence
+        for role in ("finml-equity-dev", "finml-equity-hold", "finml-cpcv", "finml-calibration", "finml-quality", "finml-importance"):
+            page.wait_for_selector(f"[data-role={role}] svg.chart, [data-role={role}] table", timeout=30_000)
+        assert page.locator("[data-role=finml-table-hold] table.data tbody tr").count() == 5 and "Random filter" in page.inner_text("[data-role=finml-table-hold]")
+        page.locator("[data-role=finml-equity-dev] .legend [role=button]").nth(1).click()                      # the shared chart kit: a legend that hides a series
+        assert page.locator("[data-role=finml-equity-dev] .legend [aria-pressed=false]").count() == 1
+        page.click("#finml button:text-is('Structure and entropy')")
+        page.wait_for_selector("[data-role=finml-structure]", timeout=240_000)
+        assert "SADF now" in page.inner_text("[data-role=finml-structure]") and page.locator("[data-role=finml-sadf] svg.chart").count() == 1
+    finally:
+        assert not page.problems, page.problems
         page.close()

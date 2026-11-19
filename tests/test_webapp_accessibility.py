@@ -22,7 +22,7 @@ sync_api = pytest.importorskip("playwright.sync_api")
 CSS = (Path(server.__file__).parent / "static" / "style.css").read_text(encoding="utf-8")
 READY = {"backtest": ".chip", "compare": "#compare .card", "builder": "#builder .card", "tune": "#tune .panel", "forecast": "#forecast .panel", "signals": "[data-role=signals-follows]", "scenarios": "#scenarios .panel", "rates": "#rates .panel", "options": "#options-results .tile", "futures": "#futures-results .tile",
          "crypto": "#crypto-results .tile", "ml": "#ml-results .card", "fundamentals": "#fundamentals .panel", "exec": "#exec-results .card", "cash": "#cash-results .card", "guides": "#guides .toc",
-         "overview": "[data-role=widgets] .widget", "saved": "#saved .card", "experiments": "#experiments .card", "jobs": "#jobs .card", "data": "#data .card", "settings": "#settings .card", "regime": "[data-role=regime-form]", "rcompare": "#rcompare .card"}
+         "overview": "[data-role=widgets] .widget", "saved": "#saved .card", "experiments": "#experiments .card", "jobs": "#jobs .card", "data": "#data .card", "settings": "#settings .card", "regime": "[data-role=regime-form]", "rcompare": "#rcompare .card", "finml": "[data-role=finml-form]"}
 
 
 @pytest.fixture(scope="module")

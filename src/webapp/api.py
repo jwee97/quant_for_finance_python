@@ -83,7 +83,7 @@ SAFE_SLUG = re.compile(r"^[a-z0-9][a-z0-9_-]{0,80}$")
 # views of the Crypto tab; 13 added the implied-distribution and open-interest views, the structure comparison and the backtest sweep of the Options tab and the new scores of the Fundamentals tab; 14 added the Enter reports mode of the Fundamentals tab (financial reports typed or pasted in by the person, stored in the database); 15 added the Rates tab (Nelson-Siegel and Svensson yield curves, the dynamic factors of a history of curves) and the normal (Bachelier) volatility of the Options tab's smile; 16 added the Scenarios tab (resampling, statistical and learned scenario generators, with a quality table); 17 added the Signals tab (follows, one run across markets, changes, a record of every signal issued, a daily schedule and alerts). 18 added the research workspace (sessions with a shared context, saved results, the Market Regime Lab and the Research Comparison: ``research_api``). The page compares it with its own number and says so
 # when the server behind it is older (the files were updated while the app was running, so it still runs the old code): the whole page needs 2, and the newer tabs ask for 3 or more on their own, so an
 # older app still runs the Backtest tab.
-API_VERSION = 18
+API_VERSION = 19
 CODE_ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -215,6 +215,7 @@ class App:
         from .models_api import ModelsApi
         from .rates_api import RatesApi
         from .research_api import ResearchApi
+        from .finml_api import FinmlApi
         from .scenarios_api import ScenariosApi
         from .signals_api import SignalsApi
 
@@ -226,7 +227,7 @@ class App:
         self.signals = SignalsApi(self, assets)                      # the Signals tab: kept, so the command line and the daily schedule reach the same book
         ml = MlApi(self)
         self.research = ResearchApi(self, ml)                       # sessions, saved results, the regime lab and the comparison (data/user/research)
-        for part in (assets, ml, self.data, TuneApi(self), ForecastApi(self), ModelsApi(self, assets), self.fundamentals, RatesApi(self), ScenariosApi(self), self.signals, self.research):
+        for part in (assets, ml, self.data, TuneApi(self), ForecastApi(self), ModelsApi(self, assets), self.fundamentals, RatesApi(self), ScenariosApi(self), self.signals, self.research, FinmlApi(self)):
             self.extra_get.update(part.get_routes())
             self.extra_post.update(part.post_routes())
 
