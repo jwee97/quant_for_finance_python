@@ -14,6 +14,7 @@ Everything here is deterministic given the seed.
 from __future__ import annotations
 
 import numpy as np
+from ..ml import live
 
 KINDS = ("autoencoder", "contrastive")
 
@@ -68,7 +69,8 @@ def train_encoder(X: np.ndarray, kind: str = "autoencoder", embed_dim: int = 8, 
     opt = torch.optim.Adam(params, lr=lr)
     data = torch.as_tensor(X, dtype=torch.float32)
     history = []
-    for _ in range(epochs):
+    live.start(epochs=epochs, patience=None, device="cpu", n_params=int(sum(q.numel() for q in params)), n_train=int(n), batch_size=int(batch_size))
+    for epoch in range(epochs):
         order = torch.randperm(n, generator=gen)
         total = 0.0
         for i in range(0, n, batch_size):
@@ -84,6 +86,8 @@ def train_encoder(X: np.ndarray, kind: str = "autoencoder", embed_dim: int = 8, 
             opt.step()
             total += float(loss.detach()) * len(batch)
         history.append(total / n)
+        live.epoch(epoch, history[-1], None, lr=lr, epochs=epochs)
+    live.finish(final_train=history[-1] if history else None)
     encoder.eval()
 
     def encode(W: np.ndarray) -> np.ndarray:

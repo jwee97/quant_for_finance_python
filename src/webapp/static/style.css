@@ -635,3 +635,15 @@ table.data td.none { text-align: center; color: var(--muted); padding: 14px; }
 .loading .hint { margin: 0; }
 .loading .bars { display: grid; gap: 8px; }
 .loading .skeleton { height: 14px; }
+
+/* ---------- live training ---------- */
+.livetrain { display: grid; gap: 8px; margin: 10px 0 2px; padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2, var(--surface)); }
+.livetrain .lt-head { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; }
+.livetrain .lt-line { font-size: 13px; }
+.livetrain .lt-bar { height: 8px; border-radius: 999px; background: var(--grid); overflow: hidden; }
+.livetrain .lt-bar i { display: block; height: 100%; background: var(--s1); transition: width 0.4s ease; }
+.livetrain .lt-kpis { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+.livetrain .lt-note { margin: 0; font-size: 13px; color: var(--ink-2); }
+.livetrain .lt-chart { min-width: 0; position: relative; }
+.livetrain .lt-done summary { cursor: pointer; font-size: 12.5px; color: var(--ink-2); }
+@media (prefers-reduced-motion: reduce) { .livetrain .lt-bar i { transition: none; } }

@@ -18,6 +18,8 @@ import pandas as pd
 
 from .probabilistic import ewma_sigma
 
+from ..ml import live
+
 PATCH = 21
 
 
@@ -63,6 +65,7 @@ def build_network(kind: str, n_assets: int, window: int = 252, d_model: int = 32
     if kind in FAMILY:                                   # Generation 5 (Stage 33); the Stage 27 networks below are untouched
         return build_family_network(kind, n_assets, window, **(family or {}))
     import torch
+
     from torch import nn
 
     patches = window // PATCH
@@ -126,6 +129,7 @@ def train_and_predict(kind: str, X_train, a_train, y_train, X_val, a_val, y_val,
     tx, ta, ty = (torch.as_tensor(X_train, dtype=torch.float32), torch.as_tensor(a_train, dtype=torch.long), torch.as_tensor(y_train, dtype=torch.float32))
     vx, va, vy = (torch.as_tensor(X_val, dtype=torch.float32), torch.as_tensor(a_val, dtype=torch.long), torch.as_tensor(y_val, dtype=torch.float32))
     best, best_state, best_epoch, history, train_history = np.inf, None, 0, [], []
+    live.start(epochs=settings.max_epochs, patience=settings.patience, device="cpu", n_params=int(sum(q.numel() for q in net.parameters())), n_train=int(len(tx)), n_val=int(len(vx)), batch_size=int(settings.batch_size))
     for epoch in range(settings.max_epochs):
         net.train()
         order = torch.randperm(len(tx), generator=generator)
@@ -142,11 +146,15 @@ def train_and_predict(kind: str, X_train, a_train, y_train, X_val, a_val, y_val,
             val_loss = float(torch.mean((net(vx, va) - vy) ** 2))
         history.append(val_loss)
         train_history.append(running / len(order))
+        gained = val_loss < best - 1e-9
+        live.epoch(epoch, train_history[-1], val_loss, lr=settings.learning_rate, best=val_loss if gained else best, best_epoch=epoch if gained else best_epoch, bad=0 if gained else epoch - best_epoch, improved=gained,
+                   epochs=settings.max_epochs, patience=settings.patience)
         if val_loss < best - 1e-9:
             best, best_epoch = val_loss, epoch
             best_state = {k: v.clone() for k, v in net.state_dict().items()}
         elif epoch - best_epoch >= settings.patience:
             break
+    live.finish(best_epoch=int(best_epoch) + 1, best_val=float(best), stopped_early=len(history) < settings.max_epochs, final_train=train_history[-1] if train_history else None)
     net.load_state_dict(best_state)
     net.eval()
     with torch.no_grad():

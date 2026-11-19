@@ -154,7 +154,11 @@ class FinmlApi:
             logp = np.log(px)
             progress("supremum ADF (explosiveness)")
             s = st.sadf(logp, min_window=60, max_starts=20)
-            crit = st.sadf_critical(len(logp), 60, reps=40, max_starts=10)
+            key = f"{len(logp)}|60|40|10"                                                   # the simulated critical value depends on nothing but these numbers: asked twice, it is read, not simulated again
+            crit = self.app.appdb.cache_get("sadf_critical", key, "1")
+            if crit is None:
+                crit = st.sadf_critical(len(logp), 60, reps=40, max_starts=10)
+                self.app.appdb.cache_put("sadf_critical", key, "1", crit)
             progress("CUSUM test on levels")
             cs = st.chu_stinchcombe_white(logp, 30)
             progress("entropy")

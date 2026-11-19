@@ -199,6 +199,59 @@
   }
   Q.registerPage("experiments", { render: () => drawExperiments($("#experiments")) });
 
+  /* ---------------------------------------------------------------- what was trained, and every job ever run (the app's database) */
+  const STATUS_CLASS = { done: "real", running: "wf", error: "stale", interrupted: "stale", cancelled: "na" };
+  async function trainingCard(root) {
+    const card = h("div", "card", root); card.dataset.role = "training-history"; h("h3", "", card, "Training history");
+    h("p", "sub", card, "Every network that was trained, epoch by epoch, kept in the app's database. A fit marked interrupted is one the app died in (out of memory, a restart, the host going idle): the epochs it did finish are still here.");
+    const body = h("div", "", card);
+    async function load() {
+      let d; try { d = await api("/api/training/fits?limit=30"); } catch (e) { body.replaceChildren(); note(body, e.message); return; }
+      body.replaceChildren();
+      if (!d.fits.length) { note(body, "No network has been trained yet. Train a deep model in the Machine Learning Lab and its epochs appear here as they happen."); return; }
+      const out = h("div", "", body), dur = (v) => (v === null || v === undefined ? "" : v < 90 ? `${Math.round(v)} s` : `${(v / 60).toFixed(1)} min`);
+      table(out, [{ label: "When", get: (f) => secs(f.started) }, { label: "Job", get: (f) => f.job_label || "" }, { label: "Model", get: (f) => `${f.model || "network"}${f.fold ? ` · fold ${f.fold} of ${f.folds}` : ""}` },
+        { label: "Epochs", num: true, get: (f) => `${f.epochs_run ?? 0}${f.epochs ? " of " + f.epochs : ""}` }, { label: "Best epoch", num: true, get: (f) => (f.best_epoch ? String(f.best_epoch) : "") },
+        { label: "Best validation", num: true, get: (f) => (f.best_val === null || f.best_val === undefined ? "" : String(+f.best_val.toPrecision(4))) },
+        { label: "How it ended", get: (f) => (f.status === "done" ? (f.stopped_early ? "stopped early (patience)" : "all epochs") : f.status) }, { label: "Time", num: true, get: (f) => dur(f.seconds) },
+        { label: "Memory", num: true, get: (f) => (f.peak_mb ? (f.peak_mb >= 1024 ? (f.peak_mb / 1024).toFixed(1) + " GB" : Math.round(f.peak_mb) + " MB") : "") }, { label: "", get: () => "" }], d.fits);
+      const rows = out.querySelectorAll("tbody tr");
+      d.fits.forEach((f, i) => {
+        const tr = rows[i]; if (!tr) return; tr.dataset.fit = String(f.id);
+        const cell = tr.lastElementChild, b = h("button", "link", cell, "Show curve"); b.type = "button";
+        b.addEventListener("click", async () => {
+          const next = tr.nextElementSibling; if (next && next.dataset.curve === String(f.id)) { next.remove(); b.textContent = "Show curve"; return; }
+          try {
+            const one = await api("/api/training/fit?id=" + f.id), e = one.epochs_detail; b.textContent = "Hide curve";
+            const row = document.createElement("tr"), td = document.createElement("td"); row.dataset.curve = String(f.id); td.colSpan = 10; row.appendChild(td); tr.after(row);
+            if (e.length < 2) { td.textContent = "Fewer than two epochs were recorded."; return; }
+            const host = h("div", "", td); Q.C.line(host, { xs: e.map((x) => x.epoch + 1), series: [{ name: "Training loss", color: Q.css("--s1"), values: e.map((x) => x.train) }, { name: "Validation loss", color: Q.css("--s2"), dash: "5 3", values: e.map((x) => x.val) }],
+              xLabel: "epoch", xFormat: (v) => String(Math.round(v)), xWhole: true, zoom: false, height: 200, yFormat: (v) => String(+v.toPrecision(2)), tipFormat: (v) => String(+v.toPrecision(4)), label: "Loss by epoch",
+              vlines: f.best_epoch ? [{ x: f.best_epoch, label: "best" }] : [] });
+          } catch (err) { toast(err.message); }
+        });
+      });
+    }
+    const row = h("div", "row", card), rf = h("button", "btn", row, "Refresh"); rf.type = "button"; rf.addEventListener("click", load);
+    await load();
+  }
+  async function jobHistoryCard(root) {
+    const card = h("div", "card", root); card.dataset.role = "job-history"; h("h3", "", card, "Every job ever run");
+    h("p", "sub", card, "The list above keeps the newest sixty. The database keeps them all: search by name, message or error, and filter by how they ended.");
+    const row = h("div", "row", card), q = h("input", "", row); q.type = "search"; q.placeholder = "Search jobs"; q.setAttribute("aria-label", "Search every job");
+    const st = h("select", "", row); st.setAttribute("aria-label", "Filter by outcome"); for (const [v, t] of [["", "Any outcome"], ["done", "Finished"], ["error", "Failed"], ["interrupted", "Interrupted"], ["cancelled", "Cancelled"]]) { const o = h("option", "", st, t); o.value = v; }
+    const body = h("div", "", card);
+    async function load() {
+      let d; try { d = await api(`/api/jobs/history?limit=40&status=${encodeURIComponent(st.value)}&q=${encodeURIComponent(q.value)}`); } catch (e) { body.replaceChildren(); note(body, e.message); return; }
+      body.replaceChildren(); h("p", "hint", body, `${d.total} job(s)${Object.keys(d.counts).length ? ": " + Object.entries(d.counts).map(([k, v]) => `${v} ${k}`).join(", ") : ""}`);
+      if (!d.jobs.length) { note(body, "No job matches."); return; }
+      table(body, [{ label: "When", get: (j) => (j.created ? secs(j.created) : "") }, { label: "Job", get: (j) => j.label || "" }, { label: "Kind", get: (j) => j.kind || "" }, { label: "Outcome", get: (j) => j.status || "" }, { label: "Message", get: (j) => (j.error || j.message || "").slice(0, 140) },
+        { label: "Took", num: true, get: (j) => (j.finished && j.created ? `${Math.round(j.finished - j.created)} s` : "") }], d.jobs);
+    }
+    let t = 0; q.addEventListener("input", () => { clearTimeout(t); t = setTimeout(load, 300); }); st.addEventListener("change", load);
+    await load();
+  }
+
   /* ---------------------------------------------------------------- Background jobs */
   let jobTimer = null;
   async function drawJobs(root) {
@@ -209,6 +262,7 @@
     const tools = h("div", "row", root);
     const clear = h("button", "btn", tools, "Clear finished"); clear.type = "button"; clear.addEventListener("click", () => api("/api/jobs/clear", { ended: true }).then(load, (e) => toast(e.message)));
     const refresh = h("button", "btn", tools, "Refresh"); refresh.type = "button"; refresh.addEventListener("click", load);
+    trainingCard(root); jobHistoryCard(root);
     async function load() {
       let d; try { d = await api("/api/jobs"); } catch (e) { body.replaceChildren(); h("div", "banner err", body, e.message); return; }
       body.replaceChildren();
@@ -235,6 +289,33 @@
   }
   Q.registerPage("jobs", { render: () => drawJobs($("#jobs")) });
 
+  /* ---------------------------------------------------------------- what the app keeps on disk, and a backup of it */
+  const bytesText = (n) => (n >= 1e9 ? (n / 1e9).toFixed(1) + " GB" : n >= 1e6 ? (n / 1e6).toFixed(1) + " MB" : n >= 1e3 ? Math.round(n / 1e3) + " kB" : n + " B");
+  async function storageCard(root) {
+    const card = h("div", "card", root); card.dataset.role = "storage"; h("h3", "", card, "Storage and backup");
+    let d; try { d = await api("/api/storage/status"); } catch (e) { note(card, "The storage report could not be read: " + e.message); return; }
+    h("p", "sub", card, `Everything the app keeps is under ${d.root}.`);
+    const k = h("div", "kpis", card); const total = d.folders.reduce((a, f) => a + f.bytes, 0), rows = d.databases.reduce((a, x) => a + Object.values(x.tables || {}).reduce((s2, v) => s2 + v, 0), 0);
+    Q.tile(k, "Databases", String(d.databases.length), { text: `${rows.toLocaleString("en-US")} rows in all` }); Q.tile(k, "Used on disk", bytesText(total), { text: `${d.folders.length} folders` });
+    Q.tile(k, "Jobs recorded", String(Object.values(d.jobs).reduce((a, v) => a + v, 0)), { text: "kept beyond the newest sixty" }); Q.tile(k, "Kept answers", String(d.cache.reduce((a, c) => a + c.entries, 0)), { text: d.cache.length ? d.cache.map((c) => c.kind).join(", ") : "none yet" });
+    if (d.app_db && !d.app_db.ok) h("div", "banner err", card, "The app's own database could not be opened: " + (d.app_db.error || "unknown reason") + ". Training history and the job archive are not being kept.");
+    table(card, [{ label: "Database", get: (x) => x.name }, { label: "Size", num: true, get: (x) => bytesText(x.bytes) }, { label: "Tables", get: (x) => (x.tables ? Object.entries(x.tables).slice(0, 6).map(([n, v]) => `${n} (${v.toLocaleString("en-US")})`).join(", ") + (Object.keys(x.tables).length > 6 ? ", …" : "") : x.error || "") }], d.databases);
+    table(card, [{ label: "Folder", get: (x) => x.name }, { label: "Files", num: true, get: (x) => String(x.files) }, { label: "Size", num: true, get: (x) => bytesText(x.bytes) }], d.folders);
+    const row = h("div", "row", card), bk = h("button", "btn primary", row, "Back up everything"); bk.type = "button"; bk.title = "A zip of a consistent copy of every database, made while the app runs";
+    const say = h("span", "hint", row); say.setAttribute("role", "status");
+    bk.addEventListener("click", async () => {
+      bk.disabled = true; say.textContent = "Making the backup…";
+      try {
+        const r = await api("/api/storage/backup", {});
+        if (r.zip_base64) { const bin = atob(r.zip_base64), arr = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i); Q.download(r.name, new Blob([arr], { type: "application/zip" })); say.textContent = `${r.name}: ${bytesText(r.bytes)}, ${r.files.length} files. Downloaded.`; }
+        else say.textContent = r.note || `${r.name} is on the server.`;
+      } catch (e) { say.textContent = ""; toast(e.message); }
+      bk.disabled = false;
+    });
+    if (d.cache.length) { const cl = h("button", "btn", row, "Forget kept answers"); cl.type = "button"; cl.addEventListener("click", async () => { try { const r = await api("/api/storage/cache/clear", {}); toast(`${r.cleared} kept answer(s) forgotten`); drawData($("#data")); } catch (e) { toast(e.message); } }); }
+    for (const t of d.advice) h("p", "hint", card, t);
+  }
+
   /* ---------------------------------------------------------------- Data management */
   async function drawData(root) {
     root.replaceChildren();
@@ -250,6 +331,7 @@
       const rows = Object.entries(ds.kinds).map(([kind, v]) => ({ kind, n: v.downloads.length, newest: v.downloads[0] ? (v.downloads[0].fetched || v.downloads[0].as_of || v.downloads[0].last || "") : "" }));
       table(c, [{ label: "Tab", get: (r) => r.kind }, { label: "Downloads", num: true, get: (r) => String(r.n) }, { label: "Newest", get: (r) => String(r.newest).slice(0, 10) }], rows); h("p", "hint", c, `Kept in ${ds.directory}. ${ds.note}`);
     }
+    await storageCard(root);
     const d = h("div", "card", root); h("h3", "", d, "Dataset versions in your results");
     const sess = R.sessions().filter((s) => s.readable);
     if (!sess.length) note(d, "Save a result to a session and its dataset version (a fingerprint of the tickers, dates and source it used) is listed here."); else note(d, "Each saved result carries the fingerprint of the data it used. Two results with different fingerprints are never ranked against each other in the Research comparison.");
@@ -257,6 +339,19 @@
   Q.registerPage("data", { render: () => drawData($("#data")) });
 
   /* ---------------------------------------------------------------- Settings */
+  /* what the machine behind the app can really give a run (the container's limits, not the host's) */
+  async function machineCard(root) {
+    const card = h("div", "card", root); card.dataset.role = "machine"; h("h3", "", card, "This machine");
+    let m; try { m = await api("/api/system/resources"); } catch (e) { note(card, "The machine could not be read: " + e.message); return; }
+    h("p", "sub", card, "What the app can really use here. A big model that needs more than this is refused before it starts, or stopped with a message before the host kills the app.");
+    const k = h("div", "kpis", card), mb = (v) => (v === null || v === undefined ? "unknown" : v >= 1024 ? (v / 1024).toFixed(1) + " GB" : v + " MB");
+    Q.tile(k, "CPUs it may use", String(m.cpu_limit), { text: `the host shows ${m.cpus_visible}; ${m.threads} worker thread(s) are used` }); Q.tile(k, "Memory limit", mb(m.memory_limit_mb), { text: `${mb(m.memory_used_mb)} in use` });
+    Q.tile(k, "Free memory", mb(m.memory_free_mb), { text: m.memory_free_mb !== null && m.memory_limit_mb && m.memory_free_mb < 0.25 * m.memory_limit_mb ? "tight: a big model will not fit" : "" , dir: m.memory_free_mb !== null && m.memory_limit_mb && m.memory_free_mb < 0.25 * m.memory_limit_mb ? "down" : "" });
+    Q.tile(k, "This app", mb(m.process_rss_mb), { text: "resident memory of the process" });
+    for (const n of m.notes) h("p", "hint", card, n);
+    for (const t of m.protection) h("p", "hint", card, t);
+    h("p", "hint", card, "Where to run bigger models, and how to move your data there: docs/deployment.md.");
+  }
   function drawSettings(root) {
     root.replaceChildren();
     head(root, "Settings", "How the app looks and opens. These are kept in this browser only; they hold no data and no results.");
@@ -269,6 +364,7 @@
     sel.addEventListener("change", () => Q.shell.setPref("landing", sel.value));
     const rail = h("label", "f inline", nav), rc = h("input", "", rail); rc.type = "checkbox"; rc.checked = !!Q.shell.prefs().rail; rail.append(document.createTextNode("Narrow sidebar (icons only)")); rc.addEventListener("change", () => { $("#railtoggle").click(); });
     const rs = h("button", "btn", nav, "Reset navigation and dashboard layout"); rs.type = "button"; rs.addEventListener("click", () => { store("shell", null); store("dash", null); toast("Reset. Reload the page to see the default sidebar."); });
+    machineCard(root);
     const ab = h("div", "card", root); h("h3", "", ab, "What this browser keeps");
     h("p", "hint", ab, "Theme, the last page, which sidebar groups are folded, the dashboard layout, your ticker list, and the id of the open research session. Sessions and results are kept by the app in data/user/research, not here.");
     const wipe = h("button", "btn", ab, "Forget these browser preferences"); wipe.type = "button"; wipe.addEventListener("click", () => { for (const k of Object.keys(localStorage).filter((x) => x.startsWith("ql."))) localStorage.removeItem(k); toast("Forgotten. Reload the page."); });

@@ -33,6 +33,9 @@ from ..equity.factors import names as factor_names
 from ..equity.portfolio import PRESETS as book_presets
 from ..strategies.factor_models import KINDS as learner_kinds
 from ..strategies.factor_timing import CALENDAR_STATES, MACRO_STATES
+from ..ml import live, resources
+from ..ml.live import Telemetry
+from ..store.appdb import AppDb, TrainingLog
 from .jobs import ACTIVE, BEAT, JobLog
 
 RETRYABLE = ("error", "cancelled", "interrupted")
@@ -83,7 +86,7 @@ SAFE_SLUG = re.compile(r"^[a-z0-9][a-z0-9_-]{0,80}$")
 # views of the Crypto tab; 13 added the implied-distribution and open-interest views, the structure comparison and the backtest sweep of the Options tab and the new scores of the Fundamentals tab; 14 added the Enter reports mode of the Fundamentals tab (financial reports typed or pasted in by the person, stored in the database); 15 added the Rates tab (Nelson-Siegel and Svensson yield curves, the dynamic factors of a history of curves) and the normal (Bachelier) volatility of the Options tab's smile; 16 added the Scenarios tab (resampling, statistical and learned scenario generators, with a quality table); 17 added the Signals tab (follows, one run across markets, changes, a record of every signal issued, a daily schedule and alerts). 18 added the research workspace (sessions with a shared context, saved results, the Market Regime Lab and the Research Comparison: ``research_api``). The page compares it with its own number and says so
 # when the server behind it is older (the files were updated while the app was running, so it still runs the old code): the whole page needs 2, and the newer tabs ask for 3 or more on their own, so an
 # older app still runs the Backtest tab.
-API_VERSION = 19
+API_VERSION = 20
 CODE_ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -156,6 +159,15 @@ class Job:
         self.session = None                                           # the research session this run belongs to, when the request named one
         self.request = None                                           # {"path", "body"} of the request that started it, so that a failed run can be started again
         self.retry_of = None
+        self.telemetry = Telemetry(on_message=self._say, check=self._check)  # what a network being trained says each epoch (src/ml/live.py): shown in ``view()["live"]`` and as the progress message
+
+    def _say(self, text: str) -> None:
+        self.message = text
+
+    def _check(self) -> None:
+        if self.cancel_event.is_set():
+            raise JobCancelled()
+        resources.watchdog()                                         # a stop with a message, before the kernel's stop without one
 
     @property
     def message(self) -> str:
@@ -187,8 +199,12 @@ class Job:
         return out
 
     def view(self) -> dict:
-        return {"id": self.id, "label": self.label, "kind": self.kind, "status": self.status, "message": self._message, "error": self.error, "result": self.result,
-                "elapsed": round((self.finished or time.time()) - self.created, 1)}
+        out = {"id": self.id, "label": self.label, "kind": self.kind, "status": self.status, "message": self._message, "error": self.error, "result": self.result,
+               "elapsed": round((self.finished or time.time()) - self.created, 1)}
+        live_view = self.telemetry.snapshot()
+        if live_view is not None:
+            out["live"] = live_view
+        return out
 
 
 class App:
@@ -197,7 +213,10 @@ class App:
         load_library()
         self.builder = builder or UniverseBuilder(config, store or TickerStore(self.root / "data" / "user" / "prices"), sources={"itick": itick_source(self.root)})
         self.jobs: dict[str, Job] = {}
-        self.joblog = JobLog(self.root / "data" / "user" / "jobs")   # every job's record on disk: a reloaded page finds its run again, and a restarted app knows what it lost
+        self.appdb = AppDb(self.root / "data" / "user" / "app.db")           # training history, every job ever run, kept answers (src/store/appdb.py)
+        self.appdb.mark_interrupted()                                         # a training the last run of the app died in is marked as such, with what it had done by then
+        self.joblog = JobLog(self.root / "data" / "user" / "jobs")
+        self.joblog.db = self.appdb   # every job's record on disk: a reloaded page finds its run again, and a restarted app knows what it lost
         self.joblog.mark_interrupted()
         self.beat_every, self._beating = BEAT, False                 # while a job is queued or running the app says so every few seconds (see _beat), so a crashed app's jobs can be told from live ones
         self.trials: dict[str, set] = {}
@@ -216,6 +235,7 @@ class App:
         from .rates_api import RatesApi
         from .research_api import ResearchApi
         from .finml_api import FinmlApi
+        from .store_api import StoreApi
         from .scenarios_api import ScenariosApi
         from .signals_api import SignalsApi
 
@@ -227,7 +247,7 @@ class App:
         self.signals = SignalsApi(self, assets)                      # the Signals tab: kept, so the command line and the daily schedule reach the same book
         ml = MlApi(self)
         self.research = ResearchApi(self, ml)                       # sessions, saved results, the regime lab and the comparison (data/user/research)
-        for part in (assets, ml, self.data, TuneApi(self), ForecastApi(self), ModelsApi(self, assets), self.fundamentals, RatesApi(self), ScenariosApi(self), self.signals, self.research, FinmlApi(self)):
+        for part in (assets, ml, self.data, TuneApi(self), ForecastApi(self), ModelsApi(self, assets), self.fundamentals, RatesApi(self), ScenariosApi(self), self.signals, self.research, FinmlApi(self), StoreApi(self)):
             self.extra_get.update(part.get_routes())
             self.extra_post.update(part.post_routes())
 
@@ -437,6 +457,7 @@ class App:
                 self.jobs.pop(old, None)
             start, self._beating = not self._beating, True
         job.sink = lambda j, final: self.joblog.save(j.record(disk=True), j.result if final and j.status == "done" else None)
+        job.telemetry.store = TrainingLog(self.appdb, job.id, job.label)
         job.save()
         if start:
             threading.Thread(target=self._beat, name="job-heartbeat", daemon=True).start()
@@ -474,6 +495,7 @@ class App:
         def progress(text: str) -> None:
             if job.cancel_event.is_set():
                 raise JobCancelled()
+            resources.watchdog()
             job.message = str(text)
 
         try:
@@ -484,17 +506,24 @@ class App:
                 return
             job.status, job.message = "running", "starting"
             job.save()
-            job.result = clean(work(progress))
+            with live.use(job.telemetry):
+                job.result = clean(work(progress))
             job.status, job.message = "done", "finished"
             if job.cancel_event.is_set():                           # the work ended before it reached a point where it could stop: its result is thrown away, not half kept
                 App._cancelled(job, "cancelled: the run had already finished its work, so its result was discarded")
         except JobCancelled:
             App._cancelled(job, "cancelled while running")
+            job.telemetry.abort("cancelled")
+        except resources.ResourceLimit as error:
+            job.status, job.error = "error", str(error)
+            job.telemetry.abort("error")
         except (ApiError, ValueError, KeyError) as error:
             job.status, job.error = "error", str(error.args[0] if isinstance(error, KeyError) and error.args else error)
+            job.telemetry.abort("error")
         except Exception as error:                                   # a bug must reach the user as a message, not a hung page
             traceback.print_exc()
             job.status, job.error = "error", f"{type(error).__name__}: {error}"
+            job.telemetry.abort("error")
         job.finished = time.time()
         job.save(final=True)
 
@@ -535,7 +564,8 @@ class App:
                 spec["evaluation"]["benchmarks"] = ["equal_weight"]
             job.message = "running the pipeline"
             pipeline = Pipeline(PipelineSpec.from_dict(spec), self.config, bundle)
-            result = pipeline.run(validate=bool(spec["evaluation"]["causality"]))
+            with live.use(job.telemetry):                          # a network trained inside a backtest tells the page what each epoch did
+                result = pipeline.run(validate=bool(spec["evaluation"]["causality"]))
             spec_view = PipelineSpec.from_dict(spec).to_dict()
             job.result = result_payload(result, bundle, red_flags(result), universe, spec_view, yaml.safe_dump(spec_view, sort_keys=False), time.perf_counter() - started, capital, self._account(body))
             job.result["trials_in_universe"] = len(seen)
@@ -547,11 +577,17 @@ class App:
                 self._cancelled(job, "cancelled: the run had already finished its work, so its result was discarded")
         except JobCancelled:
             self._cancelled(job, "cancelled while running")
+            job.telemetry.abort("cancelled")
+        except resources.ResourceLimit as error:
+            job.status, job.error = "error", str(error)
+            job.telemetry.abort("error")
         except (ApiError, UniverseError, ValueError, KeyError) as error:
             job.status, job.error = "error", str(error.args[0] if isinstance(error, KeyError) and error.args else error)
+            job.telemetry.abort("error")
         except Exception as error:                                   # a model bug must reach the user as a message, not a hung page
             traceback.print_exc()
             job.status, job.error = "error", f"{type(error).__name__}: {error}"
+            job.telemetry.abort("error")
         job.finished = time.time()
         job.save(final=True)
 

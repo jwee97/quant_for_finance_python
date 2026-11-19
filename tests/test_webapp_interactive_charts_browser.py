@@ -123,3 +123,31 @@ def test_a_table_sorts_by_its_headings_and_a_long_one_filters(page):
     assert table.locator("tbody tr").count() >= 1 and "of" in card.locator(".tbltools .hint").inner_text()
     card.locator(".tbltools input").fill("zzzzqq")
     assert "No row matches" in table.inner_text()
+
+
+LIVE = {"context": {"model": "lstm", "fold": 2, "folds": 5}, "fits": 2, "updated": 0,
+        "done": [{"n": 1, "context": {"model": "lstm", "fold": 1, "folds": 5}, "epochs_run": 12, "epochs": 40, "seconds": 31.2, "best_epoch": 9, "best_val": 0.4123, "stopped_early": True, "final_train": 0.39}],
+        "run": {"n": 2, "context": {"model": "lstm", "fold": 2, "folds": 5}, "epochs": 40, "patience": 6, "device": "cpu", "n_params": 18305, "n_train": 5000, "n_val": 900, "batch_size": 128, "name": None,
+                "batch": {"epoch": 8, "index": 12, "of": 40, "loss": 0.3951},
+                "history": {"epoch": [0, 1, 2, 3, 4, 5, 6, 7], "train": [0.9, 0.7, 0.6, 0.52, 0.47, 0.44, 0.41, 0.39], "val": [0.95, 0.8, 0.7, 0.62, 0.6, 0.601, 0.605, 0.612], "lr": [1e-3] * 7 + [5e-4], "grad": [1.2, 1.0, 0.9, 0.8, 0.7, 0.6, 0.6, 0.5], "seconds": [2.1] * 8},
+                "current": {"epoch": 8, "epochs": 40, "train": 0.39, "val": 0.612, "best": 0.6, "best_epoch": 5, "lr": 5e-4, "grad": 0.5, "seconds": 2.1, "bad": 3, "patience": 6, "improved": False, "eta_seconds": 67.2, "peak_mb": 312.0}}}
+
+
+def test_the_live_training_panel_says_how_the_network_is_learning(page):
+    page.evaluate("(live) => { const d = document.createElement('div'); d.id = 'probe'; document.body.appendChild(d); QL.livePanel(d, live); }", LIVE)
+    panel = page.locator("#probe [data-role=live-training]")
+    text = panel.inner_text()
+    low = text.lower()                                                                    # the tile labels are set in capitals by the stylesheet
+    assert "lstm · fold 2 of 5" in low and "18,305 parameters" in low and "epoch 8 of 40 finished" in low and "batch 12 of 40" in low
+    assert "training loss" in low and "validation loss" in low and "best validation loss" in low and "epoch 5" in low and "3 of 6" in low and "about 67 s left" in low
+    assert "just halved" in low and "312 mb" in low, "the learning-rate drop and the memory are shown"
+    assert "not improving: no new best validation loss for 3 epoch(s) (best at epoch 5)" in low and "memorise" in low, "it says that the validation loss turned while the training loss kept falling"
+    bar = panel.locator("[role=progressbar]")
+    assert bar.get_attribute("aria-valuenow") == str(round(((8 + 12 / 40) / 40) * 100)) and bar.get_attribute("aria-label") == "Training progress"
+    assert panel.locator("svg.chart").count() == 1 and panel.locator(".legend span").count() == 2, "the loss curves are drawn: training and validation"
+    panel.locator("details.lt-done summary").click()
+    earlier = panel.locator("details.lt-done table.data").inner_text()
+    el = earlier.lower()
+    assert "fold 1" in el and "12 of 40" in el and "early, by patience" in el and "0.4123" in el
+    page.evaluate("(live) => { const d = document.getElementById('probe'); d.replaceChildren(); const l = JSON.parse(JSON.stringify(live)); l.run.current.improved = true; l.run.current.bad = 0; l.run.history.val[7] = 0.55; l.run.current.val = 0.55; QL.livePanel(d, l); }", LIVE)
+    assert "improving: the validation loss reached a new best" in page.inner_text("#probe").lower()

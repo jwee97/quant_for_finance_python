@@ -18,6 +18,7 @@ import math
 import numpy as np
 import torch
 from torch import nn
+from ..ml import live
 
 FEATURES = 3
 START_BIAS = -3.0                # the band starts about 0.05 shares either side of the delta: close to the delta hedge, and wide enough for the gradient to move it
@@ -102,6 +103,7 @@ def train(S: float, K: float, T: float, r: float, q: float, sigma: float, cost: 
     opt = torch.optim.Adam(policy.parameters(), lr=learning_rate)
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, iterations, eta_min=learning_rate * 0.05)
     a, history = float(risk_aversion), []
+    live.start(epochs=iterations, patience=None, device="cpu", n_params=int(sum(q.numel() for q in policy.parameters())), n_train=int(batch), batch_size=int(batch), name="hedging network (iterations)")
     for it in range(iterations):
         paths = gbm_paths(S, r - q, sigma, T, steps, batch, gen)
         pnl, _, _ = run_policy(policy, paths, K, T, r, q, sigma, cost, call, premium)
@@ -112,6 +114,8 @@ def train(S: float, K: float, T: float, r: float, q: float, sigma: float, cost: 
         opt.step()
         sched.step()
         history.append(-float(loss.detach()))
+        if (it + 1) % 5 == 0 or it == 0:
+            live.epoch(it, -history[-1], None, lr=float(opt.param_groups[0]["lr"]), epochs=iterations)
         if progress is not None and (it + 1) % 25 == 0:
             progress(f"training the hedging network: {it + 1} of {iterations} iterations")
     return policy.eval(), history

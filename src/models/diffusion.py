@@ -15,6 +15,7 @@ import math
 
 import numpy as np
 from scipy.stats import chi2
+from ..ml import live
 
 
 def cosine_schedule(steps: int, s: float = 0.008) -> np.ndarray:
@@ -74,7 +75,8 @@ class Diffusion:
         opt = torch.optim.Adam(self.net.parameters(), lr=self.lr)
         abar = torch.as_tensor(self.abar, dtype=torch.float32)
         self.losses = []
-        for _ in range(self.epochs):
+        live.start(epochs=self.epochs, patience=None, device="cpu", n_params=int(sum(q.numel() for q in self.net.parameters())), n_train=int(len(x0)), batch_size=int(self.batch))
+        for epoch in range(self.epochs):
             order = torch.randperm(len(x0), generator=gen)
             running = 0.0
             for i in range(0, len(order), self.batch):
@@ -88,6 +90,8 @@ class Diffusion:
                 opt.step()
                 running += float(loss.detach()) * len(x)
             self.losses.append(running / len(x0))
+            live.epoch(epoch, self.losses[-1], None, lr=self.lr, epochs=self.epochs)
+        live.finish(final_train=self.losses[-1] if self.losses else None)
         self.net.eval()
         return self
 

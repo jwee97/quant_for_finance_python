@@ -18,6 +18,7 @@ from __future__ import annotations
 import math
 
 import numpy as np
+from ..ml import live
 
 
 def _standardise(X: np.ndarray):
@@ -59,6 +60,7 @@ class WGANGP:
         g_opt = torch.optim.Adam(self.G.parameters(), lr=self.lr, betas=(0.5, 0.9))
         d_opt = torch.optim.Adam(self.D.parameters(), lr=self.lr, betas=(0.5, 0.9))
         self.critic_gap, self.latent_dim = [], self.latent
+        live.start(epochs=self.steps, patience=None, device="cpu", n_params=int(sum(q.numel() for q in list(self.G.parameters()) + list(self.D.parameters()))), n_train=int(len(data)), batch_size=int(self.batch), name="wgan-gp (steps)")
         for step in range(self.steps):
             for _ in range(self.n_critic):
                 real = data[torch.as_tensor(rng.integers(0, len(data), self.batch))]
@@ -78,6 +80,7 @@ class WGANGP:
             g_opt.step()
             if step % 25 == 0:
                 self.critic_gap.append(float(gap.detach()))
+                live.epoch(step, float(g_loss.detach()), float(gap.detach()), lr=self.lr, epochs=self.steps)
         self.G.eval()
         return self
 
@@ -134,7 +137,8 @@ class FactorVAE:
         params = self._build(Z.shape[1])
         opt = torch.optim.Adam(params, lr=self.lr)
         self.losses = []
-        for _ in range(self.epochs):
+        live.start(epochs=self.epochs, patience=None, device="cpu", n_params=int(sum(q.numel() for q in params)), n_train=int(len(data)), batch_size=int(self.batch))
+        for epoch in range(self.epochs):
             order = rng.permutation(len(data))
             total = 0.0
             for i in range(0, len(order), self.batch):
@@ -150,6 +154,8 @@ class FactorVAE:
                 opt.step()
                 total += float(loss.detach()) * len(x)
             self.losses.append(total / len(data))
+            live.epoch(epoch, self.losses[-1], None, lr=self.lr, epochs=self.epochs)
+        live.finish(final_train=self.losses[-1] if self.losses else None)
         return self
 
     @property

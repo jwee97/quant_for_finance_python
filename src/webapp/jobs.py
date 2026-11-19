@@ -70,6 +70,7 @@ class JobLog:
         self.directory = Path(directory)
         self.keep = int(keep)
         self._lock = threading.Lock()
+        self.db = None                                                  # the app's database (src/store/appdb.py): every record is also filed there, where it outlives the ``keep`` newest files
         self._seen: set[str] = set()                                    # jobs this log has written: the directory is trimmed when a new one appears, not on every progress message
 
     # ------------------------------------------------------------------------------------------------------------ write
@@ -79,6 +80,8 @@ class JobLog:
         if not JOB_ID.match(job_id):
             return
         record = {**record, "pid": os.getpid(), "process": PROCESS, "updated": time.time()}
+        if self.db is not None:
+            self.db.upsert_job(record)
         try:
             with self._lock:
                 if result is not None:

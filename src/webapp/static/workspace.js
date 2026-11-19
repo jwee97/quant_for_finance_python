@@ -21,7 +21,7 @@
     const s = p.toString(); return s ? "?" + s : "";
   };
   function poll(lab, job, message) {                                                        // a long computation runs as a job on the server; ask after it until it ends (or is lost with the app)
-    return Q.waitJob(job, (v) => { lab.busy = `${message} ${v.message} (${Math.round(v.elapsed)} s)`; Q.syncLab(lab); }, 500);
+    return Q.waitJob(job, (v) => { lab.busy = `${message} ${v.message} (${Math.round(v.elapsed)} s)`; lab.live = v.live || null; Q.syncLab(lab); }, 500).finally(() => { lab.live = null; });
   }
   /* Run the requests of a plan one after the other and file each answer under the modes that draw from it. A step is { modes, path, query | body, job, cacheKey }: a GET with a query string, or a POST
      (a job when ``job`` is set); an answer kept under ``cacheKey`` in ``lab.cache`` is not asked for twice. Whatever goes wrong is shown on the mode that was open when the request was made. */

@@ -21,6 +21,7 @@ import pandas as pd
 
 from .datasets import Dataset
 from . import intervals as iv
+from . import live
 from .causal import CausalView
 from .models import Model, default_refit, make_model, task_for
 from .splitters import SegmentPlan, segment_plan, walk_forward_splits
@@ -223,6 +224,7 @@ def walk_forward_train(ds: Dataset, model_cfg: dict, split_cfg: dict, seed: int 
         use = treatment == "uniqueness" and dep["needed"] and not is_agent(kind)
         info["dependence"] = {"treatment": "uniqueness_weights" if use else "none", "mean_uniqueness": round(dep["mean_uniqueness"], 4), "mean_concurrency": round(dep["mean_concurrency"], 3),
                               "requested": treatment, "note": None if (treatment != "uniqueness" or use) else ("labels do not overlap (horizon 1): nothing to weight" if not dep["needed"] else "an agent has no labels to weight")}
+        live.set_context(model=kind, fold=sp.fold + 1, folds=len(splits))                  # what a network trained in this fold tells the page it is fitting
         try:
             model = _fit(kind, params, task, seed, Xtr, ytr, lab[tr_idx], ds, until=t_first, sample_weight=dep["weights"] if use else None,
                          info={k: info[k] for k in info if k in ("fit_cutoff", "label_end_max", "train_rows_hash", "train_start", "train_end", "n_train")})

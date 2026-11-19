@@ -1,7 +1,16 @@
+# docker compose up app                                   # the dashboard on http://localhost:5000, with everything it keeps in ./data/user (docs/deployment.md)
 # docker compose run --rm tests
 # docker compose run --rm pipeline                       # all 29 stages (about 80 minutes on 4 cores)
 # docker compose run --rm pipeline python -m experiments.run_all --generation 4
 services:
+  app:
+    build: .
+    command: python -u -m src serve --host 0.0.0.0 --port 5000 --no-browser
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./data/user:/app/data/user                         # the databases, downloads and results survive a restart and a rebuild
+    restart: unless-stopped
   tests:
     build: .
     command: python -m pytest -q

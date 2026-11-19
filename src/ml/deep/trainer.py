@@ -14,10 +14,13 @@ import sys
 import time
 from copy import deepcopy
 from dataclasses import asdict, dataclass, field
+from dataclasses import replace as dataclasses_replace
 from pathlib import Path
 
 import numpy as np
 import torch
+
+from .. import live, resources
 
 
 @dataclass
@@ -140,12 +143,17 @@ def fit_network(net: torch.nn.Module, batch_fn, loss_fn, n_train: int, n_val: in
     previous_threads = torch.get_num_threads()
     if cfg.num_threads > 0:
         torch.set_num_threads(int(cfg.num_threads))
+    elif previous_threads > resources.default_threads():                                  # a container shows the host's CPUs: more threads than the quota allows fight each other and slow everything
+        torch.set_num_threads(resources.default_threads())
+        cfg = dataclasses_replace(cfg, num_threads=resources.default_threads())
+    live.start(epochs=cfg.epochs, patience=cfg.patience, device=hist.device, n_params=hist.n_params, n_train=int(n_train), n_val=int(n_val), batch_size=cfg.batch_size)
     try:
         for epoch in range(start, cfg.epochs):
             e0 = time.perf_counter()
             net.train()
             total, seen, norms = 0.0, 0, []
-            for rows in batches(n_train, cfg.batch_size, rng, None if groups is None else groups["train"]):
+            plan = batches(n_train, cfg.batch_size, rng, None if groups is None else groups["train"])
+            for bi, rows in enumerate(plan):
                 loss = loss_fn(net, batch_fn("train", rows))
                 if not torch.isfinite(loss):
                     raise ValueError("training diverged (the loss is not finite); lower the learning rate")
@@ -155,6 +163,7 @@ def fit_network(net: torch.nn.Module, batch_fn, loss_fn, n_train: int, n_val: in
                 opt.step()
                 total += float(loss.detach()) * len(rows)
                 seen += len(rows)
+                live.batch(bi + 1, len(plan), total / max(seen, 1), epoch)                       # how far through the epoch; also where a cancelled run stops
             train_loss = total / max(seen, 1)
             val_loss = _evaluate(net, batch_fn, loss_fn, n_val, cfg.batch_size * 2, None if groups is None else groups["val"]) if n_val else train_loss
             hist.train_loss.append(train_loss)
@@ -163,13 +172,16 @@ def fit_network(net: torch.nn.Module, batch_fn, loss_fn, n_train: int, n_val: in
             hist.grad_norm.append(float(np.mean(norms)) if norms else 0.0)
             hist.epoch_seconds.append(time.perf_counter() - e0)
             sched.step(val_loss)
-            if val_loss < best - cfg.min_delta:
+            improved = val_loss < best - cfg.min_delta
+            if improved:
                 best, best_state, bad = val_loss, deepcopy(net.state_dict()), 0
                 hist.best_epoch = epoch
                 if folder is not None:
                     save_checkpoint(folder / "best.pt", net, opt, epoch, best, val_loss, cfg)
             else:
                 bad += 1
+            live.epoch(epoch, train_loss, val_loss if n_val else None, lr=hist.lr[-1], grad=hist.grad_norm[-1], seconds=hist.epoch_seconds[-1], best=best, best_epoch=hist.best_epoch, bad=bad, improved=improved,
+                       epochs=cfg.epochs, patience=cfg.patience, peak_mb=peak_memory_mb(next(net.parameters()).device))
             if folder is not None:
                 save_checkpoint(folder / "last.pt", net, opt, epoch, best, val_loss, cfg)
             if bad >= cfg.patience:
@@ -182,6 +194,7 @@ def fit_network(net: torch.nn.Module, batch_fn, loss_fn, n_train: int, n_val: in
     net.eval()
     hist.seconds = time.perf_counter() - t0
     hist.peak_memory_mb = peak_memory_mb(next(net.parameters()).device)
+    live.finish(best_epoch=hist.best_epoch + 1, best_val=None if not np.isfinite(best) else float(best), stopped_early=hist.stopped_early, final_train=hist.train_loss[-1] if hist.train_loss else None, peak_mb=hist.peak_memory_mb)
     return hist
 
 

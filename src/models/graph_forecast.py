@@ -14,6 +14,8 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from ..ml import live
+
 
 def correlation_neighbours(returns: pd.DataFrame, positions: np.ndarray, window: int = 252, k: int = 4) -> np.ndarray:
     """For each position, the indices of each asset's ``k`` most correlated other assets over ``returns[p - window + 1 : p + 1]``.
@@ -38,6 +40,7 @@ def correlation_neighbours(returns: pd.DataFrame, positions: np.ndarray, window:
 
 def build_graph_network(n_assets: int, n_features: int, hidden: int = 32, heads: int = 2, embedding: int = 8, dropout: float = 0.2):
     import torch
+
     from torch import nn
     import torch.nn.functional as F
 
@@ -100,6 +103,7 @@ def train_and_predict_graph(X_train, N_train, y_train, X_val, N_val, y_val, X_te
     best, best_state, best_epoch, history, train_history = np.inf, None, 0, [], []
     # a "batch" is a set of days; the day count per batch keeps the node count per batch near the Stage 27 batch size
     days_per_batch = max(1, settings.batch_size // n_assets)
+    live.start(epochs=settings.max_epochs, patience=settings.patience, device="cpu", n_params=int(sum(q.numel() for q in net.parameters())), n_train=int(len(tx)), n_val=int(len(vx)), batch_size=int(settings.batch_size))
     for epoch in range(settings.max_epochs):
         net.train()
         order = torch.randperm(len(tx), generator=generator)
@@ -116,11 +120,15 @@ def train_and_predict_graph(X_train, N_train, y_train, X_val, N_val, y_val, X_te
             val_loss = float(masked_mse(net(vx, vn), vy, vm))
         history.append(val_loss)
         train_history.append(running / len(order))
+        gained = val_loss < best - 1e-9
+        live.epoch(epoch, train_history[-1], val_loss, lr=settings.learning_rate, best=val_loss if gained else best, best_epoch=epoch if gained else best_epoch, bad=0 if gained else epoch - best_epoch, improved=gained,
+                   epochs=settings.max_epochs, patience=settings.patience)
         if val_loss < best - 1e-9:
             best, best_epoch = val_loss, epoch
             best_state = {k: v.clone() for k, v in net.state_dict().items()}
         elif epoch - best_epoch >= settings.patience:
             break
+    live.finish(best_epoch=int(best_epoch) + 1, best_val=float(best), stopped_early=len(history) < settings.max_epochs, final_train=train_history[-1] if train_history else None)
     net.load_state_dict(best_state)
     net.eval()
     sx, sn = tensors(X_test, N_test)

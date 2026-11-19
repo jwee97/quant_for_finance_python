@@ -499,7 +499,7 @@
   }
   function setBusy(busy, message) {
     S.busy = busy; syncRun(); const p = $("#progress"); p.replaceChildren();
-    if (busy) { h("span", "spinner", p); h("span", "", p, message || "Working…").id = "progress-text"; }
+    if (busy) { h("span", "spinner", p); h("span", "", p, message || "Working…").id = "progress-text"; h("div", "", p).id = "progress-live"; }
     $("#results").classList.toggle("fade", busy && !!S.current);
   }
   async function runBacktest() {
@@ -509,7 +509,7 @@
     if (!S.current) { const r = $("#results"); r.replaceChildren(); const c = h("div", "card empty", r); h("div", "spinner", c).style.margin = "0 auto 12px"; h("h2", "", c, "Running…"); h("p", "", c, "New tickers are downloaded first, then the strategy runs through the same pipeline as the command line. Neural-network strategies take longer.").id = "wait-note"; }
     try {
       const { job } = await api("/api/backtest", body);
-      const result = await waitJob(job, (v) => { const t = $("#progress-text"); if (t) t.textContent = `${v.message} (${Math.round(v.elapsed)} s)`; });
+      const result = await waitJob(job, (v) => { const t = $("#progress-text"); if (t) t.textContent = `${v.message} (${Math.round(v.elapsed)} s)`; const lv = $("#progress-live"); if (lv) { lv.replaceChildren(); if (v.live) livePanel(lv, v.live); } });
       addRun(result, job); if (S.tickers.some((x) => x.later)) recheckTickers(true);
     } catch (e) { showError(e.message); }
     setBusy(false);
@@ -605,6 +605,53 @@
     const bars = h("div", "bars", box); bars.setAttribute("aria-hidden", "true"); for (const w of [92, 78, 64]) { const b = h("div", "skeleton", bars); b.style.width = w + "%"; }
     return box;
   }
+  /* A network being trained, as it happens (the server's ``live`` object, see src/ml/live.py): where in the fit it is, what the last epoch did to the loss, whether the validation loss is still improving,
+     how much patience is left before it stops, and the curves so far. Drawn again on every poll, so it holds no state. */
+  function livePanel(parent, live) {
+    const run = live && live.run; if (!run) return null;
+    const cur = run.current, hist = run.history, ctx = run.context || {}, box = h("div", "livetrain", parent); box.dataset.role = "live-training";
+    const title = [ctx.model, ctx.fold && ctx.folds ? `fold ${ctx.fold} of ${ctx.folds}` : ctx.label, run.name].filter(Boolean).join(" · ") || "Training";
+    const head = h("div", "lt-head", box); h("strong", "", head, title); h("span", "hint", head, run.finished ? "this fit has finished" : `fit ${run.n}${run.device ? " on " + run.device : ""}${run.n_params ? ` · ${run.n_params.toLocaleString("en-US")} parameters` : ""}`);
+    const total = (cur && cur.epochs) || run.epochs || 0, doneEpochs = cur ? cur.epoch : 0, inside = run.batch && run.batch.of ? run.batch.index / run.batch.of : 0;
+    const frac = total ? Math.min(1, (doneEpochs + (run.finished ? 0 : inside)) / total) : 0;
+    const line = h("div", "lt-line", box); h("span", "", line, cur ? `Epoch ${doneEpochs}${total ? " of " + total : ""} finished` : "Starting the first epoch…");
+    if (run.batch && !run.finished) h("span", "hint", line, ` · epoch ${run.batch.epoch}: batch ${run.batch.index} of ${run.batch.of}${run.batch.loss !== null ? `, loss so far ${sig(run.batch.loss)}` : ""}`);
+    const bar = h("div", "lt-bar", box); bar.setAttribute("role", "progressbar"); bar.setAttribute("aria-label", "Training progress"); bar.setAttribute("aria-valuemin", "0"); bar.setAttribute("aria-valuemax", "100"); bar.setAttribute("aria-valuenow", String(Math.round(frac * 100)));
+    h("i", "", bar).style.width = (frac * 100).toFixed(1) + "%";
+    if (cur) {
+      const prev = (arr, k) => (arr.length > 1 ? arr[arr.length - 2] : null), pt = prev(hist.train), pv = prev(hist.val), pl = prev(hist.lr);
+      const delta = (now, before) => (now === null || before === null || before === 0 ? null : { text: `${now < before ? "▼" : "▲"} ${Math.abs((now / before - 1) * 100).toFixed(1)}% since the epoch before`, dir: now < before ? "up" : "down" });
+      const k = h("div", "kpis lt-kpis", box);
+      tile(k, "Training loss", sig(cur.train), delta(cur.train, pt) || { text: "rows the network learns from" });
+      if (cur.val !== null) tile(k, "Validation loss", sig(cur.val), delta(cur.val, pv) || { text: "later rows it is stopped on" });
+      if (cur.best !== null) tile(k, "Best validation loss", sig(cur.best), { text: `epoch ${cur.best_epoch}${cur.improved ? ", this epoch" : ""}`, dir: cur.improved ? "up" : "" });
+      tile(k, "Learning rate", cur.lr === null ? "n/a" : cur.lr.toExponential(1), { text: pl !== null && cur.lr !== null && cur.lr < pl * 0.99 ? "just halved: the validation loss had stalled" : "halves when validation stalls" });
+      tile(k, "Gradient size", cur.grad === null ? "n/a" : sig(cur.grad), { text: "average norm before clipping" });
+      tile(k, "This epoch", cur.seconds === null ? "n/a" : `${cur.seconds.toFixed(1)} s`, { text: cur.eta_seconds === null || run.finished ? "" : `about ${cur.eta_seconds < 90 ? Math.round(cur.eta_seconds) + " s" : (cur.eta_seconds / 60).toFixed(1) + " min"} left if it runs all ${total} epochs` });
+      if (cur.patience) tile(k, "Patience", `${cur.bad} of ${cur.patience}`, { text: cur.bad ? `no new best for ${cur.bad} epoch(s); it stops at ${cur.patience}` : "improving: the count restarts", dir: cur.bad >= cur.patience - 1 ? "down" : "" });
+      if (cur.peak_mb) tile(k, "Memory used", cur.peak_mb >= 1024 ? (cur.peak_mb / 1024).toFixed(1) + " GB" : Math.round(cur.peak_mb) + " MB", { text: "peak, by the network" });
+      const notes = [], n = hist.train.length;
+      if (cur.val !== null && cur.improved) notes.push(`Improving: the validation loss reached a new best${pv ? `, ${Math.abs((cur.val / pv - 1) * 100).toFixed(1)}% ${cur.val < pv ? "lower" : "higher"} than the epoch before` : ""}.`);
+      else if (cur.val !== null && cur.patience) notes.push(`Not improving: no new best validation loss for ${cur.bad} epoch(s) (best at epoch ${cur.best_epoch}); it stops after ${cur.patience}, and keeps the weights of epoch ${cur.best_epoch}.`);
+      else if (cur.val === null && n > 1 && hist.train[0]) notes.push(`The training loss is ${Math.abs((cur.train / hist.train[0] - 1) * 100).toFixed(0)}% ${cur.train < hist.train[0] ? "lower" : "higher"} than after the first epoch. This model has no validation set to stop on.`);
+      if (n >= 4 && hist.val.slice(-3).every((v) => v !== null) && hist.train[n - 1] < hist.train[n - 3] && hist.val[n - 1] > hist.val[n - 3]) notes.push("The training loss is still falling while the validation loss has risen over the last epochs: the network is starting to memorise the training rows.");
+      for (const t of notes) h("p", "lt-note", box, t);
+    }
+    if (hist.epoch.length >= 2) {
+      const host = h("div", "lt-chart", box), xs = hist.epoch.map((e) => e + 1), draw = [{ name: "Training loss", color: css("--s1"), values: hist.train }];
+      if (hist.val.some((v) => v !== null)) draw.push({ name: "Validation loss", color: css("--s2"), dash: "5 3", values: hist.val });
+      C.line(host, { xs, series: draw, xLabel: "epoch", xFormat: (v) => String(Math.round(v)), yFormat: (v) => String(+v.toPrecision(2)), tipFormat: (v) => String(+v.toPrecision(4)), xWhole: true, zoom: false, height: 170, label: "Loss by epoch",
+        vlines: cur && cur.best_epoch ? [{ x: cur.best_epoch, label: "best" }] : [] });
+    }
+    if (live.done && live.done.length) {
+      const d = h("details", "lt-done", box), sm = h("summary", "", d, `Earlier fits in this run (${live.done.length})`);
+      simpleTable(d, [{ label: "Fit", get: (x) => `${x.context.model || ""} ${x.context.fold ? "fold " + x.context.fold : "#" + x.n}`.trim() }, { label: "Epochs run", num: true, get: (x) => `${x.epochs_run}${x.epochs ? " of " + x.epochs : ""}` }, { label: "Best epoch", num: true, get: (x) => String(x.best_epoch ?? "") },
+        { label: "Best validation", num: true, get: (x) => (x.best_val === null || x.best_val === undefined ? "" : sig(x.best_val)) }, { label: "Stopped", get: (x) => (x.stopped_early ? "early, by patience" : "after all epochs") }, { label: "Seconds", num: true, get: (x) => String(x.seconds) }], live.done.slice().reverse());
+      sm.dataset.role = "live-done";
+    }
+    return box;
+  }
+  const sig = (v) => (v === null || v === undefined || !isFinite(v) ? "n/a" : String(+v.toPrecision(4)));
   function chartCard(parent, title, note, opts) {
     const card = h("div", "card chartcard" + (opts && opts.wide ? " wide" : ""), parent), bar = h("div", "bar", card);
     h("h3", "", bar, title);
@@ -1209,7 +1256,7 @@
     if (!lab.go || !lab.go.isConnected) return;
     const message = lab.check ? lab.check() : "";
     lab.go.disabled = !!lab.busy || !!message; lab.guard.textContent = message; lab.guard.hidden = !message;
-    lab.progress.replaceChildren(); if (lab.busy) { h("span", "spinner", lab.progress); h("span", "", lab.progress, lab.busy); }
+    lab.progress.replaceChildren(); if (lab.busy) { h("span", "spinner", lab.progress); h("span", "", lab.progress, lab.busy); if (lab.live) livePanel(lab.progress, lab.live); }
   }
   async function labRun(lab, path, bodyFor, message) {
     if (lab.busy) return;
@@ -1785,7 +1832,7 @@
     $("#tab-" + name).addEventListener("click", () => { if (S.catalog) showTab(name); });
     if (booted && wantedTab() === name) showTab(name, route().args);
   }
-  window.QL = { exportChart, loading, C, h, fmt, $, api, css, store, toast, copy, download, num, pct, money, smoney, axisMoney, bad, bps, grouped, plain, unsign, colorOf, SLOTS, tile, chartCard, actionsCard, simpleTable, sampleRows, keepScroll, labField, checkList, numbers,
+  window.QL = { exportChart, loading, livePanel, C, h, fmt, $, api, css, store, toast, copy, download, num, pct, money, smoney, axisMoney, bad, bps, grouped, plain, unsign, colorOf, SLOTS, tile, chartCard, actionsCard, simpleTable, sampleRows, keepScroll, labField, checkList, numbers,
     labHead, labBanner, labEmpty, labOld, syncLab, renderLab, drawLab, openGuide, serverApi, RESTART, notice, registerWorkspace, registerPage, setTheme, onNavigate: (fn) => NAV.push(fn), onResult: (fn) => RESULT.push(fn), onLabDraw: (fn) => LABDRAW.push(fn), applyContext, setupContext, setupBody, applySetup, lab: (name) => WORKSPACES[name], route, currentTab: () => current, labelPx, running, S, setupGuide, waitJob, keyHistory,
     universeBody, pickAllocator, useStrategy, setTrials, showTab, refsLine, fieldFor };
   boot();

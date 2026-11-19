@@ -39,7 +39,8 @@ from ..ml.config import build_key, experiment_config, load_ml_config
 from ..ml.datasets import UNIVERSES, build_dataset, feature_catalog, resolve_bundle
 from ..ml.deep.manifest import ARCHITECTURES, architecture                      # a table of text: importing it does not import PyTorch
 from ..ml.experiments import RL_KINDS, load_run, rebacktest, run_experiment
-from ..ml.features import GROUPS
+from ..ml import resources
+from ..ml.features import FEATURES, GROUPS
 from ..ml.models import Model, ModelUnavailable, default_refit, model_catalog
 from ..ml.model_selection import policy_from as ms_policy_from
 from ..ml.registry import STAGES, Registry
@@ -349,10 +350,33 @@ class MlApi(AdvancedRoutes, SelectionRoutes):
         if body.get("robustness"):
             over["robustness"] = {"enabled": True}
         try:
-            experiment_config(over)
+            cfg = experiment_config(over)
         except ValueError as exc:
             raise ApiError(str(exc)) from None
+        guard = self.memory_estimate(cfg)
+        if guard["level"] == "stop":                                                     # refused before a job is queued, with what to change: a run that would be killed halfway helps nobody
+            raise ApiError(guard["message"])
         return over
+
+    def memory_estimate(self, cfg: dict) -> dict:
+        """A rough price, in memory, of an experiment, against what is free (src/ml/resources.py): the feature table (assets x days x features) and, for a network, what training it keeps."""
+        try:
+            default = self.app.builder.default_bundle()
+            universe = cfg["dataset"].get("universe")
+            n_assets = len(universe) if isinstance(universe, (list, tuple)) else len(default.prices.columns)
+            n_days = len(default.prices.index)
+            groups = set(cfg["dataset"].get("feature_groups") or [])
+            n_features = max(1, sum(1 for f in FEATURES.values() if f.group in groups)) if groups else 60
+            params = cfg["model"].get("params") or {}
+            total = resources.dataset_mb(n_assets, n_days, n_features)
+            if "max_rows" in params and "lookback" in params:
+                total += resources.deep_mb(str(cfg["model"]["kind"]), n_features, int(params["lookback"]), int(params.get("hidden", 64)), int(params.get("layers", 1)), int(params.get("batch_size", 256)), int(params["max_rows"]),
+                                           int(params.get("n_heads", 1)))
+            out = resources.preflight(total, "This experiment")
+            out["parts"] = {"features": n_features, "assets": n_assets, "days": n_days}
+            return out
+        except Exception:                                                                 # an estimate must never be the reason a run is refused
+            return {"estimate_mb": None, "free_mb": None, "limit_mb": None, "level": "ok", "message": ""}
 
     def _submit(self, label: str, work) -> dict:
         return self.app.submit_task(label, work, "ml")

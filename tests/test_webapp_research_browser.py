@@ -507,3 +507,47 @@ def test_the_financial_ml_lab_runs_the_pipeline_and_says_what_it_does_and_does_n
     finally:
         assert not page.problems, page.problems
         page.close()
+
+
+def test_a_network_trained_in_the_page_shows_its_epochs_live_and_is_kept_in_the_training_history(browser, live_research):  # noqa: F811
+    page = _open(browser, live_research)
+    try:
+        body = {"dataset": {"feature_groups": ["price", "volatility"]}, "split": {"min_train_days": 400, "refit_every": 250}, "signal": {"n": 2}, "name": "live panel",
+                "model": {"kind": "lstm", "params": {"epochs": 6, "max_rows": 1500, "hidden": 8, "batch_size": 128, "lookback": 8, "patience": 3}}}
+        job = page.evaluate("async (body) => (await QL.api('/api/ml/train', body)).job", body)
+        seen = {"live": False, "message": ""}
+        for _ in range(900):                                                                 # a job's own view, as the page polls it
+            view = page.evaluate("async (id) => await QL.api('/api/job/' + id)", job)
+            if view.get("live") and view["live"].get("run") and view["live"]["run"].get("current"):
+                seen["live"], seen["message"] = True, view["message"]
+                cur = view["live"]["run"]["current"]
+                assert cur["epoch"] >= 1 and cur["train"] is not None and view["live"]["run"]["context"]["model"] == "lstm" and "epoch" in view["message"] and "train" in view["message"]
+            if view["status"] in ("done", "error"):
+                break
+            page.wait_for_timeout(200)
+        assert view["status"] == "done", view.get("error")
+        assert seen["live"], "the job reported the network's epochs while it trained"
+        open_tab(page, "jobs")
+        page.wait_for_selector("[data-role=training-history] table.data tbody tr", timeout=30_000)
+        card = page.locator("[data-role=training-history]")
+        rows = card.locator("table.data tbody tr")
+        assert rows.count() >= 1 and "lstm" in card.inner_text().lower() and "fold" in card.inner_text().lower()
+        card.locator("button:text-is('Show curve')").first.click()
+        page.wait_for_selector("[data-role=training-history] svg.chart", timeout=15_000)
+        assert page.locator("[data-role=job-history] table.data tbody tr").count() >= 1
+        open_tab(page, "data")
+        page.wait_for_selector("[data-role=storage] table.data", timeout=30_000)
+        storage = page.inner_text("[data-role=storage]")
+        assert "app.db" in storage and "training_fits" in storage and "Back up everything" in storage
+        with page.expect_download() as dl:
+            page.click("[data-role=storage] button:text-is('Back up everything')")
+        assert dl.value.suggested_filename.startswith("quant-lab-backup-") and dl.value.suggested_filename.endswith(".zip")
+        import zipfile
+        assert "app.db" in zipfile.ZipFile(dl.value.path()).namelist()
+        open_tab(page, "settings")
+        page.wait_for_selector("[data-role=machine] .tile", timeout=15_000)
+        machine = page.inner_text("[data-role=machine]").lower()
+        assert "cpus it may use" in machine and "memory limit" in machine and "free memory" in machine and "docs/deployment.md" in machine
+    finally:
+        assert not page.problems, page.problems
+        page.close()
