@@ -39,16 +39,16 @@ This page is the audit of the roadmap for Quant Lab: López de Prado's *Advances
 |---|---|---|---|---|---|
 | P0 | Cost-aware constrained optimisation | Active PM ch. 14-16; Cajas ch. 9 | existing | `tca_mvo` (allocator), `src.equity.portfolio.optimise_book`, `src.portfolio.constraints.Constraints` | costs inside the optimiser; long/short books with sector, beta and turnover limits |
 | P1 | Black-Litterman | Cajas ch. 5 | existing | `src.portfolio.black_litterman.black_litterman_posterior`, `black_litterman` (allocator) | equilibrium prior and relative views; Idzorek confidence in the allocator |
-| P1 | Augmented and Bayesian Black-Litterman | Cajas ch. 5 | partial | `src.portfolio.bayesian.bayesian_weights` | Bayesian mean-variance (normal-inverse-Wishart) exists; the augmented BL with factor views does not |
+| P1 | Augmented and Bayesian Black-Litterman | Cajas ch. 5 | built | `src.portfolio.bayesian.bayesian_weights`, `src.portfolio.augmented_bl.augmented_posterior` | Bayesian mean-variance (normal-inverse-Wishart) existed; views on factors as well as assets are the augmented-universe construction, which reduces to ordinary BL with asset views only. The book's own formulas for its augmented model were not available to check against |
 | P1 | Drawdown and tail-risk optimisation: CVaR | Cajas ch. 7-8 | existing | `src.portfolio.cvar_optimize.mean_cvar_weights` | linear programme on scenarios |
 | P1 | Drawdown and tail-risk optimisation: CDaR, maximum drawdown, EVaR | Cajas ch. 7-8 | built | `src.portfolio.drawdown.cdar_weights`, `src.portfolio.drawdown.max_drawdown_weights`, `src.portfolio.drawdown.evar_weights` | linear programmes on the scenario path (uncompounded) and a smooth convex programme for EVaR |
 | P1 | HERC | Cajas ch. 12 | existing | `src.portfolio.hierarchical.herc_weights`, `src.portfolio.hierarchical.hrp_weights` | Ward clusters chosen by silhouette |
 | P1 | Nested clustered optimisation | Cajas ch. 12 | built | `src.portfolio.nco.nco_weights` | minimum variance, maximum Sharpe or risk parity inside and between clusters; optional detoning for the clustering |
 | P1 | Risk budgeting / risk parity | Cajas ch. 10 | existing | `src.portfolio.risk_parity.risk_parity_weights`, `risk_budget` (allocator) | Newton and SLSQP, budgets by asset class |
-| P2 | Graph-based portfolios | Cajas ch. 13 | partial | `src.portfolio.graph_portfolio.hsp_weights`, `src.portfolio.graph_portfolio.centrality_weights` | MST/TMFG, centrality and hierarchical sensitivity parity exist; a constraint that caps concentration inside a graph neighbourhood does not |
-| P2 | Robust optimisation | Cajas ch. 11 | partial | `src.portfolio.mean_variance.robust_weights`, `src.portfolio.mean_variance.resampled_weights` | ellipsoidal uncertainty and Michaud resampling exist; worst-case over a Wasserstein ball does not |
+| P2 | Graph-based portfolios | Cajas ch. 13 | built | `src.portfolio.graph_portfolio.hsp_weights`, `src.portfolio.graph_portfolio.centrality_weights`, `src.portfolio.graph_constrained.graph_capped_weights` | MST/TMFG, centrality and hierarchical sensitivity parity existed; a cap on the weight inside every asset's neighbourhood of the graph is new, and refuses a hub that makes the cap impossible |
+| P2 | Robust optimisation | Cajas ch. 11 | built | `src.portfolio.mean_variance.robust_weights`, `src.portfolio.mean_variance.resampled_weights`, `src.portfolio.robust_wasserstein.wasserstein_cvar_weights` | ellipsoidal uncertainty and Michaud resampling existed; the worst-case CVaR over a Wasserstein ball (CVaR + eps ||w|| / beta, attained by moving the worst scenarios) is new, solved exactly by cutting planes |
 | P2 | Near-optimal centering | Cajas ch. 11 | built | `src.portfolio.near_optimal.near_optimal_center`, `src.portfolio.near_optimal.weight_dispersion` | the analytic centre of the portfolios within a tolerance of the best utility; resampling stability measured |
-| P1 | Optimiser comparison on identical windows, costs and caps | Cajas ch. 1 | built | `src.portfolio.lab.compare` | 17 methods, six covariance estimators; fallbacks counted; cap and weight stability reported |
+| P1 | Optimiser comparison on identical windows, costs and caps | Cajas ch. 1 | built | `src.portfolio.lab.compare` | 19 methods, six covariance estimators; fallbacks counted; cap and weight stability reported; one method can be kept in a research session |
 | P2 | Higher-moment optimisation | Cajas ch. 3, 7 | not built | none | deliberately: skewness and kurtosis are poorly estimated for large portfolios; add only against a simpler benchmark that it beats out of sample |
 | P2 | Copula scenarios and tail dependence | Cajas ch. 6, 14 | existing | `src.probability.copulas.simulate_joint`, `src.scenarios.generators.copula`, `src.probability.copulas.empirical_tail_dependence` | Gaussian, Student, Clayton, Gumbel, Frank; empirical or EVT marginals |
 
@@ -84,4 +84,4 @@ This page is the audit of the roadmap for Quant Lab: López de Prado's *Advances
 
 ## Summary
 
-46 items: 27 built, 13 existing, 3 partial, 3 not built.
+46 items: 30 built, 13 existing, 0 partial, 3 not built.

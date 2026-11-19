@@ -76,6 +76,36 @@ def backtest_artifact(result: dict, *, job_id: str = "", code_version: str = "un
             "refs": {"job": job_id, "code_version": code_version, "spec_hash": fingerprint(result["spec"]), "dataset": ctx["dataset_version"]}, "notes": notes}
 
 
+def portfolio_lab_artifact(result: dict, method: str, *, job_id: str = "", code_version: str = "unknown") -> dict:
+    """The artifact of ONE method of a finished Portfolio-lab study (``result`` is the job's result). Its net equity curve is the series; the equal-weight run on the same windows is the benchmark; the metrics are its
+    row of the table, and ``n_trials`` is how many methods the study tried, because choosing the best of them is a selection that its Sharpe ratio does not account for."""
+    for key in ("table", "equity", "config", "universe"):
+        if key not in result:
+            raise StoreError("this job did not produce a portfolio study")
+    rows = {r["key"]: r for r in result["table"]}
+    if method not in rows:
+        raise StoreError(f"the study has no method {method!r}: it has {', '.join(rows)}")
+    dates, series = list(result["equity"]["dates"]), result["equity"]["series"]
+    equity = _clean_series(series[method])
+    if len(equity) != len(dates):
+        raise StoreError("the study's dates and equity curve do not match")
+    row, cfg, uni = rows[method], result["config"], result["universe"]
+    names = {"sharpe": "sharpe", "sharpe_se": "sharpe_se", "ann_return": "ann_return", "ann_vol": "ann_vol", "max_drawdown": "max_drawdown", "cdar_95": "cdar_95", "turnover_per_year": "turnover", "effective_n": "effective_n",
+             "diversification_ratio": "diversification_ratio", "capped": "capped_weight", "fallbacks": "fallbacks", "instability": "instability"}
+    metrics = {dst: float(row[src]) for src, dst in names.items() if isinstance(row.get(src), (int, float)) and not isinstance(row.get(src), bool) and math.isfinite(row[src])}
+    metrics["n_trials"] = float(len(rows))
+    benches = {"Equal weight": _clean_series(series["equal_weight"])} if "equal_weight" in series and method != "equal_weight" and len(series["equal_weight"]) == len(dates) else {}
+    ctx = {"assets": list(uni.get("tickers", [])), "start": dates[0], "end": dates[-1], "frequency": "daily", "data_source": str(uni.get("source") or "platform"),
+           "dataset_version": fingerprint(uni.get("tickers"), cfg.get("first"), cfg.get("last"), cfg.get("rows"), uni.get("source"))}
+    notes = [f"One method ({row.get('method', method)}) of a study that tried {len(rows)}: the Sharpe ratio is not corrected for having chosen it from them. Each rebalance used only the trailing {cfg.get('lookback')} days, so the weights are "
+             "walk-forward, but which method to look at was decided with the whole result in view; this is a historical simulation, not out-of-sample evidence."]
+    if row.get("fallbacks"):
+        notes.append(f"The method failed on {int(row['fallbacks'])} rebalance date(s) and equal weight was used there.")
+    return {"kind": "portfolio_lab", "title": f"Portfolio lab: {row.get('method', method)}"[:120], "evidence": "historical_simulation", "data_kind": data_kind(str(uni.get("source", "")), None), "context": ctx,
+            "config": {"method": method, "study": {k: v for k, v in cfg.items() if isinstance(v, (int, float, str))}, "methods_tried": list(rows)}, "metrics": metrics,
+            "series": {"dates": dates, "equity": equity, "benchmarks": benches}, "refs": {"job": job_id, "code_version": code_version, "dataset": ctx["dataset_version"]}, "notes": notes}
+
+
 def ml_artifact(report: dict, returns: pd.DataFrame, *, code_version: str = "unknown") -> dict:
     """The artifact of a saved machine-learning experiment (``report`` is its ``report.json``, ``returns`` its ``returns.parquet``): its out-of-sample net returns, never the in-sample fit."""
     if returns is None or not len(returns) or "net" not in returns:

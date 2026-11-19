@@ -41,9 +41,9 @@ Two covariance estimators were added and reach `estimate_covariance`: the **grap
 
 ## Portfolios (`src/portfolio`)
 
-New: **nested clustered optimisation**, **CDaR**, **maximum drawdown** and **EVaR** optimisation, **near-optimal centering**, and the comparison harness. Three are registered as allocators, so the Backtest tab can run them with its own engine, costs and tearsheet: `nco`, `near_optimal` and `cdar`.
+New: **nested clustered optimisation**, **CDaR**, **maximum drawdown** and **EVaR** optimisation, **near-optimal centering**, **Wasserstein-robust CVaR** (the worst case over a ball of distributions around the scenarios: the CVaR plus `eps ||w|| / beta`, so a larger ball asks for a less concentrated portfolio), **neighbourhood caps on a graph of the assets** (the weight inside each asset's neighbourhood of the minimum spanning tree or TMFG is at most a cap; a hub that makes that impossible is refused), **Black-Litterman with views on factors** (the augmented-universe construction), and the comparison harness. Three are registered as allocators, so the Backtest tab can run them with its own engine, costs and tearsheet: `nco`, `near_optimal` and `cdar`.
 
-The harness (`portfolio.lab.compare`) runs 17 methods like for like:
+The harness (`portfolio.lab.compare`) runs 19 methods like for like:
 
 * the same trailing window on every rebalance, the same covariance estimator, the same shrunk expected returns, the same holding period with weights drifting between rebalances, the same trading cost, and the same cap on a position;
 * a method that fails on a date falls back to equal weight there, and **the number of fallbacks is in the table**;
@@ -73,5 +73,5 @@ quant lab trading SPY QQQ IWM EFA EEM TLT GLD --signal reversal --cost-bps 10
 * **No claim that a method is better.** Each was tested against a world whose truth was planted (an AR(1) signal of known decay, a factor structure of known loadings, a covariance whose optimum is closed-form, Brownian motion with a known drawdown law) and against brute-force searches and hand calculations. That shows the code does what its definition says, not that the method pays.
 * **Price-based signals only in the page.** Consensus-relative valuation and smart-beta decomposition need data the platform does not have; higher-moment optimisation is left out on purpose, because skewness and kurtosis are poorly estimated for large portfolios. See [the audit](roadmap_audit.md) for the full list.
 * **The fundamental (cross-sectional) factor model is in the library, not the page**, because it needs exposures you supply.
-* **A run is not saved to a research session yet.**
+* **A portfolio study can be kept in a research session, one method at a time** (*Keep a method in a research session*): its net equity curve, the equal-weight run as benchmark and its row of the table, so it can be compared with other results. Its Sharpe ratio is not corrected for having been chosen from the methods tried, and the saved note says so. The alpha, risk and trading studies are not saved yet.
 * **Capacity is a model.** The square-root law has a coefficient of order one, and the page does not have volume data; `capacity_curve` takes yours. The backtest module's `capacity_curve` has the fuller version with volume bands.

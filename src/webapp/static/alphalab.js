@@ -9,7 +9,7 @@
   const num = (v, d = 2) => (v === null || v === undefined || !isFinite(v) ? "n/a" : Q.num(v, d)), pct = (v, d = 1) => (v === null || v === undefined || !isFinite(v) ? "n/a" : Q.pct(v, d));
   const root = $("#alphalab");
   const MODES = [["alpha", "Alpha"], ["risk", "Risk"], ["portfolio", "Portfolio"], ["trading", "Trading"]];
-  const S = { mode: "alpha", plan: null, busy: false, results: {}, form: { tickers: "", start: "", source: "", signal: "momentum", horizon: 5, kind: "statistical", n_factors: "", methods: null, config: {}, trading: { cost_bps: 5, target_gross: 1, lag: 1 }, long_only: true }, weightsOf: null };
+  const S = { mode: "alpha", plan: null, busy: false, results: {}, form: { tickers: "", start: "", source: "", signal: "momentum", horizon: 5, kind: "statistical", n_factors: "", methods: null, config: {}, trading: { cost_bps: 5, target_gross: 1, lag: 1 }, long_only: true }, weightsOf: null, jobs: {} };
   const colors = () => ["--s1", "--s2", "--s3", "--s4", "--s5", "--s6", "--s7", "--s8"].map(css);
 
   function defaults() {
@@ -77,6 +77,7 @@
     const mode = S.mode; S.busy = true; btn.disabled = true; status.textContent = "Starting…";
     try {
       const { job } = await api("/api/lab/" + mode, body());
+      S.jobs[mode] = job;
       S.results[mode] = await Q.waitJob(job, (v) => { status.textContent = `${v.message} (${Math.round(v.elapsed)} s)`; }, 1000);
     } catch (e) { S.busy = false; status.textContent = ""; toast(e.message); h("div", "banner err", $("#lab-results") || root, e.message); btn.disabled = false; return; }
     S.busy = false; draw();
@@ -163,6 +164,19 @@
       { label: "Max drawdown", num: true, get: (x) => pct(x.max_drawdown) }, { label: "CDaR 95%", num: true, get: (x) => pct(x.cdar_95, 2) }, { label: "Turnover / year", num: true, get: (x) => num(x.turnover_per_year, 1) }, { label: "Effective N", num: true, get: (x) => num(x.effective_n, 1) },
       { label: "Diversification", num: true, get: (x) => num(x.diversification_ratio, 2) }, { label: "Largest weight", num: true, get: (x) => pct(x.max_weight, 0) }, { label: "Weight moved by cap", num: true, get: (x) => pct(x.capped, 1) }, { label: "Instability", num: true, get: (x) => (x.instability === null ? "not run" : num(x.instability, 2)) },
       { label: "Fallbacks", num: true, get: (x) => String(x.fallbacks) }, { label: "Sharpe 1st / 2nd half", num: true, get: (x) => `${num(x.sharpe_first_half, 2)} / ${num(x.sharpe_second_half, 2)}` }], rows);
+    const keep = h("div", "card", out); keep.dataset.role = "lab-pf-keep"; h("h3", "", keep, "Keep a method in a research session");
+    h("p", "hint", keep, `Saves one method's net equity curve, with the equal-weight run as its benchmark and its row of the table, to a research session so it can be compared with other results. Its Sharpe ratio is not corrected for having been picked from ${rows.length} methods: the saved note says so.`);
+    const krow = h("div", "row", keep), ksel = h("select", "", krow); ksel.dataset.key = "keep_method"; ksel.setAttribute("aria-label", "Method to keep");
+    for (const x of rows) { const o = h("option", "", ksel, x.method); o.value = x.key; }
+    const kbtn = h("button", "btn", krow, "Save to session"); kbtn.type = "button"; const kstat = h("span", "hint", krow); kstat.setAttribute("role", "status");
+    kbtn.addEventListener("click", async () => {
+      kbtn.disabled = true; kstat.textContent = "Saving…";
+      try {
+        const s = await Q.research.ensure("Portfolio lab"); await api("/api/research/artifact/save", { session: s.id, job: S.jobs.portfolio, method: ksel.value });
+        await Q.research.refresh(); kstat.textContent = `Saved to "${s.name}".`; toast(`Saved to "${s.name}"`);
+      } catch (e) { kstat.textContent = ""; toast(e.message); }
+      kbtn.disabled = false;
+    });
     const eq = r.equity, keys = Object.keys(eq.series), ranked = rows.slice().sort((a, b) => (b.sharpe || -9) - (a.sharpe || -9)).map((x) => x.key), pick = [...new Set([...(keys.includes("equal_weight") ? ["equal_weight"] : []), ...ranked])].slice(0, 8), c = colors(), label = Object.fromEntries(rows.map((x) => [x.key, x.method]));
     const ec = Q.chartCard(out, "Growth of 1, net of costs", pick.length < keys.length ? `The equal-weight baseline and the highest-Sharpe methods (${pick.length} of ${keys.length}); the table has them all.` : "Every method over the same dates.",
       { wide: true, draw: (b) => C.line(b, { dates: eq.dates, series: pick.map((k, i) => ({ name: label[k], color: c[i % 8], values: eq.series[k] })), baseline: 1, yFormat: (v) => v.toFixed(2) }),

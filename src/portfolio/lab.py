@@ -108,6 +108,21 @@ def _evar(w, c):
     return r["weights"]
 
 
+def _wasserstein(w, c):
+    from .robust_wasserstein import wasserstein_cvar_weights
+
+    r = wasserstein_cvar_weights(w, eps=0.0005, alpha=0.95)
+    if not r["ok"]:
+        raise RuntimeError(r["message"])
+    return r["weights"]
+
+
+def _graph_capped(w, c):
+    from .graph_constrained import graph_capped_weights
+
+    return graph_capped_weights(pd.DataFrame(c["cov"], index=w.columns, columns=w.columns), "mst", cap=0.5, hops=1)["weights"]
+
+
 def _mean_variance(w, c):
     return noc.optimum(c["mu"], c["cov"], c["lam"])
 
@@ -157,6 +172,8 @@ METHODS = {m.key: m for m in [
     Method("cdar", "CDaR (95%)", "drawdown", False, _cdar, "minimise the conditional drawdown at risk of the window's path"),
     Method("max_drawdown", "Minimum max drawdown", "drawdown", False, _max_dd),
     Method("evar", "EVaR (95%)", "tail", False, _evar, "entropic value at risk"),
+    Method("wasserstein_cvar", "Wasserstein-robust CVaR", "tail", False, _wasserstein, "worst CVaR over a ball of radius 5 bp around the window's scenarios: CVaR + eps ||w|| / 5%"),
+    Method("graph_capped", "Graph-capped minimum variance", "hierarchical", False, _graph_capped, "minimum variance with at most 50% inside any asset's neighbourhood on the minimum spanning tree"),
 ]}
 COV_METHODS = ("sample", "shrinkage", "ewma", "pca_denoised", "graphical_lasso", "factor")
 

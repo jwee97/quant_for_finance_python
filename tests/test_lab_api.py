@@ -101,3 +101,24 @@ def test_signals_are_kept_with_versions_and_an_unchanged_signal_keeps_its_versio
     assert app.extra_post["/api/lab/signals/delete"]({"name": "trend_a"})["deleted"] == "trend_a" and app.extra_get["/api/lab/signals"]({})["signals"] == []
     bad = _wait(app, app.extra_post["/api/lab/signals/register"]({"tickers": SIX, "signal": "trend", "name": "../x"})["job"], 60)
     assert bad["status"] == "error" and "name" in bad["error"]
+
+
+def test_a_method_of_a_portfolio_study_is_kept_in_a_session_with_its_benchmark_and_the_number_of_methods_tried(app):
+    view = _wait(app, app.extra_post["/api/lab/portfolio"]({"tickers": SIX, "methods": ["equal_weight", "hrp", "nco"], "config": {"step": 63}})["job"], 300)
+    assert view["status"] == "done", view
+    post = app.extra_post
+    session = post["/api/research/session/create"]({"name": "Portfolio lab", "context": {"assets": ["aaa", "bbb", "ccc", "ddd", "eee", "fff"], "start": "2012-01-02"}})["session"]
+    art = post["/api/research/artifact/save"]({"session": session["id"], "job": view["id"], "method": "hrp"})["artifact"]
+    assert art["kind"] == "portfolio_lab" and art["evidence"] == "historical_simulation" and art["title"].startswith("Portfolio lab: Hierarchical")
+    full = app.extra_get["/api/research/artifact"]({"id": art["id"]})
+    dates, equity = full["series"]["dates"], full["series"]["equity"]
+    assert len(dates) == len(equity) > 1000 and len(full["series"]["benchmarks"]["Equal weight"]) == len(dates), "the whole daily curve is kept, not a thinned one"
+    assert full["metrics"]["n_trials"] == 3 and "sharpe" in full["metrics"] and full["config"]["method"] == "hrp" and any("not corrected for having chosen it" in n for n in full["notes"])
+    assert full["context"]["assets"] == ["AAA", "BBB", "CCC", "DDD", "EEE", "FFF"] and full["refs"]["job"] == view["id"]
+    eq_art = post["/api/research/artifact/save"]({"session": session["id"], "job": view["id"], "method": "equal_weight"})["artifact"]
+    cmp = post["/api/research/compare"]({"artifacts": [art["id"], eq_art["id"]]})
+    assert len(cmp["artifacts"]) == 2 and not any(a["kind"] != "portfolio_lab" for a in cmp["artifacts"])
+    with pytest.raises(ApiError, match="which method"):
+        post["/api/research/artifact/save"]({"session": session["id"], "job": view["id"]})
+    with pytest.raises(ApiError, match="no method"):
+        post["/api/research/artifact/save"]({"session": session["id"], "job": view["id"], "method": "oracle"})

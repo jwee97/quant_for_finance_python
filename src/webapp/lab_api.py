@@ -189,7 +189,6 @@ class LabApi:
             except pl.LabError as error:
                 raise ApiError(str(error)) from None
             eq = res["equity"]
-            step = max(1, len(eq) // 400)
             table = res["table"].copy()
             rows = []
             for key, r in table.iterrows():
@@ -199,7 +198,7 @@ class LabApi:
                 d["note"] = res["notes"].get(key, "")
                 rows.append(d)
             last = {k: {a: float(x) for a, x in w.iloc[-1].items()} for k, w in res["weights"].items()}
-            return {"table": rows, "equity": {"dates": [str(d.date()) for d in eq.index[::step]], "series": {k: [round(float(x), 5) for x in eq[k].to_numpy()[::step]] for k in eq.columns}}, "last_weights": last,
+            return {"table": rows, "equity": {"dates": [str(d.date()) for d in eq.index], "series": {k: [round(float(x), 6) for x in eq[k].to_numpy()] for k in eq.columns}}, "last_weights": last,
                     "mean_weights": {k: {a: float(x) for a, x in w.mean().items()} for k, w in res["weights"].items()}, "rebalances": res["rebalances"], "config": res["config"], "universe": {"source": universe.get("source"), "tickers": tickers},
                     "notes": ["Every method saw the same windows, covariance estimate, caps and costs.",
                               "Sharpe standard errors are large: a difference smaller than about two of them is not evidence that one method is better.",

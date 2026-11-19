@@ -540,6 +540,10 @@ def test_the_alpha_and_portfolio_lab_runs_each_study_and_shows_what_it_found(bro
         assert page.locator("[data-role=lab-pf-table] table.data tbody tr").count() == 6 and "Equal weight" in page.inner_text("[data-role=lab-pf-table]") and "Fallbacks" in page.inner_text("[data-role=lab-pf-table]")
         for role in ("lab-pf-equity", "lab-pf-weights"):
             page.wait_for_selector(f"[data-role={role}] svg.chart", timeout=30_000)
+        assert "not corrected for having been picked" in page.inner_text("[data-role=lab-pf-keep]")
+        page.select_option("#alphalab select[data-key=keep_method]", "hrp")
+        page.click("[data-role=lab-pf-keep] button:text-is('Save to session')")
+        page.wait_for_selector("[data-role=lab-pf-keep] .hint[role=status]:has-text('Saved to')", timeout=60_000)
         page.locator("[data-role=lab-pf-equity] .legend [role=button]").nth(1).click()                      # the shared chart kit: a legend that hides a series
         assert page.locator("[data-role=lab-pf-equity] .legend [aria-pressed=false]").count() == 1
         page.click("#alphalab .seg button[data-mode=trading]")
