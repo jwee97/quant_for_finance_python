@@ -249,6 +249,14 @@ def estimate_covariance(returns: pd.DataFrame, method: str = "shrinkage", lookba
         cov, _ = ledoit_wolf_shrinkage(window, target, delta, annualise)
     elif method == "pca_denoised":
         cov = pca_denoised_covariance(window, annualise=annualise)
+    elif method == "graphical_lasso":
+        from ..riskengine.covariance import graphical_lasso_covariance
+
+        cov = graphical_lasso_covariance(window, annualise=annualise)["covariance"]
+    elif method == "factor":
+        from ..riskengine.factor_model import fit_statistical
+
+        cov = fit_statistical(window.dropna(axis=1, how="any"), min_obs=min(60, max(len(window) - 1, 10))).covariance(252.0 if annualise else None)
     else:
         raise ValueError(f"unknown covariance method '{method}'")
     return nearest_positive_definite(cov, min_eigenvalue)
