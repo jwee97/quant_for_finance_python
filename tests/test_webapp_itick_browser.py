@@ -17,7 +17,7 @@ from tests import free_data_helpers as fh
 from tests.free_data_helpers import FakeFeeds, cboe_payload
 from tests.ml_helpers import make_bundle
 from tests.test_webapp import _fetch
-from tests.test_webapp_browser import browser  # noqa: F401  (the module's Chromium fixture)
+from tests.test_webapp_browser import browser, open_tab  # noqa: F401  (the module's Chromium fixture)
 from tests.test_webapp_data import CBOE, YAHOO, _crypto_routes, yahoo_route
 from tests.test_webapp_workspaces_browser import _mode, _wait_until
 
@@ -337,7 +337,7 @@ def test_the_futures_card_searches_every_future_yahoo_lists_asks_yahoo_for_a_wor
 def test_the_itick_cards_fit_a_phone(browser, live_itick, tab, results):  # noqa: F811
     pg = _page(browser, live_itick, width=390, height=800)
     try:
-        pg.click(f"#tab-{tab}")
+        open_tab(pg, tab)
         pg.wait_for_selector(results, timeout=90_000)
         if tab == "options":
             pg.locator("#options input[data-key=prices]").check()

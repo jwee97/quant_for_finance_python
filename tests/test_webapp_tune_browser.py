@@ -15,7 +15,7 @@ from src.webapp.universe import TickerStore, UniverseBuilder
 from tests.ml_helpers import make_bundle
 from tests.test_tune_api import FakePipeline
 from tests.test_webapp import _fetch
-from tests.test_webapp_browser import _page_with, browser  # noqa: F401  (the module's Chromium fixture)
+from tests.test_webapp_browser import _page_with, browser, open_tab  # noqa: F401  (the module's Chromium fixture)
 from tests.test_webapp_workspaces_browser import _wait_until
 
 sync_api = pytest.importorskip("playwright.sync_api")
@@ -47,7 +47,7 @@ def _page(browser, live, width=1400):  # noqa: F811
 
 
 def _open_tune(page, strategy="kalman_trend"):
-    page.click("#tab-tune")
+    open_tab(page, "tune")
     page.wait_for_selector(".tuneset")
     if strategy:
         page.select_option("[data-role=tune-strategy]", strategy)

@@ -599,8 +599,15 @@ def _refused(page):
     page.problems[:] = [p for p in page.problems if "status of 400" not in p]
 
 
-def _lab_run(page, tab, wait_for, timeout=90_000):
+def open_tab(page, tab):
+    """Open a tab the way a person does. On a phone the sidebar is a drawer behind the Menu button, so it is opened first; on a wide screen the tab is always there."""
+    if not page.is_visible(f"#tab-{tab}") and page.is_visible("#navtoggle"):
+        page.click("#navtoggle")
     page.click(f"#tab-{tab}")
+
+
+def _lab_run(page, tab, wait_for, timeout=90_000):
+    open_tab(page, tab)
     page.wait_for_selector(f"#{tab} .panel")
     page.click(f"#{tab} .runbar button")
     page.wait_for_selector(wait_for, timeout=timeout)

@@ -21,7 +21,8 @@ sync_api = pytest.importorskip("playwright.sync_api")
 
 CSS = (Path(server.__file__).parent / "static" / "style.css").read_text(encoding="utf-8")
 READY = {"backtest": ".chip", "compare": "#compare .card", "builder": "#builder .card", "tune": "#tune .panel", "forecast": "#forecast .panel", "signals": "[data-role=signals-follows]", "scenarios": "#scenarios .panel", "rates": "#rates .panel", "options": "#options-results .tile", "futures": "#futures-results .tile",
-         "crypto": "#crypto-results .tile", "ml": "#ml-results .card", "fundamentals": "#fundamentals .panel", "exec": "#exec-results .card", "cash": "#cash-results .card", "guides": "#guides .toc"}
+         "crypto": "#crypto-results .tile", "ml": "#ml-results .card", "fundamentals": "#fundamentals .panel", "exec": "#exec-results .card", "cash": "#cash-results .card", "guides": "#guides .toc",
+         "overview": "[data-role=widgets] .widget", "saved": "#saved .card", "experiments": "#experiments .card", "jobs": "#jobs .card", "data": "#data .card", "settings": "#settings .card", "regime": "[data-role=regime-form]", "rcompare": "#rcompare .card"}
 
 
 @pytest.fixture(scope="module")
@@ -105,19 +106,21 @@ def test_every_form_control_has_a_name(pg):
 def test_the_section_tabs_are_reached_with_the_arrow_keys_and_only_the_selected_one_is_in_the_tab_order(pg):
     order = lambda: pg.evaluate("[...document.querySelectorAll('nav.tabs [role=\"tab\"]')].map((t) => [t.id, t.tabIndex, t.getAttribute('aria-selected')])")        # noqa: E731
     first = order()
-    assert [x for x in first if x[1] == 0] == [["tab-backtest", 0, "true"]] and all(x[1] == -1 for x in first[1:])
+    assert [x for x in first if x[1] == 0] == [["tab-backtest", 0, "true"]] and all(x[1] == -1 for x in first if x[0] != "tab-backtest"), "one tab in the tab order: the selected one"
+    ids = [x[0] for x in first]
+    assert ids[0] == "tab-overview" and ids[-1] == "tab-guides" and ids.index("tab-backtest") < ids.index("tab-options") < ids.index("tab-fundamentals") < ids.index("tab-data"), "the order is the sidebar's, group by group"
     pg.focus("#tab-backtest")
-    pg.keyboard.press("ArrowRight")
+    pg.keyboard.press("ArrowDown")
     assert pg.evaluate("document.activeElement.id") == "tab-compare" and pg.get_attribute("#tab-compare", "aria-selected") == "true" and pg.get_attribute("#tab-compare", "tabindex") == "0"
     pg.keyboard.press("End")
     assert pg.evaluate("document.activeElement.id") == "tab-guides" and pg.get_attribute("#tab-backtest", "tabindex") == "-1"
-    pg.keyboard.press("ArrowRight")
-    assert pg.evaluate("document.activeElement.id") == "tab-backtest", "past the last tab it wraps to the first"
-    pg.keyboard.press("ArrowLeft")
+    pg.keyboard.press("ArrowDown")
+    assert pg.evaluate("document.activeElement.id") == "tab-overview", "past the last tab it wraps to the first, across the groups"
+    pg.keyboard.press("ArrowUp")
     assert pg.evaluate("document.activeElement.id") == "tab-guides"
     pg.keyboard.press("Home")
-    assert pg.evaluate("document.activeElement.id") == "tab-backtest"
-    pg.wait_for_selector("#view-backtest:not([hidden])", timeout=10_000)                      # the view follows the key; a machine busy with a whole suite can show it a moment late
+    assert pg.evaluate("document.activeElement.id") == "tab-overview"
+    pg.wait_for_selector("#view-overview:not([hidden])", timeout=10_000)                      # the view follows the key; a machine busy with a whole suite can show it a moment late
 
 
 def test_a_slow_guides_index_does_not_bring_the_guides_tab_back_after_the_reader_has_moved_on(pg):

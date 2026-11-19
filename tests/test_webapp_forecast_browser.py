@@ -17,7 +17,7 @@ from src.webapp.api import App
 from src.webapp.universe import TickerStore, UniverseBuilder
 from tests.ml_helpers import make_bundle
 from tests.test_webapp import _fetch
-from tests.test_webapp_browser import _page_with, browser  # noqa: F401  (the module's Chromium fixture)
+from tests.test_webapp_browser import _page_with, browser, open_tab  # noqa: F401  (the module's Chromium fixture)
 
 sync_api = pytest.importorskip("playwright.sync_api")
 
@@ -48,7 +48,7 @@ def _page(browser, live, width=1400):  # noqa: F811
 
 
 def _open(page):
-    page.click("#tab-forecast")
+    open_tab(page, "forecast")
     page.wait_for_selector("#forecast .panel select[data-role=forecast-ticker]")
     page.wait_for_selector("#forecast .checks input[type=checkbox]")
 

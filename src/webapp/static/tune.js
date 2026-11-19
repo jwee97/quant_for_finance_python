@@ -7,7 +7,7 @@
   const Q = window.QL, W = window.WS, C = Q.C, h = Q.h, css = Q.css, num = Q.num, pct = Q.pct, tile = Q.tile, chartCard = Q.chartCard, table = Q.simpleTable, api = Q.api;
   const GUIDE = "tuning";
   const ACTIVE = new Set(["queued", "running"]);
-  const RUN_WORD = { queued: "Waiting", running: "Running", done: "Finished", error: "Failed", interrupted: "Stopped" };
+  const RUN_WORD = { queued: "Waiting", running: "Running", done: "Finished", error: "Failed", interrupted: "Stopped", cancelled: "Cancelled" };
   const RECENT_MS = 6 * 3600 * 1000;
   const ICON = { good: "✓", mixed: "!", bad: "✗", keep: "=" };                                    // a verdict is never colour alone
   const MEASURES = [["sharpe", "Sharpe ratio"], ["cagr", "Growth a year"], ["vol", "Swings a year"], ["max_drawdown", "Worst fall"]];

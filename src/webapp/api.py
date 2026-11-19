@@ -34,6 +34,10 @@ from ..equity.portfolio import PRESETS as book_presets
 from ..strategies.factor_models import KINDS as learner_kinds
 from ..strategies.factor_timing import CALENDAR_STATES, MACRO_STATES
 from .jobs import ACTIVE, BEAT, JobLog
+
+RETRYABLE = ("error", "cancelled", "interrupted")
+RETRY_KINDS = ("backtest", "regime")                                   # runs whose request is all there is to them: no files, no keys, nothing that changed under them
+REQUEST_LIMIT = 20_000                                               # a request larger than this is not kept with the job
 from .universe import CLASSES, MAX_TICKERS, TickerStore, UniverseBuilder, UniverseError, itick_source, normalise
 
 COMBINATIONS = {
@@ -76,10 +80,10 @@ SAFE_SLUG = re.compile(r"^[a-z0-9][a-z0-9_-]{0,80}$")
 # Cash flows tabs (``/api/exec``, ``/api/cash``); 4 added the Options, Futures, Crypto and Machine learning workspaces (``asset_api``, ``ml_api``); 5 added the Free data downloads of the Options, Futures and
 # Crypto tabs (``data_api``) and the ``downloaded`` source kind those tabs now read; 6 added iTick data to the Futures, Crypto and Options cards; 7 added the Yahoo futures search and the Clear buttons
 # of the background runs (``/api/jobs/clear``); 8 added the Tune tab (``tune_api``); 9 added the Forecast tab (``forecast_api``); 10 added the option-model modes of the Options tab (``models_api``); 11 added the Fundamentals tab (``fundamentals_api``); 12 added the signals board, the strategy settings and the curve views of the Futures tab and the new strategies and
-# views of the Crypto tab; 13 added the implied-distribution and open-interest views, the structure comparison and the backtest sweep of the Options tab and the new scores of the Fundamentals tab; 14 added the Enter reports mode of the Fundamentals tab (financial reports typed or pasted in by the person, stored in the database); 15 added the Rates tab (Nelson-Siegel and Svensson yield curves, the dynamic factors of a history of curves) and the normal (Bachelier) volatility of the Options tab's smile; 16 added the Scenarios tab (resampling, statistical and learned scenario generators, with a quality table); 17 added the Signals tab (follows, one run across markets, changes, a record of every signal issued, a daily schedule and alerts). The page compares it with its own number and says so
+# views of the Crypto tab; 13 added the implied-distribution and open-interest views, the structure comparison and the backtest sweep of the Options tab and the new scores of the Fundamentals tab; 14 added the Enter reports mode of the Fundamentals tab (financial reports typed or pasted in by the person, stored in the database); 15 added the Rates tab (Nelson-Siegel and Svensson yield curves, the dynamic factors of a history of curves) and the normal (Bachelier) volatility of the Options tab's smile; 16 added the Scenarios tab (resampling, statistical and learned scenario generators, with a quality table); 17 added the Signals tab (follows, one run across markets, changes, a record of every signal issued, a daily schedule and alerts). 18 added the research workspace (sessions with a shared context, saved results, the Market Regime Lab and the Research Comparison: ``research_api``). The page compares it with its own number and says so
 # when the server behind it is older (the files were updated while the app was running, so it still runs the old code): the whole page needs 2, and the newer tabs ask for 3 or more on their own, so an
 # older app still runs the Backtest tab.
-API_VERSION = 17
+API_VERSION = 18
 CODE_ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -132,6 +136,10 @@ def parameters(registry_kind: str, name: str, factory) -> list[dict]:
     return out
 
 
+class JobCancelled(BaseException):
+    """Raised from a job's ``progress`` call once somebody asked it to stop: a ``BaseException`` so that a ``work`` function that catches ``Exception`` for its own reasons cannot swallow it."""
+
+
 class Job:
     """One run on the worker: a backtest, a training, a search, a download. ``kind`` says which (``backtest``, ``ml``, ``data`` or ``task``). The table of jobs lives in memory; when a ``sink`` is set (the
     app's :class:`~webapp.jobs.JobLog`) every change of state, and the progress message at most every ``MESSAGE_GAP`` seconds, is also written to disk."""
@@ -143,6 +151,11 @@ class Job:
         self.created, self.result, self.error, self.finished = time.time(), None, None, None
         self.sink = None                                              # called as sink(job, final); set by ``App._register``
         self._saved_at = 0.0
+        self.cancel_event = threading.Event()                         # set by ``App.cancel_job``; honoured at the job's next progress message
+        self.future = None                                            # the pool's handle: a job that has not started can be taken back
+        self.session = None                                           # the research session this run belongs to, when the request named one
+        self.request = None                                           # {"path", "body"} of the request that started it, so that a failed run can be started again
+        self.retry_of = None
 
     @property
     def message(self) -> str:
@@ -165,9 +178,13 @@ class Job:
         result = self.result
         return result["id"] if isinstance(result, dict) and isinstance(result.get("id"), str) else None
 
-    def record(self) -> dict:
-        """The small summary kept on disk and listed by ``/api/jobs`` (never the result)."""
-        return {"id": self.id, "label": self.label, "kind": self.kind, "status": self.status, "message": self._message, "error": self.error, "created": self.created, "finished": self.finished, "ref": self.ref}
+    def record(self, disk: bool = False) -> dict:
+        """The small summary kept on disk and listed by ``/api/jobs`` (never the result). ``disk`` adds the request that started the run (the list does not show it)."""
+        out = {"id": self.id, "label": self.label, "kind": self.kind, "status": self.status, "message": self._message, "error": self.error, "created": self.created, "finished": self.finished, "ref": self.ref,
+               "session": self.session, "retry_of": self.retry_of, "cancelling": self.cancel_event.is_set() and self.status in ACTIVE}
+        if disk and self.request is not None:
+            out["request"] = self.request
+        return out
 
     def view(self) -> dict:
         return {"id": self.id, "label": self.label, "kind": self.kind, "status": self.status, "message": self._message, "error": self.error, "result": self.result,
@@ -197,16 +214,19 @@ class App:
         from .fundamentals_api import FundamentalsApi
         from .models_api import ModelsApi
         from .rates_api import RatesApi
+        from .research_api import ResearchApi
         from .scenarios_api import ScenariosApi
         from .signals_api import SignalsApi
 
         self.extra_get: dict = {"/api/jobs": lambda q=None: self.jobs_list()}   # path -> fn(query: dict) for GET /api/...?a=1&b=2
-        self.extra_post: dict = {"/api/jobs/clear": self.jobs_clear}           # path -> fn(body: dict) for POST /api/...
+        self.extra_post: dict = {"/api/jobs/clear": self.jobs_clear, "/api/jobs/cancel": self.jobs_cancel, "/api/jobs/retry": self.jobs_retry}           # path -> fn(body: dict) for POST /api/...
         self.data = DataApi(self)                                  # the free-data downloads of the three asset tabs (their own worker, apart from the backtests)
         assets = AssetApi(self)
         self.fundamentals = FundamentalsApi(self)                    # the Fundamentals tab: its own database, apart from the backtests' price files
         self.signals = SignalsApi(self, assets)                      # the Signals tab: kept, so the command line and the daily schedule reach the same book
-        for part in (assets, MlApi(self), self.data, TuneApi(self), ForecastApi(self), ModelsApi(self, assets), self.fundamentals, RatesApi(self), ScenariosApi(self), self.signals):
+        ml = MlApi(self)
+        self.research = ResearchApi(self, ml)                       # sessions, saved results, the regime lab and the comparison (data/user/research)
+        for part in (assets, ml, self.data, TuneApi(self), ForecastApi(self), ModelsApi(self, assets), self.fundamentals, RatesApi(self), ScenariosApi(self), self.signals, self.research):
             self.extra_get.update(part.get_routes())
             self.extra_post.update(part.post_routes())
 
@@ -406,7 +426,7 @@ class App:
         capital = self._capital(body)
         self._account(body)                                                                             # a broker fee that makes no sense is refused before the run, not after it
         job = self._register(Job(spec["name"], "backtest"))
-        self._pool.submit(self._run, job, spec, tickers, body, capital)
+        job.future = self._pool.submit(self._run, job, spec, tickers, body, capital)
         return {"job": job.id}
 
     def _register(self, job: Job) -> Job:
@@ -415,7 +435,7 @@ class App:
             for old in list(self.jobs)[:-60]:
                 self.jobs.pop(old, None)
             start, self._beating = not self._beating, True
-        job.sink = lambda j, final: self.joblog.save(j.record(), j.result if final and j.status == "done" else None)
+        job.sink = lambda j, final: self.joblog.save(j.record(disk=True), j.result if final and j.status == "done" else None)
         job.save()
         if start:
             threading.Thread(target=self._beat, name="job-heartbeat", daemon=True).start()
@@ -441,19 +461,34 @@ class App:
         if lane not in ("compute", "data"):
             raise ValueError("lane must be compute or data")
         job = self._register(Job(label, kind))
-        (self._data_pool if lane == "data" else self._pool).submit(self._run_task, job, work)
+        job.future = (self._data_pool if lane == "data" else self._pool).submit(self._run_task, job, work)
         return {"job": job.id}
+
+    @staticmethod
+    def _cancelled(job: Job, note: str) -> None:
+        job.status, job.message, job.result, job.error = "cancelled", note, None, None
 
     @staticmethod
     def _run_task(job: Job, work) -> None:
         def progress(text: str) -> None:
+            if job.cancel_event.is_set():
+                raise JobCancelled()
             job.message = str(text)
 
         try:
+            if job.cancel_event.is_set():
+                App._cancelled(job, "cancelled before it started")
+                job.finished = time.time()
+                job.save(final=True)
+                return
             job.status, job.message = "running", "starting"
             job.save()
             job.result = clean(work(progress))
             job.status, job.message = "done", "finished"
+            if job.cancel_event.is_set():                           # the work ended before it reached a point where it could stop: its result is thrown away, not half kept
+                App._cancelled(job, "cancelled: the run had already finished its work, so its result was discarded")
+        except JobCancelled:
+            App._cancelled(job, "cancelled while running")
         except (ApiError, ValueError, KeyError) as error:
             job.status, job.error = "error", str(error.args[0] if isinstance(error, KeyError) and error.args else error)
         except Exception as error:                                   # a bug must reach the user as a message, not a hung page
@@ -475,9 +510,16 @@ class App:
 
     def _run(self, job: Job, spec: dict, tickers: list[str], body: dict, capital: float = 100_000.0) -> None:
         def progress(text: str) -> None:
+            if job.cancel_event.is_set():
+                raise JobCancelled()
             job.message = text
 
         try:
+            if job.cancel_event.is_set():
+                self._cancelled(job, "cancelled before it started")
+                job.finished = time.time()
+                job.save(final=True)
+                return
             job.status, job.message = "running", "building the universe (downloading any new tickers)"
             job.save()
             started = time.perf_counter()
@@ -500,6 +542,10 @@ class App:
                 job.result["warning"] = ("This strategy held (almost) no positions. With the calibrated forecast the framework holds nothing when a signal has not paid in the past; "
                                          "choose 'Trade the signal as written' under Portfolio, or check that the signal has enough history.")
             job.status, job.message = "done", "finished"
+            if job.cancel_event.is_set():
+                self._cancelled(job, "cancelled: the run had already finished its work, so its result was discarded")
+        except JobCancelled:
+            self._cancelled(job, "cancelled while running")
         except (ApiError, UniverseError, ValueError, KeyError) as error:
             job.status, job.error = "error", str(error.args[0] if isinstance(error, KeyError) and error.args else error)
         except Exception as error:                                   # a model bug must reach the user as a message, not a hung page
@@ -527,12 +573,73 @@ class App:
         with self._lock:
             live = {j.id: j.record() | {"elapsed": round((j.finished or time.time()) - j.created, 1)} for j in self.jobs.values()}
         rows = list(live.values())
+        requests = {r["id"]: bool(r.get("request")) for r in self.joblog.records()}
         for record in self.joblog.records():
             if record["id"] not in live:
-                rows.append({k: record.get(k) for k in ("id", "label", "kind", "status", "message", "error", "created", "finished", "ref")}
+                rows.append({k: record.get(k) for k in ("id", "label", "kind", "status", "message", "error", "created", "finished", "ref", "session", "retry_of")}
                             | {"elapsed": round(float(record.get("finished") or record.get("updated") or time.time()) - float(record.get("created") or 0.0), 1)})
+        for r in rows:
+            r["cancellable"] = r["status"] in ACTIVE and r["id"] in self.jobs                           # only a run that is going in this app can be told to stop
+            r["retryable"] = r["status"] in RETRYABLE and requests.get(r["id"], False) and r.get("kind") in RETRY_KINDS
         rows.sort(key=lambda r: float(r["created"] or 0.0), reverse=True)
         return clean({"jobs": rows[:60], "active": sum(r["status"] in ACTIVE for r in rows)})
+
+    def jobs_cancel(self, body: dict) -> dict:
+        """``POST /api/jobs/cancel`` ``{"id"}``: ask a queued or running job to stop. A job that has not started is taken off the queue at once; a running one stops at its next progress message (a run that
+        does not report progress finishes its work and its result is then discarded). Either way a cancelled job leaves no result. Returns the job's new state."""
+        job_id = str(body.get("id") or "")
+        with self._lock:
+            job = self.jobs.get(job_id)
+        if job is None:
+            raise ApiError("this run is not going in this app (it finished, or the app was restarted)")
+        if job.status not in ACTIVE:
+            raise ApiError(f"this run is already {job.status}")
+        job.cancel_event.set()
+        if job.status == "queued" and job.future is not None and job.future.cancel():
+            self._cancelled(job, "cancelled before it started")
+            job.finished = time.time()
+            job.save(final=True)
+        else:
+            job.message = "cancelling: it stops at its next checkpoint"
+            job.save()
+        return {"id": job.id, "status": job.status, "message": job.message}
+
+    def jobs_retry(self, body: dict) -> dict:
+        """``POST /api/jobs/retry`` ``{"id"}``: start a failed, cancelled or interrupted run again from the beginning, with the request that started it. Only the kinds in ``RETRY_KINDS`` can be
+        started again this way, and nothing is resumed: a new job is made and says which one it repeats."""
+        job_id = str(body.get("id") or "")
+        live = self.jobs.get(job_id)
+        record = self.joblog.get(job_id)
+        raw = next((r for r in self.joblog.records() if r["id"] == job_id), None)
+        if live is None and (record is None or raw is None):
+            raise ApiError("unknown run")
+        status, kind = (live.status, live.kind) if live is not None else (record["status"], record["kind"])      # the run in this app is the truth; its file may be a moment behind
+        req = live.request if live is not None else raw.get("request")
+        if status not in RETRYABLE:
+            raise ApiError(f"only a failed, cancelled or interrupted run can be started again; this one is {status}")
+        if not req or kind not in RETRY_KINDS:
+            raise ApiError("this kind of run cannot be started again from here: start it again from its own tab")
+        fn = self.submit if req["path"] == "/api/backtest" else self.extra_post.get(req["path"])
+        if fn is None:
+            raise ApiError("the request that started this run is no longer available")
+        out = fn(dict(req["body"]))
+        new = self.jobs.get(out.get("job"))
+        if new is not None:
+            new.retry_of, new.request = job_id, req                                          # the new run keeps the original request (not "retry this id"), so it can be repeated again
+            new.session = live.session if live is not None else raw.get("session")
+            new.save()
+        return out
+
+    def with_request(self, path: str, fn, body: dict):
+        """Run a POST handler and, when it started a job, remember the request on that job (for a retry) and the research session the request named."""
+        out = fn(body)
+        job = self.jobs.get(out.get("job")) if isinstance(out, dict) else None
+        if job is not None and job.request is None:
+            if len(json.dumps(body, default=str)) <= REQUEST_LIMIT:
+                job.request = {"path": path, "body": body}
+            job.session = str(body["session"]) if isinstance(body.get("session"), str) and re.fullmatch(r"[0-9a-f]{12}", body["session"]) else None
+            job.save()
+        return out
 
     def jobs_clear(self, body: dict) -> dict:
         """``POST /api/jobs/clear``: take runs off the list. ``{"id": ...}`` clears one (a run that is really going in this app cannot be: it would only come back, and a run cannot be stopped from here);

@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import pytest
 
-from tests.test_webapp_browser import browser  # noqa: F401  (``browser`` is the module's Chromium fixture)
+from tests.test_webapp_browser import browser, open_tab  # noqa: F401  (``browser`` is the module's Chromium fixture)
 from tests.test_webapp_workspaces_browser import _mode, _page, _run, _start, _wait_until
 
 sync_api = pytest.importorskip("playwright.sync_api")
@@ -150,7 +150,7 @@ def test_the_model_views_fit_a_phone(browser, live_models, mode):  # noqa: F811
     try:
         pg.goto(live_models.url)
         pg.wait_for_selector(".chip")
-        pg.click("#tab-options")
+        open_tab(pg, "options")
         pg.wait_for_selector("#options-results .tile", timeout=90_000)
         _mode(pg, "options", mode)
         pg.wait_for_selector("#options-results .card.empty")

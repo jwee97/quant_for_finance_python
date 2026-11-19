@@ -28,6 +28,8 @@ nav:
       - "Review of the tabs' algorithms for personal use": algorithm_review_2026_11.md
       - "How close the app is to current quantitative practice": modern_practice_2026_11.md
       - "Correctness and research-standard review": improvement_report_2026_11.md
+      - "The research workspace: sessions, regimes and comparison": research_workspace.md
+      - "Redesign audit and plan": ui_redesign_audit.md
       - Glossary: glossary.md
       - Chapter map: chapter_map.md
   - Technique guides: techniques/index.md

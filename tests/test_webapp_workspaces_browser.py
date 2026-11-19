@@ -16,7 +16,7 @@ from tests.app_roots import isolated_root
 from tests.free_data_helpers import FakeFeeds, cboe_payload
 from tests.ml_helpers import make_bundle
 from tests.test_webapp import _fetch
-from tests.test_webapp_browser import _page_with, browser  # noqa: F401  (``browser`` is the module's Chromium fixture)
+from tests.test_webapp_browser import _page_with, browser, open_tab  # noqa: F401  (``browser`` is the module's Chromium fixture)
 from tests.test_webapp_data import CBOE, YAHOO, _crypto_routes, yahoo_route
 
 sync_api = pytest.importorskip("playwright.sync_api")
@@ -694,7 +694,7 @@ def test_the_new_tabs_fit_a_phone(browser, live_ws, tab, ready):  # noqa: F811
     try:
         pg.goto(live_ws.url)
         pg.wait_for_selector(".chip")
-        pg.click(f"#tab-{tab}")
+        open_tab(pg, tab)
         pg.wait_for_selector(ready, timeout=90_000)
         assert pg.evaluate("document.documentElement.scrollWidth") <= 392
         modes = [b.get_attribute("data-mode") for b in pg.query_selector_all(f"#view-{tab} .tabsmall button")]

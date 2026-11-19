@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import pytest
 
-from tests.test_webapp_browser import browser  # noqa: F401  (the module's Chromium fixture)
+from tests.test_webapp_browser import browser, open_tab  # noqa: F401  (the module's Chromium fixture)
 from tests.test_webapp_forecast_browser import _only, _open, live_forecast  # noqa: F401
 from tests.test_webapp_workspaces_browser import _wait_until, live_ws  # noqa: F401
 
@@ -27,7 +27,7 @@ def phone(browser, live_ws):  # noqa: F811
 
 
 def _curve(page):
-    page.click("#tab-rates")
+    open_tab(page, "rates")
     page.wait_for_selector("[data-role=rates-text]", timeout=60_000)
     _wait_until(page, "document.querySelector('[data-role=rates-text]').value.includes('3M 5.10')")
     page.click("#rates .runbar button.primary")
@@ -91,7 +91,7 @@ def test_a_line_chart_zooms_moves_and_resets_and_the_tooltip_reads_the_zoomed_da
 
 
 def test_a_bar_chart_answers_a_tap_too(phone):
-    phone.click("#tab-futures")
+    open_tab(phone, "futures")
     phone.wait_for_selector("#futures-results .tile", timeout=120_000)
     hit = phone.locator("#futures-results svg.chart rect[fill=transparent]").first
     hit.scroll_into_view_if_needed()

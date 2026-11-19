@@ -10,30 +10,65 @@
 </head>
 <body>
 <header class="top">
+  <button type="button" class="iconbtn" id="navtoggle" aria-controls="side" aria-expanded="false" aria-label="Open the navigation">Menu</button>
   <h1 class="brand">Quant Lab<small>backtest your ideas honestly</small></h1>
-  <nav class="tabs" role="tablist" aria-label="Sections">
-    <button role="tab" id="tab-backtest" aria-selected="true" aria-controls="view-backtest">Backtest</button>
-    <button role="tab" id="tab-compare" aria-selected="false" aria-controls="view-compare">Compare <span class="pill" id="runcount">0</span></button>
-    <button role="tab" id="tab-builder" aria-selected="false" aria-controls="view-builder">Strategy builder</button>
-    <button role="tab" id="tab-tune" aria-selected="false" aria-controls="view-tune">Tune</button>
-    <button role="tab" id="tab-signals" aria-selected="false" aria-controls="view-signals">Signals</button>
-    <button role="tab" id="tab-forecast" aria-selected="false" aria-controls="view-forecast">Forecast</button>
-    <button role="tab" id="tab-scenarios" aria-selected="false" aria-controls="view-scenarios">Scenarios</button>
-    <button role="tab" id="tab-rates" aria-selected="false" aria-controls="view-rates">Rates</button>
-    <button role="tab" id="tab-options" aria-selected="false" aria-controls="view-options">Options</button>
-    <button role="tab" id="tab-futures" aria-selected="false" aria-controls="view-futures">Futures</button>
-    <button role="tab" id="tab-crypto" aria-selected="false" aria-controls="view-crypto">Crypto</button>
-    <button role="tab" id="tab-ml" aria-selected="false" aria-controls="view-ml">Machine learning</button>
-    <button role="tab" id="tab-fundamentals" aria-selected="false" aria-controls="view-fundamentals">Fundamentals</button>
-    <button role="tab" id="tab-exec" aria-selected="false" aria-controls="view-exec">Execution</button>
-    <button role="tab" id="tab-cash" aria-selected="false" aria-controls="view-cash">Cash flows</button>
-    <button role="tab" id="tab-guides" aria-selected="false" aria-controls="view-guides">Guides</button>
-  </nav>
+  <nav class="crumbs" id="crumbs" aria-label="Breadcrumb"></nav>
   <div class="grow"></div>
+  <button type="button" class="iconbtn" id="palette-open" aria-haspopup="dialog" title="Search pages and actions (Ctrl+K or /)">Search <kbd>Ctrl K</kbd></button>
   <span class="pill" id="trials" title="Every distinct idea you test on the same tickers counts as a trial. The deflated Sharpe probability is penalised for the number of trials, because the best of many tries looks good by luck."></span>
   <button class="iconbtn" id="theme" aria-label="Switch between light and dark theme">Theme</button>
 </header>
+<div class="shell">
+  <nav class="tabs" id="side" aria-label="Sections">
+    <div class="navgroup" data-group="workspace" data-label="Workspace">
+      <button type="button" class="navhead" id="grp-workspace" aria-expanded="true" aria-controls="list-workspace"><span>Workspace</span></button>
+      <div class="navlist" id="list-workspace" role="tablist" aria-orientation="vertical" aria-label="Workspace">
+        <button role="tab" id="tab-overview" aria-selected="false" aria-controls="view-overview" data-keywords="dashboard home widgets summary status"><span class="ico" aria-hidden="true">Ov</span><span class="lbl">Overview</span></button>
+        <button role="tab" id="tab-saved" aria-selected="false" aria-controls="view-saved" data-keywords="sessions workspace notes resume projects"><span class="ico" aria-hidden="true">Sr</span><span class="lbl">Saved research</span></button>
+        <button role="tab" id="tab-experiments" aria-selected="false" aria-controls="view-experiments" data-keywords="registry models runs history"><span class="ico" aria-hidden="true">Ex</span><span class="lbl">Recent experiments</span></button>
+      </div>
+    </div>
+    <div class="navgroup" data-group="research" data-label="Research">
+      <button type="button" class="navhead" id="grp-research" aria-expanded="true" aria-controls="list-research"><span>Research</span></button>
+      <div class="navlist" id="list-research" role="tablist" aria-orientation="vertical" aria-label="Research">
+        <button role="tab" id="tab-backtest" aria-selected="true" aria-controls="view-backtest" data-keywords="backtest strategy models portfolio allocation"><span class="ico" aria-hidden="true">St</span><span class="lbl">Strategy Lab</span></button>
+        <button role="tab" id="tab-compare" aria-selected="false" aria-controls="view-compare" data-keywords="backtests side by side"><span class="ico" aria-hidden="true">Cr</span><span class="lbl">Compare runs <span class="pill" id="runcount">0</span></span></button>
+        <button role="tab" id="tab-builder" aria-selected="false" aria-controls="view-builder" data-keywords="rules custom indicators"><span class="ico" aria-hidden="true">Sb</span><span class="lbl">Strategy builder</span></button>
+        <button role="tab" id="tab-tune" aria-selected="false" aria-controls="view-tune" data-keywords="parameters search walk-forward hold-out optimisation"><span class="ico" aria-hidden="true">Tu</span><span class="lbl">Tune</span></button>
+        <button role="tab" id="tab-signals" aria-selected="false" aria-controls="view-signals" data-keywords="daily signals paper portfolio ledger"><span class="ico" aria-hidden="true">Sg</span><span class="lbl">Signals</span></button>
+        <button role="tab" id="tab-options" aria-selected="false" aria-controls="view-options" data-keywords="black-scholes greeks implied volatility smile surface hedging heston"><span class="ico" aria-hidden="true">Op</span><span class="lbl">Options Lab</span></button>
+        <button role="tab" id="tab-ml" aria-selected="false" aria-controls="view-ml" data-keywords="models training features datasets experiments"><span class="ico" aria-hidden="true">ML</span><span class="lbl">Machine Learning Lab</span></button>
+        <button role="tab" id="tab-regime" aria-selected="false" aria-controls="view-regime" data-keywords="hidden markov volatility states transitions"><span class="ico" aria-hidden="true">Rg</span><span class="lbl">Market Regime Lab</span></button>
+        <button role="tab" id="tab-rcompare" aria-selected="false" aria-controls="view-rcompare" data-keywords="compare experiments strategies models reports export"><span class="ico" aria-hidden="true">Rc</span><span class="lbl">Research comparison</span></button>
+      </div>
+    </div>
+    <div class="navgroup" data-group="markets" data-label="Markets & Analytics">
+      <button type="button" class="navhead" id="grp-markets" aria-expanded="true" aria-controls="list-markets"><span>Markets & Analytics</span></button>
+      <div class="navlist" id="list-markets" role="tablist" aria-orientation="vertical" aria-label="Markets & Analytics">
+        <button role="tab" id="tab-fundamentals" aria-selected="false" aria-controls="view-fundamentals" data-keywords="statements ratios factors earnings"><span class="ico" aria-hidden="true">Fu</span><span class="lbl">Fundamentals</span></button>
+        <button role="tab" id="tab-futures" aria-selected="false" aria-controls="view-futures" data-keywords="roll carry curve term structure"><span class="ico" aria-hidden="true">Ft</span><span class="lbl">Futures</span></button>
+        <button role="tab" id="tab-crypto" aria-selected="false" aria-controls="view-crypto" data-keywords="bitcoin funding perpetual"><span class="ico" aria-hidden="true">Cy</span><span class="lbl">Crypto</span></button>
+        <button role="tab" id="tab-rates" aria-selected="false" aria-controls="view-rates" data-keywords="yield curve bonds duration"><span class="ico" aria-hidden="true">Rt</span><span class="lbl">Rates</span></button>
+        <button role="tab" id="tab-forecast" aria-selected="false" aria-controls="view-forecast" data-keywords="distribution forecast volatility scoring"><span class="ico" aria-hidden="true">Fc</span><span class="lbl">Forecast</span></button>
+        <button role="tab" id="tab-scenarios" aria-selected="false" aria-controls="view-scenarios" data-keywords="stress generative simulation tail risk var"><span class="ico" aria-hidden="true">Sc</span><span class="lbl">Risk scenarios</span></button>
+        <button role="tab" id="tab-exec" aria-selected="false" aria-controls="view-exec" data-keywords="orders schedule market impact slippage twap"><span class="ico" aria-hidden="true">Ec</span><span class="lbl">Execution</span></button>
+        <button role="tab" id="tab-cash" aria-selected="false" aria-controls="view-cash" data-keywords="liabilities spending withdrawals retirement"><span class="ico" aria-hidden="true">Cf</span><span class="lbl">Portfolio cash flows</span></button>
+      </div>
+    </div>
+    <div class="navgroup" data-group="system" data-label="System">
+      <button type="button" class="navhead" id="grp-system" aria-expanded="true" aria-controls="list-system"><span>System</span></button>
+      <div class="navlist" id="list-system" role="tablist" aria-orientation="vertical" aria-label="System">
+        <button role="tab" id="tab-data" aria-selected="false" aria-controls="view-data" data-keywords="sources datasets freshness files upload cache"><span class="ico" aria-hidden="true">Da</span><span class="lbl">Data management</span></button>
+        <button role="tab" id="tab-jobs" aria-selected="false" aria-controls="view-jobs" data-keywords="tasks progress queue cancel retry"><span class="ico" aria-hidden="true">Jb</span><span class="lbl">Background jobs</span></button>
+        <button role="tab" id="tab-settings" aria-selected="false" aria-controls="view-settings" data-keywords="preferences theme navigation defaults"><span class="ico" aria-hidden="true">Se</span><span class="lbl">Settings</span></button>
+        <button role="tab" id="tab-guides" aria-selected="false" aria-controls="view-guides" data-keywords="help documentation how to"><span class="ico" aria-hidden="true">Gu</span><span class="lbl">Guides</span></button>
+      </div>
+    </div>
+    <div class="navrecent" id="recents" hidden><p class="navtitle">Recently visited</p><ul id="recent-list"></ul></div>
+    <button type="button" class="navhead railtoggle" id="railtoggle" aria-pressed="false" title="Collapse or expand the sidebar ( [ )"><span>Collapse sidebar</span></button>
+  </nav>
 <main>
+  <div class="ctxbar" id="ctxbar" role="region" aria-label="Research session" hidden></div>
   <div class="notice" id="notice" role="status" hidden></div>
   <section role="tabpanel" id="view-backtest" aria-labelledby="tab-backtest">
     <div class="layout">
@@ -56,10 +91,27 @@
   <section role="tabpanel" id="view-exec" aria-labelledby="tab-exec" hidden><div class="lab" id="exec"></div></section>
   <section role="tabpanel" id="view-cash" aria-labelledby="tab-cash" hidden><div class="lab" id="cash"></div></section>
   <section role="tabpanel" id="view-guides" aria-labelledby="tab-guides" hidden><div class="guides" id="guides"></div></section>
+  <section role="tabpanel" id="view-overview" aria-labelledby="tab-overview" hidden><div class="stack page" id="overview"></div></section>
+  <section role="tabpanel" id="view-saved" aria-labelledby="tab-saved" hidden><div class="stack page" id="saved"></div></section>
+  <section role="tabpanel" id="view-experiments" aria-labelledby="tab-experiments" hidden><div class="stack page" id="experiments"></div></section>
+  <section role="tabpanel" id="view-regime" aria-labelledby="tab-regime" hidden><div class="stack page" id="regime"></div></section>
+  <section role="tabpanel" id="view-rcompare" aria-labelledby="tab-rcompare" hidden><div class="stack page" id="rcompare"></div></section>
+  <section role="tabpanel" id="view-data" aria-labelledby="tab-data" hidden><div class="stack page" id="data"></div></section>
+  <section role="tabpanel" id="view-jobs" aria-labelledby="tab-jobs" hidden><div class="stack page" id="jobs"></div></section>
+  <section role="tabpanel" id="view-settings" aria-labelledby="tab-settings" hidden><div class="stack page" id="settings"></div></section>
 </main>
+</div>
+<dialog id="palette" aria-label="Search pages and actions"></dialog>
+<dialog id="keys" aria-label="Keyboard shortcuts"></dialog>
+<dialog id="ctxdlg" aria-label="Research context"></dialog>
 <script src="/static/charts.js"></script>
 <script src="/static/app.js"></script>
 <script src="/static/workspace.js"></script>
+<script src="/static/shell.js"></script>
+<script src="/static/research.js"></script>
+<script src="/static/pages.js"></script>
+<script src="/static/regime.js"></script>
+<script src="/static/compare.js"></script>
 <script src="/static/options.js"></script>
 <script src="/static/futures.js"></script>
 <script src="/static/crypto.js"></script>

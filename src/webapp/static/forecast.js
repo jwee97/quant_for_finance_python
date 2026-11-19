@@ -8,7 +8,7 @@
   const Q = window.QL, W = window.WS, C = Q.C, h = Q.h, css = Q.css, num = Q.num, pct = Q.pct, tile = Q.tile, chartCard = Q.chartCard, table = Q.simpleTable, api = Q.api;
   const GUIDE = "forecasting";
   const ACTIVE = new Set(["queued", "running"]);
-  const RUN_WORD = { queued: "Waiting", running: "Running", done: "Finished", error: "Failed", interrupted: "Stopped" };
+  const RUN_WORD = { queued: "Waiting", running: "Running", done: "Finished", error: "Failed", interrupted: "Stopped", cancelled: "Cancelled" };
   const RECENT_MS = 6 * 3600 * 1000;
   const ICON = { good: "✓", mixed: "!", bad: "✗" };                                              // a verdict is never colour alone
   const HORIZON_TEXT = { 5: "1 week (5 trading days)", 10: "2 weeks (10 trading days)", 21: "1 month (21 trading days)", 63: "3 months (63 trading days)" };

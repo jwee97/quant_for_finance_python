@@ -37,7 +37,7 @@ from .api import ApiError, App
 
 STATIC = Path(__file__).parent / "static"
 JS = "text/javascript; charset=utf-8"
-FILES = {"app.js": JS, "style.css": "text/css; charset=utf-8", "charts.js": JS, "workspace.js": JS, "options.js": JS, "futures.js": JS, "crypto.js": JS, "ml.js": JS, "tune.js": JS, "forecast.js": JS, "signals.js": JS, "scenarios.js": JS, "rates.js": JS, "fundamentals.js": JS, "fundamentals_lab.js": JS, "fundamentals_enter.js": JS}
+FILES = {"app.js": JS, "style.css": "text/css; charset=utf-8", "charts.js": JS, "workspace.js": JS, "shell.js": JS, "research.js": JS, "pages.js": JS, "regime.js": JS, "compare.js": JS, "options.js": JS, "futures.js": JS, "crypto.js": JS, "ml.js": JS, "tune.js": JS, "forecast.js": JS, "signals.js": JS, "scenarios.js": JS, "rates.js": JS, "fundamentals.js": JS, "fundamentals_lab.js": JS, "fundamentals_enter.js": JS}
 MAX_BODY = 200_000
 MAX_QUERY_FIELDS = 40
 LOOPBACK = {"127.0.0.1", "localhost", "::1", "[::1]"}
@@ -312,7 +312,7 @@ def make_handler(app: App, token: str, port_holder: list, access: str | None = N
             if path in routes:
                 body = self._body()
                 if body is not None:
-                    self._call(routes[path], body)
+                    self._call(lambda b: app.with_request(path, routes[path], b), body)
             elif path == "/api/reload":
                 self._call(app.reload_strategies)
             elif path == "/api/trials/reset":

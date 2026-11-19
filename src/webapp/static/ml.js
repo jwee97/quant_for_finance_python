@@ -478,7 +478,7 @@
      of it, so the server keeps a record of every job (GET /api/jobs). This card lists the runs that are going, waiting, or ended in the last hours (finished, failed, or lost when the app stopped), and
      follows them until they end. An app that predates the list answers 404 and the card stays away. */
   const ACTIVE = new Set(["queued", "running"]);
-  const RUN_WORD = { queued: "Waiting", running: "Running", done: "Finished", error: "Failed", interrupted: "Stopped" };
+  const RUN_WORD = { queued: "Waiting", running: "Running", done: "Finished", error: "Failed", interrupted: "Stopped", cancelled: "Cancelled" };
   const RECENT_MS = 6 * 3600 * 1000;
   M.runs = { jobs: [], seen: new Map(), timer: null };
   async function watchRuns() {

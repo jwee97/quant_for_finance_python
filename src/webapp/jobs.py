@@ -153,7 +153,7 @@ class JobLog:
         record = self._read(self.directory / f"{job_id}.json")
         if record is None:
             return None
-        view = {k: record.get(k) for k in ("id", "label", "kind", "status", "message", "error", "created", "finished", "ref")}
+        view = {k: record.get(k) for k in ("id", "label", "kind", "status", "message", "error", "created", "finished", "ref", "session", "retry_of")}
         view["result"] = None
         if record.get("status") == "done":
             try:

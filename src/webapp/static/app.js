@@ -31,6 +31,7 @@
       if (tick) tick(v);
       if (v.status === "done") return v.result;
       if (v.status === "error") throw new Error(v.error);
+      if (v.status === "cancelled") throw new Error(`${v.message || "This run was cancelled."} Nothing was kept.`);
       if (v.status === "interrupted") throw new Error(`${v.message || "The app stopped while this was running."} Nothing is resumed: start it again from the beginning.`);
     }
   }
@@ -68,9 +69,11 @@
   function freshView() { return { modes: {}, log: false, detail: null }; }
 
   /* ================================================================= theme, tabs */
-  function setTheme(t) { if (t) document.documentElement.setAttribute("data-theme", t); else document.documentElement.removeAttribute("data-theme"); store("theme", t); redraw(); }
+  /* Dark is the default; a person's choice (dark, light, or "system" to follow the device) is kept. */
+  function applyTheme(t) { if (t === "dark" || t === "light") document.documentElement.setAttribute("data-theme", t); else document.documentElement.removeAttribute("data-theme"); }
+  function setTheme(t) { applyTheme(t); store("theme", t || "system"); redraw(); }
   $("#theme").addEventListener("click", () => { const dark = document.documentElement.getAttribute("data-theme") ? document.documentElement.getAttribute("data-theme") === "dark" : matchMedia("(prefers-color-scheme: dark)").matches; setTheme(dark ? "light" : "dark"); });
-  const saved = store("theme"); if (saved) document.documentElement.setAttribute("data-theme", saved);
+  applyTheme(store("theme") || "dark");
   matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => redraw());
 
   const TABS = ["backtest", "compare", "builder", "exec", "cash", "guides"];
@@ -80,8 +83,8 @@
      ``then`` runs after a key opened a tab (a redraw can replace the buttons, so it puts focus back on the selected one; without it the button that was reached keeps the focus). Returns the
      function that re-reads which tab is selected. */
   function tabKeys(bar, then) {
-    const tabs = () => [...bar.querySelectorAll('[role="tab"]')], selected = (x) => x.getAttribute("aria-selected") === "true";
-    const sync = () => tabs().forEach((x) => { x.tabIndex = selected(x) ? 0 : -1; });
+    const tabs = () => [...bar.querySelectorAll('[role="tab"]')].filter((x) => x.getClientRects().length > 0), selected = (x) => x.getAttribute("aria-selected") === "true";
+    const sync = () => [...bar.querySelectorAll('[role="tab"]')].forEach((x) => { x.tabIndex = selected(x) ? 0 : -1; });
     bar.addEventListener("keydown", (e) => {
       const list = tabs(), i = list.indexOf(document.activeElement), n = list.length;
       const go = { ArrowRight: (i + 1) % n, ArrowDown: (i + 1) % n, ArrowLeft: (i + n - 1) % n, ArrowUp: (i + n - 1) % n, Home: 0, End: n - 1 }[e.key];
@@ -92,9 +95,28 @@
     sync(); return sync;
   }
   let syncNav = () => {};
-  function showTab(name) {
+  /* The address of a page is ``#/<tab>`` (``#/<tab>?key=value`` carries a little context, for instance a saved session). It is the only thing the router keeps: the tab is still ``ql.tab`` for the next visit. */
+  const PAGES = {}, NAV = [], RESULT = [];                                                             // tab name -> {render}, for the pages that are not labs (shell.js, pages.js); listeners told which tab opened
+  function route() {
+    const m = /^#\/?([a-z0-9-]+)(?:\?(.*))?$/.exec(location.hash);
+    return m ? { tab: m[1], args: Object.fromEntries(new URLSearchParams(m[2] || "")) } : { tab: "", args: {} };
+  }
+  /* Where a visit opens: the page in the address, else the one chosen in Settings (the last page by default; the Overview or the Strategy Lab on request). */
+  const wantedTab = () => {
+    const r = route().tab; if (r && TABS.includes(r)) return r;
+    const landing = (store("shell") || {}).landing;
+    return landing === "overview" ? "overview" : landing === "backtest" ? "backtest" : store("tab");
+  };
+  let current = "backtest";
+  function showTab(name, args) {
+    current = name;
     for (const t of TABS) { $("#tab-" + t).setAttribute("aria-selected", String(t === name)); $("#view-" + t).hidden = t !== name; }
     syncNav();
+    if (booted) {
+      const want = "#/" + name + (args && Object.keys(args).length ? "?" + new URLSearchParams(args) : "");
+      if (location.hash !== want) history.pushState(null, "", want);
+    }
+    if (PAGES[name]) PAGES[name].render(args || route().args);
     if (name === "compare") renderCompare();
     if (name === "builder") renderBuilder();
     if (name === "exec") renderLab(X);
@@ -103,9 +125,12 @@
     if (name === "guides") renderGuides();
     if (name === "backtest") redraw();
     store("tab", name);
+    for (const fn of NAV) { try { fn(name); } catch (e) { console.error("navigation listener", e); } }
   }
   for (const t of TABS) $("#tab-" + t).addEventListener("click", () => showTab(t));
   syncNav = tabKeys($("nav.tabs"));
+  /* The back and forward buttons, and a link typed or pasted into the address bar, move between pages without reloading. */
+  window.addEventListener("popstate", () => { const r = route(); if (booted && r.tab && TABS.includes(r.tab)) showTab(r.tab, r.args); });
 
   /* ================================================================= universe */
   function defaultTickers() { return S.catalog.default_tickers.map((t) => ({ t, cls: S.catalog.default_classes[t] || "unknown", status: "default" })); }
@@ -185,6 +210,26 @@
     saveUniverse(); renderUniverse();
   }
   const sources = () => (S.catalog && Array.isArray(S.catalog.sources) ? S.catalog.sources : []);
+  /* The research context in this tab's setup. The tickers, the first date and the data source of a session become what the next run uses; nothing that is already on screen is changed or re-run.
+     A ticker the platform dataset does not hold is checked the way a typed one is. */
+  function applyContext(ctx) {
+    if (!S.catalog) return false;
+    if (ctx.assets && ctx.assets.length) {
+      const old = new Map(S.tickers.map((x) => [x.t, x])), isDefault = new Set(S.catalog.default_tickers);
+      S.tickers = ctx.assets.map((t) => old.get(t) || { t, cls: S.catalog.default_classes[t] || "unknown", status: isDefault.has(t) ? "default" : "pending" });
+      saveUniverse(); renderUniverse();
+      const fresh = S.tickers.filter((x) => x.status === "pending").map((x) => x.t);
+      if (fresh.length) api("/api/tickers", { tickers: fresh, start: S.start || undefined, refresh: false, source: S.source }).then((res) => { applyChecks(fresh, res); saveUniverse(); renderUniverse(); }, (e) => { toast(e.message); });
+    }
+    if (ctx.start !== undefined) { S.start = ctx.start || ""; const si = $("#panel input[type=date]"); if (si) si.value = S.start; }
+    if (ctx.data_source && sources().some((x) => x.name === ctx.data_source) && S.source !== ctx.data_source) { S.source = ctx.data_source; store("source", S.source); renderSource(); recheckTickers(false); }
+    return true;
+  }
+  /* What this tab's setup says about the research context (the other direction). */
+  function setupContext() {
+    const ok = S.tickers.filter((x) => x.status !== "bad");
+    return { assets: ok.map((x) => x.t), start: S.start || "", data_source: S.source, asset_class: new Set(ok.map((x) => x.cls)).size > 1 ? "mixed" : (ok[0] ? ok[0].cls : "") };
+  }
   /* What turns iTick on. The key is never typed into this page: it goes into a Replit secret, and an app only sees the secrets that existed when it started. */
   const KEY_NAME = "ITICK_API_KEY";
   /* What iTick did with the key lately (times and iTick's own words, never the key): shown beside the connection test, so that a refusal comes with its history. */
@@ -417,7 +462,7 @@
     if (S.tickers.some((x) => x.status === "pending")) throw new Error("Wait for the ticker checks to finish");
     if (tickers.length < 1) throw new Error("Choose at least one ticker");
     const classes = {}; const isDefault = new Set(S.catalog.default_tickers); for (const x of tickers) if (!isDefault.has(x.t) && x.cls !== "unknown") classes[x.t] = x.cls;
-    return { tickers: tickers.map((x) => x.t), classes, start: S.start || null, source: S.source, refresh: S.refresh };
+    return { tickers: tickers.map((x) => x.t), classes, start: S.start || null, source: S.source, refresh: S.refresh, session: store("session") || undefined };
   }
   function buildBody() {
     const universe = universeBody();
@@ -446,7 +491,7 @@
     try {
       const { job } = await api("/api/backtest", body);
       const result = await waitJob(job, (v) => { const t = $("#progress-text"); if (t) t.textContent = `${v.message} (${Math.round(v.elapsed)} s)`; });
-      addRun(result); if (S.tickers.some((x) => x.later)) recheckTickers(true);
+      addRun(result, job); if (S.tickers.some((x) => x.later)) recheckTickers(true);
     } catch (e) { showError(e.message); }
     setBusy(false);
   }
@@ -457,8 +502,8 @@
     const b = h("div", "banner err"); b.id = "errbanner"; h("strong", "", b, "The run failed."); b.appendChild(document.createTextNode(msg));
     $("#results").prepend(b);
   }
-  function addRun(result) {
-    const slot = S.nextSlot++ % SLOTS.length, run = { id: S.runs.length + 1, slot, result, at: new Date() };
+  function addRun(result, job) {
+    const slot = S.nextSlot++ % SLOTS.length, run = { id: S.runs.length + 1, slot, result, at: new Date(), job: job || null };
     S.runs.push(run); S.current = run; S.selected.add(run.id); S.range = "all";
     $("#runcount").textContent = String(S.runs.length);
     S.trials = { n: result.trials_in_universe }; updateTrials();
@@ -592,6 +637,7 @@
     const dn = h("button", "btn", acts, "Download spec"); dn.addEventListener("click", () => download(r.name.replace(/[^\w-]+/g, "_") + ".yaml", r.yaml));
     const cmp = h("button", "btn", acts, "Compare runs"); cmp.addEventListener("click", () => showTab("compare"));
     if (r.warning) { const b = h("div", "banner", root); h("strong", "", b, "Heads up."); b.appendChild(document.createTextNode(r.warning)); }
+    for (const fn of RESULT) { try { fn(root, run); } catch (e) { console.error("result hook", e); } }
     const notes = Object.entries(r.universe.data_notes || {});
     if (notes.length) { const b = h("div", "banner", root); h("strong", "", b, "Data notes."); b.appendChild(document.createTextNode(notes.map(([t, list]) => `${t}: ${list.join(" ")}`).join(" · "))); }
     const nBad = r.flags.filter((f) => f.flag).length;
@@ -1615,7 +1661,7 @@
     draw("the results area", renderEmpty); draw("the trial counter", updateTrials);
     if (failed.length) notice("draw", "Part of the page could not be drawn: ", failed.join("; ") + ". Reload the page; if it happens again, restart the app.", true);
     booted = true;
-    const t = store("tab"); if (t && TABS.includes(t) && t !== "backtest") showTab(t);
+    const t = wantedTab(); if (t && TABS.includes(t) && (t !== "backtest" || route().tab)) showTab(t, route().args);
     document.body.dataset.ready = "1";                                                      // the page has drawn itself: what a test or a script waits for before it acts
   }
 
@@ -1625,10 +1671,16 @@
   function registerWorkspace(name, lab) {
     WORKSPACES[name] = lab; TABS.push(name);
     $("#tab-" + name).addEventListener("click", () => { if (S.catalog) showTab(name); });
-    if (booted && store("tab") === name) showTab(name);
+    if (booted && wantedTab() === name) showTab(name, route().args);
+  }
+  /* A page that is not a lab (the overview, the saved research, the jobs list): ``page.render(args)`` runs each time its tab opens. */
+  function registerPage(name, page) {
+    PAGES[name] = page; TABS.push(name);
+    $("#tab-" + name).addEventListener("click", () => { if (S.catalog) showTab(name); });
+    if (booted && wantedTab() === name) showTab(name, route().args);
   }
   window.QL = { C, h, fmt, $, api, css, store, toast, copy, download, num, pct, money, smoney, axisMoney, bad, bps, grouped, plain, unsign, colorOf, SLOTS, tile, chartCard, actionsCard, simpleTable, sampleRows, keepScroll, labField, checkList, numbers,
-    labHead, labBanner, labEmpty, labOld, syncLab, renderLab, drawLab, openGuide, serverApi, RESTART, notice, registerWorkspace, labelPx, running, S, setupGuide, waitJob, keyHistory,
+    labHead, labBanner, labEmpty, labOld, syncLab, renderLab, drawLab, openGuide, serverApi, RESTART, notice, registerWorkspace, registerPage, setTheme, onNavigate: (fn) => NAV.push(fn), onResult: (fn) => RESULT.push(fn), applyContext, setupContext, lab: (name) => WORKSPACES[name], route, currentTab: () => current, labelPx, running, S, setupGuide, waitJob, keyHistory,
     universeBody, pickAllocator, useStrategy, setTrials, showTab, refsLine, fieldFor };
   boot();
 })();
