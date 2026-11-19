@@ -288,6 +288,7 @@ def test_a_backtest_is_saved_analysed_by_regime_and_compared_with_its_evidence_l
         for role in ("compare-equity", "compare-drawdown", "compare-rolling-sharpe", "compare-distribution"):
             page.wait_for_selector(f"[data-role={role}] svg.chart")
         assert re.search(r"Shared window: \d{4}-\d\d-\d\d to \d{4}-\d\d-\d\d", page.inner_text("[data-role=compare-window]"))
+        page.locator("[data-role=compare-equity] svg.chart rect[tabindex]").scroll_into_view_if_needed()
         box = page.locator("[data-role=compare-equity] svg.chart rect[tabindex]").bounding_box()      # one cursor for the comparison charts: a day read on one is shown on the others
         page.mouse.move(box["x"] + box["width"] * 0.5, box["y"] + box["height"] / 2)
         page.wait_for_selector("[data-role=compare-drawdown] .tip:not([hidden])")

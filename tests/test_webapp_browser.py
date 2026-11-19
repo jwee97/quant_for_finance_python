@@ -404,7 +404,7 @@ def _choose_strategy(page, name, then=None):
 def test_a_strategy_that_ranks_tickers_cannot_be_run_on_one_ticker_and_one_that_trades_each_ticker_can(page):
     _only_tickers(page, "AAA")
     assert page.locator("#u-count").inner_text() == "1 ticker"
-    _choose_strategy(page, "momentum", "#run:disabled")
+    _choose_strategy(page, "momentum", "#guard:has-text('ranks the tickers')")                              # the Run button is already disabled by "Choose at least one ticker" until the server has said what the choice needs
     assert page.locator("#run").is_disabled() and page.locator("#guard").is_visible()
     assert "ranks the tickers against each other" in page.inner_text("#guard") and "at least 2 tickers and you have 1" in page.inner_text("#guard")
     assert "(needs 2+ tickers)" in page.locator("#s-body select").first.locator("option[value='momentum']").inner_text()
