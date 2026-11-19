@@ -197,6 +197,8 @@ class BacktestEngine:
         gross = (held.shift(1) * aligned_returns).sum(axis=1, skipna=True)
         valid = held.shift(1).notna().any(axis=1) & aligned_returns.notna().any(axis=1)
         gross = gross.where(valid)
+        entry = ~valid & (traded.abs().sum(axis=1) > 0)                          # the day the first book is built: no book was held the day before so it earns nothing, but it is a day of the account and it pays to
+        gross = gross.where(~entry, 0.0)                                          # trade (left as NaN, `NaN - cost` is NaN and the cost of the first trade vanished from every net series)
 
         if self.short_carry is not None:                                        # a short held through a perpetual future collects (or pays) funding: part of the return, before costs
             carry = self.short_carry.reindex(index=held.index, columns=held.columns).fillna(0.0)
