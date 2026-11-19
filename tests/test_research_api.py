@@ -202,3 +202,26 @@ def test_results_on_different_data_versions_are_flagged_before_they_are_compared
     b = app.research.store.add_artifact(s["id"], {**app.research.store.get_artifact(a["id"]), "context": {**a["context"], "dataset_version": "another-vintage"}})
     out = _post(app, "/api/research/compare", {"artifacts": [a["id"], b["id"]]})
     assert "different_dataset" in {i["code"] for i in out["issues"]} and out["ranking"] is None and out["metrics"]
+
+
+def test_an_option_strategy_backtest_is_saved_as_simulated_and_never_as_a_historical_result(app):
+    s = _post(app, "/api/research/session/create", {"name": "x"})["session"]
+    job = _post(app, "/api/options/strategy/backtest", {"strategy": "short_put", "days": 90, "params": {"delta": 0.2}})["job"]
+    view = _wait(app, job, 300)
+    assert view["status"] == "done"
+    art = _post(app, "/api/research/artifact/save", {"session": s["id"], "job": job})["artifact"]
+    assert art["kind"] == "options" and art["evidence"] == "simulated" and art["data_kind"] == "simulated"
+    full = _get(app, "/api/research/artifact", id=art["id"])
+    assert len(full["series"]["dates"]) == len(full["series"]["equity"]) > 30 and any("simulated" in n for n in full["notes"])
+    json.dumps(full, allow_nan=False)
+    ov = _get(app, "/api/research/overview")["options"]
+    assert ov["available"] and ov["evidence"] == "simulated" and "simulated option market" in ov["source"]
+
+
+def test_a_sweep_or_comparison_is_refused_because_it_is_not_one_result(app):
+    from src.research import extract
+    from src.research.store import StoreError
+
+    with pytest.raises(StoreError, match="not a strategy backtest"):
+        extract.strategy_artifact({"kind": "options_sweep", "dates": [], "rows": []})
+    assert app

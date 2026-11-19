@@ -320,7 +320,10 @@ pre { background: var(--ghost); border: 1px solid var(--border); padding: 12px; 
 pre code { background: none; padding: 0; }
 .examples { display: flex; flex-wrap: wrap; gap: 6px; }
 .guides { display: grid; grid-template-columns: 280px minmax(0, 1fr); gap: 20px; align-items: start; }
-@media (max-width: 1000px) { .guides { grid-template-columns: 1fr; } }
+@media (max-width: 1000px) { .guides { grid-template-columns: minmax(0, 1fr); } }
+article.md { min-width: 0; overflow-wrap: anywhere; }
+article.md pre { overflow-x: auto; max-width: 100%; }
+article.md table { display: block; overflow-x: auto; max-width: 100%; }
 .toc { position: sticky; top: 64px; max-height: calc(100vh - 84px); overflow: auto; padding: 12px; }
 .toc h2 { margin: 12px 0 4px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
 .toc button { display: block; width: 100%; text-align: left; background: none; border: 0; padding: 5px 8px; border-radius: 6px; cursor: pointer; color: var(--ink-2); font-size: 13px; }

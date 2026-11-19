@@ -33,13 +33,13 @@
     const mode = lab.mode, gen = lab.gen || 0; lab.busy = message; Q.syncLab(lab);
     try {
       for (const st of steps) {
-        let data = st.cacheKey && lab.cache ? lab.cache.get(st.cacheKey) : undefined;
+        let data = st.cacheKey && lab.cache ? lab.cache.get(st.cacheKey) : undefined, jobId = null;
         if (data === undefined) {
-          if (st.job) data = await poll(lab, (await api(st.path, st.body)).job, message);
-          else data = st.body ? await api(st.path, st.body) : await api(st.path + qs(st.query));
+          if (st.job) { jobId = (await api(st.path, st.body)).job; data = await poll(lab, jobId, message); }
+          else { jobId = null; data = st.body ? await api(st.path, st.body) : await api(st.path + qs(st.query)); }
           if (st.cacheKey && lab.cache && (lab.gen || 0) === gen) lab.cache.set(st.cacheKey, data);        // not if the cache was dropped while this was on its way: it was asked for before the data changed
         }
-        for (const m of st.modes) { lab.results[m] = { data, body: st.body || st.query || {} }; lab.errors[m] = null; }
+        for (const m of st.modes) { lab.results[m] = { data, body: st.body || st.query || {}, job: jobId }; lab.errors[m] = null; }
       }
     } catch (e) {
       lab.results[mode] = null;

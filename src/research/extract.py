@@ -116,3 +116,33 @@ def returns_from_equity(dates, equity) -> pd.Series:
     """Daily returns of an equity curve (the first day's return is relative to 1.0, the starting capital)."""
     eq = pd.Series(np.asarray(equity, dtype=float), index=pd.to_datetime(list(dates)))
     return eq.pct_change().fillna(eq.iloc[0] - 1.0) if len(eq) else eq
+
+
+STRATEGY_LABS = {"options_backtest": "options", "futures_backtest": "futures", "crypto_backtest": "crypto"}
+
+
+def strategy_artifact(result: dict, *, job_id: str = "", code_version: str = "unknown") -> dict:
+    """The artifact of a rolling-strategy backtest from the Options, Futures or Crypto lab (``result`` is the job's result, an envelope with ``kind``, ``source`` and the series). The options market is
+    simulated, so its evidence is ``simulated``; a futures or crypto backtest on real data is a historical simulation, on simulated data it is simulated."""
+    kind = STRATEGY_LABS.get(result.get("kind"))
+    if kind is None or not result.get("dates") or "equity" not in result:
+        raise StoreError("this job is not a strategy backtest with an equity curve (a sweep or a comparison cannot be saved as one result)")
+    dates, equity = list(result["dates"]), _clean_series(result["equity"])
+    if len(equity) != len(dates):
+        raise StoreError("the backtest's dates and equity curve do not match")
+    source = str(result.get("source") or "simulated")
+    dk = source if source in ("platform", "user_file", "downloaded", "simulated", "mixed") else "mixed"
+    simulated = kind == "options" or dk == "simulated"
+    metrics = _numbers(result.get("metrics") or {})
+    for key in ("deflated_sharpe_probability", "n_trials"):
+        if isinstance(result.get(key), (int, float)) and math.isfinite(result[key]):
+            metrics[key] = float(result[key])
+    benches = {k: _clean_series(v) for k, v in (result.get("benchmarks") or {}).items() if isinstance(v, list) and len(v) == len(dates)}
+    assets = [str(a) for a in (result.get("assets") or result.get("roots") or ([result["underlying"]] if result.get("underlying") else []))][:40]
+    ctx = {"assets": assets, "start": dates[0], "end": dates[-1], "frequency": "daily", "data_source": source, "dataset_version": fingerprint(kind, assets, dates[0], dates[-1], source)}
+    notes = list(result.get("notes") or [])[:4]
+    notes.append("The option market is simulated: premiums, quotes and hedging fills are model outputs, not trades that could have been made." if kind == "options"
+                 else "A simulation on saved data: costs are modelled, fills are not.")
+    return {"kind": kind, "title": str(result.get("strategy") or result.get("name") or f"{kind} strategy")[:120], "evidence": "simulated" if simulated else "historical_simulation", "data_kind": dk,
+            "context": ctx, "config": {"strategy": result.get("strategy"), "params": result.get("params"), "settings": result.get("settings")}, "metrics": metrics,
+            "series": {"dates": dates, "equity": equity, "benchmarks": benches}, "refs": {"job": job_id, "code_version": code_version, "dataset": ctx["dataset_version"]}, "notes": notes}

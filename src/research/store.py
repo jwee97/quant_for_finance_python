@@ -27,7 +27,7 @@ from .context import ContextError, validate_context
 
 SCHEMA = 1
 ID = re.compile(r"^[0-9a-f]{12}$")
-KINDS = ("backtest", "ml_experiment", "regime", "options", "forecast", "tune")
+KINDS = ("backtest", "ml_experiment", "regime", "options", "futures", "crypto", "forecast", "tune")
 EVIDENCE = ("in_sample", "out_of_sample", "walk_forward", "historical_simulation", "simulated", "retrospective", "paper", "live")
 DATA_KINDS = ("platform", "user_file", "downloaded", "simulated", "mixed", "unavailable")          # the vocabulary of the provenance badges the tabs already show
 MAX_SESSIONS, MAX_ARTIFACTS, MAX_NOTES, MAX_GROUPS = 200, 200, 200, 20

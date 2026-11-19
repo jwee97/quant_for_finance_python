@@ -69,7 +69,7 @@
       const ul = h("ul", "list", b); for (const [k, v] of Object.entries(r.probabilities)) { const li = h("li", "", ul, k); h("span", "", li, pct(v, 0)); }
       h("p", "hint", b, `${r.basis}. ${r.source}.`); return ["wf", "filtered"]; } },
     { id: "options", title: "Options volatility conditions", go: ["options", "Options Lab"], draw(b, d) {
-      const o = d.options; if (!o.available) { note(b, o.reason); return ["na"]; } table(b, [{ label: "Result", get: () => o.title }], [{}]); return ["sim", "simulated"]; } },
+      const o = d.options; if (!o.available) { note(b, o.reason); return ["na"]; } const k = h("div", "kpis", b); Q.tile(k, "Sharpe", num(o.metrics.sharpe)); Q.tile(k, "Max drawdown", pct(o.metrics.max_drawdown)); h("p", "hint", b, `${o.title}. ${o.source}.`); return ["sim", "simulated"]; } },
     { id: "risk", title: "Portfolio risk", go: ["backtest", "Strategy Lab"], draw(b, d) {
       const p = d.portfolio_risk; if (!p.available) { note(b, p.reason); return ["na"]; }
       const k = h("div", "kpis", b); Q.tile(k, "Volatility", pct(p.metrics.ann_vol)); Q.tile(k, "Max drawdown", pct(p.metrics.max_drawdown)); h("p", "hint", b, `${p.title}. ${p.source}.`); return ["is", "historical simulation"]; } },

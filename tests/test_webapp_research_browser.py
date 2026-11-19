@@ -174,8 +174,10 @@ def test_the_overview_labels_every_block_with_its_source_and_shows_no_made_up_nu
     for i in range(widgets.count()):
         assert widgets.nth(i).locator(".ev").count() >= 1, "every widget carries a badge saying where it comes from"
     assert "not a live feed" in pg.inner_text("[data-widget=market]")
-    assert "Nothing to show" in pg.inner_text("[data-widget=regime]") or "no regime estimate" in pg.inner_text("[data-widget=regime]")
-    assert "no option analysis" in pg.inner_text("[data-widget=options]")
+    regime_text = pg.inner_text("[data-widget=regime]")
+    assert "no regime estimate" in regime_text or "filtered" in regime_text
+    options_text = pg.inner_text("[data-widget=options]")                                       # another test may have saved an option backtest to this app
+    assert "no option strategy" in options_text or "simulated option market" in options_text
 
 
 def test_dashboard_widgets_can_be_hidden_moved_and_reset_and_the_layout_is_kept(pg):
@@ -289,6 +291,10 @@ def test_a_backtest_is_saved_analysed_by_regime_and_compared_with_its_evidence_l
             page.click("[data-role=compare-tools] button:text-is('Download report (Markdown)')")
         report = open(dl.value.path(), encoding="utf-8").read()
         assert "Window shared by all results" in report and "does not describe future returns" in report and arts[0]["refs"]["job"] in report
+        with page.expect_download() as dls:
+            page.click("[data-role=compare-equity] button:text-is('SVG')")
+        svg = open(dls.value.path(), encoding="utf-8").read()
+        assert svg.startswith("<svg") and "<path" in svg and "stroke:" in svg, "the exported chart carries its own colours"
         with page.expect_download() as dl2:
             page.click("[data-role=compare-tools] button:text-is('Download metrics (CSV)')")
         assert open(dl2.value.path(), encoding="utf-8").read().startswith("window,")
@@ -400,6 +406,42 @@ def test_the_option_assumptions_of_the_context_reach_the_options_lab_when_asked_
         page.click("#ctxbar button:text-is('Use in this tab')")
         _wait_until(page, "QL.lab('options').form.rate === '3.5' && QL.lab('options').form.dividend === '1.25'")
         assert page.evaluate("QL.lab('options').form.underlying") == "A01"
+        assert not page.problems, page.problems
+    finally:
+        page.close()
+
+
+def test_every_page_old_and_new_fits_a_phone_in_both_themes(browser, live_research):  # noqa: F811
+    page = _open(browser, live_research, width=390, height=800)
+    try:
+        tabs = page.eval_on_selector_all("nav.tabs [role=tab]", "(e) => e.map((x) => x.id.slice(4))")
+        assert len(tabs) == 24
+        for theme in ("dark", "light"):
+            page.evaluate(f"QL.setTheme('{theme}')")
+            for tab in tabs:
+                open_tab(page, tab)
+                page.wait_for_timeout(250)
+                assert page.evaluate("document.documentElement.scrollWidth") <= 392, (theme, tab)
+        assert not page.problems, page.problems
+    finally:
+        page.close()
+
+
+def test_an_option_strategy_backtest_can_be_saved_to_a_session_from_the_options_lab(browser, live_research):  # noqa: F811
+    page = _open(browser, live_research)
+    try:
+        _create_session(page, "Opt", "A01, A02")
+        page.click("#tab-options")
+        page.wait_for_selector("#options-results .tile", timeout=90_000)
+        page.click("#view-options .tabsmall button[data-mode=backtest]")
+        page.click("#options .runbar button.primary")
+        page.wait_for_selector("[data-role=research-actions]", timeout=180_000)
+        assert "simulated" in page.inner_text("[data-role=research-actions]").lower()
+        page.click("[data-role=research-actions] button:text-is('Save to session')")
+        page.wait_for_selector("[data-role=research-actions] button:text-is('Saved')")
+        page.click("#tab-overview")
+        page.wait_for_selector("[data-widget=options] .kpis")
+        assert "simulated option market" in page.inner_text("[data-widget=options]")
         assert not page.problems, page.problems
     finally:
         page.close()

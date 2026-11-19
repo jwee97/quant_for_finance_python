@@ -96,7 +96,7 @@
   }
   let syncNav = () => {};
   /* The address of a page is ``#/<tab>`` (``#/<tab>?key=value`` carries a little context, for instance a saved session). It is the only thing the router keeps: the tab is still ``ql.tab`` for the next visit. */
-  const PAGES = {}, NAV = [], RESULT = [];                                                             // tab name -> {render}, for the pages that are not labs (shell.js, pages.js); listeners told which tab opened
+  const PAGES = {}, NAV = [], RESULT = [], LABDRAW = [];                                                             // tab name -> {render}, for the pages that are not labs (shell.js, pages.js); listeners told which tab opened
   function route() {
     const m = /^#\/?([a-z0-9-]+)(?:\?(.*))?$/.exec(location.hash);
     return m ? { tab: m[1], args: Object.fromEntries(new URLSearchParams(m[2] || "")) } : { tab: "", args: {} };
@@ -1144,6 +1144,7 @@
       const error = lab.errors[lab.mode], got = lab.results[lab.mode];
       if (error) labBanner(root, "That did not run. ", error, true);
       if (got) lab.build(root, got.data, got.body); else if (!error) lab.empty(root);
+      if (got) for (const fn of LABDRAW) { try { fn(lab, root, got); } catch (e) { console.error("lab hook", e); } }
       if (lab.paint) lab.paint(root);                                                        // what a tab keeps on top of its results (the list of runs in the background) survives every redraw
     }, root);
   }
@@ -1680,7 +1681,7 @@
     if (booted && wantedTab() === name) showTab(name, route().args);
   }
   window.QL = { C, h, fmt, $, api, css, store, toast, copy, download, num, pct, money, smoney, axisMoney, bad, bps, grouped, plain, unsign, colorOf, SLOTS, tile, chartCard, actionsCard, simpleTable, sampleRows, keepScroll, labField, checkList, numbers,
-    labHead, labBanner, labEmpty, labOld, syncLab, renderLab, drawLab, openGuide, serverApi, RESTART, notice, registerWorkspace, registerPage, setTheme, onNavigate: (fn) => NAV.push(fn), onResult: (fn) => RESULT.push(fn), applyContext, setupContext, lab: (name) => WORKSPACES[name], route, currentTab: () => current, labelPx, running, S, setupGuide, waitJob, keyHistory,
+    labHead, labBanner, labEmpty, labOld, syncLab, renderLab, drawLab, openGuide, serverApi, RESTART, notice, registerWorkspace, registerPage, setTheme, onNavigate: (fn) => NAV.push(fn), onResult: (fn) => RESULT.push(fn), onLabDraw: (fn) => LABDRAW.push(fn), applyContext, setupContext, lab: (name) => WORKSPACES[name], route, currentTab: () => current, labelPx, running, S, setupGuide, waitJob, keyHistory,
     universeBody, pickAllocator, useStrategy, setTrials, showTab, refsLine, fieldFor };
   boot();
 })();

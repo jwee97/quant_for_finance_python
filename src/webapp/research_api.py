@@ -152,8 +152,10 @@ class ResearchApi:
                 art = self._regime_artifact(job["result"], str(body["job"]))
             elif job.get("kind") == "backtest":
                 art = self._store(extract.backtest_artifact, job["result"], job_id=str(body["job"]), code_version=self._code_version())
+            elif job["result"].get("kind") in extract.STRATEGY_LABS:
+                art = self._store(extract.strategy_artifact, job["result"], job_id=str(body["job"]), code_version=self._code_version())
             else:
-                raise ApiError(f"a {job.get('kind')} run cannot be saved here yet: save a backtest, a machine-learning experiment or a regime estimate")
+                raise ApiError(f"a {job.get('kind')} run cannot be saved here yet: save a backtest, a strategy backtest from the Options, Futures or Crypto lab, a machine-learning experiment or a regime estimate")
         elif body.get("experiment"):
             exp_id = str(body["experiment"])
             try:
@@ -334,7 +336,9 @@ class ResearchApi:
                                  {"available": True, "title": bt["title"], "artifact": bt["id"], "session": bt["session_id"], "evidence": bt["evidence"], "data_kind": bt["data_kind"],
                                   "metrics": {k: bt["metrics"].get(k) for k in ("ann_vol", "max_drawdown", "sharpe", "cagr")}, "source": "your latest saved backtest (a historical simulation)"})
         opt = next((a for a in everything if a["kind"] == "options"), None)
-        out["options"] = {"available": False, "reason": "no option analysis has been saved to a session; the Options Lab shows live analytics of a chain you open"} if opt is None else {"available": True, "title": opt["title"], "artifact": opt["id"], "metrics": opt["metrics"]}
+        out["options"] = ({"available": False, "reason": "no option strategy has been saved to a session: run a strategy backtest in the Options Lab and choose Save to session"} if opt is None else
+                          {"available": True, "title": opt["title"], "artifact": opt["id"], "session": opt["session_id"], "evidence": opt["evidence"], "data_kind": opt["data_kind"],
+                           "metrics": {k: opt["metrics"].get(k) for k in ("sharpe", "cagr", "max_drawdown", "ann_vol")}, "source": "your latest saved option strategy backtest, on a simulated option market"})
         return clean(out)
 
     def _regime_block(self, reg: dict) -> dict:

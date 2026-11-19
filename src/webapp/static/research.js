@@ -154,6 +154,32 @@
     }
   });
 
+  /* The strategy backtests of the Options, Futures and Crypto labs can be kept in a session too. Their market data is simulated or downloaded, and the card says which. */
+  Q.onLabDraw((lab, root, got) => {
+    if (!["options", "futures", "crypto"].includes(lab.id) || lab.mode !== "backtest" || !got.job || !got.data || !/_backtest$/.test(got.data.kind || "")) return;
+    const card = h("div", "card ractions", null); card.dataset.role = "research-actions";
+    const head = h("div", "row", card); h("strong", "", head, "Research");
+    Q.badges.evidence(head, lab.id === "options" || got.data.source === "simulated" ? "simulated" : "historical_simulation");
+    h("span", "hint", head, lab.id === "options" ? "The option market is simulated: premiums and hedging fills are model outputs, not trades that could have been made." : "A simulation on saved data: costs are modelled, fills are not.");
+    const row = h("div", "row", card), b = h("button", "btn", row, "Save to session"); b.type = "button";
+    b.addEventListener("click", async () => { b.disabled = true; try { await R.saveRun({ job: got.job }, "My research"); b.textContent = "Saved"; } catch (e) { toast(e.message); b.disabled = false; } });
+    const go = h("button", "btn", row, "Add to Research Comparison"); go.type = "button";
+    go.addEventListener("click", async () => { try { const a = await R.saveRun({ job: got.job }, "My research"); Q.showTab("rcompare", { add: a.id }); } catch (e) { toast(e.message); } });
+    root.prepend(card);
+  });
+
+  /* A chart as a standalone SVG file: the page's styling reaches the chart through CSS classes and variables, so the computed colours and strokes are copied onto each element before it is saved. */
+  Q.exportChart = (card, name) => {
+    const svg = card.querySelector("svg.chart"); if (!svg) { toast("There is no chart to export"); return; }
+    const clone = svg.cloneNode(true), src = [svg, ...svg.querySelectorAll("*")], dst = [clone, ...clone.querySelectorAll("*")];
+    const keep = ["fill", "stroke", "stroke-width", "stroke-dasharray", "stroke-linecap", "stroke-linejoin", "opacity", "fill-opacity", "font-size", "font-family", "text-anchor"];
+    src.forEach((s, i) => { const cs = getComputedStyle(s); for (const k of keep) dst[i].style.setProperty(k, cs.getPropertyValue(k)); });
+    const box = svg.getBoundingClientRect(), bg = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+    bg.setAttribute("width", "100%"); bg.setAttribute("height", "100%"); bg.setAttribute("fill", getComputedStyle(document.body).backgroundColor); clone.insertBefore(bg, clone.firstChild);
+    clone.setAttribute("xmlns", "http://www.w3.org/2000/svg"); clone.setAttribute("width", Math.round(box.width)); clone.setAttribute("height", Math.round(box.height));
+    Q.download(name.replace(/[^\w-]+/g, "_") + ".svg", new XMLSerializer().serializeToString(clone));
+  };
+
   /* sessions and experiments in the search palette */
   if (Q.shell) Q.shell.addSource({ name: "research", async search(q) {
     const ql = q.toLowerCase(), out = [];
