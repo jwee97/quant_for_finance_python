@@ -82,8 +82,9 @@ def benchmark_models(bundle, names: list[str] | None = None, repeats: int = 1) -
 def scaling_exponent(fn: Callable[[int], object], sizes, repeats: int = 3, clock: Callable[[], float] = time.perf_counter) -> dict:
     """Time ``fn(n)`` at each size (best of ``repeats``) and fit ``log t = a + b log n``. Returns the exponent ``b``, the R-squared of the fit and the timing table.
 
-    ``clock`` is wall time by default. On a machine that is busy with other work, wall time at the small sizes is inflated by waiting for a turn, which flattens the slope: pass ``time.process_time`` (CPU time of this
-    process) to measure the work and not the waiting."""
+    ``clock`` is wall time by default. Wall time is wrong whenever anything else is running: at the small sizes it includes waiting for a turn on the CPU, and a busy Python thread elsewhere in the process makes
+    every short call wait for the interpreter lock (up to its 5 ms switch interval), which flattens the slope. ``time.process_time`` is no better in that case because it also counts the other threads' work.
+    Pass ``time.thread_time`` (CPU time of the calling thread only) to measure the work and nothing else."""
     sizes = list(sizes)
     times = []
     for n in sizes:

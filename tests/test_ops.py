@@ -279,8 +279,29 @@ def test_scaling_exponent_reads_whatever_clock_it_is_given_and_fits_the_power_ex
     assert out["exponent"] == pytest.approx(2.0) and out["r2"] == pytest.approx(1.0) and out["table"]["seconds"].tolist() == [1, 4, 16, 64]
 
 
+def test_a_busy_thread_elsewhere_in_the_process_does_not_change_the_measured_exponent():
+    """What broke the suite: with another Python thread running, a short numerical call waits for the interpreter lock, so wall time (and process-wide CPU time, which counts the other thread) stops growing with n."""
+    import threading
+
+    stop = threading.Event()
+
+    def spin():
+        while not stop.is_set():
+            pass
+
+    workers = [threading.Thread(target=spin, daemon=True) for _ in range(2)]
+    for w in workers:
+        w.start()
+    try:
+        lin = profiling.scaling_exponent(lambda n: np.cumsum(np.random.default_rng(0).normal(size=n * 400)), [500, 1000, 2000, 4000], repeats=3, clock=time.thread_time)
+    finally:
+        stop.set()
+    assert 0.6 < lin["exponent"] < 1.4, lin["exponent"]
+
+
 def test_scaling_exponent_distinguishes_linear_from_quadratic_work():
-    # CPU time, not wall time: on a loaded machine (parallel test workers, a shared runner) wall time at the small sizes includes waiting for a turn, which flattens the slope below the linear floor
-    lin = profiling.scaling_exponent(lambda n: np.cumsum(np.random.default_rng(0).normal(size=n * 400)), [500, 1000, 2000, 4000], repeats=3, clock=time.process_time)
-    quad = profiling.scaling_exponent(lambda n: np.outer(np.arange(n, dtype=float), np.arange(n, dtype=float)).sum(), [400, 800, 1600, 2400], repeats=3, clock=time.process_time)
+    # This thread's CPU time, not wall time: the suite runs in processes that have other threads (job workers, servers, numerical libraries), and a busy one makes every short call wait for the interpreter lock,
+    # which flattens the slope below the linear floor. Process-wide CPU time is no better: it counts those threads' work too.
+    lin = profiling.scaling_exponent(lambda n: np.cumsum(np.random.default_rng(0).normal(size=n * 400)), [500, 1000, 2000, 4000], repeats=3, clock=time.thread_time)
+    quad = profiling.scaling_exponent(lambda n: np.outer(np.arange(n, dtype=float), np.arange(n, dtype=float)).sum(), [400, 800, 1600, 2400], repeats=3, clock=time.thread_time)
     assert 0.6 < lin["exponent"] < 1.4 and 1.5 < quad["exponent"] < 3.2 and quad["exponent"] > lin["exponent"] + 0.4 and list(lin["table"].columns) == ["n", "seconds"]
