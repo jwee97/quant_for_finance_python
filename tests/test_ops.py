@@ -3,6 +3,8 @@
 import warnings
 from math import comb
 
+import time
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -271,7 +273,14 @@ def test_benchmark_models_reports_time_memory_and_errors():
     assert "CARRY" in table.loc["carry_xs", "error"] and table.loc["tsmom", "error"] == ""
 
 
+def test_scaling_exponent_reads_whatever_clock_it_is_given_and_fits_the_power_exactly():
+    readings = iter([0, 1, 0, 4, 0, 16, 0, 64])                            # a clock that says the work took 1, 4, 16 and 64 at sizes 1, 2, 4 and 8: time = n^2
+    out = profiling.scaling_exponent(lambda n: None, [1, 2, 4, 8], repeats=1, clock=lambda: next(readings))
+    assert out["exponent"] == pytest.approx(2.0) and out["r2"] == pytest.approx(1.0) and out["table"]["seconds"].tolist() == [1, 4, 16, 64]
+
+
 def test_scaling_exponent_distinguishes_linear_from_quadratic_work():
-    lin = profiling.scaling_exponent(lambda n: np.cumsum(np.random.default_rng(0).normal(size=n * 400)), [500, 1000, 2000, 4000], repeats=3)
-    quad = profiling.scaling_exponent(lambda n: np.outer(np.arange(n, dtype=float), np.arange(n, dtype=float)).sum(), [400, 800, 1600, 2400], repeats=3)
+    # CPU time, not wall time: on a loaded machine (parallel test workers, a shared runner) wall time at the small sizes includes waiting for a turn, which flattens the slope below the linear floor
+    lin = profiling.scaling_exponent(lambda n: np.cumsum(np.random.default_rng(0).normal(size=n * 400)), [500, 1000, 2000, 4000], repeats=3, clock=time.process_time)
+    quad = profiling.scaling_exponent(lambda n: np.outer(np.arange(n, dtype=float), np.arange(n, dtype=float)).sum(), [400, 800, 1600, 2400], repeats=3, clock=time.process_time)
     assert 0.6 < lin["exponent"] < 1.4 and 1.5 < quad["exponent"] < 3.2 and quad["exponent"] > lin["exponent"] + 0.4 and list(lin["table"].columns) == ["n", "seconds"]

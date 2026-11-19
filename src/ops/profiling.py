@@ -79,18 +79,21 @@ def benchmark_models(bundle, names: list[str] | None = None, repeats: int = 1) -
     return pd.DataFrame(rows).set_index("model").sort_values("seconds", ascending=False)
 
 
-def scaling_exponent(fn: Callable[[int], object], sizes, repeats: int = 3) -> dict:
-    """Time ``fn(n)`` at each size (best of ``repeats``) and fit ``log t = a + b log n``. Returns the exponent ``b``, the R-squared of the fit and the timing table."""
+def scaling_exponent(fn: Callable[[int], object], sizes, repeats: int = 3, clock: Callable[[], float] = time.perf_counter) -> dict:
+    """Time ``fn(n)`` at each size (best of ``repeats``) and fit ``log t = a + b log n``. Returns the exponent ``b``, the R-squared of the fit and the timing table.
+
+    ``clock`` is wall time by default. On a machine that is busy with other work, wall time at the small sizes is inflated by waiting for a turn, which flattens the slope: pass ``time.process_time`` (CPU time of this
+    process) to measure the work and not the waiting."""
     sizes = list(sizes)
     times = []
     for n in sizes:
         best = np.inf
         for _ in range(repeats):
-            t0 = time.perf_counter()
+            t0 = clock()
             fn(n)
-            best = min(best, time.perf_counter() - t0)
+            best = min(best, clock() - t0)
         times.append(best)
-    x, y = np.log(sizes), np.log(times)
+    x, y = np.log(sizes), np.log(np.maximum(times, 1e-9))
     b, a = np.polyfit(x, y, 1)
     fit = a + b * x
     r2 = 1.0 - float(((y - fit) ** 2).sum() / ((y - y.mean()) ** 2).sum()) if len(sizes) > 2 else float("nan")
