@@ -122,6 +122,7 @@ def test_a_search_runs_the_result_reads_in_words_and_the_winner_goes_to_the_back
         _open_tune(page)
         _small_search(page)
         page.wait_for_selector("[data-role=tune-progress]")
+        page.wait_for_selector("button[data-action=stop-tune]")                                     # the Stop button needs the job's id, which the app sends back a moment after the panel opens
         assert "Looking for good settings" in page.inner_text("#tune-results") and page.locator("button[data-action=stop-tune]").count() == 1
         page.wait_for_selector(".verdict-card", timeout=240_000)
         card = page.locator(".verdict-card")

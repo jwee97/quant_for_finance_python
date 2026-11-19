@@ -139,6 +139,11 @@
     const row = h("div", "row", card), btn = (text, fn, title) => { const b = h("button", "btn", row, text); b.type = "button"; if (title) b.title = title; b.addEventListener("click", async () => { b.disabled = true; try { await fn(b); } catch (e) { toast(e.message); } b.disabled = false; }); return b; };
     const saved = async () => { if (run.artifact) return run.artifact; if (!run.job) throw new Error("This run was not started from this page, so its record cannot be saved"); run.artifact = await R.saveRun({ job: run.job }, run.result.name); return run.artifact; };
     btn("Save to session", async (b) => { await saved(); b.textContent = "Saved"; });
+    btn("Save configuration", async () => {
+      const body = Q.setupBody(); if (!body) { toast("The setup cannot run yet, so it cannot be saved"); return; }
+      const name = prompt("Name for this configuration", run.result.name); if (!name) return;
+      const s = await R.ensure(run.result.name); await api("/api/research/config/save", { session: s.id, name, body }); await R.refresh(); toast(`Configuration "${name}" saved to "${s.name}"`);
+    }, "Keep the strategies, portfolio rule and assumptions of this setup under a name, to load again later");
     btn("Analyze by Market Regime", async () => { const a = await saved(); Q.showTab("regime", { result: a.id }); }, "Estimate regimes on these assets and see how this result behaved in each");
     btn("Evaluate with ML", async () => { await saved(); await R.setContext({ assets: run.result.universe.tickers, start: run.result.universe.first }); R.applyTo("ml"); Q.showTab("ml"); toast("The ML tab's dataset now uses this result's tickers and dates"); }, "Open the Machine Learning Lab on the same tickers and dates");
     btn("Explore Options Hedge", async () => { await saved(); const t = run.result.universe.tickers[0]; await R.setContext({ assets: run.result.universe.tickers, start: run.result.universe.first }); const lab = Q.lab("options"); if (lab) { lab.mode = "hedge"; R.applyTo("options"); } Q.showTab("options"); toast(`The Options Lab opens on ${t}. Hedging costs there are simulated, not historical trades.`); }, "Open the Options Lab's hedging simulation");

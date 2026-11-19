@@ -154,6 +154,14 @@
         const del = h("button", "link", last, " Delete"); del.type = "button"; del.addEventListener("click", () => api("/api/research/artifact/delete", { id: a.id }).then(() => drawSaved(root), (e) => toast(e.message)));
       }
     }
+    const cc = h("div", "card", root); h("h3", "", cc, "Saved configurations"); cc.dataset.role = "session-configs";
+    if (!(rec.configs || []).length) note(cc, "No configuration saved. In the Strategy Lab, set up a strategy and choose Save configuration.");
+    for (const c of rec.configs || []) {
+      const li = h("div", "row", cc); h("span", "", li, `${c.name} · ${(c.body.models || []).map((m) => m.name).join(", ")} · ${(c.body.tickers || []).length} tickers`); h("span", "hint", li, ago(c.created));
+      const ld = h("button", "btn", li, "Load into Strategy Lab"); ld.type = "button"; ld.title = "Fill the Strategy Lab's form; nothing is run";
+      ld.addEventListener("click", () => { Q.showTab("backtest"); if (Q.applySetup(c.body)) toast(`"${c.name}" loaded. Press Run backtest to run it.`); });
+      const dl = h("button", "link", li, "Delete"); dl.type = "button"; dl.addEventListener("click", () => api("/api/research/config/delete", { session: rec.id, config: c.id }).then(() => drawSaved(root), (e) => toast(e.message)));
+    }
     const gc = h("div", "card", root); h("h3", "", gc, "Comparisons"); gc.dataset.role = "session-groups";
     if (!rec.groups.length) note(gc, "No saved comparison. Select results above and compare them, then save the group.");
     for (const g of rec.groups) { const li = h("div", "row", gc); h("span", "", li, `${g.name} (${g.artifacts.length} results)`); const o = h("button", "btn", li, "Open"); o.type = "button"; o.addEventListener("click", () => Q.showTab("rcompare", { session: rec.id, group: g.id })); }

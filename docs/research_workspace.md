@@ -59,6 +59,7 @@ An unknown field is refused, not kept. The server validates (`src/research/conte
 
 A finished backtest in the Strategy Lab has a **Research** card:
 
+- **Save configuration** keeps the setup (strategies, portfolio rule, regime, capital and account assumptions, tickers, dates, source) under a name in the session; the Saved research page lists it and **Load into Strategy Lab** fills the form again without running anything.
 - **Save to session** keeps the result. The server stores it from its own record of the finished job, never from numbers sent by the page. It is labelled with its evidence (a historical simulation of the whole sample) and its data (platform, downloaded, simulated …), and carries the job, the code version and the dataset fingerprint.
 - **Analyze by Market Regime** opens the Regime Lab on the same assets, and scores the saved result by regime once an estimate is saved.
 - **Evaluate with ML** opens the Machine Learning Lab on the same tickers and dates.
@@ -108,7 +109,7 @@ Background jobs lists every run with its kind, state, progress, session and time
 
 | What | Where | Notes |
 |---|---|---|
-| Sessions, notes, comparison groups | `data/user/research/sessions/<id>.json` | schema 1, atomic writes, ≤ 200 sessions, ≤ 1 MB each |
+| Sessions, notes, comparison groups, saved Strategy Lab configurations | `data/user/research/sessions/<id>.json` | schema 2 (1 had no configurations; migrated on read), atomic writes, ≤ 200 sessions, ≤ 1 MB each |
 | Saved results with their series | `data/user/research/artifacts/<id>.json` | schema 1, ≤ 20,000 points and 8 MB each, `NaN` stored as `null` |
 | Job records | `data/user/jobs/` | now also the session, the request (≤ 20 KB) and `retry_of` |
 | Machine-learning experiments | `artifacts/ml/` | unchanged; read, never written, by this layer |

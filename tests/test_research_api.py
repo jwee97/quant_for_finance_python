@@ -50,7 +50,7 @@ def test_a_session_is_created_changed_and_deleted_and_bad_input_is_an_api_error(
     s = _post(app, "/api/research/session/create", {"name": "Study", "context": {"assets": ["spy", "qqq"], "start": "2015-01-01"}})["session"]
     assert s["context"]["assets"] == ["SPY", "QQQ"]
     listed = _get(app, "/api/research/sessions")
-    assert [x["id"] for x in listed["sessions"]] == [s["id"]] and listed["schema"] == 1 and "yahoo" in listed["sources"]
+    assert [x["id"] for x in listed["sessions"]] == [s["id"]] and listed["schema"] == 2 and "yahoo" in listed["sources"]
     got = _post(app, "/api/research/session/update", {"id": s["id"], "name": "Renamed", "context": {"benchmark": "SPY", "start": None}})["session"]
     assert got["name"] == "Renamed" and got["context"]["benchmark"] == "SPY" and "start" not in got["context"]
     for body, word in (({"context": {"assets": ["no way!"]}}, "ticker"), ({"context": {"data_source": "nope"}}, "data source"), ({"context": {"bogus": 1}}, "unknown context field")):
@@ -225,3 +225,16 @@ def test_a_sweep_or_comparison_is_refused_because_it_is_not_one_result(app):
     with pytest.raises(StoreError, match="not a strategy backtest"):
         extract.strategy_artifact({"kind": "options_sweep", "dates": [], "rows": []})
     assert app
+
+
+def test_a_strategy_configuration_is_saved_listed_and_deleted_through_the_api(app):
+    s = _post(app, "/api/research/session/create", {"name": "x"})["session"]
+    body = {"models": [{"name": "expression", "params": {"expr": "-ret(5)"}}], "tickers": ["AAA", "BBB", "CCC"], "allocator": "score_stack", "session": s["id"]}
+    cfg = _post(app, "/api/research/config/save", {"session": s["id"], "name": "Reversal", "body": body})["config"]
+    got = _get(app, "/api/research/session", id=s["id"])["session"]
+    assert got["schema"] == 2 and [c["name"] for c in got["configs"]] == ["Reversal"] and "session" not in got["configs"][0]["body"]
+    assert _get(app, "/api/research/sessions")["sessions"][0]["n_configs"] == 1
+    with pytest.raises(ApiError, match="at least one strategy"):
+        _post(app, "/api/research/config/save", {"session": s["id"], "name": "empty", "body": {"tickers": ["AAA"]}})
+    _post(app, "/api/research/config/delete", {"session": s["id"], "config": cfg["id"]})
+    assert _get(app, "/api/research/session", id=s["id"])["session"]["configs"] == []

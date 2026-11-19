@@ -4,6 +4,7 @@ to a regime estimate to a comparison, and the ways each of those refuses to say 
 from __future__ import annotations
 
 import re
+from json import dumps as json_dumps
 
 import pytest
 
@@ -442,6 +443,29 @@ def test_an_option_strategy_backtest_can_be_saved_to_a_session_from_the_options_
         page.click("#tab-overview")
         page.wait_for_selector("[data-widget=options] .kpis")
         assert "simulated option market" in page.inner_text("[data-widget=options]")
+        assert not page.problems, page.problems
+    finally:
+        page.close()
+
+
+def test_a_strategy_setup_is_saved_as_a_configuration_and_loaded_back_without_running_anything(browser, live_research):  # noqa: F811
+    page = _open(browser, live_research)
+    try:
+        _create_session(page, "Configs", "A00, A01, A02, A03, A04, A05")
+        page.click("#run")
+        page.wait_for_selector("#runcount:text-is('1')", timeout=180_000)
+        original = page.evaluate("QL.S.models.map((m) => m.name)")
+        page.once("dialog", lambda d: d.accept("My momentum setup"))
+        page.locator("[data-role=research-actions] button:text-is('Save configuration')").click()
+        page.wait_for_selector(".toast:has-text('My momentum setup')")
+        page.evaluate("QL.S.models = [{ name: 'mean_reversion', params: {} }]")                 # the form moves on to something else
+        page.click("#tab-saved")
+        page.wait_for_selector("[data-role=session-configs] button:text-is('Load into Strategy Lab')")
+        assert "My momentum setup" in page.inner_text("[data-role=session-configs]")
+        page.click("[data-role=session-configs] button:text-is('Load into Strategy Lab')")
+        page.wait_for_selector("#view-backtest:not([hidden])")
+        _wait_until(page, f"JSON.stringify(QL.S.models.map((m) => m.name)) === '{json_dumps(original)}'")
+        assert page.text_content("#runcount") == "1", "loading a configuration does not start a run"
         assert not page.problems, page.problems
     finally:
         page.close()

@@ -471,6 +471,25 @@
       allocator: S.allocator || null, allocator_params: S.allocParams, regime: S.regime || null, regime_risk: S.regimeRisk, aum: S.aum ? parseFloat(S.aum) : null,
       validate: S.validate, label: S.label || null, capital: S.capital ? parseFloat(S.capital) : null, account: Object.fromEntries(Object.entries(S.account).filter(([, v]) => v !== "").map(([k, v]) => [k, parseFloat(v)])) };
   }
+  /* The Strategy Lab's setup as the request that would start a run (without the open session): what a saved configuration keeps. Null when the setup cannot run yet. */
+  function setupBody() {
+    let b; try { b = buildBody(); } catch (e) { return null; }
+    delete b.session; delete b.refresh; return b;
+  }
+  /* Put a saved setup back into the Strategy Lab. Only the form changes: nothing is run, and a result already on screen is left as it was. */
+  function applySetup(b) {
+    if (!S.catalog) return false;
+    const known = new Set(S.catalog.models.map((m) => m.name)), models = (b.models || []).filter((m) => known.has(m.name));
+    if (!models.length) { toast("None of this configuration's strategies is in this app's strategy list"); return false; }
+    if (models.length < (b.models || []).length) toast("Some strategies in this configuration are no longer available and were left out");
+    S.models = models.map((m) => ({ name: m.name, params: { ...(m.params || {}) } }));
+    S.combination = b.combination || "equal"; S.allocator = b.allocator || ""; S.allocatorTouched = !!b.allocator; S.allocParams = { ...(b.allocator_params || {}) };
+    S.regime = b.regime || ""; S.regimeRisk = !!b.regime_risk; S.aum = b.aum ? String(b.aum) : ""; S.capital = b.capital ? String(b.capital) : ""; S.validate = !!b.validate; S.label = b.label || "";
+    S.account = { fee_per_order: "", borrow_pct: "", margin_pct: "", ...Object.fromEntries(Object.entries(b.account || {}).map(([k, v]) => [k, String(v)])) };
+    applyContext({ assets: b.tickers, start: b.start || "", data_source: b.source });
+    buildPanel(); renderSource(); renderUniverse(); renderStrategies(); renderPortfolio();
+    return true;
+  }
   /* Put one strategy with these settings into the Backtest tab (the Tune tab's "Use these settings") and open it. The tickers stay; the strategy list is replaced. */
   function useStrategy(name, params) {
     if (!modelInfo(name)) { toast(`${name} is not in this app's strategy list`); return false; }
@@ -1681,7 +1700,7 @@
     if (booted && wantedTab() === name) showTab(name, route().args);
   }
   window.QL = { C, h, fmt, $, api, css, store, toast, copy, download, num, pct, money, smoney, axisMoney, bad, bps, grouped, plain, unsign, colorOf, SLOTS, tile, chartCard, actionsCard, simpleTable, sampleRows, keepScroll, labField, checkList, numbers,
-    labHead, labBanner, labEmpty, labOld, syncLab, renderLab, drawLab, openGuide, serverApi, RESTART, notice, registerWorkspace, registerPage, setTheme, onNavigate: (fn) => NAV.push(fn), onResult: (fn) => RESULT.push(fn), onLabDraw: (fn) => LABDRAW.push(fn), applyContext, setupContext, lab: (name) => WORKSPACES[name], route, currentTab: () => current, labelPx, running, S, setupGuide, waitJob, keyHistory,
+    labHead, labBanner, labEmpty, labOld, syncLab, renderLab, drawLab, openGuide, serverApi, RESTART, notice, registerWorkspace, registerPage, setTheme, onNavigate: (fn) => NAV.push(fn), onResult: (fn) => RESULT.push(fn), onLabDraw: (fn) => LABDRAW.push(fn), applyContext, setupContext, setupBody, applySetup, lab: (name) => WORKSPACES[name], route, currentTab: () => current, labelPx, running, S, setupGuide, waitJob, keyHistory,
     universeBody, pickAllocator, useStrategy, setTrials, showTab, refsLine, fieldFor };
   boot();
 })();

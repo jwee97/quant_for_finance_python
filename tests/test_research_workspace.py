@@ -369,3 +369,39 @@ def test_the_lab_refuses_too_little_history_and_odd_state_counts():
         rl.filtered_hmm(proxy)
     with pytest.raises(ValueError, match="2 or 3"):
         rl.filtered_hmm(_market(1200)[0], n_states=5)
+
+
+# ------------------------------------------------------------------------------------------------------ saved configurations, schema 2
+def test_a_version_1_session_is_migrated_to_2_with_an_empty_list_of_configurations_and_keeps_its_original(store, tmp_path):
+    folder = tmp_path / "research" / "sessions"
+    folder.mkdir(parents=True)
+    v1 = {"schema": 1, "id": "cccccccccccc", "name": "v1", "context": {"assets": ["SPY"]}, "notes": [], "groups": [], "artifacts": [], "created": "x", "updated": "x"}
+    (folder / "cccccccccccc.json").write_text(json.dumps(v1))
+    rec = store.get_session("cccccccccccc")
+    assert rec["schema"] == SCHEMA == 2 and rec["configs"] == [] and rec["context"] == {"assets": ["SPY"]}
+    assert json.loads((folder / "cccccccccccc.v1.bak").read_text()) == v1
+    store.add_config("cccccccccccc", "kept", {"models": [{"name": "momentum", "params": {}}]})
+    assert len(store.get_session("cccccccccccc")["configs"]) == 1
+
+
+def test_a_version_0_session_goes_through_both_migrations(store, tmp_path):
+    folder = tmp_path / "research" / "sessions"
+    folder.mkdir(parents=True)
+    (folder / "dddddddddddd.json").write_text(json.dumps({"id": "dddddddddddd", "name": "old", "tickers": ["spy"], "start": "2012-01-02", "source": "yahoo", "runs": []}))
+    rec = store.get_session("dddddddddddd")
+    assert rec["schema"] == 2 and rec["configs"] == [] and rec["context"]["assets"] == ["SPY"]
+
+
+def test_a_configuration_keeps_only_what_a_setup_is_made_of_and_is_refused_when_empty_or_unsafe(store):
+    s = store.create_session("x")
+    cfg = store.add_config(s["id"], "  Momentum  ", {"models": [{"name": "momentum", "params": {"lookback": 126}}], "tickers": ["SPY", "TLT"], "session": s["id"], "refresh": True, "evil": "x", "allocator": None})
+    assert cfg["name"] == "Momentum" and set(cfg["body"]) == {"models", "tickers"}
+    for bad, word in (({"tickers": ["SPY"]}, "at least one strategy"), ({"models": [{"name": "m", "params": {"x": float("nan")}}]}, "cannot be saved"), ("nope", "object")):
+        with pytest.raises(StoreError, match=word):
+            store.add_config(s["id"], "bad", bad)
+    with pytest.raises(StoreError, match="Strategy Lab"):
+        store.add_config(s["id"], "x", {"models": [{"name": "m"}]}, kind="options")
+    store.delete_config(s["id"], cfg["id"])
+    assert store.get_session(s["id"])["configs"] == []
+    d = store.duplicate_session(store.create_session("y")["id"])
+    assert d["configs"] == []

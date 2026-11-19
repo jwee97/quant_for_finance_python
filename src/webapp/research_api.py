@@ -60,7 +60,7 @@ class ResearchApi:
     def post_routes(self) -> dict:
         return {"/api/research/session/create": self.session_create, "/api/research/session/update": self.session_update, "/api/research/session/delete": self.session_delete,
                 "/api/research/session/duplicate": self.session_duplicate, "/api/research/note/add": self.note_add, "/api/research/note/delete": self.note_delete,
-                "/api/research/group/save": self.group_save, "/api/research/group/delete": self.group_delete, "/api/research/artifact/save": self.artifact_save,
+                "/api/research/group/save": self.group_save, "/api/research/group/delete": self.group_delete, "/api/research/config/save": self.config_save, "/api/research/config/delete": self.config_delete, "/api/research/artifact/save": self.artifact_save,
                 "/api/research/artifact/delete": self.artifact_delete, "/api/research/compare": self.compare, "/api/research/export": self.export, "/api/regime/run": self.regime_run,
                 "/api/regime/by-result": self.regime_by_result}
 
@@ -129,6 +129,13 @@ class ResearchApi:
     def group_delete(self, body: dict) -> dict:
         self._store(self.store.delete_group, _id(body, "session"), _id(body, "group"))
         return {"deleted": _id(body, "group")}
+
+    def config_save(self, body: dict) -> dict:
+        return clean({"config": self._store(self.store.add_config, _id(body, "session"), str(body.get("name") or ""), body.get("body"))})
+
+    def config_delete(self, body: dict) -> dict:
+        self._store(self.store.delete_config, _id(body, "session"), _id(body, "config"))
+        return {"deleted": _id(body, "config")}
 
     # ------------------------------------------------------------------------------------------------------ results
     def artifact(self, q: dict) -> dict:

@@ -25,12 +25,14 @@ from pathlib import Path
 
 from .context import ContextError, validate_context
 
-SCHEMA = 1
+SCHEMA = 2                                                       # 2 added saved configurations to a session
+ARTIFACT_SCHEMA = 1                                              # a saved result's own version: it did not change when sessions gained configurations
 ID = re.compile(r"^[0-9a-f]{12}$")
 KINDS = ("backtest", "ml_experiment", "regime", "options", "futures", "crypto", "forecast", "tune")
 EVIDENCE = ("in_sample", "out_of_sample", "walk_forward", "historical_simulation", "simulated", "retrospective", "paper", "live")
 DATA_KINDS = ("platform", "user_file", "downloaded", "simulated", "mixed", "unavailable")          # the vocabulary of the provenance badges the tabs already show
-MAX_SESSIONS, MAX_ARTIFACTS, MAX_NOTES, MAX_GROUPS = 200, 200, 200, 20
+MAX_SESSIONS, MAX_ARTIFACTS, MAX_NOTES, MAX_GROUPS, MAX_CONFIGS = 200, 200, 200, 20, 50
+CONFIG_KEYS = ("tickers", "classes", "start", "source", "models", "combination", "allocator", "allocator_params", "regime", "regime_risk", "aum", "capital", "account", "validate", "label")
 MAX_POINTS, MAX_ARTIFACT_CHARS, MAX_SESSION_CHARS = 20_000, 8_000_000, 1_000_000
 
 
@@ -82,7 +84,12 @@ def _session_from_v0(rec: dict) -> dict:
             "notes": [{"id": _new_id(), "ts": _now(), "text": str(n)[:4000]} for n in rec.get("notes", []) if isinstance(n, str)], "groups": [], "artifacts": list(rec.get("runs") or [])}
 
 
-SESSION_MIGRATIONS = {0: _session_from_v0}                       # version -> function that returns the record as the next version
+def _session_from_v1(rec: dict) -> dict:
+    """Version 1 had no saved configurations: a session gets an empty list."""
+    return {**rec, "schema": 2, "configs": list(rec.get("configs") or [])}
+
+
+SESSION_MIGRATIONS = {0: _session_from_v0, 1: _session_from_v1}                       # version -> function that returns the record as the next version
 
 
 def migrate_session(rec: dict) -> tuple[dict, bool]:
@@ -143,7 +150,7 @@ class ResearchStore:
             if len(self.list_sessions()) >= MAX_SESSIONS:
                 raise StoreError(f"at most {MAX_SESSIONS} sessions are kept; delete one first")
             ctx = validate_context(context or {})
-            rec = {"schema": SCHEMA, "id": _new_id(), "name": (name or ctx.get("name") or "Untitled session").strip()[:80], "created": _now(), "updated": _now(), "context": ctx, "notes": [], "groups": [], "artifacts": []}
+            rec = {"schema": SCHEMA, "id": _new_id(), "name": (name or ctx.get("name") or "Untitled session").strip()[:80], "created": _now(), "updated": _now(), "context": ctx, "notes": [], "groups": [], "configs": [], "artifacts": []}
             self._save_session(rec)
             return rec
 
@@ -166,7 +173,7 @@ class ResearchStore:
                 continue
             ctx = rec.get("context", {})
             out.append({"id": rec["id"], "name": rec["name"], "updated": rec.get("updated", ""), "created": rec.get("created", ""), "readable": True, "assets": ctx.get("assets", []), "start": ctx.get("start", ""),
-                        "end": ctx.get("end", ""), "n_artifacts": len(rec.get("artifacts", [])), "n_notes": len(rec.get("notes", [])), "n_groups": len(rec.get("groups", []))})
+                        "end": ctx.get("end", ""), "n_artifacts": len(rec.get("artifacts", [])), "n_notes": len(rec.get("notes", [])), "n_groups": len(rec.get("groups", [])), "n_configs": len(rec.get("configs", []))})
         return sorted(out, key=lambda r: r["updated"], reverse=True)
 
     def update_session(self, session_id: str, *, name: str | None = None, context: dict | None = None, replace_context: bool = False) -> dict:
@@ -200,6 +207,7 @@ class ResearchStore:
             old = self._session(session_id)
             new = self.create_session(f"{old['name']} (copy)", old["context"])
             new["notes"] = [dict(n, id=_new_id()) for n in old.get("notes", [])]
+            new["configs"] = [dict(c, id=_new_id()) for c in old.get("configs", [])]
             self._save_session(new)
             return new
 
@@ -223,6 +231,37 @@ class ResearchStore:
             rec["notes"] = [n for n in rec["notes"] if n.get("id") != note_id]
             self._save_session(rec)
 
+    # ---------------------------------------------------------------------------------------------- saved configurations
+    def add_config(self, session_id: str, name: str, body: dict, *, kind: str = "backtest") -> dict:
+        """Keep the setup of a lab (for the Strategy Lab: the request body that starts a backtest) under a name. Only the keys a setup is made of are kept; the open session and one-off flags are not."""
+        if kind != "backtest":
+            raise StoreError("only a Strategy Lab setup can be saved as a configuration")
+        if not isinstance(body, dict):
+            raise StoreError("a configuration must be an object")
+        clean = {k: body[k] for k in CONFIG_KEYS if k in body and body[k] is not None}
+        if not clean.get("models"):
+            raise StoreError("a configuration needs at least one strategy")
+        try:
+            text = json.dumps(clean, allow_nan=False)
+        except (TypeError, ValueError):
+            raise StoreError("the configuration holds a value that cannot be saved") from None
+        if len(text) > 50_000:
+            raise StoreError("the configuration is too large to keep")
+        with self._lock:
+            rec = self._session(session_id)
+            if len(rec["configs"]) >= MAX_CONFIGS:
+                raise StoreError(f"at most {MAX_CONFIGS} configurations in a session")
+            cfg = {"id": _new_id(), "name": (name or "Configuration").strip()[:80], "kind": kind, "created": _now(), "body": json.loads(text)}
+            rec["configs"].append(cfg)
+            self._save_session(rec)
+            return cfg
+
+    def delete_config(self, session_id: str, config_id: str) -> None:
+        with self._lock:
+            rec = self._session(session_id)
+            rec["configs"] = [c for c in rec["configs"] if c.get("id") != config_id]
+            self._save_session(rec)
+
     # ---------------------------------------------------------------------------------------------- artifacts
     def add_artifact(self, session_id: str, artifact: dict) -> dict:
         """Keep a result in a session. ``artifact`` is checked (see :func:`check_artifact`); it gets an id and the session id."""
@@ -230,7 +269,7 @@ class ResearchStore:
             rec = self._session(session_id)
             if len(rec["artifacts"]) >= MAX_ARTIFACTS:
                 raise StoreError(f"at most {MAX_ARTIFACTS} results in a session; delete one first")
-            art = check_artifact({**artifact, "id": _new_id(), "session_id": session_id, "created": _now(), "schema": SCHEMA})
+            art = check_artifact({**artifact, "id": _new_id(), "session_id": session_id, "created": _now(), "schema": ARTIFACT_SCHEMA})
             text = json.dumps(art, allow_nan=False, separators=(",", ":"))
             if len(text) > MAX_ARTIFACT_CHARS:
                 raise StoreError("this result is too large to keep")
@@ -243,7 +282,7 @@ class ResearchStore:
         rec = self._read(self._path("artifacts", artifact_id))
         if rec is None:
             raise StoreError("unknown result")
-        if int(rec.get("schema", 0)) > SCHEMA:
+        if int(rec.get("schema", 0)) > ARTIFACT_SCHEMA:
             raise StoreError("this result was written by a newer version of the app")
         if not series:
             rec = {k: v for k, v in rec.items() if k != "series"}
@@ -311,7 +350,7 @@ def check_artifact(raw: dict) -> dict:
         raise StoreError(f"every saved result says what kind of evidence it is: one of {', '.join(EVIDENCE)}")
     if data_kind not in DATA_KINDS:
         raise StoreError(f"every saved result says what kind of data it rests on: one of {', '.join(DATA_KINDS)}")
-    out = {"schema": raw.get("schema", SCHEMA), "id": raw["id"], "session_id": raw["session_id"], "created": raw.get("created") or _now(), "kind": kind, "title": str(raw.get("title") or kind)[:120],
+    out = {"schema": raw.get("schema", ARTIFACT_SCHEMA), "id": raw["id"], "session_id": raw["session_id"], "created": raw.get("created") or _now(), "kind": kind, "title": str(raw.get("title") or kind)[:120],
            "evidence": evidence, "data_kind": data_kind}
     ctx = validate_context(raw.get("context") or {}, classes=("equity", "rates", "fixed_income", "credit", "commodity", "real_estate", "crypto", "futures", "options", "mixed", "unknown"))
     out["context"] = ctx
