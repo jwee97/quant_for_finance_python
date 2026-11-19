@@ -601,7 +601,7 @@ def _refused(page):
 
 def open_tab(page, tab):
     """Open a tab the way a person does. On a phone the sidebar is a drawer behind the Menu button, so it is opened first; on a wide screen the tab is always there."""
-    if not page.is_visible(f"#tab-{tab}") and page.is_visible("#navtoggle"):
+    if page.is_visible("#navtoggle") and page.get_attribute("#navtoggle", "aria-expanded") != "true":      # the attribute changes at once; the drawer's own visibility lags it by its slide
         page.click("#navtoggle")
     page.click(f"#tab-{tab}")
 
