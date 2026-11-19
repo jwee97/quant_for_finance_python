@@ -48,7 +48,7 @@
   function store(key, value) { try { if (value === undefined) return JSON.parse(localStorage.getItem("ql." + key)); localStorage.setItem("ql." + key, JSON.stringify(value)); } catch (e) { return null; } }
   function toast(msg) { const t = h("div", "toast", document.body, msg); setTimeout(() => t.remove(), 3500); }
   function copy(text, what) { (navigator.clipboard ? navigator.clipboard.writeText(text) : Promise.reject()).then(() => toast(`${what} copied`), () => toast("Copy is blocked in this browser: select the text and copy it by hand")); }
-  function download(name, text) { const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([text], { type: "text/plain" })); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000); }
+  function download(name, text) { const a = document.createElement("a"); a.href = URL.createObjectURL(text instanceof Blob ? text : new Blob([text], { type: "text/plain" })); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000); }
   const unsign = (s) => (/^-0(\.0+)?$/.test(s) ? s.slice(1) : s);                                   // a value that rounds to zero is not "-0.0"
   const num = (v, d = 2) => (v === null || v === undefined || !isFinite(v) ? "n/a" : unsign(v.toFixed(d)));
   const pct = (v, d = 1) => (v === null || v === undefined || !isFinite(v) ? "n/a" : unsign((v * 100).toFixed(d)) + "%");
@@ -599,6 +599,12 @@
     h("div", "label", t, label); h("div", "value" + (/\S{12,}/.test(String(value)) ? " long" : ""), t, value); if (delta) { const d = h("div", "delta " + (delta.dir || ""), t, delta.text); }
     return t;
   }
+  /* A wait the reader can see: the sentence (announced to a screen reader) and a few pulsing bars where the content will be. */
+  function loading(parent, text) {
+    const box = h("div", "loading", parent); box.setAttribute("role", "status"); h("p", "hint", box, text);
+    const bars = h("div", "bars", box); bars.setAttribute("aria-hidden", "true"); for (const w of [92, 78, 64]) { const b = h("div", "skeleton", bars); b.style.width = w + "%"; }
+    return box;
+  }
   function chartCard(parent, title, note, opts) {
     const card = h("div", "card chartcard" + (opts && opts.wide ? " wide" : ""), parent), bar = h("div", "bar", card);
     h("h3", "", bar, title);
@@ -607,13 +613,69 @@
     const seg = h("div", "seg", bar), a = h("button", "", seg, "Chart"), b = h("button", "", seg, "Table");
     let mode = S.view.modes[title] === "table" ? "table" : "chart";
     const extra = h("span", "", bar);
+    const tools = h("span", "chartkit", bar);
     const mark = () => { a.setAttribute("aria-pressed", String(mode === "chart")); b.setAttribute("aria-pressed", String(mode === "table")); };
     const draw = () => { if (mode === "chart") opts.draw(body); else { body.replaceChildren(); opts.table(body); } };       // the chart kit measures its host and then clears it itself
     const pick = (m) => { mode = m; S.view.modes[title] = m; mark(); keepScroll(draw, body); };
     a.addEventListener("click", () => pick("chart"));
     b.addEventListener("click", () => pick("table"));
     mark(); card._draw = () => keepScroll(draw, body); card._extra = extra; card._body = body; draw();
+    chartTools(card, tools, title, opts);
     return card;
+  }
+  /* What every chart card can do: be opened large (Esc closes it) and be saved as an image (SVG, PNG) or as the numbers behind it (CSV, the Table view). */
+  const fileName = (t) => (t || "chart").toLowerCase().replace(/[^\w]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 60) || "chart";
+  function chartSvg(card, scale) {
+    const svg = card.querySelector("svg.chart"); if (!svg) return null;
+    const clone = svg.cloneNode(true), src = [svg, ...svg.querySelectorAll("*")], dst = [clone, ...clone.querySelectorAll("*")];
+    const keep = ["fill", "stroke", "stroke-width", "stroke-dasharray", "stroke-linecap", "stroke-linejoin", "opacity", "fill-opacity", "stroke-opacity", "font-size", "font-family", "font-weight", "text-anchor"];
+    src.forEach((n, i) => { const cs = getComputedStyle(n); for (const k of keep) dst[i].style.setProperty(k, cs.getPropertyValue(k)); });
+    const box = svg.getBoundingClientRect(), bg = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+    bg.setAttribute("width", "100%"); bg.setAttribute("height", "100%"); bg.setAttribute("fill", getComputedStyle(document.body).backgroundColor); clone.insertBefore(bg, clone.firstChild);
+    const w = Math.round(box.width), hh = Math.round(box.height);
+    clone.setAttribute("xmlns", "http://www.w3.org/2000/svg"); clone.setAttribute("width", w * (scale || 1)); clone.setAttribute("height", hh * (scale || 1));
+    return { text: new XMLSerializer().serializeToString(clone), w: w * (scale || 1), h: hh * (scale || 1) };
+  }
+  function exportChart(card, name, kind) {
+    const base = fileName(name || (card.querySelector("h3") || {}).textContent);
+    if (kind === "csv") {
+      const box = document.createElement("div"); const t = card._table; if (!t) { toast("There are no numbers to save for this chart"); return; }
+      t(box);
+      const rows = [...box.querySelectorAll("tr")].map((tr) => [...tr.children].map((c) => `"${c.textContent.replace(/"/g, '""')}"`).join(","));
+      if (!rows.length) { toast("There are no numbers to save for this chart"); return; }
+      download(base + ".csv", rows.join("\n") + "\n"); return;
+    }
+    const got = chartSvg(card, kind === "png" ? 2 : 1); if (!got) { toast("There is no chart to save"); return; }
+    if (kind !== "png") { download(base + ".svg", got.text); return; }
+    const img = new Image();
+    img.onload = () => { const cv = document.createElement("canvas"); cv.width = got.w; cv.height = got.h; cv.getContext("2d").drawImage(img, 0, 0, got.w, got.h); cv.toBlob((b) => (b ? download(base + ".png", b) : toast("The image could not be made")), "image/png"); };
+    img.onerror = () => toast("The image could not be made");
+    img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(got.text);
+  }
+  function chartTools(card, host, title, opts) {
+    card._table = opts.table || null;
+    const big = h("button", "icon", host, "⤢"); big.type = "button"; big.setAttribute("aria-label", "Expand chart"); big.setAttribute("aria-expanded", "false"); big.title = "Open large (Esc closes)";
+    const save = h("button", "icon", host, "⤓"); save.type = "button"; save.setAttribute("aria-label", "Save chart"); save.setAttribute("aria-haspopup", "true"); save.setAttribute("aria-expanded", "false"); save.title = "Save as an image or as numbers";
+    let menu = null, back = null;
+    const closeMenu = () => { if (menu) { menu.remove(); menu = null; save.setAttribute("aria-expanded", "false"); document.removeEventListener("pointerdown", away, true); } };
+    const away = (e) => { if (menu && !menu.contains(e.target) && e.target !== save) closeMenu(); };
+    save.addEventListener("click", () => {
+      if (menu) { closeMenu(); return; }
+      menu = h("div", "savemenu", host); menu.setAttribute("role", "menu");
+      const items = [["svg", "Save as SVG"], ["png", "Save as PNG"], ["csv", "Save numbers (CSV)"]].filter(([k]) => k !== "csv" || card._table);
+      for (const [k, label] of items) { const b = h("button", "", menu, label); b.type = "button"; b.setAttribute("role", "menuitem"); b.addEventListener("click", () => { closeMenu(); exportChart(card, title, k); }); }
+      save.setAttribute("aria-expanded", "true"); document.addEventListener("pointerdown", away, true);
+      menu.addEventListener("keydown", (e) => { if (e.key === "Escape") { e.stopPropagation(); closeMenu(); save.focus(); } });
+      menu.querySelector("button").focus();
+    });
+    const shut = () => { card.classList.remove("expanded"); if (back) { back.remove(); back = null; } document.body.classList.remove("has-expanded"); big.setAttribute("aria-expanded", "false"); big.setAttribute("aria-label", "Expand chart"); big.textContent = "⤢"; document.removeEventListener("keydown", esc, true); card._draw(); };
+    const esc = (e) => { if (e.key === "Escape" && !menu) { e.stopPropagation(); shut(); big.focus(); } };
+    big.addEventListener("click", () => {
+      if (card.classList.contains("expanded")) { shut(); return; }
+      card.classList.add("expanded"); document.body.classList.add("has-expanded"); back = h("div", "chartback", document.body); back.addEventListener("click", shut);
+      big.setAttribute("aria-expanded", "true"); big.setAttribute("aria-label", "Close large chart"); big.textContent = "✕"; document.addEventListener("keydown", esc, true);
+      card._draw(); big.focus();
+    });
   }
   /* Run a redraw of part of the page without letting the page move. Emptying a card and measuring the chart that replaces it (a chart reads its container's width) shrinks the page for a
      moment, and the browser answers by clamping or re-anchoring the scroll position. Holding the height steady while the new content is built avoids that; the scroll position is also put back. */
@@ -622,11 +684,35 @@
     if (box) box.style.minHeight = held + "px";
     try { fn(); } finally { if (box) box.style.minHeight = ""; if (window.scrollY !== y || window.scrollX !== x) window.scrollTo(x, y); }
   }
+  /* A table: columns sort when their heading is pressed (ascending, descending, as it came), and a long table can be filtered. ``cols`` are { label, get | key, num, cls, title }. */
+  const cellNumber = (t) => { const m = String(t).replace(/[−–]/g, "-").replace(/[\u2060,$%×x\s]/g, "").match(/^[-+]?\d*\.?\d+(?:e[-+]?\d+)?/i); return m ? parseFloat(m[0]) : NaN; };
   function simpleTable(parent, cols, rows) {
+    const list = rows.slice(), many = list.length > 14, sortable = list.length > 2;
+    let tools = null, shown = null, query = "", order = null;
+    if (many) { tools = h("div", "tbltools", parent); }
     const wrap = h("div", "scroll", parent), t = h("table", "data", wrap), hd = h("tr", "", h("thead", "", t));
-    for (const c of cols) { const th = h("th", c.num ? "num" : "", hd, c.label); if (c.title) th.title = c.title; }
-    const tb = h("tbody", "", t);
-    for (const r of rows) { const tr = h("tr", "", tb); for (const c of cols) h("td", [c.num && "num", c.cls].filter(Boolean).join(" "), tr, c.get ? c.get(r) : String(r[c.key])); }
+    const tb = h("tbody", "", t), text = (r, c) => String(c.get ? c.get(r) : r[c.key]);
+    const heads = cols.map((c, k) => { const th = h("th", c.num ? "num" : "", hd); if (c.title) th.title = c.title; if (sortable) { const b = h("button", "sort", th, c.label); b.type = "button"; b.addEventListener("click", () => sort(k)); } else th.textContent = c.label; return th; });
+    const paint = () => {
+      tb.replaceChildren();
+      const q = query.trim().toLowerCase(); let shownRows = list;
+      if (q) shownRows = list.filter((r) => cols.some((c) => text(r, c).toLowerCase().includes(q)));
+      if (order) {
+        const c = cols[order.k], keyed = shownRows.map((r, i) => ({ r, i, v: text(r, c) })), nums = keyed.every((x) => !isNaN(cellNumber(x.v)) || x.v === "n/a" || x.v === "" || x.v === "—");
+        keyed.sort((x, y) => { let d; if (nums) { const a = cellNumber(x.v), b = cellNumber(y.v); d = isNaN(a) ? (isNaN(b) ? 0 : 1) : isNaN(b) ? -1 : a - b; if (isNaN(a) || isNaN(b)) return d || x.i - y.i; } else d = x.v.localeCompare(y.v, undefined, { numeric: true }); return (order.desc ? -d : d) || x.i - y.i; });
+        shownRows = keyed.map((x) => x.r);
+      }
+      for (const r of shownRows) { const tr = h("tr", "", tb); for (const c of cols) h("td", [c.num && "num", c.cls].filter(Boolean).join(" "), tr, text(r, c)); }
+      if (!shownRows.length && q) { const tr = h("tr", "", tb), td = h("td", "none", tr, "No row matches"); td.colSpan = cols.length; }
+      heads.forEach((th, k) => { if (order && order.k === k) th.setAttribute("aria-sort", order.desc ? "descending" : "ascending"); else th.removeAttribute("aria-sort"); });
+      if (shown) shown.textContent = q ? `${shownRows.length} of ${list.length} rows` : `${list.length} rows`;
+    };
+    const sort = (k) => { const first = !!cols[k].num; order = !order || order.k !== k ? { k, desc: first } : order.desc === first ? { k, desc: !first } : null; paint(); const b = heads[k].querySelector("button"); if (b) b.focus({ preventScroll: true }); };
+    if (many) {
+      const f = h("input", "", tools); f.type = "search"; f.placeholder = "Filter rows"; f.setAttribute("aria-label", "Filter rows"); f.addEventListener("input", () => { query = f.value; paint(); });
+      shown = h("span", "hint", tools, `${list.length} rows`);
+    }
+    paint();
     const guard = () => {                                                                    // a table wider or taller than its card must be scrollable from the keyboard, and its region must have a name of its own
       if (!wrap.isConnected) return;
       if (wrap.scrollWidth > wrap.clientWidth + 1 || wrap.scrollHeight > wrap.clientHeight + 1) {
@@ -1603,7 +1689,7 @@
   async function renderGuides() {
     const root = $("#guides");
     if (!G.index) {
-      root.replaceChildren(); h("div", "card", root, "Loading guides…");
+      root.replaceChildren(); loading(h("div", "card", root), "Loading guides…");
       try { G.index = (await api("/api/docs")).docs; } catch (e) { root.replaceChildren(); h("div", "card", root, e.message); return; }
     }
     root.replaceChildren();
@@ -1699,7 +1785,7 @@
     $("#tab-" + name).addEventListener("click", () => { if (S.catalog) showTab(name); });
     if (booted && wantedTab() === name) showTab(name, route().args);
   }
-  window.QL = { C, h, fmt, $, api, css, store, toast, copy, download, num, pct, money, smoney, axisMoney, bad, bps, grouped, plain, unsign, colorOf, SLOTS, tile, chartCard, actionsCard, simpleTable, sampleRows, keepScroll, labField, checkList, numbers,
+  window.QL = { exportChart, loading, C, h, fmt, $, api, css, store, toast, copy, download, num, pct, money, smoney, axisMoney, bad, bps, grouped, plain, unsign, colorOf, SLOTS, tile, chartCard, actionsCard, simpleTable, sampleRows, keepScroll, labField, checkList, numbers,
     labHead, labBanner, labEmpty, labOld, syncLab, renderLab, drawLab, openGuide, serverApi, RESTART, notice, registerWorkspace, registerPage, setTheme, onNavigate: (fn) => NAV.push(fn), onResult: (fn) => RESULT.push(fn), onLabDraw: (fn) => LABDRAW.push(fn), applyContext, setupContext, setupBody, applySetup, lab: (name) => WORKSPACES[name], route, currentTab: () => current, labelPx, running, S, setupGuide, waitJob, keyHistory,
     universeBody, pickAllocator, useStrategy, setTrials, showTab, refsLine, fieldFor };
   boot();

@@ -72,7 +72,7 @@
 
     const b = sec("2. Which methods");
     if (F.planError) { const p = h("p", "hint", b, F.planError); p.style.color = css("--crit"); }
-    else if (!F.plan) h("p", "hint", b, "Loading…");
+    else if (!F.plan) Q.loading(b, "Loading…");
     else {
       h("p", "hint", b, "The random walk is always run: it is the yardstick that every other method has to beat. Tick the methods to test against it. Hover a name for what it does.");
       const quick = h("div", "row tight", b);

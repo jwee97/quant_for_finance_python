@@ -165,7 +165,7 @@
   }
   const underlyingField = (box, after) => {
     const f = O.form, cat = O.catalog;
-    if (!cat) { h("p", "hint", box, "Loading the list of underlyings…"); return; }
+    if (!cat) { Q.loading(box, "Loading the list of underlyings…"); return; }
     Q.labField(box, { key: "underlying", label: "Underlying", kind: "choice", options: cat.underlyings.map((u) => [u.id, u.label]), help: "The platform's ETFs, quoted from a model at their real last close, real chains you have downloaded, and any chain file you put in data/user/options/" }, f,
       () => { f.expiry = ""; O.spot = null; after(); });
     const u = cat.underlyings.find((x) => x.id === f.underlying);

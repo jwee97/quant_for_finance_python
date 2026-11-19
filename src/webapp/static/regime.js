@@ -77,7 +77,6 @@
     const colors = COLORS(), dates = r.timeline.dates;
     const pc = Q.chartCard(out, "Probability of each state (filtered)", "Each day uses only data up to that day.", { wide: true, draw: (b) => C.line(b, { dates, series: r.names.map((n, i) => ({ name: n, color: colors[i % 3], values: r.timeline.probabilities[n] })), yFormat: (v) => (v * 100).toFixed(0) + "%", tipFormat: (v) => pct(v, 0), ylim: [0, 1], height: 240, label: "Filtered regime probabilities" }),
       table: (b) => Q.simpleTable(b, [{ label: "Date", get: (i) => dates[i] }, ...r.names.map((n) => ({ label: n, num: true, get: (i) => num(r.timeline.probabilities[n][i], 3) }))], Q.sampleRows(dates, null, Math.max(1, Math.ceil(dates.length / 60)))) });
-    { const sv = h("button", "btn", pc._extra, "SVG"); sv.type = "button"; sv.addEventListener("click", () => Q.exportChart(pc, "regime-probabilities")); }
     if (r.retrospective) {
       const hi = r.names.length - 1, rr = r.retrospective;
       const card = Q.chartCard(out, `Filtered against retrospective: probability of ${r.names[hi]}`, "The retrospective line uses the whole sample and cannot be traded on; where the two disagree, the filtered line is what was knowable.", { wide: true,

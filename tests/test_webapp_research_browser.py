@@ -288,12 +288,20 @@ def test_a_backtest_is_saved_analysed_by_regime_and_compared_with_its_evidence_l
         for role in ("compare-equity", "compare-drawdown", "compare-rolling-sharpe", "compare-distribution"):
             page.wait_for_selector(f"[data-role={role}] svg.chart")
         assert re.search(r"Shared window: \d{4}-\d\d-\d\d to \d{4}-\d\d-\d\d", page.inner_text("[data-role=compare-window]"))
+        box = page.locator("[data-role=compare-equity] svg.chart rect[tabindex]").bounding_box()      # one cursor for the comparison charts: a day read on one is shown on the others
+        page.mouse.move(box["x"] + box["width"] * 0.5, box["y"] + box["height"] / 2)
+        page.wait_for_selector("[data-role=compare-drawdown] .tip:not([hidden])")
+        day = page.locator("[data-role=compare-equity] .tip .t").inner_text()
+        assert page.locator("[data-role=compare-drawdown] .tip .t").inner_text() == day and re.fullmatch(r"\d{4}-\d\d-\d\d", day)
+        page.mouse.move(0, 0)
+        page.wait_for_selector("[data-role=compare-drawdown] .tip", state="hidden")
         with page.expect_download() as dl:
             page.click("[data-role=compare-tools] button:text-is('Download report (Markdown)')")
         report = open(dl.value.path(), encoding="utf-8").read()
         assert "Window shared by all results" in report and "does not describe future returns" in report and arts[0]["refs"]["job"] in report
         with page.expect_download() as dls:
-            page.click("[data-role=compare-equity] button:text-is('SVG')")
+            page.click("[data-role=compare-equity] button[aria-label='Save chart']")
+            page.click("[data-role=compare-equity] button:text-is('Save as SVG')")
         svg = open(dls.value.path(), encoding="utf-8").read()
         assert svg.startswith("<svg") and "<path" in svg and "stroke:" in svg, "the exported chart carries its own colours"
         with page.expect_download() as dl2:

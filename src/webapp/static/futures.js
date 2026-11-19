@@ -128,7 +128,7 @@
   F.sections = (panel) => {
     const f = F.form, after = () => Q.syncLab(F), sec = (title, open = true) => { const d = h("details", "", panel); d.open = open; h("summary", "", d, title); return h("div", "body", d); };
     const m = F.mode, cat = F.catalog;
-    if (!cat) { h("p", "hint", sec("1. Root"), "Loading the list of roots…"); return; }
+    if (!cat) { Q.loading(sec("1. Root"), "Loading the list of roots…"); return; }
     if (CURVE_MODES.has(m)) {
       const b = sec("1. Root");
       Q.labField(b, { key: "root", label: "Futures root", kind: "choice", options: cat.futures_roots.map((r) => [r.id, `${r.id}: ${r.name}${r.source === "user_file" ? " (your file)" : r.source === "downloaded" ? " (downloaded)" : ""}`]) }, f, () => F.run(true));

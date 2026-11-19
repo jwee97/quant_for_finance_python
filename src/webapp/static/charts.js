@@ -69,6 +69,8 @@
   /* The drawing width is the host's width. Read it BEFORE the host is emptied: measuring an emptied host forces a layout while the page is shorter, and the browser answers by clamping or
      re-anchoring the scroll position, so the page would jump every time a chart is redrawn (a Chart/Table or Linear/Log toggle). */
   function width(host) { return Math.max(280, Math.floor(host.getBoundingClientRect().width || 600)); }
+  const groups = new Map();
+  function group(key) { let g = groups.get(key); if (!g) groups.set(key, (g = new Set())); for (const h of g) if (!h.isConnected) g.delete(h); return g; }
   function tooltip(host) {
     let tip = host.querySelector(":scope > .tip");
     if (!tip) { tip = html("div", "tip", host); tip.hidden = true; }
@@ -97,9 +99,20 @@
     tip.style.left = Math.max(4, Math.min(hw - w - 4, x + 14 > hw - w ? x - w - 14 : x + 14)) + "px";
     tip.style.top = Math.max(4, y - h - 8) + "px";
   }
-  function legend(host, items, boxes) {
+  /* The legend names every series. Given ``toggle`` ({ off, flip }) the entries are buttons that hide and show their series: the way to read one line of many without the others in the way. */
+  function legend(host, items, boxes, toggle) {
     const lg = html("div", "legend" + (boxes ? " boxes" : ""), host);
-    for (const s of items) { const span = html("span", "", lg); const i = html("i", s.box ? "box" : "", span); i.style.setProperty("--c", s.color); if (s.box) i.style.opacity = String(Math.min(1, (s.opacity || 0.14) * 2.5)); span.appendChild(document.createTextNode(s.name)); }
+    items.forEach((s, k) => {
+      const span = html("span", "", lg); const i = html("i", s.box ? "box" : "", span); i.style.setProperty("--c", s.color); if (s.box) i.style.opacity = String(Math.min(1, (s.opacity || 0.14) * 2.5)); span.appendChild(document.createTextNode(s.name));
+      if (toggle && !s.box) {
+        const off = toggle.off.has(k);
+        span.setAttribute("role", "button"); span.tabIndex = 0; span.setAttribute("aria-pressed", String(!off)); span.dataset.series = String(k); span.title = off ? `Show ${s.name}` : `Hide ${s.name}`;
+        if (off) span.classList.add("off");
+        const go = () => toggle.flip(k);
+        span.addEventListener("click", go);
+        span.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); go(); } });
+      }
+    });
     return lg;
   }
 
@@ -115,7 +128,14 @@
   /* A line chart that can be zoomed. The window is a range of positions along the x axis, kept on the chart's host so that a redraw (a new theme, a resize) keeps it. The buttons above the chart
      zoom in and out around the middle, move the window and reset it; Ctrl (or a pinch on a trackpad) with the wheel zooms around the pointer; two fingers pinch on a touch screen. */
   const MIN_WINDOW = 5, ZOOMABLE = 20;
-  function line(host, o) {
+  function line(host, orig) {
+    const key = orig.series.map((s) => s.name).join("\u0001");
+    if (host._seriesKey !== key) { host._seriesKey = key; host._off = new Set(); }
+    const toggleable = orig.series.length > 1 && orig.legend !== false && orig.toggle !== false && !orig.signFill && !orig.area;
+    if (toggleable && host._off.size >= orig.series.length) host._off.clear();
+    const o = !toggleable ? orig : { ...orig, series: orig.series.filter((s, k) => !host._off.has(k)), _all: orig.series, _toggle: {
+      off: host._off,
+      flip: (k) => { if (host._off.has(k)) host._off.delete(k); else if (host._off.size < orig.series.length - 1) host._off.add(k); line(host, orig); const again = host.querySelector(`.legend [data-series="${k}"]`); if (again) again.focus({ preventScroll: true }); } } };
     const n = (Array.isArray(o.xs) ? o.xs : o.dates).length;
     if (n < ZOOMABLE || o.zoom === false) { host._zoom = null; return drawLine(host, o); }
     if (!host._zoom || host._zoom.n !== n) {                                                   // ``o.window`` ([first, last] positions) is where a chart opens: the part worth reading first, with the rest a zoom out away
@@ -127,16 +147,16 @@
     const view = full ? o : { ...o, dates: cut(o.dates), xs: Array.isArray(o.xs) ? cut(o.xs) : o.xs, series: o.series.map((s) => ({ ...s, values: cut(s.values) })), bands: (o.bands || []).map((b) => ({ ...b, lo: cut(b.lo), hi: cut(b.hi) })),
       tipTitle: o.tipTitle ? (i) => o.tipTitle(i + z.a) : undefined, tipExtra: o.tipExtra ? (i) => o.tipExtra(i + z.a) : undefined };
     const active = host.contains(document.activeElement) ? document.activeElement : null;       // a redraw replaces what had the focus: the keyboard must not lose its place
-    const refocus = active ? (active.matches("rect[tabindex]") ? "rect[tabindex]" : active.getAttribute("aria-label") ? `.zoombar button[aria-label="${active.getAttribute("aria-label")}"]` : null) : null;
+    const refocus = active ? (active.matches("rect[tabindex]") ? "rect[tabindex]" : active.dataset.range ? `.rangebar button[data-range="${active.dataset.range}"]` : active.getAttribute("aria-label") ? `.zoombar button[aria-label="${active.getAttribute("aria-label")}"]` : null) : null;
     drawLine(host, view);
     const set = (a, b) => {
       let w = Math.max(MIN_WINDOW - 1, Math.min(n - 1, Math.round(b - a)));
       a = Math.max(0, Math.min(n - 1 - w, Math.round(a)));
       if (a === z.a && a + w === z.b) return;
-      z.a = a; z.b = a + w; line(host, o);
+      z.a = a; z.b = a + w; line(host, orig);
     };
     const scale = (k, centre) => { const w = (z.b - z.a) * k, c = centre === undefined ? (z.a + z.b) / 2 : centre, share = (c - z.a) / Math.max(1, z.b - z.a); set(c - w * share, c - w * share + w); };
-    const bar = html("div", "zoombar"); host.prepend(bar);
+    const top = html("div", "chartbar"), ranges = html("div", "rangebar", top), bar = html("div", "zoombar", top); host.prepend(top);
     const button = (text, name, fn, off) => { const b = html("button", "", bar, text); b.type = "button"; b.setAttribute("aria-label", name); b.title = name; b.disabled = !!off; b.addEventListener("click", fn); return b; };
     const w = z.b - z.a;
     button("+", "Zoom in", () => scale(0.5), w <= MIN_WINDOW - 1);
@@ -145,12 +165,45 @@
     button("▶", "Later", () => set(z.a + Math.max(1, Math.round(w / 4)), z.b + Math.max(1, Math.round(w / 4))), z.b === n - 1);
     button("Reset", "Show everything", () => set(0, n - 1), full);
     if (!full) html("span", "", bar, `${w + 1} of ${n} points`);
+    if (!Array.isArray(o.xs) && Date.parse(o.dates[n - 1]) - Date.parse(o.dates[0]) > 70 * 864e5) {       // ranges named the way a trader asks for them: the last month, three months, the year so far
+      const last = Date.parse(o.dates[n - 1]), first = (ms) => { let i = 0; while (i < n - 1 && Date.parse(o.dates[i]) < last - ms) i++; return i; };
+      const ytd = (() => { const y = new Date(last).getUTCFullYear(); let i = 0; while (i < n - 1 && new Date(Date.parse(o.dates[i])).getUTCFullYear() < y) i++; return i; })();
+      const span = last - Date.parse(o.dates[0]);
+      const list = [["1M", 30], ["3M", 91], ["6M", 182], ["1Y", 365], ["3Y", 1096], ["5Y", 1826]].filter(([, d]) => d * 864e5 < span * 0.9).map(([lab, d]) => [lab, first(d * 864e5), `Last ${lab}`]);
+      if (ytd > 0 && ytd < n - MIN_WINDOW) list.push(["YTD", ytd, "Year to date"]);
+      list.push(["All", 0, "Whole history"]);
+      for (const [lab, from, name] of list) {
+        if (from > n - MIN_WINDOW) continue;
+        const b = html("button", "", ranges, lab); b.type = "button"; b.dataset.range = lab; b.title = name; b.setAttribute("aria-label", name); b.setAttribute("aria-pressed", String(z.a === from && z.b === n - 1));
+        b.addEventListener("click", () => set(from, n - 1));
+      }
+      html("span", "zhint", ranges, "Drag across the chart to zoom");
+    }
     const svg = host.querySelector("svg.chart"), overlay = svg && svg.querySelector("rect[tabindex]");
     if (refocus) { const again = host.querySelector(refocus); if (again && !again.disabled) again.focus({ preventScroll: true }); else if (overlay) overlay.focus({ preventScroll: true }); }
     if (!overlay) return;
     const under = (clientX) => { const r = overlay.getBoundingClientRect(); return z.a + Math.max(0, Math.min(1, (clientX - r.left) / (r.width || 1))) * (z.b - z.a); };
     overlay.addEventListener("wheel", (e) => { if (!e.ctrlKey && !e.metaKey) return; e.preventDefault(); scale(e.deltaY < 0 ? 0.8 : 1.25, under(e.clientX)); }, { passive: false });
     overlay.addEventListener("keydown", (e) => { if (e.key === "+" || e.key === "=") scale(0.5); else if (e.key === "-") scale(2); else if (e.key === "0") set(0, n - 1); else return; e.preventDefault(); });
+    let drag = null;                                                                           // a mouse drag across the plot zooms to the stretch it covers; double-click shows everything again
+    overlay.addEventListener("pointerdown", (e) => { if (e.pointerType !== "mouse" || e.button !== 0) return; drag = { x: e.clientX, box: null, id: e.pointerId }; });
+    overlay.addEventListener("pointermove", (e) => {
+      if (!drag || e.pointerId !== drag.id) return;
+      if (!drag.box && Math.abs(e.clientX - drag.x) < 6) return;
+      const hb = host.getBoundingClientRect(), ob = overlay.getBoundingClientRect(), x0 = Math.max(ob.left, Math.min(drag.x, e.clientX)), x1 = Math.min(ob.right, Math.max(drag.x, e.clientX));
+      if (!drag.box) { drag.box = html("div", "brush", host); try { overlay.setPointerCapture(e.pointerId); } catch (_) { /* a synthetic pointer cannot be captured */ } }
+      Object.assign(drag.box.style, { left: x0 - hb.left + "px", width: Math.max(0, x1 - x0) + "px", top: ob.top - hb.top + "px", height: ob.height + "px" });
+    });
+    const drop = (e, apply) => {
+      if (!drag || e.pointerId !== drag.id) return;
+      const d = drag; drag = null;
+      if (!d.box) return;
+      const x0 = parseFloat(d.box.style.left), x1 = x0 + parseFloat(d.box.style.width), hl = host.getBoundingClientRect().left;
+      d.box.remove(); overlay._brushed = performance.now();
+      if (apply && x1 - x0 > 8) set(under(x0 + hl), under(x1 + hl));
+    };
+    overlay.addEventListener("pointerup", (e) => drop(e, true)); overlay.addEventListener("pointercancel", (e) => drop(e, false));
+    overlay.addEventListener("dblclick", () => set(0, n - 1));
     const fingers = new Map();
     let pinch = null;
     overlay.addEventListener("pointerdown", (e) => { if (e.pointerType !== "touch") return; fingers.set(e.pointerId, e.clientX); if (fingers.size === 2) { const xs = [...fingers.values()]; pinch = { gap: Math.abs(xs[0] - xs[1]) || 1, a: z.a, b: z.b, c: under((xs[0] + xs[1]) / 2) }; } });
@@ -167,10 +220,10 @@
   function drawLine(host, o) {
     const W = width(host);
     host.replaceChildren();
-    const numeric = Array.isArray(o.xs), dates = numeric ? o.xs.slice() : o.dates.map((d) => Date.parse(d)), H = o.height || 280;
+    const numeric = Array.isArray(o.xs), dates = numeric ? o.xs.slice() : o.dates.map((d) => Date.parse(d)), H = host.closest(".expanded") ? Math.max(o.height || 280, Math.round(window.innerHeight - 250)) : o.height || 280;
     const bands = o.bands || [], regions = o.regions || [], vlines = o.vlines || [], m = { l: 46, r: 14, t: regions.length || vlines.length ? 22 : 8, b: o.xLabel ? 40 : 24 }, iw = W - m.l - m.r, ih = H - m.t - m.b;
-    const legendItems = o.series.concat(bands.filter((b) => b.name).map((b) => ({ name: b.name, color: b.color, box: true, opacity: b.opacity })));
-    if (o.legend !== false && legendItems.length > 1) legend(host, legendItems);
+    const legendItems = (o._all || o.series).concat(bands.filter((b) => b.name).map((b) => ({ name: b.name, color: b.color, box: true, opacity: b.opacity })));
+    if (o.legend !== false && legendItems.length > 1) legend(host, legendItems, false, o._toggle);
     const svg = el("svg", { class: "chart", viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": o.label || "line chart" }, host);
     const log = !!o.log;
     const f = (v) => (log ? Math.log(v) : v);
@@ -233,7 +286,11 @@
         el("path", { d: area, fill: css("--pos"), "fill-opacity": 0.14, stroke: "none", "clip-path": `url(#${id}u)` }, svg);
         el("path", { d: area, fill: css("--neg"), "fill-opacity": 0.14, stroke: "none", "clip-path": `url(#${id}d)` }, svg);
       }
-      if (o.area && k === 0 && first) el("path", { d: d + `L${lastX.toFixed(1)} ${(o.areaBase !== undefined ? Y(o.areaBase) : m.t + ih).toFixed(1)}L${first[0].toFixed(1)} ${(o.areaBase !== undefined ? Y(o.areaBase) : m.t + ih).toFixed(1)}Z`, fill: s.color, "fill-opacity": 0.1, stroke: "none", ...clip }, svg);
+      if (o.area && k === 0 && first) {
+        const gid = "ag" + ++uid, grad = el("linearGradient", { id: gid, x1: 0, y1: 0, x2: 0, y2: 1 }, el("defs", {}, svg));
+        el("stop", { offset: "0%", "stop-color": s.color, "stop-opacity": 0.3 }, grad); el("stop", { offset: "100%", "stop-color": s.color, "stop-opacity": 0.02 }, grad);
+        el("path", { d: d + `L${lastX.toFixed(1)} ${(o.areaBase !== undefined ? Y(o.areaBase) : m.t + ih).toFixed(1)}L${first[0].toFixed(1)} ${(o.areaBase !== undefined ? Y(o.areaBase) : m.t + ih).toFixed(1)}Z`, fill: `url(#${gid})`, stroke: "none", ...clip }, svg);
+      }
       const stroke = { d, fill: "none", stroke: s.color, "stroke-width": s.width || 2, "stroke-linejoin": "round", "stroke-linecap": "round", ...clip };
       if (s.dash) stroke["stroke-dasharray"] = s.dash;
       if (d) el("path", stroke, svg);
@@ -254,11 +311,8 @@
     const dots = o.series.map((s) => { const g = el("g", { visibility: "hidden" }, svg); el("circle", { r: 5, fill: s.color, stroke: css("--surface"), "stroke-width": 2 }, g); return g; });
     const tip = tooltip(host);
     const overlay = el("rect", { x: m.l, y: m.t, width: iw, height: ih, fill: "transparent", tabindex: 0 }, svg);
-    const show = (clientX) => {
-      const rect = svg.getBoundingClientRect(), px = ((clientX - rect.left) / rect.width) * W, t = t0 + ((px - m.l) / iw) * (t1 - t0);
-      let lo2 = 0, hi2 = dates.length - 1;
-      while (hi2 - lo2 > 1) { const mid = (lo2 + hi2) >> 1; if (dates[mid] < t) lo2 = mid; else hi2 = mid; }
-      const i = Math.abs(dates[lo2] - t) < Math.abs(dates[hi2] - t) ? lo2 : hi2, x = X(dates[i]);
+    const mark = (i) => {
+      const rect = svg.getBoundingClientRect(), x = X(dates[i]);
       cross.setAttribute("x1", x); cross.setAttribute("x2", x); cross.setAttribute("visibility", "visible");
       tip.replaceChildren(); html("div", "t", tip, numeric ? (o.tipTitle ? o.tipTitle(i) : (o.xFormat || fmt.num)(dates[i])) : o.dates[i]);
       o.series.forEach((s, k) => {
@@ -276,7 +330,19 @@
       if (o.tipExtra) for (const [label, text] of o.tipExtra(i)) { const r = html("div", "r", tip); html("span", "k", r, label); html("b", "", r, text); }
       place(tip, host, (x / W) * rect.width, m.t + 20);
     };
-    const hide = () => { cross.setAttribute("visibility", "hidden"); dots.forEach((g) => g.setAttribute("visibility", "hidden")); tip.hidden = true; };
+    const show = (clientX) => {
+      const rect = svg.getBoundingClientRect(), px = ((clientX - rect.left) / rect.width) * W, t = t0 + ((px - m.l) / iw) * (t1 - t0);
+      let lo2 = 0, hi2 = dates.length - 1;
+      while (hi2 - lo2 > 1) { const mid = (lo2 + hi2) >> 1; if (dates[mid] < t) lo2 = mid; else hi2 = mid; }
+      const i = Math.abs(dates[lo2] - t) < Math.abs(dates[hi2] - t) ? lo2 : hi2;
+      mark(i);
+      if (o.sync && !numeric) for (const peer of group(o.sync)) if (peer !== host && peer.isConnected && peer._peer) peer._peer(o.dates[i]);
+    };
+    const hide = () => { cross.setAttribute("visibility", "hidden"); dots.forEach((g) => g.setAttribute("visibility", "hidden")); tip.hidden = true; if (o.sync) for (const peer of group(o.sync)) if (peer !== host && peer._peer) peer._peer(null); };
+    if (o.sync && !numeric) {                                                                  // charts of one group (the same dates) follow one cursor: a day read on one is the day shown on the others
+      group(o.sync).add(host);
+      host._peer = (d) => { const i = d === null ? -1 : o.dates.indexOf(d); if (i < 0) { cross.setAttribute("visibility", "hidden"); dots.forEach((g) => g.setAttribute("visibility", "hidden")); tip.hidden = true; } else mark(i); };
+    }
     hoverIn(overlay, (e) => show(e.clientX));
     hoverOut(overlay, hide);
     overlay.addEventListener("focus", () => !pointed(overlay) && show(svg.getBoundingClientRect().left + svg.getBoundingClientRect().width * 0.5));

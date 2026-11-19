@@ -60,7 +60,7 @@
 
     const b = sec("2. Which generators");
     if (S.planError) { const e = h("p", "hint", b, S.planError); e.style.color = css("--crit"); }
-    else if (!S.plan) h("p", "hint", b, "Loading…");
+    else if (!S.plan) Q.loading(b, "Loading…");
     else {
       h("p", "hint", b, "Tick the generators to compare. The learned ones train a small neural network on your history and take a few seconds each; the resampling and statistical ones take under two.");
       const quick = h("div", "row tight", b);

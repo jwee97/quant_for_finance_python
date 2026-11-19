@@ -225,7 +225,7 @@
   const newest = (x, y) => String(y.created).localeCompare(String(x.created));
   const NO_MODEL = "This run re-used its parent's predictions and has no model of its own: use the experiment it came from.";
   function expSelect(b, needModel) {                                                        // one saved experiment, shared by Explain, Overfitting and Forward test
-    if (!M.board) { h("p", "hint", b, "Loading the experiments…"); ensureBoard(); return false; }
+    if (!M.board) { Q.loading(b, "Loading the experiments…"); ensureBoard(); return false; }
     const rows = M.board.rows.slice().sort(newest), usable = rows.filter((r) => !needModel || r.has_model !== false), f = M.form;
     if (!rows.length) { h("p", "hint", b, "No experiment is saved yet: train one in the Train view first."); return false; }
     if (!usable.length) { h("p", "hint", b, "No saved experiment has a model of its own: train one in the Train view first."); return false; }
@@ -239,7 +239,7 @@
     return true;
   }
   function pickList(b, title, max) {                                                       // several saved experiments, shared by Compare and Combine
-    if (!M.board) { h("p", "hint", b, "Loading the experiments…"); ensureBoard(); return; }
+    if (!M.board) { Q.loading(b, "Loading the experiments…"); ensureBoard(); return; }
     if (!M.board.rows.length) { h("p", "hint", b, "No experiment is saved yet: train two or more in the Train view first."); return; }
     const box = h("div", "checks picklist", b); h("span", "hint", box, title);
     for (const r of M.board.rows.slice().sort(newest)) {

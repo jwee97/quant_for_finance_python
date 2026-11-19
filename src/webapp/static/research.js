@@ -173,18 +173,6 @@
     root.prepend(card);
   });
 
-  /* A chart as a standalone SVG file: the page's styling reaches the chart through CSS classes and variables, so the computed colours and strokes are copied onto each element before it is saved. */
-  Q.exportChart = (card, name) => {
-    const svg = card.querySelector("svg.chart"); if (!svg) { toast("There is no chart to export"); return; }
-    const clone = svg.cloneNode(true), src = [svg, ...svg.querySelectorAll("*")], dst = [clone, ...clone.querySelectorAll("*")];
-    const keep = ["fill", "stroke", "stroke-width", "stroke-dasharray", "stroke-linecap", "stroke-linejoin", "opacity", "fill-opacity", "font-size", "font-family", "text-anchor"];
-    src.forEach((s, i) => { const cs = getComputedStyle(s); for (const k of keep) dst[i].style.setProperty(k, cs.getPropertyValue(k)); });
-    const box = svg.getBoundingClientRect(), bg = document.createElementNS("http://www.w3.org/2000/svg", "rect");
-    bg.setAttribute("width", "100%"); bg.setAttribute("height", "100%"); bg.setAttribute("fill", getComputedStyle(document.body).backgroundColor); clone.insertBefore(bg, clone.firstChild);
-    clone.setAttribute("xmlns", "http://www.w3.org/2000/svg"); clone.setAttribute("width", Math.round(box.width)); clone.setAttribute("height", Math.round(box.height));
-    Q.download(name.replace(/[^\w-]+/g, "_") + ".svg", new XMLSerializer().serializeToString(clone));
-  };
-
   /* sessions and experiments in the search palette */
   if (Q.shell) Q.shell.addSource({ name: "research", async search(q) {
     const ql = q.toLowerCase(), out = [];

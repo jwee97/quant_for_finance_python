@@ -87,7 +87,7 @@
     const my = ++overviewSeq;
     root.replaceChildren();
     head(root, "Overview", "Where your research stands. Every block names its source; a block with nothing to show says why.");
-    const box = h("div", "stack", root); h("p", "hint", box, "Loading…");
+    const box = h("div", "stack", root); Q.loading(box, "Loading…");
     let data, detail = null;
     try { data = await api("/api/research/overview"); if (R.active()) detail = await api("/api/research/session?id=" + R.active().id).catch(() => null); } catch (e) { if (my === overviewSeq) { box.replaceChildren(); h("div", "banner err", box, "The overview could not be read: " + e.message); } return; }
     if (my !== overviewSeq) return;                                                       // a newer drawing started while this one waited for the server
@@ -177,7 +177,7 @@
   async function drawExperiments(root) {
     root.replaceChildren();
     head(root, "Recent experiments", "The machine-learning registry and the results you saved. Registry experiments are walk-forward: every prediction came from a model trained on earlier days only.");
-    const a = h("div", "card", root); h("h3", "", a, "Machine-learning experiments"); const body = h("div", "", a); h("p", "hint", body, "Loading…");
+    const a = h("div", "card", root); h("h3", "", a, "Machine-learning experiments"); const body = h("div", "", a); Q.loading(body, "Loading…");
     try {
       const d = await api("/api/ml/experiments?limit=30"), rows = (d.data || d).rows || [];
       body.replaceChildren();

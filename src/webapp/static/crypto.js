@@ -90,7 +90,7 @@
   X.sections = (panel) => {
     const f = X.form, after = () => Q.syncLab(X), rerun = () => X.run(true), sec = (title, open = true) => { const d = h("details", "", panel); d.open = open; h("summary", "", d, title); return h("div", "body", d); };
     const m = X.mode, cat = X.catalog;
-    if (!cat) { h("p", "hint", sec("1. Coin"), "Loading the list of coins…"); return; }
+    if (!cat) { Q.loading(sec("1. Coin"), "Loading the list of coins…"); return; }
     if (m === "funding") {
       const b = sec("1. Coins"), box = h("div", "checks", b); h("span", "hint", box, "Up to six:");
       for (const s of symbols()) {

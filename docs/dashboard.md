@@ -270,6 +270,14 @@ Every chart shows its numbers when you point at it. On a phone or tablet, **tap*
 
 Line charts of twenty points or more have a small bar above them: **+** and **−** zoom in and out around the middle, **◀** and **▶** move the window, **Reset** shows everything, and the bar says how many points are in view. Two fingers pinch to zoom on a touch screen; on a computer hold Ctrl (or pinch on a trackpad) and turn the wheel to zoom around the pointer; with the keyboard, focus the chart and press **+**, **−** or **0**. The y axis rescales to what is in view, so a quiet month is not flattened by a crash elsewhere in the history. The Forecast tab's fan opens already zoomed on the forecast and the weeks before it; *Reset* shows the whole history. The *Table* button of a chart card still gives every number.
 
+### Chart and table tools
+
+Every chart card has two small buttons at its top right. **⤢** opens the chart large over the page (**Esc** or **✕** closes it), and **⤓** saves it: as an **SVG** or **PNG** image (the colours are copied in, so the file looks like the page) or as the **numbers behind it** (the Table view, as CSV).
+
+Line charts of a few months or more have **range buttons** (1M, 3M, 6M, 1Y, 3Y, 5Y, YTD, All) above the plot, and you can **drag across the plot** with the mouse to zoom to the stretch you cover; double-click shows everything again. When a line chart has several series, **click a name in the legend** to hide or show that line (the last visible line cannot be hidden); the legend entries are buttons for the keyboard as well. A shaded area under a line fades out toward the axis.
+
+Tables sort when you press a column heading (numbers start from the largest; a second press reverses, a third restores the order they came in) and a table of more than fourteen rows has a **Filter rows** box and a row count. A heading's sort state is announced to a screen reader as ascending or descending.
+
 ## Keyboard and screen readers
 
 Every control can be reached with the keyboard. The sections and each tab's views are real tabs: **Tab** goes to the selected one, the **arrow keys**, **Home** and **End** move between them and open them. Choosers such as the expiry chips are toggle buttons in a labelled group. Every field has a name, the page has one top heading and no heading skips a level, and every text colour (in the light and the dark theme) reaches the 4.5:1 contrast the WCAG asks for. An automated audit (axe-core, 22 views, both themes) found each of these once, and the Forecast tab, added afterwards, was audited the same way (its form and a result, in both themes) and found clean; `tests/test_webapp_accessibility.py` keeps them fixed.
