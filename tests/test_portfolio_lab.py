@@ -97,3 +97,25 @@ def test_every_covariance_estimator_gives_a_usable_matrix(returns):
         c = estimate_covariance(returns.iloc[:300], m, 252)
         assert c.shape == (8, 8) and np.linalg.eigvalsh(c.to_numpy()).min() > 0 and np.allclose(c, c.T), m
     assert not np.allclose(estimate_covariance(returns.iloc[:300], "factor", 252), estimate_covariance(returns.iloc[:300], "sample", 252))
+
+
+# ------------------------------------------------------------------------------------------------------------------ the allocators the Backtest tab can now run
+def test_the_new_allocators_build_long_only_books_within_the_configured_limits():
+    from src.framework import ALLOCATORS, load_library
+    from src.framework.allocation import Context
+    from src.utils.config import load_config
+    from tests.test_allocators_book_exact import last_origin, market
+
+    load_library()
+    bundle, config = market(), load_config()
+    cap = float(config.get("portfolio.constraints.max_weight", 0.25))
+    for name, kw in (("nco", {}), ("near_optimal", {"tolerance": 0.3}), ("cdar", {"alpha": 0.9})):
+        weights = ALLOCATORS.create(name, lookback=252, **kw).build(Context(bundle, config))
+        origin, w = last_origin(weights, bundle)
+        assert w.sum() == pytest.approx(1.0, abs=1e-6) and (w >= -1e-9).all() and w.max() <= cap + 1e-6, (name, w.round(3).to_dict())
+        assert weights.loc[:bundle.index[250]].abs().sum().sum() == 0, "nothing is held before the first full window"
+    centre = last_origin(ALLOCATORS.create("near_optimal", lookback=252, tolerance=0.3).build(Context(bundle, config)), bundle)[1]
+    assert (centre > 0).all(), "the centre holds every asset"
+    for name, kw in (("near_optimal", {"tolerance": 0.0}), ("cdar", {"alpha": 1.0})):
+        with pytest.raises(ValueError):
+            ALLOCATORS.create(name, **kw)

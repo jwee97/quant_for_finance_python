@@ -39,7 +39,7 @@ def _saved_backtest(app, session, expr="-ret(5)", **body):
 
 
 def test_the_routes_exist_and_the_version_is_announced(app):
-    assert app.catalog()["api_version"] == api.API_VERSION == 20
+    assert app.catalog()["api_version"] == api.API_VERSION == 21
     for path in ("/api/research/sessions", "/api/research/session", "/api/research/artifact", "/api/research/overview", "/api/regime/plan", "/api/research/compat"):
         assert path in app.extra_get, path
     for path in ("/api/research/session/create", "/api/research/artifact/save", "/api/research/compare", "/api/research/export", "/api/regime/run", "/api/regime/by-result"):

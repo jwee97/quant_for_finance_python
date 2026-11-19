@@ -6,6 +6,7 @@
     es_policy     A linear softmax policy over price features trained by evolution strategies (the reinforcement-learning allocator)
     kelly         Fractional Kelly (growth-optimal) weights from the forecast mean and a trailing covariance, with a gross-leverage cap
     black_litterman   The model forecasts as views on an equilibrium prior, with view uncertainty from the forecast confidence (Idzorek), then mean-variance
+    nco, near_optimal, cdar   Nested clustered optimisation, the centre of the near-optimal minimum-variance portfolios, and minimum conditional drawdown at risk
 
 Both stamp weights at month-end origins from data up to that origin, so the engine's execution lag keeps them causal.
 """
@@ -189,6 +190,67 @@ class MaximumDiversification(_RollingRiskBook):
     def solver(cov, constraints):
         from ..portfolio.diversification import maximum_diversification_weights
         return maximum_diversification_weights(cov, constraints)
+
+
+class _Solved:
+    """What ``_RollingRiskBook.build`` reads from a solver: whether it worked and the weights."""
+
+    def __init__(self, weights, success: bool = True):
+        self.weights, self.success = weights, success
+
+
+@register_allocator("nco", "Nested clustered optimisation (Lopez de Prado): minimum variance inside and between correlation clusters, so the instability of a noisy covariance stays inside a cluster; long-only, projected on the configured limits, rebalanced monthly")
+class NestedClusteredOptimisation(_RollingRiskBook):
+    @staticmethod
+    def solver(cov, constraints):
+        from ..portfolio.nco import nco_weights
+
+        return _Solved(constraints.project(nco_weights(cov)))
+
+
+@register_allocator("near_optimal", "Near-optimal minimum variance (Cajas): the analytic centre of the portfolios within a tolerance of the minimum variance, so every asset is held and the weights move little when the data do; within the configured weight limits, rebalanced monthly")
+class NearOptimalMinimumVariance(_RollingRiskBook):
+    def __init__(self, tolerance: float = 0.2, lookback: int = 252, min_assets: int = 3):
+        super().__init__(lookback, min_assets)
+        if not 0.0 < tolerance <= 1.0:
+            raise ValueError("tolerance must be in (0, 1]")
+        self.tolerance = tolerance
+
+    def solver(self, cov, constraints):
+        from ..portfolio.near_optimal import near_optimal_center
+
+        n = len(cov)
+        ub = max(float(constraints.max_weight), 1.0 / n + 1e-9)
+        r = near_optimal_center(None, cov, 1.0, self.tolerance, lb=max(float(constraints.min_weight), 0.0), ub=ub)
+        return _Solved(r["weights"], bool(r["converged"]))
+
+
+@register_allocator("cdar", "Minimum conditional drawdown at risk (Chekhlov-Uryasev): the weights that minimise the mean of the worst 5% of drawdowns of the trailing window, long-only within the configured weight limits, rebalanced monthly")
+class MinimumCDaR(_RollingRiskBook):
+    def __init__(self, alpha: float = 0.95, lookback: int = 252, min_assets: int = 3):
+        super().__init__(lookback, min_assets)
+        if not 0.0 <= alpha < 1.0:
+            raise ValueError("alpha must be in [0, 1)")
+        self.alpha = alpha
+
+    def build(self, ctx: Context) -> pd.DataFrame:
+        from ..portfolio.drawdown import cdar_weights
+
+        bundle, constraints = ctx.bundle, ctx.constraints()
+        out = pd.DataFrame(np.nan, index=bundle.index, columns=bundle.assets)
+        for origin in month_end_dates(bundle.index):
+            position = bundle.index.get_loc(origin)
+            if position < self.lookback:
+                continue
+            window = bundle.returns.iloc[position - self.lookback + 1:position + 1]
+            live = [a for a in bundle.assets if bool(bundle.investable.loc[origin, a]) and window[a].notna().mean() > 0.9]
+            if len(live) < self.min_assets:
+                continue
+            ub = max(float(constraints.max_weight), 1.0 / len(live) + 1e-9)
+            r = cdar_weights(window[live].fillna(0.0), self.alpha, lb=max(float(constraints.min_weight), 0.0), ub=ub)
+            if r["ok"]:
+                out.loc[origin, live] = r["weights"].reindex(live).to_numpy()
+        return out.ffill().fillna(0.0)
 
 
 def class_budget(assets, asset_class: dict, budgets: dict | None) -> pd.Series:

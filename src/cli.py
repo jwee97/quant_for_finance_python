@@ -17,6 +17,7 @@
     quant models fit SPY                  fit Merton, Kou, variance gamma, NIG and Heston to an option chain; also `price` (a digital, barrier, average-price or American option under every model) and `hedge` (what hedging costs when trades cost money)
     quant scenarios SPY QQQ TLT --generators all   thousands of possible futures from eight generators (resampling, GARCH, a GAN, a variational autoencoder, a diffusion model) and how closely each resembles the history (`--list` names them)
     quant finml SPY                       financial ML pipeline on one ticker: triple-barrier labels, meta-labelling, purged validation, untouched holdout, evidence (docs/finml.md)
+    quant lab alpha SPY QQQ IWM EFA EEM TLT GLD   the Alpha, Risk and Portfolio Lab in the terminal: `alpha`, `risk`, `portfolio` (`--methods nco hrp cdar ...`) or `trading` on a basket (docs/alphalab.md)
     quant signals run                     read every followed rule now (stocks, futures, crypto, options), say what changed and how past signals did; `follow`, `list`, `history` (put `quant signals run --refresh` in cron for a daily run)
     quant curve fit --file curve.txt      a Nelson-Siegel or Svensson yield curve (`--model svensson`); `quant curve dynamic` follows its level, slope and curvature through a history and tests the forecast
     quant benchmark --models tsmom momentum   score time and peak memory of models on the default bundle
@@ -309,6 +310,65 @@ def cmd_finml(args, config) -> int:
     cp = r["cpcv"]
     print(f"  CPCV: {cp['n_paths']} paths, Sharpe {cp['mean']:.2f} +/- {cp['std'] or 0:.2f}, negative in {cp['prob_negative'] * 100:.0f}%  (a research evaluation, not a prospective test)")
     print(r["verdict"])
+    if args.json:
+        with open(args.json, "w", encoding="utf-8") as f:
+            json.dump(clean(r), f, indent=1)
+        print(f"wrote {args.json}")
+    return 0
+
+
+def cmd_lab(args, config) -> int:
+    """The Alpha, Risk and Portfolio Lab on a basket of tickers (see docs/alphalab.md): ``alpha``, ``risk``, ``portfolio`` or ``trading``."""
+    import json
+
+    from .alphalab import studies as st
+    from .portfolio import lab as pl
+    from .webapp.api import App
+    from .webapp.payload import clean
+    from .webapp.universe import normalise
+
+    tickers = normalise(args.tickers)
+    builder = App(config).builder
+    bundle, _ = builder.resolve(tickers, None, args.start, args.refresh, None, None)
+    px = bundle.prices[tickers].dropna(how="any")
+    try:
+        if args.study == "alpha":
+            r = st.alpha_study(px, args.signal, args.horizon)
+            ic, fit, cal = r["ic"], r["decay"]["fit"], r["calibration"]
+            print(f"{r['label']}, {r['horizon']}-day horizon, {len(r['assets'])} assets, {r['first']} to {r['last']}")
+            print(f"  IC {ic['mean']:+.4f} (t {ic['t']:.1f}, annual IR {ic['ir_annual']:.2f}, hit rate {ic['hit_rate'] * 100:.0f}%, sign steady in {ic['stability'] * 100:.0f}% of blocks)")
+            print("  information half-life: " + (f"{fit['half_life']:.1f} days (90% gone after {fit['periods_to_90pct']:.0f})" if fit.get("half_life") is not None and fit.get("significant") else "not estimable: the first-lag IC is not distinguishable from zero"))
+            print(f"  calibration slope {cal['slope']:.2f} +/- {cal['se']:.2f}: {cal['verdict']}")
+            b = r["breadth"]
+            print(f"  breadth {b['breadth']:.0f} independent bets a year ({b['n_effective']:.1f} of {b['n_assets']} assets x {b['forecasts_per_year']:.0f} horizons x {(1 - b['rho']) * 100:.0f}% new)")
+            if r["transfer"]:
+                print(f"  transfer coefficient, long only: {r['transfer']['long_only_tc']:.2f}")
+        elif args.study == "risk":
+            r = st.risk_study(px.pct_change().iloc[1:], args.kind)
+            print(f"{r['kind']} factor model, {len(r['assets'])} assets, {r['window']['first']} to {r['window']['last']}: {r['model']['factors']} factors, median R2 {r['model']['median_r2'] * 100:.0f}%")
+            print(f"  equal-weight volatility {r['risk']['volatility'] * 100:.1f}% a year: {r['risk']['factor_share'] * 100:.0f}% from factors, {r['risk']['specific_share'] * 100:.0f}% specific")
+            for c in r["contributions"]:
+                print(f"    {c['factor']:<10} {c['contribution'] * 100:6.2f}%")
+            print(f"  bias statistic {r['bias']['latest']:.2f}: {r['bias']['verdict']}")
+        elif args.study == "portfolio":
+            res = pl.compare(px.pct_change().iloc[1:], args.methods or None, args.lookback, args.step, args.cost_bps, args.cov_method, max_weight=args.max_weight, perturb=args.perturb)
+            t = res["table"]
+            print(f"{len(t)} methods, {res['config']['assets']} assets, {res['config']['first']} to {res['config']['last']}, {args.cov_method} covariance, cost {args.cost_bps} bp, cap {args.max_weight:.0%}")
+            print(f"  {'method':<28}{'Sharpe':>8}{'+-':>6}{'return':>9}{'vol':>8}{'maxDD':>8}{'turn/yr':>9}{'effN':>6}{'fallbacks':>10}")
+            for _, x in t.iterrows():
+                print(f"  {x['method']:<28}{x['sharpe']:8.2f}{x['sharpe_se']:6.2f}{x['ann_return'] * 100:8.1f}%{x['ann_vol'] * 100:7.1f}%{x['max_drawdown'] * 100:7.1f}%{x['turnover_per_year']:9.1f}{x['effective_n']:6.1f}{int(x['fallbacks']):10d}")
+            print("  differences smaller than about two standard errors (+-) are inside the noise")
+            r = {"table": t.to_dict("records"), "config": res["config"]}
+        else:
+            r = st.trading_study(px, args.signal, args.horizon, cost_bps=args.cost_bps)
+            print(f"{r['label']}: {r['days']} days; where the paper alpha goes (realised Sharpe):")
+            for x in r["waterfall"]:
+                print(f"  {x['index']:<20}{x['sharpe']:7.2f}  ({x['lost_sharpe']:+.2f})")
+            for x in r["policies"]:
+                print(f"  policy {x['index']:<10} net Sharpe " + ("never traded" if x["turnover_per_year"] == 0 else f"{x['sharpe']:.2f}") + f", turnover {x['turnover_per_year']:.1f} a year")
+    except (st.StudyError, pl.LabError, ValueError) as error:
+        print(f"cannot run: {error}")
+        return 2
     if args.json:
         with open(args.json, "w", encoding="utf-8") as f:
             json.dump(clean(r), f, indent=1)
@@ -939,6 +999,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("ticker"); p.add_argument("--primary", choices=["momentum", "mean_reversion", "ma_cross", "always_long"], default="momentum"); p.add_argument("--start"); p.add_argument("--refresh", action="store_true")
     p.add_argument("--holdout", type=float, default=0.2, help="share of the history never used to fit or choose anything"); p.add_argument("--cost-bps", type=float, default=5.0, dest="cost_bps"); p.add_argument("--entry-lag", type=int, default=1, dest="entry_lag")
     p.add_argument("--n-trials", type=int, default=1, dest="n_trials", help="how many configurations you tried before this one (deflates the Sharpe ratio)"); p.add_argument("--json", help="also write the whole report to this file"); p.set_defaults(func=cmd_finml)
+    p = sub.add_parser("lab", help="the Alpha, Risk and Portfolio Lab on a basket of tickers: signal quality and decay, a factor model of the risk, optimisers compared like for like, and where the alpha goes when it is traded (docs/alphalab.md)")
+    p.add_argument("study", choices=["alpha", "risk", "portfolio", "trading"]); p.add_argument("tickers", nargs="+"); p.add_argument("--start"); p.add_argument("--refresh", action="store_true")
+    p.add_argument("--signal", default="momentum", choices=["momentum", "reversal", "low_vol", "trend"], help="alpha, trading: the price-based signal"); p.add_argument("--horizon", type=int, default=5, help="alpha, trading: forecast horizon in days")
+    p.add_argument("--kind", choices=["statistical", "time_series"], default="statistical", help="risk: the factor model")
+    p.add_argument("--methods", nargs="*", help="portfolio: method ids (default: equal_weight min_variance risk_parity hrp nco max_sharpe)"); p.add_argument("--lookback", type=int, default=252); p.add_argument("--step", type=int, default=21)
+    p.add_argument("--cost-bps", type=float, default=10.0, dest="cost_bps"); p.add_argument("--cov-method", default="shrinkage", dest="cov_method", choices=list(__import__("src.portfolio.lab", fromlist=["COV_METHODS"]).COV_METHODS)); p.add_argument("--max-weight", type=float, default=1.0, dest="max_weight")
+    p.add_argument("--perturb", type=int, default=0, help="portfolio: bootstrap resamples for the weight-stability column"); p.add_argument("--json", help="also write the whole result to this file"); p.set_defaults(func=cmd_lab)
     p = sub.add_parser("signals", help="the signal book: follow rules on stocks, futures, crypto and options, read them all now, see what changed and how past signals did")
     p.add_argument("action", choices=["run", "list", "follow", "unfollow", "history"]); p.add_argument("--id", help="one follow (run, unfollow, history)")
     p.add_argument("--market", choices=["equity", "futures", "crypto", "options"], default="equity", help="follow: the market"); p.add_argument("--name", help="follow: a name for it")

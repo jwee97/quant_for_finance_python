@@ -425,7 +425,7 @@ def test_every_page_old_and_new_fits_a_phone_in_both_themes(browser, live_resear
     page = _open(browser, live_research, width=390, height=800)
     try:
         tabs = page.eval_on_selector_all("nav.tabs [role=tab]", "(e) => e.map((x) => x.id.slice(4))")
-        assert len(tabs) == 25
+        assert len(tabs) == 26
         for theme in ("dark", "light"):
             page.evaluate(f"QL.setTheme('{theme}')")
             for tab in tabs:
@@ -504,6 +504,46 @@ def test_the_financial_ml_lab_runs_the_pipeline_and_says_what_it_does_and_does_n
         page.click("#finml button:text-is('Structure and entropy')")
         page.wait_for_selector("[data-role=finml-structure]", timeout=240_000)
         assert "SADF now" in page.inner_text("[data-role=finml-structure]") and page.locator("[data-role=finml-sadf] svg.chart").count() == 1
+    finally:
+        assert not page.problems, page.problems
+        page.close()
+
+
+def test_the_alpha_and_portfolio_lab_runs_each_study_and_shows_what_it_found(browser, live_research):  # noqa: F811
+    page = _open(browser, live_research)
+    try:
+        open_tab(page, "alphalab")
+        page.wait_for_selector("[data-role=lab-form]")
+        assert _hash(page) == "#/alphalab" and "Alpha, Risk and Portfolio Lab" in page.inner_text("#alphalab h2")
+        assert "inside the noise" in page.inner_text("[data-role=lab-form]") and page.locator("#alphalab .seg button").count() == 4
+        page.fill("#alphalab input[data-key=tickers]", "A00, A01, A02, A03, A04, A05")
+        page.select_option("#alphalab select[data-key=signal]", "reversal")
+        page.click("#alphalab button:text-is('Run the alpha study')")
+        page.wait_for_selector("[data-role=lab-alpha-head]", timeout=240_000)
+        head = page.inner_text("[data-role=lab-alpha-head]")
+        assert "Mean IC" in head and "Information half-life" in head and "Calibration slope" in head and "Independent bets a year" in head and "Newey-West" in head
+        for role in ("lab-ic", "lab-decay", "lab-transfer"):
+            page.wait_for_selector(f"[data-role={role}] svg.chart, [data-role={role}] table", timeout=30_000)
+        page.click("#alphalab .seg button[data-mode=risk]")
+        page.fill("#alphalab input[data-key=tickers]", "A00, A01, A02, A03, A04, A05")
+        page.click("#alphalab button:text-is('Run the risk study')")
+        page.wait_for_selector("[data-role=lab-risk-head]", timeout=240_000)
+        assert "Bias statistic" in page.inner_text("[data-role=lab-risk-head]") and "Factors" in page.inner_text("[data-role=lab-risk-head]")
+        for role in ("lab-risk-factors", "lab-bias", "lab-spectrum", "lab-asset-risk"):
+            page.wait_for_selector(f"[data-role={role}] svg.chart, [data-role={role}] table", timeout=30_000)
+        page.click("#alphalab .seg button[data-mode=portfolio]")
+        assert page.locator("#alphalab input[data-method]").count() >= 15 and page.locator("#alphalab input[data-method]:checked").count() == 6
+        page.fill("#alphalab input[data-key=step]", "126")
+        page.fill("#alphalab input[data-key=tickers]", "A00, A01, A02, A03, A04, A05")
+        page.click("#alphalab button:text-is('Run the portfolio study')")
+        page.wait_for_selector("[data-role=lab-pf-table]", timeout=300_000)
+        assert page.locator("[data-role=lab-pf-table] table.data tbody tr").count() == 6 and "Equal weight" in page.inner_text("[data-role=lab-pf-table]") and "Fallbacks" in page.inner_text("[data-role=lab-pf-table]")
+        for role in ("lab-pf-equity", "lab-pf-weights"):
+            page.wait_for_selector(f"[data-role={role}] svg.chart", timeout=30_000)
+        page.locator("[data-role=lab-pf-equity] .legend [role=button]").nth(1).click()                      # the shared chart kit: a legend that hides a series
+        assert page.locator("[data-role=lab-pf-equity] .legend [aria-pressed=false]").count() == 1
+        page.click("#alphalab .seg button[data-mode=trading]")
+        assert page.locator("#alphalab input[data-key=cost_bps]").count() == 1 and "Long only" in page.inner_text("[data-role=lab-form]")
     finally:
         assert not page.problems, page.problems
         page.close()
