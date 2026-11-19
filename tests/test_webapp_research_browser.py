@@ -515,18 +515,21 @@ def test_a_network_trained_in_the_page_shows_its_epochs_live_and_is_kept_in_the_
         body = {"dataset": {"feature_groups": ["price", "volatility"]}, "split": {"min_train_days": 400, "refit_every": 250}, "signal": {"n": 2}, "name": "live panel",
                 "model": {"kind": "lstm", "params": {"epochs": 6, "max_rows": 1500, "hidden": 8, "batch_size": 128, "lookback": 8, "patience": 3}}}
         job = page.evaluate("async (body) => (await QL.api('/api/ml/train', body)).job", body)
-        seen = {"live": False, "message": ""}
+        seen = {"live": False, "message": "", "epoch_message": ""}
         for _ in range(900):                                                                 # a job's own view, as the page polls it
             view = page.evaluate("async (id) => await QL.api('/api/job/' + id)", job)
             if view.get("live") and view["live"].get("run") and view["live"]["run"].get("current"):
                 seen["live"], seen["message"] = True, view["message"]
                 cur = view["live"]["run"]["current"]
-                assert cur["epoch"] >= 1 and cur["train"] is not None and view["live"]["run"]["context"]["model"] == "lstm" and "epoch" in view["message"] and "train" in view["message"]
+                assert cur["epoch"] >= 1 and cur["train"] is not None and view["live"]["run"]["context"]["model"] == "lstm"
+                if "epoch" in view["message"] and "train" in view["message"]:                      # between two fits the message is the walk-forward's "fold 1 of 3"
+                    seen["epoch_message"] = view["message"]
             if view["status"] in ("done", "error"):
                 break
             page.wait_for_timeout(200)
         assert view["status"] == "done", view.get("error")
         assert seen["live"], "the job reported the network's epochs while it trained"
+        assert "lstm" in seen["epoch_message"] and "val" in seen["epoch_message"] and "patience" in seen["epoch_message"], "and said them in words as its progress message"
         open_tab(page, "jobs")
         page.wait_for_selector("[data-role=training-history] table.data tbody tr", timeout=30_000)
         card = page.locator("[data-role=training-history]")
