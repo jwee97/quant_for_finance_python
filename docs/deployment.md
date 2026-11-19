@@ -35,6 +35,21 @@ Pick by what you need. Prices and free tiers move: these are the kinds of place,
 | **A GPU for a big network now and then** | Google Colab, Kaggle notebooks, Modal, RunPod, Lambda, Vast.ai, Paperspace | Train there with the command line (`quant ml-train`, see `quant ml-train --help`), then bring the results home: copy the backup zip's databases into `data/user` of the machine that serves the app. Free notebooks give a few hours at a time. |
 | **A big machine for a day** | GitHub Codespaces (large machine types, billed by use), or any cloud VM started for the job | The same command-line route; stop it when the run ends. |
 
+## Running it on your own machine or a VPS (docker compose)
+
+```
+git clone <your repository> && cd <it>
+mkdir -p data/user                      # create it yourself: if Docker creates it, it is owned by root and the app cannot write its databases
+cp .env.example .env                    # then put the access code (and any data-feed keys) in .env; .env is not committed
+docker compose up -d app                # the dashboard on http://localhost:5000
+```
+
+* **It listens on this machine only by default** (`127.0.0.1:5000`). The dashboard has no login of its own, so a copy that other people can reach lets them run jobs and spend your data-feed allowance.
+* **To reach it from elsewhere**, set both `QUANT_LAB_ACCESS_CODE` (the page then serves nothing until the code is entered; ten wrong guesses in five minutes lock the guesser out) and `QUANT_LAB_BIND=0.0.0.0` in `.env`. The traffic is plain HTTP unless you give the app a certificate (`QUANT_LAB_TLS_CERT` and `QUANT_LAB_TLS_KEY`) or put a reverse proxy that does HTTPS in front of it (Caddy, nginx, Cloudflare Tunnel). Do not open the port to the internet without one of them: the access code would cross the network in the clear.
+* **The databases, downloads and results live in `./data/user`**, which the container mounts, so they survive `docker compose down`, a rebuild and a reboot. Back them up with *Data → Storage and backup*.
+* **Update** with `git pull && docker compose up -d --build app`. A fit running when you do so is marked *interrupted* in the training history rather than lost without a trace.
+* `docker compose ps` shows whether the container is healthy (it checks that the port answers); `docker compose logs -f app` shows the app's own messages.
+
 A pattern that works well: **serve the dashboard from a small always-on machine, train on a big temporary one**, and move the work between them with the backup (*Data → Storage and backup*, or `GET /api/storage/backups`). The registry, the fundamentals database and the training history are ordinary SQLite files, so restoring is: stop the app, unzip the backup over `data/user`, start it again.
 
 ## Checks before a long run
