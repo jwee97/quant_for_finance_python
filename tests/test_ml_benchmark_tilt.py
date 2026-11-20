@@ -159,3 +159,17 @@ def test_a_fully_invested_long_only_book_meets_a_net_exposure_bound_of_one():
     w = benchmark_tilt(_scores(n_assets=9, seed=4), 0.5)
     assert OPS["<="](float(w.sum(axis=1).abs().max()), 1.0)
     assert OPS["<="](1.0 + 1e-15, 1.0) and not OPS["<="](1.001, 1.0) and not OPS[">="](0.999, 1.0)
+
+
+@pytest.mark.parametrize("kind", ["logistic", "online_logistic"])
+def test_a_model_that_only_classifies_gets_the_cross_sectional_classification_target(tmp_path, kind):
+    """The recommended target is a return (a regression); a classifier would be refused it. Its counterpart is the top versus the bottom of the day's forward returns at the same horizon."""
+    from src.utils.config import load_config
+    from src.webapp.api import App
+    from tests.app_roots import isolated_root
+
+    config = load_config()
+    ml = App(config, root=isolated_root(tmp_path / "root", config)).extra_get["/api/ml/catalog"].__self__
+    assert experiment_config(ml._overrides({"model": {"kind": kind}}))["dataset"]["target"] == "topbottom_21"
+    assert experiment_config(ml._overrides({"model": {"kind": kind}, "dataset": {"horizon": 5}}))["dataset"]["target"] == "topbottom_5"
+    assert experiment_config(ml._overrides({"model": {"kind": kind}, "dataset": {"target": "direction_10"}}))["dataset"]["target"] == "direction_10", "what is asked wins"

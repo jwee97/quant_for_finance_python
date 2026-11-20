@@ -366,7 +366,8 @@ class MlApi(AdvancedRoutes, SelectionRoutes, StrategyRoutes, ResearchRoutes):
         if body.get("robustness"):
             over["robustness"] = {"enabled": True}
         if recommended:
-            over = with_recommended(over)
+            tasks = next((m["tasks"] for m in model_catalog() if m["kind"] == (over.get("model") or {}).get("kind")), ("regression",))
+            over = with_recommended(over, classification="regression" not in tasks)
         try:
             cfg = experiment_config(over)
         except ValueError as exc:

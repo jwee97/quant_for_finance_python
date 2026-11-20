@@ -189,16 +189,22 @@ def recommended_config(base: dict | None = None) -> dict:
     return merge(base if base is not None else load_ml_config(), RECOMMENDED)
 
 
-def with_recommended(over: dict) -> dict:
+RECOMMENDED_CLASSIFICATION_TARGET = "topbottom"           # the cross-sectional counterpart for a model that only classifies: the top versus the bottom of the day's forward returns
+
+
+def with_recommended(over: dict, classification: bool = False) -> dict:
     """``over`` (the overrides of a new run) with ``RECOMMENDED`` filling every setting it leaves out. A request that names its target or its horizon keeps it: a target alone brings its own horizon
-    (``experiment_config`` aligns them) and a horizon alone becomes the recommended target's kind at that horizon (``horizon: 5`` -> ``excess_ret_5``)."""
+    (``experiment_config`` aligns them) and a horizon alone becomes the recommended target's kind at that horizon (``horizon: 5`` -> ``excess_ret_5``). ``classification`` is for a model that can only
+    classify: its recommended target is ``topbottom`` at the same horizon (a regression target would be refused)."""
     rec = copy.deepcopy(RECOMMENDED)
     asked = over.get("dataset") or {}
+    kind = RECOMMENDED_CLASSIFICATION_TARGET if classification else RECOMMENDED["dataset"]["target"].rsplit("_", 1)[0]
     if "target" in asked:
         rec["dataset"] = {}
     elif "horizon" in asked:
-        kind = RECOMMENDED["dataset"]["target"].rsplit("_", 1)[0]
         rec["dataset"] = {"target": f"{kind}_{int(asked['horizon'])}"}
+    else:
+        rec["dataset"]["target"] = f"{kind}_{int(RECOMMENDED['dataset']['horizon'])}"
     out = merge(rec, over)
     if not out.get("dataset"):
         out.pop("dataset", None)
