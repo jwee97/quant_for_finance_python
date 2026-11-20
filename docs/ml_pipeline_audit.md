@@ -94,3 +94,50 @@ What is *not* a cause: look-ahead or label misalignment (verified correct), cash
   rather than asserted here. Random forest and boosted trees were too slow in walk-forward to include in this pass.
 * The entry-cost fix changes every backtest by about one one-way cost. No stored experiment is rewritten; a re-run reproduces the new number.
 * A perfect-foresight signal is used only as a diagnostic control in tests; it is never offered as a strategy.
+
+## Follow-up: nine mega-cap stocks and the move to cross-sectional defaults
+
+An XGBoost run on GOOGL, AMZN, AAPL, META, NVDA, TSLA, MSFT, NFLX and MU (Yahoo prices, 2004-2026, the platform's walk-forward splits) earned 3.0% a year out of sample against 35.8% for the
+equal-weight book of the same stocks. It was run with the platform's defaults at the time, and each default was a reason:
+
+| Default at the time | What it did here |
+| --- | --- |
+| `signal.method = top_n_long_short`, `net = 0` | Long the 3 best, short the 3 worst: net exposure 0, beta 0.08 to a benchmark that rose 36% a year |
+| `target = fwd_ret_5` | A raw five-day return is mostly the market's move, the same for all nine stocks; it cannot tell the model which stock to prefer |
+| `rebalance = weekly`, `holding_period = 5`, `target_vol = 0.10` | 26 times turnover a year, 182 bp a year of cost, and a 10% volatility target on a book whose benchmark runs at 30% |
+
+The predictions were then re-traded and re-trained on the same splits (no setting chosen on the test or forward segments). Out of sample, monthly, 7 bp one-way cost:
+
+| Model and target | Position rule | CAGR | Sharpe | Beta | Information ratio (t, monthly) | Validation / test / forward IR |
+| --- | --- | ---: | ---: | ---: | ---: | --- |
+| Equal weight | | 35.8% | 1.21 | 1 | | |
+| xgboost, `fwd_ret_5` (the run) | long 3 / short 3, weekly, vol target | 3.0% | 0.33 | 0.08 | -1.10 (-4.2) | -1.38 / -0.65 / -1.37 |
+| xgboost, `fwd_ret_5` | tilted around equal weight, 0.5 | 36.7% | 1.21 | 1.02 | 0.20 (0.7) | -0.06 / 0.08 / 0.62 |
+| xgboost, `excess_ret_21` (the new defaults) | tilted around equal weight, 0.5 | 40.8% | 1.30 | 1.03 | 0.75 (2.4) | 0.66 / 0.73 / 0.77 |
+| ridge, `excess_ret_21` (no macro) | tilted around equal weight, 0.5 | 40.3% | 1.28 | 1.03 | 0.70 (2.4) | 0.47 / 0.62 / 0.84 |
+| xgboost, `rank_21` (no macro) | tilted around equal weight, 0.5 | 41.4% | 1.33 | 1.01 | 0.83 (2.7) | 0.24 / 0.60 / 1.49 |
+| XGBoost ranker (NDCG), `excess_ret_21` (no macro) | tilted around equal weight, 0.5 | 41.7% | 1.30 | 1.05 | 0.91 (3.1) | 0.58 / 0.70 / 1.38 |
+| XGBoost ranker (NDCG), `excess_ret_21` (no macro) | long the top 30% | 60.5% | 1.40 | 1.23 | 1.07 (3.8) | 1.17 / 0.49 / 1.40 |
+
+The table refits every 21 days. The same set-up run through the Machine Learning Lab (which refits XGBoost every 63 days, its catalogue setting) reports, out of sample: CAGR 39.6% against 36.0%,
+Sharpe 1.28 against 1.22, information ratio 0.58 at a tracking error of 5.1%, beta 1.02, alpha 2.1% a year, turnover 3.2 times a year and 0.2% a year of cost.
+
+What it shows:
+
+1. **The position rule, not the model, made the gap.** The same five-day predictions traded long-only around the benchmark give 36.7% a year at beta 1.02; dollar-neutral, 3.0% at beta 0.08.
+2. **A cross-sectional target at the trading horizon is what makes the model add something.** With `excess_ret_21` the information ratio is 0.6-0.9 out of sample in every segment and
+   model family tried, against about 0.2 for the raw five-day target in the same rule. The rank IC per segment is still small (0.02-0.08) and on non-overlapping months is not significant
+   by itself; the active return is.
+3. **The model family matters less than the set-up.** Ridge, XGBoost, LightGBM, the XGBoost ranker and an equal-weight ensemble land within a few tenths of information ratio of each other, which is
+   inside the noise of one history. The XGBoost parameters (300 trees, depth 3, learning rate 0.03, 70% row and column sampling, `min_child_weight` 50, L2 5) were already conservative and were not changed.
+4. **The top-30% book earns more by holding more beta (1.12-1.23).** Its Sharpe ratio is close to the tilt's; the extra CAGR is mostly concentration in the higher-beta names.
+
+**What changed in the platform.** A new position rule, `benchmark_tilt`: each asset gets `(1 + tilt * c) / n`, with `c` its centred rank in [-1, 1]. At tilt 0 this is the equal-weight
+benchmark; at tilt 1 the best asset holds twice its benchmark weight and the worst holds none. The Machine Learning Lab now starts from a recommended set-up (`RECOMMENDED` in `src/ml/config.py`):
+`target = excess_ret_21`, `horizon = 21`, `signal.method = benchmark_tilt` (tilt 0.5, holding period 1), monthly rebalancing and no volatility target. The library defaults that a request omitting a
+setting gets are unchanged, so saved runs and scripts keep their meaning. A target or a horizon asked for alone now brings the other with it (`fwd_ret_5` sets the horizon to 5). The dollar-neutral rule is
+still available; the re-backtest panel says it is not comparable with the long-only benchmark and offers the tilt, the holding period and the volatility target. The report shows the information ratio, active return, tracking error, beta and alpha; the equity chart switches to a log scale when growth spans more than five times.
+
+**Limits.** These nine stocks were picked in 2026 because they became the largest companies, so the equal-weight benchmark carries hindsight; nobody could have held this book in 2006. Every number above
+is one history, and choosing among about two dozen model-and-rule rows on it is a selection: the row with the best forward segment is not corrected for being the best. The information ratios are
+large for a long-only book (0.5 is good), which is a reason for suspicion as much as for confidence. Nine names is a very small cross-section for ranking.

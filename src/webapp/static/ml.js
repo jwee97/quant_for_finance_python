@@ -9,10 +9,10 @@
   const SEGMENTS = ["train", "validation", "test", "forward"], OOS = ["validation", "test", "forward"];
   const SEG_NAME = { train: "Train (in-sample)", validation: "Validation", test: "Test", forward: "Forward" };
   const SORTS = [["validation.sharpe", "Validation Sharpe"], ["test.sharpe", "Test Sharpe"], ["forward.sharpe", "Forward Sharpe"], ["oos.sharpe", "Sharpe over all out-of-sample days"], ["ic.mean", "Rank IC"], ["ic.ir", "Rank IC information ratio"], ["overfit.generalization_score", "Generalization score"]];
-  const SIGNAL_NAME = { top_n_long_short: "Long the top n, short the bottom n", long_only_top_quantile: "Long only: the top quantile", proportional: "Proportional to the score", vol_scaled: "Score divided by volatility", rank_normalised: "Weighted by rank",
+  const SIGNAL_NAME = { top_n_long_short: "Long the top n, short the bottom n", long_only_top_quantile: "Long only: the top quantile", benchmark_tilt: "Long only: tilted around equal weight", proportional: "Proportional to the score", vol_scaled: "Score divided by volatility", rank_normalised: "Weighted by rank",
     threshold: "Long above, short below a threshold", regime_filtered: "Only in the calm regime", confidence_weighted: "Score times the model's confidence",
     uncertainty_weighted: "Score over the model's own uncertainty", uncertainty_mean_variance: "Uncertainty-adjusted views through the covariance", target_weights: "The scores are the weights (the agents)" };
-  const SIGNAL_FIELDS = { top_n_long_short: ["n"], long_only_top_quantile: ["quantile"], threshold: ["threshold"], uncertainty_weighted: ["kappa", "uncertainty_power"], uncertainty_mean_variance: ["kappa", "uncertainty_power", "mv_lookback"], cost_aware_mean_variance: ["risk_aversion", "cov_window", "opt_every", "turnover_penalty"], calibrated_sizing: ["risk_aversion", "calib_window", "calib_min_t"] };
+  const SIGNAL_FIELDS = { benchmark_tilt: ["tilt"], top_n_long_short: ["n"], long_only_top_quantile: ["quantile"], threshold: ["threshold"], uncertainty_weighted: ["kappa", "uncertainty_power"], uncertainty_mean_variance: ["kappa", "uncertainty_power", "mv_lookback"], cost_aware_mean_variance: ["risk_aversion", "cov_window", "opt_every", "turnover_penalty"], calibrated_sizing: ["risk_aversion", "calib_window", "calib_min_t"] };
   const RL_KINDS = new Set(["ppo", "sac", "recurrent_ppo"]), SLOW = new Set(["deep sequence", "forecasting", "representation", "graph", "reinforcement"]);
   const METHOD_NAME = { equal: "Equal weight", inverse_vol: "Inverse volatility", risk_parity: "Risk parity", mean_variance: "Mean-variance", bayesian: "Bayes-Stein", regime_conditioned: "Regime-conditioned", online_learning: "Online learning (Hedge)",
     bandit: "Bandit (Thompson)", best_trailing: "Best trailing Sharpe", regime_selector: "Best in this regime" };
@@ -62,7 +62,7 @@
     const d = cat.defaults, t = /^(.*)_(\d+)$/.exec(d.dataset.target);
     Object.assign(M.form, { universe: d.dataset.universe, groups: new Set(d.dataset.feature_groups), kind: t ? t[1] : "fwd_ret", horizon: String(d.dataset.horizon), normalize: d.dataset.normalize, winsor: pc(d.dataset.winsor), minHistory: String(d.dataset.min_history),
       window: d.split.window, rollingDays: String(d.split.rolling_days), minTrain: String(d.split.min_train_days), embargo: String(d.split.embargo), valFrac: pc(d.split.validation_fraction), testFrac: pc(d.split.test_fraction), fwdFrac: pc(d.split.forward_fraction),
-      model: d.model.kind, signal: d.signal.method, n: String(d.signal.n), quantile: pc(d.signal.quantile), threshold: String(d.signal.threshold), gross: String(d.signal.gross), net: String(d.signal.net), maxWeight: pc(d.signal.max_weight), holding: String(d.signal.holding_period),
+      model: d.model.kind, signal: d.signal.method, tilt: String(d.signal.tilt ?? 0.5), n: String(d.signal.n), quantile: pc(d.signal.quantile), threshold: String(d.signal.threshold), gross: String(d.signal.gross), net: String(d.signal.net), maxWeight: pc(d.signal.max_weight), holding: String(d.signal.holding_period),
       rebalance: d.backtest.rebalance, cost: String(d.backtest.cost_bps), slippage: String(d.backtest.slippage_bps), targetVol: d.backtest.target_vol === null ? "" : pc(d.backtest.target_vol), maxLev: String(d.backtest.max_leverage),
       kinds: new Set(cat.search_kinds), methods: new Set(cat.ensembles.map((e) => e.id)) });
   }
@@ -203,7 +203,7 @@
     const f = M.form, cat = M.catalog, after = () => Q.syncLab(M);
     Q.labField(b, { key: "signal", label: "Turn scores into positions", kind: "choice", options: cat.signals.map((s) => [s.id, SIGNAL_NAME[s.id] || s.id]) }, f, () => Q.renderLab(M));
     const info = cat.signals.find((s) => s.id === f.signal); if (info) h("p", "hint", b, info.text + ".");
-    const spec = { n: { label: "n (assets on each side)", step: 1, min: 1, max: 20 }, quantile: { label: "Top quantile (%)", step: 5, min: 5, max: 50 }, threshold: { label: "Threshold (in score units)", step: "any" },
+    const spec = { tilt: { label: "Tilt (0 = the benchmark, 1 = the best asset at twice its weight, the worst at none)", step: 0.05, min: 0, max: 1 }, n: { label: "n (assets on each side)", step: 1, min: 1, max: 20 }, quantile: { label: "Top quantile (%)", step: 5, min: 5, max: 50 }, threshold: { label: "Threshold (in score units)", step: "any" },
       kappa: { label: "Shrink views on unusually uncertain assets (kappa)", step: 0.1, min: 0, max: 10 }, uncertainty_power: { label: "Divide the view by uncertainty to the power", step: 0.25, min: 0, max: 3 },
       mv_lookback: { label: "Covariance window (days)", step: 21, min: 40, max: 504 }, risk_aversion: { label: "Risk aversion (the weight on variance)", step: 0.5, min: 0, max: 100 },
       cov_window: { label: "Covariance window (days)", step: 21, min: 60, max: 1000 }, opt_every: { label: "Re-solve every (days; set to the horizon)", step: 1, min: 1, max: 60 },
@@ -637,7 +637,8 @@
     if (t.dates.length) series.push({ name: SEG_NAME.train, color: css("--muted"), values: t.strategy.concat(e.dates.map(() => null)), dash: "4 3", width: 1.5 });
     series.push({ name: "Strategy", color: css("--s1"), values: blank.concat(e.strategy.map((v) => v * scale)) });
     series.push({ name: benchName(r), color: css("--s2"), values: blank.concat(e.benchmark.map((v) => v * scale)), width: 1.5 });
-    C.line(b, { dates: t.dates.concat(e.dates), series, regions: regions(e, true), baseline: 1, yFormat: (v) => v.toFixed(2), tipFormat: (v) => v.toFixed(3), height: 300, label: "Equity curve by segment", endLabels: false });
+    const vals = series.flatMap((s) => s.values).filter((v) => v !== null && isFinite(v) && v > 0), log = vals.length > 0 && Math.max(...vals) / Math.min(...vals) > 5;      // decades of compounding read on a log scale: equal distances are equal percentage changes
+    C.line(b, { dates: t.dates.concat(e.dates), series, regions: regions(e, true), baseline: 1, log, yFormat: (v) => v.toFixed(!log ? 2 : v >= 10 ? 0 : 1), tipFormat: (v) => v.toFixed(3), height: 300, label: "Equity curve by segment" + (log ? " (log scale)" : ""), endLabels: false });
   }
   function equityTable(b, r) {
     const e = r.equity, every = e.dates.map((_, n) => n).filter((n) => n % 4 === 0);
@@ -775,8 +776,15 @@
     tile(k2, "Test and forward", sig(ov.psr_test_forward), { text: "probability the true Sharpe is above 0" }, "", "Probabilistic Sharpe ratio over the two segments no choice has seen");
     tile(k2, "Turnover a year", sig(oos.ann_turnover, 1) + "×", { text: `cost drag ${pct(oos.ann_cost_drag, 1)} a year` });
     tile(k2, "Worst fall", pct(oos.max_drawdown), { text: `out of sample · Calmar ${sig(oos.calmar)}` });
+    if (oos.information_ratio !== undefined && oos.information_ratio !== null) {                     // what a book is judged on against its benchmark: the return it adds per unit of the risk it takes away from it
+      const k3 = h("div", "earnrow", root); k3.dataset.role = "benchmark-relative"; const bm = r.metrics.benchmark || {};
+      tile(k3, "Information ratio", sig(oos.information_ratio), { text: `active return per unit of tracking error, out of sample`, dir: oos.information_ratio > 0 ? "up" : "down" }, "", "Mean return over the benchmark divided by its standard deviation, annualised. 0.5 is good for a long-only book, above 1 is rare");
+      tile(k3, "Active return", spct((oos.cagr ?? 0) - (bm.cagr ?? 0)), { text: `CAGR ${pct(oos.cagr, 1)} against ${pct(bm.cagr, 1)} for ${benchName(r).toLowerCase()}` }, "", "Compound annual return of the strategy minus the benchmark's, out of sample");
+      tile(k3, "Tracking error", pct(oos.tracking_error, 1), { text: "a year: how far it strays from the benchmark" });
+      tile(k3, "Beta to the benchmark", sig(oos.beta_to_benchmark), { text: `alpha ${spct(oos.alpha_ann)} a year after beta`, dir: (oos.alpha_ann ?? 0) > 0 ? "up" : "down" }, "", "A beta far from 1 means the book is a different bet from the benchmark (below 1: less market; above: more). Alpha is the return beta does not explain");
+    }
     const ch = h("div", "charts", root);
-    chartCard(ch, "Equity curve by segment", "Growth of 1 from the first training day. The dashed line is in-sample, so it flatters; the three segments after it are out of sample. The benchmark is rebased to the strategy where validation starts.", { wide: true, draw: (b) => equityChart(b, r), table: (b) => equityTable(b, r) });
+    chartCard(ch, "Equity curve by segment", "Growth of 1 from the first training day, on a log scale when it spans more than five times (equal heights are then equal percentage moves). The dashed line is in-sample, so it flatters; the three segments after it are out of sample. The benchmark is rebased to the strategy where validation starts.", { wide: true, draw: (b) => equityChart(b, r), table: (b) => equityTable(b, r) });
     chartCard(ch, "Sharpe by segment", "Net of costs. The grey bar is in-sample; a model that is real keeps a similar height from validation to forward.", { draw: (b) => segmentColumns(b, r), table: (b) => segmentTable(b, r) });
     chartCard(ch, "Drawdown from the previous peak", "Out-of-sample days only.", {
       draw: (b) => C.line(b, { dates: r.equity.dates, series: [{ name: "Drawdown", color: css("--s1"), values: r.equity.drawdown }], area: true, areaBase: 0, baseline: 0, ceil: 0, regions: regions(r.equity, false), yFormat: pctTick, tipFormat: (v) => pct(v), height: 230, label: "Drawdown" }),
@@ -815,15 +823,23 @@
     reportView(root, d);
     const r = d.report, box = h("div", "card", root); h("h3", "", box, "Try other trading rules on the same predictions");
     h("p", "hint", box, "A re-backtest re-uses the saved predictions: nothing is refitted, so it is fast, and the result is saved as a child experiment. It counts as another look at the data.");
-    const st = { signal: r.config.signal.method, n: String(r.config.signal.n), rebalance: r.config.backtest.rebalance, cost: String(r.config.backtest.cost_bps), slippage: String(r.config.backtest.slippage_bps) }, grid = h("div", "params", box);
+    const sc = r.config.signal, bc = r.config.backtest;
+    const st = { signal: sc.method, n: String(sc.n), tilt: String(sc.tilt ?? 0.5), quantile: pc(sc.quantile ?? 0.3), holding: String(sc.holding_period ?? 1), rebalance: bc.rebalance, cost: String(bc.cost_bps), slippage: String(bc.slippage_bps),
+      targetVol: bc.target_vol === null || bc.target_vol === undefined ? "" : pc(bc.target_vol) }, grid = h("div", "params", box);
+    if (sc.method === "top_n_long_short" && Number(sc.net || 0) === 0) h("p", "hint", box, "This run's rule is dollar neutral: it holds no market exposure, so it cannot be compared with the long-only equal-weight benchmark. 'Long only: tilted around equal weight' keeps the benchmark's exposure and lets the model move weight between assets.");
     Q.labField(grid, { key: "signal", label: "Position rule", kind: "choice", options: M.catalog.signals.map((s) => [s.id, SIGNAL_NAME[s.id] || s.id]) }, st);
-    Q.labField(grid, { key: "n", label: "n (top and bottom)", kind: "number", step: 1, min: 1, max: 20 }, st);
+    Q.labField(grid, { key: "n", label: "n, top and bottom (long the top n, short the bottom n)", kind: "number", step: 1, min: 1, max: 20 }, st);
+    Q.labField(grid, { key: "tilt", label: "Tilt (tilted around equal weight: 0 = the benchmark, 1 = the strongest)", kind: "number", step: 0.05, min: 0, max: 1 }, st);
+    Q.labField(grid, { key: "quantile", label: "Top quantile, % (long only: the top quantile)", kind: "number", step: 5, min: 5, max: 50 }, st);
+    Q.labField(grid, { key: "holding", label: "Holding period (days)", kind: "number", step: 1, min: 1, max: 60 }, st);
     Q.labField(grid, { key: "rebalance", label: "Rebalance", kind: "choice", options: [["daily", "Daily"], ["weekly", "Weekly"], ["monthly", "Monthly"]] }, st);
+    Q.labField(grid, { key: "targetVol", label: "Volatility target (% a year; blank = none)", kind: "number", step: 1, min: 1, max: 100 }, st);
     Q.labField(grid, { key: "cost", label: "Commission (bps)", kind: "number", step: 0.5, min: 0, max: 250 }, st);
     Q.labField(grid, { key: "slippage", label: "Slippage (bps)", kind: "number", step: 0.5, min: 0, max: 250 }, st);
     const go2 = h("button", "btn primary", box, "Re-backtest");
     go2.addEventListener("click", async () => {
-      let body; try { body = { id: d.id, signal: { method: st.signal, n: needNumber(st.n, "n") }, backtest: { rebalance: st.rebalance, cost_bps: needNumber(st.cost, "Commission"), slippage_bps: needNumber(st.slippage, "Slippage") } }; } catch (e) { Q.toast(e.message); return; }
+      let body; try { body = { id: d.id, signal: { method: st.signal, n: needNumber(st.n, "n"), tilt: needNumber(st.tilt, "Tilt"), quantile: needNumber(st.quantile, "Quantile") / 100, holding_period: needNumber(st.holding, "Holding period") },
+        backtest: { rebalance: st.rebalance, cost_bps: needNumber(st.cost, "Commission"), slippage_bps: needNumber(st.slippage, "Slippage"), target_vol: st.targetVol === "" ? null : needNumber(st.targetVol, "Volatility target") / 100 } }; } catch (e) { Q.toast(e.message); return; }
       const got = await sideJob("child", "/api/ml/rebacktest", body, "Re-backtesting…");
       if (got) { invalidate(); setCurrent(got.id); M.results.train = { data: got, body: {} }; M.draw(); }
     });

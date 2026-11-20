@@ -23,7 +23,7 @@ UNITS = {"expected_return": "fractional return over the horizon", "ranking_score
 RANKERS = {"lgbm_ranker", "xgb_ranker"}
 QUANTILE_MODELS = {"lgbm_quantile", "tft"}
 AGENTS = {"ppo", "sac", "recurrent_ppo"}
-RANK_RULES = {"decision_policy", "top_n_long_short", "long_only_top_quantile", "proportional", "vol_scaled", "rank_normalised", "threshold", "regime_filtered", "confidence_weighted"}
+RANK_RULES = {"decision_policy", "top_n_long_short", "long_only_top_quantile", "benchmark_tilt", "proportional", "vol_scaled", "rank_normalised", "threshold", "regime_filtered", "confidence_weighted"}
 SCORE_KINDS = {"expected_return", "ranking_score", "quantile_forecast", "class_probability"}
 
 

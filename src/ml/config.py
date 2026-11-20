@@ -10,6 +10,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import re
 from pathlib import Path
 
 import yaml
@@ -31,6 +32,11 @@ DEFAULTS: dict = {
     "search": {"n_random": 12, "n_bayes": 12, "generations": 3, "population": 8, "objective_weights": {"turnover": 0.5, "max_drawdown": 0.3, "instability": 0.2, "train_validation_gap": 0.5}, "top_k": 3},
     "forward": {"horizon_days": 5, "track_window": 63, "psi_alert": 0.25},
 }
+# The set-up the Machine Learning Lab starts from: what a long-only quantitative equity book is built and judged with. A model learns to RANK the assets (the return over the equal-weight universe,
+# a month ahead), the book is the benchmark tilted by that ranking (it keeps the benchmark's market exposure, so the comparison with it is like for like) and it trades monthly without a volatility
+# target. The library defaults above are unchanged so that every saved run and every caller that relies on them keeps its meaning; ``recommended_config`` lays this over them.
+RECOMMENDED: dict = {"dataset": {"target": "excess_ret_21", "horizon": 21}, "signal": {"method": "benchmark_tilt", "tilt": 0.5, "holding_period": 1},
+                     "backtest": {"rebalance": "monthly", "target_vol": None}}
 SECTIONS = ("dataset", "split", "model", "signal", "backtest", "robustness", "execution")
 HASH_SECTIONS = ("dataset", "split", "model", "signal", "backtest", "execution")      # what decides the numbers (``execution`` only when present: it is absent from the defaults, so no existing hash changes); the robustness switch only decides which extra reports are written
 NORMALIZATIONS = ("none", "cross_sectional_z", "rank")
@@ -173,8 +179,26 @@ def experiment_config(overrides: dict | None = None, name: str | None = None, de
     cfg["name"] = str(name or (overrides or {}).get("name") or f"{cfg['model']['kind']}_{cfg['dataset']['target']}_{_universe_label(cfg['dataset']['universe'])}")[:80]
     cfg["seed"] = int((overrides or {}).get("seed", cfg.get("seed", 0)))
     cfg["notes"] = str((overrides or {}).get("notes", cfg.get("notes", "")))[:500]
+    _align_target_and_horizon(cfg["dataset"], (overrides or {}).get("dataset") or {})
     cfg["dataset"]["horizon"], cfg["dataset"]["lag"] = int(cfg["dataset"]["horizon"]), int(cfg["dataset"]["lag"])
     return validate(cfg)
+
+
+def recommended_config(base: dict | None = None) -> dict:
+    """The platform configuration with ``RECOMMENDED`` laid over it (a copy)."""
+    return merge(base if base is not None else load_ml_config(), RECOMMENDED)
+
+
+def _align_target_and_horizon(ds: dict, asked: dict) -> None:
+    """A target's name carries its horizon (``excess_ret_21``). When a request names one of the two and not the other, the other follows it, so asking for ``fwd_ret_5`` does not
+    clash with the default horizon and asking for ``horizon: 5`` changes the default target's window with it. A request that sets both is left alone (the validation checks they agree)."""
+    m = re.match(r"^(.*)_(\d+)$", str(ds.get("target", "")))
+    if not m:
+        return
+    if "target" in asked and "horizon" not in asked:
+        ds["horizon"] = int(m.group(2))
+    elif "horizon" in asked and "target" not in asked:
+        ds["target"] = f"{m.group(1)}_{int(ds['horizon'])}"
 
 
 def _universe_label(universe) -> str:

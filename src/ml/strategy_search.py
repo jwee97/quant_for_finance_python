@@ -27,7 +27,7 @@ from .registry import Registry
 from .targets import is_classification
 
 DEFAULT_KINDS = ("ridge", "lasso", "elasticnet", "random_forest", "hist_gb", "online_ridge", "kalman")
-SHARED_SPACE = {"dataset.horizon": Categorical(1, 5, 10, 20), "signal.method": Categorical("top_n_long_short", "proportional", "rank_normalised", "long_only_top_quantile"),
+SHARED_SPACE = {"dataset.horizon": Categorical(1, 5, 10, 20), "signal.method": Categorical("benchmark_tilt", "top_n_long_short", "proportional", "rank_normalised", "long_only_top_quantile"),
                 "signal.n": Int(1, 4), "signal.holding_period": Categorical(1, 5, 20), "backtest.rebalance": Categorical("daily", "weekly", "monthly")}
 
 

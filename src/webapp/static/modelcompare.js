@@ -8,7 +8,7 @@
   const num = (v, d = 2) => (v === null || v === undefined || !isFinite(v) ? "n/a" : Q.num(v, d)), pct = (v, d = 1) => (v === null || v === undefined || !isFinite(v) ? "n/a" : Q.pct(v, d));
   const root = $("#modelcompare");
   const MODELS = [["ridge", "Ridge"], ["lasso", "Lasso"], ["elasticnet", "Elastic net"], ["random_forest", "Random forest"], ["hist_gb", "Gradient boosting"]];
-  const S = { models: new Set(["ridge", "lasso"]), rule: "long_only_top_quantile", quantile: 0.3, rebalance: "monthly", cost: 5, slip: 2, min_train: 756, draws: 10, result: null, busy: false };
+  const S = { models: new Set(["ridge", "lasso"]), rule: "benchmark_tilt", tilt: 0.5, quantile: 0.3, rebalance: "monthly", cost: 5, slip: 2, min_train: 756, draws: 10, result: null, busy: false };
 
   async function draw() {
     root.replaceChildren();
@@ -23,14 +23,14 @@
     const box = h("div", "wide", grid); h("div", "hint", box, "Models (up to 6)"); const row = h("div", "chips", box);
     for (const [k, label] of MODELS) { const l = h("label", "f inline", row), cb = h("input", "", l); cb.type = "checkbox"; cb.checked = S.models.has(k); cb.dataset.model = k; l.appendChild(document.createTextNode(" " + label)); cb.addEventListener("change", () => { cb.checked ? S.models.add(k) : S.models.delete(k); }); }
     const sl = h("label", "f", grid, "Position rule"), ss = h("select", "", sl); ss.dataset.key = "rule";
-    for (const [v, t] of [["long_only_top_quantile", "Long the top share of scores (like for like with equal weight)"], ["top_n_long_short", "Long the best, short the worst (dollar neutral)"], ["decision_policy", "Explicit buy / sell / hold decisions"]]) { const o = h("option", "", ss, t); o.value = v; if (v === S.rule) o.selected = true; }
+    for (const [v, t] of [["benchmark_tilt", "Long only, tilted around equal weight by rank (like for like with it)"], ["long_only_top_quantile", "Long the top share of scores (long only, more concentrated)"], ["top_n_long_short", "Long the best, short the worst (dollar neutral)"], ["decision_policy", "Explicit buy / sell / hold decisions"]]) { const o = h("option", "", ss, t); o.value = v; if (v === S.rule) o.selected = true; }
     ss.addEventListener("change", () => { S.rule = ss.value; });
     const num_ = (label, key, help) => { const l = h("label", "f", grid, label); if (help) l.title = help; const i = h("input", "", l); i.type = "number"; i.step = "any"; i.value = S[key]; i.dataset.key = key; i.addEventListener("input", () => { S[key] = i.value; }); };
-    num_("Top share (long-only rule)", "quantile", "0.3 holds the best 30% of names"); num_("Cost (bp, one way)", "cost"); num_("Slippage (bp)", "slip"); num_("Training history before the first prediction (days)", "min_train"); num_("Random-signal books to average", "draws");
+    num_("Tilt (tilted around equal weight)", "tilt", "0 is the benchmark, 1 the strongest tilt"); num_("Top share (long-only rule)", "quantile", "0.3 holds the best 30% of names"); num_("Cost (bp, one way)", "cost"); num_("Slippage (bp)", "slip"); num_("Training history before the first prediction (days)", "min_train"); num_("Random-signal books to average", "draws");
     const rl = h("label", "f", grid, "Rebalance"), rs = h("select", "", rl); rs.dataset.key = "rebalance"; for (const v of ["daily", "weekly", "monthly", "on_change"]) { const o = h("option", "", rs, v); o.value = v; if (v === S.rebalance) o.selected = true; } rs.addEventListener("change", () => { S.rebalance = rs.value; });
     const act = h("div", "row", card), go = h("button", "btn primary", act, "Run the comparison"), status = h("span", "hint", act, ""); go.type = "button"; go.disabled = S.busy;
     go.addEventListener("click", async () => {
-      const signal = S.rule === "long_only_top_quantile" ? { method: S.rule, quantile: Number(S.quantile) } : { method: S.rule };
+      const signal = S.rule === "long_only_top_quantile" ? { method: S.rule, quantile: Number(S.quantile) } : S.rule === "benchmark_tilt" ? { method: S.rule, tilt: Number(S.tilt) } : { method: S.rule };
       const body = { models: [...S.models].map((kind) => ({ kind })), signal, backtest: { rebalance: S.rebalance, cost_bps: Number(S.cost), slippage_bps: Number(S.slip) }, split: { min_train_days: Number(S.min_train) }, draws: Number(S.draws), explain: false };
       S.busy = true; go.disabled = true; status.textContent = "Starting…";
       try { const { job } = await api("/api/ml/compare-strategies", body); S.result = await Q.waitJob(job, (v) => { status.textContent = `${v.message} (${Math.round(v.elapsed)} s)`; }, 1500); S.busy = false; draw(); }

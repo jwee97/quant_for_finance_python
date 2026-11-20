@@ -868,7 +868,7 @@ def register(sub) -> None:
             q.add_argument("--regime-detector", dest="regime_detector", choices=["vol_state", "hmm", "gmm"]); q.add_argument("--winsor", type=float); q.add_argument("--min-history", dest="min_history", type=int)
 
     def signal_options(q):
-        q.add_argument("--signal", help="top_n_long_short, long_only_top_quantile, proportional, vol_scaled, rank_normalised, threshold, regime_filtered, confidence_weighted")
+        q.add_argument("--signal", help="benchmark_tilt, top_n_long_short, long_only_top_quantile, proportional, vol_scaled, rank_normalised, threshold, regime_filtered, confidence_weighted")
         q.add_argument("--n", type=int); q.add_argument("--quantile", type=float); q.add_argument("--holding-period", dest="holding_period", type=int); q.add_argument("--max-weight", dest="max_weight", type=float)
         q.add_argument("--rebalance", choices=["daily", "weekly", "monthly"]); q.add_argument("--cost-bps", dest="cost_bps", type=float); q.add_argument("--slippage-bps", dest="slippage_bps", type=float)
         q.add_argument("--target-vol", dest="target_vol", type=float); q.add_argument("--extra-lag", dest="extra_lag", type=int)

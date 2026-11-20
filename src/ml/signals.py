@@ -36,7 +36,7 @@ UNCERTAINTY_METHODS = ("uncertainty_weighted", "uncertainty_mean_variance")
 ALLOCATION_METHODS = ("cost_aware_mean_variance",)
 SIZING_METHODS = ("calibrated_sizing",)
 DECISION_METHODS = ("decision_policy",)                                                       # an explicit buy / sell / hold policy (decisions.py): it owns its sizing, holding and exits
-METHODS = ("top_n_long_short", "long_only_top_quantile", "proportional", "vol_scaled", "rank_normalised", "threshold", "regime_filtered", "confidence_weighted", *UNCERTAINTY_METHODS, *ALLOCATION_METHODS,
+METHODS = ("top_n_long_short", "long_only_top_quantile", "benchmark_tilt", "proportional", "vol_scaled", "rank_normalised", "threshold", "regime_filtered", "confidence_weighted", *UNCERTAINTY_METHODS, *ALLOCATION_METHODS,
            *SIZING_METHODS, *DECISION_METHODS, "target_weights")
 OVERLAY_KEYS = ("trade_filter_k", "no_trade_margin", "regime_exposure")              # applied in this order, after the book is built; the first two need a forecast in return units, the last is a risk control that needs none
 DERIVED_KEYS = ("cost_bps", "window_days", "label_offset", "rebalance", "lag_total")   # set by config.validate from the other sections, never by a request
@@ -108,6 +108,20 @@ def rank_normalised(score: pd.DataFrame, gross: float = 1.0, net: float = 0.0) -
     r = score.rank(axis=1, pct=True)
     centred = r.sub(r.mean(axis=1), axis=0) if net < gross - 1e-12 else (r - 0.5).clip(lower=0.0)
     return pd.DataFrame(_scale_sides(_wide(centred.fillna(0.0)), gross, net), index=score.index, columns=score.columns)
+
+
+def benchmark_tilt(score: pd.DataFrame, tilt: float = 0.5, gross: float = 1.0) -> pd.DataFrame:
+    """A long-only book tilted around the equal-weight benchmark: each scored asset gets ``(1 + tilt * c) / n`` with ``c`` its centred rank in [-1, 1] (the best +1, the worst -1) and ``n`` the
+    assets scored that day, then scaled to ``gross``. ``tilt = 0`` is the benchmark itself; ``tilt = 1`` gives the best asset twice the benchmark weight and the worst none. The book keeps the
+    benchmark's market exposure and the model only moves weight between assets, which is how a long-only quantitative equity book is compared with its index (an enhanced index)."""
+    if not 0.0 <= tilt <= 1.0:
+        raise ValueError("benchmark_tilt needs a tilt between 0 and 1 (above 1 the worst-ranked assets would be shorted)")
+    r = score.rank(axis=1)
+    n = r.notna().sum(axis=1)
+    c = (r.sub(1.0).div((n - 1).where(n > 1), axis=0) * 2.0 - 1.0).fillna(0.0)                                          # centred rank in [-1, 1]; a lone asset is the benchmark
+    raw = (1.0 + tilt * c).where(score.notna())
+    total = raw.sum(axis=1).replace(0.0, np.nan)
+    return raw.div(total, axis=0).mul(gross).fillna(0.0)
 
 
 def threshold(score: pd.DataFrame, level: float = 0.0, gross: float = 1.0, net: float = 0.0) -> pd.DataFrame:
@@ -320,6 +334,8 @@ def build_weights(score: pd.DataFrame, cfg: dict, vol: pd.DataFrame | None = Non
         w = top_n_long_short(s, int(cfg.get("n", 3)), gross, net)
     elif method == "long_only_top_quantile":
         w = long_only_top_quantile(s, float(cfg.get("quantile", 0.3)), gross)
+    elif method == "benchmark_tilt":
+        w = benchmark_tilt(s, float(cfg.get("tilt", 0.5)), gross)
     elif method == "proportional":
         w = proportional(s, gross, net)
     elif method == "vol_scaled":

@@ -35,7 +35,7 @@ from ..ml import research_controls as rc
 from ..ml import selection as sel
 from ..ml import strategy_search as ss
 from ..ml.bundle import InferenceBundle
-from ..ml.config import build_key, experiment_config, load_ml_config
+from ..ml.config import build_key, experiment_config, load_ml_config, recommended_config
 from ..ml.datasets import UNIVERSES, build_dataset, feature_catalog, resolve_bundle
 from ..ml.deep.manifest import ARCHITECTURES, architecture                      # a table of text: importing it does not import PyTorch
 from ..ml.experiments import RL_KINDS, load_run, rebacktest, run_experiment
@@ -83,7 +83,7 @@ GROUP_TEXT = {"price": "Trailing returns, distance from highs and lows, moving-a
               "futures": "Carry, roll yield and curve slope; only for the futures universe", "options": "Implied volatility level, skew and term structure; only where the platform has the index",
               "crypto": "Funding, basis and stablecoin growth; only for the crypto universe",
               "fracdiff": "Fractional differences of the log price (orders 0.3, 0.5, 0.7): between a price and a return, they keep part of the level's memory"}
-SIGNAL_TEXT = {"top_n_long_short": "Long the n highest scores, short the n lowest, dollar neutral", "long_only_top_quantile": "Long the top quantile of scores, equal weight", "proportional": "Weight each asset in proportion to its score",
+SIGNAL_TEXT = {"top_n_long_short": "Long the n highest scores, short the n lowest, dollar neutral", "long_only_top_quantile": "Long the top quantile of scores, equal weight", "benchmark_tilt": "Long only, tilted around the equal-weight benchmark by rank: the market exposure of the benchmark, with the model moving weight between assets (like for like with the benchmark)", "proportional": "Weight each asset in proportion to its score",
                "vol_scaled": "Proportional to score divided by volatility, so each position carries similar risk", "rank_normalised": "Weight by the cross-sectional rank of the score (robust to outliers)",
                "threshold": "Long above the threshold, short below its negative", "regime_filtered": "Trade the book only in the calm regime of the dataset's regime detector",
                "confidence_weighted": "Proportional to score times the model's confidence (for a classifier, |2p - 1|)",
@@ -104,7 +104,7 @@ SPEC = {
                 "normalize": ("choice", ("none", "cross_sectional_z", "rank")), "start": ("date",), "end": ("date",), "regime_detector": ("choice", ("vol_state", "hmm", "gmm")), "benchmark": ("benchmark",)},
     "split": {"scheme": ("choice", ("walk_forward", "expanding", "rolling")), "window": ("choice", ("expanding", "rolling")), "rolling_days": ("int", 252, 5000), "min_train_days": ("int", 126, 4000), "refit_every": ("int", 1, 252),
               "embargo": ("int", 0, 60), "validation_fraction": ("float", 0.05, 0.4), "test_fraction": ("float", 0.05, 0.4), "forward_fraction": ("float", 0.05, 0.4)},
-    "signal": {"method": ("choice", SIGNAL_METHODS), "n": ("int", 1, 20), "quantile": ("float", 0.05, 0.5), "threshold": ("float", -10.0, 10.0), "gross": ("float", 0.1, 3.0), "net": ("float", -1.0, 1.0), "max_weight": ("float", 0.02, 1.0),
+    "signal": {"method": ("choice", SIGNAL_METHODS), "tilt": ("float", 0.0, 1.0), "n": ("int", 1, 20), "quantile": ("float", 0.05, 0.5), "threshold": ("float", -10.0, 10.0), "gross": ("float", 0.1, 3.0), "net": ("float", -1.0, 1.0), "max_weight": ("float", 0.02, 1.0),
                "sector_cap": ("float", 0.05, 1.0), "holding_period": ("int", 1, 60), "regime_on_states": ("states",), "reinterpret_outputs": ("bool",), "kappa": ("float", 0.0, 10.0), "uncertainty_power": ("float", 0.0, 3.0), "mv_lookback": ("int", 40, 504),
                "mv_rebalance": ("int", 1, 60), "risk_aversion": ("float", 0.0, 100.0), "cov_method": ("choice", ("sample", "ewma", "lw_constant_correlation", "lw_identity", "pca_denoised", "factor")),
                "cov_window": ("int", 60, 1000), "opt_every": ("int", 1, 60), "turnover_penalty": ("float", 0.0, 10.0), "alloc_fallback": ("choice", ("none", "hold", "equal_weight")),
@@ -396,7 +396,7 @@ class MlApi(AdvancedRoutes, SelectionRoutes, StrategyRoutes, ResearchRoutes):
     # ------------------------------------------------------------------------------------------------------------ catalogue
     def catalog(self, q: dict | None = None) -> dict:
         """Everything the workspace's forms offer: models and their settings, feature groups and features, targets, position rules, combination methods, the platform's defaults and what is already saved."""
-        cfg = load_ml_config()
+        cfg = recommended_config(load_ml_config())                      # the form starts from the recommended cross-sectional set-up; the library defaults are what a request that omits a setting gets
         features = feature_catalog()
         groups = []
         for g in GROUPS:
@@ -410,7 +410,7 @@ class MlApi(AdvancedRoutes, SelectionRoutes, StrategyRoutes, ResearchRoutes):
         return clean({
             "models": [{**m, "refit_every": m["refit_every"]} for m in model_catalog()], "architectures": {k: architecture(k) for k in ARCHITECTURES},
             "search_kinds": list(ss.DEFAULT_KINDS), "feature_groups": groups,
-            "targets": [{"kind": k, "text": v, "classification": k in CLASSIFICATION} for k, v in TARGET_KINDS.items()], "horizons": [1, 5, 10, 20, 60],
+            "targets": [{"kind": k, "text": v, "classification": k in CLASSIFICATION} for k, v in TARGET_KINDS.items()], "horizons": [1, 5, 10, 20, 21, 60],
             "signals": [{"id": s, "text": SIGNAL_TEXT.get(s, "")} for s in SIGNAL_METHODS], "ensembles": [{"id": k, "text": v} for k, v in ENSEMBLE_TEXT.items()],
             "universes": [{"id": "etf", "text": "The platform's ETFs (real prices)", "source": "platform"}, {"id": "crypto", "text": "Deribit BTC and ETH with their carry indices (real data)", "source": "platform"},
                           {"id": "futures", "text": "Simulated futures roots (a Schwartz-Smith model; checks the machinery, not a market)", "source": "simulated"}],
