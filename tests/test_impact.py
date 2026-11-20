@@ -120,7 +120,10 @@ def test_zero_band_reproduces_the_engine_trades(book, synthetic_returns):
     _, result = book
     held, traded = banded_execution(result.weights, result.trades, synthetic_returns, 0.0)
     assert np.allclose(traded.to_numpy(), result.trades.to_numpy(), atol=1e-12)
-    assert np.allclose(banded_gross_returns(held, synthetic_returns).dropna(), result.gross_returns, atol=1e-12)
+    banded = banded_gross_returns(held, synthetic_returns).dropna()
+    assert np.allclose(banded, result.gross_returns.reindex(banded.index), atol=1e-12)
+    extra = result.gross_returns.index.difference(banded.index)                         # the engine also reports the day the first book is built: it earns nothing and pays its cost that day
+    assert list(extra) == [result.gross_returns.index[0]] and result.gross_returns.loc[extra[0]] == 0.0
 
 
 def test_band_reduces_turnover_and_never_trades_inside_the_band(book, synthetic_returns):
