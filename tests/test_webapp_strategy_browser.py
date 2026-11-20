@@ -44,6 +44,7 @@ def test_the_explorer_shows_markers_the_log_the_trades_and_a_replay(browser, liv
     assert pg.locator("#strategy svg.chart .event").count() > 0, "the trades are drawn on the price"
     assert pg.locator("#strategy svg.chart .event title").first.text_content().strip(), "each marker says why"
     # the decision log: filter by action, then search the reasons
+    pg.wait_for_selector("[data-role=decision-log] tbody tr", timeout=30000)
     rows_all = pg.locator("[data-role=decision-log] tbody tr").count()
     assert rows_all > 0
     pg.select_option("[data-role=decision-log] select[data-key=action]", "BUY")

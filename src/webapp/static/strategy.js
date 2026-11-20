@@ -10,7 +10,7 @@
   const root = $("#strategy");
   const S = { runs: null, id: null, data: null, asset: null, decisions: null, trades: null, replay: null, busy: false, log: { action: "", asset: "", q: "", hold: false, offset: 0, limit: 50 }, tradeKind: "round_trips", tradeOffset: 0,
               form: { name: "", model: "ridge", entry_quantile: 0.2, exit_quantile: 0.4, min_confidence: 0, max_positions: 5, max_position: 0.25, sizing: "equal", allow_short: false, long_exposure: 1, short_exposure: 0,
-                      cash_floor: 0, stop_loss_vol: "", take_profit_vol: "", max_holding: "", cooldown: 5, rebalance_days: 5, resize_band: 0.25, cost_bps: 5, slippage_bps: 2, min_train_days: 756 } };
+                      cash_floor: 0, stop_loss_vol: "", take_profit_vol: "", max_holding: "", cooldown: 5, rebalance_days: 5, resize_band: 0.25, cost_bps: 5, slippage_bps: 2, min_train_days: 756, simulate: false } };
   // markers: the shape and the colour say the same thing twice, so the chart does not rely on colour alone
   const KINDS = { OPEN_LONG: ["up", "--pos", "Buy (open long)"], ADD_LONG: ["up", "--pos", "Add to long"], CLOSE_SHORT: ["up", "--s2", "Cover (close short)"], TRIM_SHORT: ["up", "--s2", "Reduce short"], FLIP_TO_LONG: ["up", "--pos", "Cover and buy"],
                   CLOSE_LONG: ["down", "--neg", "Sell (close long)"], TRIM_LONG: ["down", "--neg", "Reduce long"], OPEN_SHORT: ["down", "--s5", "Short (open short)"], ADD_SHORT: ["down", "--s5", "Add to short"], FLIP_TO_SHORT: ["down", "--s5", "Sell and short"] };
@@ -58,6 +58,7 @@
     field("Cost (bp, one way)", "cost_bps", "number", "Fee per unit traded");
     field("Slippage (bp)", "slippage_bps", "number", "Added to every trade");
     field("Training history before the first prediction (days)", "min_train_days", "number", "The model is first fitted on this many days; shorter histories give an earlier but noisier start");
+    field("Choose the policy at each retrain from a grid, on earlier days only (scheduled simulation)", "simulate", "checkbox", "Retrains the model on a schedule and, at each refit, picks the best of six entry/stop policies using only the days before it. The model versions, the choices and their scores are saved and shown below.");
     const row = h("div", "row", card), go = h("button", "btn primary", row, "Run the strategy"); go.type = "button"; go.disabled = S.busy;
     const status = h("span", "hint", row, "Walk-forward training takes about a minute on the default ETF universe."); status.setAttribute("aria-live", "polite");
     go.addEventListener("click", async () => {
@@ -68,7 +69,7 @@
       for (const k of Object.keys(sig)) if (sig[k] === undefined) delete sig[k];
       S.busy = true; go.disabled = true; status.textContent = "Starting…";
       try {
-        const { job } = await api("/api/ml/train", { name: f.name.trim() || `${f.model} decision policy`, model: { kind: f.model }, signal: sig, backtest: { rebalance: "on_change", target_vol: null, cost_bps: n(f.cost_bps), slippage_bps: n(f.slippage_bps) }, split: { min_train_days: n(f.min_train_days) }, explain: false });
+        const { job } = await api(f.simulate ? "/api/ml/simulate" : "/api/ml/train", { name: f.name.trim() || `${f.model} decision policy`, model: { kind: f.model }, signal: sig, backtest: { rebalance: "on_change", target_vol: null, cost_bps: n(f.cost_bps), slippage_bps: n(f.slippage_bps) }, split: { min_train_days: n(f.min_train_days) }, explain: false });
         const res = await Q.waitJob(job, (v) => { status.textContent = `${v.message} (${Math.round(v.elapsed)} s)`; }, 1500);
         S.runs = null; S.id = res.id; S.data = null; S.asset = null; toast("Strategy finished"); S.busy = false; draw();
       } catch (e) { S.busy = false; go.disabled = false; status.textContent = ""; h("div", "banner err", card, e.message); }
@@ -94,8 +95,20 @@
     t("Invested", pct(a.avg_gross_exposure, 0), "Average gross exposure; the rest is cash: " + pct(a.avg_cash, 0)); t("Net exposure", pct(a.avg_net_exposure, 0)); t("Positions held", num(a.avg_positions, 1));
     t("Turnover / year", `${num(a.ann_turnover, 1)}x`); t("Cost drag / year", pct(a.cost_drag_ann, 2), "Gross minus net annual return"); t("Gross return / year", pct(a.gross_ann_return, 1)); t("Net return / year", pct(a.net_ann_return, 1));
     if (s.note) h("p", "note", out, s.note);
+    if (d.simulation) simulationCard(out, d.simulation);
     priceCard(out); bookCards(out); statCards(out);
     controlCard(out); await logCard(out); await tradesCard(out); await replayCard(out);
+  }
+
+  function simulationCard(out, sim) {
+    const card = h("div", "card", out); card.dataset.role = "simulation-card"; h("h3", "", card, "Scheduled retraining: model versions and policy choices");
+    h("p", "note", card, `The model was refitted ${sim.model_versions.length} times. At each refit the decision policy was chosen from ${sim.selection.n_candidates} candidates using only the ${sim.selection.lookback_days} days that ended ${sim.selection.embargo_days} days before it. ` +
+      `${sim.oos_violations.length ? "The framework found predictions made by a model that had seen their date." : "The framework found no prediction made by a model that had seen its date."}`);
+    const comp = sim.comparison; if (comp) h("p", "", card, `Scheduled Sharpe ${num(comp.scheduled.sharpe, 2)} over ${comp.scheduled.days} days. Each fixed policy held for the whole run: ` + comp.fixed.map((x) => `${x.id} ${num(x.sharpe, 2)}`).join("; ") + ". " + comp.reading);
+    h("h4", "", card, "Model versions"); Q.simpleTable(card, [{ label: "Version", get: (x) => x.version }, { label: "Trained through", get: (x) => x.fit_cutoff }, { label: "Labels reached", get: (x) => x.label_end_max }, { label: "Predicts", get: (x) => `${x.predicts_from} to ${x.predicts_to}` }, { label: "Days", num: true, get: (x) => String(x.n_days) },
+      { label: "Rows hash", get: (x) => x.train_rows_hash }, { label: "Model / params", get: (x) => `${x.model} ${x.params_hash}` }], sim.model_versions);
+    h("h4", "", card, "Policy chosen at each refit"); Q.simpleTable(card, [{ label: "From", get: (x) => x.from }, { label: "Chosen", get: (x) => x.chosen }, { label: "Sharpe it was chosen on", num: true, get: (x) => num(x.score, 2) }, { label: "Days used", num: true, get: (x) => String(x.days_used) }, { label: "Basis", get: (x) => x.basis }], sim.choices);
+    h("p", "hint", card, `Reproducibility: configuration ${sim.reproducibility.config_hash}, dataset ${sim.reproducibility.dataset_key}, seed ${sim.reproducibility.seed}.`);
   }
 
   function controlCard(out) {

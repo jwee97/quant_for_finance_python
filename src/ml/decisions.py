@@ -127,8 +127,25 @@ def _sizes(names: list[int], score_row: np.ndarray, vol_row: np.ndarray, p: dict
     return {i: float(min(x, cap)) for i, x in zip(names, w)}
 
 
+def schedule_from(cfg: dict) -> list[tuple[pd.Timestamp, dict]]:
+    """The dated policy changes of a signal configuration (``decision_schedule``: ``[{"from": "2019-01-02", "policy": {"entry_quantile": 0.3}}, ...]``) as ``(date, full policy)`` pairs in date order, each
+    entry the base policy overlaid with that entry's settings. From its date on, an entry replaces the base; the state (positions, entry prices, cooldowns) carries over unchanged."""
+    base = policy_from(cfg)
+    out = []
+    for e in cfg.get("decision_schedule") or []:
+        extra = {k: v for k, v in (e.get("policy") or {}).items() if k in POLICY_KEYS}
+        bad = set(e.get("policy") or {}) - set(POLICY_KEYS)
+        if bad:
+            raise ValueError(f"decision schedule: unknown settings {sorted(bad)}")
+        merged = {**base, **extra}
+        validate(merged)
+        out.append((pd.Timestamp(e["from"]), merged))
+    out.sort(key=lambda x: x[0])
+    return out
+
+
 def run(score: pd.DataFrame, returns: pd.DataFrame, policy: dict, *, vol: pd.DataFrame | None = None, confidence: pd.DataFrame | None = None, investable: pd.DataFrame | None = None,
-        lag: int = 1, forecast_is_return: bool = False) -> tuple[pd.DataFrame, pd.DataFrame]:
+        lag: int = 1, forecast_is_return: bool = False, schedule: list | None = None) -> tuple[pd.DataFrame, pd.DataFrame]:
     """``(weights, decisions)``: the target weights stamped at the decision date, and the decision log.
 
     ``score`` is date x asset (higher is better); ``returns`` are the daily simple returns the price path is rebuilt from; ``vol`` the trailing daily volatilities (known at each close); ``confidence`` in 0..1.
@@ -145,10 +162,14 @@ def run(score: pd.DataFrame, returns: pd.DataFrame, policy: dict, *, vol: pd.Dat
     scv = sc.to_numpy(dtype=float)
     vl = np.full((n, k), np.nan) if vol is None else vol.reindex(index=idx, columns=cols).to_numpy(dtype=float)
     cf = np.ones((n, k)) if confidence is None else confidence.reindex(index=idx, columns=cols).fillna(0.0).to_numpy(dtype=float)
-    ent, ext = float(p["entry_quantile"]), float(p["exit_quantile"])
-    maxpos, h = int(p["max_positions"]), int(p["horizon"])
-    reb = int(p["rebalance_days"])
-    rt_cost = 2.0 * float(p["cost_bps"]) / 1e4
+    sched = list(schedule or [])
+    sched_i = -1                                                               # the policy in force changes on the dates of the schedule; the book and its state do not
+    base_policy = p
+
+    def settings(q: dict):
+        return float(q["entry_quantile"]), float(q["exit_quantile"]), int(q["max_positions"]), int(q["horizon"]), int(q["rebalance_days"]), 2.0 * float(q["cost_bps"]) / 1e4
+
+    ent, ext, maxpos, h, reb, rt_cost = settings(p)
 
     state = np.zeros(k)                                                        # +1 long, -1 short, 0 flat
     weight = np.zeros(k)                                                       # the current target weight
@@ -165,6 +186,12 @@ def run(score: pd.DataFrame, returns: pd.DataFrame, policy: dict, *, vol: pd.Dat
                      "entry_price": float(entry_px[i]) if np.isfinite(entry_px[i]) else np.nan, "holding_days": int(t - entry_idx[i]) if entry_idx[i] >= 0 else 0, **extra})
 
     for t in range(n):
+        while sched_i + 1 < len(sched) and sched[sched_i + 1][0] <= idx[t]:
+            sched_i += 1
+            p = sched[sched_i][1]
+            ent, ext, maxpos, h, reb, rt_cost = settings(p)
+        if sched_i < 0:
+            p = base_policy
         valid = inv[t] & np.isfinite(rank[t])
         cool = np.maximum(cool - 1, 0)
         for i in range(k):                                                     # an executed entry price exists once `lag` days have passed since the decision

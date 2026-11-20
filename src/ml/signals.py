@@ -360,7 +360,7 @@ def build_weights(score: pd.DataFrame, cfg: dict, vol: pd.DataFrame | None = Non
         from . import decisions
 
         w, decision_log = decisions.run(s, returns, decisions.policy_from(cfg), vol=None if vol is None else vol / np.sqrt(252.0), confidence=confidence, investable=investable, lag=int(cfg.get("lag_total", 1)),
-                                        forecast_is_return=bool(cfg.get("decision_forecast_is_return", False)))
+                                        forecast_is_return=bool(cfg.get("decision_forecast_is_return", False)), schedule=decisions.schedule_from(cfg))
     elif method == "target_weights":
         w = target_weights(s, gross)
     else:

@@ -122,10 +122,11 @@ def validate(cfg: dict) -> dict:
         _check(60 <= int(sig.get("calib_window", 504)) <= 2000 and float(sig.get("calib_min_t", 2.0)) >= 0.0 and 5 <= int(sig.get("stability_window", 21)) <= 250,
                "signal.calib_window in [60, 2000], calib_min_t >= 0 and stability_window in [5, 250]")
     if sig["method"] == "decision_policy":
-        from .decisions import policy_from
+        from .decisions import policy_from, schedule_from
 
         try:
             policy_from(sig)
+            schedule_from(sig)
         except ValueError as exc:
             raise MLConfigError(str(exc)) from None
     derived = sig["method"] in ("cost_aware_mean_variance", "calibrated_sizing", "decision_policy") or sig.get("no_trade_margin") is not None or sig.get("trade_filter_k") is not None

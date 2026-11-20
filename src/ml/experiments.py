@@ -174,7 +174,7 @@ def _latest_positions(weights: pd.DataFrame) -> dict:
 def run_experiment(overrides: dict | None = None, bundle=None, config=None, builder=None, registry: Registry | None = None, progress=None, save: bool = True, dataset: Dataset | None = None,
                    info: dict | None = None, parent_id: str | None = None, explain: bool = True, final_model: bool = True, robustness: bool | None = None, trials_extra: int = 0,
                    experiment_id: str | None = None, stop_after: str | None = None, evaluation=None, study: str | None = None, entry_point: str = "python", kind: str = "experiment",
-                   market: dict | None = None) -> Experiment:
+                   market: dict | None = None, train: TrainResult | None = None, report_extra: dict | None = None) -> Experiment:
     """Run one experiment. ``overrides`` is merged over the platform configuration (``ml.config.experiment_config``). With a ``registry`` and ``save`` the artifacts are written and the run recorded.
 
     ``explain`` computes permutation importance; ``final_model`` fits the model a live prediction would use; ``robustness`` overrides the configuration's switch for the stress tests;
@@ -197,14 +197,16 @@ def run_experiment(overrides: dict | None = None, bundle=None, config=None, buil
     with rc.experiment_op(registry, cfg, kind, parent_experiment=parent_id, study=study, experiment_id=exp_id, feature_hash=pv.digest(sorted(ds.features), 16), counts=kind not in rc.NON_COUNTING) as op:
         holdout = _holdout_block(registry, cfg, ds, stop_after, evaluation, entry_point, exp_id)
         progress("training walk-forward")
-        try:
-            train = walk_forward_train(ds, cfg["model"], cfg["split"], cfg["seed"], progress=progress, stop_after=stop_after)
-        except ValueError as exc:
-            raise ExperimentError(str(exc)) from None
+        if train is None:                                                               # a caller that has already fitted this very configuration (same data, model and splits; only the position rule differs) passes it in
+            try:
+                train = walk_forward_train(ds, cfg["model"], cfg["split"], cfg["seed"], progress=progress, stop_after=stop_after)
+            except ValueError as exc:
+                raise ExperimentError(str(exc)) from None
         if stop_after == "validation":
             rc.guard_development(train, train.plan)
         lineage = None if op is None else {"study": op.study_id, "operation": op.op_key, "kind": op.kind, "counts": op.counts}
-        exp = evaluate_run(cfg, ds, train, info, registry, progress, save, parent_id, explain, final_model, robustness, trials_extra, exp_id, stop_after, t0, holdout=holdout, lineage=lineage, market=market)
+        exp = evaluate_run(cfg, ds, train, info, registry, progress, save, parent_id, explain, final_model, robustness, trials_extra, exp_id, stop_after, t0, holdout=holdout, lineage=lineage, market=market,
+                           report_extra=report_extra)
         if op is not None:
             op.experiment_id = exp.id
             op.finish_detail = {"sharpe": exp.metrics.get("oos", {}).get("sharpe"), "validation_sharpe": exp.metrics.get("validation", {}).get("sharpe"), "holdout": holdout.get("status")}
@@ -231,7 +233,7 @@ def _holdout_block(registry, cfg: dict, ds: Dataset, stop_after: str | None, eva
 
 def evaluate_run(cfg: dict, ds: Dataset, train: TrainResult, info: dict, registry: Registry | None = None, progress=None, save: bool = True, parent_id: str | None = None, explain: bool = True,
                  final_model: bool = True, robustness: bool | None = None, trials_extra: int = 0, experiment_id: str | None = None, stop_after: str | None = None, t0: float | None = None,
-                 holdout: dict | None = None, lineage: dict | None = None, market: dict | None = None) -> Experiment:
+                 holdout: dict | None = None, lineage: dict | None = None, market: dict | None = None, report_extra: dict | None = None) -> Experiment:
     """Everything after the fitting: positions, backtest, segments, information coefficient, overfitting diagnostics, explanation, robustness, the report and (if a registry is given) the record. Separate
     from ``run_experiment`` so that the same predictions can be re-run under different signal and cost settings without refitting (``rebacktest``)."""
     t0 = time.perf_counter() if t0 is None else t0
@@ -365,6 +367,8 @@ def evaluate_run(cfg: dict, ds: Dataset, train: TrainResult, info: dict, registr
         report["warnings"].append("The robustness tests re-run the vectorized engine, not the order-level execution: their cost and delay variants do not describe the realistic result.")
     if trading is not None:
         report["trading"] = jsonable(trading["summary"])
+    for k, v in (report_extra or {}).items():                                       # a block a caller built around the run (a simulation's model versions and policy schedule), saved with the report
+        report[k] = jsonable(v)
     for key in ("sizing", "overlays"):
         if weights.attrs.get(key):
             report[key] = jsonable(weights.attrs[key])

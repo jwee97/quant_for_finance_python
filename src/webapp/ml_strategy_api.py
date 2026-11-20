@@ -7,6 +7,8 @@ that day's information only) and the *execution* (the trade the engine made ``la
 
 from __future__ import annotations
 
+import json
+
 import numpy as np
 import pandas as pd
 
@@ -111,7 +113,7 @@ class StrategyRoutes:
                 p = pos.reindex(ret.index).fillna(0.0)
                 book["gross"], book["positions"] = [_num(x) for x in p.abs().sum(axis=1)], [int(x) for x in (p.abs() > 1e-9).sum(axis=1)]
                 book["cash"] = [_num(max(0.0, 1.0 - x)) for x in p.abs().sum(axis=1)]
-        out = {"id": exp_id, "name": report.get("name"), "summary": trading, "assets": rows, "chart": chart, "book": book,
+        out = {"id": exp_id, "name": report.get("name"), "summary": trading, "simulation": report.get("simulation"), "assets": rows, "chart": chart, "book": book,
                "layers": {"prediction": "the model's score and its cross-sectional rank on the decision date", "decision": "the policy's action from that day's information only",
                           "execution": f"the trade the engine made {trading.get('lag_days', 1)} day(s) later at that day's close, charged {trading.get('cost_bps')} bp one way"}}
         return clean(common.envelope("ml_strategy", out, {"registry": "platform"}, [], None, [trading["note"]] if trading.get("note") else []))
@@ -202,6 +204,7 @@ class StrategyRoutes:
             inv = f["investable"]
             out = controls.run(cfg, scores.reindex(returns.index), returns, None if ret is None else ret["net"], investable=inv, n=draws, seed=seed, lag=lag, progress=progress)
             out["id"] = exp_id
+            (self.registry.experiment_dir(exp_id) / "controls.json").write_text(json.dumps(clean(out), allow_nan=False))            # the Research Evidence page reads it
             return clean(out)
 
         return self.app.submit_task("Random-signal control", work, kind="lab")
