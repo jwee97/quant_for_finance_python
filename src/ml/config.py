@@ -192,6 +192,9 @@ def recommended_config(base: dict | None = None) -> dict:
 RECOMMENDED_CLASSIFICATION_TARGET = "topbottom"           # the cross-sectional counterpart for a model that only classifies: the top versus the bottom of the day's forward returns
 
 
+MODEL_NEEDS: dict = {"regime_ridge": {"dataset": {"regime_detector": "vol_state"}}}      # what a model cannot run without, filled in when a new run does not say (the request's choice wins)
+
+
 def with_recommended(over: dict, classification: bool = False) -> dict:
     """``over`` (the overrides of a new run) with ``RECOMMENDED`` filling every setting it leaves out. A request that names its target or its horizon keeps it: a target alone brings its own horizon
     (``experiment_config`` aligns them) and a horizon alone becomes the recommended target's kind at that horizon (``horizon: 5`` -> ``excess_ret_5``). ``classification`` is for a model that can only
@@ -205,6 +208,11 @@ def with_recommended(over: dict, classification: bool = False) -> dict:
         rec["dataset"] = {"target": f"{kind}_{int(asked['horizon'])}"}
     else:
         rec["dataset"]["target"] = f"{kind}_{int(RECOMMENDED['dataset']['horizon'])}"
+    needs = MODEL_NEEDS.get((over.get("model") or {}).get("kind"), {})
+    for section, values in needs.items():
+        for key, value in values.items():
+            if not (over.get(section) or {}).get(key):
+                rec.setdefault(section, {})[key] = value
     out = merge(rec, over)
     if not out.get("dataset"):
         out.pop("dataset", None)

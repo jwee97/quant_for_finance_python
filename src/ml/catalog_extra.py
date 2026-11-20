@@ -33,7 +33,9 @@ LOSS = {"type": "choice", "choices": ["mse", "ic", "mse_rank"],
 DEEP_SPECS = {"device": DEVICE, "horizons": HORIZONS, "checkpoint_dir": {"type": "text", "help": "A folder for checkpoints (empty: none). Each refit writes best.pt and last.pt to a sub-folder of its own, named for its training window"},
               "resume": {"type": "bool", "help": "Continue an interrupted fit from its last.pt (the same training window) when it exists"}}
 SEQ_SPECS = {**DEEP_SPECS, "loss": LOSS, "rank_weight": {"type": "float", "help": "Weight of the pairwise ranking term of the mse_rank loss"}}
-BOOST = {"n_estimators": 300, "num_leaves": 15, "learning_rate": 0.03, "subsample": 0.7, "colsample_bytree": 0.7, "min_child_samples": 100, "reg_lambda": 5.0}
+# 7 leaves: LightGBM grows leaf by leaf with no depth limit, so 15 leaves can make a tree far deeper than XGBoost's depth 3 (at most 8 leaves); on noisy returns the deeper trees fit noise.
+# Measured: on synthetic markets with a planted signal the rank IC rose from 0.14 to 0.20 and from 0.05 to 0.09 (two seeds), on nine large stocks from 0.008 to 0.026 (docs/ml_pipeline_audit.md).
+BOOST = {"n_estimators": 300, "num_leaves": 7, "learning_rate": 0.03, "subsample": 0.7, "colsample_bytree": 0.7, "min_child_samples": 100, "reg_lambda": 5.0}
 RL_COMMON = {"total_timesteps": 20000, "learning_rate": 0.0003, "gamma": 0.99, "batch_size": 64, "hidden": 64, "reward": "risk_adjusted", "risk_aversion": 0.5, "turnover_penalty": 0.0,
              "drawdown_penalty": 0.0, "max_weight": 0.3, "gross": 1.0, "long_only": 0, "device": "cpu", "episode_days": 252, "cost_bps": 7.0, "impact": 0.0, "max_turnover": 0.0}
 RL_SPECS = {"cost_bps": {"type": "float", "help": "One-way cost per unit of turnover, commission plus slippage, in basis points. Match the Backtest section's costs (the form fills it in from them)"},

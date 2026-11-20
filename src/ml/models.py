@@ -184,6 +184,19 @@ class Model:
 
 
 # ------------------------------------------------------------------------------------------------------------------ scikit-learn and booster models
+def _one_thread():
+    """Native thread pools (OpenMP, BLAS) held to one thread for a fit or a prediction, like the boosters' ``n_jobs=1``. The platform runs several jobs at once; scikit-learn's histogram gradient boosting
+    otherwise starts a thread per core in each of them, and on a shared machine one fit took 76 s instead of 0.7 s."""
+    try:
+        from threadpoolctl import threadpool_limits
+
+        return threadpool_limits(1)
+    except ImportError:                                                                                # threadpoolctl comes with scikit-learn; without it nothing is limited
+        import contextlib
+
+        return contextlib.nullcontext()
+
+
 class SklearnModel(Model):
     """A scikit-learn style estimator (with an imputer and scaler in front when the estimator needs them)."""
 
@@ -213,17 +226,19 @@ class SklearnModel(Model):
         values = Xs.to_numpy(dtype=np.float64)
         if self.task == "classification" and len(np.unique(target)) < 2:
             raise ValueError("the training labels contain a single class")
-        if w is not None:
-            self.pipe_.fit(values, target, model__sample_weight=w)
-        else:
-            self.pipe_.fit(values, target)
+        with _one_thread():
+            if w is not None:
+                self.pipe_.fit(values, target, model__sample_weight=w)
+            else:
+                self.pipe_.fit(values, target)
         return self
 
     def raw_predict(self, X: pd.DataFrame) -> np.ndarray:
         values = X[self.features_].to_numpy(dtype=np.float64)
-        if self.task == "classification":
-            return self.pipe_.predict_proba(values)[:, 1] - 0.5
-        return self.pipe_.predict(values) * self.y_std_ + self.y_mean_
+        with _one_thread():
+            if self.task == "classification":
+                return self.pipe_.predict_proba(values)[:, 1] - 0.5
+            return self.pipe_.predict(values) * self.y_std_ + self.y_mean_
 
     def predict_proba(self, X: pd.DataFrame) -> np.ndarray | None:
         """The probability of class 1 (the return is positive, or the asset is in the top group). Column 1 of a scikit-learn model is the class 1 only when the classes are [0, 1], which is checked, and the
@@ -298,7 +313,7 @@ def _build_sklearn(kind: str, task: str, p: dict, seed: int) -> SklearnModel:
         return SklearnModel(kind, task, p, seed, (xgb.XGBClassifier if clf else xgb.XGBRegressor)(**kw), False, True)
     if kind == "lightgbm":
         lgb = _import("lightgbm")
-        kw = dict(n_estimators=int(p.get("n_estimators", 300)), num_leaves=int(p.get("num_leaves", 15)), learning_rate=float(p.get("learning_rate", 0.03)), subsample=float(p.get("subsample", 0.7)),
+        kw = dict(n_estimators=int(p.get("n_estimators", 300)), num_leaves=int(p.get("num_leaves", 7)), learning_rate=float(p.get("learning_rate", 0.03)), subsample=float(p.get("subsample", 0.7)),
                   subsample_freq=1, colsample_bytree=float(p.get("colsample_bytree", 0.7)), min_child_samples=int(p.get("min_child_samples", 100)), reg_lambda=float(p.get("reg_lambda", 5.0)), n_jobs=1,
                   random_state=seed, verbosity=-1, force_row_wise=True)
         return SklearnModel(kind, task, p, seed, (lgb.LGBMClassifier if clf else lgb.LGBMRegressor)(**kw), False, True)
@@ -541,7 +556,7 @@ MODEL_INFO = [
     ModelInfo("random_forest", "Random forest", "trees", ("regression", "classification"), "Bagged deep-ish trees with large leaves (panel data is noisy)", {"n_estimators": 200, "max_depth": 6, "min_samples_leaf": 200, "max_features": 0.5}, 63),
     ModelInfo("hist_gb", "Gradient boosting", "trees", ("regression", "classification"), "scikit-learn histogram gradient boosting with shallow trees and a small learning rate", {"max_iter": 200, "learning_rate": 0.05, "max_depth": 3, "min_samples_leaf": 200, "l2_regularization": 1.0}, 63),
     ModelInfo("xgboost", "XGBoost", "trees", ("regression", "classification"), "Gradient-boosted trees (xgboost)", {"n_estimators": 300, "max_depth": 3, "learning_rate": 0.03, "subsample": 0.7, "colsample_bytree": 0.7, "min_child_weight": 50, "reg_lambda": 5.0}, 63, "xgboost"),
-    ModelInfo("lightgbm", "LightGBM", "trees", ("regression", "classification"), "Gradient-boosted trees (lightgbm)", {"n_estimators": 300, "num_leaves": 15, "learning_rate": 0.03, "subsample": 0.7, "colsample_bytree": 0.7, "min_child_samples": 100, "reg_lambda": 5.0}, 63, "lightgbm"),
+    ModelInfo("lightgbm", "LightGBM", "trees", ("regression", "classification"), "Gradient-boosted trees (lightgbm)", {"n_estimators": 300, "num_leaves": 7, "learning_rate": 0.03, "subsample": 0.7, "colsample_bytree": 0.7, "min_child_samples": 100, "reg_lambda": 5.0}, 63, "lightgbm"),
     ModelInfo("catboost", "CatBoost", "trees", ("regression", "classification"), "Gradient-boosted trees (catboost), when installed", {"iterations": 300, "depth": 4, "learning_rate": 0.05, "l2_leaf_reg": 5.0}, 63, "catboost"),
     ModelInfo("ar", "Autoregression", "time series", ("regression", "classification"), "A ridge on the last five daily returns only: does yesterday predict tomorrow?", {"alpha": 10.0, "columns": list(AR_FEATURES)}, 21),
     ModelInfo("kalman", "Kalman regression", "time series", ("regression",), "A regression whose coefficients drift as a random walk, tracked by a Kalman filter", {"q": 1e-5, "r": 1.0, "max_features": 12}, 21),

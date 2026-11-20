@@ -66,7 +66,8 @@ class RankerModel(_Tabular):
             lgb = _import("lightgbm")
             return lgb.LGBMRanker(objective="lambdarank", n_estimators=int(p["n_estimators"]), num_leaves=int(p["num_leaves"]), learning_rate=float(p["learning_rate"]), subsample=float(p["subsample"]),
                                   subsample_freq=1, colsample_bytree=float(p["colsample_bytree"]), min_child_samples=int(p["min_child_samples"]), reg_lambda=float(p["reg_lambda"]), n_jobs=1,
-                                  random_state=seed, verbosity=-1, force_row_wise=True, importance_type="gain", label_gain=[2 ** i - 1 for i in range(max(levels, 2))])
+                                  random_state=seed, verbosity=-1, force_row_wise=True, importance_type="gain", label_gain=[2 ** i - 1 for i in range(max(levels, 2))],
+                                  bagging_by_query=True)                               # subsample whole days: sampling single rows would break each day's query apart, and a ranking loss compares the assets of one day
         xgb = _import("xgboost")
         return xgb.XGBRanker(objective=str(p["objective"]), n_estimators=int(p["n_estimators"]), max_depth=int(p["max_depth"]), learning_rate=float(p["learning_rate"]), subsample=float(p["subsample"]),
                              colsample_bytree=float(p["colsample_bytree"]), min_child_weight=float(p["min_child_weight"]), reg_lambda=float(p["reg_lambda"]), tree_method="hist", n_jobs=1,
