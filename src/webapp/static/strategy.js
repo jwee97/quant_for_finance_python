@@ -95,7 +95,27 @@
     t("Turnover / year", `${num(a.ann_turnover, 1)}x`); t("Cost drag / year", pct(a.cost_drag_ann, 2), "Gross minus net annual return"); t("Gross return / year", pct(a.gross_ann_return, 1)); t("Net return / year", pct(a.net_ann_return, 1));
     if (s.note) h("p", "note", out, s.note);
     priceCard(out); bookCards(out); statCards(out);
-    await logCard(out); await tradesCard(out); await replayCard(out);
+    controlCard(out); await logCard(out); await tradesCard(out); await replayCard(out);
+  }
+
+  function controlCard(out) {
+    const card = h("div", "card", out); card.dataset.role = "control-card"; h("h3", "", card, "Is this better than random signals?");
+    h("p", "note", card, "The same decision policy, costs and pace of trading, fed random scores that have the model's own rank persistence and no information about returns. If the model's Sharpe ratio is not clearly above these, nothing about its predictions has been shown. A matched benchmark (the market scaled by the book's own beta) is shown beside it.");
+    const row = h("div", "row", card), go = h("button", "btn", row, "Run the random-signal control"), status = h("span", "hint", row, ""), body = h("div", "", card); go.type = "button"; body.setAttribute("aria-live", "polite");
+    const show = (r) => {
+      body.replaceChildren(); const t = h("div", "tiles2", body);
+      Q.tile(t, "Model Sharpe", num(r.model_sharpe, 2)); Q.tile(t, "Random signals: median", num(r.random.p50, 2), null, "", `5th to 95th percentile: ${num(r.random.p05, 2)} to ${num(r.random.p95, 2)}`);
+      Q.tile(t, "Random draws as good", pct(r.share_of_random_at_least_as_good, 0), null, "", `${r.draws} draws`); Q.tile(t, "Rank persistence", num(r.rank_persistence, 2), null, "", "The model's day-to-day rank autocorrelation, copied into the random scores");
+      Q.tile(t, "Beta-matched benchmark Sharpe", num(r.matched_benchmark.matched_sharpe, 2), null, "", `Mean beta ${num(r.matched_benchmark.beta_mean, 2)}; active Sharpe over it ${num(r.matched_benchmark.active_sharpe, 2)}`);
+      if (r.replay_check && !r.replay_check.reproduces) h("div", "banner warn", body, `The replay did not reproduce the saved run (saved Sharpe ${num(r.replay_check.saved_sharpe, 2)}, replayed ${num(r.replay_check.replayed_sharpe, 2)}), so read this control with care.`);
+      h("p", "hint", body, r.reading);
+    };
+    go.addEventListener("click", async () => {
+      go.disabled = true; status.textContent = "Starting…";
+      try { const { job } = await api("/api/ml/strategy/controls", { id: S.id, draws: 40 }); show(await Q.waitJob(job, (v) => { status.textContent = `${v.message} (${Math.round(v.elapsed)} s)`; }, 1000)); status.textContent = ""; }
+      catch (e) { status.textContent = ""; h("div", "banner err", body, e.message); }
+      go.disabled = false;
+    });
   }
 
   function legendChips(parent) {

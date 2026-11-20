@@ -226,7 +226,7 @@ class MlApi(AdvancedRoutes, SelectionRoutes, StrategyRoutes):
                 "/api/ml/evaluation-plan": self.evaluation_plan, "/api/ml/evaluation-plan/freeze": self.evaluation_plan_freeze, "/api/ml/evaluate": self.evaluate,
                 "/api/ml/null-controls/run": self.null_controls_run, "/api/ml/selection-tests/run": self.selection_tests_run, "/api/ml/validation-policy": self.validation_policy_adopt,
                 "/api/ml/statistical-diagnostics/run": self.diagnostics_run, "/api/ml/multiseed/run": self.multiseed_run, "/api/ml/governance/version": self.governance_version,
-                "/api/ml/governance/action": self.governance_action, "/api/ml/improvement-experiment": self.improvement_run, **self.advanced_post_routes(), **self.selection_post_routes()}
+                "/api/ml/governance/action": self.governance_action, "/api/ml/improvement-experiment": self.improvement_run, **self.advanced_post_routes(), **self.selection_post_routes(), **self.strategy_post_routes()}
 
     # ------------------------------------------------------------------------------------------------------------ plumbing
     @property

@@ -32,6 +32,9 @@ def _num(x):
 
 
 class StrategyRoutes:
+    def strategy_post_routes(self) -> dict:
+        return {"/api/ml/strategy/controls": self.strategy_controls}
+
     def strategy_get_routes(self) -> dict:
         return {"/api/ml/strategy/runs": self.strategy_runs, "/api/ml/strategy": self.strategy, "/api/ml/strategy/decisions": self.strategy_decisions, "/api/ml/strategy/trades": self.strategy_trades, "/api/ml/strategy/replay": self.strategy_replay}
 
@@ -41,7 +44,7 @@ class StrategyRoutes:
         if not (d / "decisions.parquet").exists() and not (d / "executions.parquet").exists():
             raise ApiError("this experiment did not use the decision_policy position rule, so it has no decisions to show; run it with signal.method = decision_policy (and backtest.rebalance = on_change)")
         out = {}
-        for name in ("decisions", "executions", "round_trips", "prices", "positions", "returns", "predictions"):
+        for name in ("decisions", "executions", "round_trips", "prices", "investable", "asset_returns", "positions", "returns", "predictions"):
             f = d / f"{name}.parquet"
             out[name] = pd.read_parquet(f) if f.exists() else None
         return out
@@ -78,6 +81,8 @@ class StrategyRoutes:
             f = self._strategy_files(exp_id)
         trading = report.get("trading") or {}
         ex, trips, prices, pos, ret = f["executions"], f["round_trips"], f["prices"], f["positions"], f["returns"]
+        if prices is not None and pos is not None and len(pos):
+            prices = prices.loc[pos.index[0]:]                                              # the file holds the whole history (a control replays on it); the chart starts where the run did
         traded = (ex.groupby("asset").size().sort_values(ascending=False) if ex is not None and len(ex) else pd.Series(dtype=int))
         asset = str(q.get("asset") or (traded.index[0] if len(traded) else (prices.columns[0] if prices is not None else "")))
         if prices is not None and asset not in prices.columns:
@@ -171,6 +176,36 @@ class StrategyRoutes:
             rows.append(row)
         return clean(common.envelope("ml_strategy_trades", {"id": exp_id, "table": kind, "rows": rows, "n": int(len(t)), "offset": offset, "limit": limit}, {"registry": "platform"}, [], None, []))
 
+    # ------------------------------------------------------------------------------------------------------------ random-signal control
+    def strategy_controls(self, body: dict) -> dict:
+        """``POST /api/ml/strategy/controls`` (a job): ``{id, draws}``. Replays the saved run's position rule, costs and rank persistence with random scores and reports where the model's Sharpe ratio sits among them,
+        beside a beta-matched benchmark. The replay is checked against the saved run first."""
+        h = _h()
+        h._only(body, {"id", "draws", "seed"}, "/api/ml/strategy/controls")
+        with h._user_errors():
+            exp_id = h._id(body)
+            f = self._strategy_files(exp_id)
+            report = self.registry.report(exp_id)
+        draws = int(h._num("draws", body.get("draws", 40), 5, 200, True))
+        seed = int(h._num("seed", body.get("seed", 0), 0, 1_000_000, True))
+
+        def work(progress):
+            from ..ml import controls
+
+            preds, prices, ret = f["predictions"], f["prices"], f["returns"]
+            if preds is None or prices is None:
+                raise ApiError("this run has no saved predictions or prices to replay")
+            scores = preds["score"].unstack().reindex(columns=prices.columns)
+            returns = f["asset_returns"] if f["asset_returns"] is not None else prices.pct_change(fill_method=None)
+            cfg = report["config"]
+            lag = int(cfg["dataset"]["lag"])                                                  # the engine adds backtest.extra_lag itself
+            inv = f["investable"]
+            out = controls.run(cfg, scores.reindex(returns.index), returns, None if ret is None else ret["net"], investable=inv, n=draws, seed=seed, lag=lag, progress=progress)
+            out["id"] = exp_id
+            return clean(out)
+
+        return self.app.submit_task("Random-signal control", work, kind="lab")
+
     # ------------------------------------------------------------------------------------------------------------ replay
     def strategy_replay(self, q: dict) -> dict:
         """``GET /api/ml/strategy/replay?id=&date=``: what was known on a decision date and what the policy did with it: every asset's score and rank that day, the book before and after, the decisions taken, and
@@ -183,6 +218,8 @@ class StrategyRoutes:
             report = self.registry.report(exp_id)
             day = pd.Timestamp(h._date("date", q.get("date") or ""))
             dec, ex, pos, preds, prices = f["decisions"], f["executions"], f["positions"], f["predictions"], f["prices"]
+            if prices is not None and pos is not None and len(pos):
+                prices = prices.loc[pos.index[0]:]
             if pos is None or not len(pos):
                 raise ApiError("this experiment has no recorded positions")
             idx = pos.index

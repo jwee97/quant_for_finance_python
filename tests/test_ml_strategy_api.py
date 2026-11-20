@@ -113,3 +113,19 @@ def test_replay_shows_only_what_was_known_on_the_date_and_what_the_policy_did(ap
     assert "later and are not known" in rp["known"]
     ranks = [a["score"] for a in rp["assets"] if a["score"] is not None]
     assert ranks == sorted(ranks, reverse=True)
+
+
+def test_the_random_signal_control_runs_as_a_job_and_places_the_model_among_random_scores(app, run):
+    from tests.test_webapp import _wait
+
+    with pytest.raises(ApiError, match="draws"):
+        app.extra_post["/api/ml/strategy/controls"]({"id": run["id"], "draws": 1})
+    with pytest.raises(ApiError, match="does not take"):
+        app.extra_post["/api/ml/strategy/controls"]({"id": run["id"], "shell": "x"})
+    view = _wait(app, app.extra_post["/api/ml/strategy/controls"]({"id": run["id"], "draws": 8})["job"], 280)
+    assert view["status"] == "done", view
+    r = view["result"]
+    assert r["draws"] == 8 and 0.0 <= r["share_of_random_at_least_as_good"] <= 1.0 and r["random"]["p05"] <= r["random"]["p50"] <= r["random"]["p95"]
+    assert r["rank_persistence"] > 0 and r["matched_benchmark"]["days"] > 100 and "reading" in r
+    chk = r["replay_check"]
+    assert chk["days"] > 100 and chk["reproduces"] and abs(chk["saved_sharpe"] - chk["replayed_sharpe"]) < 1e-9, "the replay reproduces the saved run exactly before anything is compared with it"

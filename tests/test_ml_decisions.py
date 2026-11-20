@@ -143,3 +143,33 @@ def test_the_policy_is_validated_and_the_method_is_accepted_by_the_experiment_co
     for bad in ({"decision_entry_quantile": 0.6}, {"decision_exit_quantile": 0.1}, {"decision_sizing": "kelly"}, {"decision_short_exposure": 0.5}, {"decision_max_holding": 0}):
         with pytest.raises(MLConfigError):
             experiment_config({"signal": {"method": "decision_policy", **bad}})
+
+
+def test_the_experiment_pipeline_hands_the_policy_annualised_volatility_and_the_stop_still_fires_at_the_daily_scale():
+    """``build_weights`` is given the platform's annualised trailing volatility; the policy's stops are in daily units. A stop at 2 volatilities on a 1%-a-day asset must fire on a -3% day, not wait for -90%."""
+    from src.ml.signals import build_weights
+
+    idx = pd.bdate_range("2021-01-01", periods=60)
+    r = pd.DataFrame(0.0, idx, list("ABC"))
+    r.loc[idx[9], "A"] = -0.05
+    s = pd.DataFrame({"A": 3.0, "B": 2.0, "C": 1.0}, index=idx)
+    annual = pd.DataFrame(0.01 * np.sqrt(252.0), idx, r.columns)                       # what trailing_vol returns for a 1%-a-day asset
+    cfg = {"method": "decision_policy", "decision_entry_quantile": 0.5, "decision_exit_quantile": 0.5, "decision_max_positions": 2, "decision_rebalance_days": 5, "decision_stop_loss_vol": 2.0,
+           "decision_horizon": 1, "decision_cooldown": 0, "lag_total": 1}
+    w = build_weights(s, cfg, vol=annual, returns=r)
+    dec = w.attrs["decisions"]
+    stop = dec[(dec["asset"] == "A") & (dec["action"] == "STOP_LOSS")]
+    assert len(stop) == 1 and stop.iloc[0]["date"] == idx[9]
+
+
+def test_random_scores_with_the_models_persistence_trade_at_the_models_pace_and_carry_no_skill():
+    from src.ml import controls as ct
+
+    r, s = world(900)
+    smooth = s.rolling(10).mean().fillna(0.0)                                          # persistent scores
+    rho = ct.rank_persistence(smooth)
+    assert rho > 0.5 and abs(ct.rank_persistence(pd.DataFrame(np.random.default_rng(0).normal(size=s.shape), s.index, s.columns))) < 0.1
+    rs = ct.random_scores(smooth, rho, np.random.default_rng(1))
+    assert abs(ct.rank_persistence(rs) - rho) < 0.12 and rs.shape == smooth.shape
+    ic = pd.concat([rs.shift(1).stack(), r.stack()], axis=1).dropna().corr(method="spearman").iloc[0, 1]
+    assert abs(ic) < 0.05, "random scores carry no information about returns"

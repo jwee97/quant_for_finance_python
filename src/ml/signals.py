@@ -359,7 +359,7 @@ def build_weights(score: pd.DataFrame, cfg: dict, vol: pd.DataFrame | None = Non
             raise ValueError("the decision_policy method needs the assets' returns (its stops and holding limits read the price path)")
         from . import decisions
 
-        w, decision_log = decisions.run(s, returns, decisions.policy_from(cfg), vol=vol, confidence=confidence, investable=investable, lag=int(cfg.get("lag_total", 1)),
+        w, decision_log = decisions.run(s, returns, decisions.policy_from(cfg), vol=None if vol is None else vol / np.sqrt(252.0), confidence=confidence, investable=investable, lag=int(cfg.get("lag_total", 1)),
                                         forecast_is_return=bool(cfg.get("decision_forecast_is_return", False)))
     elif method == "target_weights":
         w = target_weights(s, gross)

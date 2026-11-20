@@ -62,10 +62,18 @@ The ledger reconciles to the engine: the round trips' net contributions sum to t
 * **Replay**: pick a date to see every asset's score and rank, the book going in, what the policy decided and why. The trades that followed are listed apart, because they were not known at the decision.
   The features behind each score are not stored with the run, so the replay shows the score and its rank, not the inputs.
 
+## Is it better than random signals?
+
+The **random-signal control** replays the run's decision policy, costs and trading pace with random scores in place of the model's, 40 times by default, and reports the share of those draws that did at
+least as well (`src/ml/controls.py`, `POST /api/ml/strategy/controls`). The random scores are AR(1) processes whose coefficient is the model's own rank autocorrelation, so they change as slowly as the
+model's do; a day-by-day shuffle would trade far more than the model and make it look better than it is. Beside it is a **beta-matched benchmark** (the market scaled by the book's causal beta): a long-only
+book earns the market's return for being exposed to it, and that is not skill. The replay is checked against the saved run first (it reproduces the saved Sharpe ratio to 1e-9 or the page says it did not).
+A share near 0.5 means the model is indistinguishable from noise at this pace of trading. Runs made before the control existed lack the saved price history and cannot be replayed.
+
 ## API
 
 `GET /api/ml/strategy/runs`, `/api/ml/strategy?id=&asset=`, `/api/ml/strategy/decisions?id=&asset=&action=&q=&from=&to=&limit=&offset=&hold=`, `/api/ml/strategy/trades?id=&kind=executions|round_trips`,
-`/api/ml/strategy/replay?id=&date=`. All read what the run saved; nothing is recomputed.
+`/api/ml/strategy/replay?id=&date=`, and `POST /api/ml/strategy/controls` (a job). The reads use what the run saved; nothing is recomputed.
 
 ## Limits
 

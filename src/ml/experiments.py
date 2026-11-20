@@ -425,7 +425,9 @@ def save_experiment(registry: Registry, exp: Experiment, info: dict, parent_id: 
             frame = exp.trading[name]
             if len(frame):
                 frame.to_parquet(d / f"{name}.parquet")
-        ds.prices.reindex(columns=ds.assets).loc[exp.first_signal:].to_parquet(d / "prices.parquet")          # the closes the chart draws its trade markers on
+        ds.prices.reindex(columns=ds.assets).to_parquet(d / "prices.parquet")           # the whole price history: the chart draws its markers on it, and a control replays the run on exactly what it saw
+        ds.investable.reindex(columns=ds.assets).to_parquet(d / "investable.parquet")
+        ds.returns.reindex(columns=ds.assets).to_parquet(d / "asset_returns.parquet")
     ret = pd.DataFrame({"net": exp.net, "gross": exp.gross, "costs": exp.costs, "turnover": exp.turnover, "benchmark": exp.benchmark, "segment": exp.labels.reindex(exp.net.index)})
     ret.to_parquet(d / "returns.parquet")
     if exp.insample_net is not None:
@@ -434,7 +436,7 @@ def save_experiment(registry: Registry, exp: Experiment, info: dict, parent_id: 
         tr.insample.rename("score").to_frame().to_parquet(d / "predictions_insample.parquet")
     files = {"predictions": d / "predictions.parquet", "positions": d / "positions.parquet", "returns": d / "returns.parquet", "config": d / "config.yaml"}
     if exp.trading is not None:
-        for name in ("decisions", "executions", "round_trips", "prices"):
+        for name in ("decisions", "executions", "round_trips", "prices", "investable", "asset_returns"):
             if (d / f"{name}.parquet").exists():
                 files[name] = d / f"{name}.parquet"
     for name, frame in tr.extras.items():                                           # distribution, regimes, heads, weights, latent, portfolio: what the model reported beside its scores

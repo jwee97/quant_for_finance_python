@@ -61,6 +61,10 @@ def test_the_explorer_shows_markers_the_log_the_trades_and_a_replay(browser, liv
     pg.wait_for_selector("[data-role=replay] table", timeout=30000)
     rp = pg.locator("[data-role=replay]").inner_text()
     assert "Known on" in rp and "Book going in" in rp and "Executed afterwards" in rp
+    # the random-signal control: the model's result placed among results from random scores at the same pace
+    pg.click("[data-role=control-card] button:text-is('Run the random-signal control')")
+    _wait_until(pg, "document.querySelector('[data-role=control-card]').textContent.includes('Random draws as good')", timeout=300.0)
+    assert "Beta-matched benchmark" in pg.locator("[data-role=control-card]").inner_text()
     # the builder: running a new strategy from the form adds a second run to the picker
     pg.click("[data-role=strategy-builder] summary")
     pg.select_option("[data-role=strategy-builder] select[data-key=model]", "lasso")
