@@ -192,6 +192,11 @@ Out of sample on the nine stocks with the recommended set-up (equal weight: 36.0
 
 Every family now holds the benchmark's exposure; the differences between them (a few tenths of information ratio) are within the noise of one history and are not a ranking of the models.
 
+**The neural families** (LSTM, GRU, TCN, PatchTST, iTransformer, DLinear, N-BEATS, N-HiTS, TFT, autoencoder, VAE, GCN, GAT) were checked for correctness only: on a smaller synthetic market with
+5 training epochs and one refit a year, every one trains, predicts and trades through the recommended rule with the benchmark's exposure (beta 0.95-0.97). Their rank IC against the planted signal is
+positive for all but TCN (0.00), from 0.06 to 0.27; at 5 epochs that says the plumbing works, not how good they are. With their default settings each of them takes about an hour on the nine
+stocks on a four-core CPU (a network is trained from scratch at every refit). CatBoost, NGBoost and the reinforcement-learning agents were not tested: their packages are not installed here.
+
 **A gate that excluded every long-only book.** Model selection's exposure gate (`max_abs_net_exposure <= 1`) failed a fully invested long-only book because its weights sum to 1.0000000000000002. The
 gates now allow floating-point noise (`GATE_TOL = 1e-9`, relative); a book over the bound by more than that still fails.
 
