@@ -35,7 +35,7 @@ SECTIONS = ("dataset", "split", "model", "signal", "backtest", "robustness", "ex
 HASH_SECTIONS = ("dataset", "split", "model", "signal", "backtest", "execution")      # what decides the numbers (``execution`` only when present: it is absent from the defaults, so no existing hash changes); the robustness switch only decides which extra reports are written
 NORMALIZATIONS = ("none", "cross_sectional_z", "rank")
 SCHEMES = ("walk_forward", "expanding", "rolling")
-REBALANCES = ("daily", "weekly", "monthly")
+REBALANCES = ("daily", "weekly", "monthly", "on_change")
 HOLDING_PERIODS = (1, 5, 10, 20)
 
 
@@ -121,7 +121,14 @@ def validate(cfg: dict) -> dict:
     if sig["method"] == "calibrated_sizing":
         _check(60 <= int(sig.get("calib_window", 504)) <= 2000 and float(sig.get("calib_min_t", 2.0)) >= 0.0 and 5 <= int(sig.get("stability_window", 21)) <= 250,
                "signal.calib_window in [60, 2000], calib_min_t >= 0 and stability_window in [5, 250]")
-    derived = sig["method"] in ("cost_aware_mean_variance", "calibrated_sizing") or sig.get("no_trade_margin") is not None or sig.get("trade_filter_k") is not None
+    if sig["method"] == "decision_policy":
+        from .decisions import policy_from
+
+        try:
+            policy_from(sig)
+        except ValueError as exc:
+            raise MLConfigError(str(exc)) from None
+    derived = sig["method"] in ("cost_aware_mean_variance", "calibrated_sizing", "decision_policy") or sig.get("no_trade_margin") is not None or sig.get("trade_filter_k") is not None
     if derived:                                                                             # what these rules need from the other sections, set here so that one place decides each of them
         sig["cost_bps"] = float(bt["cost_bps"]) + float(bt["slippage_bps"])
         sig["window_days"] = int(d["horizon"])                                               # the forecast horizon: the window the covariance is scaled to

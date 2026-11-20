@@ -35,11 +35,12 @@ import pandas as pd
 UNCERTAINTY_METHODS = ("uncertainty_weighted", "uncertainty_mean_variance")
 ALLOCATION_METHODS = ("cost_aware_mean_variance",)
 SIZING_METHODS = ("calibrated_sizing",)
+DECISION_METHODS = ("decision_policy",)                                                       # an explicit buy / sell / hold policy (decisions.py): it owns its sizing, holding and exits
 METHODS = ("top_n_long_short", "long_only_top_quantile", "proportional", "vol_scaled", "rank_normalised", "threshold", "regime_filtered", "confidence_weighted", *UNCERTAINTY_METHODS, *ALLOCATION_METHODS,
-           *SIZING_METHODS, "target_weights")
+           *SIZING_METHODS, *DECISION_METHODS, "target_weights")
 OVERLAY_KEYS = ("trade_filter_k", "no_trade_margin", "regime_exposure")              # applied in this order, after the book is built; the first two need a forecast in return units, the last is a risk control that needs none
 DERIVED_KEYS = ("cost_bps", "window_days", "label_offset", "rebalance", "lag_total")   # set by config.validate from the other sections, never by a request
-STATEFUL_METHODS = (*ALLOCATION_METHODS, *SIZING_METHODS)                              # rules whose book depends on the book held or on a history of settled outcomes
+STATEFUL_METHODS = (*ALLOCATION_METHODS, *SIZING_METHODS, *DECISION_METHODS)                              # rules whose book depends on the book held or on a history of settled outcomes
 
 
 def _scale_sides(raw: np.ndarray, gross: float, net: float) -> np.ndarray:
@@ -353,17 +354,24 @@ def build_weights(score: pd.DataFrame, cfg: dict, vol: pd.DataFrame | None = Non
         from . import sizing
 
         w, size_log = sizing.apply(s, returns, investable, cfg)
+    elif method == "decision_policy":
+        if returns is None:
+            raise ValueError("the decision_policy method needs the assets' returns (its stops and holding limits read the price path)")
+        from . import decisions
+
+        w, decision_log = decisions.run(s, returns, decisions.policy_from(cfg), vol=vol, confidence=confidence, investable=investable, lag=int(cfg.get("lag_total", 1)),
+                                        forecast_is_return=bool(cfg.get("decision_forecast_is_return", False)))
     elif method == "target_weights":
         w = target_weights(s, gross)
     else:
         if confidence is None:
             raise ValueError("the confidence_weighted method needs prediction confidences")
         w = proportional(s, gross, net, weight=confidence.reindex_like(s).clip(lower=0.0))
-    if cfg.get("max_weight") and method not in ALLOCATION_METHODS:                  # the optimiser enforces its own position and group limits: capping afterwards would move its solution
+    if cfg.get("max_weight") and method not in ALLOCATION_METHODS + DECISION_METHODS:                  # the optimiser enforces its own position and group limits: capping afterwards would move its solution
         w = cap_weights(w, float(cfg["max_weight"]))
-    if cfg.get("sector_cap") and groups and method not in ALLOCATION_METHODS:
+    if cfg.get("sector_cap") and groups and method not in ALLOCATION_METHODS + DECISION_METHODS:
         w = group_caps(w, groups, float(cfg["sector_cap"]))
-    out = holding_period(w, int(cfg.get("holding_period", 1)))
+    out = w if method in DECISION_METHODS else holding_period(w, int(cfg.get("holding_period", 1)))                  # the policy holds and exits by its own rules: averaging its book over a window would blur them
     overlays = {}
     if cfg.get("trade_filter_k") is not None or cfg.get("no_trade_margin") is not None:
         if returns is None:
@@ -386,6 +394,8 @@ def build_weights(score: pd.DataFrame, cfg: dict, vol: pd.DataFrame | None = Non
         out.attrs["allocation"] = alloc_log
     if method in SIZING_METHODS:
         out.attrs["sizing"] = size_log
+    if method in DECISION_METHODS:
+        out.attrs["decisions"] = decision_log
     if overlays:
         out.attrs["overlays"] = overlays
     return out

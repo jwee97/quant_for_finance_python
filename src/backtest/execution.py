@@ -48,8 +48,14 @@ def restrict_to_rebalances(weights: pd.DataFrame, index: pd.DatetimeIndex,
     Returns a frame with targets on rebalance dates and NaN elsewhere, which
     ``drift_weights`` then fills according to how the book actually evolves.
     """
-    marks = rebalance_dates(index, frequency)
     out = pd.DataFrame(np.nan, index=index, columns=weights.columns)
+    if str(frequency).lower() == "on_change":                                   # event-driven: trade only on a day whose (lagged) target differs from the previous day's, so a decision policy that
+        known = weights.notna().any(axis=1)                                     # holds a position trades when it decides to, and the book drifts with prices in between
+        moved = (weights.fillna(0.0) - weights.shift(1).fillna(0.0)).abs().max(axis=1) > 1e-12
+        common = weights.index[(known & moved).to_numpy()].intersection(index)
+        out.loc[common] = weights.loc[common]
+        return out
+    marks = rebalance_dates(index, frequency)
     common = marks.intersection(weights.index)
     out.loc[common] = weights.loc[common]
     return out

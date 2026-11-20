@@ -23,12 +23,13 @@ from . import model_report as mr
 from . import provenance as pv
 from . import research_controls as rc
 from . import robustness as rb
+from . import trade_log as tl
 from .backtest import equal_weight_benchmark, label_days, run_backtest, trim_to_signal
 from .config import DEFAULTS, build_key, config_hash, dataset_key, experiment_config, merge
 from .datasets import Dataset, build_dataset, resolve_bundle
 from .models import Model
 from .registry import Registry
-from .signals import ALLOCATION_METHODS, OVERLAY_KEYS, SIZING_METHODS, UNCERTAINTY_METHODS, build_weights
+from .signals import ALLOCATION_METHODS, DECISION_METHODS, OVERLAY_KEYS, SIZING_METHODS, UNCERTAINTY_METHODS, build_weights
 from .models import task_for
 from .contracts import OutputContractError, build_contract, check_signal_use
 from .targets import forward_return, is_classification
@@ -64,6 +65,7 @@ class Experiment:
     context: rb.Context | None = None
     metrics: dict = field(default_factory=dict)
     execution: object | None = None                                       # the realistic run (orders, fills, ledger) when the experiment asked for that mode; None for the vectorized engine
+    trading: dict | None = None                                           # the decision log, executed trades and round trips of an explicit decision policy (decisions.py, trade_log.py); None for the other rules
 
 
 def trailing_vol(returns: pd.DataFrame, window: int = 63) -> pd.DataFrame:
@@ -272,6 +274,9 @@ def evaluate_run(cfg: dict, ds: Dataset, train: TrainResult, info: dict, registr
     if stop_after:                                                             # the positions of the last day still earn for `lag` more days; nothing later belongs to the run
         cut = net.index.searchsorted(train.plan.dates[train.plan.bounds[stop_after][1] - 1]) + lag + 1
         net, gross, costs, turnover = net.iloc[:cut], gross.iloc[:cut], costs.iloc[:cut], turnover.iloc[:cut]
+    trading = None
+    if weights.attrs.get("decisions") is not None:
+        trading = tl.build(weights.attrs["decisions"], parts, ds.returns, cfg, lag)
     labels = label_days(net.index, train.plan.labels())
     bench = equal_weight_benchmark(ds.returns, ds.investable).reindex(net.index)
     # the train segment: the first model's in-sample positions, run through the same engine
@@ -279,7 +284,7 @@ def evaluate_run(cfg: dict, ds: Dataset, train: TrainResult, info: dict, registr
     s_in = train.scores_wide(ds, "insample")
     if s_in.notna().any().any():
         sig_in = {k: v for k, v in cfg["signal"].items() if k not in OVERLAY_KEYS}                                                                                       # the in-sample book is a display: no overlay is run on it
-        if sig_in["method"] in (*UNCERTAINTY_METHODS, *ALLOCATION_METHODS, *SIZING_METHODS):                                                                              # no predictive distribution, no optimiser and no calibration on in-sample scores
+        if sig_in["method"] in (*UNCERTAINTY_METHODS, *ALLOCATION_METHODS, *SIZING_METHODS, *DECISION_METHODS):                                                                              # no predictive distribution, no optimiser and no calibration on in-sample scores
             sig_in["method"] = "proportional"
         w_in = build_weights(s_in, sig_in, vol, confidence_from_scores(s_in, None), regime_on, groups, ds.investable)
         r_in = trim_to_signal(run_backtest(w_in, ds.returns, ds.investable, cfg["backtest"], lag, cfg["name"] + "_in_sample"), s_in.dropna(how="all").index[0], lag)["net"]
@@ -358,6 +363,8 @@ def evaluate_run(cfg: dict, ds: Dataset, train: TrainResult, info: dict, registr
     report["execution"] = jsonable(realistic.block if realistic is not None else xe.legacy_block(cfg))
     if realistic is not None and rob is not None:
         report["warnings"].append("The robustness tests re-run the vectorized engine, not the order-level execution: their cost and delay variants do not describe the realistic result.")
+    if trading is not None:
+        report["trading"] = jsonable(trading["summary"])
     for key in ("sizing", "overlays"):
         if weights.attrs.get(key):
             report[key] = jsonable(weights.attrs[key])
@@ -387,7 +394,7 @@ def evaluate_run(cfg: dict, ds: Dataset, train: TrainResult, info: dict, registr
     res = report["model_extras"].get("resources", {})
     metrics["run"] = {k: v for k, v in {"train_seconds": res.get("train_seconds"), "total_seconds": res.get("total_seconds"), "n_params": res.get("n_params"), "peak_memory_mb": res.get("peak_memory_mb"),
                                          "n_fits": float(len(train.diagnostics))}.items() if v is not None}
-    exp = Experiment(exp_id, cfg, ds, train, scores, weights, net, gross, costs, turnover, bench, insample_net, labels, first_signal, fmodel, report, ctx, metrics, execution=realistic)
+    exp = Experiment(exp_id, cfg, ds, train, scores, weights, net, gross, costs, turnover, bench, insample_net, labels, first_signal, fmodel, report, ctx, metrics, execution=realistic, trading=trading)
     if registry is not None and save:
         progress("saving")
         record = pv.provenance_record(cfg, ds, train, report["output_contract"], chash)
@@ -410,7 +417,15 @@ def save_experiment(registry: Registry, exp: Experiment, info: dict, parent_id: 
     if tr.probabilities is not None:
         preds["prob"] = tr.probabilities
     preds.to_parquet(d / "predictions.parquet")
-    exp.weights.loc[exp.first_signal:].to_parquet(d / "positions.parquet")
+    book = exp.weights.loc[exp.first_signal:].copy()
+    book.attrs = {}                                                                     # the allocation / sizing / decision logs travel in attrs: they are saved as their own files, not as parquet metadata
+    book.to_parquet(d / "positions.parquet")
+    if exp.trading is not None:                                                        # the decision log, the executed trades and the round trips: what the Strategy Explorer shows
+        for name in ("decisions", "executions", "round_trips"):
+            frame = exp.trading[name]
+            if len(frame):
+                frame.to_parquet(d / f"{name}.parquet")
+        ds.prices.reindex(columns=ds.assets).loc[exp.first_signal:].to_parquet(d / "prices.parquet")          # the closes the chart draws its trade markers on
     ret = pd.DataFrame({"net": exp.net, "gross": exp.gross, "costs": exp.costs, "turnover": exp.turnover, "benchmark": exp.benchmark, "segment": exp.labels.reindex(exp.net.index)})
     ret.to_parquet(d / "returns.parquet")
     if exp.insample_net is not None:
@@ -418,6 +433,10 @@ def save_experiment(registry: Registry, exp: Experiment, info: dict, parent_id: 
     if len(tr.insample):
         tr.insample.rename("score").to_frame().to_parquet(d / "predictions_insample.parquet")
     files = {"predictions": d / "predictions.parquet", "positions": d / "positions.parquet", "returns": d / "returns.parquet", "config": d / "config.yaml"}
+    if exp.trading is not None:
+        for name in ("decisions", "executions", "round_trips", "prices"):
+            if (d / f"{name}.parquet").exists():
+                files[name] = d / f"{name}.parquet"
     for name, frame in tr.extras.items():                                           # distribution, regimes, heads, weights, latent, portfolio: what the model reported beside its scores
         frame.to_parquet(d / f"extra_{name}.parquet")
         files[f"extra_{name}"] = d / f"extra_{name}.parquet"

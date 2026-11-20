@@ -57,6 +57,7 @@ from . import tuning
 from .api import ApiError
 from .ml_advanced_api import AdvancedRoutes
 from .ml_selection_api import SelectionRoutes
+from .ml_strategy_api import StrategyRoutes
 from .payload import clean
 from .universe import MAX_TICKERS, UniverseError, normalise
 
@@ -109,8 +110,13 @@ SPEC = {
                "no_trade_margin": ("float", 0.0, 50.0), "no_trade_hold_margin": ("float", 0.0, 50.0), "trade_filter_k": ("float", 0.0, 10.0), "trade_filter_cost_margin": ("float", 0.0, 50.0),
                "trade_filter_window": ("int", 40, 1000), "calib_window": ("int", 60, 2000), "calib_min_t": ("float", 0.0, 10.0), "stability_window": ("int", 5, 250),
                "regime_exposure": ("choice", ("vol_quantile", "hmm", "markov_switching")), "regime_states": ("int", 2, 5), "regime_floor": ("float", 0.0, 1.0), "regime_cap": ("float", 0.05, 1.0),
-               "regime_refit_every": ("int", 5, 252), "regime_min_days": ("int", 20, 500), "regime_min_train": ("int", 60, 1000)},
-    "backtest": {"rebalance": ("choice", ("daily", "weekly", "monthly")), "cost_bps": ("float", 0.0, 250.0), "slippage_bps": ("float", 0.0, 250.0), "target_vol": ("float", 0.01, 1.0), "max_leverage": ("float", 0.5, 5.0),
+               "regime_refit_every": ("int", 5, 252), "regime_min_days": ("int", 20, 500), "regime_min_train": ("int", 60, 1000),
+               "decision_entry_quantile": ("float", 0.01, 0.5), "decision_exit_quantile": ("float", 0.01, 1.0), "decision_min_confidence": ("float", 0.0, 1.0), "decision_max_positions": ("int", 1, 50),
+               "decision_max_position": ("float", 0.01, 1.0), "decision_sizing": ("choice", ("equal", "inverse_vol", "score")), "decision_allow_short": ("bool",), "decision_long_exposure": ("float", 0.0, 3.0),
+               "decision_short_exposure": ("float", 0.0, 3.0), "decision_cash_floor": ("float", 0.0, 0.95), "decision_stop_loss_vol": ("float", 0.1, 20.0), "decision_take_profit_vol": ("float", 0.1, 50.0),
+               "decision_max_holding": ("int", 1, 500), "decision_cooldown": ("int", 0, 60), "decision_rebalance_days": ("int", 1, 60), "decision_resize_band": ("float", 0.0, 5.0),
+               "decision_horizon": ("int", 1, 252), "decision_min_edge_bps": ("float", 0.0, 1000.0), "decision_forecast_is_return": ("bool",)},
+    "backtest": {"rebalance": ("choice", ("daily", "weekly", "monthly", "on_change")), "cost_bps": ("float", 0.0, 250.0), "slippage_bps": ("float", 0.0, 250.0), "target_vol": ("float", 0.01, 1.0), "max_leverage": ("float", 0.5, 5.0),
                  "extra_lag": ("int", 0, 20)},
     "execution": {"mode": ("choice", ("vectorized_legacy", "realistic_cash_equity")), "capital": ("float", 1_000.0, 1e12), "max_participation": ("float", 0.001, 1.0), "adv_window": ("int", 5, 250),
                   "commission_bps": ("float", 0.0, 250.0), "half_spread_bps": ("float", 0.0, 250.0), "slippage_bps": ("float", 0.0, 250.0), "impact_coefficient": ("float", 0.0, 5.0),
@@ -118,7 +124,7 @@ SPEC = {
                   "financing_spread": ("float", 0.0, 0.5), "lot": ("int", 1, 100_000), "min_adv_dollars": ("float", 0.0, 1e12), "min_listing_days": ("int", 0, 5000),
                   "shorts": ("choice", ("unconstrained", "refuse"))},
 }
-NULLABLE = {"start", "end", "regime_detector", "sector_cap", "target_vol", "max_participation", "no_trade_margin", "no_trade_hold_margin", "trade_filter_k", "regime_exposure"}                    # an explicit null means "none", not "use the default"
+NULLABLE = {"decision_stop_loss_vol", "decision_take_profit_vol", "decision_max_holding", "decision_min_edge_bps", "start", "end", "regime_detector", "sector_cap", "target_vol", "max_participation", "no_trade_margin", "no_trade_hold_margin", "trade_filter_k", "regime_exposure"}                    # an explicit null means "none", not "use the default"
 
 
 def _id(q: dict, key: str = "id") -> str:
@@ -196,7 +202,7 @@ def _user_errors():
         raise ApiError(str(exc.args[0] if isinstance(exc, KeyError) and exc.args else exc)) from None
 
 
-class MlApi(AdvancedRoutes, SelectionRoutes):
+class MlApi(AdvancedRoutes, SelectionRoutes, StrategyRoutes):
     def __init__(self, app):
         self.app = app
         self.root = Path(app.root)
@@ -212,7 +218,7 @@ class MlApi(AdvancedRoutes, SelectionRoutes):
                 "/api/ml/lineage": self.lineage, "/api/ml/holdout": self.holdout, "/api/ml/promotion-status": self.promotion_status, "/api/ml/statistical-diagnostics": self.statistical_diagnostics,
                 "/api/ml/null-controls": self.null_controls, "/api/ml/trading-diagnostics": self.trading_diagnostics, "/api/ml/validation-policy": self.validation_policy, "/api/ml/governance": self.governance_status,
                 "/api/ml/alpha-diagnostics": self.alpha_diagnostics, "/api/ml/portfolio-diagnostics": self.portfolio_diagnostics, "/api/ml/improvement-experiment": self.improvement_get,
-                "/api/ml/delay-report": self.delay_report, **self.advanced_get_routes(), **self.selection_get_routes()}
+                "/api/ml/delay-report": self.delay_report, **self.strategy_get_routes(), **self.advanced_get_routes(), **self.selection_get_routes()}
 
     def post_routes(self) -> dict:
         return {"/api/ml/dataset/build": self.dataset_build, "/api/ml/train": self.train, "/api/ml/rebacktest": self.rebacktest, "/api/ml/search": self.search, "/api/ml/tune": self.tune, "/api/ml/tune/stop": self.tune_stop,
@@ -294,6 +300,10 @@ class MlApi(AdvancedRoutes, SelectionRoutes):
                 if not re.match(r"^[A-Za-z0-9._^=-]{1,12}$", str(value)):
                     raise ApiError(f"{path} must be equal_weight or a ticker of the universe")
                 out[key] = str(value)
+            elif kind == "bool":                                                       # declared in SPEC but never read before: a true/false setting sent by the page was silently dropped
+                if not isinstance(value, bool):
+                    raise ApiError(f"{path} must be true or false")
+                out[key] = value
             elif kind == "states":
                 if not isinstance(value, list) or not value or len(value) > 5:
                     raise ApiError(f"{path} must be a list of regime state numbers")

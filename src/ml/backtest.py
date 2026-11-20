@@ -40,8 +40,11 @@ def run_backtest(weights: pd.DataFrame, returns: pd.DataFrame, investable: pd.Da
 
 def trim_to_signal(result: BacktestResult, first_signal: pd.Timestamp, lag: int) -> dict:
     """The result's return streams from the first day a position could have earned anything (the decision date plus the lag), dropping the idle days before the first prediction."""
-    start_pos = result.net_returns.index.searchsorted(pd.Timestamp(first_signal)) + int(lag)
-    keep = result.net_returns.index[start_pos:]
+    calendar = result.weights.index                                              # the full calendar: the engine drops the leading days with no return from net_returns, so counting ``lag`` days on that
+    start_pos = calendar.searchsorted(pd.Timestamp(first_signal)) + int(lag)     # index counted them from the first earning day and cut off the first trades (and, for a book that starts late, the entry)
+    keep = calendar[start_pos:]
+    if len(result.net_returns):
+        keep = keep[keep >= result.net_returns.index[0]]                         # nothing before the first day the account has a return (or pays its entry cost)
     return {"net": result.net_returns.loc[keep], "gross": result.gross_returns.reindex(keep), "costs": result.costs.reindex(keep), "turnover": result.turnover.reindex(keep),
             "weights": result.weights.reindex(keep), "trades": result.trades.reindex(keep)}
 

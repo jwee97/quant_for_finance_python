@@ -301,6 +301,15 @@
       }
       paths.push({ lastX, lastY });
     });
+    for (const ev of o.events || []) {                                                         // trade markers: o.events = [{ x, y, shape: "up" | "down" | "cross", color, label }], drawn on the line where the trade was made
+      const xv = at(ev.x);
+      if (!(xv >= t0 && xv <= t1) || ev.y === null || ev.y === undefined || !isFinite(ev.y)) continue;
+      const px = X(xv), py = Y(ev.y), s = ev.size || 6;
+      const g = el("g", { class: "event", "data-shape": ev.shape, "pointer-events": "none" }, svg), col = ev.color || css("--ink");
+      if (ev.shape === "cross") { el("path", { d: `M${px - s} ${py - s}L${px + s} ${py + s}M${px + s} ${py - s}L${px - s} ${py + s}`, stroke: col, "stroke-width": 2.4, fill: "none" }, g); }
+      else el("path", { d: ev.shape === "down" ? `M${px - s} ${py - s}L${px + s} ${py - s}L${px} ${py + s * 0.9}Z` : `M${px - s} ${py + s}L${px + s} ${py + s}L${px} ${py - s * 0.9}Z`, fill: col, stroke: css("--surface"), "stroke-width": 1.2 }, g);
+      if (ev.label) el("title", {}, g, ev.label);
+    }
     // direct end labels only when they do not collide; the legend carries identity otherwise
     if (o.series.length > 1 && o.endLabels !== false) {
       const ys = paths.map((p) => p.lastY).filter((y) => y !== null).sort((a, b) => a - b);

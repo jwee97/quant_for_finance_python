@@ -108,3 +108,22 @@ def test_a_dollar_neutral_book_has_zero_beta_to_a_rising_market_and_cannot_track
     assert abs(beta) < 0.1
     lo = run_backtest(long_only_top_quantile(r.shift(-2).fillna(0.0), 0.34, 1.0), r, None, BT, 1).net_returns.dropna()
     assert np.cov(lo, bench.reindex(lo.index))[0, 1] / bench.reindex(lo.index).var() > 0.5   # the long-only book does carry the market
+
+
+def test_the_trimmed_result_keeps_the_entry_trade_even_when_the_book_starts_after_the_first_signal():
+    """``trim_to_signal`` used to count the lag on the engine's return series, which has already dropped the days before the first return, so a book whose first trade came some days after the first
+    score lost its entry (and the first day it earned). It counts on the full calendar now."""
+    from src.ml.backtest import trim_to_signal
+
+    r = world(60)
+    w = pd.DataFrame(0.0, index=r.index, columns=r.columns)
+    w.loc[r.index[10]:, "A"] = 1.0                                          # the first score is on day 3, the first position is decided on day 10
+    res = run_backtest(w, r, None, {**BT, "cost_bps": 10.0}, 1)
+    parts = trim_to_signal(res, r.index[3], 1)
+    entry_day = r.index[11]                                                  # decided on day 10, traded one day later
+    assert parts["trades"].loc[entry_day].abs().sum() == pytest.approx(1.0)
+    assert parts["net"].index[0] == r.index[4]                               # the first score's day plus the lag: the idle days before the first trade are part of the run
+    assert parts["net"].loc[entry_day] == pytest.approx(-0.001)              # the entry cost is on the entry day
+    assert parts["net"].loc[r.index[12]] == pytest.approx(r["A"].iloc[12])    # the first day the position earns is the day after the entry
+    early = trim_to_signal(res, r.index[10], 1)                              # a first signal on the day the position is decided: the run starts at its trade
+    assert early["net"].index[0] == entry_day and early["trades"].loc[entry_day].abs().sum() == pytest.approx(1.0)
