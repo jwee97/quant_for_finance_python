@@ -436,11 +436,12 @@ def test_a_training_request_is_whitelisted_ranged_and_validated_before_it_is_que
                        ({"dataset": {"feature_groups": ["price", "astrology"]}}, "feature_groups"), ({"dataset": {"target": "fwd_ret_x"}}, "unknown target"), ({"dataset": {"horizon": 500}}, "between 1 and 252"),
                        ({"dataset": {"universe": ["ONLYONE"]}}, "between 2"), ({"dataset": {"universe": ["bad ticker!", "X"]}}, "not a valid ticker"), ({"model": {"kind": "ridge", "params": {"alpha; drop": 1}}}, "model.params"), ({"model": "ridge"}, "object"),
                        ({"model": {"kind": "ridge", "params": {"no_such": 1}}}, "model.params.no_such is not a setting"),            # the model's own settings are its schema: an unknown one is refused here, not by the job
-                       ({"split": {"validation_fraction": 0.4, "test_fraction": 0.4, "forward_fraction": 0.4}}, "leave at least 30%"), ({"seed": -1}, "seed"), ({"signal": "x"}, "must be an object"),
-                       ({"model": {"kind": "regime_ridge"}}, "regime_detector")):
+                       ({"split": {"validation_fraction": 0.4, "test_fraction": 0.4, "forward_fraction": 0.4}}, "leave at least 30%"), ({"seed": -1}, "seed"), ({"signal": "x"}, "must be an object")):
         with pytest.raises(ApiError, match=text):
             train(body)
     assert not mlapp.jobs, "nothing refused may have been queued"
+    ml = mlapp.extra_get["/api/ml/catalog"].__self__                                             # a model that cannot run without a regime detector is given one instead of being refused
+    assert ml._overrides({"model": {"kind": "regime_ridge"}})["dataset"]["regime_detector"] == "vol_state"
 
 
 def test_trees_get_their_own_refit_interval_unless_the_request_sets_one(mlapp):
