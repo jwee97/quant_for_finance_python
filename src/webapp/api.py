@@ -239,6 +239,7 @@ class App:
         from .scenarios_api import ScenariosApi
         from .signals_api import SignalsApi
         from .lab_api import LabApi
+        from .universe_api import UniverseApi
 
         self.extra_get: dict = {"/api/jobs": lambda q=None: self.jobs_list()}   # path -> fn(query: dict) for GET /api/...?a=1&b=2
         self.extra_post: dict = {"/api/jobs/clear": self.jobs_clear, "/api/jobs/cancel": self.jobs_cancel, "/api/jobs/retry": self.jobs_retry}           # path -> fn(body: dict) for POST /api/...
@@ -248,7 +249,7 @@ class App:
         self.signals = SignalsApi(self, assets)                      # the Signals tab: kept, so the command line and the daily schedule reach the same book
         ml = MlApi(self)
         self.research = ResearchApi(self, ml)                       # sessions, saved results, the regime lab and the comparison (data/user/research)
-        for part in (assets, ml, self.data, TuneApi(self), ForecastApi(self), ModelsApi(self, assets), self.fundamentals, RatesApi(self), ScenariosApi(self), self.signals, self.research, FinmlApi(self), StoreApi(self), LabApi(self)):
+        for part in (assets, ml, self.data, TuneApi(self), ForecastApi(self), ModelsApi(self, assets), self.fundamentals, RatesApi(self), ScenariosApi(self), self.signals, self.research, FinmlApi(self), StoreApi(self), LabApi(self), UniverseApi(self)):
             self.extra_get.update(part.get_routes())
             self.extra_post.update(part.post_routes())
 

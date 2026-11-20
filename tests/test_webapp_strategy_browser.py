@@ -61,5 +61,11 @@ def test_the_explorer_shows_markers_the_log_the_trades_and_a_replay(browser, liv
     pg.wait_for_selector("[data-role=replay] table", timeout=30000)
     rp = pg.locator("[data-role=replay]").inner_text()
     assert "Known on" in rp and "Book going in" in rp and "Executed afterwards" in rp
+    # the builder: running a new strategy from the form adds a second run to the picker
+    pg.click("[data-role=strategy-builder] summary")
+    pg.select_option("[data-role=strategy-builder] select[data-key=model]", "lasso")
+    pg.fill("[data-role=strategy-builder] input[data-key=min_train_days]", "504")
+    pg.click("[data-role=strategy-builder] button:text-is('Run the strategy')")
+    _wait_until(pg, "document.querySelectorAll('[data-role=strategy-picker] option').length === 2", timeout=300.0)
     assert not pg.problems, pg.problems
     pg.close()

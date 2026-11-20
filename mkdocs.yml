@@ -32,6 +32,7 @@ nav:
       - "Financial machine learning: triple barriers, meta-labelling and honest evidence": finml.md
       - "Alpha, risk and portfolio lab: from a signal to a traded portfolio": alphalab.md
       - "ML strategies: explicit buy, sell and hold decisions and the Strategy Explorer": ml_strategy.md
+      - "Stock universe lab: point-in-time universes, screens and nested validation": universe_lab.md
       - "Why models lose to the equal-weight benchmark: the shared pipeline audit": ml_pipeline_audit.md
       - "The five-book roadmap: what is built, what existed, what is not": roadmap_audit.md
       - "Running the app: what a machine needs, and where to host it": deployment.md

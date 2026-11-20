@@ -10,7 +10,7 @@
   const root = $("#strategy");
   const S = { runs: null, id: null, data: null, asset: null, decisions: null, trades: null, replay: null, busy: false, log: { action: "", asset: "", q: "", hold: false, offset: 0, limit: 50 }, tradeKind: "round_trips", tradeOffset: 0,
               form: { name: "", model: "ridge", entry_quantile: 0.2, exit_quantile: 0.4, min_confidence: 0, max_positions: 5, max_position: 0.25, sizing: "equal", allow_short: false, long_exposure: 1, short_exposure: 0,
-                      cash_floor: 0, stop_loss_vol: "", take_profit_vol: "", max_holding: "", cooldown: 5, rebalance_days: 5, resize_band: 0.25, cost_bps: 5, slippage_bps: 2 } };
+                      cash_floor: 0, stop_loss_vol: "", take_profit_vol: "", max_holding: "", cooldown: 5, rebalance_days: 5, resize_band: 0.25, cost_bps: 5, slippage_bps: 2, min_train_days: 756 } };
   // markers: the shape and the colour say the same thing twice, so the chart does not rely on colour alone
   const KINDS = { OPEN_LONG: ["up", "--pos", "Buy (open long)"], ADD_LONG: ["up", "--pos", "Add to long"], CLOSE_SHORT: ["up", "--s2", "Cover (close short)"], TRIM_SHORT: ["up", "--s2", "Reduce short"], FLIP_TO_LONG: ["up", "--pos", "Cover and buy"],
                   CLOSE_LONG: ["down", "--neg", "Sell (close long)"], TRIM_LONG: ["down", "--neg", "Reduce long"], OPEN_SHORT: ["down", "--s5", "Short (open short)"], ADD_SHORT: ["down", "--s5", "Add to short"], FLIP_TO_SHORT: ["down", "--s5", "Sell and short"] };
@@ -57,6 +57,7 @@
     field("Resize only beyond (share)", "resize_band", "number", "A held position is resized only when its target moves by more than this share of itself");
     field("Cost (bp, one way)", "cost_bps", "number", "Fee per unit traded");
     field("Slippage (bp)", "slippage_bps", "number", "Added to every trade");
+    field("Training history before the first prediction (days)", "min_train_days", "number", "The model is first fitted on this many days; shorter histories give an earlier but noisier start");
     const row = h("div", "row", card), go = h("button", "btn primary", row, "Run the strategy"); go.type = "button"; go.disabled = S.busy;
     const status = h("span", "hint", row, "Walk-forward training takes about a minute on the default ETF universe."); status.setAttribute("aria-live", "polite");
     go.addEventListener("click", async () => {
@@ -67,7 +68,7 @@
       for (const k of Object.keys(sig)) if (sig[k] === undefined) delete sig[k];
       S.busy = true; go.disabled = true; status.textContent = "Starting…";
       try {
-        const job = await api("/api/ml/train", { name: f.name.trim() || `${f.model} decision policy`, model: { kind: f.model }, signal: sig, backtest: { rebalance: "on_change", target_vol: null, cost_bps: n(f.cost_bps), slippage_bps: n(f.slippage_bps) }, explain: false });
+        const { job } = await api("/api/ml/train", { name: f.name.trim() || `${f.model} decision policy`, model: { kind: f.model }, signal: sig, backtest: { rebalance: "on_change", target_vol: null, cost_bps: n(f.cost_bps), slippage_bps: n(f.slippage_bps) }, split: { min_train_days: n(f.min_train_days) }, explain: false });
         const res = await Q.waitJob(job, (v) => { status.textContent = `${v.message} (${Math.round(v.elapsed)} s)`; }, 1500);
         S.runs = null; S.id = res.id; S.data = null; S.asset = null; toast("Strategy finished"); S.busy = false; draw();
       } catch (e) { S.busy = false; go.disabled = false; status.textContent = ""; h("div", "banner err", card, e.message); }
