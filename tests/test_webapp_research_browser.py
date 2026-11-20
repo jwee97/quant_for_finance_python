@@ -425,7 +425,7 @@ def test_every_page_old_and_new_fits_a_phone_in_both_themes(browser, live_resear
     page = _open(browser, live_research, width=390, height=800)
     try:
         tabs = page.eval_on_selector_all("nav.tabs [role=tab]", "(e) => e.map((x) => x.id.slice(4))")
-        assert len(tabs) == 26
+        assert len(tabs) == 27
         for theme in ("dark", "light"):
             page.evaluate(f"QL.setTheme('{theme}')")
             for tab in tabs:
