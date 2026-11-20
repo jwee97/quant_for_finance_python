@@ -547,7 +547,8 @@ def test_a_form_that_cannot_run_is_not_sent(ws):
     _wait_until(ws, "!document.querySelector('#ml .runbar .guard') || !/Loading/.test(document.querySelector('#ml .runbar .guard').textContent)")      # the lab's list of models and settings arrives a moment after the tab opens (the first request imports the model libraries)
     _open_all(ws, "ml")
     boxes = ws.locator("#ml details:has(summary:text-is('3. Data')) input[data-value]")
-    assert boxes.count() >= 7 and ws.locator("#ml .runbar button.primary").is_enabled()
+    assert boxes.count() >= 7
+    _wait_until(ws, "!document.querySelector('#ml .runbar button.primary').disabled", timeout=30.0)            # on a busy machine the form settles a moment after it opens
     for i in range(boxes.count()):
         _open_all(ws, "ml")                                                                      # a late redraw of the panel (seen on a busy machine) shuts the sections again
         boxes.nth(i).uncheck()

@@ -21,7 +21,9 @@ from tests.test_webapp_browser import browser  # noqa: F401  (the module's Chrom
 from tests.test_webapp_workspaces_browser import _mode, _open_all, _page, _run, _wait_until
 
 sync_api = pytest.importorskip("playwright.sync_api")
-BASE = {"dataset": {"feature_groups": ["price", "momentum", "volatility"], "target": "fwd_ret_5"}, "split": {"min_train_days": 504}, "signal": {"n": 2}, "explain": False, "mode": "development"}
+# the synthetic world plants a five-day cross-sectional signal: the candidates trade it long-short, weekly, as the world was built for (the page's recommended set-up is monthly and long only)
+BASE = {"dataset": {"feature_groups": ["price", "momentum", "volatility"], "target": "fwd_ret_5"}, "split": {"min_train_days": 504},
+        "signal": {"method": "top_n_long_short", "n": 2, "holding_period": 5}, "backtest": {"rebalance": "weekly", "target_vol": 0.10}, "explain": False, "mode": "development"}
 
 
 @pytest.fixture(scope="module")

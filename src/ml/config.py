@@ -189,6 +189,22 @@ def recommended_config(base: dict | None = None) -> dict:
     return merge(base if base is not None else load_ml_config(), RECOMMENDED)
 
 
+def with_recommended(over: dict) -> dict:
+    """``over`` (the overrides of a new run) with ``RECOMMENDED`` filling every setting it leaves out. A request that names its target or its horizon keeps it: a target alone brings its own horizon
+    (``experiment_config`` aligns them) and a horizon alone becomes the recommended target's kind at that horizon (``horizon: 5`` -> ``excess_ret_5``)."""
+    rec = copy.deepcopy(RECOMMENDED)
+    asked = over.get("dataset") or {}
+    if "target" in asked:
+        rec["dataset"] = {}
+    elif "horizon" in asked:
+        kind = RECOMMENDED["dataset"]["target"].rsplit("_", 1)[0]
+        rec["dataset"] = {"target": f"{kind}_{int(asked['horizon'])}"}
+    out = merge(rec, over)
+    if not out.get("dataset"):
+        out.pop("dataset", None)
+    return out
+
+
 def _align_target_and_horizon(ds: dict, asked: dict) -> None:
     """A target's name carries its horizon (``excess_ret_21``). When a request names one of the two and not the other, the other follows it, so asking for ``fwd_ret_5`` does not
     clash with the default horizon and asking for ``horizon: 5`` changes the default target's window with it. A request that sets both is left alone (the validation checks they agree)."""

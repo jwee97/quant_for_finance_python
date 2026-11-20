@@ -45,7 +45,8 @@ DIRECTION = {"net_sharpe": "max", "net_sortino": "max", "net_calmar": "max", "ne
              **{k: "min" for k in EXTRA_OBJECTIVES}}
 STATES = ("eligible", "ineligible", "insufficient", "failed")
 ANN = ev.ANN
-OPS = {">=": lambda x, t: x >= t, "<=": lambda x, t: x <= t, ">": lambda x, t: x > t}
+GATE_TOL = 1e-9                                   # a bound is met by a value equal to it up to floating-point noise: a fully invested long-only book's net exposure sums to 1.0000000000000002
+OPS = {">=": lambda x, t: x >= t - GATE_TOL * max(1.0, abs(t)), "<=": lambda x, t: x <= t + GATE_TOL * max(1.0, abs(t)), ">": lambda x, t: x > t}
 
 
 class SelectionError(ValueError):

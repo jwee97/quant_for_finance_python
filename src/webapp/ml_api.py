@@ -35,7 +35,7 @@ from ..ml import research_controls as rc
 from ..ml import selection as sel
 from ..ml import strategy_search as ss
 from ..ml.bundle import InferenceBundle
-from ..ml.config import build_key, experiment_config, load_ml_config, recommended_config
+from ..ml.config import build_key, experiment_config, load_ml_config, recommended_config, with_recommended
 from ..ml.datasets import UNIVERSES, build_dataset, feature_catalog, resolve_bundle
 from ..ml.deep.manifest import ARCHITECTURES, architecture                      # a table of text: importing it does not import PyTorch
 from ..ml.experiments import RL_KINDS, load_run, rebacktest, run_experiment
@@ -312,9 +312,13 @@ class MlApi(AdvancedRoutes, SelectionRoutes, StrategyRoutes, ResearchRoutes):
                 out[key] = [_num(path, v, 0, 4, True) for v in value]
         return out
 
-    def _overrides(self, body: dict, need_model: bool = True) -> dict:
+    def _overrides(self, body: dict, need_model: bool = True, recommended: bool = True) -> dict:
         """The experiment configuration a request describes, as overrides of the platform's defaults: only the settings of ``SPEC`` are accepted, each checked for type and range, and the whole is then
-        validated by ``ml.config.experiment_config``."""
+        validated by ``ml.config.experiment_config``.
+
+        A request that starts a NEW run gets the recommended set-up (``ml.config.RECOMMENDED``: a cross-sectional target a month ahead, the benchmark tilt, monthly, no volatility target) for every
+        setting it does not send, whatever the model; the settings it sends win. ``recommended=False`` is for a request that describes CHANGES to a saved run (a re-backtest, a candidate change of an
+        improvement study): what it leaves out must come from that run, not from a preset."""
         over: dict = {}
         for section in SPEC:
             clean_section = self._clean_section(section, body.get(section))
@@ -361,6 +365,8 @@ class MlApi(AdvancedRoutes, SelectionRoutes, StrategyRoutes, ResearchRoutes):
             over["seed"] = _num("seed", body["seed"], 0, 1_000_000, True)
         if body.get("robustness"):
             over["robustness"] = {"enabled": True}
+        if recommended:
+            over = with_recommended(over)
         try:
             cfg = experiment_config(over)
         except ValueError as exc:
@@ -532,7 +538,7 @@ class MlApi(AdvancedRoutes, SelectionRoutes, StrategyRoutes, ResearchRoutes):
         extra = set(body) - {"id", "signal", "backtest", "name", "notes", "robustness", "execution"}
         if extra:
             raise ApiError(f"a re-backtest can change only the signal, backtest, execution and robustness settings, not {sorted(extra)}: they would change the predictions (train a new model instead)")
-        over = self._overrides({k: body.get(k) for k in ("signal", "backtest", "name", "notes", "robustness", "execution")}, need_model=False)
+        over = self._overrides({k: body.get(k) for k in ("signal", "backtest", "name", "notes", "robustness", "execution")}, need_model=False, recommended=False)
         over = {k: v for k, v in over.items() if k in ("signal", "backtest", "name", "notes", "robustness", "execution")}
 
         def work(progress):
@@ -1268,7 +1274,7 @@ class MlApi(AdvancedRoutes, SelectionRoutes, StrategyRoutes, ResearchRoutes):
         base = self._overrides(body["baseline"] if body.get("baseline") is not None else self._saved_baseline(_id(body, "from_experiment")))
 
         def change(c: dict) -> dict:
-            ch = self._overrides(c, need_model=False)
+            ch = self._overrides(c, need_model=False, recommended=False)
             if "refit_every" not in (c.get("split") or {}) and "refit_every" in ch.get("split", {}):
                 ch["split"].pop("refit_every")                                         # the default refit period of a model kind is not a change the user asked for
                 if not ch["split"]:

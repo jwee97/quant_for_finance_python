@@ -14,7 +14,7 @@ from tests.ml_helpers import make_bundle
 from tests.test_webapp_assets_ml import _app, _safe, finished
 
 warnings.filterwarnings("ignore")
-BASE = {"dataset": {"feature_groups": ["price", "momentum", "volatility"]}, "split": {"min_train_days": 504}, "signal": {"n": 2}, "model": {"kind": "ridge"}, "explain": False}
+BASE = {"dataset": {"feature_groups": ["price", "momentum", "volatility"]}, "split": {"min_train_days": 504}, "signal": {"method": "top_n_long_short", "n": 2}, "model": {"kind": "ridge"}, "explain": False}       # a long-short book: the gate reads the borrow machinery of its shorts
 
 
 @pytest.fixture(scope="module")

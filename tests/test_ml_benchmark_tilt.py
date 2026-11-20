@@ -119,3 +119,43 @@ def test_a_target_or_a_horizon_asked_alone_brings_the_other_with_it():
     assert experiment_config({"dataset": {"horizon": 10}}, defaults=recommended_config())["dataset"]["target"] == "excess_ret_10"
     both = experiment_config({"dataset": {"target": "rank_21", "horizon": 21}})["dataset"]
     assert (both["target"], both["horizon"]) == ("rank_21", 21)
+
+
+@pytest.mark.parametrize("kind", ["ridge", "lasso", "random_forest", "hist_gb", "xgboost", "lightgbm"])
+def test_every_new_run_from_the_web_gets_the_recommended_set_up_whatever_the_model(tmp_path, kind):
+    """The set-up, not the model, decided whether a run could be compared with its benchmark; every page that starts a run (train, compare, simulate, tune, feature study) goes through _overrides."""
+    from src.ml.models import model_catalog
+    from src.utils.config import load_config
+    from src.webapp.api import App
+    from tests.app_roots import isolated_root
+
+    if not {m["kind"]: m for m in model_catalog()}[kind]["available"]:
+        pytest.skip(f"{kind} is not installed")
+    config = load_config()
+    ml = App(config, root=isolated_root(tmp_path / "root", config)).extra_get["/api/ml/catalog"].__self__
+    cfg = experiment_config(ml._overrides({"model": {"kind": kind}}))
+    assert (cfg["dataset"]["target"], cfg["dataset"]["horizon"], cfg["signal"]["method"], cfg["signal"]["holding_period"], cfg["backtest"]["rebalance"], cfg["backtest"]["target_vol"]) == \
+        ("excess_ret_21", 21, "benchmark_tilt", 1, "monthly", None)
+    asked = experiment_config(ml._overrides({"model": {"kind": kind}, "dataset": {"target": "fwd_ret_5"}, "signal": {"method": "top_n_long_short"}, "backtest": {"rebalance": "weekly"}}))
+    assert (asked["dataset"]["target"], asked["dataset"]["horizon"], asked["signal"]["method"], asked["backtest"]["rebalance"]) == ("fwd_ret_5", 5, "top_n_long_short", "weekly"), "what is asked wins"
+    assert experiment_config(ml._overrides({"model": {"kind": kind}, "dataset": {"horizon": 5}}))["dataset"]["target"] == "excess_ret_5"
+
+
+def test_a_change_to_a_saved_run_is_not_filled_from_the_preset(tmp_path):
+    from src.utils.config import load_config
+    from src.webapp.api import App
+    from tests.app_roots import isolated_root
+
+    config = load_config()
+    ml = App(config, root=isolated_root(tmp_path / "root", config)).extra_get["/api/ml/catalog"].__self__
+    change = ml._overrides({"signal": {"n": 2}}, need_model=False, recommended=False)
+    assert change == {"signal": {"n": 2}}, "a re-backtest that changes n keeps the saved run's rule, schedule and target"
+
+
+def test_a_fully_invested_long_only_book_meets_a_net_exposure_bound_of_one():
+    """The weights of a long-only book sum to 1 up to floating-point noise; model selection's exposure gate must not exclude it for that."""
+    from src.ml.model_selection import OPS
+
+    w = benchmark_tilt(_scores(n_assets=9, seed=4), 0.5)
+    assert OPS["<="](float(w.sum(axis=1).abs().max()), 1.0)
+    assert OPS["<="](1.0 + 1e-15, 1.0) and not OPS["<="](1.001, 1.0) and not OPS[">="](0.999, 1.0)

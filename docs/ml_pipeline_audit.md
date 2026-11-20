@@ -133,10 +133,38 @@ What it shows:
 4. **The top-30% book earns more by holding more beta (1.12-1.23).** Its Sharpe ratio is close to the tilt's; the extra CAGR is mostly concentration in the higher-beta names.
 
 **What changed in the platform.** A new position rule, `benchmark_tilt`: each asset gets `(1 + tilt * c) / n`, with `c` its centred rank in [-1, 1]. At tilt 0 this is the equal-weight
-benchmark; at tilt 1 the best asset holds twice its benchmark weight and the worst holds none. The Machine Learning Lab now starts from a recommended set-up (`RECOMMENDED` in `src/ml/config.py`):
-`target = excess_ret_21`, `horizon = 21`, `signal.method = benchmark_tilt` (tilt 0.5, holding period 1), monthly rebalancing and no volatility target. The library defaults that a request omitting a
-setting gets are unchanged, so saved runs and scripts keep their meaning. A target or a horizon asked for alone now brings the other with it (`fwd_ret_5` sets the horizon to 5). The dollar-neutral rule is
+benchmark; at tilt 1 the best asset holds twice its benchmark weight and the worst holds none. Every page of the dashboard that starts a new run, for every model (the Train form, Model Comparison,
+the Strategy Explorer's builder, the scheduled simulation, the feature study, searches and tuning, null controls and evaluation plans), now fills each setting it does not send from a recommended set-up
+(`RECOMMENDED` in `src/ml/config.py`, applied in `MlApi._overrides`): `target = excess_ret_21`, `horizon = 21`, `signal.method = benchmark_tilt` (tilt 0.5, holding period 1), monthly rebalancing and no
+volatility target. What a request sends wins. A request that changes a saved run (a re-backtest, a candidate change of an improvement study) is not filled from the preset: what it leaves out comes
+from that run. The library defaults used by Python and the command line are unchanged, so saved runs and scripts keep their meaning. A target or a horizon asked for alone now brings the other with it (`fwd_ret_5` sets the horizon to 5). The dollar-neutral rule is
 still available; the re-backtest panel says it is not comparable with the long-only benchmark and offers the tilt, the holding period and the volatility target. The report shows the information ratio, active return, tracking error, beta and alpha; the equity chart switches to a log scale when growth spans more than five times.
+
+**It was every model, not XGBoost.** The same comparison for each model family through the platform's own pipeline (each model's own refit cadence: monthly for linear models, quarterly for
+trees; out of sample, 7 bp one-way cost). "Old" is the library defaults the dashboard used to fill in; "recommended" is the set-up above.
+
+| Universe | Model | Set-up | CAGR | Sharpe | Information ratio | Beta | Turnover, cost a year | Benchmark CAGR, Sharpe |
+| --- | --- | --- | ---: | ---: | ---: | ---: | --- | --- |
+| Nine stocks | ridge | old | 8.1% | 0.77 | -0.98 | 0.13 | 23x, 1.6% | 35.7%, 1.21 |
+| Nine stocks | ridge | recommended | 40.2% | 1.28 | 0.70 | 1.03 | 3x, 0.2% | 36.0%, 1.22 |
+| Nine stocks | XGBoost | old | 2.7% | 0.31 | -1.09 | 0.06 | 26x, 1.8% | 35.7%, 1.21 |
+| Nine stocks | XGBoost | recommended | 39.6% | 1.27 | 0.58 | 1.02 | 3x, 0.2% | 36.0%, 1.22 |
+| Nine stocks | LightGBM | old | 1.7% | 0.21 | -1.13 | 0.07 | 28x, 1.9% | 35.7%, 1.21 |
+| Nine stocks | LightGBM | recommended | 38.4% | 1.25 | 0.41 | 1.02 | 3x, 0.2% | 36.0%, 1.22 |
+| 15 ETFs | ridge | old | -6.0% | -0.58 | -1.36 | 0.41 | 55x, 3.9% | 8.8%, 0.88 |
+| 15 ETFs | ridge | recommended | 8.4% | 0.79 | -0.01 | 1.08 | 3x, 0.2% | 8.6%, 0.87 |
+| 15 ETFs | XGBoost | old | -0.4% | 0.00 | -0.74 | 0.25 | 46x, 3.2% | 8.8%, 0.88 |
+| 15 ETFs | XGBoost | recommended | 8.2% | 0.78 | -0.11 | 1.07 | 3x, 0.2% | 8.6%, 0.87 |
+| 15 ETFs | LightGBM | old | -2.5% | -0.23 | -0.90 | 0.17 | 53x, 3.7% | 8.8%, 0.88 |
+| 15 ETFs | LightGBM | recommended | 7.9% | 0.76 | -0.29 | 1.05 | 3x, 0.2% | 8.6%, 0.87 |
+
+Under the old set-up every model lost to its benchmark by a wide margin on both universes, for the same three reasons (no market exposure, the cost of 23-55 times turnover, a raw target). Under the
+recommended one every model holds the benchmark's exposure and pays a tenth of the cost. Whether it then adds anything depends on the universe: on the nine stocks every model earns a positive information
+ratio (0.4-0.7); on the 15 ETFs none does (-0.3 to 0.0): there the models track the benchmark and their rankings add nothing measurable. **The set-up stops the models from losing for reasons that have
+nothing to do with prediction; it does not create skill where there is none.** Random forest and scikit-learn gradient boosting were too slow for this pass (over 30 minutes each).
+
+**A gate that excluded every long-only book.** Model selection's exposure gate (`max_abs_net_exposure <= 1`) failed a fully invested long-only book because its weights sum to 1.0000000000000002. The
+gates now allow floating-point noise (`GATE_TOL = 1e-9`, relative); a book over the bound by more than that still fails.
 
 **Limits.** These nine stocks were picked in 2026 because they became the largest companies, so the equal-weight benchmark carries hindsight; nobody could have held this book in 2006. Every number above
 is one history, and choosing among about two dozen model-and-rule rows on it is a selection: the row with the best forward segment is not corrected for being the best. The information ratios are
