@@ -163,6 +163,35 @@ recommended one every model holds the benchmark's exposure and pays a tenth of t
 ratio (0.4-0.7); on the 15 ETFs none does (-0.3 to 0.0): there the models track the benchmark and their rankings add nothing measurable. **The set-up stops the models from losing for reasons that have
 nothing to do with prediction; it does not create skill where there is none.** Random forest and scikit-learn gradient boosting were too slow for this pass (over 30 minutes each).
 
+**Every model family, through the dashboard's own training route.** Each available model kind was trained with the recommended set-up on a synthetic market with a planted, slowly varying
+expected return (a known answer: a model that works earns a positive information ratio against equal weight), then the families that changed were checked on the nine stocks. What the sweep found and
+what was fixed:
+
+| Family | Problem | Fix | Evidence |
+| --- | --- | --- | --- |
+| Classifiers (`logistic`, `online_logistic`) | Refused: the recommended target is a return, they only classify | A model that only classifies gets `topbottom_<h>` (the top against the bottom of the day's forward returns) | Synthetic IR 3.7 and 3.0 |
+| `regime_ridge` | Refused: it needs a regime detector nobody set | A new run that names none gets the `vol_state` detector | Runs; nine stocks IR 0.36 |
+| LightGBM (`lightgbm`, `lgbm_ranker`, `lgbm_quantile`) | 15 leaves grown leaf by leaf with no depth limit: far deeper trees than XGBoost's depth 3, fitting noise | 7 leaves | Rank IC 0.14 to 0.20 and 0.05 to 0.09 (two synthetic seeds), 0.008 to 0.026 (nine stocks) |
+| `lgbm_ranker` | Row bagging broke each day's query apart; information ratio -0.50 where every other family found the planted signal | Bag whole days (`bagging_by_query`), with the 7 leaves | Synthetic IR -0.50 to 0.96; nine stocks 0.62 to 0.82 |
+| scikit-learn models (`hist_gb` above all) | A thread per core in every job: one fit took 76 s instead of 0.7 s on a shared machine | Fit and predict on one native thread (`threadpoolctl`), like the boosters' `n_jobs = 1` | 100 times faster; same predictions up to floating-point order |
+
+Out of sample on the nine stocks with the recommended set-up (equal weight: 36.0% a year, Sharpe 1.22):
+
+| Model | CAGR | Sharpe | Information ratio | Rank IC |
+| --- | ---: | ---: | ---: | ---: |
+| XGBoost ranker | 41.3% | 1.30 | 0.86 | 0.027 |
+| LightGBM ranker (fixed) | 41.0% | 1.29 | 0.82 | 0.030 |
+| Quantile LightGBM | 40.6% | 1.30 | 0.73 | 0.026 |
+| ridge | 40.2% | 1.28 | 0.70 | 0.038 |
+| Model ensemble (ridge, LightGBM, quantile LightGBM) | 40.0% | 1.28 | 0.65 | 0.018 |
+| XGBoost | 39.6% | 1.27 | 0.58 | 0.039 |
+| LightGBM (7 leaves) | 38.3% | 1.24 | 0.41 | 0.026 |
+| Regime ridge | 38.0% | 1.24 | 0.36 | 0.022 |
+| scikit-learn gradient boosting | 37.4% | 1.23 | 0.28 | 0.027 |
+| Logistic regression (`topbottom_21`) | 35.1% | 1.19 | -0.12 | -0.013 |
+
+Every family now holds the benchmark's exposure; the differences between them (a few tenths of information ratio) are within the noise of one history and are not a ranking of the models.
+
 **A gate that excluded every long-only book.** Model selection's exposure gate (`max_abs_net_exposure <= 1`) failed a fully invested long-only book because its weights sum to 1.0000000000000002. The
 gates now allow floating-point noise (`GATE_TOL = 1e-9`, relative); a book over the bound by more than that still fails.
 
