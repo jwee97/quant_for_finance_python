@@ -55,6 +55,35 @@
     return ticks;
   }
 
+  /* Two fingers on the chart: spread or pinch to zoom, move both to pan. Handled on the HOST, which outlives every redraw (a redraw replaces the SVG, and a finger that started on the old one would be lost),
+     and the fingers are captured by the host as soon as the second one lands. One finger still just moves the crosshair, and the page still scrolls up and down. */
+  function pinchOn(host, st) {
+    if (host._tpPinch) return; host._tpPinch = true;
+    const fingers = new Map(); let g = null, raf = 0;
+    const mid = () => { const p = [...fingers.values()]; return { x: (p[0].x + p[1].x) / 2, d: Math.max(10, Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y)) }; };
+    const px2idx = (clientX, a, w0, w1) => { const b = host.querySelector("svg.tp-svg").getBoundingClientRect(), x = (clientX - b.left) * (st.W / b.width); return a + ((x - st.geom.L) / st.geom.pw) * (w1 - w0); };
+    host.addEventListener("pointerdown", (e) => {
+      if (e.pointerType !== "touch" || !e.target.closest || !e.target.closest("svg.tp-svg")) return;
+      fingers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (fingers.size === 2) {
+        for (const id of fingers.keys()) { try { host.setPointerCapture(id); } catch (err) { /* a pointer that is already gone */ } }
+        const m = mid(); g = { d0: m.d, i0: st.i0, i1: st.i1, c: px2idx(m.x, st.i0, st.i0, st.i1) };
+        st.pinching = true;
+      }
+    });
+    host.addEventListener("pointermove", (e) => {
+      if (!fingers.has(e.pointerId)) return; fingers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (fingers.size < 2 || !g) return;
+      const m = mid(), n = st.geom.n, span = Math.max(6, Math.min(n - 1, Math.round((g.i1 - g.i0) * (g.d0 / m.d))));
+      const b = host.querySelector("svg.tp-svg").getBoundingClientRect(), frac = Math.max(0, Math.min(1, (((m.x - b.left) * (st.W / b.width)) - st.geom.L) / st.geom.pw));
+      let a = Math.round(g.c - frac * span); a = Math.max(0, Math.min(n - 1 - span, a));                    // the date under the fingers' midpoint stays under it
+      st.i0 = a; st.i1 = a + span;
+      if (!raf) raf = requestAnimationFrame(() => { raf = 0; st.redraw(); });
+    });
+    const up = (e) => { fingers.delete(e.pointerId); if (fingers.size < 2) { g = null; st.pinching = false; } };
+    host.addEventListener("pointerup", up); host.addEventListener("pointercancel", up);
+  }
+
   /* o: { dates, close, weight, markers, asset, summary, book: { dates, long, short } | null, label }  (the shape of GET /api/ml/strategy's chart and book) */
   function tradePanel(host, o) {
     const st = host._tp || (host._tp = { i0: 0, i1: o.dates.length - 1, view: "asset", legend: false });
@@ -95,6 +124,8 @@
     const clamp = () => { const min = Math.min(20, n - 1); st.i0 = Math.max(0, Math.min(st.i0, n - 1 - min)); st.i1 = Math.min(n - 1, Math.max(st.i1, st.i0 + min)); };
     clamp();
     const redraw = () => render(host, o, st, T);
+    st.geom = { L, pw, n }; st.W = W; st.redraw = redraw;
+    pinchOn(host, st);
 
     // ---------- the compact bar: ranges, reset, view switch, legend
     const bar = html("div", "tp-bar", host), rng = html("div", "tp-seg", bar); rng.setAttribute("role", "group"); rng.setAttribute("aria-label", "Date range");
@@ -254,6 +285,7 @@
     };
     const hide = () => { line.setAttribute("visibility", "hidden"); dot.setAttribute("visibility", "hidden"); readout.textContent = ""; tip.hidden = true; };
     plot.addEventListener("pointermove", (e) => {
+      if (st.pinching) { hide(); return; }
       if (brushing) { const x = Math.max(L, Math.min(L + pw, svgX(e))); brush.setAttribute("x", Math.min(brushing.x, x)); brush.setAttribute("width", Math.abs(x - brushing.x)); brush.setAttribute("visibility", "visible"); return; }
       hover(e);
     });

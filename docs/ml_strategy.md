@@ -18,8 +18,10 @@ carry no trades: re-run them (a re-backtest of the saved predictions is enough).
 The price, the trades and the position are one drawing on **one date axis** (`src/webapp/static/tradechart.js`), so zooming or panning moves all of them together, and a crosshair runs through the price and the
 position with a one-line readout (date, close, position). Above it: the last price, the position, the book's exposure, the realized and unrealized P&L (as shares of the book, after costs) and the strategy's return
 against the benchmark. Controls are compact: range buttons (1M to All), a switch between this asset's position and the whole book's long and short exposure, *Reset zoom*, and a collapsible legend. A mouse drags on the
-chart to zoom (double-click or Reset to undo; Ctrl with the wheel zooms around the pointer); on a touch screen a finger moves the crosshair, and the **overview strip** under the chart (drag its window to pan, its edges to
-resize) and the range buttons zoom, so the page still scrolls.
+chart to zoom (double-click or Reset to undo; Ctrl with the wheel zooms around the pointer); on a touch screen one finger moves the crosshair, **two fingers pinch to zoom and move to pan** (the date under
+the fingers stays under them), and the **overview strip** under the chart (drag its window to pan, its edges to resize) and the range buttons do the same, so the page still scrolls. The chart is drawn with the
+platform's own SVG code and no library: the app's content-security policy allows scripts only from its own origin, so a charting package would have to be copied into the repository (Plotly.js is about 3.5 MB), and
+the one thing one would add here, touch gestures, is these few lines.
 
 Trades keep their shapes: a filled triangle up is a buy (opens a long), down a sell; the short and the cover have their own colours; an outlined triangle is an add or a trim; a cross is a stop, target or time exit.
 Hovering a trade shows the execution date and price, the decision date, the quantity (the change in the share of the book, and the share after), the cost, the **P&L of the position when the trade closes it**, the score

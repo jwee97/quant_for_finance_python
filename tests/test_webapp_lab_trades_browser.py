@@ -115,3 +115,37 @@ def test_the_trade_panel_shares_one_axis_zooms_and_stays_inside_a_phone(browser,
     assert phone.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1"), "no sideways scrolling on a phone"
     assert phone.locator("[data-role=trade-panel] svg.tp-svg").bounding_box()["width"] <= 390
     phone.close()
+
+
+def test_two_fingers_pinch_and_pan_the_trade_panel(browser, live):  # noqa: F811
+    """On a touch screen two fingers zoom (spread) and pan the window of the whole panel; one finger only moves the crosshair."""
+    running, _, run = live
+    phone = browser.new_page(viewport={"width": 390, "height": 800}, has_touch=True)
+    phone.goto(running.url + f"#/strategy?id={run['id']}")
+    phone.wait_for_selector("[data-role=trade-panel] svg.tp-svg", timeout=60000)
+    label = lambda: phone.locator("[data-role=trade-panel] svg.tp-svg").get_attribute("aria-label")  # noqa: E731
+    whole = label()
+    box = phone.locator("[data-role=trade-panel] svg.tp-svg").bounding_box()
+    y, cx = box["y"] + 100, box["x"] + box["width"] * 0.6
+
+    def touch(kind, pid, x):
+        phone.evaluate("""([kind, pid, x, y]) => {
+          const host = document.querySelector('[data-role=trade-panel]'), svg = host.querySelector('svg.tp-svg');
+          (kind === 'pointerdown' ? svg : host).dispatchEvent(new PointerEvent(kind, { pointerId: pid, pointerType: 'touch', clientX: x, clientY: y, bubbles: true, isPrimary: pid === 1 }));
+        }""", [kind, pid, x, y])
+
+    touch("pointerdown", 1, cx - 20)
+    assert label() == whole, "one finger does not zoom"
+    touch("pointerdown", 2, cx + 20)
+    touch("pointermove", 1, cx - 90)
+    touch("pointermove", 2, cx + 90)                                                          # the fingers spread: zoom in
+    phone.wait_for_function("l => document.querySelector('[data-role=trade-panel] svg.tp-svg').getAttribute('aria-label') !== l", arg=whole, timeout=5000)
+    zoomed = label()
+    assert zoomed != whole and phone.locator("[data-role=trade-panel] .tp-link").is_enabled()
+    touch("pointermove", 1, cx - 40)
+    touch("pointermove", 2, cx + 140)                                                         # both move right with the same spread: pan
+    phone.wait_for_function("l => document.querySelector('[data-role=trade-panel] svg.tp-svg').getAttribute('aria-label') !== l", arg=zoomed, timeout=5000)
+    touch("pointerup", 1, cx - 40)
+    touch("pointerup", 2, cx + 140)
+    assert phone.locator("[data-role=trade-panel] svg.tp-svg").count() == 1 and label() != zoomed, "moving both fingers pans the window"
+    phone.close()
