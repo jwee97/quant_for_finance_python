@@ -20,7 +20,7 @@ from datetime import date
 
 from .. import manual
 from ..errors import FundamentalsError
-from .tabular import detect_units  # multilingual: "in thousands", 千円, 백만원, 单位：万元
+from .tabular import detect_currency, detect_units  # multilingual: "in thousands", 千円, 백만원, 单位：万元
 
 MAX_PAGES = 400
 NUMBER = re.compile(r"^\(?-?\$?\s?\d[\d,]*(\.\d+)?\)?%?$")
@@ -28,6 +28,11 @@ YEAR = re.compile(r"\b(19[89]\d|20[0-4]\d)\b")
 MONTHS = {m: i + 1 for i, m in enumerate(["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"])}
 MONTH_ABBR = {k[:3]: v for k, v in MONTHS.items()}
 DATE_TEXT = re.compile(r"\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\.?\s+(\d{1,2}),?\s+((?:19|20)\d{2})\b", re.I)
+DATE_DMY = re.compile(r"\b(\d{1,2})(?:st|nd|rd|th)?\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\.?,?\s+((?:19|20)\d{2})\b", re.I)  # "31 December 2023" (Hong Kong, Singapore)
+DATE_CJK = re.compile(r"((?:19|20)\d{2})\s*[年년]\s*(\d{1,2})\s*[月월]\s*(\d{1,2})\s*[日일]?")                                   # "2023年12月31日"
+KIND_Q = re.compile(r"three\s+months|quarter|三個月|三个月|第[一二三四1-4]季|3개월", re.I)
+KIND_H1 = re.compile(r"six\s+months|half[\s-]year|interim period|六個月|六个月|上半年|半期|6개월", re.I)
+KIND_YTD = re.compile(r"nine\s+months|year[\s-]to[\s-]date|九個月|九个月|前三季|9개월", re.I)
 
 
 def _words(data: bytes) -> list[list[tuple]]:
@@ -104,12 +109,26 @@ def _split(row: list[tuple]) -> tuple[str, list[float | None]]:
 
 def _headings(text: str, year_end: tuple[int, int] | None) -> list[dict]:
     """The period columns named in a heading row: full dates ("December 31, 2023"), or bare years (which borrow the month and day of the fiscal year end the report names)."""
-    out = []
+    found = []
     for m in DATE_TEXT.finditer(text):
-        month = MONTH_ABBR[m.group(1)[:3].lower()]
-        out.append({"period_end": date(int(m.group(3)), month, min(int(m.group(2)), 28 if month == 2 else 31)).isoformat(), "guessed": False})
+        found.append((m.start(), int(m.group(3)), MONTH_ABBR[m.group(1)[:3].lower()], int(m.group(2))))
+    for m in DATE_DMY.finditer(text):
+        found.append((m.start(), int(m.group(3)), MONTH_ABBR[m.group(2)[:3].lower()], int(m.group(1))))
+    for m in DATE_CJK.finditer(text):
+        found.append((m.start(), int(m.group(1)), int(m.group(2)), int(m.group(3))))
+    out = []
+    seen = set()
+    for _, y, mo, d in sorted(found):                                                                 # a date named twice ("…ended 30 June 2024" then the column "30 June 2024") is one column
+        if 1 <= mo <= 12 and (y, mo, d) not in seen:
+            seen.add((y, mo, d))
+            out.append({"period_end": date(y, mo, max(1, min(d, 28 if mo == 2 else 30 if mo in (4, 6, 9, 11) else 31))).isoformat(), "guessed": False})
     if len(out) >= 2:
         return out
+    if len(out) == 1:                                                                                 # "Six months ended 30 June 2024 2023": the later years share the first date's day and month
+        first = date.fromisoformat(out[0]["period_end"])
+        rest = [int(y) for y in YEAR.findall(text[text.rfind(str(first.year)) + 4:])]
+        if rest and first.year not in rest and len(set(rest)) == len(rest):
+            return out + [{"period_end": date(y, first.month, first.day).isoformat(), "guessed": False} for y in rest]
     years = [int(y) for y in YEAR.findall(text)]
     if len(years) >= 2 and len(set(years)) == len(years):
         month, day = year_end or (12, 31)
@@ -134,6 +153,11 @@ def extract(data: bytes, ocr=None, language: str = "en") -> dict:
     m = re.search(r"(?:fiscal\s+)?year\s+ended\s+([A-Za-z]+)\s+(\d{1,2})", full_text, re.I)
     if m and m.group(1).lower()[:3] in MONTH_ABBR:
         year_end = (MONTH_ABBR[m.group(1).lower()[:3]], int(m.group(2)))
+    if year_end is None:
+        m = re.search(r"year\s+ended\s+(\d{1,2})\s+([A-Za-z]+)", full_text, re.I)
+        if m and m.group(2).lower()[:3] in MONTH_ABBR:
+            year_end = (MONTH_ABBR[m.group(2).lower()[:3]], int(m.group(1)))
+    currency = detect_currency(full_text)
     found: dict[tuple, dict] = {}                                                                   # (column key) -> {code: (value, page, line)}
     columns: dict[tuple, dict] = {}
     skipped: list[dict] = []
@@ -152,7 +176,7 @@ def extract(data: bytes, ocr=None, language: str = "en") -> dict:
             if len(heads) >= 2:
                 header = heads
                 low = line.lower()
-                header_kind = "Q" if re.search(r"three\s+months|quarter", low) else ("YTD" if re.search(r"six\s+months|nine\s+months|year[\s-]to[\s-]date", low) else "FY")
+                header_kind = "Q" if KIND_Q.search(low) else ("H1" if KIND_H1.search(low) else ("YTD" if KIND_YTD.search(low) else "FY"))
                 continue
             if not header:
                 continue
@@ -160,11 +184,13 @@ def extract(data: bytes, ocr=None, language: str = "en") -> dict:
             code = manual.ALIASES.get(manual._norm(label)) if label else None
             if code is None or not figures:
                 continue
+            if len(figures) == len(header) + 1 and figures[0] is not None and figures[0] == int(figures[0]) and 0 < figures[0] < 100:
+                figures = figures[1:]                                                                # a "Notes" reference column ("Revenue  4  1,234  1,100")
             if len(figures) != len(header):
                 skipped.append({"label": label, "page": pno, "message": f"{len(figures)} figure(s) under a heading of {len(header)} columns: not stored (which column each belongs to is not known)"})
                 continue
             if header_kind == "YTD":
-                skipped.append({"label": label, "page": pno, "message": "a year-to-date column: not stored as a quarter"})
+                skipped.append({"label": label, "page": pno, "message": "a nine-month / year-to-date column: not stored as a quarter"})
                 continue
             for h, v in zip(header, figures):
                 if v is None:
@@ -172,6 +198,13 @@ def extract(data: bytes, ocr=None, language: str = "en") -> dict:
                 key = (h["period_end"], header_kind)
                 columns.setdefault(key, {"period_end": h["period_end"], "guessed": h["guessed"], "kind": header_kind})
                 found.setdefault(key, {}).setdefault(code, (v, pno, line))
+    for key in [k for k in found if k[1] == "FY"]:                                                    # a balance sheet at 30 June carries no "six months" in its heading: join it to the interim column of that date
+        for other in ("H1", "Q"):
+            if (key[0], other) in found:
+                for code, item in found.pop(key).items():
+                    found[(key[0], other)].setdefault(code, item)
+                columns.pop(key, None)
+                break
     if not found:
         raise FundamentalsError("no statement lines this application knows were found in the text of this PDF (Revenue, Net income, Total assets…) under a heading of periods: the report may be laid out in a way this reader cannot follow")
     units = stated or (page_units.most_common(1)[0][0] if page_units else None)
@@ -191,9 +224,9 @@ def extract(data: bytes, ocr=None, language: str = "en") -> dict:
         kind = c["kind"]
         values = {code: v for code, (v, _, _) in found[key].items()}
         sources = {code: {"tag": None, "reported": v, "unit": units or "units", "page": pno, "text": line[:160], "method": method} for code, (v, pno, line) in found[key].items()}
-        periods.append({"fiscal_period": "FY" if kind == "FY" else "Q" + str((end.month - 1) // 3 + 1), "period_end": c["period_end"], "fiscal_year": end.year, "filing_date": None, "currency": None, "values": values,
+        periods.append({"fiscal_period": "FY" if kind == "FY" else "H1" if kind == "H1" else "Q" + str((end.month - 1) // 3 + 1), "period_end": c["period_end"], "fiscal_year": end.year, "filing_date": None, "currency": currency, "values": values,
                         "sources": sources, "guessed": c["guessed"] or kind == "Q"})
     if any(p["fiscal_period"] != "FY" for p in periods):
         notes.append("A quarterly column's fiscal quarter number was taken from its calendar month; a company with an off-calendar fiscal year numbers its quarters differently: check it.")
-    return {"periods": periods, "units": {"money": units or "units", "shares": "units"}, "currency": None, "company": {}, "notes": notes, "ytd_only": [], "unmapped": [], "skipped": skipped[:60],
+    return {"periods": periods, "units": {"money": units or "units", "shares": "units"}, "currency": currency, "company": {}, "notes": notes, "ytd_only": [], "unmapped": [], "skipped": skipped[:60],
             "method": method, "review_required": True, "units_stated": units is not None, "accession": None, "pages": len(pages)}

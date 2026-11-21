@@ -14,9 +14,23 @@ import re
 from .. import manual
 from ..errors import FundamentalsError
 
-UNIT_WORDS = (("billions", r"in\s+billions|\$\s*billions|\(\s*billions|十億円|십억원|十亿|单位[:：]?\s*亿"),
-              ("millions", r"in\s+millions|\$\s*millions|\(\s*millions|\bmillions of\b|百万円|百萬円|백만원|百万元|百萬元|百万|en millones|in millionen|em milhões|milhões de"),
-              ("thousands", r"in\s+thousands|\$\s*thousands|\(\s*thousands|\bthousands of\b|000s|千円|천원|千元|单位[:：]?\s*千|en miles|in tausend|em milhares|milhares de"))
+UNIT_WORDS = (("billions", r"in\s+billions|\$\s*billions?\b|\(\s*billions|十億円|십억원|十亿|单位[:：]?\s*亿"),
+              ("millions", r"in\s+millions|\$\s*millions?\b|rmb\s*millions?\b|\(\s*millions|\bmillions of\b|['’]\s*million\b|百万円|百萬円|백만원|百万元|百萬元|百万|en millones|in millionen|em milhões|milhões de"),
+              ("thousands", r"in\s+thousands|\$\s*thousands?\b|\(\s*thousands|\bthousands of\b|000s|['’]\s*000\b|\(\s*000\s*\)|千円|천원|千元|人民幣千元|港幣千元|单位[:：]?\s*千|en miles|in tausend|em milhares|milhares de"))
+
+CURRENCY_WORDS = (("HKD", r"hk\s*\$|hkd|港元|港幣|港币"), ("CNY", r"rmb|cny|renminbi|人民幣|人民币"), ("SGD", r"(?<![a-z])s\s*\$|sgd|singapore\s+dollar|新加坡元"), ("USD", r"us\s*\$|usd|u\.s\. dollar|美元|美金"),
+                  ("JPY", r"jpy|円|japanese yen"), ("KRW", r"krw|원|korean won"), ("EUR", r"eur\b|€|euro\b"), ("GBP", r"gbp|£|pound sterling"), ("CAD", r"cad\b|(?<![a-z])c\$"), ("BRL", r"brl|r\$|reais"))
+
+
+def detect_currency(text: str) -> str | None:
+    """The reporting currency a statement names in its header ("HK$'000", "RMB million", "S$'000", "人民幣千元"), or None; the most mentioned one wins."""
+    low = (text or "")[:8000].lower()
+    best, best_n = None, 0
+    for code, pattern in CURRENCY_WORDS:
+        n = len(re.findall(pattern, low))
+        if n > best_n:
+            best, best_n = code, n
+    return best
 
 
 def detect_units(text: str) -> str | None:

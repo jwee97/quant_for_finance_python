@@ -201,3 +201,59 @@ def test_a_failed_arelle_run_is_a_note_on_the_draft_not_a_failed_import(tmp_path
     assert d["periods"] and any("Arelle cross-check was not possible: Arelle is not installed" in n for n in d["notes"])
     monkeypatch.setattr(arelle_check, "crosscheck", lambda data, name, cache=None, online=True, package=None: {"agree": 8, "compared": 8, "facts_arelle": 19, "different": [], "validation_errors": 0, "agrees": True})
     assert any("8 of 8 company-wide numeric facts agree" in n for n in svc._extract_bytes("xbrl", "x.htm", ixbrl(), {"arelle": True})["notes"])
+
+
+# ---- PDF reports of Hong Kong / Singapore / mainland China style: day-month-year and CJK dates, interim columns, Notes column, currency ----
+
+def _pdf(pages, font=None):
+    pymupdf = pytest.importorskip("pymupdf")
+    doc = pymupdf.open()
+    for lines in pages:
+        page, y = doc.new_page(), 60
+        for line in lines:
+            x = 40
+            for token, dx in line:
+                page.insert_text((x, y), token, fontsize=10, **({"fontname": font} if font else {}))
+                x += dx
+            y += 16
+    return doc.tobytes()
+
+
+def test_hong_kong_interim_pdf_reads_h1_notes_column_and_currency():
+    data = _pdf([[
+        [("INTERIM REPORT (Expressed in HK$'000)", 0)],
+        [("Six months ended 30 June 2024 2023", 0)],
+        [("Revenue", 230), ("4", 40), ("1,234,000", 80), ("1,100,000", 80)],
+        [("Net income", 230), ("4", 40), ("(50,000)", 80), ("20,000", 80)],
+        [("30 June 2024  31 December 2023", 0)],
+        [("Total assets", 270), ("9,000,000", 90), ("8,500,000", 90)],
+    ]])
+    out = pdf.extract(data)
+    by = {(p["fiscal_period"], p["period_end"]): p for p in out["periods"]}
+    assert out["currency"] == "HKD" and out["units"]["money"] == "thousands" and out["review_required"]
+    h1 = by[("H1", "2024-06-30")]
+    assert h1["values"] == {"revenue": 1234000.0, "net_income": -50000.0, "total_assets": 9000000.0}      # the balance sheet at 30 June joins the half-year column
+    assert by[("H1", "2023-06-30")]["values"]["revenue"] == 1100000.0
+    assert by[("FY", "2023-12-31")]["values"] == {"total_assets": 8500000.0}                                # the December comparative stays a year-end balance
+    assert h1["currency"] == "HKD"
+
+
+def test_chinese_pdf_reads_cjk_dates_labels_and_unit():
+    data = _pdf([[
+        [("（人民币千元）", 0)],
+        [("截至2024年6月30日止六个月  2024年6月30日 2023年6月30日", 0)],
+        [("营业收入", 230), ("5,000", 80), ("4,000", 80)],
+        [("净利润", 230), ("800", 80), ("(300)", 80)],
+        [("资产总计", 230), ("90,000", 80), ("80,000", 80)],
+    ]], font="china-s")
+    out = pdf.extract(data)
+    assert out["currency"] == "CNY" and out["units"]["money"] == "thousands"
+    by = {p["period_end"]: p for p in out["periods"]}
+    assert by["2024-06-30"]["fiscal_period"] == "H1"
+    assert by["2024-06-30"]["values"] == {"revenue": 5000.0, "net_income": 800.0, "total_assets": 90000.0}
+    assert by["2023-06-30"]["values"]["net_income"] == -300.0
+
+
+def test_currency_detection_does_not_confuse_us_dollar_with_singapore_dollar():
+    from src.fundamentals.importer.tabular import detect_currency
+    assert detect_currency("US$'000") == "USD" and detect_currency("S$ million") == "SGD" and detect_currency("RMB'000") == "CNY"
