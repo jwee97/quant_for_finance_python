@@ -29,8 +29,9 @@ NS_LINK = "http://www.xbrl.org/2003/linkbase"
 MAX_FACTS = 400_000
 YEAR = (350, 380)
 QUARTER = (80, 100)
-TAXONOMY_HINTS = (("us-gaap", "us-gaap"), ("ifrs-full", "ifrs-full"), ("ifrs", "ifrs-full"), ("/dei/", "dei"), ("fasb.org/us-gaap", "us-gaap"))
-COVER_FIELDS = ("DocumentType", "DocumentPeriodEndDate", "DocumentFiscalYearFocus", "DocumentFiscalPeriodFocus", "EntityRegistrantName", "TradingSymbol", "EntityCentralIndexKey", "AmendmentFlag")
+TAXONOMY_HINTS = (("jppfs", "jppfs_cor"), ("jpigp", "jpigp_cor"), ("jpdei", "jpdei_cor"), ("jpcrp", "jpcrp_cor"), ("us-gaap", "us-gaap"), ("ifrs-full", "ifrs-full"), ("ifrs", "ifrs-full"), ("/dei/", "dei"), ("fasb.org/us-gaap", "us-gaap"))
+JP_COVER = ("CurrentPeriodEndDateDEI", "TypeOfCurrentPeriodDEI", "AccountingStandardsDEI", "FilerNameInEnglishDEI", "FilerNameInJapaneseDEI", "SecurityCodeDEI", "EDINETCodeDEI", "CurrentFiscalYearStartDateDEI", "CurrentFiscalYearEndDateDEI")
+COVER_FIELDS = JP_COVER + ("DocumentType", "DocumentPeriodEndDate", "DocumentFiscalYearFocus", "DocumentFiscalPeriodFocus", "EntityRegistrantName", "TradingSymbol", "EntityCentralIndexKey", "AmendmentFlag")
 
 
 def _taxonomy(uri: str) -> str | None:
@@ -104,7 +105,8 @@ def read_facts(data: bytes) -> dict:
             end = period.findtext(f"{{{NS_XBRLI}}}endDate") if period is not None else None
             entity = el.find(f"{{{NS_XBRLI}}}entity")
             dimensional = el.find(f"{{{NS_XBRLI}}}scenario") is not None or (entity is not None and entity.find(f"{{{NS_XBRLI}}}segment") is not None)
-            contexts[el.get("id")] = {"instant": _day(instant), "start": _day(start), "end": _day(end) or _day(instant), "dimensional": dimensional}
+            members = sorted({(m.text or "").strip() for m in el.iter("{http://xbrl.org/2006/xbrldi}explicitMember")})
+            contexts[el.get("id")] = {"instant": _day(instant), "start": _day(start), "end": _day(end) or _day(instant), "dimensional": dimensional, "members": members}
         elif uri == NS_XBRLI and name == "unit":
             measures = [m.text.strip() for m in el.iter(f"{{{NS_XBRLI}}}measure") if m.text]
             units[el.get("id")] = "/".join(m.split(":")[-1] for m in measures) if len(measures) > 1 else (measures[0].split(":")[-1] if measures else "")
@@ -116,7 +118,7 @@ def read_facts(data: bytes) -> dict:
             if tax is None:
                 continue
             if name == "nonNumeric":
-                if tax == "dei" and local in COVER_FIELDS:
+                if tax in ("dei", "jpdei_cor") and local in COVER_FIELDS:
                     cover.setdefault(local, " ".join("".join(el.itertext()).split()))
                 continue
             if el.get("{http://www.w3.org/2001/XMLSchema-instance}nil") == "true":
@@ -133,7 +135,7 @@ def read_facts(data: bytes) -> dict:
             if tax is None:
                 continue
             text = " ".join("".join(el.itertext()).split())
-            if tax == "dei" and name in COVER_FIELDS:
+            if tax in ("dei", "jpdei_cor") and name in COVER_FIELDS:
                 cover.setdefault(name, text)
                 if el.get("unitRef") is None:
                     continue
@@ -157,10 +159,10 @@ def extract(data: bytes, name: str = "", accession: str | None = None, comparati
     money = Counter()
     for f in facts:
         u = units.get(f["unit"], "")
-        if re.fullmatch(r"[A-Z]{3}", u) and f["field"].split(":")[1] in ("Assets", "Revenues", "NetIncomeLoss", "Revenue", "ProfitLoss", "Equity", "StockholdersEquity"):
+        if re.fullmatch(r"[A-Z]{3}", u) and f["field"].split(":")[1] in ("Assets", "Revenues", "NetIncomeLoss", "Revenue", "ProfitLoss", "Equity", "StockholdersEquity", "NetSales", "AssetsIFRS", "RevenueIFRS", "ProfitLossIFRS"):
             money[u] += 1
     currency = money.most_common(1)[0][0] if money else None
-    end = _day(cover.get("DocumentPeriodEndDate"))
+    end = _day(cover.get("DocumentPeriodEndDate")) or _day(cover.get("CurrentPeriodEndDateDEI"))
     if end is None:                                                                                  # the latest period end among the company-wide facts
         ends = [c["end"] for c in contexts.values() if c["end"] and not c["dimensional"]]
         end = max(ends) if ends else None
@@ -168,17 +170,26 @@ def extract(data: bytes, name: str = "", accession: str | None = None, comparati
         raise FundamentalsError("the filing names no reporting period")
     doc_type = (cover.get("DocumentType") or "").upper()
     focus = (cover.get("DocumentFiscalPeriodFocus") or "").upper()
+    jp_type = (cover.get("TypeOfCurrentPeriodDEI") or "").upper()
+    if jp_type:                                                                                      # Japan's own cover fact: FY, Q1, Q2, Q3 or HY (half-year)
+        focus = {"HY": "H1"}.get(jp_type, jp_type)
+        doc_type = doc_type or ("10-K" if jp_type == "FY" else "")
+    standard = cover.get("AccountingStandardsDEI")
     notes: list[str] = []
     per_period: dict[tuple, dict] = {}                                                               # (end, kind) -> {field: (value, unit, context)}
+    jp_facts = [f for f in facts if f["field"].startswith(("jppfs_cor:", "jpigp_cor:"))]
+    parent_only = bool(jp_facts) and not any(contexts.get(f["context"], {}).get("dimensional") is False for f in jp_facts)                # only the parent's own statements are filed
     for f in facts:
         c = contexts.get(f["context"])
-        if c is None or c["dimensional"] or c["end"] is None:
+        if c is None or c["end"] is None:
+            continue
+        if c["dimensional"] and not (parent_only and c.get("members") and all("NonConsolidatedMember" in m for m in c["members"])):
             continue
         u = units.get(f["unit"], "")
         if currency and re.fullmatch(r"[A-Z]{3}", u) and u != currency:
             continue
         span = None if c["start"] is None else (c["end"] - c["start"]).days
-        key = (c["end"], "instant" if c["start"] is None else ("year" if YEAR[0] <= span <= YEAR[1] else "quarter" if QUARTER[0] <= span <= QUARTER[1] else "ytd" if span > QUARTER[1] else "short"))
+        key = (c["end"], "instant" if c["start"] is None else ("year" if YEAR[0] <= span <= YEAR[1] else "quarter" if QUARTER[0] <= span <= QUARTER[1] else "half" if 160 <= span <= 200 else "ytd" if span > QUARTER[1] else "short"))
         per_period.setdefault(key, {}).setdefault(f["field"], (f["value"], u, f["context"]))
     ends = sorted({k[0] for k in per_period}, reverse=True)
     wanted = [end] if not comparatives else [e for e in ends if (end - e).days < 800]
@@ -188,14 +199,15 @@ def extract(data: bytes, name: str = "", accession: str | None = None, comparati
     for e in wanted:
         flows_year = per_period.get((e, "year"), {})
         flows_q = per_period.get((e, "quarter"), {})
-        flows_ytd = per_period.get((e, "ytd"), {})
+        flows_ytd = {**per_period.get((e, "ytd"), {}), **per_period.get((e, "half"), {})}
+        flows_half = per_period.get((e, "half"), {})
         stocks = per_period.get((e, "instant"), {})
         is_year = bool(flows_year) and (doc_type.startswith("10-K") or doc_type.startswith("20-F") or doc_type.startswith("40-F") or focus == "FY" or not flows_q)
-        fiscal_period = "FY" if is_year else (focus if focus in ("Q1", "Q2", "Q3", "Q4") and e == end else None)
+        fiscal_period = "FY" if is_year else (focus if focus in ("Q1", "Q2", "Q3", "Q4", "H1") and e == end else None)
         source: dict[str, tuple] = {}
         for field, (value, unit, ctx) in stocks.items():
             source[field] = (value, unit, ctx)
-        flows = flows_year if is_year else flows_q
+        flows = flows_year if is_year else (flows_half if fiscal_period == "H1" and flows_half else flows_q)
         for field, item in flows.items():
             source.setdefault(field, item)
         if not is_year:
@@ -208,7 +220,12 @@ def extract(data: bytes, name: str = "", accession: str | None = None, comparati
             continue
         plain = {f: v[0] for f, v in source.items()}
         obs, un = canonical.normalise_values("sec_edgar", plain)
-        unmapped.update(un)
+        un = [u for u in un if not u.startswith(("jppfs_cor:", "jpigp_cor:"))]
+        from ..filings.maps import jp_values
+        jp, jp_un = jp_values(plain)
+        for code, o in jp.items():
+            obs.setdefault(code, o)
+        unmapped.update(un + jp_un)
         values, sources = {}, {}
         for code, o in obs.items():
             if o["flag"] == "derived":
@@ -227,9 +244,11 @@ def extract(data: bytes, name: str = "", accession: str | None = None, comparati
         raise FundamentalsError("the filing has tagged numbers but none of the lines this application reads (revenue, net income, total assets and the others) for its reporting period")
     if ytd_only:
         notes.append("Some cash flow and income lines are reported only for the year to date in this filing (" + ", ".join(sorted({f.split(':')[1] for f in ytd_only})[:6]) + "); they were left out rather than stored as a quarter. Import the earlier quarters of the year too, or enter the quarter.")
-    company = {"name": cover.get("EntityRegistrantName"), "ticker": (cover.get("TradingSymbol") or "").upper() or None, "cik": cover.get("EntityCentralIndexKey")}
+    company = {"name": cover.get("EntityRegistrantName") or cover.get("FilerNameInEnglishDEI") or cover.get("FilerNameInJapaneseDEI"), "ticker": (cover.get("TradingSymbol") or cover.get("SecurityCodeDEI") or "").upper() or None,
+               "cik": cover.get("EntityCentralIndexKey") or cover.get("EDINETCodeDEI")}
     return {"periods": periods, "units": {"money": "units", "shares": "units"}, "currency": currency, "company": company, "notes": notes, "ytd_only": sorted(set(ytd_only)), "unmapped": sorted(unmapped)[:60],
-            "method": "ixbrl" if raw["inline"] else "xbrl", "accession": accession or _accession_from(name), "document_type": doc_type or None}
+            "method": "ixbrl" if raw["inline"] else "xbrl", "accession": accession or _accession_from(name), "document_type": doc_type or None, "accounting_standard": standard,
+            "parent_only": bool(parent_only)}
 
 
 def _accession_from(name: str) -> str | None:

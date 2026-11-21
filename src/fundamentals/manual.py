@@ -124,7 +124,7 @@ QUARTER_END = {"Q1": (3, 31), "Q2": (6, 30), "Q3": (9, 30), "Q4": (12, 31), "H1"
 
 
 def _norm(text) -> str:
-    return re.sub(r"[^a-z0-9&]+", " ", str(text).lower().replace("&", " & ")).replace(" & ", "&").strip()
+    return re.sub(r"[^\w&]+", " ", str(text).lower().replace("_", " ").replace("&", " & ")).replace(" & ", "&").strip()
 
 
 def _alias_table() -> dict[str, str]:
@@ -136,6 +136,10 @@ def _alias_table() -> dict[str, str]:
 
 
 ALIASES = _alias_table()
+from .filings.labels import ALIASES_I18N as _I18N                         # the lines' names in Japanese, Korean, Chinese, French, Spanish, German and Portuguese  # noqa: E402
+
+for _name, _code in _I18N.items():
+    ALIASES.setdefault(_name, _code)
 META_ALIASES = {_norm(name): key for key, names in META_NAMES.items() for name in names}
 PRICE_ALIASES = {_norm(name) for name in PRICE_NAMES}
 
@@ -273,6 +277,10 @@ def _parse_period_label(label) -> dict | None:
         iso = None
     if iso:
         return {"fiscal_period": "FY", "fiscal_year": int(iso[:4]), "period_end": iso, "guessed": False}
+    cjk = re.match(r"^(?:fy)?\s*(\d{4})\s*(?:年度|年報|年报|年|년도|년|財政年度)$", low)                    # 2023年度, 2023年, 2023년: a fiscal year in Japanese, Chinese or Korean
+    if cjk:
+        y = int(cjk.group(1))
+        return {"fiscal_period": "FY", "fiscal_year": y, "period_end": f"{y}-12-31", "guessed": True}
     m = re.match(r"^(?:fy|fiscal year|year)?\s*'?(\d{4}|\d{2})\s*a?$", low)
     if m and (len(m.group(1)) == 4 or low.startswith(("fy", "fiscal", "year", "'"))):
         y = _year(m.group(1))

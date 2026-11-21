@@ -155,6 +155,32 @@ class ImportService:
         name = (got.url.rsplit("/", 1)[-1].split("?")[0] or "report")
         return self.add_file(batch_id, name, got.data, url=got.url)
 
+    def add_structured(self, batch_id: str, name: str, url: str | None, raw: bytes, draft: dict, kind: str = "api") -> dict:
+        """Add a draft that a connector built from a source that is already structured (an account API, an open-data file): the answer is kept once by hash like any file, and the draft is checked at once."""
+        self._batch(batch_id)
+        h = _hash(raw)
+        why = self._already(h, batch_id)
+        self._blob(h, raw)
+        item_id = self._insert(batch_id, kind, name, url, h, len(raw), None, "duplicate" if why else "queued", why)
+        if why:
+            return self.item(item_id)
+        draft["source"] = {"file": name, "url": url, "content_hash": h, "kind": kind}
+        issues = self._issues(draft, self._batch(batch_id))
+        review = bool(draft.get("review_required")) or any(i["level"] in ("error", "warning") for i in issues)
+        self._set(item_id, draft=draft, issues=issues, status="needs_review" if review else "extracted", method=draft.get("method"), error=None)
+        return self.item(item_id)
+
+    def add_from_connector(self, batch_id: str, connector, ref) -> list[dict]:
+        """Get one filing through a country connector: a structured draft is added as it is, a file goes through the importer's readers with what the filing list knew (accession, filing date)."""
+        got = connector.get(ref)
+        if got["kind"] == "draft":
+            return [self.add_structured(batch_id, got["name"], ref.url, got["raw"], got["draft"])]
+        items = self.add_file(batch_id, got["name"], got["data"], url=ref.url)
+        for it in items:
+            if it["status"] == "queued":
+                self.set_hint(it["item_id"], {**(got.get("hint") or {}), "fiscal_period": ref.fiscal_period})
+        return items
+
     # ------------------------------------------------------------------------------------------------------------ reading
     def item(self, item_id: int, full: bool = False) -> dict:
         with self.store.db.transaction() as c:

@@ -43,7 +43,7 @@ POLICY = ("OpenFilings' usage policy does not allow rotating accounts or API key
           "choose another (a choice, never a rotation: it is refused while the key in use has spent its allowance); a later key also takes over if the key in use is rejected as invalid. When the allowance is spent "
           "the work stops until it resets. More credits come from a larger plan or from prepaid top-ups.")
 KEY_NAMES = ["OPENFILINGS_API_KEY"] + [f"OPENFILINGS_API_KEY_{i}" for i in range(1, 6)]
-SECRET_NAMES = KEY_NAMES + ["SEC_EDGAR_USER_AGENT"]                                              # every secret the module reads: a test removes them all so that a developer's own do not change what it sees
+SECRET_NAMES = KEY_NAMES + ["SEC_EDGAR_USER_AGENT", "EDINET_API_KEY", "OPENDART_API_KEY"]                                              # every secret the module reads: a test removes them all so that a developer's own do not change what it sees
 
 
 # ------------------------------------------------------------------------------------------------------------------ checking what a form sends
