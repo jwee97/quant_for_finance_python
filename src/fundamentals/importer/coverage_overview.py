@@ -17,6 +17,8 @@ from datetime import date, timedelta
 
 import pandas as pd
 
+from ..filings import calendar as cal
+
 ANNUAL_LAG = 150
 QUARTER_LAG = 90
 
@@ -32,7 +34,7 @@ def _periods(store) -> pd.DataFrame:
     return frame
 
 
-def grid(rows: pd.DataFrame, today: date, years: int) -> dict:
+def grid(rows: pd.DataFrame, today: date, years: int, country: str | None = None) -> dict:
     """The annual and quarterly cells of one company from its stored periods (a frame of one company's ``_periods`` rows)."""
     out = {"annual": {}, "quarters": {}, "sources": {}}
     if rows.empty:
@@ -41,7 +43,7 @@ def grid(rows: pd.DataFrame, today: date, years: int) -> dict:
     first_year = int(rows["fiscal_year"].min())
     window = range(max(first_year, last_year - years + 1), last_year + 2)
     held_annual = {int(y): g for y, g in rows[rows["fiscal_period"] == "FY"].groupby("fiscal_year")}
-    held_q = {(int(y), p): g for (y, p), g in rows[rows["fiscal_period"].isin(["Q1", "Q2", "Q3", "Q4"])].groupby(["fiscal_year", "fiscal_period"])}
+    held_q = {(int(y), p): g for (y, p), g in rows[rows["fiscal_period"].isin(["Q1", "Q2", "Q3", "Q4", "H1"])].groupby(["fiscal_year", "fiscal_period"])}
     ends = rows["period_end"]
     for y in window:
         if y in held_annual:
@@ -51,16 +53,17 @@ def grid(rows: pd.DataFrame, today: date, years: int) -> dict:
             end = ends[rows["fiscal_year"] == y].max() if (rows["fiscal_year"] == y).any() else pd.Timestamp(date(y, 12, 31))
             due = (end + timedelta(days=ANNUAL_LAG)).date() <= today
             out["annual"][str(y)] = {"state": "missing" if first_year <= y <= last_year or due and y < last_year + 1 else "notyet", "sources": []}
-        for q in ("Q1", "Q2", "Q3", "Q4"):
+        for q in ("Q1", "Q2", "Q3", "Q4", "H1"):
             key = (y, q)
             if key in held_q:
                 g = held_q[key]
                 derived = bool(g["provider_record_id"].astype(str).str.endswith("#Q4").any()) if q == "Q4" else False
                 out["quarters"][f"{y}{q}"] = {"state": "derived" if derived else "held", "sources": sorted(set(g["provider"])), "estimated": bool((g["pit_quality"] == "estimated").any())}
             else:
-                approx = pd.Timestamp(date(y, 3 * int(q[1]), 28))
-                due = (approx + timedelta(days=QUARTER_LAG)).date() <= today
-                out["quarters"][f"{y}{q}"] = {"state": "missing" if (first_year <= y <= last_year and due) else "notyet", "sources": []}
+                month = 3 * int(q[1]) if q[0] == "Q" else 6
+                due = (pd.Timestamp(date(y, month, 28)) + timedelta(days=QUARTER_LAG)).date() <= today
+                wanted = q in cal.expected_periods(country, y)                                     # a country's companies are not expected to file every kind of period
+                out["quarters"][f"{y}{q}"] = {"state": "missing" if (wanted and first_year <= y <= last_year and due) else ("na" if not wanted else "notyet"), "sources": []}
     out["sources"] = dict(Counter(rows["provider"]))
     return out
 
@@ -75,14 +78,15 @@ def overview(store, importer, years: int = 12, today: date | None = None) -> dic
     counts_by_provider: Counter = Counter()
     if not frame.empty:
         for sid, rows in frame.groupby("security_id"):
-            g = grid(rows, today, years)
             sec = secs[secs["security_id"] == sid]
+            country = None if sec.empty else sec.iloc[0]["country"]
+            g = grid(rows, today, years, country)
             ann = [c for c in g["annual"].values() if c["state"] in ("held", "missing")]
             qs = [c for c in g["quarters"].values() if c["state"] in ("held", "derived", "missing")]
             a_held, a_missing = sum(c["state"] == "held" for c in ann), sum(c["state"] == "missing" for c in ann)
             q_held, q_missing = sum(c["state"] in ("held", "derived") for c in qs), sum(c["state"] == "missing" for c in qs)
             companies.append({"security_id": int(sid), "ticker": None if sec.empty else sec.iloc[0]["ticker"], "name": None if sec.empty else sec.iloc[0]["company_name"],
-                              "country": None if sec.empty else sec.iloc[0]["country"], "annual": g["annual"], "quarters": g["quarters"], "annual_held": a_held, "annual_missing": a_missing, "quarter_held": q_held,
+                              "country": country, "expected": list(cal.expected_periods(country)), "standard": cal.expected(country)["standard"], "annual": g["annual"], "quarters": g["quarters"], "annual_held": a_held, "annual_missing": a_missing, "quarter_held": q_held,
                               "quarter_missing": q_missing, "completeness": (a_held + q_held) / max(a_held + a_missing + q_held + q_missing, 1), "sources": g["sources"],
                               "estimated": sum(1 for c in list(g["annual"].values()) + list(g["quarters"].values()) if c.get("estimated"))})
             totals["annual_held"] += a_held
@@ -116,8 +120,9 @@ def companies_with_gaps(store, periods=("annual", "quarter"), today: date | None
     if frame.empty:
         return []
     out = []
+    secs = store.securities().set_index("security_id")["country"].to_dict()
     for sid, rows in frame.groupby("security_id"):
-        g = grid(rows, today, 30)
+        g = grid(rows, today, 30, secs.get(int(sid)))
         if any(c["state"] == "missing" for c in g["annual"].values()) or ("quarter" in periods and any(c["state"] == "missing" for c in g["quarters"].values())):
             out.append(int(sid))
     return out

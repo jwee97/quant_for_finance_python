@@ -22,7 +22,7 @@
   const LEVEL = { error: ["✗", "tone-crit"], warning: ["!", "tone-warn"], info: ["i", "hint"] };
   const UNITS = [["units", "single units"], ["thousands", "thousands"], ["millions", "millions"], ["billions", "billions"]];
 
-  IM.s = { batch: null, ticker: "", sid: null, label: "", urls: "", found: null, filings: null, picked: new Set(), item: null, itemData: null, batchData: null, history: null, notice: "", progress: "", busyUpload: false, decision: "", restated_on: "" };
+  IM.s = { connectors: null, conn: null, connId: "", foundConn: null, pickedConn: new Set(), batch: null, ticker: "", sid: null, label: "", urls: "", found: null, filings: null, picked: new Set(), item: null, itemData: null, batchData: null, history: null, notice: "", progress: "", busyUpload: false, decision: "", restated_on: "" };
   FD.views.resetImport = () => { IM.s.batch = null; IM.s.item = null; IM.s.itemData = null; IM.s.batchData = null; };
   const s = IM.s;
 
@@ -63,7 +63,7 @@
   }
 
   /* ---------- the panel ---------- */
-  IM.check = () => (FD.db !== "real" ? "Report import is for real data: switch to Real data (the demo database is simulated)." : (!s.batch ? "Add at least one report first." : ""));
+  IM.check = () => (FD.db !== "real" ? "Report import is for real data: switch to Real data (the demo database is simulated)." : "");
   IM.sections = (panel) => {
     const a = FD.sec(panel, "1. The company");
     const row = h("div", "row tight", a), inp = h("input", "", row); inp.placeholder = "ticker, e.g. AAPL"; inp.value = s.ticker; inp.dataset.key = "import-ticker"; inp.setAttribute("aria-label", "Ticker");
@@ -101,6 +101,30 @@
       try { s.found = await FD.send("/api/fund/import/filings", { symbol: s.ticker || undefined, security_id: s.sid || undefined, limit: 60 }); s.picked = new Set(); Q.renderLab(FD); } catch (e) { Q.toast(e.message); }
     });
     h("p", "hint", c, "Each filing's own XBRL is the most exact source there is. Filings before a company's first XBRL one (2009 to 2011) have no tagged numbers.");
+    const d = FD.sec(panel, "4. A country's regulator", false), pick = h("select", "", h("label", "f", d, "Source")), what = h("p", "hint", d, "Loading the sources…"), idRow = h("input", "", h("label", "f", d, "Company identifier"));
+    pick.dataset.role = "import-connector"; pick.setAttribute("aria-label", "source"); idRow.dataset.role = "import-connector-id"; idRow.value = s.connId || "";
+    idRow.addEventListener("input", () => { s.connId = idRow.value.trim(); });
+    const since = h("input", "", h("label", "f", d, "From")), until = h("input", "", h("label", "f", d, "To")); since.type = until.type = "date"; since.dataset.role = "import-since"; since.setAttribute("aria-label", "from"); until.setAttribute("aria-label", "to");
+    const ID_HELP = { edinet: "securities code, e.g. 7203", dart: "six-digit stock code, e.g. 005930", cvm: "CVM code or CNPJ", esef: "LEI (20 characters)", sec_edgar: "ticker, e.g. AAPL" };
+    const paint = () => {
+      const c = (s.connectors || []).find((x) => x.name === pick.value); if (!c) return;
+      s.conn = c.name; idRow.placeholder = ID_HELP[c.name] || "(not used: links and files only)";
+      what.textContent = `${c.discovery === "api" ? "Official API" : c.discovery === "open_data" ? "Open data" : "Links and files only"} · ${c.countries.join(", ")} · ${c.formats.join(", ")}. ${c.available ? "" : c.reason + ". "}${c.note}`;
+    };
+    FD.read("/api/fund/connectors").then((r) => {
+      s.connectors = r.connectors; pick.replaceChildren();
+      for (const c of r.connectors) { const o = h("option", "", pick, `${c.label}${c.available ? "" : " (needs a key)"}`); o.value = c.name; if (c.name === s.conn) o.selected = true; }
+      paint();
+    }).catch((e) => { what.textContent = e.message; });
+    pick.addEventListener("change", paint);
+    const list = h("button", "btn small", d, "List its filings"); list.type = "button"; list.dataset.action = "import-connector-list";
+    list.addEventListener("click", () => FD.act("import", "Asking the source…", async (run) => {
+      const c = (s.connectors || []).find((x) => x.name === pick.value); if (!c) throw new Error("Choose a source");
+      const idf = { edinet: "sec_code", dart: "stock_code", cvm: "cd_cvm", esef: "lei", sec_edgar: "ticker" }[c.name];
+      const company = idf ? { [idf]: s.connId || s.ticker } : { ticker: s.connId || s.ticker };
+      const { result } = await run.job("/api/fund/connectors/search", { connector: c.name, company, since: since.value || undefined, until: until.value || undefined, limit: 80 }, "Listing the filings");
+      s.foundConn = result; s.pickedConn = new Set(); return { kind: "batch" };
+    }));
     const msg = h("p", "hint", panel, s.progress || s.notice); msg.dataset.role = "import-notice"; msg.setAttribute("role", "status"); msg.style.padding = "0 16px";
   };
 
@@ -118,6 +142,7 @@
     const d = s.batchData;
     Q.labHead(root, "Report import", d ? `batch ${d.batch_id}${d.label ? " · " + d.label : ""}` : "no batch yet");
     if (s.found) filingsCard(root);
+    if (s.foundConn) connectorCard(root);
     if (!d || !d.items.length) {
       const c = h("div", "card empty", root); h("h2", "", c, "Bring a company's reports into the database");
       for (const t of ["Add files or links on the left. Each report is read into a draft: a filing's own XBRL exactly as tagged, a table from the columns and rows, a PDF from the words on its pages (the least reliable: it always asks you to check it).",
@@ -138,6 +163,24 @@
     histCard(root);
   };
   async function openItem(id) { try { s.item = id; s.itemData = await FD.read("/api/fund/import/item", { id }); } catch (e) { Q.toast(e.message); } Q.renderLab(FD); }
+
+  /* ---------- a country source's filing list ---------- */
+  function connectorCard(root) {
+    const f = s.foundConn, c = f.connector, card = W.card(root, `${c.label}: filings`, f.note || ""); card.dataset.role = "import-connector-filings";
+    if (!f.filings.length) { h("p", "hint", card, c.discovery === "links_only" ? "Nothing is listed: this source has no interface for programs. Download the reports and upload them, or paste their links on the left." : "No filing matched."); return; }
+    const rows = f.filings;
+    table(card, [{ label: "", get: () => "" }, { label: "Kind", get: (r) => r.fiscal_period || "" }, { label: "Period end", get: (r) => r.period_end || "" }, { label: "Filed", get: (r) => (r.filed_at || "").slice(0, 10) }, { label: "Format", get: (r) => r.format },
+      { label: "Report", get: (r) => (r.title || r.doc_id) + (r.correction ? " (correction)" : "") }], rows);
+    [...card.querySelectorAll("tbody tr")].forEach((tr, i) => { const r = rows[i], cb = h("input", "", tr.firstElementChild); cb.type = "checkbox"; cb.checked = s.pickedConn.has(r.doc_id); cb.setAttribute("aria-label", `choose ${r.title || r.doc_id}`);
+      cb.addEventListener("change", () => { if (cb.checked) s.pickedConn.add(r.doc_id); else s.pickedConn.delete(r.doc_id); }); });
+    if (f.next_since) h("p", "hint", card, `The source lists by day: the scan stopped at ${f.next_since}. Set “From” to that date and list again to carry on.`);
+    const row = h("div", "row tight", card), go = h("button", "btn primary small", row, "Get the chosen filings"); go.type = "button"; go.dataset.action = "import-connector-fetch";
+    go.addEventListener("click", () => FD.act("import", "Getting the filings…", async (run) => {
+      const chosen = rows.filter((r) => s.pickedConn.has(r.doc_id)); if (!chosen.length) throw new Error("Choose at least one filing");
+      const batch = await ensureBatch(), { result } = await run.job("/api/fund/connectors/fetch", { batch_id: batch, connector: c.name, refs: chosen }, "Getting the filings");
+      s.notice = `${result.added} added${result.failed.length ? `; ${result.failed.length} failed: ${result.failed.map((x) => x.error).slice(0, 2).join("; ")}` : ""}.`; s.pickedConn = new Set(); await refreshBatch(); return { kind: "batch" };
+    }));
+  }
 
   /* ---------- the SEC's filing list ---------- */
   function filingsCard(root) {
@@ -282,11 +325,11 @@
     tile(k, "Dates assumed", String(p.estimated_availability), { text: "periods with no filing date: availability is estimated" }, p.estimated_availability ? "" : "muted");
     if (!data.companies.length) { FD.emptyCard(root, "Nothing is held yet", ["Add companies in the Data manager, or import a report."]); return; }
     const annual = CV.s.view === "annual";
-    const cols = annual ? [...new Set(data.companies.flatMap((c) => Object.keys(c.annual)))].sort() : [...new Set(data.companies.flatMap((c) => Object.keys(c.quarters)))].sort().slice(-24);
-    const shown = data.companies.slice(0, 60), VAL = { held: 1, derived: 0.5, missing: -1, notyet: null };
-    const card = W.card(root, annual ? "Fiscal years by company" : "Fiscal quarters by company (the latest six years)", `${shown.length < data.companies.length ? `The ${shown.length} least complete of ${data.companies.length} companies. ` : ""}Click a company to fill its gaps.`); card.dataset.role = "coverage-grid";
+    const cols = annual ? [...new Set(data.companies.flatMap((c) => Object.keys(c.annual)))].sort() : [...new Set(data.companies.flatMap((c) => Object.keys(c.quarters)))].sort().slice(-30);
+    const shown = data.companies.slice(0, 60), VAL = { held: 1, derived: 0.5, missing: -1, notyet: null, na: null };
+    const card = W.card(root, annual ? "Fiscal years by company" : "Fiscal quarters and half-years by company (the latest six years)", `${shown.length < data.companies.length ? `The ${shown.length} least complete of ${data.companies.length} companies. ` : ""}Click a company to fill its gaps.`); card.dataset.role = "coverage-grid";
     const body = h("div", "", card);
-    C.matrix(body, { rows: shown.map((c) => `${c.ticker || c.security_id} · ${pct(c.completeness, 0)}`), cols: cols.map((x) => (annual ? x : x.replace(/^(\d{4})(Q\d)$/, "$2 $1"))), values: shown.map((c) => cols.map((x) => { const cell = (annual ? c.annual : c.quarters)[x]; return cell ? VAL[cell.state] ?? null : null; })),
+    C.matrix(body, { rows: shown.map((c) => `${c.ticker || c.security_id} · ${pct(c.completeness, 0)}`), cols: cols.map((x) => (annual ? x : x.replace(/^(\d{4})([QH]\d)$/, "$2 $1"))), values: shown.map((c) => cols.map((x) => { const cell = (annual ? c.annual : c.quarters)[x]; return cell ? VAL[cell.state] ?? null : null; })),
       diverging: true, mid: 0, min: -1, max: 1, format: (v) => (v === 1 ? "held" : v === 0.5 ? "derived" : v === -1 ? "missing" : ""), name: "State", cellHeight: 22, label: annual ? "Annual statements held and missing by company" : "Quarterly statements held and missing by company" });
     const src = W.card(root, "Where the figures come from", "Periods held by source (a company can have more than one).");
     C.hbars(h("div", "", src), { rows: data.sources.map((x) => ({ label: `${x.provider} (${x.companies} companies)`, value: x.periods })), format: (v) => String(Math.round(v)), name: "Periods", label: "Periods held by source", labelWidth: 200, color: () => css("--s1") });

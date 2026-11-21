@@ -9,10 +9,15 @@ from __future__ import annotations
 
 import base64
 import binascii
+import re
 import threading
 import time
 
 from ..fundamentals.errors import FundamentalsError
+from ..fundamentals import pitstore
+from ..fundamentals.filings import calendar as country_calendar
+from ..fundamentals.filings import registry as connector_registry
+from ..fundamentals.filings.base import FilingRef
 from ..fundamentals.importer import coverage_overview as overview_module
 from ..fundamentals.importer.fetch import Fetcher
 from ..fundamentals.importer.pipeline import MAX_FILE, ImportService
@@ -30,12 +35,13 @@ class ImportRoutes:
 
     def import_get_routes(self) -> dict:
         return {"/api/fund/import/history": self.import_history, "/api/fund/import/batch": self.import_batch, "/api/fund/import/item": self.import_item, "/api/fund/import/provenance": self.import_provenance,
-                "/api/fund/coverage/overview": self.coverage_overview}
+                "/api/fund/coverage/overview": self.coverage_overview, "/api/fund/connectors": self.connectors, "/api/fund/pit/asof": self.pit_asof}
 
     def import_post_routes(self) -> dict:
         return {"/api/fund/import/create": self.import_create, "/api/fund/import/chunk": self.import_chunk, "/api/fund/import/urls": self.import_urls, "/api/fund/import/process": self.import_process,
                 "/api/fund/import/review": self.import_review, "/api/fund/import/approve": self.import_approve, "/api/fund/import/reject": self.import_reject, "/api/fund/import/filings": self.import_filings,
-                "/api/fund/import/filings/add": self.import_filings_add, "/api/fund/coverage/backfill": self.coverage_backfill}
+                "/api/fund/import/filings/add": self.import_filings_add, "/api/fund/coverage/backfill": self.coverage_backfill, "/api/fund/connectors/search": self.connectors_search, "/api/fund/connectors/fetch": self.connectors_fetch,
+                "/api/fund/pit/export": self.pit_export}
 
     # ------------------------------------------------------------------------------------------------------------ plumbing
     def _importer(self) -> ImportService:
@@ -244,3 +250,85 @@ class ImportRoutes:
         def work(progress, stop):
             return wb.service.sync("sec_edgar", security_ids=ids, periods=periods, start_year=None, progress=progress, stop=stop)
         return self._job("fundamentals: backfill from SEC EDGAR", work, stoppable=True, lane="data")
+
+    # ------------------------------------------------------------------------------------------------------------ country connectors
+    def _connector(self, name):
+        import os
+        return self._guard(connector_registry.make, str(name or ""), self._importer().fetcher, os.environ)
+
+    def connectors(self, q: dict | None = None) -> dict:
+        """``GET /api/fund/connectors``: every country connector with what it permits (an API with a key, open data, or links only), whether it is usable now and why not, and each country's expected reporting periods."""
+        import os
+        return {"connectors": connector_registry.describe(None, os.environ), "calendar": {c: {"periods": list(v["periods"]), "standard": v["standard"], "currency": v["currency"], "note": v["note"]} for c, v in country_calendar.CALENDAR.items()}}
+
+    def connectors_search(self, body: dict) -> dict:
+        """``POST /api/fund/connectors/search {connector, company, since?, until?, kinds?, limit?} (a job)``: the company's filings at that source. A source that restricts automated collection answers with an explanation and no list."""
+        conn = self._connector(body.get("connector"))
+        company = body.get("company")
+        if not isinstance(company, dict):
+            raise ApiError("company must be a dictionary of identifiers (ticker, sec_code, corp_code, cd_cvm, lei...)")
+        kinds = body.get("kinds")
+        if kinds is not None and (not isinstance(kinds, list) or not all(isinstance(k, str) for k in kinds)):
+            raise ApiError("kinds must be a list such as [\"FY\", \"Q1\"]")
+        limit = self._limit(body)
+
+        def work(progress, stop):
+            progress(f"asking {conn.label}")
+            out = conn.list_filings(company, body.get("since") or None, body.get("until") or None, kinds, limit)
+            return {**out, "filings": [f.as_dict() for f in out["filings"]], "connector": conn.describe()}
+        return self._job(f"fundamentals: list filings at {conn.label}", work, lane="data")
+
+    def connectors_fetch(self, body: dict) -> dict:
+        """``POST /api/fund/connectors/fetch {batch_id, connector, refs} (a job)``: get the chosen filings into a batch: structured drafts as they are, documents for the readers."""
+        conn = self._connector(body.get("connector"))
+        refs = body.get("refs")
+        if not isinstance(refs, list) or not refs or len(refs) > 40:
+            raise ApiError("refs must be a list of 1 to 40 filings from the filing list")
+        svc, batch = self._importer(), str(body.get("batch_id") or "")
+        self._guard(svc.batch, batch)
+        known = set(FilingRef.__dataclass_fields__)
+        built = []
+        for r in refs:
+            if not isinstance(r, dict):
+                raise ApiError("each filing must be a dictionary")
+            ref = FilingRef(**{k: v for k, v in r.items() if k in known})
+            if not re.fullmatch(r"[A-Za-z0-9_\-]{1,80}", str(ref.doc_id or "")):
+                raise ApiError("a filing's doc_id may hold only letters, digits, underscore and hyphen")
+            if ref.url and conn.hosts and not conn.on_host(ref.url):
+                raise ApiError(f"a link for {conn.label} must be on its own site ({', '.join(conn.hosts)})")
+            built.append(ref)
+
+        def work(progress, stop):
+            added, failed = 0, []
+            for n, ref in enumerate(built):
+                if stop is not None and stop.is_set():
+                    break
+                progress(f"getting filing {n + 1} of {len(built)}")
+                try:
+                    added += len(svc.add_from_connector(batch, conn, ref))
+                except FundamentalsError as error:
+                    failed.append({"doc_id": ref.doc_id, "error": str(error)})
+            return {"added": added, "failed": failed, "batch_id": batch}
+        return self._job(f"fundamentals: get filings from {conn.label}", work, stoppable=True, lane="data")
+
+    # ------------------------------------------------------------------------------------------------------------ the point-in-time store
+    def _pit_dir(self):
+        return self.app.root / "data" / "user" / "pit"
+
+    def pit_export(self, body: dict) -> dict:
+        """``POST /api/fund/pit/export (a job)``: write the database's point-in-time table to Parquet (by country and fiscal year) with a manifest."""
+        wb = self.bench("real")
+        return self._job("fundamentals: export the point-in-time store", lambda progress, stop: self._guard(pitstore.export, wb.store, self._pit_dir()), lane="compute")
+
+    def pit_asof(self, q: dict) -> dict:
+        """``GET /api/fund/pit/asof?day=&security_id=&metrics=&countries=``: the figures that were public on a day (the latest vintage by then), from the exported store."""
+        q = q or {}
+        day = str(q.get("day") or "")
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", day):
+            raise ApiError("day must be a date such as 2024-03-31")
+        ids = [int(x) for x in str(q.get("security_id") or "").split(",") if x.strip().isdigit()] or None
+        metrics = [m for m in str(q.get("metrics") or "").split(",") if m.strip()] or None
+        countries = [c.strip().upper() for c in str(q.get("countries") or "").split(",") if c.strip()] or None
+        store = self._guard(pitstore.PitStore, self._pit_dir())
+        df = self._guard(store.as_of, day, ids, metrics, countries)
+        return {"day": day, "rows": len(df), "manifest": store.manifest, "figures": df.head(5000).astype(object).where(df.head(5000).notna(), None).to_dict("records")}

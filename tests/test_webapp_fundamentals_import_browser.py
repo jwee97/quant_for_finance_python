@@ -80,7 +80,7 @@ def test_the_coverage_grid_shows_held_and_missing_years_and_quarters_and_the_pro
         assert page.locator("button[data-action=coverage-backfill-one]").count() >= 1 and page.locator("button[data-action=coverage-backfill]").count() == 1
         page.locator("[data-role=coverage-view] button", has_text="Quarterly").click()
         page.wait_for_selector("[data-role=coverage-grid] .ec-chart")
-        assert "Fiscal quarters by company" in page.inner_text("[data-role=coverage-grid]")
+        assert "Fiscal quarters and half-years by company" in page.inner_text("[data-role=coverage-grid]")
     finally:
         page.close()
 
@@ -92,5 +92,27 @@ def test_both_views_fit_a_phone(browser, live_real):  # noqa: F811
             _open(page, mode)
             page.wait_for_timeout(1200)
             assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1"), mode
+    finally:
+        page.close()
+
+
+def test_a_country_source_is_listed_with_what_it_permits_and_a_links_only_source_lists_nothing(browser, live_real):  # noqa: F811
+    page = _page(browser, live_real)
+    try:
+        page.click("#tab-fundamentals")
+        page.wait_for_selector("#fundamentals .panel")
+        page.click("#fundamentals .labtop button[data-mode=import]")
+        page.evaluate("document.querySelectorAll('#fundamentals details').forEach(d => d.open = true)")
+        page.wait_for_selector("select[data-role=import-connector] option", state="attached")
+        names = page.eval_on_selector_all("select[data-role=import-connector] option", "els => els.map(e => e.textContent)")
+        assert any("EDINET" in n and "needs a key" in n for n in names) and any("CVM" in n and "needs a key" not in n for n in names) and any("HKEXnews" in n for n in names)
+        page.evaluate("document.querySelectorAll('#fundamentals details').forEach(d => d.open = true)")
+        page.select_option("select[data-role=import-connector]", "hkex")
+        assert "Links and files only" in page.inner_text("#fundamentals .panel")
+        page.click("button[data-action=import-connector-list]")
+        page.wait_for_selector("[data-role=import-connector-filings]", timeout=30_000)
+        assert "no interface for programs" in page.inner_text("[data-role=import-connector-filings]")
+        page.select_option("select[data-role=import-connector]", "edinet")
+        assert "EDINET_API_KEY" in page.inner_text("#fundamentals .panel")
     finally:
         page.close()
