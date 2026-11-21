@@ -64,10 +64,31 @@ def _hash(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+HARD_BLOCKS = ("check_failed", "unit_mismatch", "period_unresolved", "currency_unknown")      # findings that stop an approval until fixed or explicitly overridden with a note
+LIFECYCLE = {"queued": "UPLOADED", "failed": "FAILED", "rejected": "REJECTED", "approved": "APPROVED", "saved": "COMMITTED", "duplicate": "REJECTED"}
+
+
+def lifecycle(status: str, draft: dict | None) -> str:
+    """The import lifecycle state of an item: UPLOADED, EXTRACTING, EXTRACTED, VALIDATING, VALIDATED, REVIEW_REQUIRED, APPROVED, COMMITTED, FAILED, REJECTED. Extraction, validation, approval and the
+    database commit are separate states: a draft that was read is EXTRACTED; one whose checks passed is VALIDATED; one that needs a person is REVIEW_REQUIRED."""
+    if status in LIFECYCLE:
+        return LIFECYCLE[status]
+    v = (draft or {}).get("validation")
+    if v is None:
+        return "REVIEW_REQUIRED" if status == "needs_review" else "EXTRACTED"
+    return "VALIDATED" if v.get("status") == "VALIDATED" and status != "needs_review" else "REVIEW_REQUIRED"
+
+
 def _unverified(p: dict) -> dict:
     """The lines whose reading is below the confidence threshold and that no person has confirmed or typed: they are stored flagged ``unverified``, which research excludes."""
-    return {code: "unverified" for code, s in (p.get("sources") or {}).items()
-            if s.get("confidence") is not None and s["confidence"] < checks_module.LOW_CONFIDENCE and not s.get("verified") and not s.get("edited") and code in p["values"]}
+    out = {}
+    for code, s in (p.get("sources") or {}).items():
+        if code not in p["values"] or s.get("verified") or s.get("edited"):
+            continue
+        failed = any(c.get("status") == "FAIL" for c in (s.get("checks") or []))                          # a line in a failed reconciliation is not released to research on the strength of an approval alone
+        if (s.get("confidence") is not None and s["confidence"] < checks_module.LOW_CONFIDENCE) or failed:
+            out[code] = "unverified"
+    return out
 
 
 def _diff(old: dict | None, new: dict) -> dict:
@@ -214,6 +235,7 @@ class ImportService:
         r = dict(zip(cols, row))
         for k in ("draft", "issues", "reviewed", "saved_periods", "hint"):
             r[k] = json.loads(r[k]) if r.get(k) else None
+        r["lifecycle"] = lifecycle(r["status"], r["reviewed"] or r["draft"])
         if not full:
             for k in ("draft", "reviewed"):
                 if r[k]:
@@ -461,9 +483,17 @@ class ImportService:
             issues.append({"level": "info", "message": f"Arelle agrees with every fact this reader found, and reports {ar.get('validation_errors')} validation error(s) about the filing itself (for example an inconsistent calculation in the filer's tagging): the figures are as filed.", "period": None, "field": None, "kind": "arelle"})
         if draft.get("review_required"):
             issues.append({"level": "warning", "message": "read from the text of a PDF: check every figure against the page before approving.", "period": None, "field": None, "kind": "pdf_review"})
+        self._revalidate(draft)
+        overridden = set((draft.get("overrides") or {}).get("kinds") or [])
         for c in draft.get("checks") or []:
-            if c["status"] in ("fail", "warn"):
+            if c["status"] == "FAIL":
                 issues.append({"level": "warning", "message": f"{c['label']}: {c['detail']}", "period": c.get("period"), "field": (c.get("lines") or [None])[0], "kind": "recon"})
+        for r in (draft.get("validation") or {}).get("reasons", []):
+            hard = r["kind"] in HARD_BLOCKS
+            if hard and r["kind"] in overridden:
+                issues.append({"level": "info", "message": f"overridden by the reviewer ({(draft.get('overrides') or {}).get('note', '')}): {r['message']}", "period": None, "field": None, "kind": "override"})
+            else:
+                issues.append({"level": "error" if hard else "warning", "message": r["message"], "period": None, "field": None, "kind": "validation:" + r["kind"]})
         low = [(p, code) for p in draft["periods"] for code in _unverified(p)]
         if low:
             issues.append({"level": "warning", "message": f"{len(low)} figure(s) were read with low confidence (below {checks_module.LOW_CONFIDENCE:.0%}); approved, they are stored as unverified and kept out of research until you confirm them against the page (tick Confirmed on the line) or correct them.",
@@ -471,6 +501,73 @@ class ImportService:
         for f in draft.get("fallbacks") or []:
             issues.append({"level": "info", "message": f"fallback used: {f['step']} ({f['reason']})", "period": None, "field": None, "kind": "fallback"})
         return issues
+
+    @staticmethod
+    def _candidate_value(draft: dict, c: dict) -> float:
+        """A candidate's raw figure in the draft's unit (its own column's unit converted; per-share figures and share counts are not scaled)."""
+        factors = {"units": 1.0, "thousands": 1e3, "millions": 1e6, "billions": 1e9}
+        if c["metric"] in ("eps_basic", "eps_diluted", "shares_outstanding", "weighted_avg_shares_diluted"):
+            return float(c["raw_value"])
+        return float(c["raw_value"]) * factors.get(c.get("unit") or "units", 1.0) / factors[draft["units"]["money"]]
+
+    @staticmethod
+    def _put(draft: dict, period_end: str, code: str, value: float, why: str, source: dict) -> bool:
+        for p in draft["periods"]:
+            if p["period_end"] == period_end:
+                p["values"][code] = value
+                src = p.setdefault("sources", {}).setdefault(code, {"tag": None, "unit": draft["units"]["money"]})
+                src.update(source)
+                src.update({"edited": True, "method": "manual-edit", "edit_note": why})
+                return True
+        return False
+
+    def _apply_selection(self, draft: dict, sel: dict) -> None:
+        """A person chooses between competing candidates for a line: ``{"candidate": index into draft["candidates"]}``. The chosen figure becomes the line's value, marked as a person's choice."""
+        cands = draft.get("candidates") or []
+        i = sel.get("candidate")
+        if not isinstance(i, int) or not 0 <= i < len(cands):
+            raise FundamentalsError("select: candidate is the index of a candidate of this draft")
+        c = cands[i]
+        rivals = sum(1 for x in cands if x["metric"] == c["metric"] and x["period_end"] == c["period_end"])
+        value = self._candidate_value(draft, c)
+        ok = self._put(draft, c["period_end"], c["metric"], value, f"chosen by a person among {rivals} candidates",
+                       {"page": c.get("page"), "table": c.get("table_id"), "row": c.get("row"), "col": c.get("col"), "label": c.get("label"), "statement": c.get("statement"), "reported": float(c["raw_value"])})
+        if not ok:
+            raise FundamentalsError("select: the draft has no period ending " + str(c.get("period_end")))
+        draft.setdefault("corrections", []).append({"kind": "candidate_selected", "metric": c["metric"], "period_end": c["period_end"], "candidate": i, "value": value, "at": now_iso()})
+
+    def _apply_remap(self, draft: dict, remap: dict) -> None:
+        """A person says what a row of a table is: ``{"table", "row", "metric"}``. The figures of that row in its reported-period columns become that metric's values; the metric the row was read as
+        before loses them."""
+        code = remap.get("metric")
+        if code not in manual.canonical.METRICS:
+            raise FundamentalsError(f"remap: {code} is not a line this application knows")
+        rows = [c for c in draft.get("candidates") or [] if c["table_id"] == remap.get("table") and c["row"] == remap.get("row") and c["column_role"] in ("CURRENT_PERIOD", "PRIOR_PERIOD", "HISTORICAL_PERIOD") and c["period_end"]]
+        if not rows:
+            raise FundamentalsError("remap: no figures of that row were read in a reported-period column")
+        for c in rows:
+            for p in draft["periods"]:
+                src = p.get("sources", {}).get(c["metric"], {})
+                if p["period_end"] == c["period_end"] and c["metric"] in p["values"] and src.get("row") == c["row"] and src.get("table") == c["table_id"]:
+                    p["values"].pop(c["metric"])
+                    p["sources"].pop(c["metric"], None)
+            self._put(draft, c["period_end"], code, self._candidate_value(draft, {**c, "metric": code}), "remapped by a person",
+                      {"page": c.get("page"), "table": c.get("table_id"), "row": c.get("row"), "col": c.get("col"), "label": c.get("label"), "statement": c.get("statement"), "reported": float(c["raw_value"])})
+        draft.setdefault("corrections", []).append({"kind": "remap", "table": remap.get("table"), "row": remap.get("row"), "metric": code, "at": now_iso()})
+
+    def candidates(self, item_id: int, metric: str | None = None) -> list[dict]:
+        """The candidates of an item, each with its rank evidence and, for a rejected one, the reason."""
+        it = self.item(item_id, full=True)
+        draft = it["reviewed"] or it["draft"] or {}
+        return [{**c, "index": i} for i, c in enumerate(draft.get("candidates") or []) if metric is None or c["metric"] == metric]
+
+    def _revalidate(self, draft: dict) -> None:
+        """Run the checks and the verdict again on a draft of the layout engine (after a correction, a selection or a remap)."""
+        if draft.get("statements") is None:
+            return
+        draft["checks"] = checks_module.run(draft, draft.get("cross_values"), draft.get("conflicts_between_candidates"))
+        draft["confidence"] = checks_module.confidence_summary(draft)
+        draft["validation"] = checks_module.validation(draft)
 
     # ------------------------------------------------------------------------------------------------------------ review
     def review(self, item_id: int, edits: dict) -> dict:
@@ -523,6 +620,22 @@ class ImportService:
             draft["periods"] = keep
             if not keep:
                 raise FundamentalsError("every period was dropped: reject the item instead")
+        if edits.get("confirm_periods"):                                                                # a person confirms the dates the importer had to infer
+            for p in draft["periods"]:
+                p["guessed"] = False
+            draft.setdefault("corrections", []).append({"kind": "periods_confirmed", "at": now_iso()})
+        if edits.get("override") is not None:
+            ov = edits["override"] or {}
+            kinds = [k for k in (ov.get("kinds") or []) if k in HARD_BLOCKS]
+            note = str(ov.get("note") or "").strip()
+            if kinds and len(note) < 8:
+                raise FundamentalsError("an override needs a note of at least a few words saying why the finding is acceptable")
+            draft["overrides"] = {"kinds": kinds, "note": note[:300], "at": now_iso()} if kinds else None
+            draft.setdefault("corrections", []).append({"kind": "override", "kinds": kinds, "note": note[:300], "at": now_iso()})
+        for sel in edits.get("select") or []:
+            self._apply_selection(draft, sel)
+        if edits.get("remap"):
+            self._apply_remap(draft, edits["remap"])
         verify = edits.get("verify")
         if verify:
             for p in draft["periods"]:
@@ -604,12 +717,18 @@ class ImportService:
                     s = (src.get("sources") or {}).get(code, {})
                     v = draft.get("versions") or {}
                     verified = bool(s.get("verified") or s.get("edited") or s.get("confidence") is None or s["confidence"] >= checks_module.LOW_CONFIDENCE)
+                    ov = draft.get("overrides") or {}
+                    failed = any(ch.get("status") == "FAIL" for ch in (s.get("checks") or []))
+                    vstatus = "OVERRIDDEN" if failed and ov.get("kinds") else "FAIL" if failed else "PASS" if any(ch.get("status") == "PASS" for ch in (s.get("checks") or [])) else "UNCONFIRMED"
                     c.execute("INSERT OR REPLACE INTO observation_provenance (financial_period_id, metric_code, source_kind, source_ref, content_hash, accession, page, taxonomy_tag, reported_value, reported_unit, "
-                              "extraction_method, extraction_status, edited, import_item_id, created_at, confidence, statement, scope, extractor_version, mapping_version, original_currency, bbox, verified) "
-                              "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                              "extraction_method, extraction_status, edited, import_item_id, created_at, confidence, statement, scope, extractor_version, mapping_version, original_currency, bbox, verified, "
+                              "currency, unit_multiplier, raw_value_text, normalized_value_text, period_start, period_type, table_ref, row_ref, col_ref, column_role, validation_status, override_note) "
+                              "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                               (pid, code, it["source_kind"], it["source_url"] or it["source_name"], it["content_hash"], draft.get("accession"), s.get("page"), s.get("tag"), s.get("reported", value), s.get("unit"),
                                s.get("method") or draft.get("method"), "approved" if verified else "unverified", 1 if s.get("edited") else 0, it["item_id"], now_iso(), s.get("confidence"), s.get("statement"), s.get("scope"),
-                               v.get("extractor"), v.get("mapping"), s.get("original_currency") or (src.get("pre_currency") or ep.get("currency")), json.dumps(s["bbox"]) if s.get("bbox") else None, 1 if verified else 0))
+                               v.get("extractor"), v.get("mapping"), s.get("original_currency") or (src.get("pre_currency") or ep.get("currency")), json.dumps(s["bbox"]) if s.get("bbox") else None, 1 if verified else 0,
+                               s.get("currency") or ep.get("currency"), s.get("unit_multiplier"), s.get("raw_value"), s.get("normalized_value"), src.get("start_date"), src.get("period_type"), s.get("table"), s.get("row"),
+                               s.get("col"), s.get("column_role"), vstatus, ov.get("note") if vstatus == "OVERRIDDEN" else None))
                     n += 1
                 saved.append({"period": f"{ep['fiscal_period']} to {ep['period_end']}", "period_id": pid, "lines": n, "vintage": int(row["vintage"])})
         return saved

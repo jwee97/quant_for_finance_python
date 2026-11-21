@@ -727,3 +727,6 @@ table.data.review th input[type=date], table.data.review th select { display: bl
 #fundamentals span.conf.low { color: var(--warn, #b45309); border-color: var(--warn, #b45309); }
 #fundamentals span.conf.ok { color: var(--muted, #6b7280); }
 #fundamentals td input[data-role=import-confirm] { margin-left: 6px; vertical-align: middle; }
+#fundamentals .chip { display: inline-block; padding: 1px 8px; margin-right: 6px; border-radius: 10px; font-size: 12px; border: 1px solid var(--rule, #8886); color: var(--muted, #6b7280); }
+#fundamentals .chip.on { color: var(--good, #15803d); border-color: var(--good, #15803d); }
+#fundamentals .chip.on.warn { color: var(--warn, #b45309); border-color: var(--warn, #b45309); }

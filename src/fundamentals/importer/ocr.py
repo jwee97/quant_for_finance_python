@@ -100,6 +100,23 @@ def engine(name: str | None = None) -> Engine:
     return PaddleEngine() if choice == "paddleocr" else SuryaEngine()
 
 
+def pages_subset(data: bytes, language: str, eng: Engine | None, wanted: list[int]) -> dict[int, list[tuple]]:
+    """OCR of only the 1-based pages asked for (the targeted fallback never reads a whole report again for a few bad pages)."""
+    eng = eng or engine()
+    try:
+        import pymupdf as fitz
+    except ImportError:
+        import fitz
+    doc = fitz.open(stream=data, filetype="pdf")
+    out = {}
+    for n in wanted:
+        if 1 <= n <= len(doc):
+            image = doc[n - 1].get_pixmap(dpi=RENDER_DPI).tobytes("png")
+            eng.page_hint = n                                                          # real engines ignore it; a test double that reads from a known document uses it
+            out[n] = [(w[0], w[1], w[2], w[3]) for w in eng.words(image, language)]
+    return out
+
+
 def pages(data: bytes, language: str = "en", eng: Engine | None = None) -> list[list[tuple]]:
     """The words of every page of a scanned PDF, as ``(x0, y_mid, x1, text)`` with a ``conf`` kept aside in :data:`LAST_CONFIDENCE`."""
     eng = eng or engine()

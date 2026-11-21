@@ -35,7 +35,7 @@ class ImportRoutes:
 
     def import_get_routes(self) -> dict:
         return {"/api/fund/import/history": self.import_history, "/api/fund/import/batch": self.import_batch, "/api/fund/import/item": self.import_item, "/api/fund/import/provenance": self.import_provenance,
-                "/api/fund/coverage/overview": self.coverage_overview, "/api/fund/connectors": self.connectors, "/api/fund/pit/asof": self.pit_asof, "/api/fund/import/diagnostics": self.import_diagnostics, "/api/fund/import/extractions": self.import_extractions}
+                "/api/fund/coverage/overview": self.coverage_overview, "/api/fund/connectors": self.connectors, "/api/fund/pit/asof": self.pit_asof, "/api/fund/import/diagnostics": self.import_diagnostics, "/api/fund/import/extractions": self.import_extractions, "/api/fund/import/candidates": self.import_candidates}
 
     def import_post_routes(self) -> dict:
         return {"/api/fund/import/create": self.import_create, "/api/fund/import/chunk": self.import_chunk, "/api/fund/import/urls": self.import_urls, "/api/fund/import/process": self.import_process,
@@ -238,6 +238,11 @@ class ImportRoutes:
         """``GET /api/fund/import/diagnostics``: extraction success, statement coverage, reconciliation results, fallback usage, rejection reasons, correction rates, and the last benchmark run."""
         from src.fundamentals.importer import diagnostics
         return self._guard(diagnostics.report, self.bench("real").store)
+
+    def import_candidates(self, q: dict | None = None) -> dict:
+        """``GET /api/fund/import/candidates?id=&metric=``: every candidate figure found for an item (or for one line), with the evidence for it and, for a rejected one, why it lost."""
+        q = q or {}
+        return {"item_id": self._int(q, "id"), "candidates": self._guard(self._importer().candidates, self._int(q, "id"), q.get("metric") or None)}
 
     def import_extractions(self, q: dict | None = None) -> dict:
         """``GET /api/fund/import/extractions?id=``: every reading of an item with the extractor and mapping versions that made it."""

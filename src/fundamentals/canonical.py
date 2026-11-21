@@ -41,7 +41,8 @@ METRICS: dict[str, Metric] = {m.code: m for m in [
     _m("interest_expense", "Interest expense", "income", "flow", True, "Interest paid or accrued on debt."),
     _m("income_before_tax", "Income before tax", "income", "flow", False, "Profit before income tax."),
     _m("income_tax", "Income tax", "income", "flow", False, "Income tax expense."),
-    _m("net_income", "Net income", "income", "flow", False, "Profit for the period."),
+    _m("net_income", "Net income", "income", "flow", False, "Profit for the period (the consolidated total, including minority interests, when the report shows both)."),
+    _m("net_income_attributable", "Net income attributable to parent", "income", "flow", False, "Profit for the period attributable to the owners of the parent, after minority interests. Never the same line as net income."),
     _m("eps_basic", "EPS (basic)", "income", "per_share", False, "Net income per basic share."),
     _m("eps_diluted", "EPS (diluted)", "income", "per_share", False, "Net income per diluted share."),
     # balance sheet (stocks)
@@ -155,6 +156,7 @@ SEC_MAP: dict[str, list[tuple[str, str]]] = {
                                "IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments") + [(SEC_PRETAX, "as_is")] + _ifrs("ProfitLossBeforeTax"),
     "income_tax": _gaap("IncomeTaxExpenseBenefit", "IncomeTaxExpenseBenefitContinuingOperations") + _ifrs("IncomeTaxExpenseContinuingOperations"),
     "net_income": _gaap("NetIncomeLoss", "ProfitLoss", "NetIncomeLossAvailableToCommonStockholdersBasic") + _ifrs("ProfitLossAttributableToOwnersOfParent", "ProfitLoss"),
+    "net_income_attributable": _gaap("NetIncomeLoss") + _ifrs("ProfitLossAttributableToOwnersOfParent"),
     "eps_basic": _gaap("EarningsPerShareBasic", "EarningsPerShareBasicAndDiluted", "IncomeLossFromContinuingOperationsPerBasicShare", "IncomeLossFromContinuingOperationsPerBasicAndDilutedShare")
                  + _ifrs("BasicEarningsLossPerShare"),
     "eps_diluted": _gaap("EarningsPerShareDiluted", "EarningsPerShareBasicAndDiluted", "IncomeLossFromContinuingOperationsPerDilutedShare", "IncomeLossFromContinuingOperationsPerBasicAndDilutedShare")

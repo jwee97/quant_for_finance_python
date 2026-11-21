@@ -38,7 +38,7 @@ def _pdf(pages, font=None):
     return doc.tobytes()
 
 
-def _statement(title, header, rows, unit="(in millions)"):
+def _statement(title, header, rows, unit="($ in millions)"):
     lines = [[(40, title, False)], [(40, unit, False)], [(430, header[0], True), (520, header[1], True)]]
     for label, a, b in rows:
         lines.append([(40, label, False), (430, a, True), (520, b, True)])
@@ -154,16 +154,16 @@ def _draft(values, conf=0.9):
 def test_reconciliations_raise_confidence_when_they_agree_and_lower_it_when_they_do_not():
     good = _draft({"total_assets": 5000, "total_liabilities": 3000, "shareholders_equity": 2000})
     out = checks.run(good)
-    assert out[0]["id"] == "bs_identity" and out[0]["status"] == "pass" and good["periods"][0]["sources"]["total_assets"]["confidence"] > 0.9
+    assert out[0]["id"] == "bs_identity" and out[0]["status"] == "PASS" and good["periods"][0]["sources"]["total_assets"]["confidence"] > 0.9
     bad = _draft({"total_assets": 5000, "total_liabilities": 3000, "shareholders_equity": 1000})
     out = checks.run(bad)
-    assert out[0]["status"] == "fail" and bad["periods"][0]["sources"]["total_assets"]["confidence"] < checks.LOW_CONFIDENCE
+    assert out[0]["status"] == "FAIL" and bad["periods"][0]["sources"]["total_assets"]["confidence"] < checks.LOW_CONFIDENCE
     s = checks.run(_draft({"revenue": 3_000_000, "total_assets": 5}))
-    assert any(c["id"] == "scale" and c["status"] == "fail" for c in s)
+    assert any(c["id"] == "scale" and c["status"] == "FAIL" for c in s)
     dup = checks.run(_draft({"revenue": 1}), conflicts=[{"period": "2023-12-31", "code": "revenue", "detail": "1 vs 2"}])
     assert any(c["id"] == "duplicate_conflict" for c in dup)
     xs = checks.run(_draft({"net_income": 100, "cash_and_equivalents": 50}), cross={"2023-12-31": {"cf_net_income": 101, "cf_end_cash": 50}})
-    assert {c["id"]: c["status"] for c in xs} == {"ni_cross": "pass", "cash_cross": "pass"}
+    assert {c["id"]: c["status"] for c in xs if c["status"] != "NOT_APPLICABLE"} == {"ni_cross": "PASS", "cash_cross": "PASS"}
 
 
 # ------------------------------------------------------------------------------------------------------------------------ a figure nobody has confirmed never reaches the Alpha Lab
@@ -266,7 +266,7 @@ def test_the_diagnostics_count_what_was_read_what_reconciled_and_what_was_not_us
     svc.process(batch, hint={"country": "US"})
     d = diagnostics.live(store)
     assert d["items"] == 2 and d["by_status"].get("failed") == 1 and d["extraction_success"] == 0.5 and d["statement_coverage"] == {"IS": 1.0, "BS": 1.0, "CF": 1.0}
-    assert d["reconciliation"].get("pass", 0) >= 1 and any("not a primary statement" in k for k in d["rejection_reasons"]) and d["failure_reasons"]
+    assert d["reconciliation"].get("PASS", 0) >= 1 and any("not a primary statement" in k for k in d["rejection_reasons"]) and d["failure_reasons"]
     assert d["extractions_by_version"][0]["extractor_version"] == taxonomy.EXTRACTOR_VERSION
     assert diagnostics.benchmark()["available"] and "synthetic" in diagnostics.benchmark()["note"]
 

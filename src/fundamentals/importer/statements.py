@@ -15,7 +15,7 @@ from datetime import date
 from .. import canonical
 from . import pdf as pdf_module
 from . import taxonomy
-from .ir import Document, Table
+from .ir import Cell, Document, Table
 from .tabular import detect_currency, detect_units
 
 TITLES = {
@@ -23,9 +23,10 @@ TITLES = {
     "IS": r"income\s+statements?|statements?\s+of\s+(?:comprehensive\s+)?(?:income|profit|operations|earnings)|profit\s+or\s+loss|profit\s+and\s+loss|results\s+of\s+operations|損益計算書|包括利益計算書|손익계산서|포괄손익계산서|利润表|損益表|綜合收益表|综合收益表|compte\s+de\s+résultat|cuenta\s+de\s+resultados|demonstração\s+do\s+resultado|gewinn-\s+und\s+verlustrechnung",
     "CF": r"cash\s+flows?|キャッシュ・?フロー計算書|現金流量表|현금흐름표|现金流量表|tableau\s+(?:\w+\s+){0,2}des\s+flux|flujos\s+de\s+efectivo|fluxo\s+de\s+caixa|kapitalflussrechnung",
 }
-NOT_PRIMARY = r"segment|geographical|geographic|notes?\s+to|note\s+\d|five[-\s]year|financial\s+highlights|selected\s+financial|summary|quarterly\s+results|reconciliation\s+of|changes\s+in\s+equity|stockholders.\s+equity\s+statement|変動計算書|자본변동표|所有者权益变动表|権益変動|pro\s+forma|supplementary|ratios?"
-SCOPE_PARENT = r"\bparent\s+(?:company|only)\b|company\s+only|separate\s+(?:financial|statement)|company\s+statement|\bthe\s+company\b\s*(?:statement|balance)|個別|単体|별도|母公司|单独|nur\s+ag|individuel|individual\b|solo\b"
-SCOPE_CONSOL = r"consolidated|group\b|連結|연결|合并|合併|consolidé|consolidado|konzern"
+NOT_PRIMARY = r"segment|geographical|geographic|notes?\s+to|note\s+\d|reconciliation\s+of|changes\s+in\s+equity|stockholders.\s+equity\s+statement|変動計算書|자본변동표|所有者权益变动表|権益変動|pro\s+forma|supplementary|ratios?|non-?ifrs\s+reconciliation"
+SUMMARY_TITLES = r"five[-\s]year|financial\s+highlights|highlights|selected\s+financial|summary|quarterly\s+results|(?:first|second|third|fourth)\s+quarter|quarter\s+\d{4}\s+results|results\s+for\s+the\s+quarter|forecast|outlook|五年|財務ハイライト|要約|하이라이트"
+SCOPE_PARENT = r"non-?consolidated|unconsolidated|stand-?alone|\bparent\s+(?:company|only)\b|company\s+only|separate\s+(?:financial|statement)|company\s+statement|\bthe\s+company\b\s*(?:statement|balance)|個別|単体|별도|母公司|单独|nur\s+ag|individuel|individual\b|solo\b"
+SCOPE_CONSOL = r"(?<!non-)(?<!non\s)(?<!un)consolidated|group\b|連結|연결|合并|合併|consolidé|consolidado|konzern"
 PRIMARY_LINES = {"BS": {"total_assets", "total_liabilities", "shareholders_equity", "current_assets", "current_liabilities", "cash", "cash_and_equivalents", "inventory", "accounts_receivable", "ppe", "retained_earnings"},
                  "IS": {"revenue", "net_income", "operating_income", "gross_profit", "cost_of_revenue", "income_before_tax", "eps_basic", "eps_diluted", "income_tax"},
                  "CF": {"operating_cash_flow", "investing_cash_flow", "financing_cash_flow", "capital_expenditure", "dividends_paid", "depreciation_amortization"}}
@@ -39,6 +40,20 @@ class Column:
     kind: str = "FY"                  # FY | Q | H1 | YTD
     guessed: bool = False
     note: bool = False                # the "Notes" reference column: not a period
+    role: str = "OTHER"               # a model.ColumnRole value
+    period: object = None             # model.FinancialPeriod
+    currency: str | None = None
+    unit: str | None = None
+    scope: str = "unspecified"
+    confidence: float = 0.0
+    reasons: list = field(default_factory=list)
+    original_header: str = ""
+    resolved_header: str = ""
+    bbox: tuple | None = None
+
+    @property
+    def usable(self) -> bool:
+        return self.role in ("CURRENT_PERIOD", "PRIOR_PERIOD", "HISTORICAL_PERIOD", "RESTATED") and self.period_end is not None
 
 
 @dataclass
@@ -89,6 +104,8 @@ def classify(table: Table, mapping: taxonomy.Mapping, page_context: str = "") ->
         scope = "parent"
     elif re.search(SCOPE_CONSOL, scope_text, re.I):
         scope = "consolidated"
+    if re.search(SUMMARY_TITLES, table.title, re.I) and not any(own.values()):
+        return StatementTable(table, "SUMMARY", 0.45, scope, "a summary or highlights table (" + re.search(SUMMARY_TITLES, table.title, re.I).group(0) + "): corroborates, never replaces, a primary statement", lines=lines)
     not_primary = bool(re.search(NOT_PRIMARY, table.title, re.I))
     if not_primary and not titled:
         return StatementTable(table, "OTHER", 0.0, scope, "not a primary statement (" + (re.search(NOT_PRIMARY, table.title, re.I).group(0)) + ")", lines=lines)
@@ -114,55 +131,27 @@ def _is_note_column(table: Table, col: int) -> bool:
 
 
 def resolve_columns(st: StatementTable, doc_ctx: dict, year_end: tuple | None) -> None:
-    """The period of each figure column, from the table's own heading rows (all of them read together, in order), the terms and dates the report names elsewhere, and the words of the table."""
+    """The role, period, currency, unit and scope of every figure column of the statement table (see :mod:`columns`)."""
+    from . import columns as columns_module
+    from .model import ColumnRole
     t = st.table
-    numeric_cols = sorted({c.col for c in t.cells if c.col > 0 and c.number is not None and c.row not in t.header_rows} | {c.col for c in t.cells if c.col > 0 and c.dash and c.row not in t.header_rows})
-    note_cols = [c for c in numeric_cols if _is_note_column(t, c)]
-    # a column of small integers is a notes column only when a heading says so, or it is the first of more figure columns than headings
-    heads = " ".join(c.text for r in t.header_rows for c in t.row(r) if c.col > 0 or len(t.row(r)) == 1)
-    header_all = " ".join(c.text for r in t.header_rows for c in t.row(r))
-    if not header_all.strip():
-        header_all = t.title
-    def range_free(x: str) -> str:                                                                    # "2023.01.01 부터 2023.12.31 까지" names one period's span, not two columns
-        return re.sub(r"(?:19|20)\d{2}[.\-/]\d{1,2}[.\-/]\d{1,2}\s*(?:부터|から|至|to)\s*(?:19|20)\d{2}[.\-/]\d{1,2}[.\-/]\d{1,2}\s*(?:까지|まで|止)?", " ", x)
-    header_all = range_free(header_all)
-    dates = pdf_module._headings(header_all, year_end, doc_ctx) if t.header_rows else []
-    if len(dates) < 2:                                                                               # no heading row named the periods: the title may ("Year ended 31 December 2023 and 2022")
-        dates = pdf_module._headings(header_all + " " + range_free(t.title), year_end, doc_ctx) or dates
-    if st.kind in ("IS", "CF") and len(dates) >= 2 and len(set(pdf_module.TERM.findall(header_all))) >= 2 and not pdf_module.DATE_NUM.search(header_all):
-        # numbered terms ("제 55(당) 기 / 제 54(전) 기"): the balance sheet's earlier term ends at the last year end, but an income or cash flow statement's earlier term is the same span a year before
-        d0 = date.fromisoformat(dates[0]["period_end"])
-        dates = [dates[0]] + [{"period_end": date(d0.year - i, d0.month, min(d0.day, 28 if d0.month == 2 else d0.day)).isoformat(), "guessed": False} for i in range(1, len(dates))]
-    kind = _kind_words(header_all + " " + t.title)
-    figure_cols = [c for c in numeric_cols if c not in note_cols] if note_cols else numeric_cols
-    if note_cols and len(dates) == len(numeric_cols):                                                 # as many headings as columns: the "notes" column holds figures after all
-        figure_cols = numeric_cols
-        note_cols = []
-    cols: list[Column] = []
-    if dates and len(dates) == len(figure_cols):
-        for c, d in zip(figure_cols, dates):
-            cols.append(Column(c, d["period_end"], kind, d.get("guessed", False)))
-    elif dates and len(dates) < len(figure_cols) and len(figure_cols) - len(dates) == 1 and figure_cols[0] in note_cols + figure_cols[:1]:
-        for c in figure_cols[:1]:
-            cols.append(Column(c, None, kind, True, note=True))
-        for c, d in zip(figure_cols[1:], dates):
-            cols.append(Column(c, d["period_end"], kind, d.get("guessed", False)))
-    elif dates and len(dates) > len(figure_cols) >= 1:                                                # more dates than columns: the first ones name the periods of those columns
-        for c, d in zip(figure_cols, dates):
-            cols.append(Column(c, d["period_end"], kind, True))
-    elif not dates and doc_ctx.get("latest") and len(figure_cols) in (1, 2, 3):                        # no heading read: the report's latest date, a year before it, and so on
-        d0 = doc_ctx["latest"]
-        for i, c in enumerate(figure_cols):
-            cols.append(Column(c, date(d0.year - i, d0.month, min(d0.day, 28 if d0.month == 2 else d0.day)).isoformat(), kind, True))
-    st.columns = cols
-    if not [c for c in cols if not c.note]:
-        st.confidence *= 0.0
-        st.why += "; no period columns could be read"
-    elif any(c.guessed for c in cols):
-        st.why += "; period columns partly guessed"
     unit_text = " ".join([t.unit_text, t.title, t.context])
     st.unit = detect_units(unit_text)
     st.currency = detect_currency(unit_text)
+    cols = columns_module.resolve(t, st.kind, doc_ctx, year_end, st.currency, st.unit)
+    out = []
+    for c in cols:
+        p = c.period
+        kind = {"ANNUAL": "FY", "QUARTER": "Q", "HALF_YEAR": "H1", "YTD": "YTD", "INSTANT": "FY", "UNKNOWN_FLOW": "FY"}.get(p.period_type, "FY") if p else "FY"
+        usable = c.role in (ColumnRole.CURRENT_PERIOD, ColumnRole.PRIOR_PERIOD, ColumnRole.HISTORICAL_PERIOD)
+        out.append(Column(col=c.col, period_end=p.end_date if p else None, kind=kind, guessed=bool(p) and c.confidence < 0.9, note=c.role == ColumnRole.NOTE_REFERENCE, role=c.role.value, period=p, currency=c.currency,
+                          unit=c.unit, scope=c.scope, confidence=c.confidence if usable else 0.0, reasons=c.reasons, original_header=c.original_header, resolved_header=c.resolved_header, bbox=c.bbox))
+    st.columns = out
+    if not [c for c in out if c.usable]:
+        st.confidence *= 0.0
+        st.why += "; no period columns could be read"
+    elif any(c.guessed for c in out if c.usable):
+        st.why += "; period columns partly guessed"
 
 
 def annotate_sections(doc: Document, tables: list[StatementTable]) -> None:
@@ -189,3 +178,69 @@ def doc_year_end(text: str) -> tuple | None:
 
 
 __all__ = ["Column", "StatementTable", "classify", "resolve_columns", "annotate_sections", "doc_year_end", "TITLES"]
+
+
+def merge_continuations(tables: list[Table]) -> list[Table]:
+    """A statement that runs over a page break is one statement. A table that starts the next page without a title of its own, or whose title says "continued", and whose columns sit where the previous
+    table's columns sit, is appended to it (its rows renumbered, its cells keeping their own page and box); a repeated heading is dropped."""
+    out: list[Table] = []
+    for t in tables:
+        prev = out[-1] if out else None
+        if prev is not None and t.page is not None and prev.pages and t.page == max(prev.pages) + 1 and _continues(prev, t):
+            offset = prev.n_rows()
+            keep = {r for r in range(t.n_rows()) if r not in t.header_rows} if t.header_rows and _same_header(prev, t) else set(range(t.n_rows()))
+            remap = {}
+            for r in sorted(keep):
+                remap[r] = offset + len(remap)
+            cmap = _col_map(prev, t) or {}
+            for c in t.cells:
+                if c.row in remap:
+                    prev.cells.append(Cell(c.text, remap[c.row], cmap.get(c.col, c.col) if c.col else 0, c.page, c.bbox, c.number, c.dash, c.percent, c.span))
+            prev.pages.append(t.page)
+            prev.raw_words += t.raw_words
+            for k, v in t.column_extents.items():
+                kk = cmap.get(k, k)
+                a = prev.column_extents.get(kk)
+                prev.column_extents[kk] = (min(a[0], v[0]), max(a[1], v[1])) if a else v
+            prev.title = prev.title or t.title
+            continue
+        if t.page is not None and not t.pages:
+            t.pages = [t.page]
+        out.append(t)
+    return out
+
+
+def _same_header(a: Table, b: Table) -> bool:
+    ha = " ".join(c.text for r in a.header_rows for c in a.row(r)).strip().lower()
+    hb = " ".join(c.text for r in b.header_rows for c in b.row(r)).strip().lower()
+    return bool(hb) and (ha == hb or hb in ha or ha in hb)
+
+
+def _col_map(prev: Table, t: Table) -> dict[int, int] | None:
+    """Each column of ``t`` mapped to the column of ``prev`` that sits where it sits (within 14 points), or None if one has no counterpart."""
+    out = {}
+    for k, b in t.column_extents.items():
+        def gap(kv):
+            a = kv[1]
+            return min(abs(a[1] - b[1]), abs(a[0] - b[0]), abs((a[0] + a[1]) / 2 - (b[0] + b[1]) / 2))          # right-aligned figures share a right edge, left-aligned ones a left edge
+        best = min(prev.column_extents.items(), key=gap, default=None)
+        if best is None or gap(best) > 10:
+            return None
+        out[k] = best[0]
+    return out if len(set(out.values())) == len(out) else None
+
+
+def _continues(prev: Table, t: Table) -> bool:
+    """Whether ``t`` (the first table of its page) is the rest of ``prev``: it says "continued", or it has no title; and its columns sit where columns of ``prev`` sit (a note column may be absent), and a
+    heading it carries repeats prev's."""
+    cont_words = re.search(r"continued|cont['’]?d|\(cont|続き|계속|续|續|suite|fortsetzung|continuación", t.title or "", re.I)
+    title = (t.title or "").strip()
+    section_line = bool(title) and not t.header_rows and len(title) <= 45 and not any(re.search(rx, title, re.I) for rx in TITLES.values())     # "Current liabilities": a section line of the statement, not a new title
+    titled = bool(title) and not cont_words and not section_line
+    if titled or not t.column_extents or not prev.column_extents:
+        return False
+    if _col_map(prev, t) is None:
+        return False
+    if t.header_rows and not _same_header(prev, t):
+        return False
+    return True

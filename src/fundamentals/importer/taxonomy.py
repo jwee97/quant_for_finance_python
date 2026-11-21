@@ -23,6 +23,19 @@ TAXONOMY_VERSION = "1.0.0"
 EXTRACTOR_VERSION = "2.0.0"
 
 
+ADJUSTED = re.compile(r"\b(?:adjusted|non-?ifrs|non-?gaap|underlying|core|excluding|before\s+(?:special|exceptional)\s+items|pro\s*forma)\b|调整后|調整後|调整|非国际财务报告准则|非gaap|조정|ajusté|bereinigt|ajustado", re.I)
+MINORITY = re.compile(r"non-?controlling|minority|少数股东|少數股東|非支配|非控制|비지배|intérêts\s+minoritaires|nicht\s+beherrschende|intereses\s+minoritarios|participações\s+não", re.I)
+ATTRIBUTABLE = re.compile(r"attributable\s+to|attributable|归属于|歸屬於|帰属する|귀속|지배기업|part\s+du\s+groupe|davon|entfallen|atribuible|atribuível|equity\s+holders\s+of|owners\s+of\s+the\s+(?:parent|company)", re.I)
+PROFIT_WORD = re.compile(r"profit|income|earnings|loss|利润|利潤|溢利|利益|이익|résultat|ergebnis|resultado|beneficio|lucro|^attributable\s+to", re.I)
+
+
+def _script_parts(label: str) -> list[str]:
+    """A bilingual label ("Revenue 营业收入", "売上高 Net sales") in its Latin and CJK/Hangul parts, so that each is matched on its own and the two are never counted twice."""
+    cjk = re.sub(r"[^\u3000-\u9fff\uac00-\ud7af\uff00-\uffef]+", " ", label).strip()
+    latin = re.sub(r"[\u3000-\u9fff\uac00-\ud7af\uff00-\uffef]+", " ", label).strip()
+    return [p for p in (latin, cjk) if p and re.search(r"\w", p)] if cjk and latin and len(latin) > 2 and len(cjk) > 1 else []
+
+
 @dataclass(frozen=True)
 class Match:
     code: str
@@ -43,7 +56,24 @@ class Mapping:
     def match(self, label: str) -> Match | None:
         if not label or not label.strip():
             return None
+        parts = _script_parts(label)
+        if parts:                                                                                    # bilingual: both halves must agree (or one be silent); they are one line, never two
+            found = [m for m in (self._match(p) for p in parts) if m]
+            codes = {m.code for m in found}
+            if len(codes) == 1:
+                return found[0]
+            if len(codes) > 1:
+                return None
+        return self._match(label)
+
+    def _match(self, label: str) -> Match | None:
         raw = label.strip()
+        if ADJUSTED.search(raw):                                                                     # an adjusted or non-IFRS figure is never the statutory line
+            return None
+        if ATTRIBUTABLE.search(raw) and PROFIT_WORD.search(raw):
+            if MINORITY.search(raw):
+                return None
+            return Match("net_income_attributable", "overlay", "rule:attributable-to-parent", 0.9)
         cands = [("exact", raw)]
         stripped = re.sub(r"\s*[(（][^)）]*[)）]\s*$", "", raw).strip()
         cands.append(("stripped", stripped))
@@ -108,6 +138,10 @@ LANGUAGE_STANDARD = {"ko": "k-ifrs", "ja": "j-gaap", "zh": "cas"}
 
 def standards() -> list[dict]:
     return [m.to_dict() for m in _REGISTRY.values()]
+
+
+def standards_by_name() -> dict[str, Mapping]:
+    return dict(_REGISTRY)
 
 
 def get(standard: str | None) -> Mapping:

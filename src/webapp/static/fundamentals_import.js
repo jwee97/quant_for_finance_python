@@ -259,7 +259,12 @@
         s.itemData = await FD.send("/api/fund/import/review", { item_id: it.item_id, edits }); await refreshBatch(); Q.renderLab(FD);
       } catch (e) { Q.toast(e.message); }
     });
+    lifecycleChips(card, it, draft);
     issuesBlock(card, s.itemData.issues || []);
+    overrideBlock(card, draft, edits);
+    statementsBlock(card, draft);
+    candidatesBlock(card, it, draft, edits);
+    presentationsBlock(card, draft);
     conflictsBlock(card, draft.conflicts || []);
     const act = h("div", "row tight", card);
     let decision = null;
@@ -285,6 +290,61 @@
       re.addEventListener("click", async () => { try { const r = await FD.send("/api/fund/import/reprocess", { item_id: it.item_id }); Q.toast(r.changed ? `${r.diff.changed.length} changed, ${r.diff.added.length} new, ${r.diff.removed.length} gone: stored figures untouched` : "the new reading is the same; stored figures untouched"); } catch (e) { Q.toast(e.message); } });
       provenanceBlock(card);
     }
+  }
+  /* The five states of an import are separate: read, validated, needs a person, approved, committed to the database. */
+  const LIFE = [["EXTRACTED", "Extraction completed"], ["VALIDATED", "Validation passed"], ["REVIEW_REQUIRED", "Manual review required"], ["APPROVED", "Import approved"], ["COMMITTED", "Database committed"]];
+  function lifecycleChips(card, it, draft) {
+    const state = it.lifecycle || "EXTRACTED", order = { UPLOADED: 0, EXTRACTING: 0, EXTRACTED: 1, VALIDATING: 1, VALIDATED: 2, REVIEW_REQUIRED: 2, APPROVED: 3, COMMITTED: 4, FAILED: 0, REJECTED: 0 };
+    const row = h("div", "row tight", card); row.dataset.role = "import-lifecycle"; row.setAttribute("aria-label", `import state: ${state}`);
+    for (const [k, label] of LIFE) {
+      const on = (k === "EXTRACTED" && order[state] >= 1) || (k === "VALIDATED" && (state === "VALIDATED" || order[state] >= 3)) || (k === "REVIEW_REQUIRED" && state === "REVIEW_REQUIRED") || (k === "APPROVED" && order[state] >= 3) || (k === "COMMITTED" && state === "COMMITTED");
+      const chip = h("span", "chip" + (on ? " on" : "") + (k === "REVIEW_REQUIRED" && on ? " warn" : ""), row, (on ? "✓ " : "") + label); chip.dataset.state = k; chip.dataset.on = on ? "1" : "0";
+    }
+    const v = draft.validation;
+    if (v) h("p", "hint", card, `Validation: ${v.status === "VALIDATED" ? "every check that applies passed and nothing is missing" : "a person must look: " + v.reasons.map((r) => r.kind.replace(/_/g, " ")).join(", ")}. ${v.counts ? `${v.counts.PASS} passed, ${v.counts.FAIL} failed, ${v.counts.INSUFFICIENT_DATA} could not be judged (a missing input is not a pass), ${v.counts.NOT_APPLICABLE} not applicable.` : ""}`).dataset.role = "import-validation";
+  }
+  const HARD = ["check_failed", "unit_mismatch", "period_unresolved", "currency_unknown"];
+  function overrideBlock(card, draft, edits) {
+    const v = draft.validation; if (!v) return;
+    const hard = v.reasons.filter((r) => HARD.includes(r.kind)); if (!hard.length && !draft.overrides) return;
+    const box = h("div", "issues", card); box.dataset.role = "import-override";
+    h("h4", "", box, "Findings that block approval");
+    h("p", "hint", box, "These stop an approval. Fix the figure or the period in the table above and save, or - only if you have checked the page and the finding is acceptable - override it with a reason. The override and your reason are stored with every figure it let through, and those figures stay out of research until you confirm them.");
+    const picked = new Set((draft.overrides || {}).kinds || []);
+    for (const r of hard) {
+      const lab = h("label", "f", box); const cb = h("input", "", lab); cb.type = "checkbox"; cb.checked = picked.has(r.kind); cb.dataset.kind = r.kind; lab.appendChild(document.createTextNode(` ${r.message}`));
+      cb.addEventListener("change", () => { const ks = new Set(((edits.override || {}).kinds) || [...picked]); if (cb.checked) ks.add(r.kind); else ks.delete(r.kind); edits.override = { kinds: [...ks], note: (edits.override || {}).note || (draft.overrides || {}).note || "" }; });
+    }
+    const note = h("input", "", box); note.type = "text"; note.placeholder = "Why is this acceptable? (required for an override)"; note.value = (draft.overrides || {}).note || ""; note.dataset.role = "import-override-note"; note.style.width = "100%";
+    note.addEventListener("input", () => { edits.override = { kinds: ((edits.override || {}).kinds) || [...picked], note: note.value }; });
+    const conf = h("label", "f", box); const cp = h("input", "", conf); cp.type = "checkbox"; cp.dataset.role = "import-confirm-periods"; conf.appendChild(document.createTextNode(" I checked the period dates against the report")); cp.addEventListener("change", () => { edits.confirm_periods = cp.checked; });
+  }
+  function statementsBlock(card, draft) {
+    if (!draft.statements || !draft.statements.length) return;
+    const d = h("details", "how", card); d.dataset.role = "import-statements"; h("summary", "", d, `Statements and columns read (${draft.statements.filter((x) => x.confidence > 0).length} recognised)`);
+    const rows = [];
+    for (const st of draft.statements) for (const c of st.columns) rows.push({ st, c });
+    table(d, [{ label: "Page", get: (r) => String((r.st.pages || [r.st.page]).join("–")) }, { label: "Statement", get: (r) => `${r.st.kind}${r.st.scope !== "unspecified" ? " · " + r.st.scope : ""}` }, { label: "Col", num: true, get: (r) => String(r.c.col) },
+      { label: "Printed heading", get: (r) => r.c.original_header || "" }, { label: "Read as", get: (r) => r.c.role.replace(/_/g, " ").toLowerCase() }, { label: "Period", get: (r) => r.c.period_end || "" },
+      { label: "Currency · unit", get: (r) => `${r.c.currency || "?"} · ${r.c.unit || "?"}` }, { label: "Scope", get: (r) => r.c.scope }, { label: "Confidence", num: true, get: (r) => `${Math.round((r.c.confidence || 0) * 100)}%` }], rows);
+    h("p", "hint", d, "Only columns read as current, prior or historical periods become figures. Change, percentage, note, forecast and other-currency columns never do.");
+  }
+  function presentationsBlock(card, draft) {
+    if (!(draft.presentations || []).length) return;
+    const d = h("details", "how", card); d.dataset.role = "import-presentations"; h("summary", "", d, `Figures in another currency, kept apart (${draft.presentations.length})`);
+    table(d, [{ label: "Line", get: (r) => human(r.metric) }, { label: "Period", get: (r) => r.period_end }, { label: "As reported", num: true, get: (r) => `${r.raw_value} ${r.currency || ""}` }, { label: "Unit", get: (r) => r.unit }, { label: "Page", num: true, get: (r) => String(r.page || "") }], draft.presentations);
+  }
+  function candidatesBlock(card, it, draft, edits) {
+    const cands = draft.candidates || []; if (!cands.length) return;
+    const d = h("details", "how", card); d.dataset.role = "import-candidates"; h("summary", "", d, `Candidates for each line, and why each lost (${cands.length})`);
+    const interesting = cands.map((c, i) => ({ ...c, index: i })).filter((c) => c.period_end && (c.status === "selected" || c.column_role !== "ABSOLUTE_CHANGE")).slice(0, 400);
+    table(d, [{ label: "Line", get: (c) => human(c.metric) }, { label: "Period", get: (c) => c.period_end }, { label: "Printed label", get: (c) => c.label }, { label: "Value", num: true, get: (c) => `${c.raw_value}` }, { label: "Page", num: true, get: (c) => String(c.page || "") },
+      { label: "Table", get: (c) => `${c.statement} ${c.table_id}` }, { label: "Column", get: (c) => c.column_role.replace(/_/g, " ").toLowerCase() }, { label: "Authority", num: true, get: (c) => String(c.authority) },
+      { label: "Result", get: (c) => (c.status === "selected" ? "selected" : "rejected: " + ((c.reasons || [])[0] || "")) }], interesting);
+    [...d.querySelectorAll("tbody tr")].forEach((tr, i) => {
+      const c = interesting[i]; if (!c || c.status === "selected" || !["CURRENT_PERIOD", "PRIOR_PERIOD", "HISTORICAL_PERIOD"].includes(c.column_role)) return;
+      const b = h("button", "btn small", h("td", "", tr), "Use this"); b.type = "button"; b.dataset.action = "import-select-candidate"; b.addEventListener("click", () => { edits.select = (edits.select || []).concat([{ candidate: c.index }]); b.disabled = true; b.textContent = "Chosen: save corrections"; });
+    });
   }
   function issuesBlock(card, issues) {
     if (!issues.length) { h("p", "hint", card, "No problems found."); return; }
@@ -324,7 +384,7 @@
       tile(t, "Corrected by a person", P(l.correction_rate), { text: `critical lines ${P(l.critical_correction_rate)}` });
       tile(t, "Held out of research", String(l.unverified_figures_held_out_of_research), { text: "unverified figures" });
       const rc = l.reconciliation || {};
-      h("p", "", body, `Reconciliations: ${rc.pass || 0} passed, ${rc.warn || 0} warned, ${rc.fail || 0} failed. Unit stated in the report: ${P(l.unit_stated_rate)}. Figures below the confidence threshold: ${P(l.low_confidence_share)} of ${l.figures_scored}.`);
+      h("p", "", body, `Reconciliations: ${rc.PASS || 0} passed, ${rc.FAIL || 0} failed, ${rc.INSUFFICIENT_DATA || 0} could not be judged (missing inputs), ${rc.NOT_APPLICABLE || 0} not applicable. Unit stated in the report: ${P(l.unit_stated_rate)}. Figures below the confidence threshold: ${P(l.low_confidence_share)} of ${l.figures_scored}.`);
       if (Object.keys(l.rejection_reasons).length) table(body, [{ label: "Why a table or line was not used", get: (r) => r[0] }, { label: "Times", num: true, get: (r) => String(r[1]) }], Object.entries(l.rejection_reasons));
       if (Object.keys(l.failure_reasons).length) table(body, [{ label: "Why a report could not be read", get: (r) => r[0] }, { label: "Times", num: true, get: (r) => String(r[1]) }], Object.entries(l.failure_reasons));
       h("h4", "subhead", body, "Benchmark (synthetic documents with known answers)");

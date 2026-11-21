@@ -1,0 +1,341 @@
+[
+ {
+  "issuer": "toyota",
+  "currency_expected": "JPY",
+  "metrics": {
+   "revenue": {
+    "expected": 29929992000000,
+    "extracted": null,
+    "status": "missing"
+   },
+   "operating_income": {
+    "expected": 2442869000000,
+    "extracted": null,
+    "status": "missing"
+   },
+   "net_income": {
+    "expected": 2142329000000,
+    "extracted": null,
+    "status": "missing"
+   },
+   "net_income_attributable": {
+    "expected": 2076183000000,
+    "extracted": null,
+    "status": "missing"
+   },
+   "total_assets": {
+    "expected": 52680436000000,
+    "extracted": 743487000000.0,
+    "status": "wrong"
+   },
+   "total_liabilities": {
+    "expected": 31438585000000,
+    "extracted": 538585000000.0,
+    "status": "wrong"
+   },
+   "temporary_equity": {
+    "expected": 504169000000,
+    "extracted": null,
+    "status": "missing"
+   },
+   "shareholders_equity": {
+    "expected": 20737682000000,
+    "extracted": 220733000000.0,
+    "status": "wrong"
+   },
+   "operating_cash_flow": {
+    "expected": 3590643000000,
+    "extracted": 3590643000000.0,
+    "status": "correct"
+   }
+  },
+  "periods_found": [
+   [
+    "FY",
+    "2019-03-31"
+   ],
+   [
+    "FY",
+    "2020-03-31"
+   ]
+  ],
+  "error": null,
+  "currency_found": null
+ },
+ {
+  "issuer": "samsung",
+  "currency_expected": "KRW",
+  "metrics": {
+   "revenue": {
+    "expected": 236806988000000,
+    "extracted": 30474830000000.0,
+    "status": "wrong"
+   },
+   "operating_income": {
+    "expected": 35993876000000,
+    "extracted": null,
+    "status": "missing"
+   },
+   "net_income": {
+    "expected": 26407832000000,
+    "extracted": null,
+    "status": "missing"
+   },
+   "total_assets": {
+    "expected": 378235718000000,
+    "extracted": null,
+    "status": "missing"
+   },
+   "total_liabilities": {
+    "expected": 102287702000000,
+    "extracted": null,
+    "status": "missing"
+   },
+   "shareholders_equity": {
+    "expected": 275948016000000,
+    "extracted": null,
+    "status": "missing"
+   },
+   "operating_cash_flow": {
+    "expected": 65287009000000,
+    "extracted": null,
+    "status": "missing"
+   }
+  },
+  "periods_found": [
+   [
+    "FY",
+    "2019-12-31"
+   ],
+   [
+    "FY",
+    "2020-12-31"
+   ]
+  ],
+  "error": null,
+  "currency_found": "KRW"
+ },
+ {
+  "issuer": "apple",
+  "currency_expected": "USD",
+  "metrics": {
+   "revenue": {
+    "expected": 274515000000,
+    "extracted": 274515000000.0,
+    "status": "correct"
+   },
+   "net_income": {
+    "expected": 57411000000,
+    "extracted": 57411000000.0,
+    "status": "correct"
+   },
+   "total_assets": {
+    "expected": 323888000000,
+    "extracted": 323888000000.0,
+    "status": "correct"
+   },
+   "total_liabilities": {
+    "expected": 258549000000,
+    "extracted": 258549000000.0,
+    "status": "correct"
+   },
+   "shareholders_equity": {
+    "expected": 65339000000,
+    "extracted": 65339000000.0,
+    "status": "correct"
+   },
+   "operating_cash_flow": {
+    "expected": 80674000000,
+    "extracted": null,
+    "status": "missing"
+   }
+  },
+  "periods_found": [
+   [
+    "FY",
+    "2018-09-29"
+   ],
+   [
+    "FY",
+    "2019-09-28"
+   ],
+   [
+    "FY",
+    "2020-09-26"
+   ]
+  ],
+  "error": null,
+  "currency_found": "USD",
+  "spurious_periods": []
+ },
+ {
+  "issuer": "singtel",
+  "currency_expected": "SGD",
+  "metrics": {
+   "revenue": {
+    "expected": 17371000000,
+    "extracted": null,
+    "status": "missing"
+   },
+   "total_assets": {
+    "expected": 35000000000,
+    "extracted": null,
+    "status": "missing"
+   },
+   "total_liabilities": {
+    "expected": 15000000000,
+    "extracted": null,
+    "status": "missing"
+   },
+   "shareholders_equity": {
+    "expected": 20000000000,
+    "extracted": null,
+    "status": "missing"
+   },
+   "operating_cash_flow": {
+    "expected": 5300000000,
+    "extracted": null,
+    "status": "missing"
+   }
+  },
+  "periods_found": [],
+  "error": "no statement could be recognised in this document (no table was classified as an income statement, balance sheet or cash flow statement with readable period columns)"
+ },
+ {
+  "issuer": "byd",
+  "currency_expected": "CNY",
+  "metrics": {
+   "revenue": {
+    "expected": 153469184000,
+    "extracted": null,
+    "status": "missing"
+   },
+   "gross_profit": {
+    "expected": 27243591000,
+    "extracted": null,
+    "status": "missing"
+   },
+   "net_income_attributable": {
+    "expected": 4234267000,
+    "extracted": null,
+    "status": "missing"
+   },
+   "total_assets": {
+    "expected": 201017321000,
+    "extracted": null,
+    "status": "missing"
+   }
+  },
+  "periods_found": [],
+  "error": "no statement could be recognised in this document (no table was classified as an income statement, balance sheet or cash flow statement with readable period columns)"
+ },
+ {
+  "issuer": "tencent",
+  "currency_expected": "CNY",
+  "metrics": {
+   "revenue": {
+    "expected": 482064000000,
+    "extracted": 482064000000.0,
+    "status": "correct"
+   },
+   "gross_profit": {
+    "expected": 221532000000,
+    "extracted": 221532000000.0,
+    "status": "correct"
+   },
+   "operating_income": {
+    "expected": 184237000000,
+    "extracted": 184237000000.0,
+    "status": "correct"
+   },
+   "income_before_tax": {
+    "expected": 180022000000,
+    "extracted": null,
+    "status": "missing"
+   },
+   "net_income": {
+    "expected": 160125000000,
+    "extracted": 160125000000.0,
+    "status": "correct"
+   },
+   "net_income_attributable": {
+    "expected": 159847000000,
+    "extracted": null,
+    "status": "missing"
+   },
+   "total_assets": {
+    "expected": 1333425000000,
+    "extracted": null,
+    "status": "missing"
+   },
+   "total_liabilities": {
+    "expected": 555382000000,
+    "extracted": null,
+    "status": "missing"
+   },
+   "shareholders_equity": {
+    "expected": 778043000000,
+    "extracted": null,
+    "status": "missing"
+   }
+  },
+  "periods_found": [
+   [
+    "FY",
+    "2019-12-31"
+   ],
+   [
+    "FY",
+    "2020-12-31"
+   ],
+   [
+    "Q4",
+    "2019-12-31"
+   ],
+   [
+    "Q4",
+    "2020-12-31"
+   ]
+  ],
+  "error": null,
+  "currency_found": "CNY"
+ },
+ {
+  "issuer": "asml",
+  "currency_expected": "EUR",
+  "metrics": {
+   "revenue": {
+    "expected": 13978500000.0,
+    "extracted": 13978.5,
+    "status": "wrong"
+   },
+   "cost_of_revenue": {
+    "expected": 7493900000.0,
+    "extracted": null,
+    "status": "missing"
+   },
+   "gross_profit": {
+    "expected": 6484600000.0,
+    "extracted": 6484.6,
+    "status": "wrong"
+   },
+   "operating_income": {
+    "expected": 3684600000.0,
+    "extracted": 3684.6,
+    "status": "wrong"
+   }
+  },
+  "periods_found": [
+   [
+    "FY",
+    "2019-12-31"
+   ],
+   [
+    "FY",
+    "2020-12-31"
+   ]
+  ],
+  "error": null,
+  "currency_found": "EUR"
+ }
+]

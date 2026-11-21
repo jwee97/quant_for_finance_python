@@ -29,6 +29,8 @@ class Cell:
     bbox: BBox | None = None
     number: float | None = None                 # the number the text holds ((1,234) is -1234); None for a label, a heading, a dash
     dash: bool = False                          # "-", "—": a figure that is not there (kept apart from a missing cell)
+    percent: bool = False                       # "(1.2)%": a percentage, never a reported amount
+    span: int = 1                               # a heading over several columns covers this many, starting at ``col``
 
     @property
     def is_number(self) -> bool:
@@ -46,6 +48,9 @@ class Table:
     header_rows: list[int] = field(default_factory=list)
     unit_text: str = ""                         # words near the table that state its unit or currency
     context: str = ""                           # the heading text of the page or sheet above it (scope, statement name)
+    raw_words: list = field(default_factory=list)        # (text, box) of every word of the table region, as read: the geometry is never discarded
+    column_extents: dict = field(default_factory=dict)   # column -> (x0, x1) span of its figures
+    pages: list = field(default_factory=list)            # the pages a statement that continues over several pages covers
 
     def n_rows(self) -> int:
         return 1 + max((c.row for c in self.cells), default=-1)
@@ -112,7 +117,7 @@ class Document:
 
     @classmethod
     def from_dict(cls, d: dict) -> "Document":
-        tables = [Table(**{**t, "cells": [Cell(**{**c, "bbox": tuple(c["bbox"]) if c.get("bbox") else None}) for c in t["cells"]], "bbox": tuple(t["bbox"]) if t.get("bbox") else None}) for t in d.get("tables", [])]
+        tables = [Table(**{**t, "column_extents": {int(k): tuple(v) for k, v in (t.get("column_extents") or {}).items()}, "raw_words": [(w[0], tuple(w[1])) for w in (t.get("raw_words") or [])], "cells": [Cell(**{**c, "bbox": tuple(c["bbox"]) if c.get("bbox") else None}) for c in t["cells"]], "bbox": tuple(t["bbox"]) if t.get("bbox") else None}) for t in d.get("tables", [])]
         return cls(**{**d, "tables": tables, "sections": [Section(**s) for s in d.get("sections", [])], "facts": [Fact(**f) for f in d.get("facts", [])]})
 
 

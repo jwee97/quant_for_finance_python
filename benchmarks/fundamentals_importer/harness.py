@@ -28,7 +28,7 @@ UNIT = {"units": 1, "thousands": 1e3, "millions": 1e6, "billions": 1e9}
 COUNTRY = {"US": "US", "SG": "SG", "JP": "JP", "KR": "KR", "CN": "CN", "HK": "HK"}            # EU reports get no country: the standard is then inferred from the document
 REL_TOL = 0.005
 PER_SHARE = {"eps_basic", "eps_diluted"}
-EQUIVALENT = {"cash": "cash_and_equivalents"}                                             # a label that reads "cash and deposits" or "cash and cash equivalents" is one line for this score
+EQUIVALENT = {"cash": "cash_and_equivalents", "net_income_attributable": "net_income"}   # the synthetic truth does not tell parent-attributable from total profit; the importer now does (see the real-structure fixtures)                                             # a label that reads "cash and deposits" or "cash and cash equivalents" is one line for this score
 
 
 class NoisyOcr:
@@ -42,7 +42,9 @@ class NoisyOcr:
         self.noise, self.rng, self.n = noise, random.Random(seed), 0
 
     def words(self, image_png: bytes, language: str):
-        words = self.pages[self.n]
+        hint = getattr(self, "page_hint", None)
+        words = self.pages[(hint - 1) if hint else self.n]
+        self.page_hint = None
         self.n += 1
         k = 200 / 72
         out = []

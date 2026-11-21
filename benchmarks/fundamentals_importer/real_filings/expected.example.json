@@ -1,0 +1,27 @@
+{
+  "_note": "UNVERIFIED reference values copied from the task specification, never read by the importer. Check each against the original report before treating a result as meaningful, and add verified values for the metrics that are empty (Singtel, ASML). Copy this file to expected.json next to the PDFs, name the PDFs as in 'file', and run: python -m src.fundamentals.importer.benchmark --filings DIR --expected DIR/expected.json --output DIR/out. Mark held-out filings with \"split\": \"heldout\" and never tune the importer on them.",
+  "filings": [
+    {"file": "samsung_fy2020.pdf", "issuer": "Samsung Electronics", "split": "development", "hint": {"country": "KR"},
+     "expected": {"currency": "KRW", "unit_multiplier": 1000000, "period_end": "2020-12-31", "period_type": "FY", "scope": "consolidated", "standard": "k-ifrs",
+                  "values": {"revenue": 236806988, "operating_income": 35993876, "net_income": 26407832, "total_assets": 378235718, "total_liabilities": 102287702, "shareholders_equity": 275948016, "operating_cash_flow": 65287009}}},
+    {"file": "apple_fy2020.pdf", "issuer": "Apple", "split": "development", "hint": {"country": "US"},
+     "expected": {"currency": "USD", "unit_multiplier": 1000000, "period_end": "2020-09-26", "period_type": "FY", "scope": "consolidated", "standard": "us-gaap",
+                  "values": {"revenue": 274515, "net_income": 57411, "total_assets": 323888, "total_liabilities": 258549, "shareholders_equity": 65339, "operating_cash_flow": 80674}}},
+    {"file": "singtel_fy2020.pdf", "issuer": "Singtel", "split": "development", "hint": {"country": "SG"},
+     "expected": {"currency": "SGD", "unit_multiplier": 1000000, "period_end": "2020-03-31", "period_type": "FY", "scope": "consolidated", "standard": "sfrs-i", "values": {}}},
+    {"file": "toyota_fy2020.pdf", "issuer": "Toyota Motor Corporation", "split": "development", "hint": {"country": "JP", "standard": "us-gaap"},
+     "expected": {"currency": "JPY", "unit_multiplier": 1000000, "period_end": "2020-03-31", "period_type": "FY", "scope": "consolidated", "standard": "us-gaap",
+                  "values": {"revenue": 29929992, "operating_income": 2442869, "net_income": 2142329, "net_income_attributable": 2076183, "total_assets": 52680436, "total_liabilities": 31438585, "temporary_equity": 504169,
+                             "shareholders_equity": 20737682, "operating_cash_flow": 3590643}}},
+    {"file": "byd_fy2020.pdf", "issuer": "BYD Company Limited", "split": "development", "hint": {"country": "CN"},
+     "expected": {"currency": "CNY", "unit_multiplier": 1000, "period_end": "2020-12-31", "period_type": "FY", "scope": "consolidated",
+                  "values": {"revenue": 153469184, "gross_profit": 27243591, "net_income_attributable": 4234267, "total_assets": 201017321}}},
+    {"file": "tencent_fy2020.pdf", "issuer": "Tencent Holdings", "split": "development", "hint": {"country": "HK"},
+     "expected": {"currency": "CNY", "unit_multiplier": 1000000, "period_end": "2020-12-31", "period_type": "FY", "scope": "consolidated", "standard": "ifrs",
+                  "values": {"revenue": 482064, "gross_profit": 221532, "operating_income": 184237, "income_before_tax": 180022, "net_income": 160125, "net_income_attributable": 159847, "total_assets": 1333425,
+                             "total_liabilities": 555382, "shareholders_equity": 778043},
+                  "other_observations": [{"period_end": "2020-12-31", "period_type": "Q4", "values": {"revenue": 133669, "operating_income": 63713}}]}},
+    {"file": "asml_fy2020.pdf", "issuer": "ASML Holding", "split": "development", "hint": {},
+     "expected": {"currency": "EUR", "unit_multiplier": 1000000, "period_end": "2020-12-31", "period_type": "FY", "scope": "consolidated", "values": {"revenue": 13978.5}}}
+  ]
+}

@@ -1,5 +1,5 @@
 {
- "generated": "2026-11-21T15:15:57",
+ "generated": "2026-11-21T16:23:24",
  "extractor_version": "2.0.0",
  "taxonomy_version": "1.0.0",
  "threshold": 0.75,
@@ -19,8 +19,8 @@
    "unit_accuracy": 1.0,
    "currency_accuracy": 1.0,
    "standard_accuracy": 1.0,
-   "fallback_rate": 0.0,
-   "median_seconds": 0.005
+   "fallback_rate": 0.429,
+   "median_seconds": 0.051
   },
   "by_split": {
    "dev": {
@@ -38,8 +38,8 @@
     "unit_accuracy": 1.0,
     "currency_accuracy": 1.0,
     "standard_accuracy": 1.0,
-    "fallback_rate": 0.0,
-    "median_seconds": 0.005
+    "fallback_rate": 0.429,
+    "median_seconds": 0.051
    }
   },
   "by_format": {
@@ -58,8 +58,8 @@
     "unit_accuracy": 1.0,
     "currency_accuracy": 1.0,
     "standard_accuracy": 1.0,
-    "fallback_rate": 0.0,
-    "median_seconds": 0.091
+    "fallback_rate": 1.0,
+    "median_seconds": 0.063
    },
    "pdf": {
     "cases": 11,
@@ -76,8 +76,8 @@
     "unit_accuracy": 1.0,
     "currency_accuracy": 1.0,
     "standard_accuracy": 1.0,
-    "fallback_rate": 0.0,
-    "median_seconds": 0.005
+    "fallback_rate": 0.364,
+    "median_seconds": 0.01
    },
    "xlsx": {
     "cases": 1,
@@ -95,7 +95,7 @@
     "currency_accuracy": 1.0,
     "standard_accuracy": 1.0,
     "fallback_rate": 0.0,
-    "median_seconds": 0.077
+    "median_seconds": 0.075
    }
   },
   "by_market": {
@@ -115,7 +115,7 @@
     "currency_accuracy": 1.0,
     "standard_accuracy": 1.0,
     "fallback_rate": 0.0,
-    "median_seconds": 0.003
+    "median_seconds": 0.007
    },
    "EU": {
     "cases": 3,
@@ -133,7 +133,7 @@
     "currency_accuracy": 1.0,
     "standard_accuracy": 1.0,
     "fallback_rate": 0.0,
-    "median_seconds": 0.005
+    "median_seconds": 0.009
    },
    "HK": {
     "cases": 1,
@@ -150,8 +150,8 @@
     "unit_accuracy": 1.0,
     "currency_accuracy": 1.0,
     "standard_accuracy": 1.0,
-    "fallback_rate": 0.0,
-    "median_seconds": 0.005
+    "fallback_rate": 1.0,
+    "median_seconds": 0.051
    },
    "JP": {
     "cases": 2,
@@ -168,8 +168,8 @@
     "unit_accuracy": 1.0,
     "currency_accuracy": 1.0,
     "standard_accuracy": 1.0,
-    "fallback_rate": 0.0,
-    "median_seconds": 0.005
+    "fallback_rate": 0.5,
+    "median_seconds": 0.008
    },
    "KR": {
     "cases": 1,
@@ -187,7 +187,7 @@
     "currency_accuracy": 1.0,
     "standard_accuracy": 1.0,
     "fallback_rate": 0.0,
-    "median_seconds": 0.004
+    "median_seconds": 0.008
    },
    "SG": {
     "cases": 2,
@@ -204,8 +204,8 @@
     "unit_accuracy": 1.0,
     "currency_accuracy": 1.0,
     "standard_accuracy": 1.0,
-    "fallback_rate": 0.0,
-    "median_seconds": 0.006
+    "fallback_rate": 1.0,
+    "median_seconds": 0.056
    },
    "US": {
     "cases": 4,
@@ -222,8 +222,8 @@
     "unit_accuracy": 1.0,
     "currency_accuracy": 1.0,
     "standard_accuracy": 1.0,
-    "fallback_rate": 0.0,
-    "median_seconds": 0.08
+    "fallback_rate": 0.5,
+    "median_seconds": 0.089
    }
   },
   "by_language": {
@@ -243,7 +243,7 @@
     "currency_accuracy": 1.0,
     "standard_accuracy": 1.0,
     "fallback_rate": 0.0,
-    "median_seconds": 0.004
+    "median_seconds": 0.009
    },
    "en": {
     "cases": 7,
@@ -260,8 +260,8 @@
     "unit_accuracy": 1.0,
     "currency_accuracy": 1.0,
     "standard_accuracy": 1.0,
-    "fallback_rate": 0.0,
-    "median_seconds": 0.006
+    "fallback_rate": 0.714,
+    "median_seconds": 0.063
    },
    "es": {
     "cases": 1,
@@ -279,7 +279,7 @@
     "currency_accuracy": 1.0,
     "standard_accuracy": 1.0,
     "fallback_rate": 0.0,
-    "median_seconds": 0.005
+    "median_seconds": 0.008
    },
    "fr": {
     "cases": 1,
@@ -297,7 +297,7 @@
     "currency_accuracy": 1.0,
     "standard_accuracy": 1.0,
     "fallback_rate": 0.0,
-    "median_seconds": 0.006
+    "median_seconds": 0.01
    },
    "ja": {
     "cases": 2,
@@ -314,8 +314,8 @@
     "unit_accuracy": 1.0,
     "currency_accuracy": 1.0,
     "standard_accuracy": 1.0,
-    "fallback_rate": 0.0,
-    "median_seconds": 0.005
+    "fallback_rate": 0.5,
+    "median_seconds": 0.008
    },
    "ko": {
     "cases": 1,
@@ -333,7 +333,7 @@
     "currency_accuracy": 1.0,
     "standard_accuracy": 1.0,
     "fallback_rate": 0.0,
-    "median_seconds": 0.004
+    "median_seconds": 0.008
    },
    "zh": {
     "cases": 1,
@@ -351,7 +351,7 @@
     "currency_accuracy": 1.0,
     "standard_accuracy": 1.0,
     "fallback_rate": 0.0,
-    "median_seconds": 0.003
+    "median_seconds": 0.007
    }
   },
   "by_period_type": {
@@ -370,8 +370,8 @@
     "unit_accuracy": 1.0,
     "currency_accuracy": 1.0,
     "standard_accuracy": 1.0,
-    "fallback_rate": 0.0,
-    "median_seconds": 0.005
+    "fallback_rate": 0.273,
+    "median_seconds": 0.009
    },
    "half": {
     "cases": 2,
@@ -388,8 +388,8 @@
     "unit_accuracy": 1.0,
     "currency_accuracy": 1.0,
     "standard_accuracy": 1.0,
-    "fallback_rate": 0.0,
-    "median_seconds": 0.005
+    "fallback_rate": 1.0,
+    "median_seconds": 0.053
    },
    "quarter": {
     "cases": 1,
@@ -406,8 +406,8 @@
     "unit_accuracy": 1.0,
     "currency_accuracy": 1.0,
     "standard_accuracy": 1.0,
-    "fallback_rate": 0.0,
-    "median_seconds": 0.005
+    "fallback_rate": 1.0,
+    "median_seconds": 0.119
    }
   },
   "by_layout": {
@@ -426,8 +426,8 @@
     "unit_accuracy": 1.0,
     "currency_accuracy": 1.0,
     "standard_accuracy": 1.0,
-    "fallback_rate": 0.0,
-    "median_seconds": 0.005
+    "fallback_rate": 0.385,
+    "median_seconds": 0.01
    },
    "notes": {
     "cases": 1,
@@ -444,8 +444,8 @@
     "unit_accuracy": 1.0,
     "currency_accuracy": 1.0,
     "standard_accuracy": 1.0,
-    "fallback_rate": 0.0,
-    "median_seconds": 0.006
+    "fallback_rate": 1.0,
+    "median_seconds": 0.056
    }
   },
   "by_split_market_format": {
@@ -465,7 +465,7 @@
     "currency_accuracy": 1.0,
     "standard_accuracy": 1.0,
     "fallback_rate": 0.0,
-    "median_seconds": 0.003
+    "median_seconds": 0.007
    },
    "dev|EU|pdf": {
     "cases": 3,
@@ -483,7 +483,7 @@
     "currency_accuracy": 1.0,
     "standard_accuracy": 1.0,
     "fallback_rate": 0.0,
-    "median_seconds": 0.005
+    "median_seconds": 0.009
    },
    "dev|HK|pdf": {
     "cases": 1,
@@ -500,8 +500,8 @@
     "unit_accuracy": 1.0,
     "currency_accuracy": 1.0,
     "standard_accuracy": 1.0,
-    "fallback_rate": 0.0,
-    "median_seconds": 0.005
+    "fallback_rate": 1.0,
+    "median_seconds": 0.051
    },
    "dev|JP|html": {
     "cases": 1,
@@ -518,8 +518,8 @@
     "unit_accuracy": 1.0,
     "currency_accuracy": 1.0,
     "standard_accuracy": 1.0,
-    "fallback_rate": 0.0,
-    "median_seconds": 0.005
+    "fallback_rate": 1.0,
+    "median_seconds": 0.008
    },
    "dev|JP|pdf": {
     "cases": 1,
@@ -537,7 +537,7 @@
     "currency_accuracy": 1.0,
     "standard_accuracy": 1.0,
     "fallback_rate": 0.0,
-    "median_seconds": 0.004
+    "median_seconds": 0.008
    },
    "dev|KR|pdf": {
     "cases": 1,
@@ -555,7 +555,7 @@
     "currency_accuracy": 1.0,
     "standard_accuracy": 1.0,
     "fallback_rate": 0.0,
-    "median_seconds": 0.004
+    "median_seconds": 0.008
    },
    "dev|SG|pdf": {
     "cases": 2,
@@ -572,8 +572,8 @@
     "unit_accuracy": 1.0,
     "currency_accuracy": 1.0,
     "standard_accuracy": 1.0,
-    "fallback_rate": 0.0,
-    "median_seconds": 0.006
+    "fallback_rate": 1.0,
+    "median_seconds": 0.056
    },
    "dev|US|html": {
     "cases": 1,
@@ -590,8 +590,8 @@
     "unit_accuracy": 1.0,
     "currency_accuracy": 1.0,
     "standard_accuracy": 1.0,
-    "fallback_rate": 0.0,
-    "median_seconds": 0.091
+    "fallback_rate": 1.0,
+    "median_seconds": 0.063
    },
    "dev|US|pdf": {
     "cases": 2,
@@ -608,8 +608,8 @@
     "unit_accuracy": 1.0,
     "currency_accuracy": 1.0,
     "standard_accuracy": 1.0,
-    "fallback_rate": 0.0,
-    "median_seconds": 0.08
+    "fallback_rate": 0.5,
+    "median_seconds": 0.119
    },
    "dev|US|xlsx": {
     "cases": 1,
@@ -627,10 +627,13 @@
     "currency_accuracy": 1.0,
     "standard_accuracy": 1.0,
     "fallback_rate": 0.0,
-    "median_seconds": 0.077
+    "median_seconds": 0.075
    }
   },
-  "rejection_reasons": {},
+  "rejection_reasons": {
+   "column is NOTE_REFERENCE (“Note 31 December 2023 31 December": 4,
+   "column is NOTE_REFERENCE (“Note”), not a reported period": 3
+  },
   "failures": []
  },
  "cases": [
@@ -647,7 +650,7 @@
    "layout": "classic",
    "wording": "dev",
    "success": true,
-   "seconds": 0.08,
+   "seconds": 0.089,
    "expected": 42,
    "correct": 42,
    "wrong": 0,
@@ -666,7 +669,8 @@
    "fallbacks": [],
    "rejections": {},
    "checks": {
-    "pass": 6
+    "PASS": 6,
+    "INSUFFICIENT_DATA": 1
    },
    "standard": "us-gaap",
    "standard_ok": true,
@@ -686,7 +690,7 @@
    "layout": "classic",
    "wording": "dev",
    "success": true,
-   "seconds": 0.005,
+   "seconds": 0.119,
    "expected": 42,
    "correct": 42,
    "wrong": 0,
@@ -699,13 +703,19 @@
    "statements_found": 3,
    "periods_expected": 3,
    "periods_found": 3,
-   "period_kind_ok": 2,
+   "period_kind_ok": 0,
    "unit_ok": true,
    "currency_ok": true,
-   "fallbacks": [],
+   "fallbacks": [
+    "assessment",
+    "second-table-reading",
+    "ocr-pages"
+   ],
    "rejections": {},
    "checks": {
-    "pass": 5
+    "NOT_APPLICABLE": 1,
+    "PASS": 5,
+    "INSUFFICIENT_DATA": 1
    },
    "standard": "us-gaap",
    "standard_ok": true,
@@ -725,7 +735,7 @@
    "layout": "classic",
    "wording": "dev",
    "success": true,
-   "seconds": 0.091,
+   "seconds": 0.063,
    "expected": 42,
    "correct": 42,
    "wrong": 0,
@@ -741,10 +751,13 @@
    "period_kind_ok": 2,
    "unit_ok": true,
    "currency_ok": true,
-   "fallbacks": [],
+   "fallbacks": [
+    "assessment"
+   ],
    "rejections": {},
    "checks": {
-    "pass": 6
+    "PASS": 6,
+    "INSUFFICIENT_DATA": 1
    },
    "standard": "us-gaap",
    "standard_ok": true,
@@ -764,7 +777,7 @@
    "layout": "classic",
    "wording": "dev",
    "success": true,
-   "seconds": 0.077,
+   "seconds": 0.075,
    "expected": 42,
    "correct": 42,
    "wrong": 0,
@@ -783,7 +796,8 @@
    "fallbacks": [],
    "rejections": {},
    "checks": {
-    "pass": 6
+    "PASS": 6,
+    "INSUFFICIENT_DATA": 1
    },
    "standard": "us-gaap",
    "standard_ok": true,
@@ -803,7 +817,7 @@
    "layout": "notes",
    "wording": "dev",
    "success": true,
-   "seconds": 0.006,
+   "seconds": 0.056,
    "expected": 42,
    "correct": 42,
    "wrong": 0,
@@ -819,14 +833,22 @@
    "period_kind_ok": 2,
    "unit_ok": true,
    "currency_ok": true,
-   "fallbacks": [],
-   "rejections": {},
+   "fallbacks": [
+    "assessment",
+    "second-table-reading",
+    "ocr-pages"
+   ],
+   "rejections": {
+    "column is NOTE_REFERENCE (“Note”), not a reported period": 3,
+    "column is NOTE_REFERENCE (“Note 31 December 2023 31 December": 4
+   },
    "checks": {
-    "pass": 6
+    "PASS": 6,
+    "INSUFFICIENT_DATA": 1
    },
    "standard": "sfrs-i",
    "standard_ok": true,
-   "mean_confidence": 0.963,
+   "mean_confidence": 0.832,
    "lines_found": 42
   },
   {
@@ -842,7 +864,7 @@
    "layout": "classic",
    "wording": "dev",
    "success": true,
-   "seconds": 0.005,
+   "seconds": 0.053,
    "expected": 42,
    "correct": 42,
    "wrong": 0,
@@ -855,13 +877,19 @@
    "statements_found": 3,
    "periods_expected": 3,
    "periods_found": 3,
-   "period_kind_ok": 2,
+   "period_kind_ok": 0,
    "unit_ok": true,
    "currency_ok": true,
-   "fallbacks": [],
+   "fallbacks": [
+    "assessment",
+    "second-table-reading",
+    "ocr-pages"
+   ],
    "rejections": {},
    "checks": {
-    "pass": 5
+    "NOT_APPLICABLE": 1,
+    "PASS": 5,
+    "INSUFFICIENT_DATA": 1
    },
    "standard": "sfrs-i",
    "standard_ok": true,
@@ -881,7 +909,7 @@
    "layout": "classic",
    "wording": "dev",
    "success": true,
-   "seconds": 0.004,
+   "seconds": 0.008,
    "expected": 40,
    "correct": 40,
    "wrong": 0,
@@ -900,11 +928,12 @@
    "fallbacks": [],
    "rejections": {},
    "checks": {
-    "pass": 6
+    "PASS": 6,
+    "INSUFFICIENT_DATA": 1
    },
    "standard": "j-gaap",
    "standard_ok": true,
-   "mean_confidence": 0.957,
+   "mean_confidence": 0.954,
    "lines_found": 40
   },
   {
@@ -920,7 +949,7 @@
    "layout": "classic",
    "wording": "dev",
    "success": true,
-   "seconds": 0.005,
+   "seconds": 0.008,
    "expected": 40,
    "correct": 40,
    "wrong": 0,
@@ -936,14 +965,17 @@
    "period_kind_ok": 2,
    "unit_ok": true,
    "currency_ok": true,
-   "fallbacks": [],
+   "fallbacks": [
+    "assessment"
+   ],
    "rejections": {},
    "checks": {
-    "pass": 6
+    "PASS": 6,
+    "INSUFFICIENT_DATA": 1
    },
    "standard": "j-gaap",
    "standard_ok": true,
-   "mean_confidence": 0.957,
+   "mean_confidence": 0.954,
    "lines_found": 40
   },
   {
@@ -959,7 +991,7 @@
    "layout": "classic",
    "wording": "dev",
    "success": true,
-   "seconds": 0.004,
+   "seconds": 0.008,
    "expected": 40,
    "correct": 40,
    "wrong": 0,
@@ -978,7 +1010,8 @@
    "fallbacks": [],
    "rejections": {},
    "checks": {
-    "pass": 6
+    "PASS": 6,
+    "INSUFFICIENT_DATA": 1
    },
    "standard": "k-ifrs",
    "standard_ok": true,
@@ -998,7 +1031,7 @@
    "layout": "classic",
    "wording": "dev",
    "success": true,
-   "seconds": 0.003,
+   "seconds": 0.007,
    "expected": 38,
    "correct": 38,
    "wrong": 0,
@@ -1017,7 +1050,8 @@
    "fallbacks": [],
    "rejections": {},
    "checks": {
-    "pass": 4
+    "PASS": 4,
+    "INSUFFICIENT_DATA": 3
    },
    "standard": "cas",
    "standard_ok": true,
@@ -1037,7 +1071,7 @@
    "layout": "classic",
    "wording": "dev",
    "success": true,
-   "seconds": 0.005,
+   "seconds": 0.051,
    "expected": 42,
    "correct": 42,
    "wrong": 0,
@@ -1050,13 +1084,19 @@
    "statements_found": 3,
    "periods_expected": 3,
    "periods_found": 3,
-   "period_kind_ok": 2,
+   "period_kind_ok": 0,
    "unit_ok": true,
    "currency_ok": true,
-   "fallbacks": [],
+   "fallbacks": [
+    "assessment",
+    "second-table-reading",
+    "ocr-pages"
+   ],
    "rejections": {},
    "checks": {
-    "pass": 5
+    "NOT_APPLICABLE": 1,
+    "PASS": 5,
+    "INSUFFICIENT_DATA": 1
    },
    "standard": "ifrs",
    "standard_ok": true,
@@ -1076,7 +1116,7 @@
    "layout": "classic",
    "wording": "dev",
    "success": true,
-   "seconds": 0.006,
+   "seconds": 0.01,
    "expected": 40,
    "correct": 40,
    "wrong": 0,
@@ -1095,7 +1135,8 @@
    "fallbacks": [],
    "rejections": {},
    "checks": {
-    "pass": 6
+    "PASS": 6,
+    "INSUFFICIENT_DATA": 1
    },
    "standard": "ifrs",
    "standard_ok": true,
@@ -1115,7 +1156,7 @@
    "layout": "classic",
    "wording": "dev",
    "success": true,
-   "seconds": 0.004,
+   "seconds": 0.009,
    "expected": 36,
    "correct": 36,
    "wrong": 0,
@@ -1134,7 +1175,8 @@
    "fallbacks": [],
    "rejections": {},
    "checks": {
-    "pass": 6
+    "PASS": 6,
+    "INSUFFICIENT_DATA": 1
    },
    "standard": "ifrs",
    "standard_ok": true,
@@ -1154,7 +1196,7 @@
    "layout": "classic",
    "wording": "dev",
    "success": true,
-   "seconds": 0.005,
+   "seconds": 0.008,
    "expected": 30,
    "correct": 30,
    "wrong": 0,
@@ -1173,11 +1215,12 @@
    "fallbacks": [],
    "rejections": {},
    "checks": {
-    "pass": 4
+    "PASS": 4,
+    "INSUFFICIENT_DATA": 3
    },
    "standard": "ifrs",
    "standard_ok": true,
-   "mean_confidence": 0.808,
+   "mean_confidence": 0.801,
    "lines_found": 30
   }
  ]

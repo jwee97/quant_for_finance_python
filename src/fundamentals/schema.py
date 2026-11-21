@@ -196,7 +196,9 @@ def connect(path: str | Path, timeout: float = 30.0) -> sqlite3.Connection:
     return conn
 
 
-PROVENANCE_COLUMNS = {"confidence": "REAL", "statement": "TEXT", "scope": "TEXT", "extractor_version": "TEXT", "mapping_version": "TEXT", "original_currency": "TEXT", "bbox": "TEXT", "verified": "INTEGER NOT NULL DEFAULT 0"}
+PROVENANCE_COLUMNS = {"confidence": "REAL", "statement": "TEXT", "scope": "TEXT", "extractor_version": "TEXT", "mapping_version": "TEXT", "original_currency": "TEXT", "bbox": "TEXT", "verified": "INTEGER NOT NULL DEFAULT 0",
+                      "currency": "TEXT", "unit_multiplier": "REAL", "raw_value_text": "TEXT", "normalized_value_text": "TEXT", "period_start": "TEXT", "period_type": "TEXT", "table_ref": "TEXT", "row_ref": "INTEGER",
+                      "col_ref": "INTEGER", "column_role": "TEXT", "validation_status": "TEXT", "override_note": "TEXT"}
 
 
 def _migrate(conn: sqlite3.Connection) -> None:
