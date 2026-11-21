@@ -4,6 +4,17 @@ A model's prediction is not a trade. Between them sit a *decision policy* (what 
 cost). This page describes the three layers, the policy's settings, the ledger that reconciles them to the engine, and how to read the **ML Strategy Explorer** tab. The audit that motivated the work,
 and what it found wrong with the shared pipeline, is in [the pipeline audit](ml_pipeline_audit.md).
 
+## Every position rule has a ledger of buys and sells
+
+The trade ledger below is built for **every** position rule, not only `decision_policy`. A rule that keeps no decision log (the benchmark tilt, long-short top-n, proportional weights ...) turns the scores into a
+target book each day; every change of that book that the engine traded is a trade, labelled BUY or SELL, with the model's score and its rank on the day it was decided and a reason that states the change
+(`benchmark_tilt moved the target weight from 11.1% to 12.4% (add long); its score ranked it in the top 3 of 9`). The Machine Learning Lab's report shows them in a **Buys and sells** card (the price with a
+marker on each trade, one asset at a time, and a table); the ML Strategy Explorer opens the same run with its prediction, replay and trade tables. A rule that holds every asset all the time has no round trips
+to win or lose, so the win-rate tiles are not shown for it; turnover, cost drag and exposure are. Explicit entries, exits, stops and the decision log still need `decision_policy`. Runs saved before this
+carry no trades: re-run them (a re-backtest of the saved predictions is enough).
+
+The **universe** of a strategy run (the ETFs, Deribit crypto, the simulated futures roots or your own tickers) is chosen in the builder, and on the Model Comparison page, as in the Lab.
+
 ## Three layers, kept apart
 
 | Layer | What it is | Where it is recorded |

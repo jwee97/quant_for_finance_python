@@ -805,6 +805,7 @@
       table: (b) => table(b, [{ label: "Segment", get: (s) => SEG_NAME[s] }, { label: "Predictions", num: true, get: (s) => String(dist[s].n) }, { label: "Mean", num: true, get: (s) => sct(dist[s].mean) }, { label: "Standard deviation", num: true, get: (s) => sct(dist[s].std) }], parts) });
     importanceCards(ch, r);
     modelCards(ch, r);
+    if (Q.tradesCard && d.id && d.id !== "unsaved") Q.tradesCard(root, d.id, (id) => { history.pushState(null, "", "#/strategy?id=" + encodeURIComponent(id)); window.dispatchEvent(new PopStateEvent("popstate")); });      // every rule's buys and sells, drawn on the asset's price
     const card = h("div", "card", root); h("h3", "", card, "What ran");
     const plan = r.segments.plan, own = cfg.model.params || {};
     W.kv(card, "Settings", [["Model", cfg.model.kind + (Object.keys(own).length ? " " + Object.entries(own).map(([a, v]) => `${a}=${v}`).join(", ") : "")], ["Target", ds.target], ["Features", `${ds.n_features} (${(r.features.names || []).length ? r.features.names.slice(0, 6).join(", ") + (r.features.names.length > 6 ? ", …" : "") : ""})`],

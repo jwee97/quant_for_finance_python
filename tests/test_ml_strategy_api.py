@@ -45,10 +45,18 @@ def test_the_routes_exist_and_the_policy_settings_are_validated(app):
         app.extra_get["/api/ml/strategy"]({"id": "../x"})
 
 
-def test_a_run_without_the_policy_has_no_decisions_and_says_so(app):
+def test_every_position_rule_records_its_buys_and_sells_with_the_score_behind_each(app):
+    """A run that keeps no decision log (every rule but decision_policy) still has a ledger: each trade is a BUY or a SELL labelled with the model's score and rank on the day it was decided."""
     plain = finished(app, app.extra_post["/api/ml/train"]({"dataset": BASE["dataset"], "split": BASE["split"], "model": BASE["model"], "explain": False, "name": "plain", "mode": "development"}))
-    with pytest.raises(ApiError, match="did not use the decision_policy"):
-        app.extra_get["/api/ml/strategy"]({"id": plain["id"]})
+    out = get(app, "/api/ml/strategy", id=plain["id"])
+    assert out["summary"]["rule_based"] is True and out["summary"]["n_executions"] > 0 and "keeps no decision log" in out["summary"]["note"]
+    marks = out["chart"]["markers"]
+    assert marks and {m["action"] for m in marks} <= {"BUY", "SELL"} and all(m["reason"] and m["decision_date"] for m in marks)
+    assert any(m["rank_pct"] is not None and m["score"] is not None for m in marks), "the score and rank the rule acted on are attached"
+    assert plain["id"] in {r["id"] for r in get(app, "/api/ml/strategy/runs")["rows"]}
+    assert get(app, "/api/ml/strategy/decisions", id=plain["id"])["rows"] == [], "there is no decision log, and the page is told so with an empty list"
+    trades = get(app, "/api/ml/strategy/trades", id=plain["id"], kind="executions")
+    assert trades["rows"] and trades["rows"][0]["action"] in ("BUY", "SELL")
 
 
 def test_the_overview_carries_the_policy_the_analytics_and_a_chart_with_markers(app, run):

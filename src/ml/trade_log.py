@@ -180,10 +180,38 @@ def _trip(row) -> dict:
     return {"asset": row["asset"], "side": row["side"], "open_date": str(pd.Timestamp(row["open_date"]).date()), "position_return": float(row["position_return"]), "holding_days": int(row["holding_days"])}
 
 
-def build(decisions: pd.DataFrame, parts: dict, returns: pd.DataFrame, cfg: dict, lag: int | None = None) -> dict:
+def _label_rule_trades(fills: pd.DataFrame, scores: pd.DataFrame | None, method: str) -> pd.DataFrame:
+    """Label the trades of a run whose position rule keeps no decision log (every rule except ``decision_policy``): BUY or SELL, the model's score and its rank on the day the book was decided, and a reason
+    that says what the rule did. The rule turned the scores into a target book; each trade is the change in that book, so its reason is the change and the rank behind it."""
+    if not len(fills):
+        return fills
+    out = fills.copy()
+    out["action"] = np.where(out["side"] == "BUY", "BUY", "SELL")
+    if scores is not None and len(scores):
+        rank = scores.rank(axis=1, method="average", pct=True)                                 # 1 = the best score of the day
+        n_valid = scores.notna().sum(axis=1)
+        sc, rk, nv = [], [], []
+        for d, a in zip(pd.to_datetime(out["decision_date"]), out["asset"]):
+            ok = d in scores.index and a in scores.columns
+            sc.append(float(scores.at[d, a]) if ok else np.nan)
+            rk.append(float(rank.at[d, a]) if ok else np.nan)
+            nv.append(int(n_valid.get(d, 0)) if ok else 0)
+        out["score"], out["rank_pct"] = sc, rk
+    else:
+        out["score"], out["rank_pct"], nv = np.nan, np.nan, [0] * len(out)
+    reasons = []
+    for r, n in zip(out.itertuples(), nv):
+        where = f"; its score ranked it in the top {max(1, round((1 - r.rank_pct) * n + 1))} of {n}" if np.isfinite(r.rank_pct) and n else ""
+        reasons.append(f"{method} moved the target weight from {r.weight_before:.1%} to {r.weight_after:.1%} ({r.kind.replace('_', ' ').lower()}){where}")
+    out["reason"], out["confidence"] = reasons, np.nan
+    return out
+
+
+def build(decisions: pd.DataFrame | None, parts: dict, returns: pd.DataFrame, cfg: dict, lag: int | None = None, scores: pd.DataFrame | None = None) -> dict:
     """Everything the Strategy Explorer needs for one run: the decision log, the executed trades, the round trips and a compact summary (the analytics, counts and the policy in force).
 
     ``parts`` is ``trim_to_signal``'s result (the book, the trades and the return streams from the first day a position could earn); ``lag`` the total delay between decision and execution.
+    ``decisions`` is None for a position rule that keeps no decision log: the ledger is then built from the book alone and each trade is labelled from ``scores`` (``_label_rule_trades``).
     """
     from . import decisions as dc
 
@@ -191,13 +219,19 @@ def build(decisions: pd.DataFrame, parts: dict, returns: pd.DataFrame, cfg: dict
     lag = int(sig.get("lag_total", 1)) if lag is None else int(lag)
     cost_bps = float(bt["cost_bps"]) + float(bt["slippage_bps"])
     held, trades = parts["weights"], parts["trades"]
+    rule_based = decisions is None
     fills = executions(held, trades, returns, cost_bps, decisions, lag)
+    if rule_based:
+        fills = _label_rule_trades(fills, scores, str(sig.get("method")))
     trips = round_trips(held, returns, fills, cost_bps)
     gone = unexecuted(decisions, fills)
-    summary = {"version": VERSION, "policy": dc.policy_from(sig), "decisions": dc.summarise(decisions), "n_executions": int(len(fills)), "n_unexecuted": int(len(gone)), "lag_days": lag,
-               "cost_bps": cost_bps, "rebalance": str(bt["rebalance"]),
+    summary = {"version": VERSION, "policy": dc.policy_from(sig) if not rule_based else {"method": str(sig.get("method"))}, "decisions": dc.summarise(decisions), "n_executions": int(len(fills)),
+               "n_unexecuted": int(len(gone)), "lag_days": lag, "cost_bps": cost_bps, "rebalance": str(bt["rebalance"]), "rule_based": rule_based,
                "analytics": analytics(trips, held, parts["net"], parts["gross"], parts["turnover"])}
-    if str(bt["rebalance"]) != "on_change":
+    if rule_based:
+        summary["note"] = (f"The position rule '{sig.get('method')}' turns the scores into a target book and keeps no decision log: each buy and sell below is a change in that book, labelled with the model's score and "
+                           "rank on the day it was decided. Use the decision_policy rule for explicit entries, exits, stops and a decision log.")
+    elif str(bt["rebalance"]) != "on_change":
         summary["note"] = (f"The book trades on a {bt['rebalance']} schedule, so a decision made between rebalance dates waits for the next one: an event-driven policy (stops, time exits) is exact only with "
                            "backtest.rebalance = on_change.")
     return {"decisions": decisions, "executions": fills, "round_trips": trips, "unexecuted": gone, "summary": summary}

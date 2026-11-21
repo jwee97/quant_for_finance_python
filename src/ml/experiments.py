@@ -276,9 +276,7 @@ def evaluate_run(cfg: dict, ds: Dataset, train: TrainResult, info: dict, registr
     if stop_after:                                                             # the positions of the last day still earn for `lag` more days; nothing later belongs to the run
         cut = net.index.searchsorted(train.plan.dates[train.plan.bounds[stop_after][1] - 1]) + lag + 1
         net, gross, costs, turnover = net.iloc[:cut], gross.iloc[:cut], costs.iloc[:cut], turnover.iloc[:cut]
-    trading = None
-    if weights.attrs.get("decisions") is not None:
-        trading = tl.build(weights.attrs["decisions"], parts, ds.returns, cfg, lag)
+    trading = tl.build(weights.attrs.get("decisions"), parts, ds.returns, cfg, lag, scores)     # every rule has a ledger of its buys and sells; only decision_policy also has a decision log
     labels = label_days(net.index, train.plan.labels())
     bench = equal_weight_benchmark(ds.returns, ds.investable).reindex(net.index)
     # the train segment: the first model's in-sample positions, run through the same engine
@@ -427,7 +425,7 @@ def save_experiment(registry: Registry, exp: Experiment, info: dict, parent_id: 
     if exp.trading is not None:                                                        # the decision log, the executed trades and the round trips: what the Strategy Explorer shows
         for name in ("decisions", "executions", "round_trips"):
             frame = exp.trading[name]
-            if len(frame):
+            if frame is not None and len(frame):                                        # a rule without a decision log has no decisions file
                 frame.to_parquet(d / f"{name}.parquet")
         ds.prices.reindex(columns=ds.assets).to_parquet(d / "prices.parquet")           # the whole price history: the chart draws its markers on it, and a control replays the run on exactly what it saw
         ds.investable.reindex(columns=ds.assets).to_parquet(d / "investable.parquet")

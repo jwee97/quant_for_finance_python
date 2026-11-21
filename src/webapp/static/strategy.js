@@ -9,7 +9,7 @@
   const num = (v, d = 2) => (v === null || v === undefined || !isFinite(v) ? "n/a" : Q.num(v, d)), pct = (v, d = 1) => (v === null || v === undefined || !isFinite(v) ? "n/a" : Q.pct(v, d));
   const root = $("#strategy");
   const S = { runs: null, id: null, data: null, asset: null, decisions: null, trades: null, replay: null, busy: false, log: { action: "", asset: "", q: "", hold: false, offset: 0, limit: 50 }, tradeKind: "round_trips", tradeOffset: 0,
-              form: { name: "", model: "ridge", entry_quantile: 0.2, exit_quantile: 0.4, min_confidence: 0, max_positions: 5, max_position: 0.25, sizing: "equal", allow_short: false, long_exposure: 1, short_exposure: 0,
+              form: { name: "", universe: "etf", tickers: "", model: "ridge", entry_quantile: 0.2, exit_quantile: 0.4, min_confidence: 0, max_positions: 5, max_position: 0.25, sizing: "equal", allow_short: false, long_exposure: 1, short_exposure: 0,
                       cash_floor: 0, stop_loss_vol: "", take_profit_vol: "", max_holding: "", cooldown: 5, rebalance_days: 5, resize_band: 0.25, cost_bps: 5, slippage_bps: 2, min_train_days: 756, simulate: false } };
   // markers: the shape and the colour say the same thing twice, so the chart does not rely on colour alone
   const KINDS = { OPEN_LONG: ["up", "--pos", "Buy (open long)"], ADD_LONG: ["up", "--pos", "Add to long"], CLOSE_SHORT: ["up", "--s2", "Cover (close short)"], TRIM_SHORT: ["up", "--s2", "Reduce short"], FLIP_TO_LONG: ["up", "--pos", "Cover and buy"],
@@ -38,7 +38,9 @@
     const field = (label, key, type, help, opts) => { const l = h("label", "f", grid, label); if (help) l.title = help; let i; if (type === "select") { i = h("select", "", l); for (const [v, t] of opts) { const o = h("option", "", i, t); o.value = v; if (String(f[key]) === String(v)) o.selected = true; } } else { i = h("input", "", l); i.type = type; if (type === "number") i.step = "any"; if (type === "checkbox") i.checked = !!f[key]; else i.value = f[key]; }
       i.dataset.key = key; i.addEventListener(type === "select" || type === "checkbox" ? "change" : "input", () => { f[key] = type === "checkbox" ? i.checked : i.value; }); return i; };
     field("Name", "name", "text", "Optional label for the run");
-    field("Model", "model", "select", "The model whose scores are traded", [["ridge", "Ridge regression"], ["lasso", "Lasso"], ["elasticnet", "Elastic net"], ["random_forest", "Random forest"], ["hist_gb", "Gradient boosting"]]);
+    field("Universe", "universe", "select", "What the model scores and the policy trades. The platform's ETFs, Deribit crypto, the simulated futures roots, or tickers of your own", [["etf", "ETFs (platform data)"], ["crypto", "Crypto: BTC and ETH (platform data)"], ["futures", "Futures (simulated)"], ["custom", "My tickers"]]);
+    field("My tickers (two or more, used when the universe is 'My tickers')", "tickers", "text", "For example GOOGL, AMZN, AAPL, META, NVDA. Prices come from the selected data source and are downloaded when they are not saved yet (a rate-limited source asks you to run a backtest with them once first)");
+    field("Model", "model", "select", "The model whose scores are traded", [["ridge", "Ridge regression"], ["lasso", "Lasso"], ["elasticnet", "Elastic net"], ["random_forest", "Random forest"], ["hist_gb", "Gradient boosting"], ["xgboost", "XGBoost"], ["lightgbm", "LightGBM"], ["xgb_ranker", "XGBoost ranker"]]);
     field("Open on the best (share)", "entry_quantile", "number", "A name is bought when its score is in this top share of the day's ranks (0.2 = top 20%)");
     field("Keep until it falls below (share)", "exit_quantile", "number", "A held name is sold only when it drops out of this wider top share: the gap to the entry share is the hysteresis");
     field("Minimum confidence (0-1)", "min_confidence", "number", "The model's confidence needed to open a position");
@@ -60,16 +62,18 @@
     field("Training history before the first prediction (days)", "min_train_days", "number", "The model is first fitted on this many days; shorter histories give an earlier but noisier start");
     field("Choose the policy at each retrain from a grid, on earlier days only (scheduled simulation)", "simulate", "checkbox", "Retrains the model on a schedule and, at each refit, picks the best of six entry/stop policies using only the days before it. The model versions, the choices and their scores are saved and shown below.");
     const row = h("div", "row", card), go = h("button", "btn primary", row, "Run the strategy"); go.type = "button"; go.disabled = S.busy;
-    const status = h("span", "hint", row, "Walk-forward training takes about a minute on the default ETF universe."); status.setAttribute("aria-live", "polite");
+    const status = h("span", "hint", row, "Walk-forward training takes about a minute on the ETF universe; more assets or a heavier model take longer."); status.setAttribute("aria-live", "polite");
     go.addEventListener("click", async () => {
       const n = (v) => (v === "" || v === null || v === undefined ? undefined : Number(v));
       const sig = { method: "decision_policy", decision_entry_quantile: n(f.entry_quantile), decision_exit_quantile: n(f.exit_quantile), decision_min_confidence: n(f.min_confidence), decision_max_positions: n(f.max_positions), decision_max_position: n(f.max_position),
                     decision_sizing: f.sizing, decision_allow_short: !!f.allow_short, decision_long_exposure: n(f.long_exposure), decision_short_exposure: f.allow_short ? n(f.short_exposure) : 0, decision_cash_floor: n(f.cash_floor), decision_stop_loss_vol: n(f.stop_loss_vol),
                     decision_take_profit_vol: n(f.take_profit_vol), decision_max_holding: n(f.max_holding), decision_cooldown: n(f.cooldown), decision_rebalance_days: n(f.rebalance_days), decision_resize_band: n(f.resize_band) };
       for (const k of Object.keys(sig)) if (sig[k] === undefined) delete sig[k];
+      const tickers = String(f.tickers || "").toUpperCase().split(/[\s,;]+/).filter(Boolean);
+      if (f.universe === "custom" && tickers.length < 2) { toast("Enter at least two tickers."); return; }
       S.busy = true; go.disabled = true; status.textContent = "Starting…";
       try {
-        const { job } = await api(f.simulate ? "/api/ml/simulate" : "/api/ml/train", { name: f.name.trim() || `${f.model} decision policy`, model: { kind: f.model }, signal: sig, backtest: { rebalance: "on_change", target_vol: null, cost_bps: n(f.cost_bps), slippage_bps: n(f.slippage_bps) }, split: { min_train_days: n(f.min_train_days) }, explain: false });
+        const { job } = await api(f.simulate ? "/api/ml/simulate" : "/api/ml/train", { name: f.name.trim() || `${f.model} decision policy`, dataset: { universe: f.universe === "custom" ? tickers : f.universe }, model: { kind: f.model }, signal: sig, backtest: { rebalance: "on_change", target_vol: null, cost_bps: n(f.cost_bps), slippage_bps: n(f.slippage_bps) }, split: { min_train_days: n(f.min_train_days) }, explain: false });
         const res = await Q.waitJob(job, (v) => { status.textContent = `${v.message} (${Math.round(v.elapsed)} s)`; }, 1500);
         S.runs = null; S.id = res.id; S.data = null; S.asset = null; toast("Strategy finished"); S.busy = false; draw();
       } catch (e) { S.busy = false; go.disabled = false; status.textContent = ""; h("div", "banner err", card, e.message); }
@@ -90,14 +94,17 @@
     for (const w of d.warnings || []) h("div", "banner warn", out, w);
     const tiles = h("div", "tiles2", out); tiles.dataset.role = "strategy-tiles";
     const t = (label, value, title) => Q.tile(tiles, label, value, null, "", title);
-    t("Round trips", `${a.n_round_trips ?? 0}`, "Positions opened and closed, long and short"); t("Win rate", pct(a.win_rate, 0), "Share of closed positions with a positive return"); t("Profit factor", num(a.profit_factor, 2), "Gross profit over gross loss of the positions, net of their costs");
-    t("Average win / loss", `${pct(a.avg_win, 1)} / ${pct(a.avg_loss, 1)}`, "Mean return of winning and of losing positions"); t("Average holding", `${num(a.avg_holding_days, 1)} d`, "Median " + num(a.median_holding_days, 1) + " days");
+    if (s.rule_based) t("Trades", `${s.n_executions ?? 0}`, "Every change of the book the position rule made: buys and sells, with the cost of each");      // a rule that holds every asset all the time has no round trips to win or lose: those tiles would read 100%
+    else {
+      t("Round trips", `${a.n_round_trips ?? 0}`, "Positions opened and closed, long and short"); t("Win rate", pct(a.win_rate, 0), "Share of closed positions with a positive return"); t("Profit factor", num(a.profit_factor, 2), "Gross profit over gross loss of the positions, net of their costs");
+      t("Average win / loss", `${pct(a.avg_win, 1)} / ${pct(a.avg_loss, 1)}`, "Mean return of winning and of losing positions"); t("Average holding", `${num(a.avg_holding_days, 1)} d`, "Median " + num(a.median_holding_days, 1) + " days");
+    }
     t("Invested", pct(a.avg_gross_exposure, 0), "Average gross exposure; the rest is cash: " + pct(a.avg_cash, 0)); t("Net exposure", pct(a.avg_net_exposure, 0)); t("Positions held", num(a.avg_positions, 1));
     t("Turnover / year", `${num(a.ann_turnover, 1)}x`); t("Cost drag / year", pct(a.cost_drag_ann, 2), "Gross minus net annual return"); t("Gross return / year", pct(a.gross_ann_return, 1)); t("Net return / year", pct(a.net_ann_return, 1));
     if (s.note) h("p", "note", out, s.note);
     if (d.simulation) simulationCard(out, d.simulation);
     priceCard(out); bookCards(out); statCards(out);
-    controlCard(out); await logCard(out); await tradesCard(out); await replayCard(out);
+    controlCard(out); if (!s.rule_based) await logCard(out); await tradesCard(out); await replayCard(out);                   // a rule without a decision log has no log to show
   }
 
   function simulationCard(out, sim) {
@@ -133,7 +140,7 @@
 
   function legendChips(parent) {
     const row = h("div", "chips", parent); row.dataset.role = "marker-legend";
-    for (const [k, [shape, col, text]] of [["BUY", KINDS.OPEN_LONG], ["SELL", KINDS.CLOSE_LONG], ["SHORT", KINDS.OPEN_SHORT], ["COVER", KINDS.CLOSE_SHORT]]) { const c = h("span", "chip", row), i = h("i", "", c, shape === "up" ? "▲" : "▼"); i.style.color = css(col); h("span", "", c, " " + text); }
+    for (const [k, [shape, col, text]] of [["BUY", [...KINDS.OPEN_LONG.slice(0, 2), "Buy or add to a long"]], ["SELL", [...KINDS.CLOSE_LONG.slice(0, 2), "Sell or trim a long"]], ["SHORT", KINDS.OPEN_SHORT], ["COVER", KINDS.CLOSE_SHORT]]) { const c = h("span", "chip", row), i = h("i", "", c, shape === "up" ? "▲" : "▼"); i.style.color = css(col); h("span", "", c, " " + text); }
     const x = h("span", "chip", row); h("i", "", x, "✕"); h("span", "", x, " Stop, target or time exit");
   }
 
@@ -143,7 +150,11 @@
     const l = h("label", "f", pick, "Asset"), sel = h("select", "", l); sel.dataset.key = "asset";
     for (const r of d.assets) { const o = h("option", "", sel, `${r.asset}  ·  ${r.executions} trades  ·  ${r.round_trips} round trips  ·  P&L ${pct(r.net_contribution, 2)}`); o.value = r.asset; if (r.asset === ch.asset) o.selected = true; }
     sel.addEventListener("change", () => { S.asset = sel.value; S.log.asset = sel.value; S.log.offset = 0; S.decisions = null; S.trades = null; draw(); });
-    const stopDates = new Map();
+    tradeChart(out, ch);
+  }
+
+  /* The chart, the position and the table of one asset's trades. Shared by the Explorer and by the Machine Learning Lab's report (Q.tradesCard), so a buy or a sell looks the same on both. */
+  function tradeChart(out, ch) {
     const ev = ch.markers.map((m) => {
       const k = KINDS[m.kind] || ["up", "--ink", m.kind], stop = /^(STOP_LOSS|TAKE_PROFIT|TIME_EXIT)/.test(String(m.action || "")) || STOPS.has(m.action);
       return { x: m.date, y: m.price, shape: stop ? "cross" : k[0], color: css(stop ? "--ink" : k[1]), label: `${m.date}  ${k[2]}${stop ? " (" + m.action + ")" : ""}  ${m.weight_change >= 0 ? "+" : ""}${pct(m.weight_change, 1)} of the book, ${pct(m.weight_after, 1)} after\n${m.reason || ""}` };
@@ -153,8 +164,32 @@
         tipExtra: (i) => { const m = ch.markers.filter((x) => x.date === ch.dates[i]); return m.map((x) => [(KINDS[x.kind] || [0, 0, x.kind])[2], `${pct(x.weight_change, 1)} · ${x.action || ""}`]); } });
         const w = h("div", "", b); C.line(w, { dates: ch.dates, series: [{ name: "Position (share of the book)", color: css("--s3"), values: ch.weight }], area: true, baseline: 0, yFormat: (v) => pct(v, 0), height: 120, label: `${ch.asset} position`, zoom: false }); },
       table: (b) => Q.simpleTable(b, [{ label: "Date", get: (x) => x.date }, { label: "Trade", get: (x) => (KINDS[x.kind] || [0, 0, x.kind])[2] }, { label: "Price", num: true, get: (x) => num(x.price, 2) }, { label: "Change", num: true, get: (x) => pct(x.weight_change, 2) }, { label: "Book after", num: true, get: (x) => pct(x.weight_after, 2) },
-        { label: "Cost", num: true, get: (x) => pct(x.cost, 3) }, { label: "Decided", get: (x) => x.decision_date || "" }, { label: "Why", get: (x) => x.reason || "" }], ch.markers) });
+        { label: "Cost", num: true, get: (x) => pct(x.cost, 3) }, { label: "Decided", get: (x) => x.decision_date || "" }, { label: "Why", get: (x) => x.reason || "" }, { label: "Score rank", num: true, get: (x) => (x.rank_pct === null || x.rank_pct === undefined ? "" : pct(x.rank_pct, 0)) }], ch.markers) });
   }
+
+  /* "Buys and sells" for a saved experiment of any position rule, drawn inside another page (the Machine Learning Lab's report). Loads the run's trades from the Strategy API, one asset at a time. */
+  Q.tradesCard = (parent, expId, openExplorer) => {
+    const card = h("div", "card", parent); card.dataset.role = "lab-trades"; h("h3", "", card, "Buys and sells");
+    const body = h("div", "", card); Q.loading(body, "Loading the trades…");
+    const load = async (asset) => {
+      let d;
+      try { d = await api(`/api/ml/strategy?id=${encodeURIComponent(expId)}${asset ? "&asset=" + encodeURIComponent(asset) : ""}`); }
+      catch (e) { body.replaceChildren(); h("p", "hint", body, "No trades are recorded for this run: " + e.message); return; }
+      body.replaceChildren();
+      const t = d.summary || {}, a = t.analytics || {};
+      h("p", "note", body, t.note || "The trades the engine made, each at the close of the day after the decision, at the configured cost.");
+      const tiles = h("div", "tiles2", body);
+      Q.tile(tiles, "Trades", String(t.n_executions ?? 0)); Q.tile(tiles, "Turnover / year", num(a.ann_turnover, 1) + "×"); Q.tile(tiles, "Cost drag / year", pct(a.cost_drag_ann, 2)); Q.tile(tiles, "Invested", pct(a.avg_gross_exposure, 0));
+      if (!t.rule_based) { Q.tile(tiles, "Round trips", String(a.n_round_trips ?? 0)); Q.tile(tiles, "Win rate", pct(a.win_rate, 0)); }
+      const l = h("label", "f", body, "Asset"), sel = h("select", "", l); sel.dataset.key = "asset";
+      for (const r of d.assets) { const o = h("option", "", sel, `${r.asset}  ·  ${r.executions} trades  ·  P&L ${pct(r.net_contribution, 2)}`); o.value = r.asset; if (r.asset === d.chart.asset) o.selected = true; }
+      sel.addEventListener("change", () => load(sel.value));
+      tradeChart(body, d.chart);
+      if (openExplorer) { const row = h("div", "row", body), go = h("button", "btn", row, "Open in the ML Strategy Explorer"); go.type = "button"; go.addEventListener("click", () => openExplorer(expId)); }
+    };
+    load("");
+    return card;
+  };
   const d_ = () => S.data;
 
   function bookCards(out) {
@@ -241,5 +276,8 @@
     go.addEventListener("click", run); if (S.replay) run();
   }
 
-  Q.registerPage("strategy", { render: () => draw() });
+  Q.registerPage("strategy", { render: (args) => {
+    if (args && args.id && args.id !== S.id) { S.id = args.id; S.data = null; S.asset = null; S.decisions = null; S.trades = null; S.replay = null; S.log.offset = 0; S.tradeOffset = 0; S.runs = null; }   // opened from a report: show that run
+    draw();
+  } });
 })();

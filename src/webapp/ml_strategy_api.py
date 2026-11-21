@@ -44,7 +44,7 @@ class StrategyRoutes:
     def _strategy_files(self, exp_id: str) -> dict:
         d = self.registry.experiment_dir(exp_id)
         if not (d / "decisions.parquet").exists() and not (d / "executions.parquet").exists():
-            raise ApiError("this experiment did not use the decision_policy position rule, so it has no decisions to show; run it with signal.method = decision_policy (and backtest.rebalance = on_change)")
+            raise ApiError("this experiment was saved before trades were recorded for every position rule, so it has no trades to show; run it again (a re-backtest of its saved predictions is enough)")
         out = {}
         for name in ("decisions", "executions", "round_trips", "prices", "investable", "asset_returns", "positions", "returns", "predictions"):
             f = d / f"{name}.parquet"
@@ -53,13 +53,15 @@ class StrategyRoutes:
 
     # ------------------------------------------------------------------------------------------------------------ the runs that have decisions
     def strategy_runs(self, q: dict) -> dict:
-        """``GET /api/ml/strategy/runs``: the saved experiments that used the decision policy (they have a decision log), newest first, with what to compare at a glance."""
+        """``GET /api/ml/strategy/runs``: the saved experiments that recorded their trades (every run since the ledger covers all position rules; one with the decision policy also has a decision log), newest first,
+        with what to compare at a glance."""
         h = _h()
         h._only(q, set(), "/api/ml/strategy/runs")
         rows = []
         with h._user_errors():
             for rec in self.registry.list_experiments(300):
-                if not (self.registry.experiment_dir(rec["id"]) / "decisions.parquet").exists():
+                folder = self.registry.experiment_dir(rec["id"])
+                if not ((folder / "decisions.parquet").exists() or (folder / "executions.parquet").exists()):
                     continue
                 try:
                     rep = self.registry.report(rec["id"])
