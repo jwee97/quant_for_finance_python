@@ -478,6 +478,11 @@ def test_a_factor_study_reads_in_words_with_a_table_behind_every_chart_and_count
         verdict = page.locator("[data-role=fund-verdict]")
         assert verdict.get_attribute("data-level") in ("good", "mixed") and "Interesting is not validated" in verdict.inner_text() and "fcf_yield" in verdict.inner_text()
         assert _tile(page, "Mean rank IC").startswith("+") and page.locator("[data-role=fund-breakdown-country] tbody tr").count() >= 2
+        plain = page.locator("[data-role=fund-explain]")                                        # the study in plain words: how it trades, what each number means, what to do next
+        assert "Each month the companies are ranked by fcf_yield" in plain.inner_text() and plain.locator("tbody tr").count() >= 6 and plain.locator(".tone-dot").count() >= 6
+        assert "What to do next" in plain.inner_text() and "Rank IC" in plain.inner_text()
+        picks = page.locator("[data-role=fund-picks]")                                          # and the names it ranks top and bottom now
+        assert picks.locator("table").count() == 2 and picks.locator("table").first.locator("tbody tr").count() >= 5 and "bought by the test" in picks.inner_text()
         cards = page.locator("#fundamentals-results .chartcard")
         assert cards.count() >= 10
         year = cards.filter(has=page.locator("h3", has_text="IC by year")).first
@@ -585,6 +590,13 @@ def test_a_search_counts_every_formula_keeps_the_survivors_as_candidates_and_rem
         assert heads[:2] == ["Formula", "Used as"] and {"IC", "Locked IC", "q", "DSR"} <= set(heads)
         statuses = set(page.locator("[data-role=fund-leaderboard] tbody tr td:nth-child(3)").all_inner_texts())
         assert statuses <= {"Candidate", "Survivor"} and "Validated" not in page.inner_text("#fundamentals-results")
+        cards = page.locator("[data-role=fund-strategies]")                                      # what the search found, as cards in words with a way to use each
+        assert cards.count() == 1
+        if cards.locator(".strat").count():
+            assert "÷" in cards.locator(".strat h4").first.inner_text() or cards.locator(".strat h4").first.inner_text()
+            assert cards.locator("[data-action=study-formula]").count() == cards.locator(".strat").count() and "not validated" in cards.inner_text().lower()
+        else:
+            assert "Nothing passed every stage" in cards.inner_text() and cards.locator("ul.next li").count() >= 2
         assert "Nothing here is validated" in page.inner_text("[data-role=fund-leaderboard]")
         funnel = page.locator("#fundamentals-results .chartcard", has=page.locator("h3", has_text="Where the formulas fell"))
         funnel.locator(".seg button:has-text('Table')").click()

@@ -685,3 +685,22 @@ table.data .swatch { display: inline-block; width: 10px; height: 10px; border-ra
 @media (max-width: 1100px) { .smilegrid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 640px) { .smilegrid { grid-template-columns: 1fr; } }
 table.data.cmp th, table.data.cmp td { white-space: nowrap; }
+
+/* Fundamentals: the plain-words reading of a study */
+table.data.explain td.means { color: var(--ink2); font-size: 13px; min-width: 280px; }
+.tone-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--muted); margin-right: 4px; vertical-align: middle; }
+.tone-dot[data-tone="good"] { background: var(--pos); }
+.tone-dot[data-tone="bad"] { background: var(--neg); }
+.tone-dot[data-tone="mixed"] { background: var(--warn, #d9a21b); }
+ul.next { margin: 4px 0 8px 18px; padding: 0; }
+ul.next li { margin: 4px 0; }
+
+/* Fundamentals: strategy cards from a search */
+.stratgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; margin-top: 8px; }
+.strat { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; background: var(--card2, transparent); }
+.strat h4 { margin: 0 0 2px; font-size: 15px; }
+.strat .minitiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; margin: 8px 0; }
+.strat .mini { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; }
+.strat .mini .v { font-weight: 700; font-size: 16px; }
+.strat .mini .l { font-size: 12px; color: var(--muted); }
+td.formula { min-width: 240px; word-break: normal; overflow-wrap: anywhere; }

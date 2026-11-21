@@ -17,6 +17,24 @@
   const HEAD = { good: "Strong in this sample", mixed: "Some evidence", bad: "No clear evidence" };
   const STAGE = { sanity: "Has enough data", fast_ic: "Predicts returns (training dates)", stability: "Holds up across years", quantiles: "Buckets rise in order", long_short: "Long-short pays", costs: "Still pays after costs", validation: "Holds on validation dates", locked_test: "Passes the locked test" };
   const stageWord = (s) => STAGE[s] || human(s);
+  /* A formula in words: div(net_income,market_cap) reads "net income ÷ market value". Only the shapes the search builds are translated; anything else is shown as written. */
+  const FIELD = { market_cap: "market value", enterprise_value: "enterprise value", fcf: "free cash flow", roic: "return on invested capital", roe: "return on equity", roa: "return on assets", ebitda: "EBITDA", eps: "earnings per share", capex: "capital spending",
+    total_assets: "total assets", total_debt: "total debt", net_income: "net income", operating_income: "operating income", gross_profit: "gross profit", shareholders_equity: "shareholders' equity", dividends_paid: "dividends paid", working_capital: "working capital", revenue: "revenue" };
+  const OPS = { add: (a) => `${a[0]} + ${a[1]}`, sub: (a) => `${a[0]} − ${a[1]}`, mul: (a) => `${a[0]} × ${a[1]}`, div: (a) => `${a[0]} ÷ ${a[1]}`, neg: (a) => `minus ${a[0]}`, abs: (a) => `size of ${a[0]}`, log: (a) => `log of ${a[0]}`,
+    delta: (a) => `change in ${a[0]} over ${a[1]} periods`, growth: (a) => `growth of ${a[0]} over ${a[1]} periods`, accel: (a) => `acceleration of ${a[0]} over ${a[1]} periods`, rolling_mean: (a) => `${a[0]} averaged over ${a[1]} periods`,
+    rolling_std: (a) => `volatility of ${a[0]} over ${a[1]} periods`, rank: (a) => `rank of ${a[0]}`, zscore: (a) => `${a[0]} standardised`, sector_rank: (a) => `${a[0]}, ranked within its sector`, industry_rank: (a) => `${a[0]}, ranked within its industry` };
+  FD.plainFormula = (text) => {
+    let i = 0; const src = String(text);
+    const ws = () => { while (src[i] === " ") i++; };
+    const node = () => {
+      ws(); const m = /^[A-Za-z_][A-Za-z0-9_]*|^-?\d+(\.\d+)?/.exec(src.slice(i)); if (!m) throw new Error("x"); i += m[0].length; ws();
+      if (src[i] !== "(") return /^[-\d]/.test(m[0]) ? m[0] : (FIELD[m[0]] || m[0].replace(/_/g, " "));
+      i++; const args = []; ws(); while (src[i] !== ")") { args.push(node()); ws(); if (src[i] === ",") i++; if (i >= src.length) throw new Error("x"); } i++;
+      const f = OPS[m[0]]; if (!f) throw new Error("x"); return ["div", "add", "sub", "mul"].includes(m[0]) ? `(${f(args)})` : f(args);
+    };
+    try { const out = node().replace(/^\((.*)\)$/, "$1"); return i >= src.length ? out.charAt(0).toUpperCase() + out.slice(1) : null; } catch (e) { return null; }
+  };
+
   const WAY = (d) => (Q.bad(d) ? "" : Number(d) < 0 ? "lower is better" : "higher is better");           // the sign a formula is used with: the search learned it on the training dates
 
   /* ---------- shared drawing ---------- */
@@ -44,6 +62,27 @@
     return b;
   };
 
+  /* The study in plain words: how the tested strategy would trade, what each number means and whether this study's value is good, middling or weak, and what to do next. */
+  FD.plainReading = (root, d) => {
+    const x = d.explain, card = W.card(root, "In plain words", x.how); card.dataset.role = "fund-explain";
+    const wrap = h("div", "", card); wrap.style.overflowX = "auto"; const t = h("table", "data explain", wrap), hd = h("tr", "", h("thead", "", t));
+    for (const l of ["Measure", "This study", "Reading", "What it means"]) h("th", l === "This study" ? "num" : "", hd, l);
+    const tb = h("tbody", "", t), TONE = { good: "Good", mixed: "Middling", bad: "Weak" };
+    for (const r of x.reading) {
+      const tr = h("tr", "", tb); h("td", "", tr, r.term); h("td", "num", tr, r.value); const td = h("td", "", tr); const dot = h("span", "tone-dot", td); dot.dataset.tone = r.tone; td.append(" " + TONE[r.tone]); h("td", "means", tr, r.means);
+    }
+    h("h4", "", card, "What to do next"); const ul = h("ul", "next", card); for (const n of x.next) h("li", "", ul, n);
+    h("p", "hint", card, x.source);
+  };
+  /* The names the factor ranks best and worst on the latest date: what the tested strategy would hold now. */
+  FD.picksCard = (root, d) => {
+    const p = d.picks, card = W.card(root, `What the factor ranks top and bottom now (${p.date})`, p.note); card.dataset.role = "fund-picks";
+    const cols = (side) => [{ label: "#", num: true, get: (r) => String(r.rank) }, { label: "Ticker", get: (r) => r.ticker }, { label: "Company", get: (r) => r.name || "" }, { label: "Sector", get: (r) => r.sector || "" }, { label: "Country", get: (r) => r.country || "" }, { label: "Score", num: true, get: (r) => num(r.score, 2) }];
+    const grid = h("div", "charts", card);
+    for (const [title, rows, side] of [["Top of the ranking: bought by the test", p.top, "top"], ["Bottom of the ranking: sold short by the test", p.bottom, "bottom"]]) { const c = h("div", "", grid); h("h4", "", c, title); table(c, cols(side), rows); }
+    csvButton(card, "Download the ranking (CSV)", `picks_${d.label}_${p.date}.csv`, ["side", "rank", "ticker", "company", "sector", "country", "score"], [...p.top.map((r) => ["top", r.rank, r.ticker, r.name, r.sector, r.country, r.score]), ...p.bottom.map((r) => ["bottom", r.rank, r.ticker, r.name, r.sector, r.country, r.score])]);
+  };
+
   /* The tear sheet of a study: the verdict in words, the numbers, the charts and the breakdowns. Used by the Factor lab, by combinations and by models. */
   FD.tearSheet = (root, d, opts) => {
     const o = opts || {}, level = levelOf(d), ic = d.ic, pf = d.portfolio, net = pf.net || {}, gross = pf.gross || {}, q = d.quantiles;
@@ -51,6 +90,8 @@
     const head = h("div", "vhead", v); h("span", "vicon", head, ICON[level]); h("h2", "", head, `${HEAD[level]}: ${d.label}`);
     h("p", "", v, d.verdict);
     for (const w of d.warnings) h("p", "hint", v, w);
+    if (d.explain) FD.plainReading(root, d);
+    if (d.picks) FD.picksCard(root, d);
     const k = h("div", "earnrow", root);
     const span = (ci, f) => (ci && ci.length === 2 && !Q.bad(ci[0]) && !Q.bad(ci[1]) ? `${f(ci[0])} to ${f(ci[1])}` : "");
     const icSpan = span(ic.ci95, sgn), shSpan = span(net.sharpe_ci95, (x) => num(x, 2));
@@ -399,6 +440,46 @@
     if (data.placebo) DS.placeboView(root, data.placebo, true);
     if (data.pre || data.placebo) { const runs = runsCard(); if (runs) root.appendChild(runs); }
   };
+  /* The result of a search as things to use: one card for each formula that passed, in words, with what it earned on the dates it never saw and a button that studies it as a portfolio and shows the names it holds now.
+     When nothing passed, the page says where the formulas fell, how close the nearest came and what to change. */
+  FD.strategyCards = (root, d) => {
+    const win = (d.leaderboard || []).filter((r) => r.status === "candidate" || r.status === "survivor").slice(0, 6);
+    const box = W.card(root, win.length ? "Strategies this search found" : "Nothing passed every stage", win.length
+      ? "Each card is a formula the search kept, explained in words, with how it did on the dates it was never allowed to see. These are leads to study, not validated strategies: the next step is the button on the card."
+      : "No formula cleared every bar. That is the usual outcome with real data and honest bars, not a fault: most ideas do not work."); box.dataset.role = "fund-strategies";
+    if (win.length) {
+      const grid = h("div", "stratgrid", box);
+      for (const r of win) {
+        const c = h("div", "strat", grid), plain = FD.plainFormula(r.expression);
+        h("h4", "", c, plain || r.expression); h("p", "hint", c, plain ? r.expression : "");
+        h("p", "", c, `${r.direction < 0 ? "Buys the companies where this is lowest and sells short where it is highest" : "Buys the companies where this is highest and sells short where it is lowest"}, holding for ${(DS.s || {}).horizon === "1w" ? "a week" : (DS.s || {}).horizon === "12m" ? "a year" : (DS.s || {}).horizon === "1m" ? "a month" : "the horizon searched"}.`);
+        const k = h("div", "minitiles", c);
+        for (const [label, val, tip] of [["Locked-dates IC", sgn(r.oos_ic), "Rank IC on the dates the search never saw"], ["t on locked dates", num(r.oos_t, 1), "Above 2 is distinguishable from luck on those dates alone"], ["Sharpe after costs", num(r.sharpe, 2), "Long-short portfolio, net of trading and borrowing"], ["Turnover", pct(r.turnover, 0), "Share of the book replaced each rebalance"]]) {
+          const t = h("div", "mini", k); t.title = tip; h("span", "v", t, val); h("span", "l", t, label);
+        }
+        h("p", "hint", c, `${r.status === "candidate" ? "Candidate" : "Survivor"}: false-discovery rate q ${num(r.q_value, 2)}, deflated Sharpe ${num(r.deflated_sharpe, 2)}. Not validated.`);
+        const row = h("div", "row tight", c);
+        const study = h("button", "btn primary small", row, "Study it and see its picks"); study.type = "button"; study.dataset.action = "study-formula";
+        study.title = "Opens the Factor lab on this formula: the study in plain words, and the companies it ranks top and bottom now.";
+        study.addEventListener("click", () => { FL.s.source = "formula"; FL.s.formula = r.expression; FL.s.direction = r.direction < 0 ? "-1" : "1"; FD.goto("factors"); setTimeout(() => FL.run(), 50); });
+        const bt = h("button", "btn small", row, "Backtest"); bt.type = "button"; bt.dataset.action = "backtest-formula";
+        bt.addEventListener("click", () => FD.views.libraryUse([{ kind: "formula", formula: r.expression }], "backtest"));
+      }
+      return;
+    }
+    const f = d.funnel || [], first = f[0] ? f[0].passed : 0, tried = (d.counts || {}).generated || (d.progress || {}).done || 0;
+    const lost = []; for (let i = 0; i < f.length; i++) lost.push({ stage: f[i].stage, lost: (i ? f[i - 1].passed : tried) - f[i].passed });
+    const worst = lost.slice().sort((a, b) => b.lost - a.lost)[0];
+    const ul = h("ul", "next", box);
+    if (tried && first / tried < 0.4) h("li", "", ul, `Only ${first} of ${tried} formulas had enough data to be tested at all. Most formulas read statement figures your database may not hold for enough companies: check the coverage in the Overview, or add companies and reports.`);
+    if (worst && worst.lost > 0) h("li", "", ul, `Most formulas (${worst.lost}) fell at "${stageWord(worst.stage)}". ${worst.stage === "fast_ic" || worst.stage === "locked_test" || worst.stage === "validation" ? "They did not predict returns on dates they were not fitted to: the commonest outcome, and a good one to know." : "See the funnel above for the full path."}`);
+    h("li", "", ul, "Try more formulas (the count is the lever with the most effect), a longer horizon (3 or 6 months moves slowly and costs less), or a wider universe: a search over 30 companies cannot tell an effect of the usual size from luck. 'What could this search find?' says how large an effect your universe can resolve.");
+    h("li", "", ul, "Start from the classic formulas (value, quality, growth) and look at them first in the Factor lab: a factor with a clear reading is better than a search result with none.");
+    if ((d.strictness || "") !== "exploratory") h("li", "", ul, "Loosen the strictness to Exploratory to see the near misses below. They are not evidence; they show where to look.");
+    const near = (d.candidates || []).filter((r) => r.status !== "candidate").sort((a, b) => (b.stage_reached || 0) - (a.stage_reached || 0)).slice(0, 8);
+    if (near.length) { h("h4", "", box, "The closest misses"); table(box, [{ label: "Formula", cls: "formula", get: (r) => FD.plainFormula(r.text) || r.text }, { label: "Got as far as", get: (r) => stageWord(Q.bad(r.stage_reached) ? "" : (FD.stageNames || [])[r.stage_reached] || String(r.stage_reached)) }, { label: "Why it stopped", get: (r) => r.reason || "" }], near); }
+  };
+
   DS.summaryView = (root, d, after) => {
     const c = d.counts || {};
     Q.labHead(root, `Discovery run ${d.run_id}`, `${d.status} · ${d.progress.done} of ${d.progress.total} formulas · ${d.strictness || "exploratory"} bars`, GUIDE);
@@ -412,6 +493,7 @@
     chartCard(root, "Where the formulas fell", "How many formulas passed each stage. Most should fall early: a funnel that stays wide means the bars are too low.", {
       draw: (b) => C.hbars(b, { rows: d.funnel.map((r) => ({ label: stageWord(r.stage), value: r.passed })), format: (v) => String(Math.round(v)), name: "Passed", label: "Formulas passing each stage", labelWidth: 230, valueWidth: 50, color: () => css("--s1") }),
       table: (b) => table(b, [{ label: "Stage", get: (r) => stageWord(r.stage) }, { label: "Passed", num: true, get: (r) => String(r.passed) }], d.funnel) });
+    FD.strategyCards(root, d);
     const board = W.card(root, "The best so far", "Ranked by fitness (information coefficient, stability, Sharpe, monotonicity and decorrelation, less turnover and complexity). q is the false-discovery rate over everything tried; DSR is the deflated Sharpe probability. Nothing here is validated.");
     board.dataset.role = "fund-leaderboard";
     if (!d.leaderboard.length) h("p", "hint", board, "No formula has survived the stages yet."); else {

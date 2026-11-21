@@ -523,7 +523,85 @@ def evaluate(ctx: ResearchContext, signal: pd.DataFrame, spec: EvalSpec | None =
               "power": power, "premium": premium}
     result["verdict"] = verdict(result)
     result["evidence_level"] = evidence_level(stats_ic.get("t_stat"), (portfolio.get("net") or {}).get("sharpe"))
+    result["explain"] = explain(result, spec, ctx, ls["frac"])
+    result["picks"] = current_picks(ctx, signal, spec)
     return clean(result)
+
+
+def _tone(good: bool | None, bad: bool | None = None) -> str:
+    return "good" if good else ("bad" if bad else "mixed")
+
+
+def explain(result: dict, spec: EvalSpec, ctx: ResearchContext, top_fraction: float) -> dict:
+    """The study in plain words: how the strategy being tested would trade, what each headline number means and how this study scores on it (``tone`` good, mixed or bad), and what to do next. The
+    thresholds are the usual rules of thumb of the factor literature, said as such: they are a reading aid, never a verdict (``verdict`` and ``evidence_level`` are the verdict)."""
+    ic, q, pf, st = result["ic"], result["quantiles"], result["portfolio"], result["stability"]
+    n_avg = result.get("average_companies") or 0.0
+    leg = max(1, int(round(n_avg * (top_fraction if top_fraction and top_fraction < 0.5 else 1.0 / max(int(spec.quantiles), 2)))))
+    when = {"W": "week", "M": "month", "Q": "quarter"}.get(ctx.freq, "period")
+    name = result["label"]
+    how = (f"Each {when} the companies are ranked by {name}. The test buys the top {leg} (about {100.0 * leg / max(n_avg, 1):.0f}% of the roughly {n_avg:.0f} companies that have a value) and sells short the bottom {leg}, holds for "
+           f"{spec.horizon}, and charges {spec.cost_bps:g} basis points a trade and {spec.borrow_bps:g} a year to borrow the shorts. It uses only figures that were public on the day, entering {ctx.entry_lag} day(s) later.")
+    mean, t, icir, pos = ic.get("mean_ic"), ic.get("t_stat"), ic.get("icir"), ic.get("positive_share")
+    spread, mono = q.get("spread_top_minus_bottom"), (q.get("monotonicity") or {}).get("spearman")
+    net, turn, drag = (pf.get("net") or {}).get("sharpe"), pf.get("avg_turnover"), pf.get("cost_drag_sharpe")
+    fin = lambda v: v is not None and np.isfinite(v)                                                      # noqa: E731
+    rows = []
+    if fin(mean):
+        rows.append({"term": "Rank IC (information coefficient)", "value": f"{mean:+.3f}", "tone": _tone(abs(mean) >= 0.03 and mean > 0, mean <= 0),
+                     "means": "How well the factor's ranking lines up with the ranking of what the companies earned next, averaged over dates. 0 is no relation; +1 is a perfect forecast. Real factors live between 0.02 and 0.05: above 0.03 is useful, above 0.1 is usually a mistake (look-ahead or a data error)."})
+    if fin(t):
+        rows.append({"term": "t-statistic of the IC", "value": f"{t:.1f}", "tone": _tone(abs(t) >= 3 and (mean or 0) > 0, abs(t) < 2 or (mean or 0) <= 0),
+                     "means": "How many standard errors the IC is from zero, allowing for overlapping returns. Below 2 is indistinguishable from luck; above 3 is the bar when many ideas were tried (a thousand tries will produce a 3 by luck alone, which is what Alpha discovery counts)."})
+    if fin(pos):
+        rows.append({"term": "Dates the IC was positive", "value": f"{pos:.0%}", "tone": _tone(pos >= 0.58, pos < 0.5), "means": "How steady the relation is. A factor that works on 55-65% of dates is realistic; 50% is a coin flip; a high IC from a few dates is fragile."})
+    if fin(icir):
+        rows.append({"term": "IC information ratio", "value": f"{icir:.2f}", "tone": _tone(icir >= 0.3, icir < 0.1), "means": "Mean IC divided by its spread across dates: the signal-to-noise of the factor. Above 0.3 per period is good, above 0.5 excellent."})
+    if fin(spread):
+        rows.append({"term": "Top bucket minus bottom bucket", "value": f"{spread:+.2%} per {spec.horizon}", "tone": _tone(spread > 0.004, spread <= 0), "means": "What the best-ranked fifth of companies earned over the horizon minus the worst-ranked fifth, before costs: the raw size of the effect in money terms."})
+    if fin(mono):
+        rows.append({"term": "Do the buckets rise in order?", "value": f"{mono:.2f}", "tone": _tone(mono >= 0.8, mono < 0.5), "means": "Rank correlation between the bucket number and its average return (1 is a perfect staircase). A factor that works only in one tail is harder to use than one that ranks everything."})
+    if fin(net):
+        rows.append({"term": "Long-short Sharpe after costs", "value": f"{net:.2f}", "tone": _tone(net >= 0.5, net <= 0), "means": "The return of the long-short portfolio per unit of risk, net of trading and borrowing costs. Above 0.5 is worth a look, above 1 strong; in a study found in the same sample it is flattered, so treat it as an upper bound."})
+    if fin(turn):
+        rows.append({"term": "Turnover per rebalance", "value": f"{turn:.0%}", "tone": _tone(turn <= 0.3, turn > 0.7), "means": f"The share of the portfolio replaced each {when}. High turnover means the paper profit is spent on costs{'' if not fin(drag) else f' (costs took {drag:.2f} off the Sharpe here)'}."})
+    if fin(st.get("positive_years")):
+        rows.append({"term": "Years the IC was positive", "value": f"{st['positive_years']:.0%}", "tone": _tone(st["positive_years"] >= 0.65 and bool(st.get("halves_agree")), st["positive_years"] < 0.5),
+                     "means": f"Whether it worked in most years, and whether the first half of the sample and the second half agree ({'they do' if st.get('halves_agree') else 'they do not'}). A factor that worked in one era only has probably been arbitraged away."})
+    next_steps = []
+    level = result["evidence_level"]
+    if level == "bad":
+        next_steps.append("Nothing here is distinguishable from noise. Try a different horizon, a sector-neutral version (Transformations), or a different factor from the same family before spending more time on this one.")
+    else:
+        next_steps.append("Check that it survives the things it could be disguised as: the premium regression above holds size, beta, volatility and momentum fixed. If the premium vanishes there it was one of those in disguise.")
+        next_steps.append("Press 'Look-ahead audit' to see how much of the result depends on knowing figures before they were public.")
+        next_steps.append("Open Alpha discovery: it searches thousands of variants of ideas like this one, counts every try, and tests the survivors once on dates they never saw. That is the evidence that counts.")
+    if fin(turn) and turn > 0.6:
+        next_steps.append("Turnover is high: lengthen the horizon (3 or 6 months) or the holding period so that costs do not eat the effect.")
+    next_steps.append("'Backtest this alpha' (below) runs the factor through the platform's own engine as a tradable portfolio with its costs.")
+    return {"how": how, "reading": rows, "next": next_steps, "source": "Rules of thumb from the factor literature (Grinold-Kahn on the IC; Harvey-Liu-Zhu on the t-statistic bar); a reading aid, not a verdict."}
+
+
+def current_picks(ctx: ResearchContext, signal: pd.DataFrame, spec: EvalSpec, n: int = 10) -> dict | None:
+    """The companies the factor ranks best and worst on the latest date that has enough of them: the names the tested strategy would hold now (long the top, short the bottom). The values are the same
+    signal the study measured, so they carry its caveats; a ranking is not a recommendation."""
+    mask = ctx.investable().reindex_like(signal)
+    s = signal.where(mask)
+    have = s.notna().sum(axis=1)
+    ok = have[have >= spec.min_assets]
+    if not len(ok):
+        return None
+    day = ok.index[-1]
+    row = s.loc[day].dropna().sort_values()
+    info = ctx.info
+
+    def rec(sid, v):
+        r = info.loc[sid]
+        return {"ticker": str(r.get("ticker") or sid), "name": None if r.get("company_name") is None or pd.isna(r.get("company_name")) else str(r.get("company_name")), "sector": None if pd.isna(r.get("sector")) else str(r.get("sector")),
+                "country": None if pd.isna(r.get("country")) else str(r.get("country")), "score": float(v), "rank": int(len(row) - row.index.get_loc(sid))}
+    k = min(n, len(row) // 2)
+    return {"date": str(pd.Timestamp(day).date()), "n_ranked": int(len(row)), "top": [rec(i, v) for i, v in row.iloc[::-1].iloc[:k].items()], "bottom": [rec(i, v) for i, v in row.iloc[:k].items()],
+            "note": "Highest and lowest score on the latest date with enough companies. The strategy tested buys the top and sells short the bottom; this is the ranking, not advice, and the figures behind it are those public on that date."}
 
 
 def _hist(ic: pd.Series, bins: int = 20) -> dict:

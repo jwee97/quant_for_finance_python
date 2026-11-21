@@ -319,6 +319,12 @@ def test_a_scan_sets_factors_side_by_side_and_a_study_gives_the_full_tear_sheet(
     assert scan["tested"] >= 3 and scan["rows"][0]["name"] in ("fcf_yield", "d_roic") and "map of where to look" in scan["note"]
     study = run(app, "/api/fund/evaluate", db="demo", spec={"factor": "fcf_yield"}, universe={"countries": []}, freq="M")
     assert study["ic"]["mean_ic"] > 0.03 and "Interesting is not validated" in study["verdict"] and set(study["charts"]) >= {"ic", "ls_cumulative_net", "quantile_mean"}
+    ex = study["explain"]
+    assert "ranked by fcf_yield" in ex["how"] and "basis points" in ex["how"] and {r["tone"] for r in ex["reading"]} <= {"good", "mixed", "bad"} and len(ex["reading"]) >= 6 and ex["next"]
+    assert {r["term"] for r in ex["reading"]} >= {"Rank IC (information coefficient)", "t-statistic of the IC", "Long-short Sharpe after costs"}
+    picks = study["picks"]
+    assert picks["n_ranked"] >= 20 and len(picks["top"]) == len(picks["bottom"]) >= 5 and picks["top"][0]["rank"] == 1 and picks["bottom"][0]["rank"] == picks["n_ranked"]
+    assert picks["top"][0]["score"] >= picks["top"][-1]["score"] >= picks["bottom"][0]["score"] and picks["top"][0]["ticker"] != picks["bottom"][0]["ticker"]
     audit = run(app, "/api/fund/lookahead", db="demo", spec={"factor": "fcf_yield"})
     assert set(audit) >= {"honest", "naive", "flattered", "verdict"}
     for body, why in (({"spec": {}}, "name a factor"), ({"spec": {"factor": "fcf_yield", "horizon": "9y"}}, "horizon must be"), ({"spec": {"factor": "fcf_yield", "bogus": 1}}, "unknown evaluation setting"),

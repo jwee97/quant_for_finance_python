@@ -112,3 +112,10 @@ A share near 0.5 means the model is indistinguishable from noise at this pace of
 * The policy's settings are yours. Choosing them on the same period you then report is a selection process that must be counted as such (the Tune tab and the trial counts do this); the Explorer
   does not search.
 * A stop at `k` volatilities is a risk rule, not a source of return; the analytics report what it did to the result and nothing more.
+
+
+## The end of a development run, and testing a period
+
+A development run is scored only to the end of its validation segment (the test and forward outcomes are protected). A position rule given no scores returns an empty book, which the engine used to "sell" at the next rebalance: the Explorer then showed a close of every position on the last day, with 0% held. Nothing was decided there. The ledger, the chart, the exposure and the open positions now stop at the last day the model scored plus the lag its last decision needs, and the book of that last decision stays in force (`summary.scored_until` says where). It is a display artifact, not overfitting.
+
+**Test a period** (`GET /api/ml/strategy/window?id=&days=5` or `&from=&to=`) is a forward test of a stretch of days, not one date: the run's own book over the last week, two weeks, month or any dates, against the equal-weight benchmark: return after costs, active return, days up, days beating the benchmark, worst drawdown, what each position contributed, the trades inside the window and what the model said about each asset at the window's start against what then happened. Nothing is re-fitted, so a day the model trained on is not a forward day: `coverage` counts the window's days by segment and the page says so. A week of returns is noise and the page says that too; a development run's window cannot reach past the end of validation, so a genuinely fresh week needs a full run (or `POST /api/ml/evaluate` on a frozen plan) or the Forward test tab, which records the signal as days arrive.
