@@ -149,3 +149,15 @@ def test_two_fingers_pinch_and_pan_the_trade_panel(browser, live):  # noqa: F811
     touch("pointerup", 2, cx + 140)
     assert phone.locator("[data-role=trade-panel] svg.tp-svg").count() == 1 and label() != zoomed, "moving both fingers pans the window"
     phone.close()
+
+
+def test_the_vendored_charting_library_is_served_with_its_licence(live):
+    """ECharts (Apache-2.0) is part of the repository, not fetched: the app's content-security policy allows scripts from its own origin only. Its licence and notice travel with it."""
+    import urllib.request
+
+    running, _, _ = live
+    for name, needle in (("vendor/echarts.min.js", b"echarts"), ("vendor/echarts.LICENSE", b"Apache License"), ("vendor/echarts.NOTICE", b"Apache ECharts"), ("charts_ec.js", b"window.Charts")):
+        with urllib.request.urlopen(running.url + "static/" + name) as r:
+            assert r.status == 200 and needle in r.read(), name
+    html = urllib.request.urlopen(running.url).read().decode()
+    assert html.index("vendor/echarts.min.js") < html.index("charts.js") < html.index("charts_ec.js"), "the library loads first, then the SVG kit, then the adapter that takes charts over"

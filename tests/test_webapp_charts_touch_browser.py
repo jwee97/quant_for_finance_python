@@ -39,8 +39,7 @@ def _curve(page):
 
 def test_a_tap_shows_the_tooltip_and_it_stays_until_a_tap_elsewhere(phone):
     card = _curve(phone)
-    overlay = card.locator("svg.chart rect[tabindex]")
-    box = overlay.bounding_box()
+    box = _plot(card.locator(".ec-chart"))
     phone.touchscreen.tap(box["x"] + box["width"] * 0.4, box["y"] + box["height"] * 0.5)
     tip = card.locator(".tip")
     tip.wait_for(state="visible")
@@ -57,43 +56,57 @@ def test_a_tap_shows_the_tooltip_and_it_stays_until_a_tap_elsewhere(phone):
     assert phone.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1"), "nothing scrolls sideways on a phone"
 
 
+def _plot(chart):
+    """The plot area of an ECharts chart (without its axis labels and its zoom strip), as an absolute box: where a tap or a drag reads data."""
+    return chart.evaluate("""el => { const c = echarts.getInstanceByDom(el), r = c.getModel().getComponent('grid').coordinateSystem.getRect(), b = el.getBoundingClientRect(); return { x: b.left + r.x, y: b.top + r.y, width: r.width, height: r.height }; }""")
+
+
+def _window(page, selector):
+    """The visible stretch of an ECharts line chart, as [start, end, first, last] along its x axis (None when the chart is the SVG kit's)."""
+    return page.evaluate("""(sel) => { const el = document.querySelector(sel); const c = el && window.echarts && echarts.getInstanceByDom(el); if (!c) return null;
+      const z = c.getOption().dataZoom[0], d = c.getOption().series[0].data; return [z.startValue, z.endValue, d[0][0], d[d.length - 1][0]]; }""", selector)
+
+
 def test_a_line_chart_zooms_moves_and_resets_and_the_tooltip_reads_the_zoomed_data(phone):
+    """The compact controls: a Reset button, a readout of how much is shown, a strip under the chart to drag and the keyboard (+ - 0). The old plus, minus and arrow buttons are gone: the strip and a pinch do their work."""
     card = _curve(phone)
     bar = card.locator(".zoombar")
-    assert bar.locator("button").all_inner_texts() == ["+", "−", "◀", "▶", "Reset"] and bar.locator("button[aria-label='Zoom out']").is_disabled() and bar.locator("button[aria-label='Show everything']").is_disabled()
-    last_tick = lambda: card.locator("svg.chart").evaluate("s => [...s.querySelectorAll('text')].map(t => t.textContent).join('|')")  # noqa: E731
-    whole = last_tick()
-    bar.locator("button[aria-label='Zoom in']").tap()
+    assert bar.locator("button").all_inner_texts() == ["Reset"] and bar.locator("button[aria-label='Show everything']").is_disabled()
+    sel = "#rates-results .chartcard .ec-chart"
+    a0, b0, first, last = _window(phone, sel)
+    assert (a0, b0) == (first, last), "it opens on the whole curve"
+    chart = card.locator(".ec-chart")
+    chart.focus()
+    phone.keyboard.press("+")
     _wait_until(phone, "document.querySelector('#rates-results .chartcard .zoombar span') !== null")
-    assert " of " in card.locator(".zoombar span").inner_text() and last_tick() != whole
+    assert " of " in card.locator(".zoombar span").inner_text()
     shown = int(card.locator(".zoombar span").inner_text().split()[0])
     total = int(card.locator(".zoombar span").inner_text().split()[2])
-    assert shown < total and abs(shown - total / 2) <= 2
-    assert card.locator("button[aria-label='Earlier']").is_enabled() and card.locator("button[aria-label='Later']").is_enabled()
-    for _ in range(6):
-        if card.locator("button[aria-label='Later']").is_disabled():
-            break
-        card.locator("button[aria-label='Later']").tap()
-    _wait_until(phone, "document.querySelector(\"#rates-results .chartcard button[aria-label='Later']\").disabled")
-    overlay = card.locator("svg.chart rect[tabindex]")
-    box = overlay.bounding_box()
-    phone.touchscreen.tap(box["x"] + box["width"] - 2, box["y"] + box["height"] * 0.5)
+    a1, b1, _, _ = _window(phone, sel)
+    assert shown < total and (b1 - a1) < (b0 - a0) * 0.75 and bar.locator("button").is_enabled()
+    phone.evaluate("""(sel) => { const c = echarts.getInstanceByDom(document.querySelector(sel)), z = c.getOption().dataZoom[0], d = c.getOption().series[0].data, end = d[d.length - 1][0], w = z.endValue - z.startValue;
+      c.dispatchAction({ type: 'dataZoom', startValue: end - w, endValue: end }); }""", sel)                    # what dragging the strip to the right-hand end does
+    box = _plot(chart)
+    phone.touchscreen.tap(box["x"] + box["width"] - 6, box["y"] + box["height"] * 0.4)
     card.locator(".tip").wait_for(state="visible")
-    assert "30.00 years" in card.locator(".tip").inner_text() or "years" in card.locator(".tip").inner_text(), "the right edge of the zoomed chart is still the last maturity"
-    overlay.focus()
+    assert "years" in card.locator(".tip").inner_text(), "the right edge of the zoomed chart is still the last maturity"
+    chart.focus()
     phone.keyboard.press("-")
+    a2, b2, _, _ = _window(phone, sel)
+    assert (b2 - a2) > (b1 - a1), "minus zooms out"
+    phone.keyboard.press("0")
     _wait_until(phone, "document.querySelector('#rates-results .chartcard .zoombar span') === null")
     phone.keyboard.press("+")
     _wait_until(phone, "document.querySelector('#rates-results .chartcard .zoombar span') !== null")
     card.locator("button[aria-label='Show everything']").tap()
     _wait_until(phone, "document.querySelector('#rates-results .chartcard .zoombar span') === null")
-    assert last_tick() == whole
+    assert _window(phone, sel)[:2] == [first, last]
 
 
 def test_a_bar_chart_answers_a_tap_too(phone):
     open_tab(phone, "futures")
     phone.wait_for_selector("#futures-results .tile", timeout=120_000)
-    hit = phone.locator("#futures-results svg.chart rect[fill=transparent]").first
+    hit = phone.locator("#futures-results :is(.ec-chart, svg.chart rect[fill=transparent])").first
     hit.scroll_into_view_if_needed()
     box = hit.bounding_box()
     phone.touchscreen.tap(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
@@ -116,8 +129,9 @@ def test_a_tap_on_the_forecast_part_of_the_fan_reads_the_forecast(browser, live_
         page.wait_for_selector("[data-role=forecast-fan] svg.chart", timeout=240_000)
         card = page.locator("[data-role=forecast-fan]")
         card.scroll_into_view_if_needed()
-        box = card.locator("svg.chart rect[tabindex]").bounding_box()
-        share = page.evaluate("""() => { const s = document.querySelector('[data-role=forecast-fan] svg.chart'), r = s.querySelector('rect[tabindex]').getBoundingClientRect(), v = s.querySelector('line.ref').getBoundingClientRect(); return (r.right - v.left) / r.width; }""")
+        box = _plot(card.locator(".ec-chart"))
+        share = page.evaluate("""() => { const c = echarts.getInstanceByDom(document.querySelector('[data-role=forecast-fan] .ec-chart')), o = c.getOption(), ml = o.series[0].markLine.data.find((d) => d.xAxis !== undefined),
+          rect = c.getModel().getComponent('grid').coordinateSystem.getRect(), x = c.convertToPixel({ xAxisIndex: 0 }, ml.xAxis); return (rect.x + rect.width - x) / rect.width; }""")
         assert share > 0.3, f"the forecast is {share:.0%} of the chart: too narrow to tap on a phone"
         page.touchscreen.tap(box["x"] + box["width"] * 0.9, box["y"] + box["height"] * 0.5)
         tip = card.locator(".tip")

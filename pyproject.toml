@@ -50,7 +50,7 @@ quant = "src.cli:main"
 include = ["src*"]
 
 [tool.setuptools.package-data]
-"src.webapp" = ["static/*"]
+"src.webapp" = ["static/*", "static/vendor/*"]
 "src.assets.free_data" = ["*.csv"]
 
 [tool.pytest.ini_options]

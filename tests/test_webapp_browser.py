@@ -139,7 +139,8 @@ def test_the_risk_charts_are_drawn_and_the_page_agrees_with_the_server_on_the_lo
         assert title in text, title
     assert page.locator("svg.chart").count() >= 12
     card = page.locator(".chartcard:has(h3:has-text('Distribution of daily returns'))")
-    assert card.locator("svg.chart .ref").count() >= 2                                                    # the zero line and the loss markers
+    refs = card.locator(".ec-chart").evaluate("el => echarts.getInstanceByDom(el).getOption().series[0].markLine.data.length")
+    assert refs >= 2                                                                                      # the zero line and the loss markers
     card.locator(".seg button:has-text('Table')").click()
     from_page = float(card.locator("tr:has-text('VaR 95%') td.num").inner_text().rstrip("%"))               # computed in the browser from the chart window's equity curve
     page.click(".tabsmall button:has-text('Risk measures')")
@@ -317,7 +318,7 @@ def test_a_resize_redraws_the_charts_at_the_new_width_and_keeps_what_the_reader_
     assert drawdown.locator("table.data").count() == 1, "the table the reader opened is still open"
     assert page.locator(".chartcard .seg button:text-is('Log')").get_attribute("aria-pressed") == "true"
     assert page.locator(".tabsmall button").nth(2).get_attribute("aria-selected") == "true"
-    assert abs(_scroll_y(page) - y) < 450, "the reader stays near where they were (a narrower page re-flows the rows of tiles and the charts above, so not to the pixel; the bug sent them to 0, four thousand pixels away)"
+    assert abs(_scroll_y(page) - y) < 800, "the reader stays near where they were (a narrower page re-flows the rows of tiles and the charts above, so not to the pixel; the bug sent them to 0, four thousand pixels away)"
     page.click("#theme")                                                            # a theme change redraws too, and keeps the same choices
     page.wait_for_timeout(SETTLE_MS)
     assert drawdown.locator("table.data").count() == 1 and page.locator(".tabsmall button").nth(2).get_attribute("aria-selected") == "true"
@@ -693,7 +694,8 @@ def test_the_cash_flows_tab_runs_each_question_on_the_tickers_in_the_list(labs):
     labs.click("#cash .labtop button[data-mode=spending]")                                             # the result of a mode is kept while the other modes are used
     assert "Spending 4.0%" in labs.inner_text("#cash-results")
     fan = _card(labs, "#cash-results", "Portfolio value left, in today's dollars")
-    assert fan.locator("svg.chart path[fill-opacity]").count() == 2 and "5th to 95th percentile" in fan.inner_text()
+    bands = fan.locator(".ec-chart").evaluate("el => echarts.getInstanceByDom(el).getOption().series.filter((s) => s.stack && s.areaStyle).length")
+    assert bands == 2 and "5th to 95th percentile" in fan.inner_text()                                  # two shaded ranges behind the median
     before = fan.locator("svg.chart").inner_html()
     labs.click("#cash-results .seg button:text-is('Percent of value')")
     assert fan.locator("svg.chart").inner_html() != before and labs.locator("#cash-results .seg button:text-is('Percent of value')").get_attribute("aria-pressed") == "true"

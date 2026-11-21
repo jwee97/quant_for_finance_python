@@ -55,7 +55,7 @@ def test_a_range_preset_and_a_drag_zoom_narrow_the_chart_and_a_double_click_show
     assert "of" in card.locator(".zoombar span").inner_text() and card.locator(".rangebar button:has-text('1Y')").get_attribute("aria-pressed") == "true"
     card.locator(".rangebar button:has-text('All')").click()
     assert card.locator(".zoombar span").count() == 0
-    box = card.locator("svg.chart rect[tabindex]").bounding_box()
+    box = card.locator(":is(.ec-chart, svg.chart rect[tabindex])").bounding_box()
     y = box["y"] + box["height"] / 2
     page.mouse.move(box["x"] + box["width"] * 0.3, y)
     page.mouse.down()
@@ -65,7 +65,7 @@ def test_a_range_preset_and_a_drag_zoom_narrow_the_chart_and_a_double_click_show
     page.mouse.up()
     page.wait_for_selector(".zoombar span")
     assert card.locator(".brush").count() == 0 and "points" in card.locator(".zoombar span").inner_text()
-    card.locator("svg.chart rect[tabindex]").dblclick()
+    card.locator(":is(.ec-chart, svg.chart rect[tabindex])").dblclick()
     assert card.locator(".zoombar span").count() == 0
 
 
