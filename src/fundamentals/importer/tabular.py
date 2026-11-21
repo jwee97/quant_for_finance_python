@@ -14,12 +14,14 @@ import re
 from .. import manual
 from ..errors import FundamentalsError
 
-UNIT_WORDS = (("billions", r"in\s+billions|\$\s*billions|\(\s*billions"), ("millions", r"in\s+millions|\$\s*millions|\(\s*millions|\bmillions of\b"), ("thousands", r"in\s+thousands|\$\s*thousands|\(\s*thousands|\bthousands of\b|000s"))
+UNIT_WORDS = (("billions", r"in\s+billions|\$\s*billions|\(\s*billions|十億円|십억원|十亿|单位[:：]?\s*亿"),
+              ("millions", r"in\s+millions|\$\s*millions|\(\s*millions|\bmillions of\b|百万円|百萬円|백만원|百万元|百萬元|百万|en millones|in millionen|em milhões|milhões de"),
+              ("thousands", r"in\s+thousands|\$\s*thousands|\(\s*thousands|\bthousands of\b|000s|千円|천원|千元|单位[:：]?\s*千|en miles|in tausend|em milhares|milhares de"))
 
 
 def detect_units(text: str) -> str | None:
     """The unit a statement says its amounts are in ("in thousands", "$ millions"), or None when it says nothing."""
-    low = (text or "")[:6000].lower()
+    low = (text or "")[:8000].lower()
     for unit, pattern in UNIT_WORDS:
         if re.search(pattern, low):
             return unit

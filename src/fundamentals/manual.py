@@ -193,7 +193,9 @@ def parse_number(cell) -> float | None:
     negative = text.startswith("(") and text.endswith(")")
     if negative:
         text = text[1:-1]
-    text = re.sub(r"[\s$€£¥*]", "", text)
+    if text[:1] in ("△", "▲"):                                                      # the Japanese minus sign of a statement: △1,000 is negative
+        negative, text = True, text[1:]
+    text = re.sub(r"[\s$€£¥￥*]", "", text)
     if "," in text:
         if not _THOUSANDS.match(text):
             raise ValueError(f"{cell!r} is not a number")

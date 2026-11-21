@@ -1,0 +1,113 @@
+"""Optical character recognition for scanned filings, through an engine that is installed (PaddleOCR or Surya), never one that is assumed.
+
+A scanned report has no text layer, and its digits are pixels. An OCR engine turns them back into words with positions, which the PDF reader's row logic then reads like any other page; the result is marked
+``pdf-ocr`` and always needs a person's review, because a misread digit is a wrong number that looks like a right one. The engines are heavy and optional (PaddleOCR needs PaddlePaddle; Surya needs PyTorch and
+downloads its models on first use), so nothing here imports them until asked, and a missing engine is named in the message with how to install it. Languages: Japanese, Korean, Chinese and English.
+
+The adapters were written against the engines' documented interfaces and are tested here with a stand-in engine; they have not been run against the real engines in this environment.
+"""
+
+from __future__ import annotations
+
+import importlib.util
+
+from ..errors import FundamentalsError
+
+LANG = {"en": {"paddleocr": "en", "surya": ["en"]}, "ja": {"paddleocr": "japan", "surya": ["ja"]}, "ko": {"paddleocr": "korean", "surya": ["ko"]}, "zh": {"paddleocr": "ch", "surya": ["zh"]},
+        "zh-tw": {"paddleocr": "chinese_cht", "surya": ["zh"]}}
+ENGINES = ("paddleocr", "surya")
+
+
+def available() -> list[str]:
+    return [e for e in ENGINES if importlib.util.find_spec(e) is not None]
+
+
+def missing_message() -> str:
+    return "this PDF has no text layer (it looks scanned) and no OCR engine is installed: install PaddleOCR (pip install paddleocr paddlepaddle) or Surya (pip install surya-ocr), or use the company's XBRL or an Excel/CSV export"
+
+
+def render_pages(data: bytes, dpi: int = 200, limit: int = 60) -> list[bytes]:
+    try:
+        import pymupdf as fitz
+    except ImportError:
+        import fitz
+    doc = fitz.open(stream=data, filetype="pdf")
+    return [page.get_pixmap(dpi=dpi).tobytes("png") for page in list(doc)[:limit]]
+
+
+class Engine:
+    name = "engine"
+
+    def words(self, image_png: bytes, language: str) -> list[tuple]:
+        """``[(x0, y_mid, x1, text, confidence)]`` for one page image."""
+        raise NotImplementedError
+
+
+class PaddleEngine(Engine):
+    name = "paddleocr"
+
+    def __init__(self):
+        self._by_lang: dict = {}
+
+    def words(self, image_png: bytes, language: str) -> list[tuple]:
+        try:
+            from paddleocr import PaddleOCR
+        except ImportError:
+            raise FundamentalsError(missing_message()) from None
+        lang = LANG.get(language, LANG["en"])["paddleocr"]
+        if lang not in self._by_lang:
+            self._by_lang[lang] = PaddleOCR(use_angle_cls=True, lang=lang, show_log=False)
+        out = []
+        result = self._by_lang[lang].ocr(image_png, cls=True) or []
+        for page in result:
+            for box, (text, conf) in (page or []):
+                xs, ys = [p[0] for p in box], [p[1] for p in box]
+                out.append((min(xs), (min(ys) + max(ys)) / 2, max(xs), str(text), float(conf)))
+        return out
+
+
+class SuryaEngine(Engine):
+    name = "surya"
+
+    def words(self, image_png: bytes, language: str) -> list[tuple]:
+        try:
+            import io
+
+            from PIL import Image
+            from surya.detection import DetectionPredictor
+            from surya.recognition import RecognitionPredictor
+        except ImportError:
+            raise FundamentalsError(missing_message()) from None
+        image = Image.open(io.BytesIO(image_png)).convert("RGB")
+        predictions = RecognitionPredictor()([image], [LANG.get(language, LANG["en"])["surya"]], DetectionPredictor())
+        out = []
+        for line in predictions[0].text_lines:
+            x0, y0, x1, y1 = line.bbox
+            out.append((x0, (y0 + y1) / 2, x1, line.text, float(getattr(line, "confidence", 0.0) or 0.0)))
+        return out
+
+
+def engine(name: str | None = None) -> Engine:
+    """The engine asked for, or the first installed one."""
+    choice = name or next(iter(available()), None)
+    if choice is None:
+        raise FundamentalsError(missing_message())
+    if choice not in ENGINES:
+        raise FundamentalsError(f"OCR engine must be one of {', '.join(ENGINES)}")
+    return PaddleEngine() if choice == "paddleocr" else SuryaEngine()
+
+
+def pages(data: bytes, language: str = "en", eng: Engine | None = None) -> list[list[tuple]]:
+    """The words of every page of a scanned PDF, as ``(x0, y_mid, x1, text)`` with a ``conf`` kept aside in :data:`LAST_CONFIDENCE`."""
+    eng = eng or engine()
+    out = []
+    LAST_CONFIDENCE.clear()
+    for n, image in enumerate(render_pages(data), start=1):
+        words = eng.words(image, language)
+        out.append([(w[0], w[1], w[2], w[3]) for w in words])
+        for w in words:
+            LAST_CONFIDENCE[(n, w[3])] = w[4]
+    return out
+
+
+LAST_CONFIDENCE: dict = {}

@@ -20,7 +20,7 @@ from datetime import date
 
 from .. import manual
 from ..errors import FundamentalsError
-from .tabular import detect_units
+from .tabular import detect_units  # multilingual: "in thousands", 千円, 백만원, 单位：万元
 
 MAX_PAGES = 400
 NUMBER = re.compile(r"^\(?-?\$?\s?\d[\d,]*(\.\d+)?\)?%?$")
@@ -117,10 +117,17 @@ def _headings(text: str, year_end: tuple[int, int] | None) -> list[dict]:
     return out if out else []
 
 
-def extract(data: bytes) -> dict:
+def extract(data: bytes, ocr=None, language: str = "en") -> dict:
+    """Read a PDF. A page with no text layer is sent to an OCR engine when one is installed (or the ``ocr`` engine given); without one the PDF is refused, because guessed digits would be invented numbers."""
     pages = _words(data)
+    method = "pdf-text"
     if not any(pages):
-        raise FundamentalsError("this PDF has no text layer (it looks scanned): there is no OCR here, and guessing digits would put invented numbers in the database. Use the company's XBRL or an Excel/CSV export")
+        from . import ocr as ocr_module
+        if ocr is None and not ocr_module.available():
+            raise FundamentalsError(ocr_module.missing_message())
+        pages, method = ocr_module.pages(data, language, ocr), "pdf-ocr"
+        if not any(pages):
+            raise FundamentalsError("OCR found no text on any page of this PDF")
     full_text = " ".join(" ".join(w[3] for w in p) for p in pages[:6])
     stated = detect_units(full_text)
     year_end = None
@@ -169,6 +176,8 @@ def extract(data: bytes) -> dict:
         raise FundamentalsError("no statement lines this application knows were found in the text of this PDF (Revenue, Net income, Total assets…) under a heading of periods: the report may be laid out in a way this reader cannot follow")
     units = stated or (page_units.most_common(1)[0][0] if page_units else None)
     notes = ["Read from the text of a PDF: every figure carries its page and its line, and every period needs a person's review before it is stored."]
+    if method == "pdf-ocr":
+        notes.insert(0, "This PDF was scanned: its text was recognised by an OCR engine, and a misread digit looks like a right one. Check every figure against the page image.")
     if not units:
         notes.append("The report does not state its unit in the pages read: amounts are read as units. Choose the unit below if they are in thousands or millions.")
     if len(page_units) > 1:
@@ -181,10 +190,10 @@ def extract(data: bytes) -> dict:
         end = date.fromisoformat(c["period_end"])
         kind = c["kind"]
         values = {code: v for code, (v, _, _) in found[key].items()}
-        sources = {code: {"tag": None, "reported": v, "unit": units or "units", "page": pno, "text": line[:160], "method": "pdf-text"} for code, (v, pno, line) in found[key].items()}
+        sources = {code: {"tag": None, "reported": v, "unit": units or "units", "page": pno, "text": line[:160], "method": method} for code, (v, pno, line) in found[key].items()}
         periods.append({"fiscal_period": "FY" if kind == "FY" else "Q" + str((end.month - 1) // 3 + 1), "period_end": c["period_end"], "fiscal_year": end.year, "filing_date": None, "currency": None, "values": values,
                         "sources": sources, "guessed": c["guessed"] or kind == "Q"})
     if any(p["fiscal_period"] != "FY" for p in periods):
         notes.append("A quarterly column's fiscal quarter number was taken from its calendar month; a company with an off-calendar fiscal year numbers its quarters differently: check it.")
     return {"periods": periods, "units": {"money": units or "units", "shares": "units"}, "currency": None, "company": {}, "notes": notes, "ytd_only": [], "unmapped": [], "skipped": skipped[:60],
-            "method": "pdf-text", "review_required": True, "units_stated": units is not None, "accession": None, "pages": len(pages)}
+            "method": method, "review_required": True, "units_stated": units is not None, "accession": None, "pages": len(pages)}

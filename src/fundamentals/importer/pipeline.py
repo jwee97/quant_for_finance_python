@@ -25,8 +25,9 @@ import zlib
 from .. import manual
 from ..errors import FundamentalsError
 from ..schema import now_iso
+from . import ai_extract, docling_adapter, reconcile, tabular, xbrl
+from . import html as html_reader
 from . import pdf as pdf_reader
-from . import reconcile, tabular, xbrl
 from .fetch import Fetcher
 
 MAX_FILE = 40_000_000
@@ -34,7 +35,7 @@ MAX_ZIP_MEMBERS = 200
 MAX_ZIP_TOTAL = 250_000_000
 MAX_RATIO = 200
 STATUSES = ("queued", "extracted", "needs_review", "approved", "saved", "rejected", "failed", "duplicate")
-EXT_KIND = {".csv": "csv", ".tsv": "csv", ".txt": "csv", ".xlsx": "xlsx", ".xlsm": "xlsx", ".pdf": "pdf", ".xml": "xbrl", ".xbrl": "xbrl", ".htm": "xbrl", ".html": "xbrl", ".xhtml": "xbrl", ".zip": "zip"}
+EXT_KIND = {".csv": "csv", ".tsv": "csv", ".txt": "csv", ".xlsx": "xlsx", ".xlsm": "xlsx", ".pdf": "pdf", ".xml": "xbrl", ".xbrl": "xbrl", ".htm": "html", ".html": "html", ".xhtml": "html", ".zip": "zip"}
 
 
 def sniff(name: str, data: bytes) -> str:
@@ -223,9 +224,44 @@ class ImportService:
             return tabular.from_xlsx(data)
         if kind == "csv":
             return tabular.from_text(tabular.decode(data), "csv", {"file": name})
+        if kind == "html":
+            return html_reader.extract(data)
         if kind == "pdf":
-            return pdf_reader.extract(data)
+            return self._pdf(data, name, hint)
         raise FundamentalsError(f"{name}: this kind of file cannot be read (supported: XBRL / inline XBRL filings, CSV, Excel, PDF, and ZIP archives of them)")
+
+    MIN_PDF_LINES = 5
+
+    def _pdf(self, data: bytes, name: str, hint: dict) -> dict:
+        """The chain for a PDF, deterministic first: the words on the page (with OCR for a scanned one, if an engine is installed); if that finds fewer than a handful of known lines, Docling's table
+        recovery (if installed); and only then, if switched on, an AI model whose every figure must be found in the document. Each step is marked in the draft's method and all are reviewed."""
+        language = hint.get("language") or "en"
+        problem = None
+        try:
+            draft = pdf_reader.extract(data, hint.get("ocr_engine"), language)
+            lines = len({c for p in draft["periods"] for c in p["values"]})
+            if lines >= self.MIN_PDF_LINES:
+                return draft
+            problem = FundamentalsError(f"only {lines} statement line(s) were found in the text of this PDF")
+        except FundamentalsError as error:
+            problem = error
+        if docling_adapter.available():
+            try:
+                tables = docling_adapter.tables(data)
+                for text in tables:
+                    d = tabular.from_text(text, "pdf-docling", {"file": name})
+                    d.update(method="pdf-docling", review_required=True)
+                    d["notes"].insert(0, "Tables recovered by Docling's layout analysis because the plain reading found too little: check every figure against the page.")
+                    return d
+            except FundamentalsError as error:
+                problem = problem or error
+        if ai_extract.enabled():
+            try:
+                text = " ".join(" ".join(w[3] for w in p) for p in pdf_reader._words(data))
+                return ai_extract.extract(text, hint.get("ai_client"), language)
+            except FundamentalsError as error:
+                problem = FundamentalsError(f"{problem}; AI-assisted extraction: {error}")
+        raise problem
 
     def extract_item(self, item_id: int, hint: dict | None = None) -> dict:
         it = self.item(item_id, full=True)
