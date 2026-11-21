@@ -21,11 +21,12 @@ import json
 import uuid
 import zipfile
 import zlib
+from pathlib import Path
 
 from .. import manual
 from ..errors import FundamentalsError
 from ..schema import now_iso
-from . import ai_extract, docling_adapter, reconcile, tabular, xbrl
+from . import ai_extract, arelle_check, docling_adapter, reconcile, tabular, xbrl
 from . import html as html_reader
 from . import pdf as pdf_reader
 from .fetch import Fetcher
@@ -177,9 +178,13 @@ class ImportService:
         if got["kind"] == "draft":
             return [self.add_structured(batch_id, got["name"], ref.url, got["raw"], got["draft"])]
         items = self.add_file(batch_id, got["name"], got["data"], url=ref.url)
+        package_hash = None
+        if got.get("package"):                                                                       # the whole report package, kept once, for an XBRL processor that needs the taxonomy files beside the report
+            package_hash = _hash(got["package"])
+            self._blob(package_hash, got["package"])
         for it in items:
             if it["status"] == "queued":
-                self.set_hint(it["item_id"], {**(got.get("hint") or {}), "fiscal_period": ref.fiscal_period})
+                self.set_hint(it["item_id"], {**(got.get("hint") or {}), "fiscal_period": ref.fiscal_period, "package_hash": package_hash})
         return items
 
     # ------------------------------------------------------------------------------------------------------------ reading
@@ -219,7 +224,18 @@ class ImportService:
 
     def _extract_bytes(self, kind: str, name: str, data: bytes, hint: dict) -> dict:
         if kind == "xbrl":
-            return xbrl.extract(data, name, hint.get("accession"), bool(hint.get("comparatives")))
+            draft = xbrl.extract(data, name, hint.get("accession"), bool(hint.get("comparatives")))
+            if arelle_check.wanted(hint):
+                try:
+                    cache = Path(self.store.db.path).parent / "arelle_cache" if getattr(self.store.db, "path", None) else None
+                    package = self._blob(hint["package_hash"]) if hint.get("package_hash") else None
+                    check = arelle_check.crosscheck(data, name, cache, package=package)
+                    draft["arelle"] = check
+                    draft["notes"].append(f"Arelle cross-check: {check['agree']} of {check['compared']} company-wide numeric facts agree with Arelle ({check['facts_arelle']} facts read by Arelle)"
+                                          + (f"; {len(check['different'])} differ" if check["different"] else "") + (f"; Arelle reports {check['validation_errors']} validation message(s) about the filing itself" if check["validation_errors"] else "") + ".")
+                except FundamentalsError as error:
+                    draft["notes"].append(f"Arelle cross-check was not possible: {error}")
+            return draft
         if kind == "xlsx":
             return tabular.from_xlsx(data)
         if kind == "csv":
@@ -331,6 +347,12 @@ class ImportService:
             if not p.get("filing_date"):
                 issues.append({"level": "info", "message": f"{p['fiscal_period']} to {p['period_end']} has no filing date: it is treated as public a conservative time after the period end and flagged estimated. Enter the date it was filed to use it as of that day.",
                                "period": f"{p['fiscal_period']} to {p['period_end']}", "field": "filing_date", "kind": "no_filing_date"})
+        ar = draft.get("arelle")
+        if ar and not ar.get("agrees"):
+            why = "Arelle read no values (its taxonomy could not be loaded)" if ar.get("no_values") else f"{len(ar.get('different') or [])} fact(s) differ, {len(ar.get('only_arelle') or [])} are only in Arelle and {len(ar.get('only_this_reader') or [])} only in this reader"
+            issues.append({"level": "warning", "message": f"the Arelle cross-check does not agree with this reader: {why}. See the draft's arelle section.", "period": None, "field": None, "kind": "arelle"})
+        elif ar and not ar.get("valid", True):
+            issues.append({"level": "info", "message": f"Arelle agrees with every fact this reader found, and reports {ar.get('validation_errors')} validation error(s) about the filing itself (for example an inconsistent calculation in the filer's tagging): the figures are as filed.", "period": None, "field": None, "kind": "arelle"})
         if draft.get("review_required"):
             issues.append({"level": "warning", "message": "read from the text of a PDF: check every figure against the page before approving.", "period": None, "field": None, "kind": "pdf_review"})
         return issues

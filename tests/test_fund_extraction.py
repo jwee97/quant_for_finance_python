@@ -162,3 +162,42 @@ def test_the_pdf_chain_reaches_the_ai_model_only_when_it_is_switched_on(svc, mon
     good = {"unit": "millions", "periods": [{"fiscal_period": "FY", "period_end": "2024-03-31", "values": {"revenue": {"value": 48036704, "evidence": "Net sales 48,036,704 37,154,298"}}}]}
     d = svc._pdf(data, "r.pdf", {"ai_client": lambda prompt: json.dumps(good)})
     assert d["method"] == "ai-assisted" and d["periods"][0]["values"] == {"revenue": 48036704.0}
+
+
+# ------------------------------------------------------------------------------------------------------------------------ Arelle
+def _arelle_facts(read, drop=None, change=None, errors=0):
+    facts = []
+    for f in read["facts"]:
+        c = read["contexts"][f["context"]]
+        v = f["value"] * (2 if change and f["field"] == change else 1)
+        if drop and f["field"] == drop:
+            continue
+        facts.append({"name": f["field"], "value": v, "text": None, "unit": "USD", "start": c["start"].isoformat() if c["start"] else None, "end": c["end"].isoformat(), "dims": "x" if c["dimensional"] else ""})
+    return {"facts": facts, "messages": [{"level": "error", "message": "x"}] * errors + [{"level": "warning", "message": "w"}]}
+
+
+def test_the_arelle_cross_check_counts_agreement_names_differences_and_says_when_arelle_read_no_values():
+    from tests.test_fund_import import ixbrl
+    from src.fundamentals.importer import arelle_check, xbrl
+    read = xbrl.read_facts(ixbrl())
+    ok = arelle_check.compare(read, _arelle_facts(read))
+    assert ok["agrees"] and ok["agree"] == ok["compared"] >= 7 and ok["different"] == [] and ok["validation_warnings"] == 1 and ok["facts_arelle"] == len(read["facts"])
+    bad = arelle_check.compare(read, _arelle_facts(read, change="us-gaap:Revenues", drop="us-gaap:Assets"))
+    assert not bad["agrees"] and [d["fact"] for d in bad["different"]] == ["us-gaap:Revenues"] and bad["different"][0]["arelle"] == 2 * bad["different"][0]["this_reader"]
+    assert [o["fact"] for o in bad["only_this_reader"]] == ["us-gaap:Assets"]
+    flawed = arelle_check.compare(read, _arelle_facts(read, errors=2))
+    assert flawed["agrees"] and not flawed["valid"] and flawed["validation_errors"] == 2, "a validation error is about the filing, not a disagreement between the readers"
+    names_only = {"facts": [{"name": "us-gaap:Assets", "value": None, "text": "", "unit": None, "start": None, "end": None, "dims": ""}], "messages": []}
+    assert arelle_check.compare(read, names_only)["no_values"]
+    assert arelle_check.wanted({"arelle": True}, {}) and arelle_check.wanted({}, {"FUNDAMENTALS_ARELLE": "1"}) and not arelle_check.wanted({}, {})
+
+
+def test_a_failed_arelle_run_is_a_note_on_the_draft_not_a_failed_import(tmp_path, monkeypatch):
+    from tests.test_fund_import import ixbrl
+    from src.fundamentals.importer import arelle_check
+    svc = ImportService(FundamentalsStore(tmp_path / "f.db"))
+    monkeypatch.setattr(arelle_check, "available", lambda: False)
+    d = svc._extract_bytes("xbrl", "x.htm", ixbrl(), {"arelle": True})
+    assert d["periods"] and any("Arelle cross-check was not possible: Arelle is not installed" in n for n in d["notes"])
+    monkeypatch.setattr(arelle_check, "crosscheck", lambda data, name, cache=None, online=True, package=None: {"agree": 8, "compared": 8, "facts_arelle": 19, "different": [], "validation_errors": 0, "agrees": True})
+    assert any("8 of 8 company-wide numeric facts agree" in n for n in svc._extract_bytes("xbrl", "x.htm", ixbrl(), {"arelle": True})["notes"])

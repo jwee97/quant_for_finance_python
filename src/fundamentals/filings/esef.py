@@ -56,4 +56,4 @@ class Esef(Connector):
         if not reports:
             raise FundamentalsError("the ESEF package holds no inline-XBRL report")
         main = max(reports, key=lambda i: i.file_size)
-        return {"kind": "file", "name": main.filename.rsplit("/", 1)[-1], "data": zf.read(main), "hint": {"accession": ref.doc_id, "filing_date": ref.filed_at}}
+        return {"kind": "file", "name": main.filename.rsplit("/", 1)[-1], "data": zf.read(main), "hint": {"accession": ref.doc_id, "filing_date": ref.filed_at}, "package": got.data}     # the whole package: an XBRL processor needs the company's own taxonomy files beside the report
