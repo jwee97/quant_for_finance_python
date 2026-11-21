@@ -175,12 +175,14 @@ def load_prices(store: FundamentalsStore, security_ids: list[int] | None = None,
     return report
 
 
-def load_fx(store: FundamentalsStore, start: str = DEFAULT_START, fetch=yahoo_download, progress=None) -> dict:
+def load_fx(store: FundamentalsStore, start: str = DEFAULT_START, fetch=yahoo_download, progress=None, currencies: list[str] | None = None) -> dict:
     """Exchange rates (units of a currency per US dollar) for every currency the companies trade or report in, from Yahoo's ``<CCY>USD=X`` pairs."""
     say = progress or (lambda text: None)
-    with store.db.transaction() as conn:
-        rows = conn.execute("SELECT DISTINCT currency FROM securities WHERE currency IS NOT NULL UNION SELECT DISTINCT reporting_currency FROM financial_periods WHERE reporting_currency IS NOT NULL").fetchall()
-    currencies = sorted({str(r[0]).upper() for r in rows if r[0]} - {"USD"})
+    if currencies is None:
+        with store.db.transaction() as conn:
+            rows = conn.execute("SELECT DISTINCT currency FROM securities WHERE currency IS NOT NULL UNION SELECT DISTINCT reporting_currency FROM financial_periods WHERE reporting_currency IS NOT NULL").fetchall()
+        currencies = [str(r[0]) for r in rows if r[0]]
+    currencies = sorted({str(c).upper() for c in currencies} - {"USD"})
     report: dict = {"currencies": currencies, "loaded": [], "failed": {}, "rows": 0}
     if not currencies:
         return report

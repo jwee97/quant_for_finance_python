@@ -29,6 +29,7 @@ from ..schema import now_iso
 from . import ai_extract, arelle_check, docling_adapter, reconcile, tabular, xbrl
 from . import html as html_reader
 from . import pdf as pdf_reader
+from . import currency as currency_module
 from .fetch import Fetcher
 
 MAX_FILE = 40_000_000
@@ -64,9 +65,10 @@ def _hash(data: bytes) -> str:
 
 
 class ImportService:
-    def __init__(self, store, fetcher: Fetcher | None = None):
+    def __init__(self, store, fetcher: Fetcher | None = None, fx_fetch=None):
         self.store = store
         self.fetcher = fetcher or Fetcher()
+        self.fx_fetch = fx_fetch                                                        # None: Yahoo Finance, for the exchange rates a currency conversion needs
 
     # ------------------------------------------------------------------------------------------------------------ batches
     def create_batch(self, label: str = "", security_id: int | None = None, ticker: str | None = None, note: str = "") -> str:
@@ -330,6 +332,7 @@ class ImportService:
 
     def _issues(self, draft: dict, batch: dict, security: dict | None = None) -> list[dict]:
         issues: list[dict] = []
+        issues += currency_module.apply(draft, draft.get("convert_to"), currency_module.Rates(self.store, self.fx_fetch))
         sid = (security or {}).get("security_id") or batch.get("security_id")
         row = self.store.get_security(int(sid)) if sid else None
         try:
@@ -372,7 +375,15 @@ class ImportService:
             draft["units"] = {"money": str(edits["units"].get("money") or draft["units"]["money"]), "shares": str(edits["units"].get("shares") or draft["units"]["shares"])}
             draft["units_stated"] = True
         if "currency" in edits:
+            currency_module.restore(draft)                                              # a currency typed by a person is the currency the figures are in: undo any conversion first
             draft["currency"] = (str(edits["currency"]).upper()[:3] or None)
+            draft.pop("convert_to", None)
+        if "convert_to" in edits:
+            draft["convert_to"] = (str(edits["convert_to"]).strip().upper()[:3] or None)
+            if draft["convert_to"] and not manual.CURRENCY.match(draft["convert_to"]):
+                raise FundamentalsError("convert_to is a three-letter currency code such as USD, or empty to keep the report as reported")
+        if "currency_change_ok" in edits:
+            draft["currency_change_ok"] = bool(edits["currency_change_ok"])
         incoming = edits.get("periods")
         if incoming is not None:
             if not isinstance(incoming, list) or len(incoming) > len(draft["periods"]):

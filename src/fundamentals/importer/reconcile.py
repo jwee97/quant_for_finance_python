@@ -96,8 +96,18 @@ def against_database(store, security_id: int | None, draft: dict, filing_dates: 
         return issues, conflicts
     stored_currency = periods["reporting_currency"].dropna().mode()
     cur = draft.get("currency")
-    if cur and len(stored_currency) and str(stored_currency.iloc[0]).upper() != str(cur).upper():
-        issues.append(_issue("warning", f"the draft is in {cur} but the company's stored statements are in {stored_currency.iloc[0]}: figures in two currencies must not be mixed in one series.", None, None, "currency"))
+    held = str(stored_currency.iloc[0]).upper() if len(stored_currency) else None
+    ok = bool(draft.get("currency_change_ok"))
+    differing = sorted({str(c).upper() for c in ([cur] + [p.get("currency") for p in draft.get("periods", [])]) if c and held and str(c).upper() != held})
+    if differing:
+        issues.append(_issue("warning" if ok else "error", f"the report is in {', '.join(differing)} but the company's stored statements are in {held}: figures in two currencies must not be mixed in one series. "
+                             + ("You said the company's reporting currency really changed, so it will be stored as reported." if ok else
+                                f"Choose \"Convert to {held}\" to convert it (exchange rates come from Yahoo Finance), or say that the reporting currency really changed."), None, None, "currency"))
+    own = {str(c).upper() for c in ([p.get("currency") or cur for p in draft.get("periods", [])]) if c}
+    if len(own) > 1 and not draft.get("conversion"):
+        issues.append(_issue("warning", f"the periods of this report are in different currencies ({', '.join(sorted(own))}): a reporting-currency change inside one filing. Convert them to one currency, or check each column.", None, None, "currency"))
+    if periods["reporting_currency"].dropna().nunique() > 1:
+        issues.append(_issue("info", "the statements already stored for this company are in more than one currency: " + ", ".join(sorted(periods["reporting_currency"].dropna().astype(str).unique())) + ".", None, None, "currency"))
     for p in draft.get("periods", []):
         label = f"{p['fiscal_period']} to {p['period_end']}"
         same = periods[(periods["fiscal_period"] == p["fiscal_period"]) & (periods["period_end"].dt.strftime("%Y-%m-%d") == str(p["period_end"])[:10])]

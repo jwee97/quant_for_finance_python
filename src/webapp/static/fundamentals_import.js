@@ -212,6 +212,15 @@
     for (const [v, l] of UNITS) { const o = h("option", "", un, l); o.value = v; if (v === (draft.units || {}).money) o.selected = true; }
     const edits = { periods: draft.periods.map(() => ({ values: {} })) };
     const unitEdit = {};
+    /* The currency: the figures are stored in the one currency a company already has. A report in another one is converted (rates from Yahoo Finance) or, if the company really changed currency, stored as reported. */
+    const held = (draft.conversion ? draft.conversion.to : null), shown = (draft.pre_conversion || {}).currency || draft.currency || "";
+    const cs = h("select", "", h("label", "f", bar, `Currency (read as ${shown || "unknown"})`)); cs.dataset.role = "import-convert"; cs.setAttribute("aria-label", "currency to store in");
+    const CURRENCIES = ["USD", "EUR", "GBP", "JPY", "KRW", "CNY", "HKD", "SGD", "CAD", "BRL", "AUD", "CHF", "INR"];
+    h("option", "", cs, "As reported").value = "";
+    for (const c of CURRENCIES.filter((c) => c !== shown)) { const o = h("option", "", cs, `Convert to ${c}`); o.value = c; if (c === (draft.convert_to || held)) o.selected = true; }
+    cs.addEventListener("change", () => { edits.convert_to = cs.value; });
+    const chg = h("input", "", h("label", "f", bar, "The company's reporting currency really changed")); chg.type = "checkbox"; chg.checked = !!draft.currency_change_ok; chg.dataset.role = "import-currency-change";
+    chg.addEventListener("change", () => { edits.currency_change_ok = chg.checked; });
     un.addEventListener("change", () => { unitEdit.money = un.value; });
     const wrap = h("div", "scroll", card), t = h("table", "data review", wrap), hd = h("tr", "", h("thead", "", t));
     h("th", "", hd, "Line");
