@@ -137,3 +137,16 @@ def test_the_random_signal_control_runs_as_a_job_and_places_the_model_among_rand
     assert r["rank_persistence"] > 0 and r["matched_benchmark"]["days"] > 100 and "reading" in r
     chk = r["replay_check"]
     assert chk["days"] > 100 and chk["reproduces"] and abs(chk["saved_sharpe"] - chk["replayed_sharpe"]) < 1e-9, "the replay reproduces the saved run exactly before anything is compared with it"
+
+
+def test_a_run_without_a_decision_log_can_be_replayed_and_carries_the_numbers_above_the_chart(app):
+    """The replay of a rule that keeps no decision log used to fail with KeyError 'asset' on any date; the chart summary and the closing trade's result feed the Explorer's strip and tooltips."""
+    plain = next(r for r in get(app, "/api/ml/strategy/runs")["rows"] if r["name"] == "plain")
+    out = get(app, "/api/ml/strategy", id=plain["id"])
+    assert out["decision_dates"], "the replay's dates come from the trades when there is no decision log"
+    rep = get(app, "/api/ml/strategy/replay", id=plain["id"], date=out["decision_dates"][len(out["decision_dates"]) // 2])
+    assert rep["assets"] and all("decision" in a for a in rep["assets"])
+    s = out["chart"]["summary"]
+    assert s["last_price"] and s["position"] is not None and s["realized"] is not None and s["unrealized"] is not None and s["book_return"] is not None
+    assert len(out["book"]["long"]) == len(out["book"]["short"]) == len(out["book"]["dates"])
+    assert all(m["pnl_return"] is None or isinstance(m["pnl_return"], float) for m in out["chart"]["markers"])

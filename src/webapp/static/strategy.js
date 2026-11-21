@@ -138,33 +138,22 @@
     });
   }
 
-  function legendChips(parent) {
-    const row = h("div", "chips", parent); row.dataset.role = "marker-legend";
-    for (const [k, [shape, col, text]] of [["BUY", [...KINDS.OPEN_LONG.slice(0, 2), "Buy or add to a long"]], ["SELL", [...KINDS.CLOSE_LONG.slice(0, 2), "Sell or trim a long"]], ["SHORT", KINDS.OPEN_SHORT], ["COVER", KINDS.CLOSE_SHORT]]) { const c = h("span", "chip", row), i = h("i", "", c, shape === "up" ? "▲" : "▼"); i.style.color = css(col); h("span", "", c, " " + text); }
-    const x = h("span", "chip", row); h("i", "", x, "✕"); h("span", "", x, " Stop, target or time exit");
-  }
-
   function priceCard(out) {
     const d = d_(), ch = d.chart;
     const pick = h("div", "card", out); pick.dataset.role = "asset-picker";
     const l = h("label", "f", pick, "Asset"), sel = h("select", "", l); sel.dataset.key = "asset";
     for (const r of d.assets) { const o = h("option", "", sel, `${r.asset}  ·  ${r.executions} trades  ·  ${r.round_trips} round trips  ·  P&L ${pct(r.net_contribution, 2)}`); o.value = r.asset; if (r.asset === ch.asset) o.selected = true; }
     sel.addEventListener("change", () => { S.asset = sel.value; S.log.asset = sel.value; S.log.offset = 0; S.decisions = null; S.trades = null; draw(); });
-    tradeChart(out, ch);
+    tradeChart(out, ch, d.book);
   }
 
   /* The chart, the position and the table of one asset's trades. Shared by the Explorer and by the Machine Learning Lab's report (Q.tradesCard), so a buy or a sell looks the same on both. */
-  function tradeChart(out, ch) {
-    const ev = ch.markers.map((m) => {
-      const k = KINDS[m.kind] || ["up", "--ink", m.kind], stop = /^(STOP_LOSS|TAKE_PROFIT|TIME_EXIT)/.test(String(m.action || "")) || STOPS.has(m.action);
-      return { x: m.date, y: m.price, shape: stop ? "cross" : k[0], color: css(stop ? "--ink" : k[1]), label: `${m.date}  ${k[2]}${stop ? " (" + m.action + ")" : ""}  ${m.weight_change >= 0 ? "+" : ""}${pct(m.weight_change, 1)} of the book, ${pct(m.weight_after, 1)} after\n${m.reason || ""}` };
-    });
-    Q.chartCard(out, `${ch.asset}: price, position and trades`, "Closes with a marker on every executed trade (hover for the reason). A decision is made from the close of one day and executed later, so a marker sits on the day the trade was made, not the day it was decided.", {
-      wide: true, draw: (b) => { legendChips(b); const host = h("div", "", b); C.line(host, { dates: ch.dates, series: [{ name: ch.asset + " close", color: css("--s1"), values: ch.close }], events: ev, yFormat: (v) => num(v, 2), height: 300, label: `${ch.asset} price with trades`,
-        tipExtra: (i) => { const m = ch.markers.filter((x) => x.date === ch.dates[i]); return m.map((x) => [(KINDS[x.kind] || [0, 0, x.kind])[2], `${pct(x.weight_change, 1)} · ${x.action || ""}`]); } });
-        const w = h("div", "", b); C.line(w, { dates: ch.dates, series: [{ name: "Position (share of the book)", color: css("--s3"), values: ch.weight }], area: true, baseline: 0, yFormat: (v) => pct(v, 0), height: 120, label: `${ch.asset} position`, zoom: false }); },
+  function tradeChart(out, ch, book) {
+    Q.chartCard(out, `${ch.asset}: price, position and trades`, "One date axis for the price, the trades and the position: drag on the chart (mouse) or on the strip below it to zoom and pan, and the three move together. A decision is made from the close of one day and executed later, so a marker sits on the day the trade was made.", {
+      wide: true, draw: (b) => { const host = h("div", "", b); host.dataset.role = "trade-panel"; C.tradePanel(host, { dates: ch.dates, close: ch.close, weight: ch.weight, markers: ch.markers, asset: ch.asset, summary: ch.summary, book }); },
       table: (b) => Q.simpleTable(b, [{ label: "Date", get: (x) => x.date }, { label: "Trade", get: (x) => (KINDS[x.kind] || [0, 0, x.kind])[2] }, { label: "Price", num: true, get: (x) => num(x.price, 2) }, { label: "Change", num: true, get: (x) => pct(x.weight_change, 2) }, { label: "Book after", num: true, get: (x) => pct(x.weight_after, 2) },
-        { label: "Cost", num: true, get: (x) => pct(x.cost, 3) }, { label: "Decided", get: (x) => x.decision_date || "" }, { label: "Why", get: (x) => x.reason || "" }, { label: "Score rank", num: true, get: (x) => (x.rank_pct === null || x.rank_pct === undefined ? "" : pct(x.rank_pct, 0)) }], ch.markers) });
+        { label: "Cost", num: true, get: (x) => pct(x.cost, 3) }, { label: "P&L", num: true, get: (x) => (x.pnl_return === null || x.pnl_return === undefined ? "" : pct(x.pnl_return, 1)) }, { label: "Decided", get: (x) => x.decision_date || "" }, { label: "Why", get: (x) => x.reason || "" },
+        { label: "Score rank", num: true, get: (x) => (x.rank_pct === null || x.rank_pct === undefined ? "" : pct(x.rank_pct, 0)) }], ch.markers) });
   }
 
   /* "Buys and sells" for a saved experiment of any position rule, drawn inside another page (the Machine Learning Lab's report). Loads the run's trades from the Strategy API, one asset at a time. */
@@ -184,7 +173,7 @@
       const l = h("label", "f", body, "Asset"), sel = h("select", "", l); sel.dataset.key = "asset";
       for (const r of d.assets) { const o = h("option", "", sel, `${r.asset}  ·  ${r.executions} trades  ·  P&L ${pct(r.net_contribution, 2)}`); o.value = r.asset; if (r.asset === d.chart.asset) o.selected = true; }
       sel.addEventListener("change", () => load(sel.value));
-      tradeChart(body, d.chart);
+      tradeChart(body, d.chart, d.book);
       if (openExplorer) { const row = h("div", "row", body), go = h("button", "btn", row, "Open in the ML Strategy Explorer"); go.type = "button"; go.addEventListener("click", () => openExplorer(expId)); }
     };
     load("");
@@ -260,7 +249,7 @@
     h("p", "note", card, "Pick a date to see only what was known then: every asset's score and rank, the book going in, and what the policy decided. The trades that followed happen later and are listed apart.");
     const row = h("div", "row", card), inp = h("input", "", row); inp.type = "date"; inp.setAttribute("aria-label", "Decision date"); inp.dataset.key = "replay-date";
     const go = h("button", "btn", row, "Replay"), body = h("div", "", card); body.setAttribute("aria-live", "polite"); go.type = "button";
-    const dates = (S.decisions && S.decisions.rows.length ? S.decisions.rows : (await api(`/api/ml/strategy/decisions?id=${encodeURIComponent(S.id)}&limit=500`)).rows).map((x) => x.date);
+    const dates = S.data && S.data.decision_dates && S.data.decision_dates.length ? S.data.decision_dates : (S.decisions && S.decisions.rows.length ? S.decisions.rows : (await api(`/api/ml/strategy/decisions?id=${encodeURIComponent(S.id)}&limit=500`)).rows).map((x) => x.date);
     inp.value = S.replay ? S.replay.date : dates[Math.floor(dates.length / 2)] || "";
     const step = (dir) => { const u = [...new Set(dates)].sort(), i = u.findIndex((x) => x >= inp.value); const j = dir < 0 ? Math.max(0, (i < 0 ? u.length : i) - 1) : Math.min(u.length - 1, i < 0 ? u.length - 1 : (u[i] === inp.value ? i + 1 : i)); inp.value = u[j]; run(); };
     const prev = h("button", "btn small", row, "Previous decision day"), nxt = h("button", "btn small", row, "Next decision day"); prev.type = nxt.type = "button"; prev.addEventListener("click", () => step(-1)); nxt.addEventListener("click", () => step(1));

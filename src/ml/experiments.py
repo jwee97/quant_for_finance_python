@@ -127,6 +127,23 @@ def prepare(cfg: dict, bundle=None, config=None, builder=None, dataset: Dataset 
     return ds, info
 
 
+def hold_last_book(weights: pd.DataFrame, scores: pd.DataFrame, last_label=None) -> pd.DataFrame:
+    """Keep the last target book on the days after the last score. The final ``lag + horizon`` days of a dataset have no model score (their outcomes are not known, so no walk-forward fold predicts them), and a
+    position rule given no scores returns an empty book: the engine then sold every position at the first rebalance after the last score and sat in cash for the final month. No new information is no new trade.
+    Days before the first score and gaps inside the scored period are not touched. ``last_label`` is the last day that has a label: when the scores stop earlier than that the stop was deliberate (a development run
+    is predicted only to the end of validation), and nothing beyond it is held."""
+    scored = scores.dropna(how="all").index
+    if not len(scored) or (last_label is not None and scored[-1] < last_label):
+        return weights
+    tail = weights.index > scored[-1]
+    if not tail.any():
+        return weights
+    out = weights.copy()
+    out.attrs = dict(weights.attrs)
+    out.loc[tail] = weights.loc[scored[-1]].to_numpy()
+    return out
+
+
 def realistic_requested(cfg: dict) -> bool:
     return bool(cfg.get("execution")) and cfg["execution"].get("mode", "realistic_cash_equity") == "realistic_cash_equity"
 
@@ -259,6 +276,8 @@ def evaluate_run(cfg: dict, ds: Dataset, train: TrainResult, info: dict, registr
         weights = build_weights(scores, cfg["signal"], vol, conf, regime_on, groups, ds.investable, unc_wide, ds.returns, dollars)
     except ValueError as exc:
         raise ExperimentError(str(exc)) from None
+    labelled = ds.Y[train.target].dropna().index.get_level_values(0)
+    weights = hold_last_book(weights, scores, labelled.max() if len(labelled) else None)     # a development run is predicted only to the end of validation, on purpose: that cut-off is not held past
     result = run_backtest(weights, ds.returns, ds.investable, cfg["backtest"], lag, cfg["name"])
     realistic = None
     if realistic_requested(cfg):                                               # the declared evaluation mode: the same weights through orders, fills and the ledger instead of a cost per unit of turnover

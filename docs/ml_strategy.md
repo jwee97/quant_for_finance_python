@@ -13,6 +13,22 @@ marker on each trade, one asset at a time, and a table); the ML Strategy Explore
 to win or lose, so the win-rate tiles are not shown for it; turnover, cost drag and exposure are. Explicit entries, exits, stops and the decision log still need `decision_policy`. Runs saved before this
 carry no trades: re-run them (a re-backtest of the saved predictions is enough).
 
+### The trade panel
+
+The price, the trades and the position are one drawing on **one date axis** (`src/webapp/static/tradechart.js`), so zooming or panning moves all of them together, and a crosshair runs through the price and the
+position with a one-line readout (date, close, position). Above it: the last price, the position, the book's exposure, the realized and unrealized P&L (as shares of the book, after costs) and the strategy's return
+against the benchmark. Controls are compact: range buttons (1M to All), a switch between this asset's position and the whole book's long and short exposure, *Reset zoom*, and a collapsible legend. A mouse drags on the
+chart to zoom (double-click or Reset to undo; Ctrl with the wheel zooms around the pointer); on a touch screen a finger moves the crosshair, and the **overview strip** under the chart (drag its window to pan, its edges to
+resize) and the range buttons zoom, so the page still scrolls.
+
+Trades keep their shapes: a filled triangle up is a buy (opens a long), down a sell; the short and the cover have their own colours; an outlined triangle is an add or a trim; a cross is a stop, target or time exit.
+Hovering a trade shows the execution date and price, the decision date, the quantity (the change in the share of the book, and the share after), the cost, the **P&L of the position when the trade closes it**, the score
+rank and the reason. Long histories stay light: the price line keeps the minimum and maximum of every pixel column, the position is drawn from its change points, and no trade is ever dropped; only routine adds and
+trims that would overlap are merged into one numbered mark (zoom in to separate them), while openings, closings, flips and exits are always drawn one by one.
+
+The last month of a run: the final days of any dataset have no model score (their outcomes are not known yet), and a position rule given no scores used to return an empty book, so the engine sold everything at the
+next rebalance and sat in cash. The last target book is now held to the end of the data (`hold_last_book`); a development run, whose predictions stop at the end of validation on purpose, is not held past it.
+
 The **universe** of a strategy run (the ETFs, Deribit crypto, the simulated futures roots or your own tickers) is chosen in the builder, and on the Model Comparison page, as in the Lab.
 
 ## Three layers, kept apart

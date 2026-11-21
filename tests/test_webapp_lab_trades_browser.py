@@ -49,8 +49,9 @@ def test_the_labs_report_draws_the_buys_and_sells_of_an_ordinary_position_rule(b
     assert "Win rate" not in text, "a rule that holds every asset has no round trips to win or lose, so those tiles are not shown"
     assert card.locator("svg.chart .event").count() > 0, "every trade is a marker on the price"
     assert card.locator("svg.chart .event title").first.text_content().strip(), "each marker says why"
+    first = card.locator("svg.tp-svg").get_attribute("aria-label")
     card.locator("select[data-key=asset]").select_option(index=1)
-    _wait_until(pg, "document.querySelectorAll('[data-role=lab-trades] svg.chart').length >= 2", timeout=30.0)
+    _wait_until(pg, f"document.querySelector('[data-role=lab-trades] svg.tp-svg').getAttribute('aria-label') !== {first!r}", timeout=30.0)
     card.locator("button:has-text('Open in the ML Strategy Explorer')").click()
     pg.wait_for_selector("#strategy [data-role=strategy-tiles] .tile", timeout=60000)
     assert pg.url.endswith(f"#/strategy?id={run['id']}") and not pg.problems, pg.problems
@@ -69,3 +70,48 @@ def test_the_strategy_explorer_and_the_comparison_offer_every_universe(browser, 
         assert values == ["etf", "crypto", "futures", "custom"], values
         assert pg.locator(f"{form} input[data-key=tickers]").count() == 1
     pg.close()
+
+
+def test_the_replay_works_for_a_run_without_a_decision_log(browser, live):  # noqa: F811
+    """On such a run the replay used to answer every date with the error 'asset' (a missing column); now its dates are the days the trades were decided and the table names each decision's trade."""
+    running, _, run = live
+    pg = _page(browser, running)
+    pg.goto(running.url + f"#/strategy?id={run['id']}")
+    pg.wait_for_selector("[data-role=replay]", timeout=60000)
+    pg.locator("[data-role=replay]").scroll_into_view_if_needed()
+    pg.click("[data-role=replay] button:has-text('Replay')")
+    pg.wait_for_selector("[data-role=replay] table", timeout=30000)
+    assert "banner err" not in pg.locator("[data-role=replay]").inner_html()
+    pg.click("[data-role=replay] button:has-text('Next decision day')")
+    pg.wait_for_selector("[data-role=replay] table", timeout=30000)
+    assert not pg.problems, pg.problems
+    pg.close()
+
+
+def test_the_trade_panel_shares_one_axis_zooms_and_stays_inside_a_phone(browser, live):  # noqa: F811
+    running, _, run = live
+    pg = _page(browser, running)
+    pg.goto(running.url + f"#/strategy?id={run['id']}")
+    pg.wait_for_selector("[data-role=trade-panel] svg.tp-svg", timeout=60000)
+    panel = pg.locator("[data-role=trade-panel]")
+    assert panel.locator("svg.tp-svg").count() == 1, "price, trades, position and the overview strip are one drawing, so they zoom together"
+    for label in ("Price", "Position", "Book exposure", "Realized P&L", "Unrealized P&L", "Strategy return"):
+        assert label in panel.locator("[data-role=trade-metrics]").inner_text(), label
+    full = panel.locator("svg.tp-svg").get_attribute("aria-label")
+    panel.locator(".tp-seg button:has-text('3M')").click()
+    assert panel.locator("svg.tp-svg").get_attribute("aria-label") != full, "a range button changes the window of every panel at once"
+    assert panel.locator(".tp-seg button:has-text('3M')").get_attribute("aria-pressed") == "true"
+    assert panel.locator("details.tp-legend[data-role=marker-legend]").count() == 1 and panel.locator("details.tp-legend").get_attribute("open") is None, "the legend is collapsed until asked for"
+    box = panel.locator("svg.tp-svg").bounding_box()
+    pg.mouse.move(box["x"] + box["width"] * 0.5, box["y"] + 80)
+    assert panel.locator("svg.tp-svg line[stroke-dasharray]").count() >= 1
+    panel.locator(".tp-link").click()
+    assert panel.locator("svg.tp-svg").get_attribute("aria-label") == full, "Reset zoom returns to the whole history"
+    assert panel.locator(".event title").count() > 0 and not pg.problems, pg.problems
+    pg.close()
+    phone = browser.new_page(viewport={"width": 390, "height": 800}, has_touch=True)
+    phone.goto(running.url + f"#/strategy?id={run['id']}")
+    phone.wait_for_selector("[data-role=trade-panel] svg.tp-svg", timeout=60000)
+    assert phone.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1"), "no sideways scrolling on a phone"
+    assert phone.locator("[data-role=trade-panel] svg.tp-svg").bounding_box()["width"] <= 390
+    phone.close()

@@ -173,3 +173,21 @@ def test_a_model_that_only_classifies_gets_the_cross_sectional_classification_ta
     assert experiment_config(ml._overrides({"model": {"kind": kind}}))["dataset"]["target"] == "topbottom_21"
     assert experiment_config(ml._overrides({"model": {"kind": kind}, "dataset": {"horizon": 5}}))["dataset"]["target"] == "topbottom_5"
     assert experiment_config(ml._overrides({"model": {"kind": kind}, "dataset": {"target": "direction_10"}}))["dataset"]["target"] == "direction_10", "what is asked wins"
+
+
+def test_the_last_book_is_held_after_the_last_score_instead_of_selling_everything():
+    """The final days of a dataset have no model score; a rule given none returned an empty book and the engine liquidated at the next rebalance."""
+    from src.ml.experiments import hold_last_book
+
+    s = _scores(n_days=50, n_assets=4)
+    s.iloc[40:] = np.nan
+    w = benchmark_tilt(s, 0.5)
+    assert (w.iloc[40:].sum(axis=1) == 0).all(), "the rule alone gives an empty book without scores"
+    held = hold_last_book(w, s, s.index[39])
+    assert np.allclose(held.iloc[40:].to_numpy(), w.iloc[39].to_numpy()) and np.allclose(held.iloc[:40].to_numpy(), w.iloc[:40].to_numpy())
+    s2 = s.copy()
+    s2.iloc[:5] = np.nan
+    w2 = benchmark_tilt(s2, 0.5)
+    assert np.allclose(hold_last_book(w2, s2, s.index[39]).iloc[:5].to_numpy(), 0.0), "days before the first score are not filled"
+    assert hold_last_book(w, s, s.index[39]).attrs == w.attrs
+    assert np.allclose(hold_last_book(w, s, s.index[44]).iloc[40:].to_numpy(), 0.0), "scores that stop before the last labelled day stopped on purpose: nothing is held past them"

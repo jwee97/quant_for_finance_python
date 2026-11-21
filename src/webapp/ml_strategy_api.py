@@ -84,7 +84,7 @@ class StrategyRoutes:
             report = self.registry.report(exp_id)
             f = self._strategy_files(exp_id)
         trading = report.get("trading") or {}
-        ex, trips, prices, pos, ret = f["executions"], f["round_trips"], f["prices"], f["positions"], f["returns"]
+        ex, trips, prices, pos, ret, dec = f["executions"], f["round_trips"], f["prices"], f["positions"], f["returns"], f["decisions"]
         if prices is not None and pos is not None and len(pos):
             prices = prices.loc[pos.index[0]:]                                              # the file holds the whole history (a control replays on it); the chart starts where the run did
         traded = (ex.groupby("asset").size().sort_values(ascending=False) if ex is not None and len(ex) else pd.Series(dtype=int))
@@ -96,17 +96,21 @@ class StrategyRoutes:
             t = trips[trips["asset"] == a] if trips is not None and len(trips) else pd.DataFrame()
             rows.append({"asset": a, "executions": int(traded.get(a, 0)), "round_trips": int(len(t)),
                          "net_contribution": _num(t["net_contribution"].sum()) if len(t) else 0.0, "win_rate": _num((t["position_return"] > 0).mean()) if len(t) else None})
-        chart = {"asset": asset, "dates": [], "close": [], "weight": [], "markers": []}
+        chart = {"asset": asset, "dates": [], "close": [], "weight": [], "markers": [], "summary": {}}
+        mine = trips[trips["asset"] == asset] if trips is not None and len(trips) else pd.DataFrame()
         if prices is not None:
             px = prices[asset].dropna()
             w = pos[asset].reindex(px.index).fillna(0.0) if pos is not None and asset in pos.columns else pd.Series(0.0, index=px.index)
             chart.update({"dates": [_iso(d) for d in px.index], "close": [_num(x) for x in px.to_numpy()], "weight": [_num(x) for x in w.to_numpy()]})
             if ex is not None and len(ex):
+                closed = mine[mine["status"] == "closed"] if len(mine) else mine
                 for _, r in ex[ex["asset"] == asset].iterrows():
-                    chart["markers"].append({"date": _iso(r["date"]), "price": _num(px.get(pd.Timestamp(r["date"]))), "kind": r["kind"], "side": r["side"], "weight_change": _num(r["trade_weight"]),
+                    trip = closed[pd.to_datetime(closed["close_date"]) == pd.Timestamp(r["date"])] if len(closed) else closed       # a trade that ends a position carries that position's result
+                    chart["markers"].append({"date": _iso(r["date"]), "price": _num(px.get(pd.Timestamp(r["date"]))), "pnl_return": _num(trip["position_return"].iloc[0]) if len(trip) else None,
+                                             "pnl_contribution": _num(trip["net_contribution"].iloc[0]) if len(trip) else None, "kind": r["kind"], "side": r["side"], "weight_change": _num(r["trade_weight"]),
                                              "weight_after": _num(r["weight_after"]), "action": r.get("action"), "reason": r.get("reason"), "decision_date": _iso(r.get("decision_date")), "cost": _num(r["cost"]),
                                              "rank_pct": _num(r.get("rank_pct")), "score": _num(r.get("score"))})
-        book = {"dates": [], "net": [], "benchmark": [], "drawdown": [], "gross": [], "cash": [], "positions": []}
+        book = {"dates": [], "net": [], "benchmark": [], "drawdown": [], "gross": [], "cash": [], "positions": [], "long": [], "short": []}
         if ret is not None:
             cum, bcum = (1 + ret["net"].fillna(0)).cumprod(), (1 + ret["benchmark"].fillna(0)).cumprod()
             book.update({"dates": [_iso(d) for d in ret.index], "net": [_num(x) for x in cum.to_numpy()], "benchmark": [_num(x) for x in bcum.to_numpy()],
@@ -114,8 +118,20 @@ class StrategyRoutes:
             if pos is not None:
                 p = pos.reindex(ret.index).fillna(0.0)
                 book["gross"], book["positions"] = [_num(x) for x in p.abs().sum(axis=1)], [int(x) for x in (p.abs() > 1e-9).sum(axis=1)]
+                book["long"], book["short"] = [_num(x) for x in p.clip(lower=0).sum(axis=1)], [_num(x) for x in p.clip(upper=0).sum(axis=1)]
                 book["cash"] = [_num(max(0.0, 1.0 - x)) for x in p.abs().sum(axis=1)]
-        out = {"id": exp_id, "name": report.get("name"), "summary": trading, "simulation": report.get("simulation"), "assets": rows, "chart": chart, "book": book,
+        if chart["close"]:                                                                      # the numbers above the chart: where the asset and the book stand now
+            last_w = next((w for w in reversed(chart["weight"]) if w is not None), None)
+            opened = mine[mine["status"] != "closed"] if len(mine) else mine
+            chart["summary"] = {"last_date": chart["dates"][-1], "last_price": chart["close"][-1], "first_price": next((c for c in chart["close"] if c is not None), None), "position": last_w,
+                                "realized": _num(mine.loc[mine["status"] == "closed", "net_contribution"].sum()) if len(mine) else 0.0, "unrealized": _num(opened["net_contribution"].sum()) if len(opened) else 0.0,
+                                "book_gross": next((g for g in reversed(book["gross"]) if g is not None), None), "book_return": (book["net"][-1] - 1.0) if book["net"] else None,
+                                "benchmark_return": (book["benchmark"][-1] - 1.0) if book["benchmark"] else None}
+        if ex is not None and len(ex):
+            decision_dates = sorted({_iso(d) for d in (dec["date"] if dec is not None and len(dec) else ex["decision_date"].dropna())})
+        else:
+            decision_dates = []
+        out = {"id": exp_id, "name": report.get("name"), "summary": trading, "simulation": report.get("simulation"), "assets": rows, "chart": chart, "book": book, "decision_dates": decision_dates,
                "layers": {"prediction": "the model's score and its cross-sectional rank on the decision date", "decision": "the policy's action from that day's information only",
                           "execution": f"the trade the engine made {trading.get('lag_days', 1)} day(s) later at that day's close, charged {trading.get('cost_bps')} bp one way"}}
         return clean(common.envelope("ml_strategy", out, {"registry": "platform"}, [], None, [trading["note"]] if trading.get("note") else []))
@@ -239,8 +255,11 @@ class StrategyRoutes:
                     scores = s.set_index(lvl1)["score"]
             before = pos.shift(1).loc[at].fillna(0.0) if len(pos) else None
             after = pos.loc[at].fillna(0.0)
-            made = dec[dec["date"] == at] if dec is not None else pd.DataFrame()
             did = ex[ex["decision_date"] == at] if ex is not None and len(ex) else pd.DataFrame()
+            if dec is not None:
+                made = dec[dec["date"] == at]
+            else:                                                                           # a rule with no decision log: what it decided that day is the trades it led to, with their reasons
+                made = did[["asset", "action", "reason"]].copy() if len(did) else pd.DataFrame(columns=["asset", "action", "reason"])
             table = []
             for a in pos.columns:
                 sc = _num(scores.get(a)) if scores is not None else None
