@@ -13,10 +13,20 @@ import importlib.util
 
 from ..errors import FundamentalsError
 
-LANG = {"en": {"paddleocr": "en", "surya": ["en"]}, "ja": {"paddleocr": "japan", "surya": ["ja"]}, "ko": {"paddleocr": "korean", "surya": ["ko"]}, "zh": {"paddleocr": "ch", "surya": ["zh"]},
-        "zh-tw": {"paddleocr": "chinese_cht", "surya": ["zh"]}}
-ENGINES = ("rapidocr", "paddleocr", "surya")                      # lightest first: RapidOCR runs on onnxruntime with models bundled in the wheel (no model download, no PaddlePaddle or PyTorch)
+# PaddleOCR is the default engine: it reads Chinese (simplified and traditional), Japanese, Korean, English and the Latin-script European languages with models made for each. One model per language group;
+# the Chinese, Japanese and Korean models also read the English in a bilingual report. Surya and RapidOCR are optional alternatives.
+LANG = {"en": {"paddleocr": "en", "rapidocr": "en", "surya": ["en"]}, "ja": {"paddleocr": "japan", "surya": ["ja"]}, "ko": {"paddleocr": "korean", "surya": ["ko"]}, "zh": {"paddleocr": "ch", "rapidocr": "ch", "surya": ["zh"]},
+        "zh-tw": {"paddleocr": "chinese_cht", "surya": ["zh"]}, "zh-hk": {"paddleocr": "chinese_cht", "surya": ["zh"]}, "fr": {"paddleocr": "fr", "surya": ["fr"]}, "de": {"paddleocr": "german", "surya": ["de"]},
+        "es": {"paddleocr": "es", "surya": ["es"]}, "pt": {"paddleocr": "pt", "surya": ["pt"]}, "it": {"paddleocr": "it", "surya": ["it"]}, "nl": {"paddleocr": "nl", "surya": ["nl"]}}
+COUNTRY_LANGUAGE = {"JP": "ja", "KR": "ko", "CN": "zh", "HK": "zh-hk", "TW": "zh-tw", "FR": "fr", "DE": "de", "ES": "es", "PT": "pt", "BR": "pt", "IT": "it", "NL": "nl", "US": "en", "GB": "en", "SG": "en", "CA": "en"}
+ENGINES = ("paddleocr", "surya", "rapidocr")                      # PaddleOCR first: the languages of the markets this application reads
 MODULES = {"rapidocr": "rapidocr_onnxruntime", "paddleocr": "paddleocr", "surya": "surya"}
+
+
+def language_for(hint: dict | None) -> str:
+    """The OCR language: the hint's ``language``, else the one of the company's country, else English. A report that mixes English with its local language is read with the local language's model."""
+    hint = hint or {}
+    return hint.get("language") or COUNTRY_LANGUAGE.get(str(hint.get("country") or "").upper(), "en")
 
 
 def available() -> list[str]:
@@ -24,7 +34,7 @@ def available() -> list[str]:
 
 
 def missing_message() -> str:
-    return "this PDF has no text layer (it looks scanned) and no OCR engine is installed: install RapidOCR (pip install rapidocr-onnxruntime: small, runs on onnxruntime, English and Chinese models bundled), PaddleOCR (pip install paddleocr paddlepaddle) or Surya (pip install surya-ocr), or use the company's XBRL or an Excel/CSV export"
+    return "this PDF has no text layer (it looks scanned) and no OCR engine is installed: install PaddleOCR (pip install paddleocr paddlepaddle; it downloads one model per language on first use) or, alternatively, Surya (pip install surya-ocr) or RapidOCR (pip install rapidocr-onnxruntime: English and Chinese only), or use the company's XBRL or an Excel/CSV export"
 
 
 RENDER_DPI = 200
@@ -86,25 +96,54 @@ class RapidEngine(Engine):
 
 
 class PaddleEngine(Engine):
+    """PaddleOCR, in either of its interfaces (2.x ``ocr()`` and 3.x ``predict()``). A page image goes in as an array; every recognised *line* comes back with its polygon and is split into words with boxes, so the
+    layout reader can tell a label from the figures after it. One model is loaded per language and kept."""
     name = "paddleocr"
 
     def __init__(self):
         self._by_lang: dict = {}
 
+    @staticmethod
+    def _array(image_png: bytes):
+        import io
+
+        import numpy as np
+        from PIL import Image
+        return np.array(Image.open(io.BytesIO(image_png)).convert("RGB"))
+
+    def _model(self, lang: str):
+        from paddleocr import PaddleOCR
+        if lang not in self._by_lang:
+            try:
+                self._by_lang[lang] = PaddleOCR(lang=lang, use_textline_orientation=True)                     # 3.x
+            except (TypeError, ValueError):
+                self._by_lang[lang] = PaddleOCR(use_angle_cls=True, lang=lang, show_log=False)                # 2.x
+        return self._by_lang[lang]
+
     def words(self, image_png: bytes, language: str) -> list[tuple]:
         try:
-            from paddleocr import PaddleOCR
+            import paddleocr  # noqa: F401
         except ImportError:
             raise FundamentalsError(missing_message()) from None
-        lang = LANG.get(language, LANG["en"])["paddleocr"]
-        if lang not in self._by_lang:
-            self._by_lang[lang] = PaddleOCR(use_angle_cls=True, lang=lang, show_log=False)
+        lang = LANG.get(language, LANG["en"]).get("paddleocr", "en")
+        model = self._model(lang)
+        img = self._array(image_png)
+        lines: list[tuple] = []                                                                              # (polygon, text, score)
+        if hasattr(model, "predict"):
+            for res in model.predict(img) or []:
+                data = res if isinstance(res, dict) else getattr(res, "json", None) or {}
+                data = data.get("res", data) if isinstance(data, dict) else {}
+                for poly, text, score in zip(data.get("rec_polys") or data.get("dt_polys") or [], data.get("rec_texts") or [], data.get("rec_scores") or []):
+                    lines.append((poly, text, score))
+        else:
+            for page in model.ocr(img, cls=True) or []:
+                for box, (text, score) in (page or []):
+                    lines.append((box, text, score))
         out = []
-        result = self._by_lang[lang].ocr(image_png, cls=True) or []
-        for page in result:
-            for box, (text, conf) in (page or []):
-                xs, ys = [p[0] for p in box], [p[1] for p in box]
-                out.append((min(xs), (min(ys) + max(ys)) / 2, max(xs), str(text), float(conf)))
+        for poly, text, score in lines:
+            xs, ys = [float(p[0]) for p in poly], [float(p[1]) for p in poly]
+            for x0, y, x1, t in split_line(min(xs), (min(ys) + max(ys)) / 2, max(xs), text):
+                out.append((x0, y, x1, t, float(score)))
         return out
 
 

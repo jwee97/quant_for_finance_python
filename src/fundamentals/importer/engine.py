@@ -36,7 +36,8 @@ _CACHE_MAX = 32
 
 def read(data: bytes, kind: str, hint: dict | None = None) -> Document:
     hint = hint or {}
-    language = hint.get("language") or "en"
+    from . import ocr as ocr_module
+    language = ocr_module.language_for(hint)
     if kind == "pdf":
         return pdf_layout.extract(data, hint.get("ocr_engine"), language)
     if kind == "html":
@@ -195,7 +196,7 @@ def _targeted(data: bytes, kind: str, doc: Document, draft: dict, hint: dict, fa
         todo = pages if doc.format == "pdf-scan" else blank
         if hint.get("ocr_engine") is not None or ocr_module.available():
             try:
-                words = ocr_module.pages_subset(data, hint.get("language") or "en", hint.get("ocr_engine"), todo)
+                words = ocr_module.pages_subset(data, ocr_module.language_for(hint), hint.get("ocr_engine"), todo)
                 scale = 72.0 / ocr_module.RENDER_DPI
                 counter = [20_000]
                 tables = {n: pdf_layout._build_page(n, [(w[0] * scale, w[1] * scale, w[2] * scale, w[3]) for w in ws], "pdf-ocr", counter)[0] for n, ws in words.items()}

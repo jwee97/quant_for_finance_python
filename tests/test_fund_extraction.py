@@ -299,7 +299,7 @@ def test_rapidocr_adapter_turns_recognised_lines_into_words_and_is_listed_after_
     assert ocr.split_line(100, 50, 300, "Total assets 1,200 1,000")[0][3] == "Total" and len(ocr.split_line(100, 50, 300, "Total assets 1,200 1,000")) == 4
     words = ocr.split_line(100, 50, 300, "Revenue 1,200")
     assert words[0][0] == 100 and words[-1][2] == pytest.approx(300) and words[0][2] < words[1][0]
-    assert "rapidocr" in ocr.ENGINES and ocr.ENGINES[0] == "rapidocr"
+    assert "rapidocr" in ocr.ENGINES and ocr.ENGINES[0] == "paddleocr"
     monkeypatch.delitem(sys.modules, "rapidocr_onnxruntime", raising=False)
     if "rapidocr" in ocr.available():
         pytest.skip("RapidOCR is really installed")
@@ -324,3 +324,55 @@ def test_ocr_is_tried_only_for_pages_without_a_text_layer_and_unavailable_ocr_is
     data, _ = rl.samsung()
     draft, _ = engine_module.extract(data, "s.pdf", "pdf", {"country": "KR"})
     assert not any(f["step"] == "ocr-pages" for f in draft["fallbacks"]), "a PDF with a text layer was offered OCR"
+
+
+def _png():
+    import io
+
+    from PIL import Image
+    buf = io.BytesIO()
+    Image.new("RGB", (40, 20), "white").save(buf, "PNG")
+    return buf.getvalue()
+
+
+def _fake_paddle(monkeypatch, version):
+    import importlib.machinery
+    import sys
+    import types
+    seen = {}
+    poly = lambda x0, x1: [[x0, 10], [x1, 10], [x1, 20], [x0, 20]]  # noqa: E731
+    fake = types.ModuleType("paddleocr")
+    fake.__spec__ = importlib.machinery.ModuleSpec("paddleocr", None)
+
+    class PaddleOCR:
+        def __init__(self, **kw):
+            if version == 2 and "use_textline_orientation" in kw:
+                raise TypeError("unexpected keyword")
+            seen["kw"] = kw
+        if version == 3:
+            def predict(self, img):
+                seen["shape"] = img.shape
+                return [{"res": {"rec_polys": [poly(100, 300)], "rec_texts": ["Total assets 1,200"], "rec_scores": [0.97]}}]
+        else:
+            def ocr(self, img, cls=True):
+                seen["shape"] = img.shape
+                return [[[poly(100, 300), ("Total assets 1,200", 0.97)]]]
+    fake.PaddleOCR = PaddleOCR
+    monkeypatch.setitem(sys.modules, "paddleocr", fake)
+    return seen
+
+
+@pytest.mark.parametrize("version", [2, 3])
+def test_paddleocr_adapter_reads_both_interfaces_and_picks_the_language_model(monkeypatch, version):
+    seen = _fake_paddle(monkeypatch, version)
+    eng = ocr.PaddleEngine()
+    out = eng.words(_png(), "ko")
+    assert [w[3] for w in out] == ["Total", "assets", "1,200"] and out[0][0] == 100 and out[-1][2] == pytest.approx(300) and out[0][4] == 0.97
+    assert seen["shape"][:2] == (20, 40) and seen["kw"]["lang"] == "korean"
+    assert "paddleocr" in ocr.available() and isinstance(ocr.engine(), ocr.PaddleEngine)
+
+
+def test_ocr_language_follows_the_hint_then_the_country():
+    assert ocr.language_for({"language": "ja"}) == "ja" and ocr.language_for({"country": "KR"}) == "ko"
+    assert ocr.language_for({"country": "hk"}) == "zh-hk" and ocr.language_for({}) == "en" and ocr.language_for(None) == "en"
+    assert all("paddleocr" in v for v in ocr.LANG.values())

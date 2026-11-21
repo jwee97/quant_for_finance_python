@@ -10,5 +10,6 @@ duckdb>=1.0
 streamlit>=1.35
 # Not installed by default (heavy; the readers say so when they are needed): paddleocr + paddlepaddle or surya-ocr for scanned reports, docling for complex tables, anthropic for AI-assisted extraction.
 
-# OCR for scanned reports (optional; recommended): small, runs on onnxruntime, models bundled in the wheel, English and Chinese. For Japanese and Korean use paddleocr or surya instead.
-# rapidocr-onnxruntime>=1.3
+# OCR for scanned reports: PaddleOCR (default engine; Chinese, Japanese, Korean, English and the main European languages; downloads one model per language on first use).
+# paddlepaddle>=2.6
+# paddleocr>=2.7
