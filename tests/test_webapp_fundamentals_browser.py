@@ -426,7 +426,7 @@ def test_a_company_is_found_by_name_in_openfilings_added_for_nothing_and_fetched
         assert said and int(said.group(1)) >= 8 and "88 credits left today" in page.inner_text("[data-role=fund-remote]")
         assert "Loaded 10 daily prices (free), so it can be studied now" in page.inner_text("[data-role=fund-fetch-report]") and live_real.asked == [["NVDA"]]     # a study needs prices as well: they came with the statements
         assert page.locator("#fundamentals .panel [role=img][aria-label='Today: 12 of 100 credits used']").count() == 1                                     # the allowance, as a meter, where the search is
-        assert int(page.locator("[data-role=fund-companies] tbody tr td").nth(4).inner_text()) >= 8
+        assert int(page.locator("[data-role=fund-companies] tbody tr td").nth(5).inner_text()) >= 8
         assert "saved answer, free" in page.inner_text("[data-role=fund-remote]") and len(fake.requests) == 3        # the search, the lookup and the statements: the page read the saved search again for nothing
         assert _tables_have_names(page) == [] and page.locator("[data-role=fund-remote] button:not([aria-label])").count() == 0
         page.fill("input[data-key=q]", "Zzyzx")                                             # a company the directory does not know
@@ -778,7 +778,7 @@ def test_the_years_a_company_holds_are_shown_picked_priced_and_asked_for_without
         page.wait_for_selector("[data-role=fund-companies] tbody tr")
         cells = page.locator("[data-role=fund-companies] tbody tr").first.locator("td").all_inner_texts()
         heads = page.locator("[data-role=fund-companies] th").all_inner_texts()
-        assert heads[4:7] == ["Annual", "Gaps", "First period"] and cells[4] == "8" and cells[5] == "2" and cells[6] == "2014-12-31"
+        assert heads[5:8] == ["Annual", "Gaps", "First period"] and cells[5] == "8" and cells[6] == "2" and cells[7] == "2014-12-31"
         assert _tables_have_names(page) == [] and KEY_1 not in page.content() and page.problems == []
     finally:
         page.close()

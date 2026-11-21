@@ -140,7 +140,7 @@ def test_a_company_is_found_in_the_sec_list_added_for_nothing_and_fetched_for_tw
         assert "Fetched 10 annual periods for us:AAPL and spent 2 requests." in text and "Loaded 10 daily prices (free)" in text
         assert fake.kinds() == ["tickers", "submissions", "facts"] and live_sec.asked == [["AAPL"]]
         row = page.locator("[data-role=fund-companies] tbody tr").first.locator("td").all_inner_texts()
-        assert row[0].startswith("AAPL") and row[1] == "Apple Inc." and row[2] == "US" and row[3] == "Technology" and row[4] == "10"
+        assert row[1].startswith("AAPL") and row[2] == "Apple Inc." and row[3] == "US" and row[4] == "Technology" and row[5] == "10"
         page.locator("[data-role=fund-companies] tbody tr").first.locator("[data-action=open-company]").click()
         page.wait_for_selector("[data-role=fund-coverage] .years")
         card = "[data-role=fund-coverage]"
