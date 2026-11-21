@@ -52,3 +52,10 @@ followed was to extend working components (the SQLite store, the point-in-time e
 * The point-in-time lag for an import without a filing date is 120 days for a year and 60 for a quarter, and is flagged estimated.
 * PDF figures are as reliable as the layout of the PDF; scanned reports are refused (there is no OCR).
 * The SEC refused automated requests to `www.sec.gov` from the environment this was built in (HTTP 403), so the filing list and the document fetch are tested against stand-ins of the documented shape, not against the live service.
+
+
+## Global filings (second change)
+
+Added: country connectors for EDINET, OpenDART, CVM, ESEF and link-only sources (HKEXnews, SGXNet, CNINFO, SSE, SZSE, SEDAR+) with each source's access rules enforced in code; the Japanese XBRL taxonomies; line names in eight languages; HTML table reading in the page's own encoding; OCR and Docling adapters (optional engines); AI-assisted extraction with a verbatim-evidence check; per-country coverage calendars; the Parquet/DuckDB point-in-time store with an as-of query; the Streamlit interface.
+
+Not done, and why: the **live behaviour** of every connector (nothing is reachable from here); **Arelle** (still not used: it needs each filer's taxonomy package and a network); **PaddleOCR, Surya and Docling** were not installed or run (heavy, optional, adapters tested with stand-ins); **dart-fss** is not used: OpenDART's API is called directly, which avoids a dependency and is the same interface; **SEDAR+, HKEXnews, SGXNet, CNINFO, SSE, SZSE** have no interface for programs and restrict automated collection, so they are links-and-files only; **Chinese XBRL** does not exist for Mainland companies (reports are PDFs); **Singapore's** and **Hong Kong's** financial statements are PDFs for most companies, so their history depends on the review of PDF readings. A restatement in CVM's data is noted but only the latest version is read; EDINET corrections (type 130, 150, 170) are listed and read as separate filings.

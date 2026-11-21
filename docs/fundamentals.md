@@ -306,3 +306,29 @@ SEC EDGAR now gives quarters as well as years (`quant fundamentals sync --provid
 ## Data coverage
 
 *Data coverage* shows, for every company, which fiscal years and quarters the database holds, from which source, which are missing between the first and the latest, and what is waiting: reports awaiting review, conflicts with held figures, failed imports, periods whose availability date is assumed. *Backfill* asks SEC EDGAR for the missing years and quarters of one company or of all with gaps. `docs/fundamentals_audit.md` lists what exists, what this change added, the limits of each source and what is still open.
+
+
+## Filings from other countries
+
+The import system reads filings from the US, Japan, South Korea, Singapore, Mainland China, Hong Kong, France, Spain, Germany, Canada and Brazil, each through the way that source actually allows (`src/fundamentals/filings/`).
+
+| Market | Source | What the source permits | What the connector does |
+|---|---|---|---|
+| United States | SEC EDGAR | free API; every request must name who is asking (`SEC_EDGAR_USER_AGENT`) | company facts (annual and 10-Q quarters), the filing list, the filing's inline XBRL |
+| Japan | EDINET | official API with a free key (`EDINET_API_KEY`); lists filings by day only | scans days (resumable), securities reports (annual, quarterly, half-year and corrections), reads the XBRL with the Japanese taxonomies (`jppfs_cor`, `jpigp_cor`, `jpdei_cor`), parent-only filers included |
+| South Korea | OpenDART | official API with a free key (`OPENDART_API_KEY`, 20,000 requests a day) | lists a company's reports, gets the statements as structured accounts with IFRS element ids: no PDF; Q1, half-year, Q3 and annual; the cash flow only where the period is a quarter or six months |
+| Brazil | CVM open data | files published for reuse, no key | DFP (annual) and ITR (quarterly) yearly files; amounts scaled to units; the latest version read and earlier versions noted |
+| France, Spain, Germany and other EU markets | ESEF index (filings.xbrl.org) | open index, no key | annual reports in inline XBRL, read through the IFRS mapping |
+| Hong Kong, Singapore, Mainland China (CNINFO, SSE, SZSE), Canada (SEDAR+) | HKEXnews, SGXNet, the exchanges, SEDAR+ | websites for people: no interface for programs, terms restrict automated collection | **no search, no crawl.** A link or file a person has chosen is accepted if it is on the source's own host, classified (annual, interim, quarterly, in the source's languages) and fetched like a download |
+
+`GET /api/fund/connectors` lists them with what each permits, whether it is usable now and why not, and each country's expected periods. A source that needs a key makes no request without one.
+
+**What is expected for each country.** Coverage counts only the periods a market's companies file: a Hong Kong company files a half-year and an annual report, so a missing Q1 is not a gap, and a missing half-year is. `filings/calendar.py` holds the rules (US Q1 to Q4 and FY; Japan Q1 to Q3 and FY, a half-year and FY from fiscal 2024; Korea Q1, H1, Q3, FY; China Q1, H1, Q3, FY; Hong Kong and Singapore H1 and FY; Germany Q1, H1, Q3, FY; France and Spain H1 and FY; Canada and Brazil Q1 to Q3 and FY), each with its note and its limits.
+
+**Languages.** Line names are recognised in Japanese, Korean, Chinese (simplified and traditional), French, Spanish, German and Portuguese, and the unit is read from the words of the report ("百万円", "백만원", "单位：万元", "in millions"). A label that two lines could claim is left unmapped. Scanned reports go through an OCR engine if one is installed (PaddleOCR or Surya: heavy and optional; their adapters are tested here with a stand-in, not the real engines); Docling recovers complex tables if installed. **AI-assisted extraction** is off unless `FUNDAMENTALS_AI_EXTRACTION=1`, runs only after the deterministic readers found too little, and keeps a figure only if the number and the quoted sentence are in the document: a figure that is not in the text is dropped. Every PDF, OCR, Docling, HTML and AI reading is sent for review.
+
+**Point-in-time storage.** `pitstore.export` writes every figure with its availability date, vintage and provenance to Parquet (by country and fiscal year) beside a manifest; `PitStore.as_of(day)` (DuckDB) answers what was public on a day. SQLite stays the source of truth; the Parquet files are the reproducible analytic view. `POST /api/fund/pit/export`, `GET /api/fund/pit/asof`.
+
+**Streamlit.** `streamlit run src/fundamentals/streamlit_app.py` opens the same services as the dashboard: retrieval from a source, uploads and review, coverage, and the point-in-time store. No rule lives in the Streamlit layer.
+
+**What was and was not verified.** None of these services is reachable from the build environment, so each connector is tested against a stand-in of the source's documented shape (the request, the answer, the errors): the code paths are exercised, the live services are not. The Japanese element names, the CVM account codes, the DART field names and the filings.xbrl.org request were written from the published descriptions and may need adjusting against a live filing.
