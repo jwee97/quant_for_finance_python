@@ -15,7 +15,7 @@ Where the company also files XBRL (every US-listed company does), prefer it: the
 from __future__ import annotations
 
 import re
-from collections import Counter, defaultdict
+from collections import Counter
 from datetime import date
 
 from .. import manual

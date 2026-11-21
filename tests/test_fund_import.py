@@ -8,12 +8,10 @@ old one; every stored figure says where it came from; a link to a private addres
 from __future__ import annotations
 
 import io
-import json
 import zipfile
 
 import pytest
 
-from src.fundamentals import canonical
 from src.fundamentals.errors import FundamentalsError
 from src.fundamentals.importer import fetch, pdf, pipeline, reconcile, tabular, xbrl
 from src.fundamentals.importer.fetch import Fetcher

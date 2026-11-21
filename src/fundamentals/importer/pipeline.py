@@ -18,7 +18,6 @@ import copy
 import hashlib
 import io
 import json
-import re
 import uuid
 import zipfile
 import zlib
