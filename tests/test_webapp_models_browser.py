@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import pytest
 
+from tests.chart_helpers import chart_points
 from tests.test_webapp_browser import browser, open_tab  # noqa: F401  (``browser`` is the module's Chromium fixture)
 from tests.test_webapp_workspaces_browser import _mode, _page, _run, _start, _wait_until
 
@@ -62,13 +63,35 @@ def test_the_fit_ranks_the_models_draws_the_smiles_and_says_what_it_fitted(mp):
     assert mp.locator("#options-results svg.chart").count() >= 4 and mp.locator("#options-results .banner.err").count() == 0
     titles = " | ".join(_titles(mp))
     assert "How far each model is from the quotes" in titles and "What the quotes imply for the price" in titles and "The chance of a fall at least this big" in titles and "The fitted parameters" in titles
-    pills = mp.locator("#options-results .filters .tabsmall button")
-    assert pills.count() >= 2 and mp.locator("#options-results .filters .tabsmall button[aria-pressed=true]").count() == 1
+    pills = mp.locator("#options-results .tabsmall[aria-label=\"Expiry of the smile\"] button")
+    assert pills.count() >= 2 and mp.locator("#options-results .tabsmall[aria-label=\"Expiry of the smile\"] button[aria-pressed=true]").count() == 1
     before = mp.inner_text("#options-results")
-    mp.locator("#options-results .filters .tabsmall button[aria-pressed=false]").first.click()
-    _wait_until(mp, "document.querySelectorAll('#options-results .filters .tabsmall button[aria-pressed=true]').length === 1 && document.querySelector('#options-results .chartcard h3') !== null", 30)
+    mp.locator("#options-results .tabsmall[aria-label=\"Expiry of the smile\"] button[aria-pressed=false]").first.click()
+    _wait_until(mp, "document.querySelectorAll('#options-results .tabsmall[aria-label=\"Expiry of the smile\"] button[aria-pressed=true]').length === 1 && document.querySelector('#options-results .chartcard h3') !== null", 30)
     assert mp.inner_text("#options-results") != before, "another expiry draws another smile"
     assert mp.locator("#options-results .chartcard").count() >= 4 and "Read the guide" in text
+
+
+def test_the_fit_compares_the_models_maps_their_errors_and_sets_the_smiles_side_by_side(mp):
+    """The model comparison table, the residual heatmap by expiry and strike, and the smile of every expiry: each answers to its own chips and reads from the same fit."""
+    _mode(mp, "options", "fit")
+    _choose_models(mp)
+    _run(mp, "options")
+    _done(mp)
+    table = mp.locator("#options-results [data-role=model-comparison] table")
+    names = table.locator("tbody tr td:nth-child(2)").all_inner_texts()
+    assert len(names) >= 3 and "Flat volatility" in names[0] and table.locator("tbody td.best").count() >= 3, "the flat volatility is the reference row and the best of each column is marked"
+    mp.locator("#options-results [data-role=model-comparison] .tabsmall button[data-value=put_wing]").click()
+    _wait_until(mp, "document.querySelector('#options-results [data-role=model-comparison] th.sorted').textContent.includes('Put wing')", 30)
+    heat = mp.locator("#options-results [data-role=residual-heatmap]")
+    heat.scroll_into_view_if_needed()
+    assert chart_points(heat) >= 20, "a grid of expiries by strikes"
+    before = heat.inner_text()
+    heat.locator(".tabsmall button[aria-pressed=false]").first.click()
+    _wait_until(mp, "document.querySelectorAll('#options-results [data-role=residual-heatmap] .tabsmall button[aria-pressed=true]').length === 1", 30)
+    assert heat.inner_text() != before, "another model, another map of its errors"
+    grid = mp.locator("#options-results [data-role=smile-grid] .smallchart")
+    assert grid.count() >= 3 and grid.locator(".ec-chart").count() == grid.count()
 
 
 def test_every_chart_of_the_fit_has_a_table_behind_it_and_every_control_a_name(mp):

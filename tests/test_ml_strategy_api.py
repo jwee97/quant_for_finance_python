@@ -4,6 +4,7 @@ The numbers are checked against what the run itself reports, not against fixed v
 
 import warnings
 
+import pandas as pd
 import pytest
 
 from src.webapp.api import ApiError
@@ -150,3 +151,36 @@ def test_a_run_without_a_decision_log_can_be_replayed_and_carries_the_numbers_ab
     assert s["last_price"] and s["position"] is not None and s["realized"] is not None and s["unrealized"] is not None and s["book_return"] is not None
     assert len(out["book"]["long"]) == len(out["book"]["short"]) == len(out["book"]["dates"])
     assert all(m["pnl_return"] is None or isinstance(m["pnl_return"], float) for m in out["chart"]["markers"])
+
+
+def _plain(app, name):
+    return finished(app, app.extra_post["/api/ml/train"]({"dataset": BASE["dataset"], "split": BASE["split"], "model": BASE["model"], "explain": False, "name": name, "mode": "development"}))
+
+
+def test_the_end_of_a_development_runs_scores_is_not_a_sale_of_the_book(app):
+    """A development run is scored only to the end of validation; a rule given no scores returns an empty book, which was shown as a close of every position at the last day. Nothing was decided there."""
+    run = _plain(app, "no-fake-sale")
+    out = get(app, "/api/ml/strategy", id=run["id"])
+    until = out["summary"]["scored_until"]
+    assert until and out["chart"]["dates"][-1] <= str((pd.Timestamp(until) + pd.Timedelta(days=7)).date())
+    assert all(m["decision_date"] <= until for m in out["chart"]["markers"]), "no trade is decided after the last score"
+    assert not any(m["weight_after"] == 0.0 and m["decision_date"] > until for m in out["chart"]["markers"])
+    assert out["chart"]["summary"]["position"] and out["chart"]["summary"]["book_gross"] > 0.5, "the last book is still held on the last day shown"
+
+
+def test_a_period_of_the_run_is_tested_against_the_benchmark_and_says_which_days_were_out_of_sample(app):
+    run = _plain(app, "window")
+    w = get(app, "/api/ml/strategy/window", id=run["id"], days="5")
+    assert w["window"]["days"] == 5 and w["metrics"]["days"] == 5 and w["coverage"]["days"] == 5
+    assert w["metrics"]["active_return"] == pytest.approx(w["metrics"]["net_return"] - w["metrics"]["benchmark_return"])
+    assert len(w["curve"]["dates"]) == 5 and w["curve"]["net"][0] is not None and w["coverage"]["train_days"] == 0
+    raw = app.extra_get["/api/ml/strategy/window"]({"id": run["id"], "days": "5"})
+    assert any("very short test" in x for x in raw["warnings"]), "a week is flagged as too short to show skill"
+    month = get(app, "/api/ml/strategy/window", id=run["id"], days="63")
+    assert month["assets"] and month["read"] and month["window"]["days"] == 63
+    dated = get(app, "/api/ml/strategy/window", id=run["id"], **{"from": month["window"]["from"], "to": month["window"]["to"]})
+    assert dated["metrics"]["net_return"] == pytest.approx(month["metrics"]["net_return"])
+    with pytest.raises(ApiError, match="no days between"):
+        app.extra_get["/api/ml/strategy/window"]({"id": run["id"], "from": "1990-01-01", "to": "1990-02-01"})
+    with pytest.raises(ApiError, match="must not be before"):
+        app.extra_get["/api/ml/strategy/window"]({"id": run["id"], "from": "2018-05-01", "to": "2018-04-01"})

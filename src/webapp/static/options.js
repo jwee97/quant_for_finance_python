@@ -855,6 +855,66 @@
     const se = m.std_errors[k], edge = m.at_bounds.includes(k), loose = !Q.bad(se) && Math.abs(se) > 5 * Math.abs(v);                 // a parameter on the edge of its range, or known to within many times its size, has no usable standard error
     return `${GREEK[k] || k} ${pnum(v)}${edge ? " (at the edge of its range: not a measurement)" : loose ? " (not pinned down by the quotes)" : Q.bad(se) ? "" : ` ±${pnum(se)}`}`;
   }).join(" · ");
+  /* ---------- model comparison, residual heatmap and smile comparison (the fit view) ---------- */
+  const CMP_COLS = [["rmse", "Error", "Root-mean-square gap to the quotes, in volatility points: the headline number the models are ranked by."], ["mae", "Mean |error|", "The average size of the gap, in volatility points."], ["max_error", "Worst", "The single largest gap, in volatility points."],
+    ["bias", "Bias", "Average signed gap: above zero means the model's volatilities sit above the market's, below zero under it."], ["atm", "At the money", "Error of the quotes within 3% of the forward: where most of the trading is."],
+    ["put_wing", "Put wing", "Error of the quotes more than 10% below the forward: the price of crash protection."], ["call_wing", "Call wing", "Error of the quotes more than 10% above the forward."],
+    ["short", "Short expiries", "Error of the nearer half of the expiries (the smile is steepest there)."], ["long", "Long expiries", "Error of the farther half."],
+    ["bic", "BIC", "A fit measure that charges for each extra parameter (lower is better): a model with more parameters has to earn them."]];
+  function fitComparison(root, d) {
+    const cmp = d.comparison; if (!cmp) return;
+    const sortKey = O.fitSort || "rmse", rows = [...cmp.rows].sort((a, b) => (a.rank && b.rank ? (a.rank[sortKey] || 99) - (b.rank[sortKey] || 99) : 0));
+    const card = h("div", "card wide", root); card.dataset.role = "model-comparison"; h("h3", "", card, "Model comparison");
+    h("p", "hint", card, "Every model on the same quotes. Errors are implied-volatility points (1 point is 20% against 21%). The best in each column is marked; the grey row is the best constant volatility for each expiry, the bar a model has to clear to say it learned the smile.");
+    const wrap = h("div", "filters", card); W.pills(wrap, CMP_COLS.map(([k, label, tip]) => [k, label, tip]), sortKey, (v) => { O.fitSort = v; O.draw(); }, "Rank the models by");
+    const sc = FD_GUARD(h("div", "scroll", card)), t = h("table", "data cmp", sc), hd = h("tr", "", h("thead", "", t));
+    h("th", "", hd, "#"); h("th", "", hd, "Model");
+    for (const [k, label, tip] of CMP_COLS) { const th = h("th", "num", hd, label); th.title = tip; if (k === sortKey) th.className = "num sorted"; }
+    h("th", "num", hd, "Parameters").title = "Free parameters shared by every expiry"; h("th", "num", hd, "Seconds");
+    const tb = h("tbody", "", t), best = {};
+    for (const [k] of CMP_COLS) { const v = cmp.rows.filter((r) => r[k] !== null && r[k] !== undefined).map((r) => (k === "bias" ? Math.abs(r[k]) : r[k])); best[k] = v.length ? Math.min(...v) : null; }
+    const line = (r, ref) => {
+      const tr = h("tr", ref ? "ref" : "", tb); h("td", "", tr, ref ? "" : String(rows.indexOf(r) + 1)); const nm = h("td", "", tr, r.label); if (!ref) { const sw = h("span", "swatch", nm); sw.style.background = modelColor(r.id); nm.prepend(sw); }
+      for (const [k] of CMP_COLS) {
+        const v = r[k], td = h("td", "num", tr, v === null || v === undefined ? "n/a" : k === "bic" ? num(v, 0) : k === "bias" ? W.signed(v, 2) : num(v, 2));
+        if (!ref && v !== null && v !== undefined && best[k] !== null && (k === "bias" ? Math.abs(v) : v) === best[k]) td.className = "num best";
+      }
+      h("td", "num", tr, String(r.n_params)); h("td", "num", tr, ref || r.seconds === undefined ? "" : num(r.seconds, 1));
+    };
+    line(cmp.flat, true); for (const r of rows) line(r, false);
+    const winner = rows[0];
+    h("p", "hint", card, `Ranked by ${CMP_COLS.find((c) => c[0] === sortKey)[1].toLowerCase()}, ${winner.label} comes first with ${num(winner[sortKey], 2)}${sortKey === "bic" ? "" : " points"}; it is best on ${winner.wins} of ${CMP_COLS.length} columns. A model that wins the headline error but is far worse in the put wing may price crash protection badly even though it looks good on average.`);
+  }
+  const FD_GUARD = (el) => el;
+  function fitHeat(root, d) {
+    const heat = d.heat; if (!heat) return;
+    const choices = [["flat", "Flat volatility"], ...d.models.map((m) => [m.id, m.label])], pick = O.fitHeat && choices.some((c) => c[0] === O.fitHeat) ? O.fitHeat : d.best;
+    const card = h("div", "card wide", root); card.dataset.role = "residual-heatmap"; h("h3", "", card, "Where each model is wrong");
+    h("p", "hint", card, "The model's implied volatility minus the market's, in volatility points, for every expiry (rows) and strike (columns, as a share of the forward: puts on the left, calls on the right). Red is a model above the market, blue below, grey a quote it was never asked to fit. A good fit is a pale grid; a stripe is a systematic miss.");
+    W.pills(h("div", "filters", card), choices, pick, (v) => { O.fitHeat = v; O.draw(); }, "Model");
+    const edges = heat.edges, label = (c) => (c === 0 ? `< ${Math.round(edges[0] * 100)}%` : c === edges.length ? `> ${Math.round(edges[edges.length - 1] * 100)}%` : `${Math.round(edges[c - 1] * 100)}-${Math.round(edges[c] * 100)}%`);
+    const cols = Array.from({ length: edges.length + 1 }, (_, c) => label(c)), grid = pick === "flat" ? heat.flat : heat.models[pick];
+    const all = grid.flat().filter((v) => v !== null), lim = Math.max(0.5, Math.ceil(Math.max(...all.map(Math.abs), 0) * 2) / 2);
+    const body = h("div", "", card);
+    C.matrix(body, { rows: heat.expiries.map((e) => `${Math.round(e.dte)} days`), cols, values: grid, diverging: true, mid: 0, min: -lim, max: lim, format: (v) => W.signed(v, 2), name: "Model minus market (vol points)", rowTitle: "Expiry", colTitle: "Strike, share of the forward", cellHeight: 30, label: "Model error by expiry and strike" });
+    const worst = (() => { let w = null; grid.forEach((row, i) => row.forEach((v, c) => { if (v !== null && (!w || Math.abs(v) > Math.abs(w.v))) w = { v, i, c }; })); return w; })();
+    if (worst) h("p", "hint", card, `The largest average miss is ${W.signed(worst.v, 2)} points, in the ${heat.expiries[worst.i].dte.toFixed(0)}-day expiry at strikes ${cols[worst.c]} of the forward${worst.v > 0 ? " (the model is too expensive there)" : " (the model is too cheap there)"}.`);
+  }
+  function fitSmileGrid(root, d) {
+    if (!d.smiles || d.smiles.length < 2) return;
+    const card = h("div", "card wide", root); card.dataset.role = "smile-grid"; h("h3", "", card, "Smile comparison across expiries");
+    h("p", "hint", card, "The market's quotes (dots) against the chosen models at every expiry on the same strike axis, so the way the smile flattens with time, and where each model departs from it, can be read at a glance. Dots are the market; each line is a model, coloured as in the chips below.");
+    const choices = d.models.map((m) => [m.id, m.label]), chosen = O.fitGrid || new Set([d.best]);
+    W.picks(h("div", "filters", card), choices.map(([id, label]) => [id, label, label]), chosen, () => { O.fitGrid = chosen; O.draw(); });
+    const grid = h("div", "smilegrid", card);
+    for (const sm of d.smiles) {
+      const cell = h("div", "smallchart", grid); h("h4", "", cell, `${Math.round(sm.dte)} days · ${sm.expiry}`);
+      const ivs = [...sm.market, ...[...chosen].flatMap((id) => sm.models[id] || [])];
+      C.line(h("div", "", cell), { xs: sm.strike, xLabel: "Strike", series: [{ name: "Quotes", color: modelColor("market"), values: sm.market, dots: true, dotSize: 3, width: 1 }, ...[...chosen].filter((id) => sm.models[id]).map((id) => ({ name: (d.models.find((m) => m.id === id) || {}).label, color: modelColor(id), values: sm.models[id], width: 2 }))],
+        yFormat: volFormat(ivs), tipFormat: (v) => pct(v, 1), xFormat: (v) => num(v, 0), height: 170, zoom: false, legend: false, label: `Smile at ${Math.round(sm.dte)} days`, endLabels: false, vlines: [{ x: sm.forward, label: "forward" }] });
+    }
+  }
+
   function buildFit(root, d) {
     const best = d.models[0], dens = d.density, tails = dens.tails, bs = tails.find((t) => t.id === "bs"), bt = tails.find((t) => t.id === d.best), dte = Math.round(dens.dte), days = d.quotes.expiries.map((e) => e.dte);
     header(root, `${nameOf(d)}: option models fitted to the chain`, `${d.quotes.n} out-of-the-money quotes · ${d.quotes.expiries.length} expiries from ${Math.round(Math.min(...days))} to ${Math.round(Math.max(...days))} days · price ${money(d.spot, 2)}`, GUIDES.fit);
@@ -870,6 +930,9 @@
     chartCard(ch, "How far each model is from the quotes", "Root-mean-square error in implied-volatility points (1 point is a volatility of 20% against 21%). The grey bar is the best flat volatility for each expiry: a model that does not beat it has learned nothing about the smile.", { wide: true,
       draw: (b) => C.hbars(b, { rows: err, format: (v) => v.toFixed(2), tipFormat: (v) => v.toFixed(2) + " pts", name: "Error", label: "Fit error by model", labelWidth: 200, color: (v, row) => row.color }),
       table: (b) => table(b, [{ label: "Model", get: (x) => x.label }, { label: "Error (pts)", num: true, get: (x) => num(x.value, 2) }], err) });
+    fitComparison(root, d);
+    fitHeat(root, d);
+    fitSmileGrid(root, d);
     const nearest = d.smiles.reduce((best, x, i) => (Math.abs(x.dte - 30) < Math.abs(d.smiles[best].dte - 30) ? i : best), 0);       // the first view is the expiry nearest 30 days, where the density below is drawn
     const si = O.fitSmile === null || O.fitSmile >= d.smiles.length ? nearest : O.fitSmile, sm = d.smiles[si];
     const pickRow = h("div", "filters", root);

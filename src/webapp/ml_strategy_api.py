@@ -38,7 +38,8 @@ class StrategyRoutes:
         return {"/api/ml/strategy/controls": self.strategy_controls}
 
     def strategy_get_routes(self) -> dict:
-        return {"/api/ml/strategy/runs": self.strategy_runs, "/api/ml/strategy": self.strategy, "/api/ml/strategy/decisions": self.strategy_decisions, "/api/ml/strategy/trades": self.strategy_trades, "/api/ml/strategy/replay": self.strategy_replay}
+        return {"/api/ml/strategy/runs": self.strategy_runs, "/api/ml/strategy": self.strategy, "/api/ml/strategy/decisions": self.strategy_decisions, "/api/ml/strategy/trades": self.strategy_trades, "/api/ml/strategy/replay": self.strategy_replay,
+                "/api/ml/strategy/window": self.strategy_window}
 
     # ------------------------------------------------------------------------------------------------------------ loading
     def _strategy_files(self, exp_id: str) -> dict:
@@ -87,6 +88,13 @@ class StrategyRoutes:
         ex, trips, prices, pos, ret, dec = f["executions"], f["round_trips"], f["prices"], f["positions"], f["returns"], f["decisions"]
         if prices is not None and pos is not None and len(pos):
             prices = prices.loc[pos.index[0]:]                                              # the file holds the whole history (a control replays on it); the chart starts where the run did
+            until = trading.get("scored_until")
+            if until:                                                                       # ...and ends where the model's decisions end (plus the lag they need to execute): after that no book is held or traded, which is not the same as a book of cash
+                stop = prices.index.searchsorted(pd.Timestamp(until)) + int(trading.get("lag_days") or 1) + 1
+                prices = prices.iloc[:stop]
+                pos = pos.loc[:prices.index[-1]].copy()
+                pos.loc[pos.index > pd.Timestamp(until)] = np.nan                       # the rows after the last score are an empty book for want of scores: the last decision's book stays in force for the lag
+                pos = pos.ffill().fillna(0.0)
         traded = (ex.groupby("asset").size().sort_values(ascending=False) if ex is not None and len(ex) else pd.Series(dtype=int))
         asset = str(q.get("asset") or (traded.index[0] if len(traded) else (prices.columns[0] if prices is not None else "")))
         if prices is not None and asset not in prices.columns:
@@ -226,6 +234,92 @@ class StrategyRoutes:
             return clean(out)
 
         return self.app.submit_task("Random-signal control", work, kind="lab")
+
+    # ------------------------------------------------------------------------------------------------------------ a period
+    def strategy_window(self, q: dict) -> dict:
+        """``GET /api/ml/strategy/window?id=[&days=5][&from=&to=]``: a forward test of a period, not of one date. The run's own book over the last ``days`` trading days (or ``from``..``to``): what it earned
+        against the equal-weight benchmark, which positions made or lost it, the trades inside it, and what the model said about each asset at the start of the period against what then happened.
+
+        Nothing is re-fitted. The book is the one the run recorded, so a day the model had trained on is not a forward day: ``coverage`` counts the window's days by segment and says so. A development run is
+        scored only to the end of its validation segment (the test and forward outcomes are protected), so its window cannot reach past that."""
+        h = _h()
+        h._only(q, {"id", "days", "from", "to"}, "/api/ml/strategy/window")
+        with h._user_errors():
+            exp_id = h._id(q)
+            f = self._strategy_files(exp_id)
+            report = self.registry.report(exp_id)
+            ret, pos, preds = f["returns"], f["positions"], f["predictions"]
+            if ret is None or pos is None or not len(ret):
+                raise ApiError("this experiment has no recorded return stream to test a period on")
+            lag = int((report.get("trading") or {}).get("lag_days", 1))
+            days = h._int(q, "days", 5, 1, 504)
+            if q.get("from") or q.get("to"):
+                a = pd.Timestamp(h._date("from", q["from"])) if q.get("from") else ret.index[0]
+                b = pd.Timestamp(h._date("to", q["to"])) if q.get("to") else ret.index[-1]
+                if b < a:
+                    raise ApiError("'to' must not be before 'from'")
+                win = ret.loc[a:b]
+            else:
+                win = ret.iloc[-days:]
+            if not len(win):
+                raise ApiError(f"the run has no days between {_iso(q.get('from'))} and {_iso(q.get('to'))}; it covers {_iso(ret.index[0])} to {_iso(ret.index[-1])}")
+            net, gross, bench = win["net"].fillna(0.0), win["gross"].fillna(0.0) if "gross" in win else win["net"].fillna(0.0), win["benchmark"].fillna(0.0) if "benchmark" in win else pd.Series(0.0, index=win.index)
+            comp = lambda r: float((1.0 + r).prod() - 1.0)                                                  # noqa: E731
+            curve_n, curve_b = (1.0 + net).cumprod(), (1.0 + bench).cumprod()
+            metrics = {"net_return": comp(net), "gross_return": comp(gross), "benchmark_return": comp(bench), "active_return": comp(net) - comp(bench), "cost": comp(gross) - comp(net),
+                       "days": int(len(win)), "up_days": int((net > 0).sum()), "best_day": _num(net.max()), "worst_day": _num(net.min()), "max_drawdown": _num((curve_n / curve_n.cummax() - 1.0).min()),
+                       "turnover": _num(win["turnover"].sum()) if "turnover" in win else None, "beat_benchmark_days": int((net > bench).sum())}
+            segs = {}
+            if preds is not None and "segment" in preds.columns:                                           # which part of the run each day of the window belongs to
+                by_day = preds["segment"].groupby(level=0).first()
+                got = by_day.reindex(win.index)
+                segs = {str(k): int(v) for k, v in got.value_counts().items()}
+                segs["not_scored"] = int(got.isna().sum())
+            oos = sum(v for k, v in segs.items() if k in ("validation", "test", "forward"))
+            coverage = {"segments": segs, "out_of_sample_days": oos, "days": int(len(win)), "train_days": int(segs.get("train", 0)), "not_scored_days": int(segs.get("not_scored", 0))}
+            notes = []
+            if coverage["train_days"]:
+                notes.append(f"{coverage['train_days']} of the {len(win)} days lie in the training segment: the model had learned from them, so they say nothing about forward skill.")
+            if coverage["not_scored_days"] > lag and segs:
+                notes.append(f"{coverage['not_scored_days']} day(s) were not scored by the model (a development run stops at the end of validation; the test and forward outcomes are protected).")
+            if len(win) < 20:
+                notes.append(f"{len(win)} days is a very short test: a week of returns is mostly noise, and it cannot separate skill from luck. Read it as a check that the book behaved as designed, not as evidence of an edge.")
+            ar = f["asset_returns"] if f["asset_returns"] is not None else (f["prices"].pct_change() if f["prices"] is not None else None)
+            assets, read = [], None
+            if ar is not None:
+                held = pos.shift(lag).reindex(win.index).fillna(0.0)
+                r = ar.reindex(index=win.index, columns=pos.columns).fillna(0.0)
+                contrib = (held * r).sum()
+                cumr = (1.0 + r).prod() - 1.0
+                sc0 = None
+                if preds is not None:
+                    p = preds.reset_index()
+                    d0, a0 = p.columns[0], p.columns[1]
+                    before = p[p[d0] < win.index[0]][d0]
+                    day0 = before.max() if len(before) else p[d0].min()                                    # the last score known before the window opened
+                    sc0 = p[p[d0] == day0].set_index(a0)["score"]
+                for a in pos.columns:
+                    if abs(held[a]).max() < 1e-9 and abs(cumr[a]) < 1e-12:
+                        continue
+                    assets.append({"asset": a, "avg_weight": _num(held[a].mean()), "asset_return": _num(cumr[a]), "contribution": _num(contrib[a]), "score_at_start": _num(sc0.get(a)) if sc0 is not None else None,
+                                   "rank_at_start": _num(sc0.rank(pct=True).get(a)) if sc0 is not None else None})
+                assets.sort(key=lambda x: -abs(x["contribution"] or 0.0))
+                if sc0 is not None and len(sc0.dropna()) >= 4:
+                    both = pd.concat([sc0, cumr], axis=1, join="inner").dropna()
+                    both.columns = ["score", "ret"]
+                    top = both["score"] >= both["score"].median()
+                    read = {"rank_correlation": _num(both["score"].rank().corr(both["ret"].rank())), "top_half_return": _num(both.loc[top, "ret"].mean()), "bottom_half_return": _num(both.loc[~top, "ret"].mean()),
+                            "n_assets": int(len(both)), "note": "the model's score at the start of the window against what each asset then did: a rank correlation across only a handful of assets over a few days is noise on its own."}
+            ex = f["executions"]
+            trades = []
+            if ex is not None and len(ex):
+                inside = ex[(ex["date"] >= win.index[0]) & (ex["date"] <= win.index[-1])]
+                trades = [{"date": _iso(r["date"]), "asset": r["asset"], "action": r.get("action"), "weight_change": _num(r["trade_weight"]), "weight_after": _num(r["weight_after"]),
+                           "decision_date": _iso(r.get("decision_date")), "reason": r.get("reason")} for _, r in inside.head(200).iterrows()]
+        out = {"id": exp_id, "name": report.get("name"), "window": {"from": _iso(win.index[0]), "to": _iso(win.index[-1]), "days": int(len(win)), "run_from": _iso(ret.index[0]), "run_to": _iso(ret.index[-1])},
+               "metrics": metrics, "coverage": coverage, "curve": {"dates": [_iso(d) for d in win.index], "net": [_num(x) for x in curve_n], "benchmark": [_num(x) for x in curve_b]},
+               "assets": assets[:30], "read": read, "trades": trades}
+        return clean(common.envelope("ml_strategy_window", out, {"registry": "platform"}, notes, None, []))
 
     # ------------------------------------------------------------------------------------------------------------ replay
     def strategy_replay(self, q: dict) -> dict:

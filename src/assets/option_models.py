@@ -182,7 +182,8 @@ def fit_report(name: str, quotes: cal.Quotes, results: dict[str, cal.Calibration
         warnings.append(f"{levy.MODELS[mid].label} could not be fitted: {why}")
     data = {"underlying": name, "spot": quotes.S, "rate": quotes.r, "dividend": quotes.q, "settings": settings,
             "quotes": {"n": int(len(quotes.T)), "expiries": [{"expiry": e, "dte": float(T * 365.0), "n": int((quotes.T == T).sum()), "atm_iv": _atm_of(quotes, T)} for e, T in zip(quotes.expiries, quotes.maturities)]},
-            "flat_rmse": flat, "models": rows, "best": rows[0]["id"], "smiles": _smiles(quotes, results), "density": _density(quotes, results)}
+            "flat_rmse": flat, "models": rows, "best": rows[0]["id"], "smiles": _smiles(quotes, results), "density": _density(quotes, results),
+            "comparison": _comparison(quotes, results, flat, rows), "heat": _heat(quotes, results)}
     notes = ["Each model's parameters are shared by every expiry and fitted by bounded least squares on the vega-scaled price errors, which equal the implied-volatility errors to first order, so every strike counts evenly in volatility terms.",
              "Prices come from the Lewis (2001) integral of the characteristic function (exact to about 1e-9); the Heston model's characteristic function uses the stable 'little trap' form.",
              "Errors are in volatility points. The flat-volatility benchmark is one Black-Scholes volatility per expiry, the best constant: a model that does not beat it has not captured the smile.",
@@ -190,7 +191,68 @@ def fit_report(name: str, quotes: cal.Quotes, results: dict[str, cal.Calibration
     return data, warnings, notes
 
 
-def _smiles(quotes: cal.Quotes, results: dict[str, cal.Calibration], max_shown: int = 4) -> list[dict]:
+HEAT_EDGES = (0.80, 0.88, 0.94, 0.98, 1.02, 1.06, 1.12, 1.20)      # strike as a share of the forward: the cell borders of the residual heatmap (nine columns, the puts' wing first)
+
+
+def _flat_iv(quotes: cal.Quotes) -> np.ndarray:
+    """What the best flat volatility says at every quote: the average of the quotes of its own expiry."""
+    out = np.empty(len(quotes.T))
+    for T in quotes.maturities:
+        idx = quotes.T == T
+        out[idx] = quotes.iv[idx].mean()
+    return out
+
+
+def _residual_cells(quotes: cal.Quotes, model_iv: np.ndarray) -> list[list[float | None]]:
+    """The model's error, in volatility points, averaged in each cell of a grid of expiry (rows, nearest first) by strike as a share of the forward (columns, puts first). None where no quote falls."""
+    share = quotes.K / quotes.forward
+    col = np.digitize(share, HEAT_EDGES)
+    err = (model_iv - quotes.iv) * 100.0
+    rows = []
+    for T in quotes.maturities:
+        in_row = quotes.T == T
+        rows.append([float(err[in_row & (col == c)].mean()) if np.any(in_row & (col == c)) else None for c in range(len(HEAT_EDGES) + 1)])
+    return rows
+
+
+def _comparison(quotes: cal.Quotes, results: dict[str, cal.Calibration], flat: float, rows: list[dict]) -> dict:
+    """The models side by side on the quotes: error overall (RMSE, mean absolute, worst, bias), where it is made (at the money, in the put wing, in the call wing, in the short and in the long expiries), and what
+    the extra parameters cost (AIC and BIC on the volatility errors), with each model's rank on every column. The best flat volatility is the first row: the bar to clear."""
+    share = quotes.K / quotes.forward
+    zones = {"atm": np.abs(np.log(share)) <= 0.03, "put_wing": np.log(share) < -0.10, "call_wing": np.log(share) > 0.10}
+    dte = quotes.T * 365.0
+    short = dte <= np.median(dte)
+    zones.update(short=short, long=~short)
+    n = len(quotes.T)
+
+    def metrics(err: np.ndarray, k: int) -> dict:
+        e = err * 100.0
+        mse = float(np.mean(e ** 2))
+        out = {"rmse": float(np.sqrt(mse)), "mae": float(np.mean(np.abs(e))), "max_error": float(np.max(np.abs(e))), "bias": float(np.mean(e)), "n_params": k}
+        for z, mask in zones.items():
+            out[z] = float(np.sqrt(np.mean(e[mask] ** 2))) if np.any(mask) else None
+        out["aic"] = float(n * np.log(max(mse, 1e-12)) + 2 * k)
+        out["bic"] = float(n * np.log(max(mse, 1e-12)) + k * np.log(n))
+        return out
+
+    flat_row = {"id": "flat", "label": "Flat volatility (per expiry)", **metrics(_flat_iv(quotes) - quotes.iv, quotes.maturities.size)}
+    table = [{"id": r["id"], "label": levy.MODELS[r["id"]].label, "seconds": r["seconds"], **metrics(results[r["id"]].model_iv - quotes.iv, len(results[r["id"]].model.param_names))} for r in rows]
+    cols = ("rmse", "mae", "max_error", "atm", "put_wing", "call_wing", "short", "long", "aic", "bic")
+    for c in cols:
+        vals = [(i, t[c]) for i, t in enumerate(table) if t[c] is not None]
+        for rank, (i, _) in enumerate(sorted(vals, key=lambda x: x[1]), start=1):
+            table[i].setdefault("rank", {})[c] = rank
+    for t in table:
+        t["wins"] = int(sum(1 for v in t.get("rank", {}).values() if v == 1))
+    return {"flat": flat_row, "rows": table, "columns": list(cols), "flat_rmse_pts": flat * 100.0}
+
+
+def _heat(quotes: cal.Quotes, results: dict[str, cal.Calibration]) -> dict:
+    return {"edges": [float(e) for e in HEAT_EDGES], "expiries": [{"expiry": e, "dte": float(T * 365.0)} for e, T in zip(quotes.expiries, quotes.maturities)],
+            "models": {mid: _residual_cells(quotes, c.model_iv) for mid, c in results.items()}, "flat": _residual_cells(quotes, _flat_iv(quotes))}
+
+
+def _smiles(quotes: cal.Quotes, results: dict[str, cal.Calibration], max_shown: int = 6) -> list[dict]:
     """The market's smile and each model's, for up to ``max_shown`` expiries spread along the curve (and always the one the density is drawn for)."""
     mats = quotes.maturities
     spread = set(np.round(np.linspace(0, len(mats) - 1, min(max_shown, len(mats)))).astype(int).tolist())

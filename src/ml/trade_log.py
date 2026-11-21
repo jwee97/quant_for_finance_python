@@ -207,6 +207,18 @@ def _label_rule_trades(fills: pd.DataFrame, scores: pd.DataFrame | None, method:
     return out
 
 
+def _inside_scored_period(held: pd.DataFrame, trades: pd.DataFrame, scores: pd.DataFrame, lag: int) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Cut the book and the trades at the last day the model scored, plus the lag its last decision needs to execute. A development run is scored only to the end of its validation segment; on the first day
+    after that a position rule has no scores and returns an empty book, which the engine would 'sell' at the next rebalance: a liquidation nobody decided. It is not a trade of the strategy, so the ledger,
+    the exposure and the open positions stop where the model's decisions stop."""
+    scored = scores.dropna(how="all").index
+    if not len(scored):
+        return held, trades
+    stop = held.index.searchsorted(scored[-1]) + int(lag) + 1
+    held = held.iloc[:stop]
+    return held, trades.loc[trades.index <= held.index[-1]]
+
+
 def build(decisions: pd.DataFrame | None, parts: dict, returns: pd.DataFrame, cfg: dict, lag: int | None = None, scores: pd.DataFrame | None = None) -> dict:
     """Everything the Strategy Explorer needs for one run: the decision log, the executed trades, the round trips and a compact summary (the analytics, counts and the policy in force).
 
@@ -220,6 +232,8 @@ def build(decisions: pd.DataFrame | None, parts: dict, returns: pd.DataFrame, cf
     cost_bps = float(bt["cost_bps"]) + float(bt["slippage_bps"])
     held, trades = parts["weights"], parts["trades"]
     rule_based = decisions is None
+    if scores is not None:
+        held, trades = _inside_scored_period(held, trades, scores, lag)
     fills = executions(held, trades, returns, cost_bps, decisions, lag)
     if rule_based:
         fills = _label_rule_trades(fills, scores, str(sig.get("method")))
@@ -227,6 +241,7 @@ def build(decisions: pd.DataFrame | None, parts: dict, returns: pd.DataFrame, cf
     gone = unexecuted(decisions, fills)
     summary = {"version": VERSION, "policy": dc.policy_from(sig) if not rule_based else {"method": str(sig.get("method"))}, "decisions": dc.summarise(decisions), "n_executions": int(len(fills)),
                "n_unexecuted": int(len(gone)), "lag_days": lag, "cost_bps": cost_bps, "rebalance": str(bt["rebalance"]), "rule_based": rule_based,
+               "scored_until": None if scores is None or not scores.notna().any(axis=None) else str(scores.dropna(how="all").index[-1].date()),
                "analytics": analytics(trips, held, parts["net"], parts["gross"], parts["turnover"])}
     if rule_based:
         summary["note"] = (f"The position rule '{sig.get('method')}' turns the scores into a target book and keeps no decision log: each buy and sell below is a change in that book, labelled with the model's score and "

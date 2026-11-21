@@ -104,7 +104,7 @@
     if (s.note) h("p", "note", out, s.note);
     if (d.simulation) simulationCard(out, d.simulation);
     priceCard(out); bookCards(out); statCards(out);
-    controlCard(out); if (!s.rule_based) await logCard(out); await tradesCard(out); await replayCard(out);                   // a rule without a decision log has no log to show
+    controlCard(out); if (!s.rule_based) await logCard(out); await tradesCard(out); await windowCard(out); await replayCard(out);                   // a rule without a decision log has no log to show
   }
 
   function simulationCard(out, sim) {
@@ -242,6 +242,36 @@
     else Q.simpleTable(card, [{ label: "Executed", get: (x) => x.date }, { label: "Decided", get: (x) => x.decision_date || "" }, { label: "Asset", get: (x) => x.asset }, { label: "Trade", get: (x) => (KINDS[x.kind] || [0, 0, x.kind])[2] }, { label: "Weight traded", num: true, get: (x) => pct(x.trade_weight, 2) },
       { label: "Book after", num: true, get: (x) => pct(x.weight_after, 2) }, { label: "Cost", num: true, get: (x) => pct(x.cost, 3) }, { label: "Decision", get: (x) => x.action || "" }, { label: "Why", get: (x) => x.reason || "" }], r.rows);
     pager(card, r.n, S.tradeOffset, 50, (o) => { S.tradeOffset = o; draw(); });
+  }
+
+  /* A forward test of a period: the run's own book over the last few trading days (or any dates), against the equal-weight benchmark. Nothing is re-fitted; the page says which of the days were out of sample. */
+  async function windowCard(out) {
+    const card = h("div", "card", out); card.dataset.role = "window-test"; h("h3", "", card, "Test a period");
+    h("p", "note", card, "How the run's book did over a stretch of days rather than one date: the last week, the last month, or dates of your own. The book is the one the run recorded, so a day the model trained on is flagged and does not count as forward.");
+    const row = h("div", "row", card), body = h("div", "", card); body.setAttribute("aria-live", "polite");
+    const from = h("input", "", row), to = h("input", "", row); from.type = to.type = "date"; from.setAttribute("aria-label", "From"); to.setAttribute("aria-label", "To"); from.dataset.key = "window-from"; to.dataset.key = "window-to";
+    const seg = h("div", "tp-seg", row); seg.setAttribute("role", "group"); seg.setAttribute("aria-label", "Period length");
+    async function run(query) {
+      body.replaceChildren(); h("p", "hint", body, "Testing…");
+      let r; try { r = await api(`/api/ml/strategy/window?id=${encodeURIComponent(S.id)}&${query}`); } catch (e) { body.replaceChildren(); h("div", "banner err", body, e.message); return; }
+      body.replaceChildren(); from.value = r.window.from; to.value = r.window.to;
+      for (const w of r.warnings || []) h("div", "banner warn", body, w);
+      const m = r.metrics, tiles = h("div", "tiles2", body); tiles.dataset.role = "window-tiles";
+      Q.tile(tiles, "Window", `${r.window.from} to ${r.window.to}`, null, "", `${m.days} trading days`); Q.tile(tiles, "Strategy", pct(m.net_return, 2), null, "", `After costs of ${pct(m.cost, 2)}`);
+      Q.tile(tiles, "Equal-weight benchmark", pct(m.benchmark_return, 2)); Q.tile(tiles, "Active return", pct(m.active_return, 2), null, "", "Strategy minus benchmark over the window");
+      Q.tile(tiles, "Up days", `${m.up_days} of ${m.days}`); Q.tile(tiles, "Beat benchmark", `${m.beat_benchmark_days} of ${m.days} days`); Q.tile(tiles, "Worst drawdown", pct(m.max_drawdown, 2));
+      Q.tile(tiles, "Out of sample", `${r.coverage.out_of_sample_days} of ${r.coverage.days} days`, null, "", Object.entries(r.coverage.segments).map(([k, v]) => `${k}: ${v}`).join(", "));
+      C.line(h("div", "", body), { dates: r.curve.dates, series: [{ name: "Strategy", color: css("--s1"), values: r.curve.net }, { name: "Equal-weight benchmark", color: css("--muted"), values: r.curve.benchmark }], baseline: 1, yFormat: (v) => v.toFixed(3),
+                                   tipFormat: (v) => v.toFixed(4), height: 220, label: "Growth of 1 over the window" });
+      if (r.read) h("p", "hint", body, `At the start of the window the model's top half of assets returned ${pct(r.read.top_half_return, 2)} against ${pct(r.read.bottom_half_return, 2)} for its bottom half (rank correlation ${num(r.read.rank_correlation, 2)} over ${r.read.n_assets} assets). ${r.read.note}`);
+      if (r.assets.length) { h("h4", "", body, "What made and lost the money"); Q.simpleTable(body, [{ label: "Asset", get: (x) => x.asset }, { label: "Average weight", num: true, get: (x) => pct(x.avg_weight, 1) }, { label: "Asset return", num: true, get: (x) => pct(x.asset_return, 2) },
+        { label: "Contribution to the book", num: true, get: (x) => pct(x.contribution, 2) }, { label: "Model rank at the start", num: true, get: (x) => pct(x.rank_at_start, 0) }], r.assets.slice(0, 12)); }
+      if (r.trades.length) { h("h4", "", body, "Trades inside the window"); Q.simpleTable(body, [{ label: "Executed", get: (x) => x.date }, { label: "Asset", get: (x) => x.asset }, { label: "Action", get: (x) => x.action || "" }, { label: "Weight change", num: true, get: (x) => pct(x.weight_change, 2) },
+        { label: "Book after", num: true, get: (x) => pct(x.weight_after, 1) }, { label: "Why", get: (x) => x.reason || "" }], r.trades.slice(0, 30)); }
+    }
+    for (const [label, d] of [["1 week", 5], ["2 weeks", 10], ["1 month", 21], ["3 months", 63]]) { const b = h("button", "btn small", seg, label); b.type = "button"; b.dataset.days = String(d); b.addEventListener("click", () => run("days=" + d)); }
+    const go = h("button", "btn", row, "Test these dates"); go.type = "button"; go.addEventListener("click", () => { if (from.value || to.value) run(`${from.value ? "from=" + from.value + "&" : ""}${to.value ? "to=" + to.value : ""}`); });
+    await run("days=5");
   }
 
   async function replayCard(out) {

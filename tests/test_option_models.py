@@ -252,3 +252,19 @@ def test_the_command_prices_a_product_and_costs_a_hedge_from_the_same_chain_file
 def test_a_request_the_command_cannot_serve_is_explained_and_exits_with_two(capsys, chain_file, argv, message):
     code, out, err = run(capsys, *[a.replace("{chain}", chain_file) for a in argv])
     assert code == 2 and message in err and out == ""
+
+
+def test_the_fit_report_compares_the_models_and_maps_their_errors_by_expiry_and_strike(quotes, fits):
+    """The comparison table's errors come from the same quotes as the headline error, and the heatmap's cells average the same residuals the smiles are drawn from."""
+    data, _, _ = om.fit_report("TST", quotes, fits, {}, {}, simulated=False)
+    comp, heat = data["comparison"], data["heat"]
+    assert [r["id"] for r in comp["rows"]] == [m["id"] for m in data["models"]]
+    for r, m in zip(comp["rows"], data["models"]):
+        assert r["rmse"] == pytest.approx(m["rmse"] * 100.0, rel=1e-6) and r["mae"] <= r["rmse"] + 1e-12 <= r["max_error"] + 1e-12
+        assert r["n_params"] == m["n_params"] and r["rank"]["rmse"] >= 1
+    assert comp["flat"]["rmse"] == pytest.approx(data["flat_rmse"] * 100.0, rel=1e-6) and comp["rows"][0]["rank"]["rmse"] == 1
+    assert len(heat["expiries"]) == len(data["quotes"]["expiries"]) and len(heat["edges"]) + 1 == len(heat["flat"][0])
+    for mid, grid in heat["models"].items():
+        assert len(grid) == len(heat["expiries"]) and all(len(row) == len(heat["edges"]) + 1 for row in grid)
+        assert any(c is not None for row in grid for c in row)
+    assert len(data["smiles"]) <= 7
