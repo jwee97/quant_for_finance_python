@@ -12,6 +12,7 @@ from src.utils.config import load_config
 from src.webapp import server
 from src.webapp.api import App
 from src.webapp.universe import TickerStore, UniverseBuilder
+from tests.chart_helpers import chart_points
 from tests.app_roots import isolated_root
 from tests.free_data_helpers import FakeFeeds, cboe_payload
 from tests.ml_helpers import make_bundle
@@ -165,7 +166,7 @@ def test_the_options_positioning_view_maps_open_interest_walls_and_gamma(ws):
     pills.nth(4).click()
     _wait_until(ws, "document.querySelectorAll('#options-results .earnrow .tile').length > 5", timeout=120.0)
     assert "Max pain" in ws.inner_text("#options-results .earnrow")                                                         # an expiry has one; all of them together do not
-    assert ws.locator("#options-results svg.chart rect[fill]").count() > 20
+    assert chart_points(ws.locator("#options-results")) > 20
 
 
 def test_the_options_strategy_builder_groups_the_structures_and_draws_them_beside_each_other(ws):

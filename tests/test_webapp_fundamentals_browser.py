@@ -19,6 +19,7 @@ from src.utils.config import load_config
 from src.webapp import server
 from src.webapp.api import App
 from src.webapp.universe import TickerStore, UniverseBuilder
+from tests.chart_helpers import chart_points
 from tests.app_roots import isolated_root
 from tests.ml_helpers import make_bundle
 from tests.test_fund_api import run
@@ -319,7 +320,7 @@ def test_a_company_page_shows_distress_scores_with_their_zones_graham_tests_and_
         total = float(page.locator("[data-role=fund-distress-double_prime] .seg button:has-text('Table')").evaluate("b => b.closest('.chartcard').querySelector('tbody tr td:nth-child(2)') ? b.closest('.chartcard').querySelector('tbody tr td:nth-child(2)').textContent : 'nan'"))
         assert len(pts) == 4 and abs(sum(pts) - total) < 0.06                                                                       # the points add up to the latest score (to the rounding of four numbers)
         dupont = page.locator("[data-role=fund-dupont-chart]")
-        assert dupont.locator("svg.chart rect").count() > 10 and "Change in return on equity" in dupont.locator(".legend").inner_text()
+        assert chart_points(dupont) > 10 and "Change in return on equity" in dupont.locator(".legend").inner_text()
         graham = page.locator("[data-role=fund-graham]")
         assert graham.locator("svg.chart").count() == 1 and "Tests met by year" in graham.inner_text() and "Profit every year" in graham.inner_text()
         assert page.locator("[data-role=fund-graham] a[href^='https://']").count() >= 2 and page.problems == []

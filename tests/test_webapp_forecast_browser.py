@@ -15,6 +15,7 @@ from src.utils.config import load_config
 from src.webapp import server
 from src.webapp.api import App
 from src.webapp.universe import TickerStore, UniverseBuilder
+from tests.chart_helpers import chart_points
 from tests.ml_helpers import make_bundle
 from tests.test_webapp import _fetch
 from tests.test_webapp_browser import _page_with, browser, open_tab  # noqa: F401  (the module's Chromium fixture)
@@ -148,13 +149,13 @@ def test_the_forecast_page_compares_methods_with_a_skill_matrix_a_cumulative_gai
     try:
         _run(page, ids=("riskmetrics", "garch", "egarch", "bootstrap", "blend_weighted"), horizon="21")
         matrix = page.locator("[data-role=forecast-skill-matrix]")
-        assert matrix.locator("svg.chart rect").count() >= 3 * 5 and "Horizon" in matrix.inner_text() and matrix.locator("button:has-text('Table')").count() == 1
+        assert chart_points(matrix) >= 3 * 5 and "Horizon" in matrix.inner_text() and matrix.locator("button:has-text('Table')").count() == 1
         gain = page.locator("[data-role=forecast-gain]")
         assert gain.locator("svg.chart path").count() >= 4 and "kept beating the random walk" in gain.inner_text()
         gain.locator(".seg button:has-text('Table')").click()
         assert gain.locator("table.data tbody tr").count() == 5 and "Total gain over the random walk" in gain.inner_text()
         pairs = page.locator("[data-role=forecast-pairs]")
-        assert pairs.locator("svg.chart rect").count() >= 6 * 6 and "Diebold-Mariano" in pairs.inner_text()
+        assert chart_points(pairs) >= 6 * 6 and "Diebold-Mariano" in pairs.inner_text()
         pairs.locator(".seg button:has-text('Table')").click()
         assert pairs.locator("table.data tbody tr").count() == 6 and "Methods it beats at 5%" in pairs.inner_text()
         density = page.locator("[data-role=forecast-density]")

@@ -17,8 +17,9 @@ straight through to the SVG kit, so no chart loses a feature by being ported.
 | `line` (about 120 call sites) | a time or numeric axis, any number of series (dash, width, dots, gaps), area, baseline, regions, vertical references, bands, a log axis, fixed or padded limits, tooltips with `tipFormat`, `tipTitle` and `tipExtra`, a legend whose entries hide and show series (the last visible one stays), synchronized cursors (`sync`), an opening window (`window`) |
 | `columns`, `hbars` (waterfalls included), `histogram` | the options their pages use, with the same hover text |
 
-Still on the SVG kit: `scatter`, `matrix`, `heatmap`, `ranges`, `stack`, `mirror`, the trade panel (`tradechart.js`, which is one drawing for the price, the trades and the position), and any `line` that uses `signFill`,
-`events`, `pointLabel`, or `areaBase` with `area`.
+`scatter`, `matrix`, `heatmap`, `ranges`, `stack`, `mirror` and the line variants `signFill`, `pointLabel` and `areaBase` are ported too. Plotly was not needed: ECharts covers every chart type here.
+
+Still on the SVG kit: the trade panel (`tradechart.js`, one drawing for the price, the trades and the position) and any `line` that uses `events`, or `xs` together with `sync`.
 
 ## What the reader gets
 
