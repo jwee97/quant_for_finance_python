@@ -148,7 +148,7 @@
       for (const t of ["Add files or links on the left. Each report is read into a draft: a filing's own XBRL exactly as tagged, a table from the columns and rows, a PDF from the words on its pages (the least reliable: it always asks you to check it).",
         "You look at what was read, correct it if it is wrong, and approve it. Only then is it stored, with the file, the filing number, the page and the tag it came from, so any figure can be traced back. A report with different figures from one already held is never written over it: you choose to store it as a restatement, to correct the old one, or to skip it.",
         "Prefer the company's XBRL (every US-listed company files it) over its PDF: nothing has to be guessed."]) h("p", "", c, t);
-      histCard(root); return;
+      histCard(root); diagCard(root); return;
     }
     const k = h("div", "earnrow", root);
     for (const key of ["queued", "needs_review", "extracted", "saved", "duplicate", "failed"]) tile(k, STATUS_WORD[key], String(d.counts[key] || 0), {}, d.counts[key] ? "" : "muted");
@@ -160,7 +160,7 @@
       if (["needs_review", "extracted", "approved", "saved"].includes(it.status)) { tr.style.cursor = "pointer"; tr.tabIndex = 0; const open = () => openItem(it.item_id); tr.addEventListener("click", open); tr.addEventListener("keydown", (e) => { if (e.key === "Enter") open(); }); }
     }
     if (s.itemData) reviewCard(root);
-    histCard(root);
+    histCard(root); diagCard(root);
   };
   async function openItem(id) { try { s.item = id; s.itemData = await FD.read("/api/fund/import/item", { id }); } catch (e) { Q.toast(e.message); } Q.renderLab(FD); }
 
@@ -241,6 +241,15 @@
         inp.title = [src.tag && `tag ${src.tag}`, src.page && `page ${src.page}`, src.text && `“${src.text}”`, src.edited && "edited by you"].filter(Boolean).join(" · ") || "typed";
         if (src.edited) inp.classList.add("edited");
         inp.addEventListener("input", () => { edits.periods[j].values[code] = inp.value.trim() === "" ? null : inp.value.trim(); inp.classList.add("edited"); });
+        if (src.confidence !== undefined && src.confidence !== null) {                       // how far this reading can be trusted, and what it was read from
+          const pctText = `${Math.round(src.confidence * 100)}%`;
+          const badge = h("span", "conf " + (src.confidence < 0.75 ? "low" : "ok"), td, pctText); badge.dataset.role = "import-confidence";
+          badge.title = [src.statement && `from the ${src.statement}`, src.scope && `${src.scope} scope`, src.label && `row “${src.label}”`, src.page && `page ${src.page}`, (src.checks || []).map((c) => `${c.id}: ${c.status}`).join(", ")].filter(Boolean).join(" · ");
+          if (src.confidence < 0.75 && !src.verified && !src.edited) {
+            const cf = h("input", "", td); cf.type = "checkbox"; cf.dataset.role = "import-confirm"; cf.setAttribute("aria-label", `confirm ${human(code)}, column ${j + 1}, against the page`); cf.title = "Tick to confirm this figure against the page; unconfirmed low-confidence figures are stored but kept out of research";
+            cf.addEventListener("change", () => { const set = new Set(edits.verify || []); if (cf.checked) set.add(code); else set.delete(code); edits.verify = [...set]; });
+          } else if (src.verified) badge.textContent = pctText + " ✓";
+        }
       });
     }
     const save = h("button", "btn small", bar, "Save corrections and check again"); save.type = "button"; save.dataset.action = "import-correct";
@@ -268,7 +277,14 @@
     });
     const rej = h("button", "btn", act, "Reject"); rej.type = "button"; rej.dataset.action = "import-reject"; rej.disabled = it.status === "saved";
     rej.addEventListener("click", async () => { try { await FD.send("/api/fund/import/reject", { item_id: it.item_id, reason: "rejected after review" }); s.itemData = null; await refreshBatch(); Q.renderLab(FD); } catch (e) { Q.toast(e.message); } });
-    if (it.status === "saved") provenanceBlock(card);
+    if (it.status === "saved") {
+      const ver = h("button", "btn small", act, "Confirm the low-confidence figures against the page"); ver.type = "button"; ver.dataset.action = "import-verify";
+      ver.title = "Releases the figures that were stored as unverified to research. Do this only after checking them against the page.";
+      ver.addEventListener("click", async () => { try { const r = await FD.send("/api/fund/import/verify", { item_id: it.item_id }); Q.toast(`${r.confirmed} figure(s) confirmed`); FD.resetCaches(); s.itemData = await FD.read("/api/fund/import/item", { id: it.item_id }); Q.renderLab(FD); } catch (e) { Q.toast(e.message); } });
+      const re = h("button", "btn small", act, "Read the original again with the current extractor"); re.type = "button"; re.dataset.action = "import-reprocess";
+      re.addEventListener("click", async () => { try { const r = await FD.send("/api/fund/import/reprocess", { item_id: it.item_id }); Q.toast(r.changed ? `${r.diff.changed.length} changed, ${r.diff.added.length} new, ${r.diff.removed.length} gone: stored figures untouched` : "the new reading is the same; stored figures untouched"); } catch (e) { Q.toast(e.message); } });
+      provenanceBlock(card);
+    }
   }
   function issuesBlock(card, issues) {
     if (!issues.length) { h("p", "hint", card, "No problems found."); return; }
@@ -290,6 +306,37 @@
       table(card, [{ label: "Period", get: (x) => `${x.fiscal_period} ${x.period_end.slice(0, 10)}` }, { label: "Line", get: (x) => human(x.metric_code) }, { label: "As reported", num: true, get: (x) => num(x.reported_value, 0) }, { label: "Unit", get: (x) => x.reported_unit || "" },
         { label: "Tag", get: (x) => x.taxonomy_tag || "" }, { label: "Page", get: (x) => (x.page ? String(x.page) : "") }, { label: "Filing", get: (x) => x.accession || "" }, { label: "How", get: (x) => `${x.extraction_method || ""}${x.edited ? " · edited" : ""}` }], mine.slice(0, 80));
     } catch (e) { /* the figures are stored; the list is a convenience */ }
+  }
+  /* ---------- importer diagnostics ---------- */
+  const P = (x) => (x === null || x === undefined ? "n/a" : `${Math.round(x * 100)}%`);
+  function diagCard(root) {
+    const card = W.card(root, "Importer diagnostics", "How the importer is doing: from the reports it has read here, and from the benchmark."); card.dataset.role = "import-diagnostics";
+    const body = h("div", "stack", card);
+    const go = h("button", "btn small", card, s.diag ? "Refresh" : "Show the diagnostics"); go.type = "button"; go.dataset.action = "import-diagnostics";
+    const paint = (d) => {
+      body.replaceChildren();
+      const l = d.live, b = d.benchmark;
+      h("h4", "subhead", body, "Your imports");
+      const t = h("div", "earnrow", body);
+      tile(t, "Reports read", String(l.items), { text: l.extraction_success === null ? "" : `${P(l.extraction_success)} produced a draft` });
+      tile(t, "Statements found", l.statement_coverage ? `${P(l.statement_coverage.IS)} · ${P(l.statement_coverage.BS)} · ${P(l.statement_coverage.CF)}` : "n/a", { text: "income · balance · cash flow" });
+      tile(t, "Fallback used", P(l.fallback_rate), { text: Object.entries(l.fallback_usage).map(([k, v]) => `${k} ${v}`).join(", ") || "none" });
+      tile(t, "Corrected by a person", P(l.correction_rate), { text: `critical lines ${P(l.critical_correction_rate)}` });
+      tile(t, "Held out of research", String(l.unverified_figures_held_out_of_research), { text: "unverified figures" });
+      const rc = l.reconciliation || {};
+      h("p", "", body, `Reconciliations: ${rc.pass || 0} passed, ${rc.warn || 0} warned, ${rc.fail || 0} failed. Unit stated in the report: ${P(l.unit_stated_rate)}. Figures below the confidence threshold: ${P(l.low_confidence_share)} of ${l.figures_scored}.`);
+      if (Object.keys(l.rejection_reasons).length) table(body, [{ label: "Why a table or line was not used", get: (r) => r[0] }, { label: "Times", num: true, get: (r) => String(r[1]) }], Object.entries(l.rejection_reasons));
+      if (Object.keys(l.failure_reasons).length) table(body, [{ label: "Why a report could not be read", get: (r) => r[0] }, { label: "Times", num: true, get: (r) => String(r[1]) }], Object.entries(l.failure_reasons));
+      h("h4", "subhead", body, "Benchmark (synthetic documents with known answers)");
+      if (!b.available) { h("p", "hint", body, "No benchmark run is stored."); return; }
+      const rows = ["dev", "validation", "heldout_first_run", "heldout_post_fix"].filter((k) => b[k]).map((k) => [k.replace(/_/g, " "), b[k]]);
+      table(body, [{ label: "Split", get: (r) => r[0] }, { label: "Cases", num: true, get: (r) => String(r[1].cases) }, { label: "Line recall", num: true, get: (r) => P(r[1].recall) }, { label: "Critical lines", num: true, get: (r) => P(r[1].critical_accuracy) },
+        { label: "Confident errors", num: true, get: (r) => String(r[1].confident_errors) }, { label: "Statements", num: true, get: (r) => P(r[1].statement_coverage) }, { label: "Periods", num: true, get: (r) => P(r[1].period_accuracy) },
+        { label: "Unit", num: true, get: (r) => P(r[1].unit_accuracy) }], rows);
+      h("p", "hint tone-warn", body, b.note + ". The held-out rows are the honest ones; dev and validation were tuned.");
+    };
+    go.addEventListener("click", async () => { try { s.diag = await FD.read("/api/fund/import/diagnostics"); paint(s.diag); go.textContent = "Refresh"; } catch (e) { Q.toast(e.message); } });
+    if (s.diag) paint(s.diag);
   }
   function histCard(root) {
     if (!s.history || !s.history.length) return;

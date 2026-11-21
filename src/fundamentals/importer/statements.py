@@ -129,6 +129,10 @@ def resolve_columns(st: StatementTable, doc_ctx: dict, year_end: tuple | None) -
     dates = pdf_module._headings(header_all, year_end, doc_ctx) if t.header_rows else []
     if len(dates) < 2:                                                                               # no heading row named the periods: the title may ("Year ended 31 December 2023 and 2022")
         dates = pdf_module._headings(header_all + " " + range_free(t.title), year_end, doc_ctx) or dates
+    if st.kind in ("IS", "CF") and len(dates) >= 2 and len(set(pdf_module.TERM.findall(header_all))) >= 2 and not pdf_module.DATE_NUM.search(header_all):
+        # numbered terms ("제 55(당) 기 / 제 54(전) 기"): the balance sheet's earlier term ends at the last year end, but an income or cash flow statement's earlier term is the same span a year before
+        d0 = date.fromisoformat(dates[0]["period_end"])
+        dates = [dates[0]] + [{"period_end": date(d0.year - i, d0.month, min(d0.day, 28 if d0.month == 2 else d0.day)).isoformat(), "guessed": False} for i in range(1, len(dates))]
     kind = _kind_words(header_all + " " + t.title)
     figure_cols = [c for c in numeric_cols if c not in note_cols] if note_cols else numeric_cols
     if note_cols and len(dates) == len(numeric_cols):                                                 # as many headings as columns: the "notes" column holds figures after all
@@ -176,11 +180,11 @@ def annotate_sections(doc: Document, tables: list[StatementTable]) -> None:
 
 def doc_year_end(text: str) -> tuple | None:
     m = re.search(r"(?:fiscal\s+)?year\s+ended\s+([A-Za-z]+)\s+(\d{1,2})", text, re.I)
-    if m and m.group(1).lower()[:3] in pdf_module.MONTH_ABBR:
-        return pdf_module.MONTH_ABBR[m.group(1).lower()[:3]], int(m.group(2))
+    if m and pdf_module.month_of(m.group(1)):
+        return pdf_module.month_of(m.group(1)), int(m.group(2))
     m = re.search(r"year\s+ended\s+(\d{1,2})\s+([A-Za-z]+)", text, re.I)
-    if m and m.group(2).lower()[:3] in pdf_module.MONTH_ABBR:
-        return pdf_module.MONTH_ABBR[m.group(2).lower()[:3]], int(m.group(1))
+    if m and pdf_module.month_of(m.group(2)):
+        return pdf_module.month_of(m.group(2)), int(m.group(1))
     return None
 
 

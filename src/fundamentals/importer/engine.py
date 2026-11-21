@@ -32,6 +32,21 @@ def read(data: bytes, kind: str, hint: dict | None = None) -> Document:
     raise FundamentalsError(f"the layout engine reads PDF, HTML, workbooks and delimited text, not {kind!r}")
 
 
+LEGACY_CONFIDENCE = 0.6
+
+
+def cap_legacy(draft: dict) -> dict:
+    """A draft from the line-by-line readers matched labels without knowing which statement they were in: every figure gets a confidence below the review threshold, so it is stored unverified until a person confirms it."""
+    for p in draft.get("periods", []):
+        for code in p["values"]:
+            s = p.setdefault("sources", {}).setdefault(code, {"tag": None, "method": draft.get("method")})
+            s.setdefault("confidence", LEGACY_CONFIDENCE)
+            s["confidence"] = min(s["confidence"], LEGACY_CONFIDENCE)
+            s.setdefault("statement", "unknown (label match only)")
+    draft.setdefault("notes", []).append("Read by the line-by-line fallback reader, which does not know which statement a line is in: every figure is stored unverified until you confirm it.")
+    return draft
+
+
 def lines_found(draft: dict) -> int:
     return len({c for p in draft["periods"] for c in p["values"]})
 
@@ -44,13 +59,14 @@ def extract(data: bytes, name: str, kind: str, hint: dict | None = None) -> tupl
     if doc.format == "pdf-scan" and not doc.tables:
         raise FundamentalsError(doc.warnings[0] if doc.warnings else "scanned PDF with no OCR engine")
     draft = matcher.build(doc, hint)
-    if lines_found(draft) < MIN_LINES:
+    recognised = any(st["confidence"] > 0 and st["kind"] in ("IS", "BS", "CF") for st in draft.get("statements", []))
+    if lines_found(draft) < MIN_LINES and not recognised:                                             # a recognised statement is trusted even when short: the line-by-line reader has no statement context
         fallbacks.append({"step": "layout", "reason": f"only {lines_found(draft)} statement line(s) found by the table reader"})
         legacy = _legacy(data, name, kind, hint)
         if legacy is not None and lines_found(legacy) > lines_found(draft):
             fallbacks.append({"step": "legacy-reader", "reason": "the line-by-line reader found more"})
             legacy["fallbacks"] = fallbacks
-            draft = legacy
+            draft = cap_legacy(legacy)
     draft["fallbacks"] = fallbacks
     draft["versions"] = {"extractor": taxonomy.EXTRACTOR_VERSION, "mapping": (draft.get("standard") or {}).get("mapping_version"), "taxonomy": taxonomy.TAXONOMY_VERSION,
                          "reader": doc.reader.get("name")}

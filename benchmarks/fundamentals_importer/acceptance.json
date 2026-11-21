@@ -1,0 +1,12 @@
+{
+  "description": "A (market, filing format) pair is called 'validated on synthetic held-out' only when every threshold holds on the held-out split alone. Nothing is called 'supported' on real filings: none was tested.",
+  "min_heldout_cases": 2,
+  "critical_accuracy": 0.95,
+  "recall": 0.90,
+  "confident_error_rate": 0.005,
+  "statement_coverage": 0.95,
+  "period_accuracy": 0.95,
+  "unit_accuracy": 0.95,
+  "currency_accuracy": 0.95,
+  "wrong_caught_rate": 0.9
+}

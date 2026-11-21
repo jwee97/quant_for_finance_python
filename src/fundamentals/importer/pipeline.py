@@ -292,6 +292,7 @@ class ImportService:
             else:
                 raise
             draft.setdefault("fallbacks", []).append({"step": "legacy-reader", "reason": f"the layout engine found nothing ({error})"})
+            engine.cap_legacy(draft)
             draft.setdefault("versions", {"extractor": taxonomy.EXTRACTOR_VERSION, "mapping": None, "taxonomy": taxonomy.TAXONOMY_VERSION, "reader": "legacy"})
             return draft
 
@@ -352,6 +353,24 @@ class ImportService:
         self._set(item_id, draft=draft, issues=issues, status="needs_review" if review else "extracted", method=draft.get("method"), error=None)
         self._record_extraction(item_id, draft)
         return self.item(item_id)
+
+    def verify_saved(self, item_id: int, codes: list[str] | str = "all", note: str = "") -> dict:
+        """A person confirms stored figures against the page: the lines read with low confidence lose their ``unverified`` flag and become visible to research. Nothing about the value changes."""
+        it = self.item(item_id)
+        if it["status"] != "saved":
+            raise FundamentalsError("only a saved item has stored figures to confirm")
+        periods = it.get("saved_periods") or []
+        ids = [int(p["period_id"]) for p in periods]
+        if not ids:
+            return {"confirmed": 0}
+        marks = ",".join("?" * len(ids))
+        with self.store.db.transaction() as c:
+            rows = c.execute(f"SELECT financial_period_id, metric_code FROM observation_provenance WHERE import_item_id = ? AND financial_period_id IN ({marks}) AND verified = 0", [int(item_id)] + ids).fetchall()
+            chosen = [(r[0], r[1]) for r in rows if codes == "all" or r[1] in codes]
+            for pid, code in chosen:
+                c.execute("UPDATE observation_provenance SET verified = 1, extraction_status = 'verified' WHERE financial_period_id = ? AND metric_code = ? AND import_item_id = ?", (pid, code, int(item_id)))
+                c.execute("UPDATE fundamental_observations SET quality_flag = 'ok' WHERE financial_period_id = ? AND metric_code = ? AND quality_flag = 'unverified'", (pid, code))
+        return {"confirmed": len(chosen), "remaining_unverified": len(rows) - len(chosen), "note": note}
 
     def _record_extraction(self, item_id: int, draft: dict) -> None:
         v = draft.get("versions") or {}

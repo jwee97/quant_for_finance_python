@@ -35,13 +35,13 @@ class ImportRoutes:
 
     def import_get_routes(self) -> dict:
         return {"/api/fund/import/history": self.import_history, "/api/fund/import/batch": self.import_batch, "/api/fund/import/item": self.import_item, "/api/fund/import/provenance": self.import_provenance,
-                "/api/fund/coverage/overview": self.coverage_overview, "/api/fund/connectors": self.connectors, "/api/fund/pit/asof": self.pit_asof}
+                "/api/fund/coverage/overview": self.coverage_overview, "/api/fund/connectors": self.connectors, "/api/fund/pit/asof": self.pit_asof, "/api/fund/import/diagnostics": self.import_diagnostics, "/api/fund/import/extractions": self.import_extractions}
 
     def import_post_routes(self) -> dict:
         return {"/api/fund/import/create": self.import_create, "/api/fund/import/chunk": self.import_chunk, "/api/fund/import/urls": self.import_urls, "/api/fund/import/process": self.import_process,
                 "/api/fund/import/review": self.import_review, "/api/fund/import/approve": self.import_approve, "/api/fund/import/reject": self.import_reject, "/api/fund/import/filings": self.import_filings,
                 "/api/fund/import/filings/add": self.import_filings_add, "/api/fund/coverage/backfill": self.coverage_backfill, "/api/fund/connectors/search": self.connectors_search, "/api/fund/connectors/fetch": self.connectors_fetch,
-                "/api/fund/pit/export": self.pit_export}
+                "/api/fund/pit/export": self.pit_export, "/api/fund/import/verify": self.import_verify, "/api/fund/import/reprocess": self.import_reprocess}
 
     # ------------------------------------------------------------------------------------------------------------ plumbing
     def _importer(self) -> ImportService:
@@ -220,6 +220,29 @@ class ImportRoutes:
         out = self._guard(self._importer().approve, self._int(body, "item_id"), sec or None, body.get("decision") or None, body.get("restated_on") or None)
         self.bench("real").forget()
         return out
+
+    def import_verify(self, body: dict) -> dict:
+        """``POST /api/fund/import/verify {item_id, codes?}``: confirm stored figures that were read with low confidence (all of them unless ``codes`` names some); research then includes them."""
+        codes = body.get("codes") or "all"
+        if codes != "all" and not (isinstance(codes, list) and all(isinstance(c, str) for c in codes)):
+            raise ApiError("codes is a list of line names, or leave it out for all")
+        out = self._guard(self._importer().verify_saved, self._int(body, "item_id"), codes, str(body.get("note") or "")[:200])
+        self.bench("real").forget()
+        return out
+
+    def import_reprocess(self, body: dict) -> dict:
+        """``POST /api/fund/import/reprocess {item_id}``: read the stored original again with the current extractor and mappings; earlier readings are kept and stored figures are not touched."""
+        return self._guard(self._importer().reprocess, self._int(body, "item_id"))
+
+    def import_diagnostics(self, q: dict | None = None) -> dict:
+        """``GET /api/fund/import/diagnostics``: extraction success, statement coverage, reconciliation results, fallback usage, rejection reasons, correction rates, and the last benchmark run."""
+        from src.fundamentals.importer import diagnostics
+        return self._guard(diagnostics.report, self.bench("real").store)
+
+    def import_extractions(self, q: dict | None = None) -> dict:
+        """``GET /api/fund/import/extractions?id=``: every reading of an item with the extractor and mapping versions that made it."""
+        item = self._int(q or {}, "id")
+        return {"item_id": item, "extractions": self._guard(self._importer().extractions, item)}
 
     def import_reject(self, body: dict) -> dict:
         return self._guard(self._importer().reject, self._int(body, "item_id"), str(body.get("reason") or ""))

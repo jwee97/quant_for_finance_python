@@ -48,6 +48,13 @@ def build(doc: Document, hint: dict | None = None) -> dict:
             rejections.append({"reason": s.why, "table": s.table.table_id, "page": s.table.page, "title": s.table.title[:80]})
     for s in primary:
         statements.resolve_columns(s, ctx, year_end)
+    if year_end is None:                                                                              # a balance sheet names its date in full ("31 December 2023"): that is the fiscal year end the bare-year headings of the other statements share
+        named = Counter((date.fromisoformat(c.period_end).month, date.fromisoformat(c.period_end).day) for s in primary if s.kind == "BS" for c in s.columns if c.period_end and not c.guessed and not c.note)
+        if named:
+            year_end = named.most_common(1)[0][0]
+            for s in primary:
+                if any(c.guessed for c in s.columns):
+                    statements.resolve_columns(s, ctx, year_end)
     statements.annotate_sections(doc, primary)
     reader_conf = READER_CONFIDENCE.get(primary[0].table.kind if primary else "", 0.9) if primary else 0.9
     unit_counts = Counter(s.unit for s in primary if s.unit)

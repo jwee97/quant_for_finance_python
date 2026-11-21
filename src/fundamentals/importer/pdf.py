@@ -27,8 +27,29 @@ NUMBER = re.compile(r"^\(?-?\$?\s?\d[\d,]*(\.\d+)?\)?%?$")
 YEAR = re.compile(r"\b(19[89]\d|20[0-4]\d)\b")
 MONTHS = {m: i + 1 for i, m in enumerate(["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"])}
 MONTH_ABBR = {k[:3]: v for k, v in MONTHS.items()}
-DATE_TEXT = re.compile(r"\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\.?\s+(\d{1,2}),?\s+((?:19|20)\d{2})\b", re.I)
-DATE_DMY = re.compile(r"\b(\d{1,2})(?:st|nd|rd|th)?\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\.?,?\s+((?:19|20)\d{2})\b", re.I)  # "31 December 2023" (Hong Kong, Singapore)
+_FOREIGN = {"fr": "janvier février mars avril mai juin juillet août septembre octobre novembre décembre", "de": "januar februar märz april mai juni juli august september oktober november dezember",
+            "es": "enero febrero marzo abril mayo junio julio agosto septiembre octubre noviembre diciembre", "pt": "janeiro fevereiro março abril maio junho julho agosto setembro outubro novembro dezembro",
+            "it": "gennaio febbraio marzo aprile maggio giugno luglio agosto settembre ottobre novembre dicembre", "nl": "januari februari maart april mei juni juli augustus september oktober november december"}
+_ABBR = {"janv": 1, "févr": 2, "fevr": 2, "mär": 3, "mrz": 3, "avr": 4, "abr": 4, "juil": 7, "okt": 10, "dez": 12, "déc": 12, "dic": 12, "ene": 1, "gen": 1, "lug": 7, "ago": 8, "set": 9, "out": 10}
+MONTH_WORDS = {w: i + 1 for words in _FOREIGN.values() for i, w in enumerate(words.split())}
+
+
+def month_of(word: str) -> int | None:
+    """The month a word names (English, French, German, Spanish, Portuguese, Italian, Dutch; full or abbreviated), else None."""
+    w = (word or "").lower().strip(". ")
+    if w in MONTHS:
+        return MONTHS[w]
+    if w in MONTH_WORDS:
+        return MONTH_WORDS[w]
+    if w in _ABBR:
+        return _ABBR[w]
+    if len(w) >= 3:
+        for name, num in MONTHS.items():
+            if name.startswith(w):
+                return num
+    return None
+DATE_TEXT = re.compile(r"\b([^\W\d_]{3,12})\.?\s+(\d{1,2}),?\s+((?:19|20)\d{2})\b", re.I)
+DATE_DMY = re.compile(r"\b(\d{1,2})(?:st|nd|rd|th|er)?\s+(?:de\s+)?([^\W\d_]{3,12})\.?,?\s+(?:de\s+)?((?:19|20)\d{2})\b", re.I)  # "31 December 2023", "31 décembre 2023", "31 de diciembre de 2023"
 DATE_CJK = re.compile(r"((?:19|20)\d{2})\s*[年년]\s*(\d{1,2})\s*[月월]\s*(\d{1,2})\s*[日일]?")                                   # "2023年12月31日"
 DATE_NUM = re.compile(r"(?<!\d)((?:19|20)\d{2})\s*[.\-/]\s*(\d{1,2})\s*[.\-/]\s*(\d{1,2})(?!\d)")                                   # "2023.12.31" (Korea), "2023-12-31", "2023/12/31"
 TERM = re.compile(r"제\s*(\d{1,3})\s*(?:\([^)]*\))?\s*기")                                                                     # Korean "제 55(당) 기": the 55th term of the company
@@ -113,11 +134,11 @@ def _split(row: list[tuple]) -> tuple[str, list[float | None]]:
 def _day_month(text: str) -> tuple[int, int] | None:
     """The day and month a heading names without a year: "ended 31 March", "ended March 31", "止6月30日", "6월 30일"."""
     m = re.search(r"(?:ended|ending|as\s+at|as\s+of|au|zum|al|a)\s+(?:the\s+)?(\d{1,2})(?:st|nd|rd|th)?\s+([A-Za-zéûôç]{3,})\b(?!\s+\d{4})", text, re.I)
-    if m and m.group(2).lower()[:3] in MONTH_ABBR:
-        return MONTH_ABBR[m.group(2).lower()[:3]], int(m.group(1))
+    if m and month_of(m.group(2)):
+        return month_of(m.group(2)), int(m.group(1))
     m = re.search(r"(?:ended|ending|as\s+at|as\s+of)\s+([A-Za-z]{3,})\.?\s+(\d{1,2})\b(?!\s*,?\s*\d{4})", text, re.I)
-    if m and m.group(1).lower()[:3] in MONTH_ABBR:
-        return MONTH_ABBR[m.group(1).lower()[:3]], int(m.group(2))
+    if m and month_of(m.group(1)):
+        return month_of(m.group(1)), int(m.group(2))
     m = re.search(r"(\d{1,2})\s*[月월]\s*(\d{1,2})\s*[日일]", text)
     if m and not re.search(r"\d{4}\s*[年년]\s*\d{1,2}\s*[月월]", text):
         return int(m.group(1)), int(m.group(2))
@@ -128,9 +149,11 @@ def _headings(text: str, year_end: tuple[int, int] | None, ctx: dict | None = No
     """The period columns named in a heading row: full dates ("December 31, 2023"), or bare years (which borrow the month and day of the fiscal year end the report names)."""
     found = []
     for m in DATE_TEXT.finditer(text):
-        found.append((m.start(), int(m.group(3)), MONTH_ABBR[m.group(1)[:3].lower()], int(m.group(2))))
+        if month_of(m.group(1)):
+            found.append((m.start(), int(m.group(3)), month_of(m.group(1)), int(m.group(2))))
     for m in DATE_DMY.finditer(text):
-        found.append((m.start(), int(m.group(3)), MONTH_ABBR[m.group(2)[:3].lower()], int(m.group(1))))
+        if month_of(m.group(2)):
+            found.append((m.start(), int(m.group(3)), month_of(m.group(2)), int(m.group(1))))
     for m in DATE_CJK.finditer(text):
         found.append((m.start(), int(m.group(1)), int(m.group(2)), int(m.group(3))))
     for m in DATE_NUM.finditer(text):
@@ -192,8 +215,10 @@ def context_from_lines(lines) -> dict:
                 except ValueError:
                     pass
         for m in DATE_DMY.finditer(line):
+            if not month_of(m.group(2)):
+                continue
             try:
-                dates.append((m.start(), date(int(m.group(3)), MONTH_ABBR[m.group(2)[:3].lower()], int(m.group(1)))))
+                dates.append((m.start(), date(int(m.group(3)), month_of(m.group(2)), int(m.group(1)))))
             except ValueError:
                 pass
         if not dates:
@@ -235,12 +260,12 @@ def extract(data: bytes, ocr=None, language: str = "en") -> dict:
     stated = detect_units(full_text)
     year_end = None
     m = re.search(r"(?:fiscal\s+)?year\s+ended\s+([A-Za-z]+)\s+(\d{1,2})", full_text, re.I)
-    if m and m.group(1).lower()[:3] in MONTH_ABBR:
-        year_end = (MONTH_ABBR[m.group(1).lower()[:3]], int(m.group(2)))
+    if m and month_of(m.group(1)):
+        year_end = (month_of(m.group(1)), int(m.group(2)))
     if year_end is None:
         m = re.search(r"year\s+ended\s+(\d{1,2})\s+([A-Za-z]+)", full_text, re.I)
-        if m and m.group(2).lower()[:3] in MONTH_ABBR:
-            year_end = (MONTH_ABBR[m.group(2).lower()[:3]], int(m.group(1)))
+        if m and month_of(m.group(2)):
+            year_end = (month_of(m.group(2)), int(m.group(1)))
     currency = detect_currency(full_text)
     ctx = _context(pages)
     found: dict[tuple, dict] = {}                                                                   # (column key) -> {code: (value, page, line)}

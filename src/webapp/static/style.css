@@ -721,3 +721,9 @@ table.data.review input[type=text] { width: 9.5em; text-align: right; }
 table.data.review input.edited { border-color: var(--warn, #d9a21b); }
 table.data.review th input[type=date], table.data.review th select { display: block; width: 9.5em; margin-top: 4px; font-size: 12px; }
 .issues p { margin: 4px 0; }
+
+/* Report import: confidence of a figure read from a document, and the importer diagnostics */
+#fundamentals span.conf { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 8px; font-size: 11px; line-height: 16px; border: 1px solid var(--rule, #8884); }
+#fundamentals span.conf.low { color: var(--warn, #b45309); border-color: var(--warn, #b45309); }
+#fundamentals span.conf.ok { color: var(--muted, #6b7280); }
+#fundamentals td input[data-role=import-confirm] { margin-left: 6px; vertical-align: middle; }
