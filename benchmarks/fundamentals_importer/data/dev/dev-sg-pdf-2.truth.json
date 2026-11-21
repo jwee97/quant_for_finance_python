@@ -1,0 +1,100 @@
+{
+ "periods": [
+  {
+   "fiscal_period": "H1",
+   "period_end": "2023-06-30",
+   "values": {
+    "revenue": 1800000,
+    "cost_of_revenue": 923000,
+    "gross_profit": 877000,
+    "operating_income": 438000,
+    "income_before_tax": 404000,
+    "income_tax": 84000,
+    "net_income": 320000,
+    "eps_basic": 0.6,
+    "operating_cash_flow": 420000,
+    "investing_cash_flow": -400000,
+    "financing_cash_flow": -200000
+   },
+   "currency": "SGD"
+  },
+  {
+   "fiscal_period": "FY",
+   "period_end": "2023-12-31",
+   "values": {
+    "cash_and_equivalents": 600000,
+    "accounts_receivable": 600000,
+    "inventory": 700000,
+    "current_assets": 1900000,
+    "ppe": 1100000,
+    "total_assets": 3100000,
+    "accounts_payable": 200000,
+    "current_liabilities": 500000,
+    "total_liabilities": 800000,
+    "shareholders_equity": 2300000
+   },
+   "currency": "SGD"
+  },
+  {
+   "fiscal_period": "H1",
+   "period_end": "2024-06-30",
+   "values": {
+    "revenue": 4000000,
+    "cost_of_revenue": 2511000,
+    "gross_profit": 1489000,
+    "operating_income": 703000,
+    "income_before_tax": 645000,
+    "income_tax": 132000,
+    "net_income": 513000,
+    "eps_basic": 0.87,
+    "cash_and_equivalents": 600000,
+    "accounts_receivable": 400000,
+    "inventory": 200000,
+    "current_assets": 1200000,
+    "ppe": 1900000,
+    "total_assets": 3400000,
+    "accounts_payable": 300000,
+    "current_liabilities": 600000,
+    "total_liabilities": 1300000,
+    "shareholders_equity": 2100000,
+    "operating_cash_flow": 613000,
+    "investing_cash_flow": -300000,
+    "financing_cash_flow": -500000
+   },
+   "currency": "SGD"
+  }
+ ],
+ "unit": "thousands",
+ "currency": "SGD",
+ "statements": [
+  "IS",
+  "BS",
+  "CF"
+ ],
+ "standard": "sfrs-i",
+ "lines_printed": 42,
+ "spec": {
+  "id": "dev-sg-pdf-2",
+  "split": "dev",
+  "market": "SG",
+  "format": "pdf",
+  "language": "en",
+  "standard": "sfrs-i",
+  "unit": "thousands",
+  "currency": "SGD",
+  "period_type": "half",
+  "layout": "classic",
+  "wording": "dev",
+  "ends": [
+   "2024-06-30",
+   "2023-06-30"
+  ],
+  "bs_ends": [
+   "2024-06-30",
+   "2023-12-31"
+  ],
+  "term": 55,
+  "mag": 100,
+  "currency_label": "S$'000"
+ }
+}

@@ -1,0 +1,100 @@
+{
+ "periods": [
+  {
+   "fiscal_period": "H1",
+   "period_end": "2023-06-30",
+   "values": {
+    "revenue": 2200000,
+    "cost_of_revenue": 1249000,
+    "gross_profit": 951000,
+    "operating_income": 520000,
+    "income_before_tax": 493000,
+    "income_tax": 137000,
+    "net_income": 356000,
+    "eps_basic": 0.83,
+    "operating_cash_flow": 456000,
+    "investing_cash_flow": -600000,
+    "financing_cash_flow": -500000
+   },
+   "currency": "SGD"
+  },
+  {
+   "fiscal_period": "FY",
+   "period_end": "2023-12-31",
+   "values": {
+    "cash_and_equivalents": 900000,
+    "accounts_receivable": 200000,
+    "inventory": 200000,
+    "current_assets": 1300000,
+    "ppe": 1000000,
+    "total_assets": 2500000,
+    "accounts_payable": 300000,
+    "current_liabilities": 700000,
+    "total_liabilities": 1500000,
+    "shareholders_equity": 1000000
+   },
+   "currency": "SGD"
+  },
+  {
+   "fiscal_period": "H1",
+   "period_end": "2024-06-30",
+   "values": {
+    "revenue": 1300000,
+    "cost_of_revenue": 669000,
+    "gross_profit": 631000,
+    "operating_income": 370000,
+    "income_before_tax": 351000,
+    "income_tax": 70000,
+    "net_income": 281000,
+    "eps_basic": 0.45,
+    "cash_and_equivalents": 700000,
+    "accounts_receivable": 300000,
+    "inventory": 300000,
+    "current_assets": 1300000,
+    "ppe": 1900000,
+    "total_assets": 3300000,
+    "accounts_payable": 200000,
+    "current_liabilities": 300000,
+    "total_liabilities": 1000000,
+    "shareholders_equity": 2300000,
+    "operating_cash_flow": 381000,
+    "investing_cash_flow": -700000,
+    "financing_cash_flow": -500000
+   },
+   "currency": "SGD"
+  }
+ ],
+ "unit": "thousands",
+ "currency": "SGD",
+ "statements": [
+  "IS",
+  "BS",
+  "CF"
+ ],
+ "standard": "sfrs-i",
+ "lines_printed": 42,
+ "spec": {
+  "id": "heldout-sg-pdf-2",
+  "split": "heldout",
+  "market": "SG",
+  "format": "pdf",
+  "language": "en",
+  "standard": "sfrs-i",
+  "unit": "thousands",
+  "currency": "SGD",
+  "period_type": "half",
+  "layout": "notes",
+  "wording": "held",
+  "ends": [
+   "2024-06-30",
+   "2023-06-30"
+  ],
+  "bs_ends": [
+   "2024-06-30",
+   "2023-12-31"
+  ],
+  "term": 55,
+  "mag": 100,
+  "currency_label": "S$'000"
+ }
+}

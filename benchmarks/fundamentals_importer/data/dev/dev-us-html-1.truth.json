@@ -1,0 +1,93 @@
+{
+ "periods": [
+  {
+   "fiscal_period": "FY",
+   "period_end": "2022-12-31",
+   "values": {
+    "revenue": 2700000000,
+    "cost_of_revenue": 1599000000,
+    "gross_profit": 1101000000,
+    "operating_income": 688000000,
+    "income_before_tax": 666000000,
+    "income_tax": 126000000,
+    "net_income": 540000000,
+    "eps_basic": 1.04,
+    "cash_and_equivalents": 300000000,
+    "accounts_receivable": 400000000,
+    "inventory": 500000000,
+    "current_assets": 1200000000,
+    "ppe": 1200000000,
+    "total_assets": 2800000000,
+    "accounts_payable": 300000000,
+    "current_liabilities": 500000000,
+    "total_liabilities": 800000000,
+    "shareholders_equity": 2000000000,
+    "operating_cash_flow": 740000000,
+    "investing_cash_flow": -800000000,
+    "financing_cash_flow": -200000000
+   },
+   "currency": "USD"
+  },
+  {
+   "fiscal_period": "FY",
+   "period_end": "2023-12-31",
+   "values": {
+    "revenue": 2000000000,
+    "cost_of_revenue": 1250000000,
+    "gross_profit": 750000000,
+    "operating_income": 334000000,
+    "income_before_tax": 319000000,
+    "income_tax": 93000000,
+    "net_income": 226000000,
+    "eps_basic": 0.48,
+    "cash_and_equivalents": 400000000,
+    "accounts_receivable": 500000000,
+    "inventory": 400000000,
+    "current_assets": 1300000000,
+    "ppe": 1500000000,
+    "total_assets": 3000000000,
+    "accounts_payable": 500000000,
+    "current_liabilities": 700000000,
+    "total_liabilities": 1600000000,
+    "shareholders_equity": 1400000000,
+    "operating_cash_flow": 626000000,
+    "investing_cash_flow": -600000000,
+    "financing_cash_flow": -400000000
+   },
+   "currency": "USD"
+  }
+ ],
+ "unit": "millions",
+ "currency": "USD",
+ "statements": [
+  "IS",
+  "BS",
+  "CF"
+ ],
+ "standard": "us-gaap",
+ "lines_printed": 42,
+ "spec": {
+  "id": "dev-us-html-1",
+  "split": "dev",
+  "market": "US",
+  "format": "html",
+  "language": "en",
+  "standard": "us-gaap",
+  "unit": "millions",
+  "currency": "USD",
+  "period_type": "annual",
+  "layout": "classic",
+  "wording": "dev",
+  "ends": [
+   "2023-12-31",
+   "2022-12-31"
+  ],
+  "bs_ends": [
+   "2023-12-31",
+   "2022-12-31"
+  ],
+  "term": 55,
+  "mag": 100,
+  "currency_label": "$"
+ }
+}

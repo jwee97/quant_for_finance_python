@@ -1,0 +1,86 @@
+{
+ "periods": [
+  {
+   "fiscal_period": "FY",
+   "period_end": "2022-12-31",
+   "values": {
+    "revenue": 800000000,
+    "cost_of_revenue": 368000000,
+    "gross_profit": 432000000,
+    "operating_income": 182000000,
+    "income_before_tax": 168000000,
+    "income_tax": 47000000,
+    "net_income": 121000000,
+    "cash_and_equivalents": 800000000,
+    "inventory": 300000000,
+    "current_assets": 1300000000,
+    "ppe": 1300000000,
+    "total_assets": 2700000000,
+    "current_liabilities": 500000000,
+    "total_liabilities": 1100000000,
+    "shareholders_equity": 1600000000,
+    "operating_cash_flow": 521000000,
+    "investing_cash_flow": -500000000,
+    "financing_cash_flow": -400000000
+   },
+   "currency": "EUR"
+  },
+  {
+   "fiscal_period": "FY",
+   "period_end": "2023-12-31",
+   "values": {
+    "revenue": 900000000,
+    "cost_of_revenue": 491000000,
+    "gross_profit": 409000000,
+    "operating_income": 209000000,
+    "income_before_tax": 195000000,
+    "income_tax": 40000000,
+    "net_income": 155000000,
+    "cash_and_equivalents": 400000000,
+    "inventory": 300000000,
+    "current_assets": 1000000000,
+    "ppe": 1300000000,
+    "total_assets": 2500000000,
+    "current_liabilities": 600000000,
+    "total_liabilities": 1500000000,
+    "shareholders_equity": 1000000000,
+    "operating_cash_flow": 355000000,
+    "investing_cash_flow": -400000000,
+    "financing_cash_flow": -100000000
+   },
+   "currency": "EUR"
+  }
+ ],
+ "unit": "millions",
+ "currency": "EUR",
+ "statements": [
+  "IS",
+  "BS",
+  "CF"
+ ],
+ "standard": "ifrs",
+ "lines_printed": 36,
+ "spec": {
+  "id": "dev-eu-pdf-2",
+  "split": "dev",
+  "market": "EU",
+  "format": "pdf",
+  "language": "de",
+  "standard": "ifrs",
+  "unit": "millions",
+  "currency": "EUR",
+  "period_type": "annual",
+  "layout": "classic",
+  "wording": "dev",
+  "ends": [
+   "2023-12-31",
+   "2022-12-31"
+  ],
+  "bs_ends": [
+   "2023-12-31",
+   "2022-12-31"
+  ],
+  "term": 55,
+  "mag": 100
+ }
+}

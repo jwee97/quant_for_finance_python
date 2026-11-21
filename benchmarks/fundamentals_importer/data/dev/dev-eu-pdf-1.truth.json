@@ -1,0 +1,90 @@
+{
+ "periods": [
+  {
+   "fiscal_period": "FY",
+   "period_end": "2022-12-31",
+   "values": {
+    "revenue": 900000,
+    "cost_of_revenue": 463000,
+    "gross_profit": 437000,
+    "operating_income": 190000,
+    "income_before_tax": 180000,
+    "income_tax": 44000,
+    "net_income": 136000,
+    "cash_and_equivalents": 500000,
+    "accounts_receivable": 400000,
+    "inventory": 500000,
+    "current_assets": 1400000,
+    "ppe": 800000,
+    "total_assets": 2600000,
+    "accounts_payable": 200000,
+    "current_liabilities": 600000,
+    "total_liabilities": 1500000,
+    "shareholders_equity": 1100000,
+    "operating_cash_flow": 536000,
+    "investing_cash_flow": -300000,
+    "financing_cash_flow": -200000
+   },
+   "currency": "EUR"
+  },
+  {
+   "fiscal_period": "FY",
+   "period_end": "2023-12-31",
+   "values": {
+    "revenue": 2800000,
+    "cost_of_revenue": 1508000,
+    "gross_profit": 1292000,
+    "operating_income": 743000,
+    "income_before_tax": 712000,
+    "income_tax": 171000,
+    "net_income": 541000,
+    "cash_and_equivalents": 500000,
+    "accounts_receivable": 200000,
+    "inventory": 300000,
+    "current_assets": 1000000,
+    "ppe": 1200000,
+    "total_assets": 2500000,
+    "accounts_payable": 400000,
+    "current_liabilities": 600000,
+    "total_liabilities": 1100000,
+    "shareholders_equity": 1400000,
+    "operating_cash_flow": 841000,
+    "investing_cash_flow": -700000,
+    "financing_cash_flow": -400000
+   },
+   "currency": "EUR"
+  }
+ ],
+ "unit": "thousands",
+ "currency": "EUR",
+ "statements": [
+  "IS",
+  "BS",
+  "CF"
+ ],
+ "standard": "ifrs",
+ "lines_printed": 40,
+ "spec": {
+  "id": "dev-eu-pdf-1",
+  "split": "dev",
+  "market": "EU",
+  "format": "pdf",
+  "language": "fr",
+  "standard": "ifrs",
+  "unit": "thousands",
+  "currency": "EUR",
+  "period_type": "annual",
+  "layout": "classic",
+  "wording": "dev",
+  "ends": [
+   "2023-12-31",
+   "2022-12-31"
+  ],
+  "bs_ends": [
+   "2023-12-31",
+   "2022-12-31"
+  ],
+  "term": 55,
+  "mag": 100
+ }
+}

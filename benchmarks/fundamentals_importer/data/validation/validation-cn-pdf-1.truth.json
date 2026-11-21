@@ -1,0 +1,95 @@
+{
+ "periods": [
+  {
+   "fiscal_period": "H1",
+   "period_end": "2023-06-30",
+   "values": {
+    "revenue": 29000000,
+    "cost_of_revenue": 20152000,
+    "operating_income": 4026000,
+    "income_before_tax": 3751000,
+    "income_tax": 699000,
+    "net_income": 3052000,
+    "operating_cash_flow": 4052000,
+    "investing_cash_flow": -6000000,
+    "financing_cash_flow": -1000000
+   },
+   "currency": "CNY"
+  },
+  {
+   "fiscal_period": "FY",
+   "period_end": "2023-12-31",
+   "values": {
+    "cash_and_equivalents": 4000000,
+    "accounts_receivable": 4000000,
+    "inventory": 4000000,
+    "current_assets": 12000000,
+    "ppe": 6000000,
+    "total_assets": 19000000,
+    "accounts_payable": 6000000,
+    "current_liabilities": 10000000,
+    "total_liabilities": 18000000,
+    "shareholders_equity": 1000000
+   },
+   "currency": "CNY"
+  },
+  {
+   "fiscal_period": "H1",
+   "period_end": "2024-06-30",
+   "values": {
+    "revenue": 12000000,
+    "cost_of_revenue": 7330000,
+    "operating_income": 2249000,
+    "income_before_tax": 2120000,
+    "income_tax": 498000,
+    "net_income": 1622000,
+    "cash_and_equivalents": 6000000,
+    "accounts_receivable": 6000000,
+    "inventory": 3000000,
+    "current_assets": 15000000,
+    "ppe": 18000000,
+    "total_assets": 34000000,
+    "accounts_payable": 5000000,
+    "current_liabilities": 8000000,
+    "total_liabilities": 16000000,
+    "shareholders_equity": 18000000,
+    "operating_cash_flow": 5622000,
+    "investing_cash_flow": -8000000,
+    "financing_cash_flow": -1000000
+   },
+   "currency": "CNY"
+  }
+ ],
+ "unit": "thousands",
+ "currency": "CNY",
+ "statements": [
+  "IS",
+  "BS",
+  "CF"
+ ],
+ "standard": "cas",
+ "lines_printed": 38,
+ "spec": {
+  "id": "validation-cn-pdf-1",
+  "split": "validation",
+  "market": "CN",
+  "format": "pdf",
+  "language": "zh",
+  "standard": "cas",
+  "unit": "thousands",
+  "currency": "CNY",
+  "period_type": "half",
+  "layout": "classic",
+  "wording": "alt",
+  "ends": [
+   "2024-06-30",
+   "2023-06-30"
+  ],
+  "bs_ends": [
+   "2024-06-30",
+   "2023-12-31"
+  ],
+  "term": 55,
+  "mag": 1000
+ }
+}

@@ -1,0 +1,97 @@
+{
+ "periods": [
+  {
+   "fiscal_period": "H1",
+   "period_end": "2023-06-30",
+   "values": {
+    "revenue": 23000000000,
+    "cost_of_revenue": 11002000000,
+    "gross_profit": 11998000000,
+    "operating_income": 7342000000,
+    "income_before_tax": 7111000000,
+    "income_tax": 1986000000,
+    "net_income": 5125000000,
+    "operating_cash_flow": 6125000000,
+    "investing_cash_flow": -5000000000,
+    "financing_cash_flow": -1000000000
+   },
+   "currency": "JPY"
+  },
+  {
+   "fiscal_period": "FY",
+   "period_end": "2023-12-31",
+   "values": {
+    "cash_and_equivalents": 8000000000,
+    "accounts_receivable": 4000000000,
+    "inventory": 4000000000,
+    "current_assets": 16000000000,
+    "ppe": 17000000000,
+    "total_assets": 35000000000,
+    "accounts_payable": 5000000000,
+    "current_liabilities": 7000000000,
+    "total_liabilities": 13000000000,
+    "shareholders_equity": 22000000000
+   },
+   "currency": "JPY"
+  },
+  {
+   "fiscal_period": "H1",
+   "period_end": "2024-06-30",
+   "values": {
+    "revenue": 27000000000,
+    "cost_of_revenue": 15331000000,
+    "gross_profit": 11669000000,
+    "operating_income": 7217000000,
+    "income_before_tax": 7028000000,
+    "income_tax": 1962000000,
+    "net_income": 5066000000,
+    "cash_and_equivalents": 7000000000,
+    "accounts_receivable": 5000000000,
+    "inventory": 7000000000,
+    "current_assets": 19000000000,
+    "ppe": 6000000000,
+    "total_assets": 27000000000,
+    "accounts_payable": 3000000000,
+    "current_liabilities": 5000000000,
+    "total_liabilities": 14000000000,
+    "shareholders_equity": 13000000000,
+    "operating_cash_flow": 7066000000,
+    "investing_cash_flow": -3000000000,
+    "financing_cash_flow": -2000000000
+   },
+   "currency": "JPY"
+  }
+ ],
+ "unit": "millions",
+ "currency": "JPY",
+ "statements": [
+  "IS",
+  "BS",
+  "CF"
+ ],
+ "standard": "j-gaap",
+ "lines_printed": 40,
+ "spec": {
+  "id": "heldout-jp-pdf-2",
+  "split": "heldout",
+  "market": "JP",
+  "format": "pdf",
+  "language": "ja",
+  "standard": "j-gaap",
+  "unit": "millions",
+  "currency": "JPY",
+  "period_type": "half",
+  "layout": "notes",
+  "wording": "held",
+  "ends": [
+   "2024-06-30",
+   "2023-06-30"
+  ],
+  "bs_ends": [
+   "2024-06-30",
+   "2023-12-31"
+  ],
+  "term": 55,
+  "mag": 1000
+ }
+}

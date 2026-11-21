@@ -1,0 +1,91 @@
+{
+ "periods": [
+  {
+   "fiscal_period": "FY",
+   "period_end": "2022-12-31",
+   "values": {
+    "revenue": 40000000,
+    "cost_of_revenue": 18483000,
+    "operating_income": 11150000,
+    "income_before_tax": 10732000,
+    "income_tax": 2168000,
+    "net_income": 8564000,
+    "cash_and_equivalents": 8000000,
+    "accounts_receivable": 5000000,
+    "inventory": 2000000,
+    "current_assets": 15000000,
+    "ppe": 18000000,
+    "total_assets": 36000000,
+    "accounts_payable": 6000000,
+    "current_liabilities": 7000000,
+    "total_liabilities": 12000000,
+    "shareholders_equity": 24000000,
+    "operating_cash_flow": 10564000,
+    "investing_cash_flow": -7000000,
+    "financing_cash_flow": -4000000
+   },
+   "currency": "CNY"
+  },
+  {
+   "fiscal_period": "FY",
+   "period_end": "2023-12-31",
+   "values": {
+    "revenue": 29000000,
+    "cost_of_revenue": 15562000,
+    "operating_income": 7925000,
+    "income_before_tax": 7458000,
+    "income_tax": 1637000,
+    "net_income": 5821000,
+    "cash_and_equivalents": 3000000,
+    "accounts_receivable": 4000000,
+    "inventory": 5000000,
+    "current_assets": 12000000,
+    "ppe": 10000000,
+    "total_assets": 24000000,
+    "accounts_payable": 4000000,
+    "current_liabilities": 6000000,
+    "total_liabilities": 12000000,
+    "shareholders_equity": 12000000,
+    "operating_cash_flow": 7821000,
+    "investing_cash_flow": -6000000,
+    "financing_cash_flow": -3000000
+   },
+   "currency": "CNY"
+  }
+ ],
+ "unit": "thousands",
+ "currency": "CNY",
+ "statements": [
+  "IS",
+  "BS",
+  "CF"
+ ],
+ "standard": "cas",
+ "lines_printed": 38,
+ "spec": {
+  "id": "heldout-cn-pdf-1",
+  "split": "heldout",
+  "market": "CN",
+  "format": "pdf",
+  "language": "zh",
+  "standard": "cas",
+  "unit": "thousands",
+  "currency": "CNY",
+  "period_type": "annual",
+  "layout": "classic",
+  "wording": "held",
+  "ends": [
+   "2023-12-31",
+   "2022-12-31"
+  ],
+  "bs_ends": [
+   "2023-12-31",
+   "2022-12-31"
+  ],
+  "term": 55,
+  "mag": 1000,
+  "traps": [
+   "parent"
+  ]
+ }
+}

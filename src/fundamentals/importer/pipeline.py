@@ -26,7 +26,7 @@ from pathlib import Path
 from .. import manual
 from ..errors import FundamentalsError
 from ..schema import now_iso
-from . import ai_extract, arelle_check, docling_adapter, reconcile, tabular, xbrl
+from . import ai_extract, arelle_check, checks as checks_module, docling_adapter, engine, reconcile, tabular, taxonomy, xbrl
 from . import html as html_reader
 from . import pdf as pdf_reader
 from . import currency as currency_module
@@ -62,6 +62,21 @@ def sniff(name: str, data: bytes) -> str:
 
 def _hash(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+def _unverified(p: dict) -> dict:
+    """The lines whose reading is below the confidence threshold and that no person has confirmed or typed: they are stored flagged ``unverified``, which research excludes."""
+    return {code: "unverified" for code, s in (p.get("sources") or {}).items()
+            if s.get("confidence") is not None and s["confidence"] < checks_module.LOW_CONFIDENCE and not s.get("verified") and not s.get("edited") and code in p["values"]}
+
+
+def _diff(old: dict | None, new: dict) -> dict:
+    """Which figures differ between two readings of the same document."""
+    def flat(d):
+        return {(p["fiscal_period"], p["period_end"], c): v for p in (d or {}).get("periods", []) for c, v in p["values"].items()}
+    a, b = flat(old), flat(new)
+    return {"changed": [{"period": f"{k[0]} to {k[1]}", "code": k[2], "was": a[k], "now": b[k]} for k in sorted(a.keys() & b.keys()) if abs(a[k] - b[k]) > 1e-9 * max(1.0, abs(a[k]))][:100],
+            "added": [{"period": f"{k[0]} to {k[1]}", "code": k[2], "now": b[k]} for k in sorted(b.keys() - a.keys())][:100], "removed": [{"period": f"{k[0]} to {k[1]}", "code": k[2], "was": a[k]} for k in sorted(a.keys() - b.keys())][:100]}
 
 
 class ImportService:
@@ -238,15 +253,47 @@ class ImportService:
                 except FundamentalsError as error:
                     draft["notes"].append(f"Arelle cross-check was not possible: {error}")
             return draft
-        if kind == "xlsx":
-            return tabular.from_xlsx(data)
-        if kind == "csv":
-            return tabular.from_text(tabular.decode(data), "csv", {"file": name})
-        if kind == "html":
-            return html_reader.extract(data)
-        if kind == "pdf":
-            return self._pdf(data, name, hint)
+        if kind in ("xlsx", "csv"):
+            first, draft = None, None
+            try:
+                draft = tabular.from_xlsx(data) if kind == "xlsx" else tabular.from_text(tabular.decode(data), "csv", {"file": name})
+                if engine.lines_found(draft) >= engine.MIN_LINES or hint.get("engine") == "legacy":
+                    return draft
+                first = FundamentalsError(f"the Enter-reports table reader found only {engine.lines_found(draft)} line(s)")
+            except FundamentalsError as error:
+                first = error
+            try:
+                better = self._engine(kind, name, data, hint, first)
+            except FundamentalsError:
+                if draft is None:
+                    raise first
+                return draft
+            return better if draft is None or engine.lines_found(better) > engine.lines_found(draft) else draft
+        if kind in ("html", "pdf"):
+            if hint.get("engine") == "legacy":
+                return html_reader.extract(data) if kind == "html" else self._pdf(data, name, hint)
+            return self._engine(kind, name, data, hint, None)
         raise FundamentalsError(f"{name}: this kind of file cannot be read (supported: XBRL / inline XBRL filings, CSV, Excel, PDF, and ZIP archives of them)")
+
+    def _engine(self, kind: str, name: str, data: bytes, hint: dict, earlier) -> dict:
+        """The layout engine first (tables with coordinates, statements, taxonomy, checks); if it finds nothing, the readers that came before it, so nothing that was readable before is lost."""
+        try:
+            draft, _doc = engine.extract(data, name, kind, hint)
+            if earlier is not None:
+                draft.setdefault("fallbacks", []).insert(0, {"step": "table-reader", "reason": str(earlier)})
+            if kind == "pdf" and draft.get("method") == "pdf-layout" and any(f["step"] == "legacy-reader" for f in draft.get("fallbacks", [])):
+                draft["method"] = "pdf-text"
+            return draft
+        except FundamentalsError as error:
+            if kind == "pdf":
+                draft = self._pdf(data, name, hint)
+            elif kind == "html":
+                draft = html_reader.extract(data)
+            else:
+                raise
+            draft.setdefault("fallbacks", []).append({"step": "legacy-reader", "reason": f"the layout engine found nothing ({error})"})
+            draft.setdefault("versions", {"extractor": taxonomy.EXTRACTOR_VERSION, "mapping": None, "taxonomy": taxonomy.TAXONOMY_VERSION, "reader": "legacy"})
+            return draft
 
     MIN_PDF_LINES = 5
 
@@ -303,7 +350,44 @@ class ImportService:
         issues = self._issues(draft, batch)
         review = bool(draft.get("review_required")) or any(i["level"] in ("error", "warning") for i in issues)
         self._set(item_id, draft=draft, issues=issues, status="needs_review" if review else "extracted", method=draft.get("method"), error=None)
+        self._record_extraction(item_id, draft)
         return self.item(item_id)
+
+    def _record_extraction(self, item_id: int, draft: dict) -> None:
+        v = draft.get("versions") or {}
+        conf = (draft.get("confidence") or {}).get("mean")
+        with self.store.db.transaction() as c:
+            c.execute("INSERT INTO import_extractions (item_id, extractor_version, mapping_version, taxonomy_version, standard, method, lines, mean_confidence, draft, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                      (int(item_id), v.get("extractor") or taxonomy.EXTRACTOR_VERSION, v.get("mapping"), v.get("taxonomy"), (draft.get("standard") or {}).get("standard"), draft.get("method"),
+                       engine.lines_found(draft) if draft.get("periods") else 0, conf, json.dumps(draft, default=str), now_iso()))
+
+    def extractions(self, item_id: int) -> list[dict]:
+        """Every reading of an item, oldest first, with the versions that made it."""
+        with self.store.db.transaction() as c:
+            rows = c.execute("SELECT id, extractor_version, mapping_version, taxonomy_version, standard, method, lines, mean_confidence, created_at FROM import_extractions WHERE item_id = ? ORDER BY id", (int(item_id),)).fetchall()
+        return [dict(r) for r in rows]
+
+    def reprocess(self, item_id: int, hint: dict | None = None) -> dict:
+        """Read the stored original again with the current extractor and mappings, keeping every earlier reading. An item that is already saved keeps its stored figures untouched and gets a comparison:
+        the lines that changed, appeared or disappeared. An item that is not saved is moved to the new reading (the person's earlier corrections stay in the history)."""
+        it = self.item(item_id, full=True)
+        data = self._blob(it["content_hash"])
+        if data is None:
+            raise FundamentalsError("the stored original is missing: it cannot be read again")
+        hint = {**(it.get("hint") or {}), **(hint or {})}
+        old = it["reviewed"] or it["draft"]
+        try:
+            draft = self._extract_bytes(it["source_kind"], it["source_name"] or "", data, hint)
+        except FundamentalsError as error:
+            return {"item_id": item_id, "changed": False, "error": str(error), "versions": self.extractions(item_id)}
+        draft["source"] = {"file": it["source_name"], "url": it["source_url"], "content_hash": it["content_hash"], "kind": it["source_kind"]}
+        diff = _diff(old, draft)
+        self._record_extraction(item_id, draft)
+        if it["status"] not in ("saved", "duplicate", "rejected"):
+            batch = self._batch(it["batch_id"])
+            issues = self._issues(draft, batch)
+            self._set(item_id, draft=draft, reviewed=None, issues=issues, status="needs_review", method=draft.get("method"), error=None)
+        return {"item_id": item_id, "changed": bool(diff["changed"] or diff["added"] or diff["removed"]), "saved_figures_untouched": it["status"] == "saved", "diff": diff, "versions": self.extractions(item_id)}
 
     def process(self, batch_id: str, progress=None, stop=None, hint: dict | None = None) -> dict:
         """Extract every item that is still ``queued`` (so a batch interrupted half way carries on where it stopped) and say what came of each."""
@@ -324,7 +408,7 @@ class ImportService:
     def _entry(self, draft: dict, batch: dict, security: dict | None = None) -> dict:
         entry = {"units": draft.get("units") or {"money": "units", "shares": "units"}, "currency": draft.get("currency"),
                  "periods": [{"fiscal_period": p["fiscal_period"], "period_end": p["period_end"], "fiscal_year": p.get("fiscal_year"), "filing_date": p.get("filing_date"), "currency": p.get("currency"),
-                              "values": {k: v for k, v in p["values"].items() if v is not None}} for p in draft["periods"]]}
+                              "values": {k: v for k, v in p["values"].items() if v is not None}, "flags": _unverified(p)} for p in draft["periods"]]}
         sid = (security or {}).get("security_id") or batch.get("security_id")
         if sid:
             entry["security_id"] = sid
@@ -358,6 +442,15 @@ class ImportService:
             issues.append({"level": "info", "message": f"Arelle agrees with every fact this reader found, and reports {ar.get('validation_errors')} validation error(s) about the filing itself (for example an inconsistent calculation in the filer's tagging): the figures are as filed.", "period": None, "field": None, "kind": "arelle"})
         if draft.get("review_required"):
             issues.append({"level": "warning", "message": "read from the text of a PDF: check every figure against the page before approving.", "period": None, "field": None, "kind": "pdf_review"})
+        for c in draft.get("checks") or []:
+            if c["status"] in ("fail", "warn"):
+                issues.append({"level": "warning", "message": f"{c['label']}: {c['detail']}", "period": c.get("period"), "field": (c.get("lines") or [None])[0], "kind": "recon"})
+        low = [(p, code) for p in draft["periods"] for code in _unverified(p)]
+        if low:
+            issues.append({"level": "warning", "message": f"{len(low)} figure(s) were read with low confidence (below {checks_module.LOW_CONFIDENCE:.0%}); approved, they are stored as unverified and kept out of research until you confirm them against the page (tick Confirmed on the line) or correct them.",
+                           "period": None, "field": None, "kind": "low_confidence"})
+        for f in draft.get("fallbacks") or []:
+            issues.append({"level": "info", "message": f"fallback used: {f['step']} ({f['reason']})", "period": None, "field": None, "kind": "fallback"})
         return issues
 
     # ------------------------------------------------------------------------------------------------------------ review
@@ -411,6 +504,12 @@ class ImportService:
             draft["periods"] = keep
             if not keep:
                 raise FundamentalsError("every period was dropped: reject the item instead")
+        verify = edits.get("verify")
+        if verify:
+            for p in draft["periods"]:
+                for code in (list(p["values"]) if verify == "all" else verify):
+                    if code in p["values"]:
+                        p.setdefault("sources", {}).setdefault(code, {"tag": None, "method": "manual-edit", "unit": draft["units"]["money"]})["verified"] = True
         batch = self._batch(it["batch_id"])
         issues = self._issues(draft, batch)
         self._set(item_id, reviewed=draft, issues=issues, status="needs_review" if any(i["level"] in ("error", "warning") for i in issues) else "extracted")
@@ -484,10 +583,14 @@ class ImportService:
                     if code not in stored:
                         continue
                     s = (src.get("sources") or {}).get(code, {})
+                    v = draft.get("versions") or {}
+                    verified = bool(s.get("verified") or s.get("edited") or s.get("confidence") is None or s["confidence"] >= checks_module.LOW_CONFIDENCE)
                     c.execute("INSERT OR REPLACE INTO observation_provenance (financial_period_id, metric_code, source_kind, source_ref, content_hash, accession, page, taxonomy_tag, reported_value, reported_unit, "
-                              "extraction_method, extraction_status, edited, import_item_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                              "extraction_method, extraction_status, edited, import_item_id, created_at, confidence, statement, scope, extractor_version, mapping_version, original_currency, bbox, verified) "
+                              "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                               (pid, code, it["source_kind"], it["source_url"] or it["source_name"], it["content_hash"], draft.get("accession"), s.get("page"), s.get("tag"), s.get("reported", value), s.get("unit"),
-                               s.get("method") or draft.get("method"), "approved", 1 if s.get("edited") else 0, it["item_id"], now_iso()))
+                               s.get("method") or draft.get("method"), "approved" if verified else "unverified", 1 if s.get("edited") else 0, it["item_id"], now_iso(), s.get("confidence"), s.get("statement"), s.get("scope"),
+                               v.get("extractor"), v.get("mapping"), s.get("original_currency") or (src.get("pre_currency") or ep.get("currency")), json.dumps(s["bbox"]) if s.get("bbox") else None, 1 if verified else 0))
                     n += 1
                 saved.append({"period": f"{ep['fiscal_period']} to {ep['period_end']}", "period_id": pid, "lines": n, "vintage": int(row["vintage"])})
         return saved

@@ -1,0 +1,93 @@
+{
+ "periods": [
+  {
+   "fiscal_period": "FY",
+   "period_end": "2022-12-31",
+   "values": {
+    "revenue": 19000000000,
+    "cost_of_revenue": 8717000000,
+    "gross_profit": 10283000000,
+    "operating_income": 5929000000,
+    "income_before_tax": 5389000000,
+    "income_tax": 1530000000,
+    "net_income": 3859000000,
+    "cash_and_equivalents": 6000000000,
+    "accounts_receivable": 2000000000,
+    "inventory": 4000000000,
+    "current_assets": 12000000000,
+    "ppe": 9000000000,
+    "total_assets": 25000000000,
+    "accounts_payable": 2000000000,
+    "current_liabilities": 3000000000,
+    "total_liabilities": 7000000000,
+    "shareholders_equity": 18000000000,
+    "operating_cash_flow": 4859000000,
+    "investing_cash_flow": -7000000000,
+    "financing_cash_flow": -3000000000
+   },
+   "currency": "JPY"
+  },
+  {
+   "fiscal_period": "FY",
+   "period_end": "2023-12-31",
+   "values": {
+    "revenue": 23000000000,
+    "cost_of_revenue": 14703000000,
+    "gross_profit": 8297000000,
+    "operating_income": 3677000000,
+    "income_before_tax": 3522000000,
+    "income_tax": 878000000,
+    "net_income": 2644000000,
+    "cash_and_equivalents": 8000000000,
+    "accounts_receivable": 2000000000,
+    "inventory": 4000000000,
+    "current_assets": 14000000000,
+    "ppe": 9000000000,
+    "total_assets": 24000000000,
+    "accounts_payable": 5000000000,
+    "current_liabilities": 6000000000,
+    "total_liabilities": 9000000000,
+    "shareholders_equity": 15000000000,
+    "operating_cash_flow": 3644000000,
+    "investing_cash_flow": -2000000000,
+    "financing_cash_flow": -1000000000
+   },
+   "currency": "JPY"
+  }
+ ],
+ "unit": "millions",
+ "currency": "JPY",
+ "statements": [
+  "IS",
+  "BS",
+  "CF"
+ ],
+ "standard": "j-gaap",
+ "lines_printed": 40,
+ "spec": {
+  "id": "heldout-jp-pdf-1",
+  "split": "heldout",
+  "market": "JP",
+  "format": "pdf",
+  "language": "ja",
+  "standard": "j-gaap",
+  "unit": "millions",
+  "currency": "JPY",
+  "period_type": "annual",
+  "layout": "classic",
+  "wording": "held",
+  "ends": [
+   "2023-12-31",
+   "2022-12-31"
+  ],
+  "bs_ends": [
+   "2023-12-31",
+   "2022-12-31"
+  ],
+  "term": 55,
+  "mag": 1000,
+  "traps": [
+   "parent"
+  ]
+ }
+}

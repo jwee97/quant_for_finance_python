@@ -1,0 +1,91 @@
+{
+ "periods": [
+  {
+   "fiscal_period": "FY",
+   "period_end": "2022-12-31",
+   "values": {
+    "revenue": 1400000000,
+    "cost_of_revenue": 954000000,
+    "gross_profit": 446000000,
+    "operating_income": 237000000,
+    "income_before_tax": 218000000,
+    "income_tax": 51000000,
+    "net_income": 167000000,
+    "cash_and_equivalents": 500000000,
+    "accounts_receivable": 200000000,
+    "inventory": 600000000,
+    "current_assets": 1300000000,
+    "ppe": 1800000000,
+    "total_assets": 3400000000,
+    "accounts_payable": 600000000,
+    "current_liabilities": 900000000,
+    "total_liabilities": 1800000000,
+    "shareholders_equity": 1600000000,
+    "operating_cash_flow": 467000000,
+    "investing_cash_flow": -700000000,
+    "financing_cash_flow": -100000000
+   },
+   "currency": "EUR"
+  },
+  {
+   "fiscal_period": "FY",
+   "period_end": "2023-12-31",
+   "values": {
+    "revenue": 2700000000,
+    "cost_of_revenue": 1713000000,
+    "gross_profit": 987000000,
+    "operating_income": 505000000,
+    "income_before_tax": 480000000,
+    "income_tax": 128000000,
+    "net_income": 352000000,
+    "cash_and_equivalents": 500000000,
+    "accounts_receivable": 300000000,
+    "inventory": 500000000,
+    "current_assets": 1300000000,
+    "ppe": 2000000000,
+    "total_assets": 3500000000,
+    "accounts_payable": 500000000,
+    "current_liabilities": 600000000,
+    "total_liabilities": 900000000,
+    "shareholders_equity": 2600000000,
+    "operating_cash_flow": 452000000,
+    "investing_cash_flow": -600000000,
+    "financing_cash_flow": -200000000
+   },
+   "currency": "EUR"
+  }
+ ],
+ "unit": "millions",
+ "currency": "EUR",
+ "statements": [
+  "IS",
+  "BS",
+  "CF"
+ ],
+ "standard": "ifrs",
+ "lines_printed": 40,
+ "spec": {
+  "id": "heldout-eu-pdf-1",
+  "split": "heldout",
+  "market": "EU",
+  "format": "pdf",
+  "language": "fr",
+  "standard": "ifrs",
+  "unit": "millions",
+  "currency": "EUR",
+  "period_type": "annual",
+  "layout": "notes",
+  "wording": "held",
+  "ends": [
+   "2023-12-31",
+   "2022-12-31"
+  ],
+  "bs_ends": [
+   "2023-12-31",
+   "2022-12-31"
+  ],
+  "term": 55,
+  "mag": 100,
+  "restated": true
+ }
+}

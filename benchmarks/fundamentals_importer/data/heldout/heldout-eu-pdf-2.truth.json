@@ -1,0 +1,93 @@
+{
+ "periods": [
+  {
+   "fiscal_period": "H1",
+   "period_end": "2023-06-30",
+   "values": {
+    "revenue": 1300000000,
+    "cost_of_revenue": 825000000,
+    "gross_profit": 475000000,
+    "operating_income": 274000000,
+    "income_before_tax": 258000000,
+    "income_tax": 49000000,
+    "net_income": 209000000,
+    "operating_cash_flow": 609000000,
+    "investing_cash_flow": -700000000,
+    "financing_cash_flow": -500000000
+   },
+   "currency": "EUR"
+  },
+  {
+   "fiscal_period": "FY",
+   "period_end": "2023-12-31",
+   "values": {
+    "cash_and_equivalents": 900000000,
+    "inventory": 400000000,
+    "current_assets": 1700000000,
+    "ppe": 1500000000,
+    "total_assets": 3300000000,
+    "current_liabilities": 600000000,
+    "total_liabilities": 1000000000,
+    "shareholders_equity": 2300000000
+   },
+   "currency": "EUR"
+  },
+  {
+   "fiscal_period": "H1",
+   "period_end": "2024-06-30",
+   "values": {
+    "revenue": 2500000000,
+    "cost_of_revenue": 1317000000,
+    "gross_profit": 1183000000,
+    "operating_income": 576000000,
+    "income_before_tax": 563000000,
+    "income_tax": 128000000,
+    "net_income": 435000000,
+    "cash_and_equivalents": 700000000,
+    "inventory": 600000000,
+    "current_assets": 1700000000,
+    "ppe": 1800000000,
+    "total_assets": 3800000000,
+    "current_liabilities": 600000000,
+    "total_liabilities": 1100000000,
+    "shareholders_equity": 2700000000,
+    "operating_cash_flow": 835000000,
+    "investing_cash_flow": -400000000,
+    "financing_cash_flow": -300000000
+   },
+   "currency": "EUR"
+  }
+ ],
+ "unit": "millions",
+ "currency": "EUR",
+ "statements": [
+  "IS",
+  "BS",
+  "CF"
+ ],
+ "standard": "ifrs",
+ "lines_printed": 36,
+ "spec": {
+  "id": "heldout-eu-pdf-2",
+  "split": "heldout",
+  "market": "EU",
+  "format": "pdf",
+  "language": "de",
+  "standard": "ifrs",
+  "unit": "millions",
+  "currency": "EUR",
+  "period_type": "half",
+  "layout": "classic",
+  "wording": "held",
+  "ends": [
+   "2024-06-30",
+   "2023-06-30"
+  ],
+  "bs_ends": [
+   "2024-06-30",
+   "2023-12-31"
+  ],
+  "term": 55,
+  "mag": 100
+ }
+}

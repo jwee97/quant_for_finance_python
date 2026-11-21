@@ -1,0 +1,100 @@
+{
+ "periods": [
+  {
+   "fiscal_period": "H1",
+   "period_end": "2023-06-30",
+   "values": {
+    "revenue": 1300000,
+    "cost_of_revenue": 782000,
+    "gross_profit": 518000,
+    "operating_income": 282000,
+    "income_before_tax": 269000,
+    "income_tax": 79000,
+    "net_income": 190000,
+    "eps_basic": 0.36,
+    "operating_cash_flow": 590000,
+    "investing_cash_flow": -600000,
+    "financing_cash_flow": -200000
+   },
+   "currency": "HKD"
+  },
+  {
+   "fiscal_period": "FY",
+   "period_end": "2023-12-31",
+   "values": {
+    "cash_and_equivalents": 300000,
+    "accounts_receivable": 400000,
+    "inventory": 200000,
+    "current_assets": 900000,
+    "ppe": 600000,
+    "total_assets": 1800000,
+    "accounts_payable": 200000,
+    "current_liabilities": 500000,
+    "total_liabilities": 900000,
+    "shareholders_equity": 900000
+   },
+   "currency": "HKD"
+  },
+  {
+   "fiscal_period": "H1",
+   "period_end": "2024-06-30",
+   "values": {
+    "revenue": 3800000,
+    "cost_of_revenue": 2157000,
+    "gross_profit": 1643000,
+    "operating_income": 832000,
+    "income_before_tax": 802000,
+    "income_tax": 154000,
+    "net_income": 648000,
+    "eps_basic": 1.22,
+    "cash_and_equivalents": 800000,
+    "accounts_receivable": 300000,
+    "inventory": 600000,
+    "current_assets": 1700000,
+    "ppe": 1500000,
+    "total_assets": 3500000,
+    "accounts_payable": 300000,
+    "current_liabilities": 700000,
+    "total_liabilities": 1500000,
+    "shareholders_equity": 2000000,
+    "operating_cash_flow": 848000,
+    "investing_cash_flow": -800000,
+    "financing_cash_flow": -400000
+   },
+   "currency": "HKD"
+  }
+ ],
+ "unit": "thousands",
+ "currency": "HKD",
+ "statements": [
+  "IS",
+  "BS",
+  "CF"
+ ],
+ "standard": "ifrs",
+ "lines_printed": 42,
+ "spec": {
+  "id": "dev-hk-pdf-1",
+  "split": "dev",
+  "market": "HK",
+  "format": "pdf",
+  "language": "en",
+  "standard": "ifrs",
+  "unit": "thousands",
+  "currency": "HKD",
+  "period_type": "half",
+  "layout": "classic",
+  "wording": "dev",
+  "ends": [
+   "2024-06-30",
+   "2023-06-30"
+  ],
+  "bs_ends": [
+   "2024-06-30",
+   "2023-12-31"
+  ],
+  "term": 55,
+  "mag": 100,
+  "currency_label": "HK$'000"
+ }
+}

@@ -1,0 +1,103 @@
+{
+ "periods": [
+  {
+   "fiscal_period": "Q1",
+   "period_end": "2023-03-31",
+   "values": {
+    "revenue": 2500000000,
+    "cost_of_revenue": 1492000000,
+    "gross_profit": 1008000000,
+    "operating_income": 511000000,
+    "income_before_tax": 489000000,
+    "income_tax": 120000000,
+    "net_income": 369000000,
+    "eps_basic": 0.42,
+    "operating_cash_flow": 669000000,
+    "investing_cash_flow": -700000000,
+    "financing_cash_flow": -300000000
+   },
+   "currency": "USD"
+  },
+  {
+   "fiscal_period": "FY",
+   "period_end": "2023-12-31",
+   "values": {
+    "cash_and_equivalents": 300000000,
+    "accounts_receivable": 600000000,
+    "inventory": 500000000,
+    "current_assets": 1400000000,
+    "ppe": 2000000000,
+    "total_assets": 3700000000,
+    "accounts_payable": 300000000,
+    "current_liabilities": 500000000,
+    "total_liabilities": 1300000000,
+    "shareholders_equity": 2400000000
+   },
+   "currency": "USD"
+  },
+  {
+   "fiscal_period": "Q1",
+   "period_end": "2024-03-31",
+   "values": {
+    "revenue": 2100000000,
+    "cost_of_revenue": 1273000000,
+    "gross_profit": 827000000,
+    "operating_income": 522000000,
+    "income_before_tax": 506000000,
+    "income_tax": 146000000,
+    "net_income": 360000000,
+    "eps_basic": 0.48,
+    "cash_and_equivalents": 800000000,
+    "accounts_receivable": 200000000,
+    "inventory": 300000000,
+    "current_assets": 1300000000,
+    "ppe": 1000000000,
+    "total_assets": 2600000000,
+    "accounts_payable": 500000000,
+    "current_liabilities": 800000000,
+    "total_liabilities": 1200000000,
+    "shareholders_equity": 1400000000,
+    "operating_cash_flow": 760000000,
+    "investing_cash_flow": -800000000,
+    "financing_cash_flow": -200000000
+   },
+   "currency": "USD"
+  }
+ ],
+ "unit": "millions",
+ "currency": "USD",
+ "statements": [
+  "IS",
+  "BS",
+  "CF"
+ ],
+ "standard": "us-gaap",
+ "lines_printed": 42,
+ "spec": {
+  "id": "heldout-us-pdf-2",
+  "split": "heldout",
+  "market": "US",
+  "format": "pdf",
+  "language": "en",
+  "standard": "us-gaap",
+  "unit": "millions",
+  "currency": "USD",
+  "period_type": "quarter",
+  "layout": "dated_header",
+  "wording": "held",
+  "ends": [
+   "2024-03-31",
+   "2023-03-31"
+  ],
+  "bs_ends": [
+   "2024-03-31",
+   "2023-12-31"
+  ],
+  "term": 55,
+  "mag": 100,
+  "traps": [
+   "segment"
+  ],
+  "currency_label": "$"
+ }
+}

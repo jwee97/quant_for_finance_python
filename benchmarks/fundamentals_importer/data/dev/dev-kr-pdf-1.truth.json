@@ -1,0 +1,90 @@
+{
+ "periods": [
+  {
+   "fiscal_period": "FY",
+   "period_end": "2022-12-31",
+   "values": {
+    "revenue": 16000000000,
+    "cost_of_revenue": 9981000000,
+    "gross_profit": 6019000000,
+    "operating_income": 2707000000,
+    "income_before_tax": 2574000000,
+    "income_tax": 595000000,
+    "net_income": 1979000000,
+    "cash_and_equivalents": 8000000000,
+    "accounts_receivable": 2000000000,
+    "inventory": 4000000000,
+    "current_assets": 14000000000,
+    "ppe": 18000000000,
+    "total_assets": 36000000000,
+    "accounts_payable": 4000000000,
+    "current_liabilities": 8000000000,
+    "total_liabilities": 13000000000,
+    "shareholders_equity": 23000000000,
+    "operating_cash_flow": 3979000000,
+    "investing_cash_flow": -8000000000,
+    "financing_cash_flow": -1000000000
+   },
+   "currency": "KRW"
+  },
+  {
+   "fiscal_period": "FY",
+   "period_end": "2023-12-31",
+   "values": {
+    "revenue": 40000000000,
+    "cost_of_revenue": 21006000000,
+    "gross_profit": 18994000000,
+    "operating_income": 9059000000,
+    "income_before_tax": 8501000000,
+    "income_tax": 1964000000,
+    "net_income": 6537000000,
+    "cash_and_equivalents": 3000000000,
+    "accounts_receivable": 5000000000,
+    "inventory": 7000000000,
+    "current_assets": 15000000000,
+    "ppe": 20000000000,
+    "total_assets": 37000000000,
+    "accounts_payable": 6000000000,
+    "current_liabilities": 9000000000,
+    "total_liabilities": 12000000000,
+    "shareholders_equity": 25000000000,
+    "operating_cash_flow": 8537000000,
+    "investing_cash_flow": -7000000000,
+    "financing_cash_flow": -4000000000
+   },
+   "currency": "KRW"
+  }
+ ],
+ "unit": "millions",
+ "currency": "KRW",
+ "statements": [
+  "IS",
+  "BS",
+  "CF"
+ ],
+ "standard": "k-ifrs",
+ "lines_printed": 40,
+ "spec": {
+  "id": "dev-kr-pdf-1",
+  "split": "dev",
+  "market": "KR",
+  "format": "pdf",
+  "language": "ko",
+  "standard": "k-ifrs",
+  "unit": "millions",
+  "currency": "KRW",
+  "period_type": "annual",
+  "layout": "classic",
+  "wording": "dev",
+  "ends": [
+   "2023-12-31",
+   "2022-12-31"
+  ],
+  "bs_ends": [
+   "2023-12-31",
+   "2022-12-31"
+  ],
+  "term": 55,
+  "mag": 1000
+ }
+}

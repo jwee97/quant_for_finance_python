@@ -1,0 +1,88 @@
+{
+ "periods": [
+  {
+   "fiscal_period": "FY",
+   "period_end": "2022-12-31",
+   "values": {
+    "revenue": 40000000,
+    "cost_of_revenue": 18255000,
+    "operating_income": 9188000,
+    "income_before_tax": 8857000,
+    "income_tax": 2569000,
+    "net_income": 6288000,
+    "cash_and_equivalents": 8000000,
+    "accounts_receivable": 3000000,
+    "inventory": 7000000,
+    "current_assets": 18000000,
+    "ppe": 18000000,
+    "total_assets": 40000000,
+    "accounts_payable": 5000000,
+    "current_liabilities": 9000000,
+    "total_liabilities": 16000000,
+    "shareholders_equity": 24000000,
+    "operating_cash_flow": 10288000,
+    "investing_cash_flow": -3000000,
+    "financing_cash_flow": -1000000
+   },
+   "currency": "CNY"
+  },
+  {
+   "fiscal_period": "FY",
+   "period_end": "2023-12-31",
+   "values": {
+    "revenue": 28000000,
+    "cost_of_revenue": 18990000,
+    "operating_income": 3867000,
+    "income_before_tax": 3517000,
+    "income_tax": 816000,
+    "net_income": 2701000,
+    "cash_and_equivalents": 9000000,
+    "accounts_receivable": 6000000,
+    "inventory": 3000000,
+    "current_assets": 18000000,
+    "ppe": 20000000,
+    "total_assets": 41000000,
+    "accounts_payable": 4000000,
+    "current_liabilities": 8000000,
+    "total_liabilities": 16000000,
+    "shareholders_equity": 25000000,
+    "operating_cash_flow": 6701000,
+    "investing_cash_flow": -8000000,
+    "financing_cash_flow": -3000000
+   },
+   "currency": "CNY"
+  }
+ ],
+ "unit": "thousands",
+ "currency": "CNY",
+ "statements": [
+  "IS",
+  "BS",
+  "CF"
+ ],
+ "standard": "cas",
+ "lines_printed": 38,
+ "spec": {
+  "id": "heldout-cn-xlsx-1",
+  "split": "heldout",
+  "market": "CN",
+  "format": "xlsx",
+  "language": "zh",
+  "standard": "cas",
+  "unit": "thousands",
+  "currency": "CNY",
+  "period_type": "annual",
+  "layout": "classic",
+  "wording": "held",
+  "ends": [
+   "2023-12-31",
+   "2022-12-31"
+  ],
+  "bs_ends": [
+   "2023-12-31",
+   "2022-12-31"
+  ],
+  "term": 55,
+  "mag": 1000
+ }
+}

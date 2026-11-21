@@ -1,0 +1,86 @@
+{
+ "periods": [
+  {
+   "fiscal_period": "FY",
+   "period_end": "2022-12-31",
+   "values": {
+    "revenue": 2300000000,
+    "cost_of_revenue": 1509000000,
+    "gross_profit": 791000000,
+    "operating_income": 509000000,
+    "income_before_tax": 471000000,
+    "income_tax": 132000000,
+    "net_income": 339000000,
+    "cash_and_equivalents": 400000000,
+    "inventory": 300000000,
+    "current_assets": 1000000000,
+    "ppe": 1000000000,
+    "total_assets": 2200000000,
+    "current_liabilities": 1000000000,
+    "total_liabilities": 1900000000,
+    "shareholders_equity": 300000000,
+    "operating_cash_flow": 439000000,
+    "investing_cash_flow": -700000000,
+    "financing_cash_flow": -200000000
+   },
+   "currency": "EUR"
+  },
+  {
+   "fiscal_period": "FY",
+   "period_end": "2023-12-31",
+   "values": {
+    "revenue": 3800000000,
+    "cost_of_revenue": 2597000000,
+    "gross_profit": 1203000000,
+    "operating_income": 780000000,
+    "income_before_tax": 743000000,
+    "income_tax": 191000000,
+    "net_income": 552000000,
+    "cash_and_equivalents": 800000000,
+    "inventory": 600000000,
+    "current_assets": 1700000000,
+    "ppe": 900000000,
+    "total_assets": 2800000000,
+    "current_liabilities": 600000000,
+    "total_liabilities": 1200000000,
+    "shareholders_equity": 1600000000,
+    "operating_cash_flow": 752000000,
+    "investing_cash_flow": -500000000,
+    "financing_cash_flow": -500000000
+   },
+   "currency": "EUR"
+  }
+ ],
+ "unit": "millions",
+ "currency": "EUR",
+ "statements": [
+  "IS",
+  "BS",
+  "CF"
+ ],
+ "standard": "ifrs",
+ "lines_printed": 36,
+ "spec": {
+  "id": "validation-eu-xlsx-1",
+  "split": "validation",
+  "market": "EU",
+  "format": "xlsx",
+  "language": "de",
+  "standard": "ifrs",
+  "unit": "millions",
+  "currency": "EUR",
+  "period_type": "annual",
+  "layout": "classic",
+  "wording": "alt",
+  "ends": [
+   "2023-12-31",
+   "2022-12-31"
+  ],
+  "bs_ends": [
+   "2023-12-31",
+   "2022-12-31"
+  ],
+  "term": 55,
+  "mag": 100
+ }
+}

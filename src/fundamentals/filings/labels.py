@@ -59,6 +59,42 @@ NAMES: dict[str, list[str]] = {
 }
 
 
+# Names added from the development reports of the benchmark (benchmarks/fundamentals_importer, split "dev" and later "validation"): wording a report used that the first list lacked. The held-out split
+# is never used to add a name, so its result measures names the list was not written for.
+_EXTRA = {
+    "cash": ["現金及び預金"],
+    "income_tax": ["impôt sur le résultat", "impuesto sobre beneficios"],
+    "current_assets": ["total des actifs courants", "total activo corriente"],
+    "current_liabilities": ["total des passifs courants", "total pasivo corriente"],
+    "shareholders_equity": ["total des capitaux propres", "total patrimonio neto"],
+    "total_liabilities": ["summe schulden"],
+    "operating_cash_flow": ["cashflow aus betrieblicher tätigkeit"],
+    "cash_and_equivalents": ["efectivo y equivalentes de efectivo"],
+}
+_EXTRA_VALIDATION = {
+    "income_tax": ["taxation", "法人所得税費用", "稅項", "impôts sur les bénéfices", "steuern vom einkommen und ertrag", "impuesto sobre las ganancias"],
+    "accounts_receivable": ["営業債権及びその他の債権", "매출채권 및 기타채권", "clients et comptes rattachés"],
+    "accounts_payable": ["営業債務及びその他の債務", "매입채무 및 기타채무", "fournisseurs et comptes rattachés"],
+    "shareholders_equity": ["資本合計", "總權益", "summe eigenkapital", "patrimonio neto total"],
+    "income_before_tax": ["법인세비용차감전계속사업이익", "résultat avant impôts", "ergebnis vor ertragsteuern"],
+    "net_income": ["연결당기순이익", "résultat net de l'exercice", "beneficio del ejercicio"],
+    "current_assets": ["流動資產總額", "total actifs courants", "summe kurzfristige vermögenswerte", "activos corrientes totales"],
+    "operating_cash_flow": ["經營活動產生之現金淨額", "flux net de trésorerie généré par l'activité", "mittelzufluss aus laufender geschäftstätigkeit", "flujos de efectivo de actividades de operación"],
+    "financing_cash_flow": ["融資活動所用現金淨額", "flux net de trésorerie lié aux opérations de financement", "mittelabfluss aus finanzierungstätigkeit", "flujos de efectivo de actividades de financiación"],
+    "investing_cash_flow": ["flux net de trésorerie lié aux opérations d'investissement", "mittelabfluss aus investitionstätigkeit", "flujos de efectivo de actividades de inversión"],
+    "inventory": ["stocks et en-cours", "inventarios"],
+    "total_assets": ["total actif", "summe aktiva", "total activos"],
+    "current_liabilities": ["total passifs courants", "summe kurzfristige schulden", "pasivos corrientes totales"],
+    "total_liabilities": ["total passif hors capitaux propres", "summe verbindlichkeiten", "total pasivos"],
+    "cost_of_revenue": ["umsatzkosten"], "gross_profit": ["bruttoergebnis vom umsatz"], "operating_income": ["ergebnis der betrieblichen tätigkeit"],
+    "cash_and_equivalents": ["liquide mittel", "efectivo y otros activos líquidos equivalentes"],
+}
+for _code, _names in _EXTRA_VALIDATION.items():
+    _EXTRA.setdefault(_code, []).extend(_names)
+for _code, _names in _EXTRA.items():
+    NAMES.setdefault(_code, []).extend(_names)
+
+
 def normalise(text) -> str:
     """Lower case, accents kept, every run of punctuation and spaces folded to one space (the same rule as :func:`manual._norm`, so a name and a label meet)."""
     return re.sub(r"[^\w&]+", " ", str(text).lower().replace("_", " ").replace("&", " & ")).replace(" & ", "&").strip()

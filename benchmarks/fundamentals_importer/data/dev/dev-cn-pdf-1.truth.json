@@ -1,0 +1,88 @@
+{
+ "periods": [
+  {
+   "fiscal_period": "FY",
+   "period_end": "2022-12-31",
+   "values": {
+    "revenue": 34000000,
+    "cost_of_revenue": 19438000,
+    "operating_income": 6232000,
+    "income_before_tax": 5670000,
+    "income_tax": 1116000,
+    "net_income": 4554000,
+    "cash_and_equivalents": 6000000,
+    "accounts_receivable": 3000000,
+    "inventory": 7000000,
+    "current_assets": 16000000,
+    "ppe": 15000000,
+    "total_assets": 33000000,
+    "accounts_payable": 3000000,
+    "current_liabilities": 5000000,
+    "total_liabilities": 11000000,
+    "shareholders_equity": 22000000,
+    "operating_cash_flow": 7554000,
+    "investing_cash_flow": -7000000,
+    "financing_cash_flow": -5000000
+   },
+   "currency": "CNY"
+  },
+  {
+   "fiscal_period": "FY",
+   "period_end": "2023-12-31",
+   "values": {
+    "revenue": 32000000,
+    "cost_of_revenue": 17475000,
+    "operating_income": 8386000,
+    "income_before_tax": 7764000,
+    "income_tax": 1886000,
+    "net_income": 5878000,
+    "cash_and_equivalents": 8000000,
+    "accounts_receivable": 6000000,
+    "inventory": 4000000,
+    "current_assets": 18000000,
+    "ppe": 10000000,
+    "total_assets": 32000000,
+    "accounts_payable": 5000000,
+    "current_liabilities": 8000000,
+    "total_liabilities": 13000000,
+    "shareholders_equity": 19000000,
+    "operating_cash_flow": 9878000,
+    "investing_cash_flow": -5000000,
+    "financing_cash_flow": -2000000
+   },
+   "currency": "CNY"
+  }
+ ],
+ "unit": "thousands",
+ "currency": "CNY",
+ "statements": [
+  "IS",
+  "BS",
+  "CF"
+ ],
+ "standard": "cas",
+ "lines_printed": 38,
+ "spec": {
+  "id": "dev-cn-pdf-1",
+  "split": "dev",
+  "market": "CN",
+  "format": "pdf",
+  "language": "zh",
+  "standard": "cas",
+  "unit": "thousands",
+  "currency": "CNY",
+  "period_type": "annual",
+  "layout": "classic",
+  "wording": "dev",
+  "ends": [
+   "2023-12-31",
+   "2022-12-31"
+  ],
+  "bs_ends": [
+   "2023-12-31",
+   "2022-12-31"
+  ],
+  "term": 55,
+  "mag": 1000
+ }
+}

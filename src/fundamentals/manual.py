@@ -608,6 +608,9 @@ def check_entry(raw, security: dict | None = None, today: date | None = None) ->
             issues.append(_issue("error", "this period has no figures", label, None, column))
             continue
         observations, _ = canonical.normalise_values(PROVIDER, scaled)
+        for code, flag in (item.get("flags") or {}).items():                                      # a line read with low confidence and not yet confirmed: stored, but flagged, and research leaves it out
+            if code in observations and observations[code]["flag"] == "ok":
+                observations[code]["flag"] = flag
         for code, o in observations.items():
             if canonical.METRICS[code].nonnegative and o["value"] < 0:
                 issues.append(_issue("error", f"{canonical.METRICS[code].label} cannot be negative", label, code, column))

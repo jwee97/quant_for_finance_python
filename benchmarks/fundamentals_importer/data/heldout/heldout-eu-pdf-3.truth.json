@@ -1,0 +1,83 @@
+{
+ "periods": [
+  {
+   "fiscal_period": "FY",
+   "period_end": "2022-12-31",
+   "values": {
+    "revenue": 2500000,
+    "operating_income": 521000,
+    "income_before_tax": 497000,
+    "income_tax": 93000,
+    "net_income": 404000,
+    "cash_and_equivalents": 600000,
+    "inventory": 300000,
+    "current_assets": 1300000,
+    "total_assets": 2300000,
+    "current_liabilities": 500000,
+    "total_liabilities": 900000,
+    "shareholders_equity": 1400000,
+    "operating_cash_flow": 704000,
+    "investing_cash_flow": -300000,
+    "financing_cash_flow": -300000
+   },
+   "currency": "EUR"
+  },
+  {
+   "fiscal_period": "FY",
+   "period_end": "2023-12-31",
+   "values": {
+    "revenue": 1200000,
+    "operating_income": 221000,
+    "income_before_tax": 211000,
+    "income_tax": 42000,
+    "net_income": 169000,
+    "cash_and_equivalents": 500000,
+    "inventory": 400000,
+    "current_assets": 1200000,
+    "total_assets": 2500000,
+    "current_liabilities": 400000,
+    "total_liabilities": 900000,
+    "shareholders_equity": 1600000,
+    "operating_cash_flow": 469000,
+    "investing_cash_flow": -800000,
+    "financing_cash_flow": -300000
+   },
+   "currency": "EUR"
+  }
+ ],
+ "unit": "thousands",
+ "currency": "EUR",
+ "statements": [
+  "IS",
+  "BS",
+  "CF"
+ ],
+ "standard": "ifrs",
+ "lines_printed": 30,
+ "spec": {
+  "id": "heldout-eu-pdf-3",
+  "split": "heldout",
+  "market": "EU",
+  "format": "pdf",
+  "language": "es",
+  "standard": "ifrs",
+  "unit": "thousands",
+  "currency": "EUR",
+  "period_type": "annual",
+  "layout": "dated_header",
+  "wording": "held",
+  "ends": [
+   "2023-12-31",
+   "2022-12-31"
+  ],
+  "bs_ends": [
+   "2023-12-31",
+   "2022-12-31"
+  ],
+  "term": 55,
+  "mag": 100,
+  "traps": [
+   "segment"
+  ]
+ }
+}

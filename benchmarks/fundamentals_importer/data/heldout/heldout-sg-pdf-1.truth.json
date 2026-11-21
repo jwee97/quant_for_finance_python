@@ -1,0 +1,96 @@
+{
+ "periods": [
+  {
+   "fiscal_period": "FY",
+   "period_end": "2022-12-31",
+   "values": {
+    "revenue": 1600000,
+    "cost_of_revenue": 1076000,
+    "gross_profit": 524000,
+    "operating_income": 282000,
+    "income_before_tax": 263000,
+    "income_tax": 61000,
+    "net_income": 202000,
+    "eps_basic": 0.35,
+    "cash_and_equivalents": 900000,
+    "accounts_receivable": 400000,
+    "inventory": 300000,
+    "current_assets": 1600000,
+    "ppe": 900000,
+    "total_assets": 2700000,
+    "accounts_payable": 400000,
+    "current_liabilities": 800000,
+    "total_liabilities": 1400000,
+    "shareholders_equity": 1300000,
+    "operating_cash_flow": 402000,
+    "investing_cash_flow": -600000,
+    "financing_cash_flow": -400000
+   },
+   "currency": "SGD"
+  },
+  {
+   "fiscal_period": "FY",
+   "period_end": "2023-12-31",
+   "values": {
+    "revenue": 2300000,
+    "cost_of_revenue": 1342000,
+    "gross_profit": 958000,
+    "operating_income": 525000,
+    "income_before_tax": 498000,
+    "income_tax": 98000,
+    "net_income": 400000,
+    "eps_basic": 0.55,
+    "cash_and_equivalents": 900000,
+    "accounts_receivable": 300000,
+    "inventory": 200000,
+    "current_assets": 1400000,
+    "ppe": 1900000,
+    "total_assets": 3600000,
+    "accounts_payable": 400000,
+    "current_liabilities": 600000,
+    "total_liabilities": 1200000,
+    "shareholders_equity": 2400000,
+    "operating_cash_flow": 800000,
+    "investing_cash_flow": -600000,
+    "financing_cash_flow": -300000
+   },
+   "currency": "SGD"
+  }
+ ],
+ "unit": "thousands",
+ "currency": "SGD",
+ "statements": [
+  "IS",
+  "BS",
+  "CF"
+ ],
+ "standard": "sfrs-i",
+ "lines_printed": 42,
+ "spec": {
+  "id": "heldout-sg-pdf-1",
+  "split": "heldout",
+  "market": "SG",
+  "format": "pdf",
+  "language": "en",
+  "standard": "sfrs-i",
+  "unit": "thousands",
+  "currency": "SGD",
+  "period_type": "annual",
+  "layout": "parent_after",
+  "wording": "held",
+  "ends": [
+   "2023-12-31",
+   "2022-12-31"
+  ],
+  "bs_ends": [
+   "2023-12-31",
+   "2022-12-31"
+  ],
+  "term": 55,
+  "mag": 100,
+  "currency_label": "S$'000",
+  "traps": [
+   "parent"
+  ]
+ }
+}

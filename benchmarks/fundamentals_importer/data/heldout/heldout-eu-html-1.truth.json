@@ -1,0 +1,90 @@
+{
+ "periods": [
+  {
+   "fiscal_period": "FY",
+   "period_end": "2022-12-31",
+   "values": {
+    "revenue": 2400000,
+    "cost_of_revenue": 1668000,
+    "gross_profit": 732000,
+    "operating_income": 386000,
+    "income_before_tax": 354000,
+    "income_tax": 100000,
+    "net_income": 254000,
+    "cash_and_equivalents": 400000,
+    "accounts_receivable": 600000,
+    "inventory": 600000,
+    "current_assets": 1600000,
+    "ppe": 1700000,
+    "total_assets": 3700000,
+    "accounts_payable": 600000,
+    "current_liabilities": 800000,
+    "total_liabilities": 1600000,
+    "shareholders_equity": 2100000,
+    "operating_cash_flow": 554000,
+    "investing_cash_flow": -600000,
+    "financing_cash_flow": -400000
+   },
+   "currency": "EUR"
+  },
+  {
+   "fiscal_period": "FY",
+   "period_end": "2023-12-31",
+   "values": {
+    "revenue": 900000,
+    "cost_of_revenue": 589000,
+    "gross_profit": 311000,
+    "operating_income": 184000,
+    "income_before_tax": 167000,
+    "income_tax": 36000,
+    "net_income": 131000,
+    "cash_and_equivalents": 600000,
+    "accounts_receivable": 500000,
+    "inventory": 600000,
+    "current_assets": 1700000,
+    "ppe": 2000000,
+    "total_assets": 3800000,
+    "accounts_payable": 600000,
+    "current_liabilities": 700000,
+    "total_liabilities": 1500000,
+    "shareholders_equity": 2300000,
+    "operating_cash_flow": 431000,
+    "investing_cash_flow": -800000,
+    "financing_cash_flow": -100000
+   },
+   "currency": "EUR"
+  }
+ ],
+ "unit": "thousands",
+ "currency": "EUR",
+ "statements": [
+  "IS",
+  "BS",
+  "CF"
+ ],
+ "standard": "ifrs",
+ "lines_printed": 40,
+ "spec": {
+  "id": "heldout-eu-html-1",
+  "split": "heldout",
+  "market": "EU",
+  "format": "html",
+  "language": "fr",
+  "standard": "ifrs",
+  "unit": "thousands",
+  "currency": "EUR",
+  "period_type": "annual",
+  "layout": "classic",
+  "wording": "held",
+  "ends": [
+   "2023-12-31",
+   "2022-12-31"
+  ],
+  "bs_ends": [
+   "2023-12-31",
+   "2022-12-31"
+  ],
+  "term": 55,
+  "mag": 100
+ }
+}

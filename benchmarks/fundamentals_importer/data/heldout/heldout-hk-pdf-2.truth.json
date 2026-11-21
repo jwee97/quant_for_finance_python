@@ -1,0 +1,96 @@
+{
+ "periods": [
+  {
+   "fiscal_period": "FY",
+   "period_end": "2022-12-31",
+   "values": {
+    "revenue": 19000000,
+    "cost_of_revenue": 12395000,
+    "gross_profit": 6605000,
+    "operating_income": 2725000,
+    "income_before_tax": 2640000,
+    "income_tax": 630000,
+    "net_income": 2010000,
+    "eps_basic": 0.42,
+    "cash_and_equivalents": 3000000,
+    "accounts_receivable": 5000000,
+    "inventory": 6000000,
+    "current_assets": 14000000,
+    "ppe": 12000000,
+    "total_assets": 28000000,
+    "accounts_payable": 5000000,
+    "current_liabilities": 6000000,
+    "total_liabilities": 12000000,
+    "shareholders_equity": 16000000,
+    "operating_cash_flow": 3010000,
+    "investing_cash_flow": -5000000,
+    "financing_cash_flow": -1000000
+   },
+   "currency": "HKD"
+  },
+  {
+   "fiscal_period": "FY",
+   "period_end": "2023-12-31",
+   "values": {
+    "revenue": 22000000,
+    "cost_of_revenue": 9941000,
+    "gross_profit": 12059000,
+    "operating_income": 6897000,
+    "income_before_tax": 6640000,
+    "income_tax": 1376000,
+    "net_income": 5264000,
+    "eps_basic": 1.14,
+    "cash_and_equivalents": 9000000,
+    "accounts_receivable": 5000000,
+    "inventory": 7000000,
+    "current_assets": 21000000,
+    "ppe": 10000000,
+    "total_assets": 32000000,
+    "accounts_payable": 5000000,
+    "current_liabilities": 6000000,
+    "total_liabilities": 14000000,
+    "shareholders_equity": 18000000,
+    "operating_cash_flow": 9264000,
+    "investing_cash_flow": -7000000,
+    "financing_cash_flow": -3000000
+   },
+   "currency": "HKD"
+  }
+ ],
+ "unit": "thousands",
+ "currency": "HKD",
+ "statements": [
+  "IS",
+  "BS",
+  "CF"
+ ],
+ "standard": "ifrs",
+ "lines_printed": 42,
+ "spec": {
+  "id": "heldout-hk-pdf-2",
+  "split": "heldout",
+  "market": "HK",
+  "format": "pdf",
+  "language": "en",
+  "standard": "ifrs",
+  "unit": "thousands",
+  "currency": "HKD",
+  "period_type": "annual",
+  "layout": "parent_after",
+  "wording": "held",
+  "ends": [
+   "2023-12-31",
+   "2022-12-31"
+  ],
+  "bs_ends": [
+   "2023-12-31",
+   "2022-12-31"
+  ],
+  "term": 55,
+  "mag": 1000,
+  "currency_label": "HK$'000",
+  "traps": [
+   "parent"
+  ]
+ }
+}

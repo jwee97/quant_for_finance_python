@@ -5,6 +5,7 @@ Flags (``fundamental_observations.quality_flag``), most serious first. Research 
 ``identity_error``       assets differ from liabilities plus equity by more than a few per cent in that period (a mapping error, a missing line, or a company that consolidates in an unusual way)
 ``negative_value``       a quantity that cannot be negative (revenue, assets, debt) is negative
 ``suspicious_jump``      a level more than eight times above or below the median of the periods around it (the signature of a unit error: thousands against units)
+``unverified``            read by the importer with low confidence and not yet confirmed by a person: kept in the database, left out of research until it is confirmed
 ``provider_disagreement``  two providers report the same figure for the same period and differ by more than the tolerance
 ``restated``             a later vintage replaced the figure (set when the restatement is stored)
 ``derived``              computed by the application from other figures of the same period (gross profit = revenue - cost of revenue)
@@ -22,7 +23,7 @@ import pandas as pd
 from . import canonical
 from .store import FundamentalsStore
 
-SEVERE = ("identity_error", "negative_value", "suspicious_jump", "provider_disagreement")
+SEVERE = ("identity_error", "negative_value", "suspicious_jump", "provider_disagreement", "unverified")
 INFORMATIVE = ("restated", "derived", "estimated")
 DEFAULT_EXCLUDE = SEVERE
 IDENTITY_TOLERANCE = 0.03
@@ -119,6 +120,8 @@ def check_security(store: FundamentalsStore, security_id: int) -> dict:
 
     # the flag each observation deserves: a serious finding, else the informative one it was stored with (so re-running the check can clear a flag that no longer applies)
     def natural(row) -> str:
+        if row.quality_flag == "unverified":                                    # only a person's confirmation clears it, never a re-run of the checks
+            return "unverified"
         if row.is_restated:
             return "restated"
         if str(row.source_metric).startswith("derived:"):

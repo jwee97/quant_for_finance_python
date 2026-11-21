@@ -15,11 +15,11 @@ from .. import manual
 from ..errors import FundamentalsError
 
 UNIT_WORDS = (("billions", r"in\s+billions|\$\s*billions?\b|\(\s*billions|十億円|십억원|十亿|单位[:：]?\s*亿"),
-              ("millions", r"in\s+millions|\$\s*millions?\b|rmb\s*millions?\b|\(\s*millions|\bmillions of\b|['’]\s*million\b|百万円|百萬円|백만원|百万元|百萬元|百万|en millones|in millionen|em milhões|milhões de"),
-              ("thousands", r"in\s+thousands|\$\s*thousands?\b|\(\s*thousands|\bthousands of\b|000s|['’]\s*000\b|\(\s*000\s*\)|千円|천원|千元|人民幣千元|港幣千元|单位[:：]?\s*千|en miles|in tausend|em milhares|milhares de"))
+              ("millions", r"in\s+millions|\$\s*millions?\b|rmb\s*millions?\b|\(\s*millions|\bmillions of\b|['’]\s*million\b|百万円|百萬円|백만원|百万元|百萬元|百万|en millones|en millions|in millionen|in mio|mio\\.|em milhões|milhões de"),
+              ("thousands", r"in\s+thousands|\$\s*thousands?\b|\(\s*thousands|\bthousands of\b|000s|['’]\s*000\b|\(\s*000\s*\)|千円|천원|千元|千[港美新台日欧]元|以千|人民幣千元|港幣千元|单位[:：]?\s*千|en miles|en milliers|in tausend|in tsd|em milhares|milhares de|tsd\\.|miles de"))
 
-CURRENCY_WORDS = (("HKD", r"hk\s*\$|hkd|港元|港幣|港币"), ("CNY", r"rmb|cny|renminbi|人民幣|人民币"), ("SGD", r"(?<![a-z])s\s*\$|sgd|singapore\s+dollar|新加坡元"), ("USD", r"us\s*\$|usd|u\.s\. dollar|美元|美金"),
-                  ("JPY", r"jpy|円|japanese yen"), ("KRW", r"krw|원|korean won"), ("EUR", r"eur\b|€|euro\b"), ("GBP", r"gbp|£|pound sterling"), ("CAD", r"cad\b|(?<![a-z])c\$"), ("BRL", r"brl|r\$|reais"))
+CURRENCY_WORDS = (("HKD", r"hk\s*\$|hkd|港元|港幣|港币"), ("CNY", r"rmb|cny|renminbi|人民幣|人民币|(?<![港美新台日欧])元"), ("SGD", r"(?<![a-z])s\s*\$|sgd|singapore\s+dollar|新加坡元"), ("USD", r"us\s*\$|usd|u\.s\. dollar|美元|美金|(?<![a-z])\$"),
+                  ("JPY", r"jpy|円|japanese yen"), ("KRW", r"krw|원|korean won"), ("EUR", r"eur\b|€|euros?\b"), ("GBP", r"gbp|£|pound sterling"), ("CAD", r"cad\b|(?<![a-z])c\$"), ("BRL", r"brl|r\$|reais"))
 
 
 def detect_currency(text: str) -> str | None:

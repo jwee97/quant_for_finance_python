@@ -1,0 +1,86 @@
+{
+ "periods": [
+  {
+   "fiscal_period": "FY",
+   "period_end": "2022-12-31",
+   "values": {
+    "revenue": 34000000,
+    "cost_of_revenue": 22698000,
+    "gross_profit": 11302000,
+    "operating_income": 5833000,
+    "income_before_tax": 5555000,
+    "income_tax": 1227000,
+    "net_income": 4328000,
+    "cash_and_equivalents": 3000000,
+    "inventory": 3000000,
+    "current_assets": 10000000,
+    "ppe": 19000000,
+    "total_assets": 30000000,
+    "current_liabilities": 8000000,
+    "total_liabilities": 11000000,
+    "shareholders_equity": 19000000,
+    "operating_cash_flow": 7328000,
+    "investing_cash_flow": -5000000,
+    "financing_cash_flow": -5000000
+   },
+   "currency": "HKD"
+  },
+  {
+   "fiscal_period": "FY",
+   "period_end": "2023-12-31",
+   "values": {
+    "revenue": 15000000,
+    "cost_of_revenue": 7012000,
+    "gross_profit": 7988000,
+    "operating_income": 4553000,
+    "income_before_tax": 4352000,
+    "income_tax": 1199000,
+    "net_income": 3153000,
+    "cash_and_equivalents": 8000000,
+    "inventory": 6000000,
+    "current_assets": 16000000,
+    "ppe": 19000000,
+    "total_assets": 36000000,
+    "current_liabilities": 5000000,
+    "total_liabilities": 13000000,
+    "shareholders_equity": 23000000,
+    "operating_cash_flow": 5153000,
+    "investing_cash_flow": -8000000,
+    "financing_cash_flow": -5000000
+   },
+   "currency": "HKD"
+  }
+ ],
+ "unit": "thousands",
+ "currency": "HKD",
+ "statements": [
+  "IS",
+  "BS",
+  "CF"
+ ],
+ "standard": "ifrs",
+ "lines_printed": 36,
+ "spec": {
+  "id": "validation-hk-pdf-1",
+  "split": "validation",
+  "market": "HK",
+  "format": "pdf",
+  "language": "zh-hk",
+  "standard": "ifrs",
+  "unit": "thousands",
+  "currency": "HKD",
+  "period_type": "annual",
+  "layout": "classic",
+  "wording": "alt",
+  "ends": [
+   "2023-12-31",
+   "2022-12-31"
+  ],
+  "bs_ends": [
+   "2023-12-31",
+   "2022-12-31"
+  ],
+  "term": 55,
+  "mag": 1000
+ }
+}

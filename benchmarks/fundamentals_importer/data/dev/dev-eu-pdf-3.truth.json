@@ -1,0 +1,80 @@
+{
+ "periods": [
+  {
+   "fiscal_period": "FY",
+   "period_end": "2022-12-31",
+   "values": {
+    "revenue": 1600000,
+    "operating_income": 370000,
+    "income_before_tax": 340000,
+    "income_tax": 97000,
+    "net_income": 243000,
+    "cash_and_equivalents": 600000,
+    "inventory": 600000,
+    "current_assets": 1600000,
+    "total_assets": 2900000,
+    "current_liabilities": 500000,
+    "total_liabilities": 1300000,
+    "shareholders_equity": 1600000,
+    "operating_cash_flow": 443000,
+    "investing_cash_flow": -400000,
+    "financing_cash_flow": -200000
+   },
+   "currency": "EUR"
+  },
+  {
+   "fiscal_period": "FY",
+   "period_end": "2023-12-31",
+   "values": {
+    "revenue": 1400000,
+    "operating_income": 194000,
+    "income_before_tax": 190000,
+    "income_tax": 48000,
+    "net_income": 142000,
+    "cash_and_equivalents": 400000,
+    "inventory": 300000,
+    "current_assets": 1000000,
+    "total_assets": 2100000,
+    "current_liabilities": 600000,
+    "total_liabilities": 1100000,
+    "shareholders_equity": 1000000,
+    "operating_cash_flow": 342000,
+    "investing_cash_flow": -500000,
+    "financing_cash_flow": -200000
+   },
+   "currency": "EUR"
+  }
+ ],
+ "unit": "thousands",
+ "currency": "EUR",
+ "statements": [
+  "IS",
+  "BS",
+  "CF"
+ ],
+ "standard": "ifrs",
+ "lines_printed": 30,
+ "spec": {
+  "id": "dev-eu-pdf-3",
+  "split": "dev",
+  "market": "EU",
+  "format": "pdf",
+  "language": "es",
+  "standard": "ifrs",
+  "unit": "thousands",
+  "currency": "EUR",
+  "period_type": "annual",
+  "layout": "classic",
+  "wording": "dev",
+  "ends": [
+   "2023-12-31",
+   "2022-12-31"
+  ],
+  "bs_ends": [
+   "2023-12-31",
+   "2022-12-31"
+  ],
+  "term": 55,
+  "mag": 100
+ }
+}

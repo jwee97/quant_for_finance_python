@@ -1,0 +1,93 @@
+{
+ "periods": [
+  {
+   "fiscal_period": "H1",
+   "period_end": "2023-06-30",
+   "values": {
+    "revenue": 21000000,
+    "cost_of_revenue": 10759000,
+    "gross_profit": 10241000,
+    "operating_income": 4492000,
+    "income_before_tax": 4290000,
+    "income_tax": 811000,
+    "net_income": 3479000,
+    "operating_cash_flow": 5479000,
+    "investing_cash_flow": -2000000,
+    "financing_cash_flow": -4000000
+   },
+   "currency": "HKD"
+  },
+  {
+   "fiscal_period": "FY",
+   "period_end": "2023-12-31",
+   "values": {
+    "cash_and_equivalents": 5000000,
+    "inventory": 5000000,
+    "current_assets": 16000000,
+    "ppe": 8000000,
+    "total_assets": 26000000,
+    "current_liabilities": 9000000,
+    "total_liabilities": 18000000,
+    "shareholders_equity": 8000000
+   },
+   "currency": "HKD"
+  },
+  {
+   "fiscal_period": "H1",
+   "period_end": "2024-06-30",
+   "values": {
+    "revenue": 27000000,
+    "cost_of_revenue": 16490000,
+    "gross_profit": 10510000,
+    "operating_income": 4527000,
+    "income_before_tax": 4179000,
+    "income_tax": 1071000,
+    "net_income": 3108000,
+    "cash_and_equivalents": 7000000,
+    "inventory": 7000000,
+    "current_assets": 20000000,
+    "ppe": 19000000,
+    "total_assets": 41000000,
+    "current_liabilities": 3000000,
+    "total_liabilities": 12000000,
+    "shareholders_equity": 29000000,
+    "operating_cash_flow": 6108000,
+    "investing_cash_flow": -7000000,
+    "financing_cash_flow": -3000000
+   },
+   "currency": "HKD"
+  }
+ ],
+ "unit": "thousands",
+ "currency": "HKD",
+ "statements": [
+  "IS",
+  "BS",
+  "CF"
+ ],
+ "standard": "ifrs",
+ "lines_printed": 36,
+ "spec": {
+  "id": "heldout-hk-pdf-1",
+  "split": "heldout",
+  "market": "HK",
+  "format": "pdf",
+  "language": "zh-hk",
+  "standard": "ifrs",
+  "unit": "thousands",
+  "currency": "HKD",
+  "period_type": "half",
+  "layout": "notes",
+  "wording": "held",
+  "ends": [
+   "2024-06-30",
+   "2023-06-30"
+  ],
+  "bs_ends": [
+   "2024-06-30",
+   "2023-12-31"
+  ],
+  "term": 55,
+  "mag": 1000
+ }
+}

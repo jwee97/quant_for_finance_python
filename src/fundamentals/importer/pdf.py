@@ -110,6 +110,20 @@ def _split(row: list[tuple]) -> tuple[str, list[float | None]]:
     return " ".join(tokens[:first]), figures
 
 
+def _day_month(text: str) -> tuple[int, int] | None:
+    """The day and month a heading names without a year: "ended 31 March", "ended March 31", "止6月30日", "6월 30일"."""
+    m = re.search(r"(?:ended|ending|as\s+at|as\s+of|au|zum|al|a)\s+(?:the\s+)?(\d{1,2})(?:st|nd|rd|th)?\s+([A-Za-zéûôç]{3,})\b(?!\s+\d{4})", text, re.I)
+    if m and m.group(2).lower()[:3] in MONTH_ABBR:
+        return MONTH_ABBR[m.group(2).lower()[:3]], int(m.group(1))
+    m = re.search(r"(?:ended|ending|as\s+at|as\s+of)\s+([A-Za-z]{3,})\.?\s+(\d{1,2})\b(?!\s*,?\s*\d{4})", text, re.I)
+    if m and m.group(1).lower()[:3] in MONTH_ABBR:
+        return MONTH_ABBR[m.group(1).lower()[:3]], int(m.group(2))
+    m = re.search(r"(\d{1,2})\s*[月월]\s*(\d{1,2})\s*[日일]", text)
+    if m and not re.search(r"\d{4}\s*[年년]\s*\d{1,2}\s*[月월]", text):
+        return int(m.group(1)), int(m.group(2))
+    return None
+
+
 def _headings(text: str, year_end: tuple[int, int] | None, ctx: dict | None = None) -> list[dict]:
     """The period columns named in a heading row: full dates ("December 31, 2023"), or bare years (which borrow the month and day of the fiscal year end the report names)."""
     found = []
@@ -122,7 +136,7 @@ def _headings(text: str, year_end: tuple[int, int] | None, ctx: dict | None = No
     for m in DATE_NUM.finditer(text):
         found.append((m.start(), int(m.group(1)), int(m.group(2)), int(m.group(3))))
     ctx = ctx or {}
-    terms = [int(t) for t in TERM.findall(text)]
+    terms = list(dict.fromkeys(int(t) for t in TERM.findall(text)))                                  # "제 55 기 … 제 55(당) 기  제 54(전) 기": each term once, in order
     if len(terms) >= 2 and len(found) < 2 and ctx.get("terms"):                                       # "제 55(당) 기  제 54(전) 기": the terms name the columns, the dates come from the lines that introduce them
         known = ctx["terms"]
         top = max(known)
@@ -151,37 +165,45 @@ def _headings(text: str, year_end: tuple[int, int] | None, ctx: dict | None = No
             return out + [{"period_end": date(y, first.month, first.day).isoformat(), "guessed": False} for y in rest]
     years = [int(y) for y in YEAR.findall(text)]
     if len(years) >= 2 and len(set(years)) == len(years):
-        month, day = year_end or (12, 31)
-        return [{"period_end": date(y, month, day).isoformat(), "guessed": year_end is None} for y in years]
+        named = _day_month(text)                                                                     # "Three months ended 31 March" above "2024  2023": the day and month are named once
+        month, day = named or year_end or (12, 31)
+        return [{"period_end": date(y, month, min(day, 28 if month == 2 else 30 if month in (4, 6, 9, 11) else 31)).isoformat(), "guessed": named is None and year_end is None} for y in years]
     return out if out else []
 
 
 def _context(pages) -> dict:
     """What the report says outside its column headings: which date each numbered term ends on ("제 55 기: 2023.12.31 현재"), and the latest date it names."""
-    terms: dict[int, date] = {}
-    latest = None
+    lines = []
     for words in pages[:40]:
         for row in _rows(words):
-            line = " ".join(w[3] for w in row)
-            dates = []
-            for rx, order in ((DATE_NUM, (1, 2, 3)), (DATE_CJK, (1, 2, 3))):
-                for m in rx.finditer(line):
-                    try:
-                        dates.append((m.start(), date(int(m.group(order[0])), int(m.group(order[1])), int(m.group(order[2])))))
-                    except ValueError:
-                        pass
-            for m in DATE_DMY.finditer(line):
+            lines.append(" ".join(w[3] for w in row))
+    return context_from_lines(lines)
+
+
+def context_from_lines(lines) -> dict:
+    terms: dict[int, date] = {}
+    latest = None
+    for line in lines:
+        dates = []
+        for rx in (DATE_NUM, DATE_CJK):
+            for m in rx.finditer(line):
                 try:
-                    dates.append((m.start(), date(int(m.group(3)), MONTH_ABBR[m.group(2)[:3].lower()], int(m.group(1)))))
+                    dates.append((m.start(), date(int(m.group(1)), int(m.group(2)), int(m.group(3)))))
                 except ValueError:
                     pass
-            if not dates:
-                continue
-            dates.sort()
-            latest = max([latest] + [d for _, d in dates]) if latest else max(d for _, d in dates)
-            term = TERM.search(line)
-            if term and len(TERM.findall(line)) == 1:
-                terms.setdefault(int(term.group(1)), dates[-1][1])
+        for m in DATE_DMY.finditer(line):
+            try:
+                dates.append((m.start(), date(int(m.group(3)), MONTH_ABBR[m.group(2)[:3].lower()], int(m.group(1)))))
+            except ValueError:
+                pass
+        if not dates:
+            continue
+        dates.sort()
+        top = max(d for _, d in dates)
+        latest = top if latest is None else max(latest, top)
+        term = TERM.search(line)
+        if term and len(TERM.findall(line)) == 1:
+            terms.setdefault(int(term.group(1)), dates[-1][1])
     return {"terms": terms, "latest": latest}
 
 

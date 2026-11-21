@@ -1,0 +1,97 @@
+{
+ "periods": [
+  {
+   "fiscal_period": "H1",
+   "period_end": "2023-06-30",
+   "values": {
+    "revenue": 26000000000,
+    "cost_of_revenue": 16897000000,
+    "gross_profit": 9103000000,
+    "operating_income": 4855000000,
+    "income_before_tax": 4748000000,
+    "income_tax": 1068000000,
+    "net_income": 3680000000,
+    "operating_cash_flow": 4680000000,
+    "investing_cash_flow": -8000000000,
+    "financing_cash_flow": -5000000000
+   },
+   "currency": "KRW"
+  },
+  {
+   "fiscal_period": "FY",
+   "period_end": "2023-12-31",
+   "values": {
+    "cash_and_equivalents": 8000000000,
+    "accounts_receivable": 6000000000,
+    "inventory": 6000000000,
+    "current_assets": 20000000000,
+    "ppe": 11000000000,
+    "total_assets": 35000000000,
+    "accounts_payable": 5000000000,
+    "current_liabilities": 7000000000,
+    "total_liabilities": 15000000000,
+    "shareholders_equity": 20000000000
+   },
+   "currency": "KRW"
+  },
+  {
+   "fiscal_period": "H1",
+   "period_end": "2024-06-30",
+   "values": {
+    "revenue": 31000000000,
+    "cost_of_revenue": 20179000000,
+    "gross_profit": 10821000000,
+    "operating_income": 6362000000,
+    "income_before_tax": 6024000000,
+    "income_tax": 1640000000,
+    "net_income": 4384000000,
+    "cash_and_equivalents": 3000000000,
+    "accounts_receivable": 4000000000,
+    "inventory": 7000000000,
+    "current_assets": 14000000000,
+    "ppe": 11000000000,
+    "total_assets": 26000000000,
+    "accounts_payable": 2000000000,
+    "current_liabilities": 6000000000,
+    "total_liabilities": 11000000000,
+    "shareholders_equity": 15000000000,
+    "operating_cash_flow": 5384000000,
+    "investing_cash_flow": -7000000000,
+    "financing_cash_flow": -1000000000
+   },
+   "currency": "KRW"
+  }
+ ],
+ "unit": "millions",
+ "currency": "KRW",
+ "statements": [
+  "IS",
+  "BS",
+  "CF"
+ ],
+ "standard": "k-ifrs",
+ "lines_printed": 40,
+ "spec": {
+  "id": "heldout-kr-pdf-2",
+  "split": "heldout",
+  "market": "KR",
+  "format": "pdf",
+  "language": "ko",
+  "standard": "k-ifrs",
+  "unit": "millions",
+  "currency": "KRW",
+  "period_type": "half",
+  "layout": "classic",
+  "wording": "held",
+  "ends": [
+   "2024-06-30",
+   "2023-06-30"
+  ],
+  "bs_ends": [
+   "2024-06-30",
+   "2023-12-31"
+  ],
+  "term": 55,
+  "mag": 1000
+ }
+}

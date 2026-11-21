@@ -1,0 +1,94 @@
+{
+ "periods": [
+  {
+   "fiscal_period": "FY",
+   "period_end": "2022-12-31",
+   "values": {
+    "revenue": 3100000000,
+    "cost_of_revenue": 1800000000,
+    "gross_profit": 1300000000,
+    "operating_income": 665000000,
+    "income_before_tax": 603000000,
+    "income_tax": 108000000,
+    "net_income": 495000000,
+    "eps_basic": 1.03,
+    "cash_and_equivalents": 300000000,
+    "accounts_receivable": 200000000,
+    "inventory": 600000000,
+    "current_assets": 1100000000,
+    "ppe": 1000000000,
+    "total_assets": 2300000000,
+    "accounts_payable": 200000000,
+    "current_liabilities": 400000000,
+    "total_liabilities": 1100000000,
+    "shareholders_equity": 1200000000,
+    "operating_cash_flow": 695000000,
+    "investing_cash_flow": -500000000,
+    "financing_cash_flow": -300000000
+   },
+   "currency": "USD"
+  },
+  {
+   "fiscal_period": "FY",
+   "period_end": "2023-12-31",
+   "values": {
+    "revenue": 1700000000,
+    "cost_of_revenue": 1182000000,
+    "gross_profit": 518000000,
+    "operating_income": 282000000,
+    "income_before_tax": 273000000,
+    "income_tax": 69000000,
+    "net_income": 204000000,
+    "eps_basic": 0.25,
+    "cash_and_equivalents": 300000000,
+    "accounts_receivable": 500000000,
+    "inventory": 700000000,
+    "current_assets": 1500000000,
+    "ppe": 1500000000,
+    "total_assets": 3200000000,
+    "accounts_payable": 500000000,
+    "current_liabilities": 900000000,
+    "total_liabilities": 1500000000,
+    "shareholders_equity": 1700000000,
+    "operating_cash_flow": 504000000,
+    "investing_cash_flow": -400000000,
+    "financing_cash_flow": -200000000
+   },
+   "currency": "USD"
+  }
+ ],
+ "unit": "millions",
+ "currency": "USD",
+ "statements": [
+  "IS",
+  "BS",
+  "CF"
+ ],
+ "standard": "us-gaap",
+ "lines_printed": 42,
+ "spec": {
+  "id": "heldout-us-pdf-3",
+  "split": "heldout",
+  "market": "US",
+  "format": "pdf",
+  "language": "en",
+  "standard": "us-gaap",
+  "unit": "millions",
+  "currency": "USD",
+  "period_type": "annual",
+  "layout": "classic",
+  "wording": "held",
+  "ends": [
+   "2023-12-31",
+   "2022-12-31"
+  ],
+  "bs_ends": [
+   "2023-12-31",
+   "2022-12-31"
+  ],
+  "term": 55,
+  "mag": 100,
+  "scanned": true,
+  "currency_label": "$"
+ }
+}

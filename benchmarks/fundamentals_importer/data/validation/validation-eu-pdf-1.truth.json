@@ -1,0 +1,90 @@
+{
+ "periods": [
+  {
+   "fiscal_period": "FY",
+   "period_end": "2022-12-31",
+   "values": {
+    "revenue": 800000000,
+    "cost_of_revenue": 536000000,
+    "gross_profit": 264000000,
+    "operating_income": 117000000,
+    "income_before_tax": 114000000,
+    "income_tax": 22000000,
+    "net_income": 92000000,
+    "cash_and_equivalents": 500000000,
+    "accounts_receivable": 300000000,
+    "inventory": 400000000,
+    "current_assets": 1200000000,
+    "ppe": 1500000000,
+    "total_assets": 2800000000,
+    "accounts_payable": 500000000,
+    "current_liabilities": 800000000,
+    "total_liabilities": 1500000000,
+    "shareholders_equity": 1300000000,
+    "operating_cash_flow": 392000000,
+    "investing_cash_flow": -200000000,
+    "financing_cash_flow": -200000000
+   },
+   "currency": "EUR"
+  },
+  {
+   "fiscal_period": "FY",
+   "period_end": "2023-12-31",
+   "values": {
+    "revenue": 1500000000,
+    "cost_of_revenue": 1048000000,
+    "gross_profit": 452000000,
+    "operating_income": 258000000,
+    "income_before_tax": 244000000,
+    "income_tax": 66000000,
+    "net_income": 178000000,
+    "cash_and_equivalents": 500000000,
+    "accounts_receivable": 600000000,
+    "inventory": 300000000,
+    "current_assets": 1400000000,
+    "ppe": 1700000000,
+    "total_assets": 3200000000,
+    "accounts_payable": 200000000,
+    "current_liabilities": 400000000,
+    "total_liabilities": 800000000,
+    "shareholders_equity": 2400000000,
+    "operating_cash_flow": 478000000,
+    "investing_cash_flow": -400000000,
+    "financing_cash_flow": -100000000
+   },
+   "currency": "EUR"
+  }
+ ],
+ "unit": "millions",
+ "currency": "EUR",
+ "statements": [
+  "IS",
+  "BS",
+  "CF"
+ ],
+ "standard": "ifrs",
+ "lines_printed": 40,
+ "spec": {
+  "id": "validation-eu-pdf-1",
+  "split": "validation",
+  "market": "EU",
+  "format": "pdf",
+  "language": "fr",
+  "standard": "ifrs",
+  "unit": "millions",
+  "currency": "EUR",
+  "period_type": "annual",
+  "layout": "classic",
+  "wording": "alt",
+  "ends": [
+   "2023-12-31",
+   "2022-12-31"
+  ],
+  "bs_ends": [
+   "2023-12-31",
+   "2022-12-31"
+  ],
+  "term": 55,
+  "mag": 100
+ }
+}

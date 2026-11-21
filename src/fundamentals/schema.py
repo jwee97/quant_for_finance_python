@@ -144,6 +144,11 @@ CREATE TABLE IF NOT EXISTS observation_provenance (
     id INTEGER PRIMARY KEY, financial_period_id INTEGER NOT NULL REFERENCES financial_periods(id) ON DELETE CASCADE, metric_code TEXT NOT NULL, source_kind TEXT NOT NULL, source_ref TEXT,
     content_hash TEXT NOT NULL DEFAULT '', accession TEXT, page INTEGER, taxonomy_tag TEXT, reported_value REAL, reported_unit TEXT, extraction_method TEXT, extraction_status TEXT NOT NULL DEFAULT 'approved',
     edited INTEGER NOT NULL DEFAULT 0, import_item_id INTEGER, created_at TEXT NOT NULL, UNIQUE (financial_period_id, metric_code, content_hash));
+-- Every extraction of an item, by version: a historical filing can be read again with a newer extractor or mapping and the earlier readings stay.
+CREATE TABLE IF NOT EXISTS import_extractions (
+    id INTEGER PRIMARY KEY, item_id INTEGER NOT NULL REFERENCES import_items(item_id) ON DELETE CASCADE, extractor_version TEXT NOT NULL, mapping_version TEXT, taxonomy_version TEXT, standard TEXT,
+    method TEXT, lines INTEGER, mean_confidence REAL, draft TEXT NOT NULL, created_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS ix_extractions_item ON import_extractions(item_id, id);
 CREATE INDEX IF NOT EXISTS ix_prov_period ON observation_provenance(financial_period_id, metric_code);
 CREATE INDEX IF NOT EXISTS ix_prov_accession ON observation_provenance(accession);
 """
@@ -191,9 +196,22 @@ def connect(path: str | Path, timeout: float = 30.0) -> sqlite3.Connection:
     return conn
 
 
+PROVENANCE_COLUMNS = {"confidence": "REAL", "statement": "TEXT", "scope": "TEXT", "extractor_version": "TEXT", "mapping_version": "TEXT", "original_currency": "TEXT", "bbox": "TEXT", "verified": "INTEGER NOT NULL DEFAULT 0"}
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Bring an older database up to date without losing anything: columns are added, never removed or changed (a database made before the layout engine has none of the provenance columns below)."""
+    have = {r[1] for r in conn.execute("PRAGMA table_info(observation_provenance)").fetchall()}
+    for name, ddl in PROVENANCE_COLUMNS.items():
+        if name not in have:
+            conn.execute(f"ALTER TABLE observation_provenance ADD COLUMN {name} {ddl}")
+    conn.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('importer_schema', '2')")           # additive only: the schema version is unchanged, so an older build still opens the file
+
+
 def initialise(conn: sqlite3.Connection) -> None:
     """Create the tables (idempotent), seed the market list and record the schema version."""
     conn.executescript(DDL)
+    _migrate(conn)
     conn.executemany("INSERT OR IGNORE INTO markets (code, name, country, region, currency, timezone) VALUES (?, ?, ?, ?, ?, ?)", MARKETS)
     conn.execute("INSERT OR IGNORE INTO meta (key, value) VALUES ('schema_version', ?)", (str(SCHEMA_VERSION),))
     conn.execute("INSERT OR IGNORE INTO meta (key, value) VALUES ('created_at', ?)", (now_iso(),))

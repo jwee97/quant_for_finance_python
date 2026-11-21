@@ -26,7 +26,10 @@ def missing_message() -> str:
     return "this PDF has no text layer (it looks scanned) and no OCR engine is installed: install PaddleOCR (pip install paddleocr paddlepaddle) or Surya (pip install surya-ocr), or use the company's XBRL or an Excel/CSV export"
 
 
-def render_pages(data: bytes, dpi: int = 200, limit: int = 60) -> list[bytes]:
+RENDER_DPI = 200
+
+
+def render_pages(data: bytes, dpi: int = RENDER_DPI, limit: int = 60) -> list[bytes]:
     try:
         import pymupdf as fitz
     except ImportError:
