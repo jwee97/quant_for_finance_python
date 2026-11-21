@@ -27,9 +27,11 @@ NOT_PRIMARY = r"segment|geographical|geographic|notes?\s+to|note\s+\d|reconcilia
 SUMMARY_TITLES = r"five[-\s]year|financial\s+highlights|highlights|selected\s+financial|summary|quarterly\s+results|(?:first|second|third|fourth)\s+quarter|quarter\s+\d{4}\s+results|results\s+for\s+the\s+quarter|forecast|outlook|五年|財務ハイライト|要約|하이라이트"
 SCOPE_PARENT = r"non-?consolidated|unconsolidated|stand-?alone|\bparent\s+(?:company|only)\b|company\s+only|separate\s+(?:financial|statement)|company\s+statement|\bthe\s+company\b\s*(?:statement|balance)|個別|単体|별도|母公司|单独|nur\s+ag|individuel|individual\b|solo\b"
 SCOPE_CONSOL = r"(?<!non-)(?<!non\s)(?<!un)consolidated|group\b|連結|연결|合并|合併|consolidé|consolidado|konzern"
-PRIMARY_LINES = {"BS": {"total_assets", "total_liabilities", "shareholders_equity", "current_assets", "current_liabilities", "cash", "cash_and_equivalents", "inventory", "accounts_receivable", "ppe", "retained_earnings"},
-                 "IS": {"revenue", "net_income", "operating_income", "gross_profit", "cost_of_revenue", "income_before_tax", "eps_basic", "eps_diluted", "income_tax"},
-                 "CF": {"operating_cash_flow", "investing_cash_flow", "financing_cash_flow", "capital_expenditure", "dividends_paid", "depreciation_amortization"}}
+PRIMARY_LINES = {"BS": {"total_assets", "total_liabilities", "shareholders_equity", "current_assets", "current_liabilities", "cash", "cash_and_equivalents", "inventory", "accounts_receivable", "ppe", "retained_earnings",
+                        "long_term_debt", "short_term_debt", "total_debt", "goodwill", "intangible_assets", "accounts_payable", "preferred_equity", "temporary_equity", "minority_interest"},
+                 "IS": {"revenue", "net_income", "operating_income", "gross_profit", "cost_of_revenue", "income_before_tax", "eps_basic", "eps_diluted", "income_tax", "research_and_development", "selling_general_admin",
+                        "interest_expense", "ebit", "ebitda", "net_income_attributable", "weighted_avg_shares_diluted"},
+                 "CF": {"operating_cash_flow", "investing_cash_flow", "financing_cash_flow", "capital_expenditure", "dividends_paid", "depreciation_amortization", "stock_based_compensation", "acquisitions", "share_repurchases"}}
 STATEMENT_NAME = {"BS": "balance sheet", "IS": "income statement", "CF": "cash flow statement"}
 
 

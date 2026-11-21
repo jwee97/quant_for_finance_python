@@ -24,7 +24,7 @@ OCR was *simulated* (the true words with random digit errors): the accuracy of a
 | dev | 14 | 100% | 100% | 100% | 0 | 0.00% | 100% | 100% | 100% | 100% |
 | validation | 8 | 100% | 100% | 100% | 0 | 0.00% | 100% | 100% | 100% | 100% |
 | held-out, first run (unseen) | 24 | 100% | 67% | 69% | 11 | 1.66% | 92% | 96% | 100% | 100% |
-| held-out, after the generic changes (see below) | 24 | 100% | 71% | 71% | 0 | 0.00% | 94% | 98% | 100% | 100% |
+| held-out, after the generic changes (see below) | 24 | 100% | 80% | 81% | 0 | 0.00% | 97% | 98% | 100% | 100% |
 
 The gap between dev/validation (100%) and held-out (68%) is the size of the generalisation problem: almost all of the held-out loss is **row labels in wording the label lists did not contain**. Those lines are *not extracted*
 (the line is simply absent, and the lines present are right), not extracted wrongly. A line that is absent is a gap a person can see; a wrong value is the dangerous failure, counted separately as *confident errors*.
@@ -39,14 +39,14 @@ The first-run errors came from a Korean half-year report (the prior-period colum
 
 |  | cases | extracted | line recall | critical lines | confident errors | rate | statements | periods | unit | currency |
 |---|---|---|---|---|---|---|---|---|---|---|
-| html | 3 | 100% | 64% | 73% | 0 | 0.00% | 89% | 100% | 100% | 100% |
-| pdf | 20 | 100% | 71% | 69% | 0 | 0.00% | 95% | 98% | 100% | 100% |
+| html | 3 | 100% | 75% | 87% | 0 | 0.00% | 100% | 100% | 100% | 100% |
+| pdf | 20 | 100% | 81% | 79% | 0 | 0.00% | 97% | 98% | 100% | 100% |
 | xlsx | 1 | 100% | 84% | 100% | 0 | 0.00% | 100% | 100% | 100% | 100% |
 
 ### Scanned PDFs (simulated OCR with 4% of digit-bearing words damaged)
 
-* scanned (4 cases): 76% recall, 4 wrong values, 0 confident errors, 4 of 4 wrong values caught by low confidence
-* text-layer PDFs (16 cases): 70% recall, 0 wrong values, 0 confident errors, 0 of 0 wrong values caught by low confidence
+* scanned (4 cases): 90% recall, 5 wrong values, 0 confident errors, 5 of 5 wrong values caught by low confidence
+* text-layer PDFs (16 cases): 78% recall, 0 wrong values, 0 confident errors, 0 of 0 wrong values caught by low confidence
 * Every wrong value that OCR damage produced was caught: a damaged digit breaks a reconciliation (assets = liabilities + equity, gross profit, net income across statements) or lowers the line's confidence below the threshold, so it is stored unverified.
 
 ## By market (held-out, after fixes)
@@ -54,55 +54,55 @@ The first-run errors came from a Korean half-year report (the prior-period colum
 |  | cases | extracted | line recall | critical lines | confident errors | rate | statements | periods | unit | currency |
 |---|---|---|---|---|---|---|---|---|---|---|
 | CN | 3 | 100% | 84% | 100% | 0 | 0.00% | 100% | 100% | 100% | 100% |
-| EU | 4 | 100% | 29% | 35% | 0 | 0.00% | 67% | 89% | 100% | 100% |
-| HK | 3 | 100% | 74% | 67% | 0 | 0.00% | 100% | 100% | 100% | 100% |
+| EU | 4 | 100% | 37% | 45% | 0 | 0.00% | 83% | 89% | 100% | 100% |
+| HK | 3 | 100% | 88% | 80% | 0 | 0.00% | 100% | 100% | 100% | 100% |
 | JP | 3 | 100% | 80% | 80% | 0 | 0.00% | 100% | 100% | 100% | 100% |
 | KR | 3 | 100% | 70% | 60% | 0 | 0.00% | 100% | 100% | 100% | 100% |
-| SG | 3 | 100% | 80% | 80% | 0 | 0.00% | 100% | 100% | 100% | 100% |
-| US | 5 | 100% | 80% | 80% | 0 | 0.00% | 100% | 100% | 100% | 100% |
+| SG | 3 | 100% | 99% | 100% | 0 | 0.00% | 100% | 100% | 100% | 100% |
+| US | 5 | 100% | 99% | 100% | 0 | 0.00% | 100% | 100% | 100% | 100% |
 
 ## By period type
 
 |  | cases | extracted | line recall | critical lines | confident errors | rate | statements | periods | unit | currency |
 |---|---|---|---|---|---|---|---|---|---|---|
-| annual | 17 | 100% | 72% | 74% | 0 | 0.00% | 94% | 100% | 100% | 100% |
-| half | 6 | 100% | 66% | 60% | 0 | 0.00% | 94% | 94% | 100% | 100% |
-| quarter | 1 | 100% | 81% | 80% | 0 | 0.00% | 100% | 100% | 100% | 100% |
+| annual | 17 | 100% | 83% | 86% | 0 | 0.00% | 98% | 100% | 100% | 100% |
+| half | 6 | 100% | 69% | 63% | 0 | 0.00% | 94% | 94% | 100% | 100% |
+| quarter | 1 | 100% | 100% | 100% | 0 | 0.00% | 100% | 100% | 100% | 100% |
 
 ## By layout
 
 |  | cases | extracted | line recall | critical lines | confident errors | rate | statements | periods | unit | currency |
 |---|---|---|---|---|---|---|---|---|---|---|
-| classic | 11 | 100% | 68% | 71% | 0 | 0.00% | 94% | 96% | 100% | 100% |
-| dated_header | 2 | 100% | 67% | 50% | 0 | 0.00% | 83% | 100% | 100% | 100% |
-| left_aligned | 2 | 100% | 82% | 90% | 0 | 0.00% | 100% | 100% | 100% | 100% |
-| notes | 6 | 100% | 68% | 67% | 0 | 0.00% | 94% | 100% | 100% | 100% |
-| parent_after | 2 | 100% | 81% | 80% | 0 | 0.00% | 100% | 100% | 100% | 100% |
-| wrapped | 1 | 100% | 79% | 80% | 0 | 0.00% | 100% | 100% | 100% | 100% |
+| classic | 11 | 100% | 75% | 78% | 0 | 0.00% | 97% | 96% | 100% | 100% |
+| dated_header | 2 | 100% | 78% | 60% | 0 | 0.00% | 83% | 100% | 100% | 100% |
+| left_aligned | 2 | 100% | 92% | 100% | 0 | 0.00% | 100% | 100% | 100% | 100% |
+| notes | 6 | 100% | 77% | 77% | 0 | 0.00% | 100% | 100% | 100% | 100% |
+| parent_after | 2 | 100% | 100% | 100% | 0 | 0.00% | 100% | 100% | 100% | 100% |
+| wrapped | 1 | 100% | 98% | 100% | 0 | 0.00% | 100% | 100% | 100% | 100% |
 
 ## Which (market, format) pairs pass the acceptance criteria
 
 Criteria (`acceptance.json`): at least 2 held-out cases; critical-line accuracy ≥ 95%; line recall ≥ 90%; confident-error rate ≤ 0.5%; statements, periods, unit and currency ≥ 95%; ≥ 90% of wrong values caught.
 
-**0 of 15 (market, format) pairs pass on the synthetic held-out split; 0 were tested on real filings.**
+**2 of 15 (market, format) pairs pass on the synthetic held-out split; 0 were tested on real filings.**
 
 | market | format | held-out cases | recall | critical | conf. errors | synthetic held-out | real filings |
 |---|---|---|---|---|---|---|---|
 | CN | pdf | 2 | 84% | 100% | 0.00% | does not pass: recall 84% < 90% | not tested |
 | CN | xlsx | 1 | 84% | 100% | 0.00% | does not pass: only 1 held-out case(s); recall 84% < 90% | not tested |
-| EU | html | 1 | 30% | 60% | 0.00% | does not pass: only 1 held-out case(s); critical_accuracy 60% < 95%; recall 30% < 90% | not tested |
-| EU | pdf | 3 | 28% | 27% | 0.00% | does not pass: critical_accuracy 27% < 95%; recall 28% < 90%; statement_coverage 67% < 95% | not tested |
-| HK | pdf | 2 | 72% | 60% | 0.00% | does not pass: critical_accuracy 60% < 95%; recall 72% < 90% | not tested |
-| HK | pdf-scan | 1 | 79% | 80% | 0.00% | does not pass: only 1 held-out case(s); critical_accuracy 80% < 95%; recall 79% < 90% | not tested |
+| EU | html | 1 | 45% | 80% | 0.00% | does not pass: only 1 held-out case(s); critical_accuracy 80% < 95%; recall 45% < 90% | not tested |
+| EU | pdf | 3 | 34% | 33% | 0.00% | does not pass: critical_accuracy 33% < 95%; recall 34% < 90%; statement_coverage 78% < 95% | not tested |
+| HK | pdf | 2 | 82% | 70% | 0.00% | does not pass: critical_accuracy 70% < 95%; recall 82% < 90% | not tested |
+| HK | pdf-scan | 1 | 98% | 100% | 0.00% | does not pass: only 1 held-out case(s) | not tested |
 | JP | html | 1 | 80% | 80% | 0.00% | does not pass: only 1 held-out case(s); critical_accuracy 80% < 95%; recall 80% < 90% | not tested |
 | JP | pdf | 2 | 80% | 80% | 0.00% | does not pass: critical_accuracy 80% < 95%; recall 80% < 90% | not tested |
 | KR | pdf | 2 | 70% | 60% | 0.00% | does not pass: critical_accuracy 60% < 95%; recall 70% < 90% | not tested |
 | KR | pdf-scan | 1 | 70% | 60% | 0.00% | does not pass: only 1 held-out case(s); critical_accuracy 60% < 95%; recall 70% < 90% | not tested |
-| SG | pdf | 2 | 81% | 80% | 0.00% | does not pass: critical_accuracy 80% < 95%; recall 81% < 90% | not tested |
-| SG | pdf-scan | 1 | 79% | 80% | 0.00% | does not pass: only 1 held-out case(s); critical_accuracy 80% < 95%; recall 79% < 90% | not tested |
-| US | html | 1 | 81% | 80% | 0.00% | does not pass: only 1 held-out case(s); critical_accuracy 80% < 95%; recall 81% < 90% | not tested |
-| US | pdf | 3 | 81% | 80% | 0.00% | does not pass: critical_accuracy 80% < 95%; recall 81% < 90% | not tested |
-| US | pdf-scan | 1 | 76% | 80% | 0.00% | does not pass: only 1 held-out case(s); critical_accuracy 80% < 95%; recall 76% < 90% | not tested |
+| SG | pdf | 2 | 100% | 100% | 0.00% | **passes (synthetic held-out)** | not tested |
+| SG | pdf-scan | 1 | 98% | 100% | 0.00% | does not pass: only 1 held-out case(s) | not tested |
+| US | html | 1 | 100% | 100% | 0.00% | does not pass: only 1 held-out case(s) | not tested |
+| US | pdf | 3 | 100% | 100% | 0.00% | **passes (synthetic held-out)** | not tested |
+| US | pdf-scan | 1 | 93% | 100% | 0.00% | does not pass: only 1 held-out case(s) | not tested |
 
 'Not tested' means no real filing of that market and format was run. **No pair is claimed as supported.** Where a pair passes on synthetic documents, that says the layout handling works; it does not say the market's real reports are read correctly.
 
@@ -111,12 +111,12 @@ Criteria (`acceptance.json`): at least 2 held-out cases; critical-line accuracy 
 | reason | count |
 |---|---|
 | parent-company / non-consolidated scope | 30 |
-| a primary statement covers this period | 16 |
-| column is NOTE_REFERENCE (“Note”), not a reported period | 14 |
+| column is NOTE_REFERENCE (“Note”), not a reported period | 15 |
 | not a primary statement (segment, note or reconciliation tab | 10 |
 | column is OTHER (“”), not a reported period | 8 |
 | column is NOTE_REFERENCE (“注記”), not a reported period | 6 |
-| column is NOTE_REFERENCE (“Note 31 December 2023 31 December | 3 |
+| column is NOTE_REFERENCE (“Note 31 December 2023 31 December | 4 |
+| a primary statement covers this period | 4 |
 | column is NOTE_REFERENCE (“제 55 기 2023.01.01 부터 2023.12.31 까 | 3 |
 | not a primary statement (Note 5) | 2 |
 | column is NOTE_REFERENCE (“주석제 55(당) 기제 54(전) 기”), not a rep | 2 |
@@ -124,5 +124,5 @@ Criteria (`acceptance.json`): at least 2 held-out cases; critical-line accuracy 
 
 ## Fallback usage
 
-92% of held-out cases needed a fallback (the line-by-line reader after the layout engine found fewer than 4 lines).
+71% of held-out cases needed a fallback (the line-by-line reader after the layout engine found fewer than 4 lines).
 

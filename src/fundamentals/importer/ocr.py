@@ -15,15 +15,16 @@ from ..errors import FundamentalsError
 
 LANG = {"en": {"paddleocr": "en", "surya": ["en"]}, "ja": {"paddleocr": "japan", "surya": ["ja"]}, "ko": {"paddleocr": "korean", "surya": ["ko"]}, "zh": {"paddleocr": "ch", "surya": ["zh"]},
         "zh-tw": {"paddleocr": "chinese_cht", "surya": ["zh"]}}
-ENGINES = ("paddleocr", "surya")
+ENGINES = ("rapidocr", "paddleocr", "surya")                      # lightest first: RapidOCR runs on onnxruntime with models bundled in the wheel (no model download, no PaddlePaddle or PyTorch)
+MODULES = {"rapidocr": "rapidocr_onnxruntime", "paddleocr": "paddleocr", "surya": "surya"}
 
 
 def available() -> list[str]:
-    return [e for e in ENGINES if importlib.util.find_spec(e) is not None]
+    return [e for e in ENGINES if importlib.util.find_spec(MODULES[e]) is not None]
 
 
 def missing_message() -> str:
-    return "this PDF has no text layer (it looks scanned) and no OCR engine is installed: install PaddleOCR (pip install paddleocr paddlepaddle) or Surya (pip install surya-ocr), or use the company's XBRL or an Excel/CSV export"
+    return "this PDF has no text layer (it looks scanned) and no OCR engine is installed: install RapidOCR (pip install rapidocr-onnxruntime: small, runs on onnxruntime, English and Chinese models bundled), PaddleOCR (pip install paddleocr paddlepaddle) or Surya (pip install surya-ocr), or use the company's XBRL or an Excel/CSV export"
 
 
 RENDER_DPI = 200
@@ -44,6 +45,44 @@ class Engine:
     def words(self, image_png: bytes, language: str) -> list[tuple]:
         """``[(x0, y_mid, x1, text, confidence)]`` for one page image."""
         raise NotImplementedError
+
+
+def split_line(x0: float, y: float, x1: float, text: str) -> list[tuple]:
+    """A recognised *line* of text (what most OCR engines return) as words with boxes: the line's width shared out by characters, so the layout reader can tell a label from the figures after it."""
+    words = str(text).split()
+    if len(words) <= 1:
+        return [(x0, y, x1, str(text).strip())] if str(text).strip() else []
+    total = sum(len(w) for w in words) + (len(words) - 1)
+    per = (x1 - x0) / max(total, 1)
+    out, cur = [], x0
+    for w in words:
+        out.append((cur, y, cur + per * len(w), w))
+        cur += per * (len(w) + 1)
+    return out
+
+
+class RapidEngine(Engine):
+    """RapidOCR on onnxruntime: PP-OCR detection and recognition models that ship inside the wheel. English and Chinese are read natively; Japanese and Korean pages are read only as far as the Chinese
+    model's character set goes, which is not enough for their kana and hangul: use PaddleOCR or Surya for those."""
+    name = "rapidocr"
+
+    def __init__(self):
+        self._ocr = None
+
+    def words(self, image_png: bytes, language: str) -> list[tuple]:
+        try:
+            from rapidocr_onnxruntime import RapidOCR
+        except ImportError:
+            raise FundamentalsError(missing_message()) from None
+        if self._ocr is None:
+            self._ocr = RapidOCR()
+        result, _ = self._ocr(image_png)
+        out = []
+        for box, text, score in (result or []):
+            xs, ys = [p[0] for p in box], [p[1] for p in box]
+            for x0, y, x1, t in split_line(min(xs), (min(ys) + max(ys)) / 2, max(xs), text):
+                out.append((x0, y, x1, t, float(score)))
+        return out
 
 
 class PaddleEngine(Engine):
@@ -97,7 +136,7 @@ def engine(name: str | None = None) -> Engine:
         raise FundamentalsError(missing_message())
     if choice not in ENGINES:
         raise FundamentalsError(f"OCR engine must be one of {', '.join(ENGINES)}")
-    return PaddleEngine() if choice == "paddleocr" else SuryaEngine()
+    return {"rapidocr": RapidEngine, "paddleocr": PaddleEngine, "surya": SuryaEngine}[choice]()
 
 
 def pages_subset(data: bytes, language: str, eng: Engine | None, wanted: list[int]) -> dict[int, list[tuple]]:

@@ -56,7 +56,14 @@ def table_basis(title: str) -> str | None:
     return None
 
 
+# Lines that legitimately appear in more than one primary statement (depreciation is a cost line of the income statement and the first adjustment of the cash flow statement; interest and stock compensation likewise).
+MULTI = {"depreciation_amortization": ("IS", "CF"), "stock_based_compensation": ("IS", "CF"), "interest_expense": ("IS", "CF"), "ebitda": ("IS",), "ebit": ("IS",), "free_cash_flow": ("CF", "IS"),
+         "share_repurchases": ("CF", "BS"), "weighted_avg_shares_diluted": ("IS", "BS"), "shares_outstanding": ("IS", "BS"), "retained_earnings": ("BS",), "preferred_equity": ("BS",)}
+
+
 def _allowed(code: str, kind: str) -> bool:
+    if code in MULTI:
+        return kind in MULTI[code]
     m = canonical.METRICS[code]
     if m.statement == "shares":
         return kind in ("IS", "BS")

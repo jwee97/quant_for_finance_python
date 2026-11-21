@@ -184,25 +184,32 @@ def _targeted(data: bytes, kind: str, doc: Document, draft: dict, hint: dict, fa
                 return draft, doc
     else:
         fallbacks.append({"step": "second-table-reading", "pages": pages, "reason": "pdfplumber is not installed", "accepted": False})
-    # OCR of the affected pages only, if an engine is there
+    # OCR of the affected pages only, and only for pages that have no text layer to read: OCR of a page that already has text adds errors, not information
     from . import ocr as ocr_module
-    if hint.get("ocr_engine") is not None or ocr_module.available():
-        try:
-            words = ocr_module.pages_subset(data, hint.get("language") or "en", hint.get("ocr_engine"), pages)
-            scale = 72.0 / ocr_module.RENDER_DPI
-            counter = [20_000]
-            tables = {n: pdf_layout._build_page(n, [(w[0] * scale, w[1] * scale, w[2] * scale, w[3]) for w in ws], "pdf-ocr", counter)[0] for n, ws in words.items()}
-            ocr_doc = _replace_pages(doc, tables)
-            ocr_draft = matcher.build(ocr_doc, hint)
-            before, after = score(draft), score(ocr_draft)
-            take = after > before
-            fallbacks.append({"step": "ocr-pages", "pages": pages, "reason": "OCR of the affected pages only", "before": list(before), "after": list(after), "accepted": take})
-            if take:
-                draft, doc = ocr_draft, ocr_doc
-        except FundamentalsError as error:
-            fallbacks.append({"step": "ocr-pages", "pages": pages, "reason": str(error)[:120], "accepted": False})
-    else:
-        fallbacks.append({"step": "ocr-pages", "pages": pages, "reason": "no OCR engine is installed", "accepted": False})
+    words_per_page: dict[int, int] = {}
+    for t in doc.tables:
+        for pg in (t.pages or [t.page]):
+            words_per_page[pg] = words_per_page.get(pg, 0) + len(t.raw_words)
+    blank = [p for p in pages if words_per_page.get(p, 0) < 12]
+    if doc.format == "pdf-scan" or blank:
+        todo = pages if doc.format == "pdf-scan" else blank
+        if hint.get("ocr_engine") is not None or ocr_module.available():
+            try:
+                words = ocr_module.pages_subset(data, hint.get("language") or "en", hint.get("ocr_engine"), todo)
+                scale = 72.0 / ocr_module.RENDER_DPI
+                counter = [20_000]
+                tables = {n: pdf_layout._build_page(n, [(w[0] * scale, w[1] * scale, w[2] * scale, w[3]) for w in ws], "pdf-ocr", counter)[0] for n, ws in words.items()}
+                ocr_doc = _replace_pages(doc, tables)
+                ocr_draft = matcher.build(ocr_doc, hint)
+                before, after = score(draft), score(ocr_draft)
+                take = after > before
+                fallbacks.append({"step": "ocr-pages", "pages": todo, "reason": "OCR of the pages that have no text layer", "before": list(before), "after": list(after), "accepted": take})
+                if take:
+                    draft, doc = ocr_draft, ocr_doc
+            except FundamentalsError as error:
+                fallbacks.append({"step": "ocr-pages", "pages": todo, "reason": str(error)[:160], "accepted": False})
+        else:
+            fallbacks.append({"step": "ocr-pages", "pages": todo, "reason": "these pages have no text layer and no OCR engine is installed: " + ocr_module.missing_message()[:200], "accepted": False})
     # an AI reading, opt-in: only for critical lines still missing, only what the text itself contains, never trusted
     from . import ai_extract
     if ai_extract.enabled() and (draft.get("validation") or {}).get("missing_critical"):

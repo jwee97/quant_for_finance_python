@@ -36,6 +36,44 @@ def _script_parts(label: str) -> list[str]:
     return [p for p in (latin, cjk) if p and re.search(r"\w", p)] if cjk and latin and len(latin) > 2 and len(cjk) > 1 else []
 
 
+_VERB = r"(?:(?:net|total|cash|flows?|generated|provided|used|inflow|outflow|inflows|outflows|from|by|in|for|and|or|of|continuing|operations|discontinued)\s+)*"
+# Anchored patterns over the *whole* normalised label (lower case, punctuation folded to spaces), for the lines whose wording varies most between companies. A pattern names the line only if the label is
+# nothing but that phrase: "cash used in investing activities" is the investing total; "proceeds from the sale of property" and "depreciation of a lease" are not matched by the capex and total patterns.
+RULES: tuple = tuple((re.compile(p), code) for p, code in (
+    (r"^" + _VERB + r"operating activities(?: continuing operations)?$", "operating_cash_flow"),
+    (r"^" + _VERB + r"investing activities(?: continuing operations)?$", "investing_cash_flow"),
+    (r"^" + _VERB + r"financing activities(?: continuing operations)?$", "financing_cash_flow"),
+    (r"^(?:purchases?|purchase|payments?|additions?|acquisitions?|expenditures?|investments?)(?: made)?(?: of| for| on| to| in)?(?: acquisition of| purchase of)?(?: the)? (?:property|plant|equipment|fixed assets|capital assets|premises|pp e)(?: .*)?$", "capital_expenditure"),
+    (r"^capital (?:expenditures?|spending|investments?)(?: .*)?$|^capex$", "capital_expenditure"),
+    (r"^depreciation(?: depletion)?(?: ?(?:and|&) ?| )?(?:amorti[sz]ation)?(?: of (?:property|plant|equipment|fixed assets|tangible assets|intangible assets|assets)(?: .*)?)?(?: expense)?$|^amorti[sz]ation(?: expense)?$|^depreciation ?(?:and|&) ?amorti[sz]ation(?: expense)?$", "depreciation_amortization"),
+    (r"^(?:share|stock) based (?:compensation|payments?)(?: expense)?$|^equity based compensation$", "stock_based_compensation"),
+    (r"^(?:acquisitions?|acquisition of (?:businesses|subsidiaries|a business|business)|payments? for acquisitions?|business (?:acquisitions?|combinations?))(?: net of cash acquired)?$", "acquisitions"),
+    (r"^(?:(?:repurchases?|purchases?|buybacks?|payments? for(?: the)? (?:repurchases?|purchase)) (?:of )?(?:common |ordinary |our own )?(?:stock|shares)(?: .*)?|(?:repurchases?|purchases?) of treasury (?:stock|shares)|share (?:repurchases?|buybacks?)|treasury (?:stock|shares) purchased)$", "share_repurchases"),
+    (r"^(?:payments? (?:of|for) (?:cash )?dividends?|(?:cash )?dividends? (?:paid|payments?)(?: .*)?)$", "dividends_paid"),
+    (r"^(?:long|non current|noncurrent) ?(?:term )?(?:debt|borrowings?|loans?|notes? payable|bonds? payable|financial liabilities|interest bearing (?:loans|borrowings))(?: net of (?:current|short term) .*| less (?:current|short term) .*| non current)?$|^term debt$|^bonds? payable$|^debentures?$", "long_term_debt"),
+    (r"^(?:short term|current)(?: portion of (?:long term )?)? ?(?:debt|borrowings?|loans?)(?: .*)?$|^commercial paper$|^notes? payable$|^bank (?:overdrafts?|loans?)$", "short_term_debt"),
+    (r"^(?:net )?(?:income|earnings|profit|loss)? ?(?:per (?:ordinary |common )?share)?[ :]*basic(?: .*)?$|^basic (?:net )?(?:income|earnings|profit|loss)? ?(?:per (?:ordinary |common )?share)?(?: .*)?$|^basic eps$|^earnings per share basic$", "eps_basic"),
+    (r"^(?:net )?(?:income|earnings|profit|loss)? ?(?:per (?:ordinary |common )?share)?[ :]*diluted(?: .*)?$|^diluted (?:net )?(?:income|earnings|profit|loss)? ?(?:per (?:ordinary |common )?share)?(?: .*)?$|^diluted eps$|^earnings per share diluted$", "eps_diluted"),
+    (r"^(?:weighted[ -]?average )?(?:number of )?(?:common |ordinary )?shares(?: outstanding| used)?[ :,-]* ?(?:in (?:computing|the computation of|calculating) )?diluted(?: .*)?$|^diluted (?:weighted[ -]?average )?(?:number of )?(?:common |ordinary )?shares(?: outstanding)?$|^shares used in (?:computing|computation of|calculating|the calculation of) diluted .*$|^weighted[ -]?average (?:number of )?(?:common |ordinary )?shares(?: outstanding)?[ :,-]* ?diluted$", "weighted_avg_shares_diluted"),
+    (r"^(?:number of )?(?:common |ordinary )?shares (?:issued and )?outstanding$|^number of (?:common |ordinary )?shares(?: outstanding| in issue)?$|^shares in issue$", "shares_outstanding"),
+    (r"^(?:interest|finance) (?:expenses?|costs?)(?:,? net)?$|^interest and finance (?:costs?|expenses?)$|^interest expenses? and similar charges$", "interest_expense"),
+    (r"^r ?&? ?d(?: expenses?| costs?| spending)?$|^research and development(?: costs?| expenses?| expense)?$", "research_and_development"),
+    (r"^inventor(?:y|ies)(?:,? net)?$|^stocks? and work in progress$", "inventory"),
+    (r"^property,? plant,? (?:and|&) equipment(?:,? net(?: of .*)?)?$|^property (?:and|&) equipment(?:,? net)?$|^fixed assets(?:,? net)?$|^tangible fixed assets$", "ppe"),
+    (r"^current assets,? total$|^total current assets$", "current_assets"),
+    (r"^current liabilities,? total$|^total current liabilities$", "current_liabilities"),
+    (r"^cash and (?:bank|cash) balances$|^cash at bank and in hand$", "cash_and_equivalents"),
+    (r"^cash and cash equivalents,? (?:at )?(?:the )?end of (?:the )?(?:year|period|fiscal year)$|^cash and cash equivalents at (?:the )?end$", "cash_and_equivalents"),
+    (r"^(?:retained earnings|retained profits?|reinvested earnings|accumulated (?:deficit|earnings|profits?))(?:.*)?$", "retained_earnings"),
+    (r"^(?:preferred|preference) (?:stock|shares?|equity)(?:.*)?$", "preferred_equity"),
+    (r"^net loss$|^net (?:income|profit|earnings)(?: loss| \(loss\))?$", "net_income"),
+    (r"^earnings before (?:income )?taxes$|^earnings before interest,? taxes,? depreciation and amorti[sz]ation$", None),
+))
+RULES = tuple((rx, c) for rx, c in RULES if c)
+_EBITDA = re.compile(r"^earnings before interest,? taxes,? depreciation and amorti[sz]ation$")
+_EBT = re.compile(r"^earnings before (?:income )?taxes$")
+
+
 @dataclass(frozen=True)
 class Match:
     code: str
@@ -89,6 +127,13 @@ class Mapping:
             code = manual.ALIASES.get(n)
             if code:
                 return Match(code, tier, f"alias:{n}", 1.0 if tier == "exact" else 0.9)
+            if _EBITDA.match(n):
+                return Match("ebitda", tier, "rule:ebitda", 0.85)
+            if _EBT.match(n):
+                return Match("income_before_tax", tier, "rule:ebt", 0.85)
+            for rx, code in RULES:
+                if rx.match(n):
+                    return Match(code, "rule", f"rule:{code}", 0.88 if tier == "exact" else 0.8)
         return None
 
     def to_dict(self) -> dict:

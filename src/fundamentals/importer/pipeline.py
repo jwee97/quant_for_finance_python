@@ -499,7 +499,14 @@ class ImportService:
             issues.append({"level": "warning", "message": f"{len(low)} figure(s) were read with low confidence (below {checks_module.LOW_CONFIDENCE:.0%}); approved, they are stored as unverified and kept out of research until you confirm them against the page (tick Confirmed on the line) or correct them.",
                            "period": None, "field": None, "kind": "low_confidence"})
         for f in draft.get("fallbacks") or []:
-            issues.append({"level": "info", "message": f"fallback used: {f['step']} ({f['reason']})", "period": None, "field": None, "kind": "fallback"})
+            if f["step"] == "assessment":                                                                  # the reasons a reading was judged unreliable, shown with the validation findings
+                continue
+            if f.get("accepted") or f["step"] in ("legacy-reader", "layout"):
+                issues.append({"level": "info", "message": f"fallback used: {f['step']} ({f['reason']})", "period": None, "field": None, "kind": "fallback"})
+            elif f["step"] == "ocr-pages":
+                issues.append({"level": "warning", "message": f"pages {f.get('pages')}: {f['reason']}", "period": None, "field": None, "kind": "ocr_unavailable"})
+            else:
+                issues.append({"level": "info", "message": f"tried without improvement: {f['step']} (pages {f.get('pages')})", "period": None, "field": None, "kind": "fallback_not_used"})
         return issues
 
     @staticmethod

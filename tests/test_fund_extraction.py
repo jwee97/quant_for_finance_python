@@ -9,6 +9,7 @@ import pytest
 
 from src.fundamentals.errors import FundamentalsError
 from src.fundamentals.importer import ai_extract, docling_adapter, ocr, pdf
+from src.fundamentals.importer import engine as engine_module
 from src.fundamentals.importer import html as html_reader
 from src.fundamentals.importer.pipeline import ImportService, sniff
 from src.fundamentals.store import FundamentalsStore
@@ -289,3 +290,37 @@ def test_pdf_without_readable_column_headings_falls_back_to_latest_date_and_says
     by = {p["period_end"]: p for p in out["periods"]}
     assert by["2023-12-31"]["values"] == {"revenue": 500.0, "net_income": 50.0} and by["2022-12-31"]["values"]["revenue"] == 400.0
     assert all(p["guessed"] for p in out["periods"]) and any("No column headings" in n for n in out["notes"])
+
+
+def test_rapidocr_adapter_turns_recognised_lines_into_words_and_is_listed_after_it_is_installed(monkeypatch):
+    import sys
+    import types
+
+    assert ocr.split_line(100, 50, 300, "Total assets 1,200 1,000")[0][3] == "Total" and len(ocr.split_line(100, 50, 300, "Total assets 1,200 1,000")) == 4
+    words = ocr.split_line(100, 50, 300, "Revenue 1,200")
+    assert words[0][0] == 100 and words[-1][2] == pytest.approx(300) and words[0][2] < words[1][0]
+    assert "rapidocr" in ocr.ENGINES and ocr.ENGINES[0] == "rapidocr"
+    monkeypatch.delitem(sys.modules, "rapidocr_onnxruntime", raising=False)
+    if "rapidocr" in ocr.available():
+        pytest.skip("RapidOCR is really installed")
+    with pytest.raises(FundamentalsError, match="rapidocr-onnxruntime"):
+        ocr.RapidEngine().words(b"x", "en")
+    import importlib.machinery
+    fake = types.ModuleType("rapidocr_onnxruntime")
+    fake.__spec__ = importlib.machinery.ModuleSpec("rapidocr_onnxruntime", None)
+
+    class FakeRapid:
+        def __call__(self, image):
+            return [([[10, 10], [200, 10], [200, 30], [10, 30]], "Total assets 5,000", 0.97)], None
+    fake.RapidOCR = FakeRapid
+    monkeypatch.setitem(sys.modules, "rapidocr_onnxruntime", fake)
+    got = ocr.RapidEngine().words(b"png", "en")
+    assert [w[3] for w in got] == ["Total", "assets", "5,000"] and all(w[4] == 0.97 for w in got)
+    assert "rapidocr" in ocr.available() and isinstance(ocr.engine(), ocr.RapidEngine)
+
+
+def test_ocr_is_tried_only_for_pages_without_a_text_layer_and_unavailable_ocr_is_said_only_then():
+    from tests.fixtures import real_like as rl
+    data, _ = rl.samsung()
+    draft, _ = engine_module.extract(data, "s.pdf", "pdf", {"country": "KR"})
+    assert not any(f["step"] == "ocr-pages" for f in draft["fallbacks"]), "a PDF with a text layer was offered OCR"

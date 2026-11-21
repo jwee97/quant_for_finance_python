@@ -1,5 +1,5 @@
 {
- "generated": "2026-11-21T16:23:30",
+ "generated": "2026-11-21T16:48:47",
  "extractor_version": "2.0.0",
  "taxonomy_version": "1.0.0",
  "threshold": 0.75,
@@ -7,77 +7,77 @@
   "overall": {
    "cases": 24,
    "extraction_success": 1.0,
-   "recall": 0.707,
-   "critical_accuracy": 0.708,
-   "wrong": 4,
+   "recall": 0.802,
+   "critical_accuracy": 0.808,
+   "wrong": 5,
    "spurious": 0,
    "confident_errors": 0,
    "confident_error_rate": 0.0,
    "wrong_caught_rate": 1.0,
-   "statement_coverage": 0.944,
+   "statement_coverage": 0.972,
    "period_accuracy": 0.982,
    "unit_accuracy": 1.0,
    "currency_accuracy": 1.0,
    "standard_accuracy": 1.0,
-   "fallback_rate": 0.917,
-   "median_seconds": 0.068
+   "fallback_rate": 0.708,
+   "median_seconds": 0.088
   },
   "by_split": {
    "heldout": {
     "cases": 24,
     "extraction_success": 1.0,
-    "recall": 0.707,
-    "critical_accuracy": 0.708,
-    "wrong": 4,
+    "recall": 0.802,
+    "critical_accuracy": 0.808,
+    "wrong": 5,
     "spurious": 0,
     "confident_errors": 0,
     "confident_error_rate": 0.0,
     "wrong_caught_rate": 1.0,
-    "statement_coverage": 0.944,
+    "statement_coverage": 0.972,
     "period_accuracy": 0.982,
     "unit_accuracy": 1.0,
     "currency_accuracy": 1.0,
     "standard_accuracy": 1.0,
-    "fallback_rate": 0.917,
-    "median_seconds": 0.068
+    "fallback_rate": 0.708,
+    "median_seconds": 0.088
    }
   },
   "by_format": {
    "html": {
     "cases": 3,
     "extraction_success": 1.0,
-    "recall": 0.639,
-    "critical_accuracy": 0.733,
+    "recall": 0.754,
+    "critical_accuracy": 0.867,
     "wrong": 0,
     "spurious": 0,
     "confident_errors": 0,
     "confident_error_rate": 0.0,
     "wrong_caught_rate": null,
-    "statement_coverage": 0.889,
+    "statement_coverage": 1.0,
     "period_accuracy": 1.0,
     "unit_accuracy": 1.0,
     "currency_accuracy": 1.0,
     "standard_accuracy": 1.0,
     "fallback_rate": 1.0,
-    "median_seconds": 0.013
+    "median_seconds": 0.01
    },
    "pdf": {
     "cases": 20,
     "extraction_success": 1.0,
-    "recall": 0.711,
-    "critical_accuracy": 0.69,
-    "wrong": 4,
+    "recall": 0.808,
+    "critical_accuracy": 0.79,
+    "wrong": 5,
     "spurious": 0,
     "confident_errors": 0,
     "confident_error_rate": 0.0,
     "wrong_caught_rate": 1.0,
-    "statement_coverage": 0.95,
+    "statement_coverage": 0.967,
     "period_accuracy": 0.979,
     "unit_accuracy": 1.0,
     "currency_accuracy": 1.0,
     "standard_accuracy": 1.0,
-    "fallback_rate": 0.95,
-    "median_seconds": 0.079
+    "fallback_rate": 0.7,
+    "median_seconds": 0.097
    },
    "xlsx": {
     "cases": 1,
@@ -95,7 +95,7 @@
     "currency_accuracy": 1.0,
     "standard_accuracy": 1.0,
     "fallback_rate": 0.0,
-    "median_seconds": 0.08
+    "median_seconds": 0.168
    }
   },
   "by_market": {
@@ -115,19 +115,19 @@
     "currency_accuracy": 1.0,
     "standard_accuracy": 1.0,
     "fallback_rate": 0.333,
-    "median_seconds": 0.08
+    "median_seconds": 0.126
    },
    "EU": {
     "cases": 4,
     "extraction_success": 1.0,
-    "recall": 0.288,
-    "critical_accuracy": 0.35,
+    "recall": 0.37,
+    "critical_accuracy": 0.45,
     "wrong": 0,
     "spurious": 0,
     "confident_errors": 0,
     "confident_error_rate": 0.0,
     "wrong_caught_rate": null,
-    "statement_coverage": 0.667,
+    "statement_coverage": 0.833,
     "period_accuracy": 0.889,
     "unit_accuracy": 1.0,
     "currency_accuracy": 1.0,
@@ -138,8 +138,8 @@
    "HK": {
     "cases": 3,
     "extraction_success": 1.0,
-    "recall": 0.742,
-    "critical_accuracy": 0.667,
+    "recall": 0.875,
+    "critical_accuracy": 0.8,
     "wrong": 1,
     "spurious": 0,
     "confident_errors": 0,
@@ -150,8 +150,8 @@
     "unit_accuracy": 1.0,
     "currency_accuracy": 1.0,
     "standard_accuracy": 1.0,
-    "fallback_rate": 1.0,
-    "median_seconds": 0.066
+    "fallback_rate": 0.333,
+    "median_seconds": 0.107
    },
    "JP": {
     "cases": 3,
@@ -169,7 +169,7 @@
     "currency_accuracy": 1.0,
     "standard_accuracy": 1.0,
     "fallback_rate": 1.0,
-    "median_seconds": 0.045
+    "median_seconds": 0.063
    },
    "KR": {
     "cases": 3,
@@ -187,13 +187,13 @@
     "currency_accuracy": 1.0,
     "standard_accuracy": 1.0,
     "fallback_rate": 1.0,
-    "median_seconds": 0.082
+    "median_seconds": 0.114
    },
    "SG": {
     "cases": 3,
     "extraction_success": 1.0,
-    "recall": 0.802,
-    "critical_accuracy": 0.8,
+    "recall": 0.992,
+    "critical_accuracy": 1.0,
     "wrong": 1,
     "spurious": 0,
     "confident_errors": 0,
@@ -204,15 +204,15 @@
     "unit_accuracy": 1.0,
     "currency_accuracy": 1.0,
     "standard_accuracy": 1.0,
-    "fallback_rate": 1.0,
-    "median_seconds": 0.09
+    "fallback_rate": 0.667,
+    "median_seconds": 0.084
    },
    "US": {
     "cases": 5,
     "extraction_success": 1.0,
-    "recall": 0.8,
-    "critical_accuracy": 0.8,
-    "wrong": 2,
+    "recall": 0.986,
+    "critical_accuracy": 1.0,
+    "wrong": 3,
     "spurious": 0,
     "confident_errors": 0,
     "confident_error_rate": 0.0,
@@ -222,8 +222,8 @@
     "unit_accuracy": 1.0,
     "currency_accuracy": 1.0,
     "standard_accuracy": 1.0,
-    "fallback_rate": 1.0,
-    "median_seconds": 0.079
+    "fallback_rate": 0.6,
+    "median_seconds": 0.099
    }
   },
   "by_language": {
@@ -243,14 +243,14 @@
     "currency_accuracy": 1.0,
     "standard_accuracy": 1.0,
     "fallback_rate": 1.0,
-    "median_seconds": 0.041
+    "median_seconds": 0.033
    },
    "en": {
     "cases": 10,
     "extraction_success": 1.0,
-    "recall": 0.8,
-    "critical_accuracy": 0.8,
-    "wrong": 4,
+    "recall": 0.988,
+    "critical_accuracy": 1.0,
+    "wrong": 5,
     "spurious": 0,
     "confident_errors": 0,
     "confident_error_rate": 0.0,
@@ -260,8 +260,8 @@
     "unit_accuracy": 1.0,
     "currency_accuracy": 1.0,
     "standard_accuracy": 1.0,
-    "fallback_rate": 1.0,
-    "median_seconds": 0.09
+    "fallback_rate": 0.5,
+    "median_seconds": 0.099
    },
    "es": {
     "cases": 1,
@@ -279,25 +279,25 @@
     "currency_accuracy": 1.0,
     "standard_accuracy": 1.0,
     "fallback_rate": 1.0,
-    "median_seconds": 0.059
+    "median_seconds": 0.042
    },
    "fr": {
     "cases": 2,
     "extraction_success": 1.0,
-    "recall": 0.3,
-    "critical_accuracy": 0.6,
+    "recall": 0.45,
+    "critical_accuracy": 0.8,
     "wrong": 0,
     "spurious": 0,
     "confident_errors": 0,
     "confident_error_rate": 0.0,
     "wrong_caught_rate": null,
-    "statement_coverage": 0.667,
+    "statement_coverage": 1.0,
     "period_accuracy": 1.0,
     "unit_accuracy": 1.0,
     "currency_accuracy": 1.0,
     "standard_accuracy": 1.0,
     "fallback_rate": 1.0,
-    "median_seconds": 0.042
+    "median_seconds": 0.066
    },
    "ja": {
     "cases": 3,
@@ -315,7 +315,7 @@
     "currency_accuracy": 1.0,
     "standard_accuracy": 1.0,
     "fallback_rate": 1.0,
-    "median_seconds": 0.045
+    "median_seconds": 0.063
    },
    "ko": {
     "cases": 3,
@@ -333,7 +333,7 @@
     "currency_accuracy": 1.0,
     "standard_accuracy": 1.0,
     "fallback_rate": 1.0,
-    "median_seconds": 0.082
+    "median_seconds": 0.114
    },
    "zh": {
     "cases": 3,
@@ -351,7 +351,7 @@
     "currency_accuracy": 1.0,
     "standard_accuracy": 1.0,
     "fallback_rate": 0.333,
-    "median_seconds": 0.08
+    "median_seconds": 0.126
    },
    "zh-hk": {
     "cases": 1,
@@ -369,33 +369,33 @@
     "currency_accuracy": 1.0,
     "standard_accuracy": 1.0,
     "fallback_rate": 1.0,
-    "median_seconds": 0.066
+    "median_seconds": 0.107
    }
   },
   "by_period_type": {
    "annual": {
     "cases": 17,
     "extraction_success": 1.0,
-    "recall": 0.718,
-    "critical_accuracy": 0.741,
-    "wrong": 4,
+    "recall": 0.828,
+    "critical_accuracy": 0.859,
+    "wrong": 5,
     "spurious": 0,
     "confident_errors": 0,
     "confident_error_rate": 0.0,
     "wrong_caught_rate": 1.0,
-    "statement_coverage": 0.941,
+    "statement_coverage": 0.98,
     "period_accuracy": 1.0,
     "unit_accuracy": 1.0,
     "currency_accuracy": 1.0,
     "standard_accuracy": 1.0,
-    "fallback_rate": 0.882,
-    "median_seconds": 0.079
+    "fallback_rate": 0.588,
+    "median_seconds": 0.088
    },
    "half": {
     "cases": 6,
     "extraction_success": 1.0,
-    "recall": 0.655,
-    "critical_accuracy": 0.6,
+    "recall": 0.69,
+    "critical_accuracy": 0.633,
     "wrong": 0,
     "spurious": 0,
     "confident_errors": 0,
@@ -407,13 +407,13 @@
     "currency_accuracy": 1.0,
     "standard_accuracy": 1.0,
     "fallback_rate": 1.0,
-    "median_seconds": 0.066
+    "median_seconds": 0.084
    },
    "quarter": {
     "cases": 1,
     "extraction_success": 1.0,
-    "recall": 0.81,
-    "critical_accuracy": 0.8,
+    "recall": 1.0,
+    "critical_accuracy": 1.0,
     "wrong": 0,
     "spurious": 0,
     "confident_errors": 0,
@@ -425,33 +425,33 @@
     "currency_accuracy": 1.0,
     "standard_accuracy": 1.0,
     "fallback_rate": 1.0,
-    "median_seconds": 0.056
+    "median_seconds": 0.132
    }
   },
   "by_layout": {
    "classic": {
     "cases": 11,
     "extraction_success": 1.0,
-    "recall": 0.683,
-    "critical_accuracy": 0.709,
-    "wrong": 3,
+    "recall": 0.749,
+    "critical_accuracy": 0.782,
+    "wrong": 4,
     "spurious": 0,
     "confident_errors": 0,
     "confident_error_rate": 0.0,
     "wrong_caught_rate": 1.0,
-    "statement_coverage": 0.939,
+    "statement_coverage": 0.97,
     "period_accuracy": 0.958,
     "unit_accuracy": 1.0,
     "currency_accuracy": 1.0,
     "standard_accuracy": 1.0,
-    "fallback_rate": 0.818,
-    "median_seconds": 0.061
+    "fallback_rate": 0.636,
+    "median_seconds": 0.067
    },
    "dated_header": {
     "cases": 2,
     "extraction_success": 1.0,
-    "recall": 0.667,
-    "critical_accuracy": 0.5,
+    "recall": 0.778,
+    "critical_accuracy": 0.6,
     "wrong": 0,
     "spurious": 0,
     "confident_errors": 0,
@@ -463,13 +463,13 @@
     "currency_accuracy": 1.0,
     "standard_accuracy": 1.0,
     "fallback_rate": 1.0,
-    "median_seconds": 0.059
+    "median_seconds": 0.132
    },
    "left_aligned": {
     "cases": 2,
     "extraction_success": 1.0,
-    "recall": 0.825,
-    "critical_accuracy": 0.9,
+    "recall": 0.925,
+    "critical_accuracy": 1.0,
     "wrong": 0,
     "spurious": 0,
     "confident_errors": 0,
@@ -480,32 +480,14 @@
     "unit_accuracy": 1.0,
     "currency_accuracy": 1.0,
     "standard_accuracy": 1.0,
-    "fallback_rate": 1.0,
-    "median_seconds": 0.202
+    "fallback_rate": 0.5,
+    "median_seconds": 0.126
    },
    "notes": {
     "cases": 6,
     "extraction_success": 1.0,
-    "recall": 0.675,
-    "critical_accuracy": 0.667,
-    "wrong": 0,
-    "spurious": 0,
-    "confident_errors": 0,
-    "confident_error_rate": 0.0,
-    "wrong_caught_rate": null,
-    "statement_coverage": 0.944,
-    "period_accuracy": 1.0,
-    "unit_accuracy": 1.0,
-    "currency_accuracy": 1.0,
-    "standard_accuracy": 1.0,
-    "fallback_rate": 1.0,
-    "median_seconds": 0.079
-   },
-   "parent_after": {
-    "cases": 2,
-    "extraction_success": 1.0,
-    "recall": 0.81,
-    "critical_accuracy": 0.8,
+    "recall": 0.767,
+    "critical_accuracy": 0.767,
     "wrong": 0,
     "spurious": 0,
     "confident_errors": 0,
@@ -517,13 +499,31 @@
     "currency_accuracy": 1.0,
     "standard_accuracy": 1.0,
     "fallback_rate": 1.0,
-    "median_seconds": 0.09
+    "median_seconds": 0.088
+   },
+   "parent_after": {
+    "cases": 2,
+    "extraction_success": 1.0,
+    "recall": 1.0,
+    "critical_accuracy": 1.0,
+    "wrong": 0,
+    "spurious": 0,
+    "confident_errors": 0,
+    "confident_error_rate": 0.0,
+    "wrong_caught_rate": null,
+    "statement_coverage": 1.0,
+    "period_accuracy": 1.0,
+    "unit_accuracy": 1.0,
+    "currency_accuracy": 1.0,
+    "standard_accuracy": 1.0,
+    "fallback_rate": 0.0,
+    "median_seconds": 0.019
    },
    "wrapped": {
     "cases": 1,
     "extraction_success": 1.0,
-    "recall": 0.786,
-    "critical_accuracy": 0.8,
+    "recall": 0.976,
+    "critical_accuracy": 1.0,
     "wrong": 1,
     "spurious": 0,
     "confident_errors": 0,
@@ -535,7 +535,7 @@
     "currency_accuracy": 1.0,
     "standard_accuracy": 1.0,
     "fallback_rate": 1.0,
-    "median_seconds": 0.866
+    "median_seconds": 1.185
    }
   },
   "by_split_market_format": {
@@ -555,7 +555,7 @@
     "currency_accuracy": 1.0,
     "standard_accuracy": 1.0,
     "fallback_rate": 0.5,
-    "median_seconds": 0.094
+    "median_seconds": 0.126
    },
    "heldout|CN|xlsx": {
     "cases": 1,
@@ -573,37 +573,37 @@
     "currency_accuracy": 1.0,
     "standard_accuracy": 1.0,
     "fallback_rate": 0.0,
-    "median_seconds": 0.08
+    "median_seconds": 0.168
    },
    "heldout|EU|html": {
     "cases": 1,
     "extraction_success": 1.0,
-    "recall": 0.3,
-    "critical_accuracy": 0.6,
+    "recall": 0.45,
+    "critical_accuracy": 0.8,
     "wrong": 0,
     "spurious": 0,
     "confident_errors": 0,
     "confident_error_rate": 0.0,
     "wrong_caught_rate": null,
-    "statement_coverage": 0.667,
+    "statement_coverage": 1.0,
     "period_accuracy": 1.0,
     "unit_accuracy": 1.0,
     "currency_accuracy": 1.0,
     "standard_accuracy": 1.0,
     "fallback_rate": 1.0,
-    "median_seconds": 0.013
+    "median_seconds": 0.008
    },
    "heldout|EU|pdf": {
     "cases": 3,
     "extraction_success": 1.0,
-    "recall": 0.283,
-    "critical_accuracy": 0.267,
+    "recall": 0.34,
+    "critical_accuracy": 0.333,
     "wrong": 0,
     "spurious": 0,
     "confident_errors": 0,
     "confident_error_rate": 0.0,
     "wrong_caught_rate": null,
-    "statement_coverage": 0.667,
+    "statement_coverage": 0.778,
     "period_accuracy": 0.857,
     "unit_accuracy": 1.0,
     "currency_accuracy": 1.0,
@@ -614,8 +614,8 @@
    "heldout|HK|pdf": {
     "cases": 2,
     "extraction_success": 1.0,
-    "recall": 0.718,
-    "critical_accuracy": 0.6,
+    "recall": 0.821,
+    "critical_accuracy": 0.7,
     "wrong": 0,
     "spurious": 0,
     "confident_errors": 0,
@@ -626,14 +626,14 @@
     "unit_accuracy": 1.0,
     "currency_accuracy": 1.0,
     "standard_accuracy": 1.0,
-    "fallback_rate": 1.0,
-    "median_seconds": 0.066
+    "fallback_rate": 0.5,
+    "median_seconds": 0.107
    },
    "heldout|HK|pdf-scan": {
     "cases": 1,
     "extraction_success": 1.0,
-    "recall": 0.786,
-    "critical_accuracy": 0.8,
+    "recall": 0.976,
+    "critical_accuracy": 1.0,
     "wrong": 1,
     "spurious": 0,
     "confident_errors": 0,
@@ -644,8 +644,8 @@
     "unit_accuracy": 1.0,
     "currency_accuracy": 1.0,
     "standard_accuracy": 1.0,
-    "fallback_rate": 1.0,
-    "median_seconds": 0.928
+    "fallback_rate": 0.0,
+    "median_seconds": 0.585
    },
    "heldout|JP|html": {
     "cases": 1,
@@ -663,7 +663,7 @@
     "currency_accuracy": 1.0,
     "standard_accuracy": 1.0,
     "fallback_rate": 1.0,
-    "median_seconds": 0.008
+    "median_seconds": 0.01
    },
    "heldout|JP|pdf": {
     "cases": 2,
@@ -681,7 +681,7 @@
     "currency_accuracy": 1.0,
     "standard_accuracy": 1.0,
     "fallback_rate": 1.0,
-    "median_seconds": 0.068
+    "median_seconds": 0.097
    },
    "heldout|KR|pdf": {
     "cases": 2,
@@ -699,7 +699,7 @@
     "currency_accuracy": 1.0,
     "standard_accuracy": 1.0,
     "fallback_rate": 1.0,
-    "median_seconds": 0.082
+    "median_seconds": 0.114
    },
    "heldout|KR|pdf-scan": {
     "cases": 1,
@@ -717,13 +717,13 @@
     "currency_accuracy": 1.0,
     "standard_accuracy": 1.0,
     "fallback_rate": 1.0,
-    "median_seconds": 0.955
+    "median_seconds": 1.351
    },
    "heldout|SG|pdf": {
     "cases": 2,
     "extraction_success": 1.0,
-    "recall": 0.81,
-    "critical_accuracy": 0.8,
+    "recall": 1.0,
+    "critical_accuracy": 1.0,
     "wrong": 0,
     "spurious": 0,
     "confident_errors": 0,
@@ -734,14 +734,14 @@
     "unit_accuracy": 1.0,
     "currency_accuracy": 1.0,
     "standard_accuracy": 1.0,
-    "fallback_rate": 1.0,
-    "median_seconds": 0.09
+    "fallback_rate": 0.5,
+    "median_seconds": 0.084
    },
    "heldout|SG|pdf-scan": {
     "cases": 1,
     "extraction_success": 1.0,
-    "recall": 0.786,
-    "critical_accuracy": 0.8,
+    "recall": 0.976,
+    "critical_accuracy": 1.0,
     "wrong": 1,
     "spurious": 0,
     "confident_errors": 0,
@@ -753,13 +753,13 @@
     "currency_accuracy": 1.0,
     "standard_accuracy": 1.0,
     "fallback_rate": 1.0,
-    "median_seconds": 0.866
+    "median_seconds": 1.185
    },
    "heldout|US|html": {
     "cases": 1,
     "extraction_success": 1.0,
-    "recall": 0.81,
-    "critical_accuracy": 0.8,
+    "recall": 1.0,
+    "critical_accuracy": 1.0,
     "wrong": 0,
     "spurious": 0,
     "confident_errors": 0,
@@ -771,13 +771,13 @@
     "currency_accuracy": 1.0,
     "standard_accuracy": 1.0,
     "fallback_rate": 1.0,
-    "median_seconds": 0.061
+    "median_seconds": 0.067
    },
    "heldout|US|pdf": {
     "cases": 3,
     "extraction_success": 1.0,
-    "recall": 0.81,
-    "critical_accuracy": 0.8,
+    "recall": 1.0,
+    "critical_accuracy": 1.0,
     "wrong": 0,
     "spurious": 0,
     "confident_errors": 0,
@@ -788,15 +788,15 @@
     "unit_accuracy": 1.0,
     "currency_accuracy": 1.0,
     "standard_accuracy": 1.0,
-    "fallback_rate": 1.0,
-    "median_seconds": 0.079
+    "fallback_rate": 0.667,
+    "median_seconds": 0.099
    },
    "heldout|US|pdf-scan": {
     "cases": 1,
     "extraction_success": 1.0,
-    "recall": 0.762,
-    "critical_accuracy": 0.8,
-    "wrong": 2,
+    "recall": 0.929,
+    "critical_accuracy": 1.0,
+    "wrong": 3,
     "spurious": 0,
     "confident_errors": 0,
     "confident_error_rate": 0.0,
@@ -806,18 +806,18 @@
     "unit_accuracy": 1.0,
     "currency_accuracy": 1.0,
     "standard_accuracy": 1.0,
-    "fallback_rate": 1.0,
-    "median_seconds": 0.835
+    "fallback_rate": 0.0,
+    "median_seconds": 0.488
    }
   },
   "rejection_reasons": {
    "parent-company / non-consolidated scope": 30,
-   "a primary statement covers this period": 16,
-   "column is NOTE_REFERENCE (“Note”), not a reported period": 14,
+   "column is NOTE_REFERENCE (“Note”), not a reported period": 15,
    "not a primary statement (segment, note or reconciliation tab": 10,
    "column is OTHER (“”), not a reported period": 8,
    "column is NOTE_REFERENCE (“注記”), not a reported period": 6,
-   "column is NOTE_REFERENCE (“Note 31 December 2023 31 December": 3,
+   "column is NOTE_REFERENCE (“Note 31 December 2023 31 December": 4,
+   "a primary statement covers this period": 4,
    "column is NOTE_REFERENCE (“제 55 기 2023.01.01 부터 2023.12.31 까": 3,
    "not a primary statement (Note 5)": 2,
    "column is NOTE_REFERENCE (“주석제 55(당) 기제 54(전) 기”), not a rep": 2,
@@ -839,15 +839,15 @@
    "layout": "left_aligned",
    "wording": "held",
    "success": true,
-   "seconds": 0.202,
+   "seconds": 0.099,
    "expected": 42,
-   "correct": 34,
+   "correct": 42,
    "wrong": 0,
    "spurious": 0,
    "confident_errors": 0,
    "wrong_caught": 0,
    "critical_expected": 10,
-   "critical_correct": 8,
+   "critical_correct": 10,
    "statements_expected": 3,
    "statements_found": 3,
    "periods_expected": 2,
@@ -855,19 +855,16 @@
    "period_kind_ok": 2,
    "unit_ok": true,
    "currency_ok": true,
-   "fallbacks": [
-    "assessment",
-    "second-table-reading",
-    "ocr-pages"
-   ],
+   "fallbacks": [],
    "rejections": {},
    "checks": {
-    "PASS": 6
+    "PASS": 6,
+    "INSUFFICIENT_DATA": 1
    },
    "standard": "us-gaap",
    "standard_ok": true,
-   "mean_confidence": 0.968,
-   "lines_found": 34
+   "mean_confidence": 0.943,
+   "lines_found": 42
   },
   {
    "id": "heldout-us-pdf-2",
@@ -884,15 +881,15 @@
    "layout": "dated_header",
    "wording": "held",
    "success": true,
-   "seconds": 0.056,
+   "seconds": 0.132,
    "expected": 42,
-   "correct": 34,
+   "correct": 42,
    "wrong": 0,
    "spurious": 0,
    "confident_errors": 0,
    "wrong_caught": 0,
    "critical_expected": 10,
-   "critical_correct": 8,
+   "critical_correct": 10,
    "statements_expected": 3,
    "statements_found": 3,
    "periods_expected": 3,
@@ -902,8 +899,7 @@
    "currency_ok": true,
    "fallbacks": [
     "assessment",
-    "second-table-reading",
-    "ocr-pages"
+    "second-table-reading"
    ],
    "rejections": {
     "not a primary statement (Note 5)": 1,
@@ -911,12 +907,13 @@
    },
    "checks": {
     "NOT_APPLICABLE": 1,
-    "PASS": 5
+    "PASS": 5,
+    "INSUFFICIENT_DATA": 1
    },
    "standard": "us-gaap",
    "standard_ok": true,
-   "mean_confidence": 0.968,
-   "lines_found": 34
+   "mean_confidence": 0.943,
+   "lines_found": 42
   },
   {
    "id": "heldout-us-html-1",
@@ -931,15 +928,15 @@
    "layout": "classic",
    "wording": "held",
    "success": true,
-   "seconds": 0.061,
+   "seconds": 0.067,
    "expected": 42,
-   "correct": 34,
+   "correct": 42,
    "wrong": 0,
    "spurious": 0,
    "confident_errors": 0,
    "wrong_caught": 0,
    "critical_expected": 10,
-   "critical_correct": 8,
+   "critical_correct": 10,
    "statements_expected": 3,
    "statements_found": 3,
    "periods_expected": 2,
@@ -952,12 +949,13 @@
    ],
    "rejections": {},
    "checks": {
-    "PASS": 6
+    "PASS": 6,
+    "INSUFFICIENT_DATA": 1
    },
    "standard": "us-gaap",
    "standard_ok": true,
-   "mean_confidence": 0.839,
-   "lines_found": 34
+   "mean_confidence": 0.802,
+   "lines_found": 42
   },
   {
    "id": "heldout-us-pdf-3",
@@ -972,15 +970,15 @@
    "layout": "classic",
    "wording": "held",
    "success": true,
-   "seconds": 0.835,
+   "seconds": 0.488,
    "expected": 42,
-   "correct": 32,
-   "wrong": 2,
+   "correct": 39,
+   "wrong": 3,
    "spurious": 0,
    "confident_errors": 0,
-   "wrong_caught": 2,
+   "wrong_caught": 3,
    "critical_expected": 10,
-   "critical_correct": 8,
+   "critical_correct": 10,
    "statements_expected": 3,
    "statements_found": 3,
    "periods_expected": 2,
@@ -988,19 +986,16 @@
    "period_kind_ok": 2,
    "unit_ok": true,
    "currency_ok": true,
-   "fallbacks": [
-    "assessment",
-    "second-table-reading",
-    "ocr-pages"
-   ],
+   "fallbacks": [],
    "rejections": {},
    "checks": {
-    "PASS": 6
+    "PASS": 6,
+    "INSUFFICIENT_DATA": 1
    },
    "standard": "us-gaap",
    "standard_ok": true,
-   "mean_confidence": 0.728,
-   "lines_found": 34
+   "mean_confidence": 0.707,
+   "lines_found": 42
   },
   {
    "id": "heldout-us-pdf-4",
@@ -1017,15 +1012,15 @@
    "layout": "notes",
    "wording": "held",
    "success": true,
-   "seconds": 0.079,
+   "seconds": 0.088,
    "expected": 42,
-   "correct": 34,
+   "correct": 42,
    "wrong": 0,
    "spurious": 0,
    "confident_errors": 0,
    "wrong_caught": 0,
    "critical_expected": 10,
-   "critical_correct": 8,
+   "critical_correct": 10,
    "statements_expected": 3,
    "statements_found": 3,
    "periods_expected": 2,
@@ -1035,21 +1030,21 @@
    "currency_ok": true,
    "fallbacks": [
     "assessment",
-    "second-table-reading",
-    "ocr-pages"
+    "second-table-reading"
    ],
    "rejections": {
     "column is NOTE_REFERENCE (“Note”), not a reported period": 3,
-    "column is NOTE_REFERENCE (“Note 31 December 2023 31 December": 3,
+    "column is NOTE_REFERENCE (“Note 31 December 2023 31 December": 4,
     "column is OTHER (“”), not a reported period": 8
    },
    "checks": {
-    "PASS": 6
+    "PASS": 6,
+    "INSUFFICIENT_DATA": 1
    },
    "standard": "us-gaap",
    "standard_ok": true,
-   "mean_confidence": 0.822,
-   "lines_found": 34
+   "mean_confidence": 0.813,
+   "lines_found": 42
   },
   {
    "id": "heldout-sg-pdf-1",
@@ -1066,15 +1061,15 @@
    "layout": "parent_after",
    "wording": "held",
    "success": true,
-   "seconds": 0.09,
+   "seconds": 0.017,
    "expected": 42,
-   "correct": 34,
+   "correct": 42,
    "wrong": 0,
    "spurious": 0,
    "confident_errors": 0,
    "wrong_caught": 0,
    "critical_expected": 10,
-   "critical_correct": 8,
+   "critical_correct": 10,
    "statements_expected": 3,
    "statements_found": 3,
    "periods_expected": 2,
@@ -1082,21 +1077,18 @@
    "period_kind_ok": 2,
    "unit_ok": true,
    "currency_ok": true,
-   "fallbacks": [
-    "assessment",
-    "second-table-reading",
-    "ocr-pages"
-   ],
+   "fallbacks": [],
    "rejections": {
     "parent-company / non-consolidated scope": 8
    },
    "checks": {
-    "PASS": 6
+    "PASS": 6,
+    "INSUFFICIENT_DATA": 1
    },
    "standard": "sfrs-i",
    "standard_ok": true,
-   "mean_confidence": 0.965,
-   "lines_found": 34
+   "mean_confidence": 0.94,
+   "lines_found": 42
   },
   {
    "id": "heldout-sg-pdf-2",
@@ -1111,15 +1103,15 @@
    "layout": "notes",
    "wording": "held",
    "success": true,
-   "seconds": 0.079,
+   "seconds": 0.084,
    "expected": 42,
-   "correct": 34,
+   "correct": 42,
    "wrong": 0,
    "spurious": 0,
    "confident_errors": 0,
    "wrong_caught": 0,
    "critical_expected": 10,
-   "critical_correct": 8,
+   "critical_correct": 10,
    "statements_expected": 3,
    "statements_found": 3,
    "periods_expected": 3,
@@ -1129,20 +1121,20 @@
    "currency_ok": true,
    "fallbacks": [
     "assessment",
-    "second-table-reading",
-    "ocr-pages"
+    "second-table-reading"
    ],
    "rejections": {
-    "column is NOTE_REFERENCE (“Note”), not a reported period": 6
+    "column is NOTE_REFERENCE (“Note”), not a reported period": 7
    },
    "checks": {
     "NOT_APPLICABLE": 1,
-    "PASS": 5
+    "PASS": 5,
+    "INSUFFICIENT_DATA": 1
    },
    "standard": "sfrs-i",
    "standard_ok": true,
-   "mean_confidence": 0.965,
-   "lines_found": 34
+   "mean_confidence": 0.94,
+   "lines_found": 42
   },
   {
    "id": "heldout-sg-pdf-3",
@@ -1157,15 +1149,15 @@
    "layout": "wrapped",
    "wording": "held",
    "success": true,
-   "seconds": 0.866,
+   "seconds": 1.185,
    "expected": 42,
-   "correct": 33,
+   "correct": 41,
    "wrong": 1,
    "spurious": 0,
    "confident_errors": 0,
    "wrong_caught": 1,
    "critical_expected": 10,
-   "critical_correct": 8,
+   "critical_correct": 10,
    "statements_expected": 3,
    "statements_found": 3,
    "periods_expected": 2,
@@ -1180,12 +1172,13 @@
    ],
    "rejections": {},
    "checks": {
-    "PASS": 6
+    "PASS": 6,
+    "INSUFFICIENT_DATA": 1
    },
    "standard": "sfrs-i",
    "standard_ok": true,
-   "mean_confidence": 0.726,
-   "lines_found": 34
+   "mean_confidence": 0.705,
+   "lines_found": 42
   },
   {
    "id": "heldout-jp-pdf-1",
@@ -1202,7 +1195,7 @@
    "layout": "classic",
    "wording": "held",
    "success": true,
-   "seconds": 0.068,
+   "seconds": 0.097,
    "expected": 40,
    "correct": 32,
    "wrong": 0,
@@ -1220,8 +1213,7 @@
    "currency_ok": true,
    "fallbacks": [
     "assessment",
-    "second-table-reading",
-    "ocr-pages"
+    "second-table-reading"
    ],
    "rejections": {
     "parent-company / non-consolidated scope": 4
@@ -1248,7 +1240,7 @@
    "layout": "classic",
    "wording": "held",
    "success": true,
-   "seconds": 0.008,
+   "seconds": 0.01,
    "expected": 40,
    "correct": 32,
    "wrong": 0,
@@ -1290,7 +1282,7 @@
    "layout": "notes",
    "wording": "held",
    "success": true,
-   "seconds": 0.045,
+   "seconds": 0.063,
    "expected": 40,
    "correct": 32,
    "wrong": 0,
@@ -1308,8 +1300,7 @@
    "currency_ok": true,
    "fallbacks": [
     "assessment",
-    "second-table-reading",
-    "ocr-pages"
+    "second-table-reading"
    ],
    "rejections": {
     "column is NOTE_REFERENCE (“注記”), not a reported period": 6
@@ -1339,7 +1330,7 @@
    "layout": "notes",
    "wording": "held",
    "success": true,
-   "seconds": 0.082,
+   "seconds": 0.114,
    "expected": 40,
    "correct": 28,
    "wrong": 0,
@@ -1357,8 +1348,7 @@
    "currency_ok": true,
    "fallbacks": [
     "assessment",
-    "second-table-reading",
-    "ocr-pages"
+    "second-table-reading"
    ],
    "rejections": {
     "column is NOTE_REFERENCE (“제 55 기 2023.01.01 부터 2023.12.31 까": 3,
@@ -1388,7 +1378,7 @@
    "layout": "classic",
    "wording": "held",
    "success": true,
-   "seconds": 0.05,
+   "seconds": 0.049,
    "expected": 40,
    "correct": 28,
    "wrong": 0,
@@ -1406,8 +1396,7 @@
    "currency_ok": true,
    "fallbacks": [
     "assessment",
-    "second-table-reading",
-    "ocr-pages"
+    "second-table-reading"
    ],
    "rejections": {},
    "checks": {
@@ -1433,7 +1422,7 @@
    "layout": "classic",
    "wording": "held",
    "success": true,
-   "seconds": 0.955,
+   "seconds": 1.351,
    "expected": 40,
    "correct": 28,
    "wrong": 0,
@@ -1480,7 +1469,7 @@
    "layout": "classic",
    "wording": "held",
    "success": true,
-   "seconds": 0.009,
+   "seconds": 0.014,
    "expected": 38,
    "correct": 32,
    "wrong": 0,
@@ -1522,7 +1511,7 @@
    "layout": "left_aligned",
    "wording": "held",
    "success": true,
-   "seconds": 0.094,
+   "seconds": 0.126,
    "expected": 38,
    "correct": 32,
    "wrong": 0,
@@ -1540,8 +1529,7 @@
    "currency_ok": true,
    "fallbacks": [
     "assessment",
-    "second-table-reading",
-    "ocr-pages"
+    "second-table-reading"
    ],
    "rejections": {},
    "checks": {
@@ -1567,7 +1555,7 @@
    "layout": "classic",
    "wording": "held",
    "success": true,
-   "seconds": 0.08,
+   "seconds": 0.168,
    "expected": 38,
    "correct": 32,
    "wrong": 0,
@@ -1607,7 +1595,7 @@
    "layout": "notes",
    "wording": "held",
    "success": true,
-   "seconds": 0.066,
+   "seconds": 0.107,
    "expected": 36,
    "correct": 22,
    "wrong": 0,
@@ -1625,8 +1613,7 @@
    "currency_ok": true,
    "fallbacks": [
     "assessment",
-    "second-table-reading",
-    "ocr-pages"
+    "second-table-reading"
    ],
    "rejections": {
     "column is NOTE_REFERENCE (“Note”), not a reported period": 3
@@ -1656,15 +1643,15 @@
    "layout": "parent_after",
    "wording": "held",
    "success": true,
-   "seconds": 0.066,
+   "seconds": 0.019,
    "expected": 42,
-   "correct": 34,
+   "correct": 42,
    "wrong": 0,
    "spurious": 0,
    "confident_errors": 0,
    "wrong_caught": 0,
    "critical_expected": 10,
-   "critical_correct": 8,
+   "critical_correct": 10,
    "statements_expected": 3,
    "statements_found": 3,
    "periods_expected": 2,
@@ -1672,21 +1659,18 @@
    "period_kind_ok": 2,
    "unit_ok": true,
    "currency_ok": true,
-   "fallbacks": [
-    "assessment",
-    "second-table-reading",
-    "ocr-pages"
-   ],
+   "fallbacks": [],
    "rejections": {
     "parent-company / non-consolidated scope": 8
    },
    "checks": {
-    "PASS": 6
+    "PASS": 6,
+    "INSUFFICIENT_DATA": 1
    },
    "standard": "ifrs",
    "standard_ok": true,
-   "mean_confidence": 0.968,
-   "lines_found": 34
+   "mean_confidence": 0.943,
+   "lines_found": 42
   },
   {
    "id": "heldout-hk-pdf-3",
@@ -1701,15 +1685,15 @@
    "layout": "classic",
    "wording": "held",
    "success": true,
-   "seconds": 0.928,
+   "seconds": 0.585,
    "expected": 42,
-   "correct": 33,
+   "correct": 41,
    "wrong": 1,
    "spurious": 0,
    "confident_errors": 0,
    "wrong_caught": 1,
    "critical_expected": 10,
-   "critical_correct": 8,
+   "critical_correct": 10,
    "statements_expected": 3,
    "statements_found": 3,
    "periods_expected": 2,
@@ -1717,19 +1701,16 @@
    "period_kind_ok": 2,
    "unit_ok": true,
    "currency_ok": true,
-   "fallbacks": [
-    "assessment",
-    "second-table-reading",
-    "ocr-pages"
-   ],
+   "fallbacks": [],
    "rejections": {},
    "checks": {
-    "PASS": 6
+    "PASS": 6,
+    "INSUFFICIENT_DATA": 1
    },
    "standard": "ifrs",
    "standard_ok": true,
-   "mean_confidence": 0.728,
-   "lines_found": 34
+   "mean_confidence": 0.707,
+   "lines_found": 42
   },
   {
    "id": "heldout-eu-pdf-1",
@@ -1744,17 +1725,17 @@
    "layout": "notes",
    "wording": "held",
    "success": true,
-   "seconds": 0.042,
+   "seconds": 0.066,
    "expected": 40,
-   "correct": 12,
+   "correct": 18,
    "wrong": 0,
    "spurious": 0,
    "confident_errors": 0,
    "wrong_caught": 0,
    "critical_expected": 10,
-   "critical_correct": 6,
+   "critical_correct": 8,
    "statements_expected": 3,
-   "statements_found": 2,
+   "statements_found": 3,
    "periods_expected": 2,
    "periods_found": 2,
    "period_kind_ok": 2,
@@ -1762,20 +1743,18 @@
    "currency_ok": true,
    "fallbacks": [
     "assessment",
-    "second-table-reading",
-    "ocr-pages"
+    "second-table-reading"
    ],
    "rejections": {
-    "column is NOTE_REFERENCE (“Note”), not a reported period": 2,
-    "a primary statement covers this period": 6
+    "column is NOTE_REFERENCE (“Note”), not a reported period": 2
    },
    "checks": {
-    "INSUFFICIENT_DATA": 2
+    "INSUFFICIENT_DATA": 4
    },
    "standard": "ifrs",
    "standard_ok": true,
-   "mean_confidence": 0.95,
-   "lines_found": 12
+   "mean_confidence": 0.848,
+   "lines_found": 18
   },
   {
    "id": "heldout-eu-pdf-2",
@@ -1790,7 +1769,7 @@
    "layout": "classic",
    "wording": "held",
    "success": true,
-   "seconds": 0.041,
+   "seconds": 0.033,
    "expected": 36,
    "correct": 4,
    "wrong": 0,
@@ -1808,8 +1787,7 @@
    "currency_ok": true,
    "fallbacks": [
     "assessment",
-    "second-table-reading",
-    "ocr-pages"
+    "second-table-reading"
    ],
    "rejections": {
     "a primary statement covers this period": 4
@@ -1837,7 +1815,7 @@
    "layout": "dated_header",
    "wording": "held",
    "success": true,
-   "seconds": 0.059,
+   "seconds": 0.042,
    "expected": 30,
    "correct": 14,
    "wrong": 0,
@@ -1855,8 +1833,7 @@
    "currency_ok": true,
    "fallbacks": [
     "assessment",
-    "second-table-reading",
-    "ocr-pages"
+    "second-table-reading"
    ],
    "rejections": {
     "no statement title and too few known lines": 1,
@@ -1884,17 +1861,17 @@
    "layout": "classic",
    "wording": "held",
    "success": true,
-   "seconds": 0.013,
+   "seconds": 0.008,
    "expected": 40,
-   "correct": 12,
+   "correct": 18,
    "wrong": 0,
    "spurious": 0,
    "confident_errors": 0,
    "wrong_caught": 0,
    "critical_expected": 10,
-   "critical_correct": 6,
+   "critical_correct": 8,
    "statements_expected": 3,
-   "statements_found": 2,
+   "statements_found": 3,
    "periods_expected": 2,
    "periods_found": 2,
    "period_kind_ok": 2,
@@ -1903,16 +1880,14 @@
    "fallbacks": [
     "assessment"
    ],
-   "rejections": {
-    "a primary statement covers this period": 6
-   },
+   "rejections": {},
    "checks": {
-    "INSUFFICIENT_DATA": 2
+    "INSUFFICIENT_DATA": 4
    },
    "standard": "ifrs",
    "standard_ok": true,
-   "mean_confidence": 0.95,
-   "lines_found": 12
+   "mean_confidence": 0.848,
+   "lines_found": 18
   }
  ]
 }

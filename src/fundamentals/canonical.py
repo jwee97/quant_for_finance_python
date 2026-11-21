@@ -320,6 +320,8 @@ def _derive(obs: dict[str, dict]) -> None:
         put("free_cash_flow", obs["operating_cash_flow"]["value"] - obs["capital_expenditure"]["value"], "operating_cash_flow - capital_expenditure")
     if has("short_term_debt") or has("long_term_debt"):
         put("total_debt", (obs.get("short_term_debt", {"value": 0.0})["value"]) + (obs.get("long_term_debt", {"value": 0.0})["value"]), "short_term_debt + long_term_debt")
+    if has("total_assets") and has("shareholders_equity") and not has("total_liabilities"):
+        put("total_liabilities", obs["total_assets"]["value"] - obs["shareholders_equity"]["value"] - obs.get("temporary_equity", {"value": 0.0})["value"], "total_assets - total_equity - temporary_equity")
     if has("cash_and_equivalents"):
         put("cash", obs["cash_and_equivalents"]["value"], "cash_and_equivalents")
     if has("weighted_avg_shares_diluted"):
