@@ -79,7 +79,7 @@
     });
     const b = FD.sec(panel, "2. Add reports");
     const drop = h("div", "dropzone", b); drop.dataset.role = "import-drop"; drop.tabIndex = 0;
-    h("p", "", drop, "Drop files here, or choose them: XBRL / inline-XBRL filings (.htm .xml), CSV, Excel (.xlsx), PDF, or a ZIP of them. Several at once.");
+    h("p", "", drop, "Drop files here, or choose them: XBRL / inline-XBRL filings (.htm .xml), CSV, Excel (.xlsx), PDF, or a ZIP of them. Several at once. This works for a report from any country, with no regulator source needed: a PDF in Korean, Japanese, Chinese, French or any other language is read by its line names, and every PDF reading is shown for your review before it is stored.");
     const file = h("input", "", drop); file.type = "file"; file.multiple = true; file.accept = ".pdf,.csv,.tsv,.txt,.xlsx,.xlsm,.xml,.xbrl,.htm,.html,.xhtml,.zip"; file.dataset.role = "import-file"; file.setAttribute("aria-label", "Choose report files");
     file.addEventListener("change", () => { addFiles([...file.files]); file.value = ""; });
     for (const ev of ["dragover", "dragenter"]) drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.add("over"); });

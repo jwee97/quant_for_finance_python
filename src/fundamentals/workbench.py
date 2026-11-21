@@ -269,6 +269,21 @@ class Workbench:
             sectors = [r[0] for r in conn.execute("SELECT DISTINCT sector FROM securities WHERE sector IS NOT NULL ORDER BY sector")]
         return clean({"total": total, "offset": offset, "limit": limit, "companies": [dict(r) for r in rows], "countries": countries, "sectors": sectors})
 
+    def delete_companies(self, security_ids) -> dict:
+        """Remove companies and everything held for them (statements, figures, prices, identifiers, fetch log). A manual import batch that pointed at one keeps its files and is left unlinked. Nothing is
+        asked of a provider, so nothing is spent; adding the company again starts from nothing."""
+        ids = sorted({int(i) for i in security_ids})
+        if not ids:
+            raise FundamentalsError("name at least one company to delete")
+        if len(ids) > 500:
+            raise FundamentalsError("at most 500 companies can be deleted at a time")
+        marks = ",".join("?" * len(ids))
+        with self.store.db.transaction() as conn:
+            rows = conn.execute(f"SELECT security_id, ticker, company_name FROM securities WHERE security_id IN ({marks})", ids).fetchall()
+            periods = int(conn.execute(f"SELECT COUNT(*) FROM financial_periods WHERE security_id IN ({marks})", ids).fetchone()[0])
+            conn.execute(f"DELETE FROM securities WHERE security_id IN ({marks})", ids)
+        return {"deleted": len(rows), "periods_removed": periods, "companies": [{"security_id": r[0], "ticker": r[1], "name": r[2]} for r in rows], "missing": [i for i in ids if i not in {r[0] for r in rows}]}
+
     FIGURES = ("revenue", "gross_profit", "operating_income", "net_income", "operating_cash_flow", "capital_expenditure", "free_cash_flow", "total_assets", "total_debt", "shareholders_equity",
                "cash", "retained_earnings", "shares_outstanding")
     RATIOS = ("gross_margin", "operating_margin", "net_margin", "roe", "roa", "roic", "revenue_growth", "fcf_margin", "debt_to_equity", "interest_coverage", "accruals_ratio", "asset_turnover",

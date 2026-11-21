@@ -251,3 +251,26 @@ def test_with_only_the_sec_set_up_the_first_step_is_done_and_its_cost_is_in_requ
         page.close()
         running.stop()
         saved.undo()
+
+
+def test_companies_can_be_selected_and_deleted_from_the_explorer(browser, live_unset):  # noqa: F811
+    live_unset.app.fundamentals.add_companies({"symbols": "AAPL, MSFT, NVDA"})
+    page = _page(browser, live_unset)
+    try:
+        page.evaluate("window.confirm = () => true")                                                # the confirmation of the delete
+        _open(page, "companies", demo=False)
+        page.wait_for_selector("[data-role=fund-companies] tbody tr")
+        assert page.locator("[data-role=fund-companies] tbody tr").count() == 3
+        assert page.locator("[data-action=delete-companies]").is_disabled()
+        page.locator("[data-role=pick-company]").nth(0).check()
+        page.locator("[data-role=pick-company]").nth(1).check()
+        assert "Delete selected (2)" in page.inner_text("[data-action=delete-companies]")
+        page.click("[data-action=delete-companies]")
+        _wait_until(page, "document.querySelectorAll('[data-role=fund-companies] tbody tr').length === 1", 30)
+        page.locator("[data-role=fund-companies] [data-action=open-company]").click()
+        page.wait_for_selector("[data-action=delete-company]")
+        page.click("[data-action=delete-company]")
+        page.wait_for_selector("[data-role=fund-companies] h3:has-text('no companies in your database yet')")
+        assert [x for x in page.problems if "400" not in x] == []                                          # opening a company with no statements yet may be answered "nothing to show" (400)
+    finally:
+        page.close()

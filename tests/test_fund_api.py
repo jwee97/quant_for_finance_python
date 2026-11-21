@@ -95,7 +95,7 @@ def test_the_two_databases_are_separate_files_and_the_demo_never_calls_a_provide
     real = get(app, "/api/fund/status")
     assert real["database"] == "real" and not real["readiness"]["ready"] and "add some in the Data Manager" in real["readiness"]["problems"][0]
     assert app.root.joinpath("data", "user", "fundamentals_demo.db").exists() and app.root.joinpath("data", "user", "fundamentals.db").exists()
-    for path, body in (("/api/fund/companies/add", {"symbols": ["AAPL"]}), ("/api/fund/sync", {"budget": 10}), ("/api/fund/sync/plan", {}), ("/api/fund/provider/test", {}),
+    for path, body in (("/api/fund/companies/add", {"symbols": ["AAPL"]}), ("/api/fund/companies/delete", {"security_ids": [1]}), ("/api/fund/sync", {"budget": 10}), ("/api/fund/sync/plan", {}), ("/api/fund/provider/test", {}),
                        ("/api/fund/prices", {}), ("/api/fund/price-symbol", {"security_id": 1, "symbol": "X"})):
         with pytest.raises(ApiError, match="Switch to Real data|switch to Real data"):
             post(app, path, db="demo", **body)
@@ -514,3 +514,16 @@ def test_the_overview_and_the_catalogue_carry_what_the_new_checks_need(app):
         post(app, "/api/fund/evaluate", db="demo", spec={"factor": "fcf_yield", "controls": ["vibes"]})
     audit = run(app, "/api/fund/lookahead", db="demo", spec={"factor": "fcf_yield"})
     assert [r["lag_days"] for r in audit["by_lag"]] == [1, 30, 60, 90] and "lag_verdict" in audit
+
+
+def test_companies_can_be_deleted_with_their_data(tmp_path):
+    local = make_app(tmp_path)
+    ids = post(local, "/api/fund/companies/add", symbols="AAPL, us:MSFT, jp:7203")["security_ids"]
+    out = post(local, "/api/fund/companies/delete", security_ids=ids[:2])
+    assert out["deleted"] == 2 and {c["security_id"] for c in out["companies"]} == set(ids[:2])
+    left = get(local, "/api/fund/companies")
+    assert left["total"] == 1 and left["companies"][0]["security_id"] == ids[2]
+    again = post(local, "/api/fund/companies/delete", security_ids=[ids[0], ids[2]])
+    assert again["deleted"] == 1 and again["missing"] == [ids[0]]
+    with pytest.raises(ApiError, match="at least one"):
+        post(local, "/api/fund/companies/delete", security_ids=[])

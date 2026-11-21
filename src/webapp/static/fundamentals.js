@@ -27,7 +27,7 @@
     about: "Company fundamentals from around the world in a local database, tested as factors and searched for alphas, with the evidence counted honestly.",
     modes: [["overview", "Overview"], ["companies", "Company explorer"], ["factors", "Factor lab"], ["discovery", "Alpha discovery"], ["library", "Alpha library"], ["monitor", "Alpha monitor"], ["data", "Data manager"]],
     db: Q.store("fund.db") === "demo" ? "demo" : "real", facets: {}, views: {},
-    co: { q: "", country: "", sector: "", market: "", provider: "openfilings", offset: 0, limit: 25, id: null, found: null, report: null, val: { rate: "9", growth: "2" } },
+    co: { picked: new Set(), q: "", country: "", sector: "", market: "", provider: "openfilings", offset: 0, limit: 25, id: null, found: null, report: null, val: { rate: "9", growth: "2" } },
     dm: { symbols: "", market: "us", provider: "openfilings", start_year: "2000", budget: "", plan: null, report: null, prices: null, price_start: "2010-01-01", price_refresh: false, price_note: "", companies: "120", from: "2009", to: "2022", seed: "7",
           strong: false, tested: null },
     uni: { countries: new Set(), sectors: new Set(), min_cap: "", min_vol: "", developed: false, delisted: true, freq: "M", lag: "1", start: "", end: "", info_lag: "1" },
@@ -424,6 +424,18 @@
     }
     return [r.stopped || `Nothing was fetched for ${r.symbol}: it is already up to date.`, "hint"];
   };
+  /* Delete companies (real database only): a company with no filings, or one added under the wrong ticker. It removes its statements and prices; asking a provider again starts from nothing. */
+  CO.remove = (ids, label) => {
+    if (!ids.length || FD.db !== "real") return;
+    if (!window.confirm(`Delete ${label}? Its statements and prices are removed from your database. This cannot be undone (adding it again fetches from the start).`)) return;
+    FD.act("companies", "Deleting…", async () => {
+      const r = await FD.send("/api/fund/companies/delete", { security_ids: ids });
+      for (const i of ids) FD.co.picked.delete(i);
+      if (FD.co.id && ids.includes(FD.co.id)) FD.co.id = null;
+      FD.co.found = null; FD.resetCaches(); CO.refreshFacets(); Q.toast(`${r.deleted} compan${r.deleted === 1 ? "y" : "ies"} deleted`);
+      return FD.read("/api/fund/companies", CO.local());
+    });
+  };
   CO.none = (card, dbTotal) => {
     if (FD.db === "demo") { h("p", "hint", card, dbTotal === 0 ? "The demo has not been made yet: open the Data manager." : "No company in the demo matches."); return; }
     if (dbTotal === 0) {
@@ -497,11 +509,19 @@
     const card = h("div", "card roomy", root); card.dataset.role = "fund-companies";
     if (!d.companies.length) CO.none(card, dbTotal);
     else {
+      const real = FD.db === "real";
+      const del = h("button", "btn small", real ? h("div", "row tight", card) : document.createElement("span"), `Delete selected (${FD.co.picked.size})`); del.type = "button"; del.dataset.action = "delete-companies"; del.disabled = !FD.co.picked.size;
+      del.addEventListener("click", () => CO.remove([...FD.co.picked], `${FD.co.picked.size} selected compan${FD.co.picked.size === 1 ? "y" : "ies"}`));
       const wrap = FD.guardScroll(h("div", "scroll", card)), t = h("table", "data", wrap), hd = h("tr", "", h("thead", "", t));
+      if (real) { const th = h("th", "", hd); h("span", "vh", th, "Select"); }
       for (const [label, numeric] of [["Ticker", 0], ["Company", 0], ["Country", 0], ["Sector", 0], ["Annual", 1], ["Gaps", 1], ["First period", 0], ["Last period", 0], ["Price days", 1], ["Open", 2]]) { const th = h("th", numeric === 1 ? "num" : "", hd); if (numeric === 2) h("span", "vh", th, label); else th.textContent = label; }
       const tb = h("tbody", "", t);
       for (const r of d.companies) {
         const tr = h("tr", "", tb); tr.dataset.id = r.security_id;
+        if (real) {
+          const box = h("input", "", h("td", "", tr)); box.type = "checkbox"; box.checked = FD.co.picked.has(r.security_id); box.dataset.role = "pick-company"; box.setAttribute("aria-label", "select " + r.ticker);
+          box.addEventListener("change", () => { if (box.checked) FD.co.picked.add(r.security_id); else FD.co.picked.delete(r.security_id); del.disabled = !FD.co.picked.size; del.textContent = `Delete selected (${FD.co.picked.size})`; });
+        }
         h("td", "", tr, r.ticker + (r.exchange ? " · " + r.exchange : "")); h("td", "", tr, r.company_name || ""); h("td", "", tr, r.country || ""); h("td", "", tr, r.sector || "");
         h("td", "num", tr, String(r.annual)); h("td", "num", tr, r.annual_gaps ? String(r.annual_gaps) : "").title = "Fiscal years missing between the first and the last that are held"; h("td", "", tr, day(r.first_period_end)); h("td", "", tr, day(r.last_period_end)); h("td", "num", tr, String(r.price_days));
         const open = h("button", "btn small", h("td", "", tr), "Open"); open.type = "button"; open.dataset.action = "open-company"; open.setAttribute("aria-label", "open " + r.ticker);
@@ -746,6 +766,7 @@
     const preview = !!(opts && opts.preview), p = d.profile;
     Q.labHead(root, `${p.company_name || p.ticker} (${p.ticker}${p.exchange ? ", " + p.exchange : ""})`, [p.country, p.sector, p.industry, p.currency].filter(Boolean).join(" · "), GUIDE);
     if (p.active === 0 || p.active === false) Q.labBanner(root, "Delisted. ", `This company is no longer listed${p.delisted_date ? " (since " + day(p.delisted_date) + ")" : ""}; its history is kept so that studies do not leave out the ones that failed.`);
+    if (!preview && FD.db === "real" && p.security_id !== undefined) { const rm = h("button", "btn small", root, "Delete this company"); rm.type = "button"; rm.dataset.action = "delete-company"; rm.addEventListener("click", () => CO.remove([p.security_id], `${p.company_name || p.ticker}`)); }
     const k = h("div", "earnrow", root);
     tile(k, "Annual statements", String(d.summary.annual || 0), { text: `${day(d.summary.first_end)} to ${day(d.summary.last_end)}` });
     tile(k, "Last filed", day(d.summary.last_filed) || "n/a", { text: p.source ? "from " + p.source : "" });

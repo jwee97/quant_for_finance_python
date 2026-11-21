@@ -257,3 +257,35 @@ def test_chinese_pdf_reads_cjk_dates_labels_and_unit():
 def test_currency_detection_does_not_confuse_us_dollar_with_singapore_dollar():
     from src.fundamentals.importer.tabular import detect_currency
     assert detect_currency("US$'000") == "USD" and detect_currency("S$ million") == "SGD" and detect_currency("RMB'000") == "CNY"
+
+
+def test_korean_pdf_reads_terms_dotted_dates_outline_numbers_and_loss_notes():
+    data = _pdf([[
+        [("(단위 : 백만원)", 0)],
+        [("제 55 기 : 2023.12.31 현재", 0)],
+        [("제 54 기 : 2022.12.31 현재", 0)],
+        [("과 목", 150), ("주석", 60), ("제 55(당) 기", 130), ("제 54(전) 기", 130)],
+        [("자산총계", 150), ("", 60), ("448,424,507", 130), ("448,424,507", 130)],
+    ], [
+        [("제 55 기 2023.01.01 부터 2023.12.31 까지", 0)],
+        [("과 목", 150), ("주석", 60), ("제 55(당) 기", 130), ("제 54(전) 기", 130)],
+        [("Ⅰ. 매출액", 150), ("", 60), ("258,935,494", 130), ("302,231,360", 130)],
+        [("당기순이익(손실)", 150), ("", 60), ("14,473,401", 130), ("55,654,077", 130)],
+    ]], font="korea")
+    out = pdf.extract(data)
+    by = {p["period_end"]: p for p in out["periods"]}
+    assert out["currency"] == "KRW" and out["units"]["money"] == "millions"
+    assert by["2023-12-31"]["values"] == {"total_assets": 448424507.0, "revenue": 258935494.0, "net_income": 14473401.0}
+    assert by["2022-12-31"]["values"]["revenue"] == 302231360.0
+
+
+def test_pdf_without_readable_column_headings_falls_back_to_latest_date_and_says_so():
+    data = _pdf([[
+        [("Statement as of 31 December 2023", 0)],
+        [("Revenue", 200), ("500", 80), ("400", 80)],
+        [("Net income", 200), ("50", 80), ("40", 80)],
+    ]])
+    out = pdf.extract(data)
+    by = {p["period_end"]: p for p in out["periods"]}
+    assert by["2023-12-31"]["values"] == {"revenue": 500.0, "net_income": 50.0} and by["2022-12-31"]["values"]["revenue"] == 400.0
+    assert all(p["guessed"] for p in out["periods"]) and any("No column headings" in n for n in out["notes"])

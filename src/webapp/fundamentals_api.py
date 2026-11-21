@@ -128,7 +128,7 @@ class FundamentalsApi(ImportRoutes):
                             "/api/fund/manual/template": self.manual_template, "/api/fund/manual/entries": self.manual_entries, **self.import_get_routes()})
 
     def post_routes(self) -> dict:
-        return self._clean({"/api/fund/companies/add": self.add_companies, "/api/fund/companies/search": self.search_companies, "/api/fund/sync/plan": self.sync_plan, "/api/fund/coverage/plan": self.coverage_plan, "/api/fund/coverage/fetch": self.coverage_fetch,
+        return self._clean({"/api/fund/companies/add": self.add_companies, "/api/fund/companies/delete": self.delete_companies, "/api/fund/companies/search": self.search_companies, "/api/fund/sync/plan": self.sync_plan, "/api/fund/coverage/plan": self.coverage_plan, "/api/fund/coverage/fetch": self.coverage_fetch,
                             "/api/fund/provider/test": self.provider_test, "/api/fund/keys/use": self.use_key,
                             "/api/fund/price-symbol": self.price_symbol, "/api/fund/formula/check": self.formula_check, "/api/fund/library/status": self.library_status,
                             "/api/fund/library/validate": self.library_validate, "/api/fund/sync": self.sync, "/api/fund/simulate": self.simulate, "/api/fund/prices": self.load_prices,
@@ -354,6 +354,15 @@ class FundamentalsApi(ImportRoutes):
         ids = self._guard(wb.service.add_companies, _provider(body), symbols, None, market)
         rows = [wb.store.get_security(i) or {} for i in ids]
         return {"added": len(ids), "security_ids": ids, "symbols": symbols, "companies": [{"security_id": i, "ticker": r.get("ticker"), "name": r.get("company_name")} for i, r in zip(ids, rows)]}
+
+    def delete_companies(self, body: dict) -> dict:
+        """``POST /api/fund/companies/delete {security_ids}``: remove companies, with their statements and prices, from the real database. Free; cannot be undone."""
+        db = _db(body)
+        self._real_only(db, "deleting companies")
+        ids = _ids(body.get("security_ids"), "security_ids")
+        if not ids:
+            raise ApiError("name at least one company to delete")
+        return self._guard(self.bench(db).delete_companies, ids)
 
     def search_companies(self, body: dict) -> dict:
         """``POST /api/fund/companies/search {q, kind?, market?, refresh?, provider?}``: look a company up in a provider's directory by name, ticker or ISIN. In OpenFilings' it spends one credit of the

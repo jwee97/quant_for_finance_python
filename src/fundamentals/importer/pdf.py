@@ -30,6 +30,9 @@ MONTH_ABBR = {k[:3]: v for k, v in MONTHS.items()}
 DATE_TEXT = re.compile(r"\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\.?\s+(\d{1,2}),?\s+((?:19|20)\d{2})\b", re.I)
 DATE_DMY = re.compile(r"\b(\d{1,2})(?:st|nd|rd|th)?\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\.?,?\s+((?:19|20)\d{2})\b", re.I)  # "31 December 2023" (Hong Kong, Singapore)
 DATE_CJK = re.compile(r"((?:19|20)\d{2})\s*[年년]\s*(\d{1,2})\s*[月월]\s*(\d{1,2})\s*[日일]?")                                   # "2023年12月31日"
+DATE_NUM = re.compile(r"(?<!\d)((?:19|20)\d{2})\s*[.\-/]\s*(\d{1,2})\s*[.\-/]\s*(\d{1,2})(?!\d)")                                   # "2023.12.31" (Korea), "2023-12-31", "2023/12/31"
+TERM = re.compile(r"제\s*(\d{1,3})\s*(?:\([^)]*\))?\s*기")                                                                     # Korean "제 55(당) 기": the 55th term of the company
+RELATIVE = re.compile(r"(당기|本期|当期|本年度?|当年).{0,12}?(전기|前期|上期|上年同期|上年度?|前年)")                                      # "current / prior" column words
 KIND_Q = re.compile(r"three\s+months|quarter|三個月|三个月|第[一二三四1-4]季|3개월", re.I)
 KIND_H1 = re.compile(r"six\s+months|half[\s-]year|interim period|六個月|六个月|上半年|半期|6개월", re.I)
 KIND_YTD = re.compile(r"nine\s+months|year[\s-]to[\s-]date|九個月|九个月|前三季|9개월", re.I)
@@ -107,7 +110,7 @@ def _split(row: list[tuple]) -> tuple[str, list[float | None]]:
     return " ".join(tokens[:first]), figures
 
 
-def _headings(text: str, year_end: tuple[int, int] | None) -> list[dict]:
+def _headings(text: str, year_end: tuple[int, int] | None, ctx: dict | None = None) -> list[dict]:
     """The period columns named in a heading row: full dates ("December 31, 2023"), or bare years (which borrow the month and day of the fiscal year end the report names)."""
     found = []
     for m in DATE_TEXT.finditer(text):
@@ -116,6 +119,23 @@ def _headings(text: str, year_end: tuple[int, int] | None) -> list[dict]:
         found.append((m.start(), int(m.group(3)), MONTH_ABBR[m.group(2)[:3].lower()], int(m.group(1))))
     for m in DATE_CJK.finditer(text):
         found.append((m.start(), int(m.group(1)), int(m.group(2)), int(m.group(3))))
+    for m in DATE_NUM.finditer(text):
+        found.append((m.start(), int(m.group(1)), int(m.group(2)), int(m.group(3))))
+    ctx = ctx or {}
+    terms = [int(t) for t in TERM.findall(text)]
+    if len(terms) >= 2 and len(found) < 2 and ctx.get("terms"):                                       # "제 55(당) 기  제 54(전) 기": the terms name the columns, the dates come from the lines that introduce them
+        known = ctx["terms"]
+        top = max(known)
+        cols = []
+        for t in terms:
+            d = known.get(t) or (date(known[top].year - (top - t), known[top].month, min(known[top].day, 28 if known[top].month == 2 else known[top].day)) if top - t < 40 else None)
+            if d is None:
+                return []
+            cols.append({"period_end": d.isoformat(), "guessed": t not in known})
+        return cols
+    if len(found) < 2 and RELATIVE.search(text) and ctx.get("latest"):                               # "当期 / 前期": the latest date the report names, and a year before it
+        d = ctx["latest"]
+        return [{"period_end": d.isoformat(), "guessed": True}, {"period_end": date(d.year - 1, d.month, min(d.day, 28 if d.month == 2 else d.day)).isoformat(), "guessed": True}]
     out = []
     seen = set()
     for _, y, mo, d in sorted(found):                                                                 # a date named twice ("…ended 30 June 2024" then the column "30 June 2024") is one column
@@ -134,6 +154,48 @@ def _headings(text: str, year_end: tuple[int, int] | None) -> list[dict]:
         month, day = year_end or (12, 31)
         return [{"period_end": date(y, month, day).isoformat(), "guessed": year_end is None} for y in years]
     return out if out else []
+
+
+def _context(pages) -> dict:
+    """What the report says outside its column headings: which date each numbered term ends on ("제 55 기: 2023.12.31 현재"), and the latest date it names."""
+    terms: dict[int, date] = {}
+    latest = None
+    for words in pages[:40]:
+        for row in _rows(words):
+            line = " ".join(w[3] for w in row)
+            dates = []
+            for rx, order in ((DATE_NUM, (1, 2, 3)), (DATE_CJK, (1, 2, 3))):
+                for m in rx.finditer(line):
+                    try:
+                        dates.append((m.start(), date(int(m.group(order[0])), int(m.group(order[1])), int(m.group(order[2])))))
+                    except ValueError:
+                        pass
+            for m in DATE_DMY.finditer(line):
+                try:
+                    dates.append((m.start(), date(int(m.group(3)), MONTH_ABBR[m.group(2)[:3].lower()], int(m.group(1)))))
+                except ValueError:
+                    pass
+            if not dates:
+                continue
+            dates.sort()
+            latest = max([latest] + [d for _, d in dates]) if latest else max(d for _, d in dates)
+            term = TERM.search(line)
+            if term and len(TERM.findall(line)) == 1:
+                terms.setdefault(int(term.group(1)), dates[-1][1])
+    return {"terms": terms, "latest": latest}
+
+
+def _code(label: str):
+    """The statement line a label names. A trailing note in brackets ("당기순이익(손실)", "Net income (loss)") and a leading outline number ("Ⅰ. 매출액", "1. Revenue") do not change what the line is."""
+    candidates = [label]
+    stripped = re.sub(r"\s*[(（][^)）]*[)）]\s*$", "", label).strip()
+    candidates.append(stripped)
+    candidates.append(re.sub(r"^\s*(?:[IVXⅠⅡⅢⅣⅤⅥⅦⅧⅨⅩ]+|\d{1,2}|[가-힣]|[a-z])\s*[.)、]\s*", "", stripped, flags=re.I))
+    for c in candidates:
+        code = manual.ALIASES.get(manual._norm(c)) if c else None
+        if code:
+            return code
+    return None
 
 
 def extract(data: bytes, ocr=None, language: str = "en") -> dict:
@@ -158,46 +220,55 @@ def extract(data: bytes, ocr=None, language: str = "en") -> dict:
         if m and m.group(2).lower()[:3] in MONTH_ABBR:
             year_end = (MONTH_ABBR[m.group(2).lower()[:3]], int(m.group(1)))
     currency = detect_currency(full_text)
+    ctx = _context(pages)
     found: dict[tuple, dict] = {}                                                                   # (column key) -> {code: (value, page, line)}
     columns: dict[tuple, dict] = {}
     skipped: list[dict] = []
     page_units: Counter = Counter()
-    for pno, words in enumerate(pages, start=1):
-        rows = _rows(words)
-        header: list[dict] = []
-        header_kind = "FY"
-        page_text = " ".join(" ".join(w[3] for w in r) for r in rows[:12])
-        u = detect_units(page_text)
-        if u:
-            page_units[u] += 1
-        for row in rows:
-            line = " ".join(w[3] for w in row)
-            heads = _headings(line, year_end)
-            if len(heads) >= 2:
-                header = heads
-                low = line.lower()
-                header_kind = "Q" if KIND_Q.search(low) else ("H1" if KIND_H1.search(low) else ("YTD" if KIND_YTD.search(low) else "FY"))
-                continue
-            if not header:
-                continue
-            label, figures = _split(row)
-            code = manual.ALIASES.get(manual._norm(label)) if label else None
-            if code is None or not figures:
-                continue
-            if len(figures) == len(header) + 1 and figures[0] is not None and figures[0] == int(figures[0]) and 0 < figures[0] < 100:
-                figures = figures[1:]                                                                # a "Notes" reference column ("Revenue  4  1,234  1,100")
-            if len(figures) != len(header):
-                skipped.append({"label": label, "page": pno, "message": f"{len(figures)} figure(s) under a heading of {len(header)} columns: not stored (which column each belongs to is not known)"})
-                continue
-            if header_kind == "YTD":
-                skipped.append({"label": label, "page": pno, "message": "a nine-month / year-to-date column: not stored as a quarter"})
-                continue
-            for h, v in zip(header, figures):
-                if v is None:
-                    continue
-                key = (h["period_end"], header_kind)
-                columns.setdefault(key, {"period_end": h["period_end"], "guessed": h["guessed"], "kind": header_kind})
-                found.setdefault(key, {}).setdefault(code, (v, pno, line))
+    headerless = False
+    for attempt in (0, 1):
+      if attempt == 1:
+        if found or not ctx["latest"]:
+            break
+        headerless = True                                                                           # no column headings were understood: read two-figure lines as [latest date, a year earlier]
+        skipped = []
+      for pno, words in enumerate(pages, start=1):
+          rows = _rows(words)
+          d0 = ctx["latest"]
+          header: list[dict] = ([{"period_end": d0.isoformat(), "guessed": True}, {"period_end": date(d0.year - 1, d0.month, min(d0.day, 28 if d0.month == 2 else d0.day)).isoformat(), "guessed": True}] if headerless else [])
+          header_kind = "FY"
+          page_text = " ".join(" ".join(w[3] for w in r) for r in rows[:12])
+          u = detect_units(page_text)
+          if u:
+              page_units[u] += 1
+          for row in rows:
+              line = " ".join(w[3] for w in row)
+              heads = _headings(line, year_end, ctx)
+              if len(heads) >= 2:
+                  header = heads
+                  low = line.lower()
+                  header_kind = "Q" if KIND_Q.search(low) else ("H1" if KIND_H1.search(low) else ("YTD" if KIND_YTD.search(low) else "FY"))
+                  continue
+              if not header:
+                  continue
+              label, figures = _split(row)
+              code = _code(label) if label else None
+              if code is None or not figures:
+                  continue
+              if len(figures) == len(header) + 1 and figures[0] is not None and figures[0] == int(figures[0]) and 0 < figures[0] < 100:
+                  figures = figures[1:]                                                                # a "Notes" reference column ("Revenue  4  1,234  1,100")
+              if len(figures) != len(header):
+                  skipped.append({"label": label, "page": pno, "message": f"{len(figures)} figure(s) under a heading of {len(header)} columns: not stored (which column each belongs to is not known)"})
+                  continue
+              if header_kind == "YTD":
+                  skipped.append({"label": label, "page": pno, "message": "a nine-month / year-to-date column: not stored as a quarter"})
+                  continue
+              for h, v in zip(header, figures):
+                  if v is None:
+                      continue
+                  key = (h["period_end"], header_kind)
+                  columns.setdefault(key, {"period_end": h["period_end"], "guessed": h["guessed"], "kind": header_kind})
+                  found.setdefault(key, {}).setdefault(code, (v, pno, line))
     for key in [k for k in found if k[1] == "FY"]:                                                    # a balance sheet at 30 June carries no "six months" in its heading: join it to the interim column of that date
         for other in ("H1", "Q"):
             if (key[0], other) in found:
@@ -215,6 +286,8 @@ def extract(data: bytes, ocr=None, language: str = "en") -> dict:
         notes.append("The report does not state its unit in the pages read: amounts are read as units. Choose the unit below if they are in thousands or millions.")
     if len(page_units) > 1:
         notes.append("Different pages state different units (" + ", ".join(f"{k} on {v}" for k, v in page_units.items()) + "): check every statement.")
+    if headerless:
+        notes.append("No column headings of periods could be read, so each statement line's two figures were taken as the latest date the report names and the year before it: check which column is which.")
     if any(c["guessed"] for c in columns.values()):
         notes.append("A heading gave only years, so the period end was taken as December 31 (the report names no fiscal year end): check the dates.")
     periods = []
