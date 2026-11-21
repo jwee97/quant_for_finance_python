@@ -134,7 +134,7 @@ CREATE TABLE IF NOT EXISTS import_batches (
     ticker TEXT, note TEXT);
 CREATE TABLE IF NOT EXISTS import_items (
     item_id INTEGER PRIMARY KEY, batch_id TEXT NOT NULL REFERENCES import_batches(batch_id) ON DELETE CASCADE, seq INTEGER NOT NULL, parent_item INTEGER, source_kind TEXT NOT NULL,
-    source_name TEXT, source_url TEXT, content_hash TEXT NOT NULL, size_bytes INTEGER, method TEXT, status TEXT NOT NULL, error TEXT, draft TEXT, issues TEXT, reviewed TEXT, saved_periods TEXT,
+    source_name TEXT, source_url TEXT, content_hash TEXT NOT NULL, size_bytes INTEGER, method TEXT, status TEXT NOT NULL, error TEXT, hint TEXT, draft TEXT, issues TEXT, reviewed TEXT, saved_periods TEXT,
     created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS ix_import_items_batch ON import_items(batch_id, seq);
 CREATE INDEX IF NOT EXISTS ix_import_items_hash ON import_items(content_hash);

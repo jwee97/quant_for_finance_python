@@ -163,7 +163,7 @@ class ImportService:
         if row is None:
             raise FundamentalsError("no such import item")
         r = dict(zip(cols, row))
-        for k in ("draft", "issues", "reviewed", "saved_periods"):
+        for k in ("draft", "issues", "reviewed", "saved_periods", "hint"):
             r[k] = json.loads(r[k]) if r.get(k) else None
         if not full:
             for k in ("draft", "reviewed"):
@@ -171,13 +171,18 @@ class ImportService:
                     r[k] = {"periods": len(r[k]["periods"]), "method": r[k].get("method")}
         return r
 
+    def set_hint(self, item_id: int, hint: dict) -> None:
+        """What is known about an item before it is read (the accession and filing date of a filing found in the SEC's list); used when the item is extracted."""
+        with self.store.db.transaction() as c:
+            c.execute("UPDATE import_items SET hint = ? WHERE item_id = ? AND status = 'queued'", (json.dumps({k: v for k, v in hint.items() if v}), int(item_id)))
+
     def _set(self, item_id: int, **fields) -> None:
         cols, args = [], []
         for k, v in fields.items():
             if k == "note":
                 continue
             cols.append(f"{k} = ?")
-            args.append(json.dumps(v, default=str) if k in ("draft", "issues", "reviewed", "saved_periods") and v is not None else v)
+            args.append(json.dumps(v, default=str) if k in ("draft", "issues", "reviewed", "saved_periods", "hint") and v is not None else v)
         if not cols:
             return
         cols.append("updated_at = ?")
@@ -202,7 +207,9 @@ class ImportService:
         if data is None:
             self._set(item_id, status="failed", error="the stored file is missing")
             return self.item(item_id)
-        hint = hint or {}
+        hint = dict(hint or {})
+        if it.get("hint"):
+            hint = {**it["hint"], **hint}
         try:
             draft = self._extract_bytes(it["source_kind"], it["source_name"] or "", data, hint)
         except FundamentalsError as error:

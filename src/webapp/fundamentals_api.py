@@ -34,6 +34,7 @@ from ..fundamentals.providers.simulated import PLANTED
 from ..fundamentals.service import PROVIDER_WORDS, FundamentalsService
 from ..fundamentals.workbench import MAX_SYMBOLS, Workbench, eval_spec
 from .api import ACTIVE, ApiError
+from .fundamentals_import_api import ImportRoutes
 
 DBS = ("real", "demo")
 REAL_PROVIDERS = ("openfilings", "sec_edgar")                                                  # the providers the real database is filled from
@@ -111,7 +112,7 @@ def _company_id(source: dict) -> int:
         raise ApiError("say which company (security_id)") from None
 
 
-class FundamentalsApi:
+class FundamentalsApi(ImportRoutes):
     def __init__(self, app):
         self.app = app
         self.benches: dict[str, Workbench] = {}
@@ -124,7 +125,7 @@ class FundamentalsApi:
         return self._clean({"/api/fund/status": self.status, "/api/fund/overview": self.overview, "/api/fund/catalogue": self.catalogue, "/api/fund/companies": self.companies,
                             "/api/fund/company": self.company, "/api/fund/valuation": self.valuation, "/api/fund/coverage": self.coverage, "/api/fund/quality": self.quality, "/api/fund/library": self.library, "/api/fund/alpha": self.alpha,
                             "/api/fund/graveyard": self.graveyard, "/api/fund/runs": self.runs, "/api/fund/run": self.run_summary, "/api/fund/experiments": self.experiments,
-                            "/api/fund/manual/template": self.manual_template, "/api/fund/manual/entries": self.manual_entries})
+                            "/api/fund/manual/template": self.manual_template, "/api/fund/manual/entries": self.manual_entries, **self.import_get_routes()})
 
     def post_routes(self) -> dict:
         return self._clean({"/api/fund/companies/add": self.add_companies, "/api/fund/companies/search": self.search_companies, "/api/fund/sync/plan": self.sync_plan, "/api/fund/coverage/plan": self.coverage_plan, "/api/fund/coverage/fetch": self.coverage_fetch,
@@ -135,7 +136,7 @@ class FundamentalsApi:
                             "/api/fund/discover": self.discover, "/api/fund/discover/preflight": self.preflight, "/api/fund/placebo": self.placebo, "/api/fund/monitor": self.monitor, "/api/fund/correlation": self.correlation, "/api/fund/combine": self.combine,
                             "/api/fund/ml": self.ml, "/api/fund/backtest": self.backtest, "/api/fund/stop": self.stop,
                             "/api/fund/manual/parse": self.manual_parse, "/api/fund/manual/preview": self.manual_preview, "/api/fund/manual/save": self.manual_save,
-                            "/api/fund/manual/delete": self.manual_delete})
+                            "/api/fund/manual/delete": self.manual_delete, **self.import_post_routes()})
 
     @staticmethod
     def _clean(routes: dict) -> dict:

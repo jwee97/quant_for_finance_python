@@ -712,3 +712,12 @@ ol.steps { margin: 4px 0 8px 20px; padding: 0; } ol.steps li { margin: 5px 0; }
 .howgroup ul { margin: 4px 0 0 16px; padding: 0; font-size: 13px; } .howgroup code { font-size: 12px; }
 @media (max-width: 640px) { table.data.explain td.means { min-width: 0; } table.data.explain th, table.data.explain td { padding-left: 6px; padding-right: 6px; } .stratgrid { grid-template-columns: minmax(0, 1fr); } }
 [data-role=fund-picks] .charts > div { min-width: 0; overflow-x: auto; }
+
+/* Fundamentals: report import and data coverage */
+.dropzone { border: 2px dashed var(--line); border-radius: 12px; padding: 14px; text-align: center; margin-bottom: 10px; }
+.dropzone.over, .dropzone:focus-visible { border-color: var(--s1); background: color-mix(in srgb, var(--s1) 8%, transparent); outline: none; }
+.dropzone input[type=file] { max-width: 100%; }
+table.data.review input[type=text] { width: 9.5em; text-align: right; }
+table.data.review input.edited { border-color: var(--warn, #d9a21b); }
+table.data.review th input[type=date], table.data.review th select { display: block; width: 9.5em; margin-top: 4px; font-size: 12px; }
+.issues p { margin: 4px 0; }

@@ -24,6 +24,7 @@ nav:
       - Forecasting a stock's price, and how far to trust it: forecasting.md
       - "Scenarios: thousands of possible futures, and how far to trust each way of making them": scenarios.md
       - "Company fundamentals: studying factors, searching for alphas, and counting honestly": fundamentals.md
+      - "Fundamentals audit: what exists, what was added, what is open": fundamentals_audit.md
       - "Option models: what a chain implies, what an exotic is worth, what a hedge costs": option_models.md
       - "Review of the tabs' algorithms for personal use": algorithm_review_2026_11.md
       - "How close the app is to current quantitative practice": modern_practice_2026_11.md

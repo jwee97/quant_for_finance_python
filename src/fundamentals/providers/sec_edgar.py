@@ -899,6 +899,40 @@ class SecEdgarProvider(FundamentalDataProvider):
                  "tickers": [str(t) for t in (data.get("tickers") or []) if isinstance(t, str)][:8], "fiscal_year_end": str(data.get("fiscalYearEnd") or ""), "category": str(data.get("category") or "")}
         return _profile(ticker, " ".join(str(data.get("name") or "").split())[:200], None, sector_of(data.get("sic")), _title(data.get("sicDescription")) or None, lei, extra)
 
+    def filings(self, symbol: str, forms=("10-K", "10-Q"), limit: int = 80, market: str | None = None) -> dict:
+        """The company's filings of the forms asked for, newest first, from the SEC's submissions record: its recent filings and the older pages it links to (one request each; five at most). Each has the
+        accession number, the form, the date it was filed, the period it reports, the address of its main document and whether that document carries XBRL (inline or not). A filing before a company's first
+        XBRL one has no tagged numbers: its document is a report to read, not data to import."""
+        ticker, _ = self._split(symbol, market)
+        cik = self._cik_of(symbol, market)
+        wanted = {f.upper() for f in forms}
+        data = self._get(f"{self.base_url}/submissions/CIK{cik:010d}.json", "filings", f"us:{ticker}")
+        if not isinstance(data, dict):
+            raise ProviderError("SEC EDGAR answered with something that is not a submissions record")
+        blocks = [(data.get("filings") or {}).get("recent") or {}]
+        older = [f.get("name") for f in ((data.get("filings") or {}).get("files") or []) if isinstance(f, dict) and f.get("name")]
+        out: list[dict] = []
+
+        def read(block: dict) -> None:
+            forms_, accs = block.get("form") or [], block.get("accessionNumber") or []
+            for i, form in enumerate(forms_):
+                if str(form).upper() not in wanted or i >= len(accs):
+                    continue
+                accn = str(accs[i])
+                doc = (block.get("primaryDocument") or [""] * len(forms_))[i]
+                out.append({"accession": accn, "form": form, "filing_date": (block.get("filingDate") or [""] * len(forms_))[i], "period": (block.get("reportDate") or [""] * len(forms_))[i] or None,
+                            "document": doc, "xbrl": bool(int((block.get("isXBRL") or [0] * len(forms_))[i] or 0) or int((block.get("isInlineXBRL") or [0] * len(forms_))[i] or 0)),
+                            "url": f"https://www.sec.gov/Archives/edgar/data/{cik}/{accn.replace('-', '')}/{doc}" if doc else None})
+        read(blocks[0])
+        for name in older[:5]:
+            if len(out) >= limit:
+                break
+            page = self._get(f"{self.base_url}/submissions/{name}", "filings", f"us:{ticker}")
+            if isinstance(page, dict):
+                read(page)
+        out.sort(key=lambda r: (r["filing_date"], r["accession"]), reverse=True)
+        return {"cik": cik, "ticker": ticker, "name": data.get("name"), "filings": out[:limit], "older_pages": len(older), "note": "Filings before the company's first XBRL filing (2009 to 2011) carry no tagged numbers."}
+
     def _quarters(self, symbol: str, market: str | None, start_year: int | None, end_year: int | None) -> FinancialsResult:
         """The quarters of a company, from the 10-Q filings in the same free company-facts answer (see :mod:`sec_quarters`): Q1 to Q3 as filed, Q4 as the year less the nine months."""
         from .sec_quarters import QUARTER_FORMS, parse_quarters

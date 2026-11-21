@@ -1,0 +1,8 @@
+# The optional readers of the Fundamentals tab's Report import: Excel workbooks (openpyxl), PDF text (PyMuPDF, with pdfplumber as the alternative) and DuckDB for analytic reads of the point-in-time store.
+# Install with:  pip install -r requirements-fundamentals-extras.txt      (or:  pip install ".[fundamentals-extras]")
+# XBRL and inline-XBRL filings, CSV files and ZIP archives are read with what the base install has; a reader that is missing is named in the message that says a file cannot be read, and the tests that
+# need one are skipped. Arelle (the XBRL consortium's processor) is not required: it needs each filer's taxonomy package and a network, see docs/fundamentals_audit.md.
+openpyxl>=3.1
+pymupdf>=1.24
+pdfplumber>=0.11
+duckdb>=1.0
