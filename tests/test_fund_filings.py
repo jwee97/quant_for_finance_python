@@ -162,7 +162,7 @@ def test_edinet_lists_a_companys_securities_reports_by_scanning_days_and_fetches
     assert got["kind"] == "file" and got["name"] == "S100TOYO.xbrl" and got["hint"]["filing_date"] == "2024-06-25" and xbrl.extract(got["data"])["periods"][0]["values"]["revenue"] == 48e12
     with pytest.raises(FundamentalsError, match="needs the company's securities code"):
         c.list_filings({})
-    bad = conn("edinet", {"documents.json": {"statusCode": 401, "message": "Access denied"}}, EDINET_API_KEY="K")
+    bad = conn("edinet", {"documents.json": {"StatusCode": 401, "message": "Access denied due to invalid subscription key.Make sure to provide a valid key for an active subscription."}}, EDINET_API_KEY="K")   # the live answer
     with pytest.raises(FundamentalsError, match="refused the key"):
         bad.list_filings({"ticker": "7203"}, since="2024-06-24", until="2024-06-24")
 
@@ -205,6 +205,9 @@ def test_opendart_lists_reports_by_company_and_turns_the_accounts_into_lines():
     nothing = conn("dart", {**dart_routes(), "fnlttSinglAcntAll": {"status": "013", "list": []}}, OPENDART_API_KEY="K")
     with pytest.raises(FundamentalsError, match="no statements"):
         nothing.get(by["FY"])
+    wrong = conn("dart", {"list.json": {"status": "010", "message": "등록되지 않은 인증키입니다."}}, OPENDART_API_KEY="K")      # the live answer to an unregistered key
+    with pytest.raises(FundamentalsError, match="not registered"):
+        wrong.list_filings({"corp_code": "00126380"})
     limited = conn("dart", {"list.json": {"status": "020", "message": "limit"}}, OPENDART_API_KEY="K")
     with pytest.raises(FundamentalsError, match="daily request limit"):
         limited.list_filings({"corp_code": "00126380"})
@@ -227,11 +230,12 @@ def cvm_zip(doc="DFP", year=2023) -> bytes:
     if doc == "DFP":
         files = {f"dfp_cia_aberta_{year}.csv": table(["CNPJ_CIA", "DT_REFER", "VERSAO", "DENOM_CIA", "CD_CVM", "CATEG_DOC", "ID_DOC", "DT_RECEB"], [["33.000.167/0001-01", "2023-12-31", "1", "PETROBRAS", "9512", "DFP", "1", "2024-02-20"], ["33.000.167/0001-01", "2023-12-31", "2", "PETROBRAS", "9512", "DFP", "2", "2024-05-02"]]),
                  f"dfp_cia_aberta_DRE_con_{year}.csv": table(dre_head, [r("2023-12-31", "2", "MIL", "ÚLTIMO", "3.01", "Receita de Venda", "500000", "2023-01-01"), r("2023-12-31", "1", "MIL", "ÚLTIMO", "3.01", "Receita de Venda", "490000", "2023-01-01"),
-                                                                       r("2023-12-31", "2", "MIL", "ÚLTIMO", "3.11", "Lucro", "124000", "2023-01-01"), r("2023-12-31", "2", "MIL", "PENÚLTIMO", "3.01", "Receita", "1", "2022-01-01"),
+                                                                       r("2023-12-31", "2", "MIL", "ÚLTIMO", "3.11", "Lucro", "124000", "2023-01-01"), r("2023-12-31", "2", "MIL", "ÚLTIMO", "3.02", "Custo", "-240000", "2023-01-01"), r("2023-12-31", "2", "MIL", "PENÚLTIMO", "3.01", "Receita", "1", "2022-01-01"),
                                                                        r("2023-12-31", "2", "MIL", "ÚLTIMO", "3.01", "outra empresa", "7", "2023-01-01", cnpj="00.000.000/0001-00", cvm="1")]),
                  f"dfp_cia_aberta_BPA_con_{year}.csv": table(bp_head, [r("2023-12-31", "2", "MIL", "ÚLTIMO", "1", "Ativo Total", "1000000"), r("2023-12-31", "2", "MIL", "ÚLTIMO", "1.01.01", "Caixa", "50000")]),
-                 f"dfp_cia_aberta_BPP_con_{year}.csv": table(bp_head, [r("2023-12-31", "2", "MIL", "ÚLTIMO", "2.03", "Patrimônio Líquido", "400000")]),
-                 f"dfp_cia_aberta_DFC_MD_con_{year}.csv": table(dre_head, [r("2023-12-31", "2", "MIL", "ÚLTIMO", "6.01", "Caixa líquido operacional", "200000", "2023-01-01")])}
+                 f"dfp_cia_aberta_BPP_con_{year}.csv": table(bp_head, [r("2023-12-31", "2", "MIL", "ÚLTIMO", "2.03", "Patrimônio Líquido", "400000"), r("2023-12-31", "2", "MIL", "ÚLTIMO", "2.01", "Passivo Circulante", "160000"),
+                                                                       r("2023-12-31", "2", "MIL", "ÚLTIMO", "2.02", "Passivo Não Circulante", "440000")]),
+                 f"dfp_cia_aberta_DFC_MI_con_{year}.csv": table(dre_head, [r("2023-12-31", "2", "MIL", "ÚLTIMO", "6.01", "Caixa líquido operacional", "200000", "2023-01-01")])}   # the indirect method, as most companies file
     else:
         files = {f"itr_cia_aberta_{year}.csv": table(["CNPJ_CIA", "DT_REFER", "VERSAO", "DENOM_CIA", "CD_CVM", "CATEG_DOC", "ID_DOC", "DT_RECEB"], [["33.000.167/0001-01", "2023-09-30", "1", "PETROBRAS", "9512", "ITR", "3", "2023-11-09"]]),
                  f"itr_cia_aberta_DRE_con_{year}.csv": table(dre_head, [r("2023-09-30", "1", "MIL", "ÚLTIMO", "3.01", "Receita", "120000", "2023-07-01"), r("2023-09-30", "1", "MIL", "ÚLTIMO", "3.01", "Receita acumulada", "370000", "2023-01-01")]),
@@ -246,7 +250,8 @@ def test_cvm_open_data_gives_the_year_scaled_to_units_with_the_latest_version_an
     got = c.get(next(r for r in refs if r.doc_type == "DFP"))
     p = got["draft"]["periods"][0]
     assert p["fiscal_period"] == "FY" and p["period_end"] == "2023-12-31" and p["currency"] == "BRL" and p["filing_date"] == "2024-05-02", "the date the latest version was received"
-    assert p["values"] == {"revenue": 500_000_000.0, "net_income": 124_000_000.0, "total_assets": 1_000_000_000.0, "cash_and_equivalents": 50_000_000.0, "shareholders_equity": 400_000_000.0, "operating_cash_flow": 200_000_000.0}
+    assert p["values"] == {"revenue": 500_000_000.0, "cost_of_revenue": 240_000_000.0, "net_income": 124_000_000.0, "total_assets": 1_000_000_000.0, "cash_and_equivalents": 50_000_000.0, "shareholders_equity": 400_000_000.0,
+                           "current_liabilities": 160_000_000.0, "total_liabilities": 600_000_000.0, "operating_cash_flow": 200_000_000.0}, "a cost is a positive amount; total liabilities is 2.01 + 2.02; the indirect cash flow is read"
     assert any("versions [1, 2]" in n and "latest (2)" in n for n in got["draft"]["notes"]) and p["sources"]["revenue"]["method"] == "cvm-csv"
     assert not any("outra" in s["text"] for s in p["sources"].values()), "another company's rows are not read"
     q = c.get(FilingRef("cvm", "BR", "33.000.167/0001-01", "ITR-2023", "ITR", "Q", url="https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC/ITR/DADOS/itr_cia_aberta_2023.zip", extra={"year": 2023}))
@@ -309,3 +314,36 @@ def test_a_connectors_draft_goes_through_review_and_is_stored_with_its_source(tm
     svc.process(jb)
     got = svc.item(items[0]["item_id"], full=True)
     assert got["draft"]["accession"] == "S100TOYO" and got["draft"]["periods"][0]["filing_date"] == "2024-06-25" and got["draft"]["periods"][0]["values"]["revenue"] == 48e12
+
+
+def test_inline_numbers_in_the_formats_real_reports_use():
+    """Formats seen in a real ESEF report (Hermès 2024): a non-breaking space between digit groups and a decimal comma."""
+    n = xbrl._number
+    assert n("15\xa0170", 6, None, "ixt:num-comma-decimal") == 15_170e6 and n("13 427", 6, None, "ixt:num-comma-decimal") == 13_427e6
+    assert n("1.234,5", 0, None, "ixt:num-comma-decimal") == 1234.5 and n("1,234.5", 0, None, "ixt:num-dot-decimal") == 1234.5 and n("1\u202f234,5", 0, None, "ixt:numspacecomma") == 1234.5
+    assert n("-", 3, None, "ixt:zerodash") == 0.0 and n("(12)", 0, None, None) == -12.0 and n("5", 3, "-", None) == -5000.0 and n("x", 0, None, None) is None
+
+
+TAXONOMIES = {"jppfs": "http://disclosure.edinet-fsa.go.jp/taxonomy/jppfs/2023-12-01/jppfs_cor_2023-12-01.xsd", "jpigp": "http://disclosure.edinet-fsa.go.jp/taxonomy/jpigp/2023-12-01/jpigp_cor_2023-12-01.xsd",
+              "jpdei": "http://disclosure.edinet-fsa.go.jp/taxonomy/jpdei/2013-08-31/jpdei_cor_2013-08-31.xsd"}
+
+
+def test_every_japanese_element_name_is_in_the_published_taxonomy():
+    """The mapping was checked against the FSA's own taxonomy files; this repeats the check whenever they can be downloaded (skipped offline), so a renamed element is noticed."""
+    import re
+    import urllib.request
+
+    from src.fundamentals.filings import maps
+    from src.fundamentals.importer import xbrl as x
+
+    def names(url):
+        try:
+            with urllib.request.urlopen(url, timeout=30) as r:
+                return set(re.findall(r'<(?:\w+:)?element[^>]*?\bname="([^"]+)"', r.read().decode("utf-8")))
+        except Exception:
+            pytest.skip("the taxonomy could not be downloaded here")
+    pfs, igp, dei = names(TAXONOMIES["jppfs"]), names(TAXONOMIES["jpigp"]), names(TAXONOMIES["jpdei"])
+    ifrs = {n[:-4] for n in igp if n.endswith("IFRS")}
+    wanted = {n for t in (maps.JP_ELEMENTS, maps.JP_ABS) for opts in t.values() for n, _ in opts}
+    assert not {n for n in wanted if n not in pfs and n not in ifrs}, "a mapped element that is in neither Japanese taxonomy"
+    assert set(x.JP_COVER) <= dei

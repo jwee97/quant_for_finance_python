@@ -42,7 +42,7 @@ class Esef(Connector):
             period = str(a.get("period_end") or "")[:10]
             if (since and period < since) or (until and period > until) or not a.get("package_url"):
                 continue
-            found.append(FilingRef(self.name, str(a.get("country") or country), lei or str(a.get("fxo_id") or "")[:20], str(a.get("fxo_id") or item.get("id")), "ESEF", "FY", period or None, str(a.get("date_added") or "")[:10] or None,
+            found.append(FilingRef(self.name, str(a.get("country") or country), lei or str(a.get("fxo_id") or "")[:20], str(a.get("fxo_id") or item.get("id")), "ESEF", "FY", period or None, str(a.get("published") or a.get("date_added") or "")[:10] or None,
                                    SITE + str(a["package_url"]), "ixbrl", f"Annual financial report {period[:4]}", None, 0, False, {"report_url": a.get("report_url")}))
         return {"filings": found[:limit], "complete": True, "next_since": None, "note": "ESEF covers annual reports; half-year reports are not in the index."}
 

@@ -18,7 +18,7 @@ from ..errors import FundamentalsError
 from . import _util
 from . import calendar as cal
 from .base import Access, Connector, FilingRef, registry
-from .maps import CVM_ACCOUNTS
+from .maps import CVM_ACCOUNTS, CVM_POSITIVE
 
 BASE = "https://dados.cvm.gov.br/dados/CIA_ABERTA/DOC"
 
@@ -86,13 +86,14 @@ class Cvm(Connector):
                     if doc == "DFP" and not 350 <= span <= 380:
                         continue
                     if doc == "ITR" and not 80 <= span <= 100:
-                        if stmt == "DFC_MD" and not (start and start.month == 1 and span <= 100):
+                        if stmt in ("DFC_MD", "DFC_MI") and not (start and start.month == 1 and span <= 100):
                             continue
-                        if stmt != "DFC_MD":
+                        if stmt not in ("DFC_MD", "DFC_MI"):
                             continue
                 v = _util.number(r.get("VL_CONTA"))
                 if v is None:
                     continue
+                v = abs(v) if code in CVM_POSITIVE else v
                 scale = 1000.0 if (r.get("ESCALA_MOEDA") or "").upper().startswith("MIL") else 1.0
                 ver = int(r.get("VERSAO") or 0)
                 versions.setdefault(r["DT_REFER"], set()).add(ver)
@@ -107,6 +108,10 @@ class Cvm(Connector):
             kind = "FY" if doc == "DFP" else cal.quarter_of(end, 12)
             if kind == "Q":
                 continue
+            if "current_liabilities" in slot and "noncurrent_liabilities" in slot:                         # total liabilities as the sum of the two lines CVM reports (2.01 + 2.02)
+                cl, nl = slot["current_liabilities"], slot["noncurrent_liabilities"]
+                slot["total_liabilities"] = (cl[0] + nl[0], f"BPP 2.01 + 2.02 {cl[1]} + {nl[1]}", min(cl[2], nl[2]))
+            slot.pop("noncurrent_liabilities", None)
             ver = max(v for _, _, v in slot.values())
             received = filed.get((dt, str(ver))) or next((v for (d, _), v in filed.items() if d == dt), "")
             periods.append({"fiscal_period": kind, "period_end": dt, "fiscal_year": end.year, "filing_date": received or None, "currency": "BRL", "values": {c: v for c, (v, _, _) in slot.items()},

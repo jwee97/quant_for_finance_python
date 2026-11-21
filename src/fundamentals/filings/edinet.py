@@ -32,11 +32,12 @@ class Edinet(Connector):
 
     def _documents(self, day: date) -> list[dict]:
         data = self._json(f"{BASE}/documents.json?date={day.isoformat()}&type=2&Subscription-Key={self.key()}")
-        status = str((data.get("metadata") or {}).get("status", data.get("statusCode", "200")))
+        lower = {str(k).lower(): v for k, v in data.items()}                                         # a refused key is answered as {"StatusCode": 401, "message": ...} (a capital S), checked against the live service
+        status = str((data.get("metadata") or {}).get("status", lower.get("statuscode", "200")))
         if status == "401":
             raise FundamentalsError("EDINET refused the key (HTTP 401): check EDINET_API_KEY")
         if status not in ("200", "404"):
-            raise FundamentalsError(f"EDINET answered status {status}: {(data.get('metadata') or {}).get('message') or data.get('message') or ''}")
+            raise FundamentalsError(f"EDINET answered status {status}: {(data.get('metadata') or {}).get('message') or lower.get('message') or ''}")
         return data.get("results") or []
 
     def list_filings(self, company: dict, since: str | None = None, until: str | None = None, kinds=None, limit: int = 100) -> dict:

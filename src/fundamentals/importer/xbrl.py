@@ -55,19 +55,25 @@ def looks_like_xbrl(data: bytes) -> bool:
 
 
 def _number(text: str, scale: int, sign: str | None, fmt: str | None) -> float | None:
-    t = (text or "").strip()
-    if fmt and ("zerodash" in fmt or "fixed-zero" in fmt or "fixedzero" in fmt):
+    """The value of an inline fact: its text under the transformation the filing names. French and German reports group digits with a non-breaking space (``15 170`` with U+00A0, or U+202F), which is
+    whitespace for this purpose; ``ixt:num-comma-decimal`` and its siblings write ``1.234,5`` or ``1 234,5``; ``ixt:zerodash`` and ``fixed-zero`` mean zero."""
+    t = re.sub(r"\s+", "", (text or "").strip())
+    f = (fmt or "").lower().replace("-", "").replace("_", "")
+    if "zerodash" in f or "fixedzero" in f:
         value = 0.0
     else:
-        if fmt and ("numcommadecimal" in fmt or "num-comma-decimal" in fmt):                       # 1.234,56
-            t = t.replace(".", "").replace(" ", "").replace(",", ".")
+        if "commadecimal" in f or "spacecomma" in f or "numcomma" in f:                            # 1.234,56 or 1 234,56
+            t = t.replace(".", "").replace("'", "").replace(",", ".")
         else:
-            t = t.replace(",", "").replace(" ", "")
-        t = t.strip("()$€£")
+            t = t.replace(",", "").replace("'", "")
+        negative = t.startswith("(") and t.endswith(")")
+        t = t.strip("()$€£¥")
         try:
             value = float(t)
         except ValueError:
             return None
+        if negative:
+            value = -value
     value *= 10.0 ** scale
     if sign == "-":
         value = -value

@@ -1,6 +1,6 @@
 """Mapping the element names of other countries' taxonomies, and Brazil's account codes, onto the application's canonical lines.
 
-* **Japan (EDINET).** Japanese GAAP filings tag with ``jppfs_cor`` (NetSales, OperatingIncome, Assets...), IFRS filings with ``jpigp_cor`` (the same names with an ``IFRS`` suffix: RevenueIFRS, AssetsIFRS), and the
+* **Japan (EDINET).** *Every element name below was checked against the published taxonomies* (``jppfs_cor`` and ``jpigp_cor`` 2023-12-01, ``jpdei_cor`` 2013-08-31, downloaded from the FSA's site; a test repeats the check when the network is available). Japanese GAAP filings tag with ``jppfs_cor`` (NetSales, OperatingIncome, Assets...), IFRS filings with ``jpigp_cor`` (the same names with an ``IFRS`` suffix: RevenueIFRS, AssetsIFRS), and the
   cover facts with ``jpdei_cor``. The names below are those of the published taxonomy's main statement elements; a company's own extension elements are not mapped and are listed as unmapped. A line
   that is only an approximation of the canonical one (net assets for the owners' equity, cash and deposits for cash) is flagged ``estimated``.
 * **Korea (OpenDART)** and **Europe (ESEF)** tag with IFRS (``ifrs-full``), which the SEC mapping already covers.
@@ -11,7 +11,7 @@ from __future__ import annotations
 
 # canonical line -> element local names (without the IFRS suffix), tried in order; True marks an approximation
 JP_ELEMENTS: dict[str, list[tuple[str, bool]]] = {
-    "revenue": [("NetSales", False), ("Revenue", False), ("OperatingRevenue1", False), ("OperatingRevenues", False)],
+    "revenue": [("NetSales", False), ("Revenue", False), ("OperatingRevenue1", False)],
     "cost_of_revenue": [("CostOfSales", False)],
     "gross_profit": [("GrossProfit", False)],
     "selling_general_admin": [("SellingGeneralAndAdministrativeExpenses", False)],
@@ -24,17 +24,17 @@ JP_ELEMENTS: dict[str, list[tuple[str, bool]]] = {
     "current_liabilities": [("CurrentLiabilities", False)],
     "total_liabilities": [("Liabilities", False)],
     "shareholders_equity": [("EquityAttributableToOwnersOfParent", False), ("ShareholdersEquity", False), ("NetAssets", True), ("Equity", True)],
-    "minority_interest": [("NonControllingInterests", False), ("MinorityInterests", False)],
+    "minority_interest": [("NonControllingInterests", False)],
     "cash_and_equivalents": [("CashAndCashEquivalents", False), ("CashAndDeposits", True)],
-    "accounts_receivable": [("NotesAndAccountsReceivableTrade", False), ("TradeAndOtherReceivables", False)],
+    "accounts_receivable": [("NotesAndAccountsReceivableTrade", False), ("TradeAndOtherReceivablesCA", False)],
     "inventory": [("Inventories", False)],
     "retained_earnings": [("RetainedEarnings", False)],
     "operating_cash_flow": [("NetCashProvidedByUsedInOperatingActivities", False)],
     "investing_cash_flow": [("NetCashProvidedByUsedInInvestmentActivities", False), ("NetCashProvidedByUsedInInvestingActivities", False)],
     "financing_cash_flow": [("NetCashProvidedByUsedInFinancingActivities", False)],
-    "depreciation_amortization": [("DepreciationAndAmortizationOpeCF", False), ("DepreciationAndAmortization", False)],
+    "depreciation_amortization": [("DepreciationAndAmortizationOpeCF", False)],
 }
-JP_ABS = {"capital_expenditure": [("PurchaseOfPropertyPlantAndEquipmentInvCF", False), ("PurchaseOfPropertyPlantAndEquipment", False)], "dividends_paid": [("CashDividendsPaidFinCF", False), ("DividendsPaid", False)]}
+JP_ABS = {"capital_expenditure": [("PurchaseOfPropertyPlantAndEquipmentInvCF", False)], "dividends_paid": [("CashDividendsPaidFinCF", False), ("DividendsPaidFinCF", False)]}
 JP_PREFIXES = ("jppfs_cor:", "jpigp_cor:")
 
 
@@ -62,7 +62,9 @@ def jp_values(fields: dict[str, float]) -> tuple[dict[str, dict], list[str]]:
 CVM_ACCOUNTS: dict[str, dict[str, str]] = {
     "DRE": {"3.01": "revenue", "3.02": "cost_of_revenue", "3.03": "gross_profit", "3.05": "operating_income", "3.07": "income_before_tax", "3.11": "net_income"},
     "BPA": {"1": "total_assets", "1.01": "current_assets", "1.01.01": "cash_and_equivalents", "1.01.03": "accounts_receivable", "1.01.04": "inventory"},
-    "BPP": {"2.01": "current_liabilities", "2.03": "shareholders_equity"},
+    "BPP": {"2.01": "current_liabilities", "2.02": "noncurrent_liabilities", "2.03": "shareholders_equity"},
     "DFC_MD": {"6.01": "operating_cash_flow", "6.02": "investing_cash_flow", "6.03": "financing_cash_flow"},
+    "DFC_MI": {"6.01": "operating_cash_flow", "6.02": "investing_cash_flow", "6.03": "financing_cash_flow"},            # the indirect method: most companies file this one, a few the direct (DFC_MD)
 }
+CVM_POSITIVE = ("cost_of_revenue",)                                                                            # CVM shows costs as negative numbers; the application keeps costs as positive amounts
 CVM_NET_INCOME_ALT = {"3.11": "net_income"}                                                                  # "Lucro/Prejuízo Consolidado do Período" (includes minorities)
