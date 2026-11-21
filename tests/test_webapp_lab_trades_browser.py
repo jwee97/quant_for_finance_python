@@ -43,6 +43,9 @@ def test_the_labs_report_draws_the_buys_and_sells_of_an_ordinary_position_rule(b
     pg.click("#ml button:has-text('Experiments')")
     pg.locator("#ml button:has-text('Open')").first.click()
     pg.wait_for_selector("[data-role=lab-trades] svg.chart .event", timeout=60000)
+    how = pg.locator("[data-role=how-it-decides]")                                           # the report says how the model decides: a return target, indicators, a rule, and why it is not a curve fit
+    pg.wait_for_selector("[data-role=how-it-decides] ol.steps", timeout=30000)
+    assert "not fitting the price" in how.inner_text() and "From data to a trade" in how.inner_text() and how.locator(".howgroup").count() >= 1 and "Why this is not a curve fit" in how.inner_text()
     card = pg.locator("[data-role=lab-trades]")
     text = card.inner_text()
     assert "Buys and sells" in text and "keeps no decision log" in text and "Turnover / year" in text and "Cost drag / year" in text

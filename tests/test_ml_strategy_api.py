@@ -184,3 +184,15 @@ def test_a_period_of_the_run_is_tested_against_the_benchmark_and_says_which_days
         app.extra_get["/api/ml/strategy/window"]({"id": run["id"], "from": "1990-01-01", "to": "1990-02-01"})
     with pytest.raises(ApiError, match="must not be before"):
         app.extra_get["/api/ml/strategy/window"]({"id": run["id"], "from": "2018-05-01", "to": "2018-04-01"})
+
+
+def test_a_run_explains_how_it_turns_indicators_into_buys_and_sells_and_that_it_is_not_fitting_the_price(app):
+    run = finished(app, app.extra_post["/api/ml/train"]({"dataset": BASE["dataset"], "split": BASE["split"], "model": BASE["model"], "explain": True, "name": "how", "mode": "development"}))
+    how = get(app, "/api/ml/strategy/how", id=run["id"])
+    assert "minus the average return of its universe" in how["predicts"] and how["target"].startswith("excess_ret") and how["n_features"] >= 20
+    assert {g["group"] for g in how["groups"]} == {"price", "momentum", "volatility"} and all(e["meaning"] for g in how["groups"] for e in g["examples"])
+    assert how["has_importance"] and how["leaning_on"][0]["meaning"] and how["leaning_on"][0]["share"] > 0 and how["rule"]["method"] == "benchmark_tilt"
+    text = " ".join(how["steps"] + how["guards"])
+    assert "never sees the price level" in text and "executed 1 trading day" in text and "purge" in text
+    with pytest.raises(ApiError, match="not a valid identifier"):
+        app.extra_get["/api/ml/strategy/how"]({"id": "../x"})

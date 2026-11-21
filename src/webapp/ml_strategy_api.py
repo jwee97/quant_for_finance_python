@@ -39,7 +39,7 @@ class StrategyRoutes:
 
     def strategy_get_routes(self) -> dict:
         return {"/api/ml/strategy/runs": self.strategy_runs, "/api/ml/strategy": self.strategy, "/api/ml/strategy/decisions": self.strategy_decisions, "/api/ml/strategy/trades": self.strategy_trades, "/api/ml/strategy/replay": self.strategy_replay,
-                "/api/ml/strategy/window": self.strategy_window}
+                "/api/ml/strategy/window": self.strategy_window, "/api/ml/strategy/how": self.strategy_how}
 
     # ------------------------------------------------------------------------------------------------------------ loading
     def _strategy_files(self, exp_id: str) -> dict:
@@ -234,6 +234,59 @@ class StrategyRoutes:
             return clean(out)
 
         return self.app.submit_task("Random-signal control", work, kind="lab")
+
+    # ------------------------------------------------------------------------------------------------------------ how the model decides
+    def strategy_how(self, q: dict) -> dict:
+        """``GET /api/ml/strategy/how?id=``: in words, how this run turns data into a buy or a sell. What it is asked to predict (a future return, never the price level), the indicators it reads (the feature
+        groups and the ones the model leaned on most, each with what it measures), the model, how its score becomes positions, when a trade happens and what keeps the test honest."""
+        h = _h()
+        h._only(q, {"id"}, "/api/ml/strategy/how")
+        with h._user_errors():
+            exp_id = h._id(q)
+            rep = self.registry.report(exp_id)
+        from ..ml import features as fx
+        from ..ml.models import model_catalog
+
+        cfg = rep.get("config") or {}
+        ds, sg, sp, bt = cfg.get("dataset") or {}, cfg.get("signal") or {}, cfg.get("split") or {}, cfg.get("backtest") or {}
+        horizon = int(ds.get("horizon") or 21)
+        target = str(ds.get("target") or "")
+        base = {"fwd_ret": f"the stock's own return over the next {horizon} trading days", "excess_ret": f"the stock's return over the next {horizon} trading days minus the average return of its universe (so it learns which names will beat the group, not whether the market goes up)",
+                "rank": f"the stock's rank among its peers by return over the next {horizon} trading days", "direction": f"whether the stock's return over the next {horizon} trading days is positive",
+                "topbottom": f"whether the stock lands in the top or the bottom of the day's forward returns over {horizon} trading days"}
+        kind = next((k for k in base if target.startswith(k)), None)
+        predicts = base[kind] if kind else f"the target '{target}'"
+        names = list((rep.get("features") or {}).get("names") or [])
+        by_group: dict[str, list[str]] = {}
+        for n in names:
+            spec = fx.FEATURES.get(n)
+            by_group.setdefault(spec.group if spec else "other", []).append(n)
+        GROUP_TEXT = {"price": "trailing returns and where the price sits against its moving averages and its highs and lows", "momentum": "the classic momentum signals (12-1, 6-1, 3-1 month), RSI, MACD, breakouts and trend strength",
+                      "mean_reversion": "short-term reversal, z-scores, Bollinger position and autocorrelation", "volatility": "realised, downside and range-based volatility, skew, beta and drawdown",
+                      "volume": "traded dollar volume, volume surges and illiquidity", "relative": "strength against the rest of the universe and its asset class", "macro": "levels and changes of macro series",
+                      "futures": "carry, curve slope and basis momentum", "options": "implied volatility and its premium over realised volatility", "crypto": "funding, perpetual basis and stablecoin supply", "fracdiff": "fractionally differenced prices"}
+        groups = [{"group": g, "n": len(v), "what": GROUP_TEXT.get(g, ""), "examples": [{"name": n, "meaning": (fx.FEATURES[n].description if n in fx.FEATURES else "")} for n in v[:6]]} for g, v in by_group.items()]
+        imp = (rep.get("importance") or {}).get("table") or []
+        leaning = [{"name": r["feature"], "share": _num(r.get("share")), "group": fx.FEATURES[r["feature"]].group if r["feature"] in fx.FEATURES else None,
+                    "meaning": fx.FEATURES[r["feature"]].description if r["feature"] in fx.FEATURES else ""} for r in imp[:12]]
+        kind_id = (cfg.get("model") or {}).get("kind")
+        info = next((m for m in model_catalog() if m["kind"] == kind_id), {})
+        method = str(sg.get("method"))
+        rule = h.SIGNAL_TEXT.get(method, method)
+        lag = int((rep.get("trading") or {}).get("lag_days") or ds.get("lag") or 1)
+        steps = [f"At the close of each day the model reads {len(names)} indicators for every stock, each computed only from data up to that close.",
+                 f"It outputs one score per stock: its estimate of {predicts}.",
+                 f"The position rule ('{method}') turns the day's scores into a target book: {rule[:1].lower() + rule[1:]}.",
+                 f"The book is rebalanced {str(bt.get('rebalance', 'on a schedule')).replace('_', ' ')}; a trade decided at the close of day t is executed {lag} trading day(s) later and charged {bt.get('cost_bps', '?')} bp plus {bt.get('slippage_bps', '?')} bp slippage one way.",
+                 "A buy is a rise of a stock's target weight and a sell a fall of it; the trade list shows each one with the score and rank behind it."]
+        guards = ["It never sees the price level as a target: a price trends, and any model can fit a trending series perfectly and forecast nothing. It is asked for a future return, which is what a trade earns.",
+                  "Every indicator is a function of data up to its own date (tested by replacing the future with noise and requiring the indicators to be unchanged).",
+                  f"The model is re-fitted every {sp.get('refit_every', 21)} days on past data only, with the training rows whose outcome windows overlap a test day removed (the purge), so a score on day t never used day t's outcome.",
+                  "The result is judged out of sample, after costs, against the equal-weight benchmark of the same stocks; it is not judged on how well it fits the past."]
+        out = {"id": exp_id, "name": rep.get("name"), "predicts": predicts, "target": target, "horizon": horizon, "n_features": len(names), "groups": groups, "leaning_on": leaning, "has_importance": bool(leaning),
+               "model": {"kind": kind_id, "label": info.get("label") or kind_id, "family": info.get("family"), "text": info.get("description"), "refit_every": sp.get("refit_every"), "window": sp.get("window")},
+               "rule": {"method": method, "text": rule, "rebalance": bt.get("rebalance"), "lag_days": lag}, "steps": steps, "guards": guards}
+        return clean(common.envelope("ml_strategy_how", out, {"registry": "platform"}, [], None, []))
 
     # ------------------------------------------------------------------------------------------------------------ a period
     def strategy_window(self, q: dict) -> dict:

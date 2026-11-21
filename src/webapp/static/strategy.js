@@ -104,7 +104,7 @@
     if (s.note) h("p", "note", out, s.note);
     if (d.simulation) simulationCard(out, d.simulation);
     priceCard(out); bookCards(out); statCards(out);
-    controlCard(out); if (!s.rule_based) await logCard(out); await tradesCard(out); await windowCard(out); await replayCard(out);                   // a rule without a decision log has no log to show
+    Q.howCard(out, S.id); controlCard(out); if (!s.rule_based) await logCard(out); await tradesCard(out); await windowCard(out); await replayCard(out);                   // a rule without a decision log has no log to show
   }
 
   function simulationCard(out, sim) {
@@ -155,6 +155,27 @@
         { label: "Cost", num: true, get: (x) => pct(x.cost, 3) }, { label: "P&L", num: true, get: (x) => (x.pnl_return === null || x.pnl_return === undefined ? "" : pct(x.pnl_return, 1)) }, { label: "Decided", get: (x) => x.decision_date || "" }, { label: "Why", get: (x) => x.reason || "" },
         { label: "Score rank", num: true, get: (x) => (x.rank_pct === null || x.rank_pct === undefined ? "" : pct(x.rank_pct, 0)) }], ch.markers) });
   }
+
+  /* "How this model decides": what it predicts, which indicators it reads and leans on, how its score becomes a buy or a sell, and what keeps the test honest. Shared by the Explorer and the Lab's report. */
+  Q.howCard = (parent, expId) => {
+    const card = h("div", "card", parent); card.dataset.role = "how-it-decides"; h("h3", "", card, "How this model decides to buy or sell");
+    const body = h("div", "", card); Q.loading(body, "Reading the run…");
+    api(`/api/ml/strategy/how?id=${encodeURIComponent(expId)}`).then((d) => {
+      body.replaceChildren();
+      h("p", "note", body, `It is not fitting the price. It predicts ${d.predicts}, from ${d.n_features} indicators, and trades on that.`);
+      h("h4", "", body, "From data to a trade"); const ol = h("ol", "steps", body); for (const t of d.steps) h("li", "", ol, t);
+      h("h4", "", body, "The indicators it reads"); const g = h("div", "howgroups", body);
+      for (const x of d.groups) { const c = h("div", "howgroup", g); h("b", "", c, `${x.group.replace(/_/g, " ")} (${x.n})`); h("p", "hint", c, x.what); const ul = h("ul", "", c); for (const e of x.examples) { const li = h("li", "", ul); h("code", "", li, e.name); li.append(e.meaning ? ` — ${e.meaning}` : ""); } }
+      if (d.leaning_on.length) {
+        h("h4", "", body, "What the model leaned on most"); h("p", "hint", body, "The indicators that moved its scores the most, as a share of the total (permutation and fold importance from the run). A model leaning on one indicator is a model to distrust.");
+        Q.simpleTable(body, [{ label: "Indicator", get: (r) => r.name }, { label: "Group", get: (r) => (r.group || "").replace(/_/g, " ") }, { label: "Share", num: true, get: (r) => pct(r.share, 1) }, { label: "What it measures", get: (r) => r.meaning || "" }], d.leaning_on);
+      } else h("p", "hint", body, "This run did not compute feature importance (train with explanations on to see which indicators it leaned on).");
+      h("h4", "", body, "The model and the rule"); h("p", "", body, `${d.model.label}${d.model.text ? ": " + d.model.text : ""} Re-fitted every ${d.model.refit_every ?? "?"} days on ${d.model.window || "past"} data.`);
+      h("p", "", body, `Position rule '${d.rule.method}': ${d.rule.text}.`);
+      h("h4", "", body, "Why this is not a curve fit"); const ul = h("ul", "next", body); for (const t of d.guards) h("li", "", ul, t);
+    }).catch((e) => { body.replaceChildren(); h("p", "hint", body, "No explanation is available for this run: " + e.message); });
+    return card;
+  };
 
   /* "Buys and sells" for a saved experiment of any position rule, drawn inside another page (the Machine Learning Lab's report). Loads the run's trades from the Strategy API, one asset at a time. */
   Q.tradesCard = (parent, expId, openExplorer) => {
