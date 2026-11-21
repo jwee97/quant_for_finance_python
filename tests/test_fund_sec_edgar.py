@@ -678,11 +678,11 @@ def test_the_stored_answer_says_what_it_held_and_is_small(tmp_path):
     assert [p.period_end for p in parse_companyfacts(result.raw)[0]] == [p.period_end for p in result.periods]
 
 
-def test_quarters_are_not_read_yet_and_say_so(tmp_path):
+def test_quarters_are_read_from_the_ten_q_filings_and_other_frequencies_are_refused(tmp_path):
     prov, fake = provider(tmp_path)
-    with pytest.raises(PlanError):
-        prov.get_financials("cik:320193", period="quarter")
-    assert fake.requests == [] and prov.periods_available == ("annual",)
+    with pytest.raises(PlanError, match="annual.*quarter"):
+        prov.get_financials("cik:320193", period="half-year")
+    assert fake.requests == [] and prov.periods_available == ("annual", "quarter")
 
 
 def test_a_company_lookup_gives_the_name_sector_and_industry_from_the_filers_own_record(tmp_path):
@@ -774,7 +774,7 @@ def test_the_years_view_shows_what_is_held_and_the_sec_wording_replaces_the_cred
     assert all(states[y] == "held" for y in range(2016, 2026)) and states[2015] == "empty" and states[2026] == "notyet"
     assert cov["unit"] == "requests" and cov["request_cost"] == 1 and cov["can_fetch"] and cov["provider_word"] == "SEC EDGAR"
     assert "whole history in one free request" in cov["reading"] and "Credits pay" not in cov["reading"] and "first XBRL filing" in cov["reading"]
-    assert not cov["quarterly"]["supported"] and "10-Q" in cov["quarterly"]["note"]
+    assert cov["quarterly"]["supported"] and cov["quarterly"]["held"] == 0 and cov["quarterly"]["note"] == ""
 
 
 def test_the_years_not_yet_held_are_picked_and_fetched_without_touching_the_ones_that_are(tmp_path):
@@ -836,7 +836,7 @@ def test_the_data_status_lists_the_provider_with_no_key_and_never_the_contact(tm
     svc.sync("sec_edgar", symbols=["AAPL"])
     status = svc.data_status()
     card = next(p for p in status["providers"] if p["name"] == "sec_edgar")
-    assert card["available"] and card["free"] and card["unit"] == "requests" and card["used_today"] == 3 and card["daily_limit"] is None and card["periods"] == ["annual"]
+    assert card["available"] and card["free"] and card["unit"] == "requests" and card["used_today"] == 3 and card["daily_limit"] is None and card["periods"] == ["annual", "quarter"]
     assert "example.org" not in json.dumps(status) and "Test Person" not in json.dumps(status)
     assert [p["name"] for p in status["providers"]] == ["openfilings", "sec_edgar", "simulated"]
 

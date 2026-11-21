@@ -127,6 +127,25 @@ CREATE TABLE IF NOT EXISTS discovery_candidates (
 
 CREATE TABLE IF NOT EXISTS experiments (
     experiment_id TEXT PRIMARY KEY, kind TEXT NOT NULL, created_at TEXT NOT NULL, spec TEXT NOT NULL, data_version TEXT, code_version TEXT, summary TEXT, status TEXT NOT NULL);
+
+-- Report imports: a batch of uploaded, linked or fetched reports; each item is one file (or one member of a ZIP) taken from "queued" to "saved" through a person's review. The bytes are kept once.
+CREATE TABLE IF NOT EXISTS import_batches (
+    batch_id TEXT PRIMARY KEY, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, label TEXT, status TEXT NOT NULL DEFAULT 'open', security_id INTEGER REFERENCES securities(security_id) ON DELETE SET NULL,
+    ticker TEXT, note TEXT);
+CREATE TABLE IF NOT EXISTS import_items (
+    item_id INTEGER PRIMARY KEY, batch_id TEXT NOT NULL REFERENCES import_batches(batch_id) ON DELETE CASCADE, seq INTEGER NOT NULL, parent_item INTEGER, source_kind TEXT NOT NULL,
+    source_name TEXT, source_url TEXT, content_hash TEXT NOT NULL, size_bytes INTEGER, method TEXT, status TEXT NOT NULL, error TEXT, draft TEXT, issues TEXT, reviewed TEXT, saved_periods TEXT,
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS ix_import_items_batch ON import_items(batch_id, seq);
+CREATE INDEX IF NOT EXISTS ix_import_items_hash ON import_items(content_hash);
+CREATE TABLE IF NOT EXISTS import_blobs (content_hash TEXT PRIMARY KEY, data BLOB NOT NULL, size_bytes INTEGER NOT NULL, created_at TEXT NOT NULL);
+-- Where each stored figure came from: the file or link, the filing accession, the page, the taxonomy tag, the figure as reported (before any unit scaling) and how it was extracted and approved.
+CREATE TABLE IF NOT EXISTS observation_provenance (
+    id INTEGER PRIMARY KEY, financial_period_id INTEGER NOT NULL REFERENCES financial_periods(id) ON DELETE CASCADE, metric_code TEXT NOT NULL, source_kind TEXT NOT NULL, source_ref TEXT,
+    content_hash TEXT NOT NULL DEFAULT '', accession TEXT, page INTEGER, taxonomy_tag TEXT, reported_value REAL, reported_unit TEXT, extraction_method TEXT, extraction_status TEXT NOT NULL DEFAULT 'approved',
+    edited INTEGER NOT NULL DEFAULT 0, import_item_id INTEGER, created_at TEXT NOT NULL, UNIQUE (financial_period_id, metric_code, content_hash));
+CREATE INDEX IF NOT EXISTS ix_prov_period ON observation_provenance(financial_period_id, metric_code);
+CREATE INDEX IF NOT EXISTS ix_prov_accession ON observation_provenance(accession);
 """
 
 # a short list that gives a region to every market a provider names; anything else is added when a provider reports it

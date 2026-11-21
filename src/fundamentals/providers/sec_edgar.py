@@ -321,8 +321,8 @@ def _is_year(fact: _Fact) -> bool:
     return fact.start is not None and YEAR_DAYS[0] <= (fact.end - fact.start).days <= YEAR_DAYS[1]
 
 
-def _read_facts(payload: dict) -> tuple[dict[str, list[_Fact]], str]:
-    """``({source field: facts}, currency)``: the facts the mapping reads, from annual reports only, and the currency the company reports in (the money unit most facts are in)."""
+def _read_facts(payload: dict, forms=ANNUAL_FORMS) -> tuple[dict[str, list[_Fact]], str]:
+    """``({source field: facts}, currency)``: the facts the mapping reads, from annual reports only (or the ``forms`` given), and the currency the company reports in (the money unit most facts are in)."""
     taxonomies = payload.get("facts") if isinstance(payload.get("facts"), dict) else {}
     found: dict[str, list[_Fact]] = {}
     currencies: Counter = Counter()
@@ -335,7 +335,7 @@ def _read_facts(payload: dict) -> tuple[dict[str, list[_Fact]], str]:
             if not isinstance(items, list):
                 continue
             for item in items:
-                if not isinstance(item, dict) or item.get("form") not in ANNUAL_FORMS:
+                if not isinstance(item, dict) or item.get("form") not in forms:
                     continue
                 value, end, filed, accn = item.get("val"), _day(item.get("end")), str(item.get("filed") or "")[:10], item.get("accn")
                 if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or end is None or not accn or _day(filed) is None:
@@ -484,7 +484,7 @@ def parse_companyfacts(payload: dict) -> tuple[list[PeriodStatement], dict]:
     return periods, summary
 
 
-def trim_companyfacts(payload: dict) -> dict:
+def trim_companyfacts(payload: dict, forms=ANNUAL_FORMS) -> dict:
     """The part of a company-facts answer this application uses, in the same shape: the elements in the mapping, from annual reports, every column of each fact kept. What is stored as the raw answer
     (the full answer is megabytes of facts nothing here reads), and enough to read the periods again without asking the SEC."""
     taxonomies = payload.get("facts") if isinstance(payload.get("facts"), dict) else {}
@@ -493,7 +493,7 @@ def trim_companyfacts(payload: dict) -> dict:
         taxonomy, _, element = field.partition(":")
         entry = taxonomies.get(taxonomy, {}).get(element) if isinstance(taxonomies.get(taxonomy), dict) else None
         units = entry.get("units") if isinstance(entry, dict) and isinstance(entry.get("units"), dict) else {}
-        kept = {unit: [item for item in items if isinstance(item, dict) and item.get("form") in ANNUAL_FORMS] for unit, items in units.items() if isinstance(items, list)}
+        kept = {unit: [item for item in items if isinstance(item, dict) and item.get("form") in forms] for unit, items in units.items() if isinstance(items, list)}
         kept = {unit: items for unit, items in kept.items() if items}
         if kept:
             out.setdefault(taxonomy, {})[element] = {"units": kept}
@@ -512,7 +512,7 @@ class SecEdgarProvider(FundamentalDataProvider):
     has_filing_dates = True
     keyed = False
     meters_itself = True
-    periods_available = ("annual",)
+    periods_available = ("annual", "quarter")
     default_market = "us"
     has_lookup = True
     price_note = ("SEC EDGAR sends a company's whole history in one free request, from the company's first XBRL filing (2009 for the largest US companies, 2011 for the rest); "
@@ -899,10 +899,34 @@ class SecEdgarProvider(FundamentalDataProvider):
                  "tickers": [str(t) for t in (data.get("tickers") or []) if isinstance(t, str)][:8], "fiscal_year_end": str(data.get("fiscalYearEnd") or ""), "category": str(data.get("category") or "")}
         return _profile(ticker, " ".join(str(data.get("name") or "").split())[:200], None, sector_of(data.get("sic")), _title(data.get("sicDescription")) or None, lei, extra)
 
+    def _quarters(self, symbol: str, market: str | None, start_year: int | None, end_year: int | None) -> FinancialsResult:
+        """The quarters of a company, from the 10-Q filings in the same free company-facts answer (see :mod:`sec_quarters`): Q1 to Q3 as filed, Q4 as the year less the nine months."""
+        from .sec_quarters import QUARTER_FORMS, parse_quarters
+        ticker, _ = self._split(symbol, market)
+        cik = self._cik_of(symbol, market)
+        data = self._get(f"{self.base_url}/api/xbrl/companyfacts/CIK{cik:010d}.json", "financials", f"us:{ticker}")
+        if not isinstance(data, dict):
+            raise ProviderError("SEC EDGAR answered with something that is not a set of company facts")
+        periods, info = parse_quarters(data)
+        trimmed = trim_companyfacts(data, ANNUAL_FORMS | QUARTER_FORMS)
+        trimmed["periods"] = info["lines"]
+        asked = {"cik": cik, "fiscal_year_from": int(start_year) if start_year else None, "fiscal_year_to": int(end_year) if end_year else None, "fiscal_period": "quarter", "message": ""}
+        if not periods:
+            error = NotFound(f"SEC EDGAR has facts for CIK {cik} but no quarterly statement with figures in them (a company that files no 10-Q, or whose first XBRL 10-Q is too recent to make a year)")
+            error.raw, error.charged, error.request = trimmed, 1, asked
+            raise error
+        kept = [p for p in periods if (start_year is None or (p.fiscal_year or 0) >= int(start_year)) and (end_year is None or (p.fiscal_year or 0) <= int(end_year))]
+        years = [p.fiscal_year for p in kept if p.fiscal_year is not None]
+        labels = Counter(p.fiscal_period for p in kept)
+        answer = {"entries": len(kept), "labels": dict(labels), "annual": 0, "first_year": min(years) if years else None, "last_year": max(years) if years else None, "echoed": {}}
+        return FinancialsResult(kept, trimmed, asked, _profile(ticker, info["name"], info["currency"]), answer=answer, exhausted=start_year is None or (bool(years) and min(years) > int(start_year)), requests=1, cost=1)
+
     def get_financials(self, symbol: str, market: str | None = None, start_year: int | None = None, end_year: int | None = None, period: str = "annual",
                        limit: int | None = None) -> FinancialsResult:
-        if period != "annual":
-            raise PlanError("SEC EDGAR quarterly figures are not read by this application yet; the annual statements are")
+        if period not in ("annual", "quarter"):
+            raise PlanError("SEC EDGAR has annual (10-K) and quarterly (10-Q) statements: ask for 'annual' or 'quarter'")
+        if period == "quarter":
+            return self._quarters(symbol, market, start_year, end_year)
         ticker, _ = self._split(symbol, market)
         cik = self._cik_of(symbol, market)
         url = f"{self.base_url}/api/xbrl/companyfacts/CIK{cik:010d}.json"
