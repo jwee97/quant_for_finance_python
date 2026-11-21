@@ -65,7 +65,7 @@
   /* The study in plain words: how the tested strategy would trade, what each number means and whether this study's value is good, middling or weak, and what to do next. */
   FD.plainReading = (root, d) => {
     const x = d.explain, card = W.card(root, "In plain words", x.how); card.dataset.role = "fund-explain";
-    const wrap = h("div", "", card); wrap.style.overflowX = "auto"; const t = h("table", "data explain", wrap), hd = h("tr", "", h("thead", "", t));
+    const wrap = h("div", "", card); wrap.style.overflowX = "auto"; wrap.style.maxWidth = "100%"; const t = h("table", "data explain", wrap), hd = h("tr", "", h("thead", "", t));
     for (const l of ["Measure", "This study", "Reading", "What it means"]) h("th", l === "This study" ? "num" : "", hd, l);
     const tb = h("tbody", "", t), TONE = { good: "Good", mixed: "Middling", bad: "Weak" };
     for (const r of x.reading) {

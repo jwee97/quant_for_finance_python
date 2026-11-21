@@ -710,3 +710,5 @@ ol.steps { margin: 4px 0 8px 20px; padding: 0; } ol.steps li { margin: 5px 0; }
 .howgroups { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
 .howgroup { border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; }
 .howgroup ul { margin: 4px 0 0 16px; padding: 0; font-size: 13px; } .howgroup code { font-size: 12px; }
+@media (max-width: 640px) { table.data.explain td.means { min-width: 0; } table.data.explain th, table.data.explain td { padding-left: 6px; padding-right: 6px; } .stratgrid { grid-template-columns: minmax(0, 1fr); } }
+[data-role=fund-picks] .charts > div { min-width: 0; overflow-x: auto; }
