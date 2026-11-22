@@ -322,7 +322,7 @@ def price_tick(chain: pd.DataFrame) -> float:
     return float(np.clip(gaps[gaps > 1e-4].min(), 0.01, 0.25)) if (gaps > 1e-4).any() else 0.01
 
 
-def arbitrage_view(chain: pd.DataFrame, liquid_only: bool = False, band: float = 0.10) -> dict:
+def arbitrage_view(chain: pd.DataFrame, liquid_only: bool = False, band: float = 0.10, exercise: str = "european") -> dict:
     """The static no-arbitrage checks of ``derivatives.schema.arbitrage_report``, with the tolerance a quote's rounding needs. Prices are rounded to a tick, so a slope between two strikes ``gap`` apart is wrong
     by up to ``tick / gap`` at each end, and a butterfly (a difference of two slopes) by twice that: a "violation" smaller than that is the rounding, not the market. ``tolerance`` is returned with the rows.
 
@@ -337,7 +337,7 @@ def arbitrage_view(chain: pd.DataFrame, liquid_only: bool = False, band: float =
     tick = price_tick(chain)
     gaps = [float(np.diff(np.sort(g["strike"].unique())).min()) for _, g in chain.groupby("expiry") if g["strike"].nunique() > 1]
     tol = 2.0 * tick / max(min(gaps), 1e-6) if gaps else 1e-8
-    return {"rows": arbitrage_report(chain, tol=tol).to_dict(orient="records"), "tick": tick, "tolerance": tol}
+    return {"rows": arbitrage_report(chain, tol=tol, exercise=exercise).to_dict(orient="records"), "tick": tick, "tolerance": tol, "exercise": exercise}
 
 
 # ------------------------------------------------------------------------------------------------------------------ the chain table
@@ -666,7 +666,16 @@ def volatility_cone(prices: pd.Series, windows: tuple = (5, 10, 21, 42, 63, 126,
     return {"rows": rows, "history_days": int(len(r))}
 
 
-def positioning(chain: pd.DataFrame, expiry=None, grid_points: int = 41, span: float = 0.15) -> dict:
+DEALER_SCENARIOS = {                                                                      # name: (sign of the dealers' position in a call, in a put), +1 long, -1 short
+    "calls_long_puts_short": (1.0, -1.0, "Dealers are long the calls and short the puts: the convention of most published gamma-exposure charts (customers sell calls, buy puts)."),
+    "dealers_short_all": (-1.0, -1.0, "Customers buy every option: dealers are short calls and short puts (a market where customers hold the protection and the lottery tickets)."),
+    "dealers_long_all": (1.0, 1.0, "Customers sell every option (covered calls, cash-secured puts): dealers are long calls and long puts."),
+    "calls_short_puts_long": (-1.0, 1.0, "The reverse of the convention: customers buy calls and sell puts (a rising market with call buying)."),
+}
+DEFAULT_DEALER = "calls_long_puts_short"
+
+
+def positioning(chain: pd.DataFrame, expiry=None, grid_points: int = 41, span: float = 0.15, dealer: str | tuple = DEFAULT_DEALER, dealer_share: float = 1.0) -> dict:
     """Where the open interest sits, from the chain's ``open_interest`` and ``volume`` columns: by strike, the open interest of calls and puts (one expiry, or all together when ``expiry`` is None); the walls
     (the call strike above the price and the put strike below it with the most open interest); the *max pain* strike of a single expiry (the settlement price at which option holders would be paid the
     least, ``argmin_S sum_calls OI max(S - K, 0) + sum_puts OI max(K - S, 0)``, which is a folk rule: the evidence is that prices tend to cluster at strikes with large open interest near expiry, Ni,
@@ -674,7 +683,12 @@ def positioning(chain: pd.DataFrame, expiry=None, grid_points: int = 41, span: f
     positive for calls and negative for puts, the sign that follows if the people who hold the other side (the dealers) are long the calls customers write and short the puts they buy. Open interest
     has no sign, so that assumption is not in the data: it is the convention of the dealer-gamma literature (Garleanu, Pedersen and Poteshman 2009 show the demand pressure on prices; Barbon and Buraschi 2020 build a
     gamma imbalance from signed data). The net GEX is also recomputed at spot levels from ``1 - span`` to ``1 + span`` times the price, with each contract's volatility held fixed, and the *flip* is where it
-    crosses zero nearest the price: below it dealers' hedging would add to the move, above it damp it."""
+    crosses zero nearest the price: below it dealers' hedging would add to the move, above it damp it.
+
+    **What is observed and what is assumed.** Open interest, volume, strikes, implied volatilities and the *gross* gamma (``|Gamma| x OI``, no sign) are observed. Who holds the other side of each contract is
+    **not** in any open-interest file: the dealers' signed position is an assumption. ``dealer`` names it (a preset of ``DEALER_SCENARIOS``, or a ``(call_sign, put_sign)`` pair in [-1, 1]) and
+    ``dealer_share`` is the share of the open interest assumed to be held by dealers (the rest is customers on both sides, netting out). The result carries the selected scenario *and* every preset, so
+    the reader sees whether the sign of the net exposure and the flip survive a change of assumption; when they do not, the net figure is a property of the assumption, not of the market."""
     if expiry is not None:
         g = _expiry_slice(chain, expiry)
         label = str(pd.Timestamp(expiry).date())
@@ -685,13 +699,34 @@ def positioning(chain: pd.DataFrame, expiry=None, grid_points: int = 41, span: f
     vol = g.pivot_table(index="strike", columns="right", values="volume", aggfunc="sum").reindex(columns=["C", "P"]).fillna(0.0)
     book = g[(g["open_interest"] > 0) & np.isfinite(g["iv"]) & (g["iv"] > 0)]
 
-    def gamma_dollars(level: float) -> pd.Series:
-        """Per row of ``book``: signed dollar gamma for a 1% move with the underlying at ``level``."""
+    if isinstance(dealer, str):
+        if dealer not in DEALER_SCENARIOS:
+            raise ValueError(f"dealer is one of {', '.join(DEALER_SCENARIOS)} or a (call sign, put sign) pair")
+        c_sign, p_sign, why = DEALER_SCENARIOS[dealer]
+        label_d = dealer
+    else:
+        c_sign, p_sign = (float(x) for x in dealer)
+        if not (-1.0 <= c_sign <= 1.0 and -1.0 <= p_sign <= 1.0):
+            raise ValueError("the dealer's signs are between -1 and 1")
+        why, label_d = f"A custom assumption: dealers hold {c_sign:+.2f} of the call open interest and {p_sign:+.2f} of the put open interest.", "custom"
+    if not 0.0 <= dealer_share <= 1.0:
+        raise ValueError("dealer_share is between 0 and 1")
+
+    def unsigned_gamma(level: float) -> pd.Series:
+        """Per row of ``book``: gamma x open interest in dollars for a 1% move with the underlying at ``level``, with no sign: what is observed."""
         gam = bsm_greeks(level, book["strike"].to_numpy(), np.maximum(book["T"].to_numpy(), 1.0 / 365.0), book["rate"].to_numpy(), book["dividend"].to_numpy(), book["iv"].to_numpy(), True)["gamma"]
-        sign = np.where(book["right"].to_numpy() == "C", 1.0, -1.0)
-        return pd.Series(sign * gam * book["open_interest"].to_numpy() * MULTIPLIER * level ** 2 / 100.0, index=book.index)
+        return pd.Series(gam * book["open_interest"].to_numpy() * MULTIPLIER * level ** 2 / 100.0, index=book.index)
+
+    is_call = (book["right"].to_numpy() == "C")
+
+    def signed(raw: pd.Series, cs: float, ps: float) -> pd.Series:
+        return raw * np.where(is_call, cs, ps) * dealer_share
+
+    def gamma_dollars(level: float) -> pd.Series:
+        return signed(unsigned_gamma(level), c_sign, p_sign)
 
     now = gamma_dollars(spot)
+    gross = unsigned_gamma(spot)
     by_row = pd.DataFrame({"strike": book["strike"], "right": book["right"], "gex": now}).groupby(["strike", "right"])["gex"].sum().unstack("right").reindex(columns=["C", "P"]).fillna(0.0)
     levels = spot * np.linspace(1.0 - span, 1.0 + span, grid_points)
     net = np.array([float(gamma_dollars(x).sum()) for x in levels])
@@ -700,6 +735,22 @@ def positioning(chain: pd.DataFrame, expiry=None, grid_points: int = 41, span: f
         crossing = float(levels[i] - net[i] * (levels[i + 1] - levels[i]) / (net[i + 1] - net[i]))
         if flip is None or abs(crossing - spot) < abs(flip - spot):
             flip = crossing
+    levels_raw = {x: unsigned_gamma(x) for x in levels}                                       # computed once; every scenario only changes the signs
+    scenarios = {}
+    for name, (cs, ps, why_s) in DEALER_SCENARIOS.items():
+        curve = np.array([float(signed(levels_raw[x], cs, ps).sum()) for x in levels])
+        fl = None
+        for i in np.flatnonzero(curve[:-1] * curve[1:] < 0):
+            cr = float(levels[i] - curve[i] * (levels[i + 1] - levels[i]) / (curve[i + 1] - curve[i]))
+            if fl is None or abs(cr - spot) < abs(fl - spot):
+                fl = cr
+        scenarios[name] = {"call_sign": cs, "put_sign": ps, "net": float(signed(gross, cs, ps).sum()), "flip": fl, "text": why_s}
+    nets = [v["net"] for v in scenarios.values()]
+    uncertainty = {"net_range": [min(nets), max(nets)], "sign_agrees_across_scenarios": bool(all(n > 0 for n in nets) or all(n < 0 for n in nets)),
+                   "flip_in_scenarios": sum(1 for v in scenarios.values() if v["flip"] is not None), "scenarios": len(scenarios)}
+    assumptions = [f"Dealer positioning is ASSUMED, not observed: {why}", f"Dealers are assumed to hold {dealer_share:.0%} of the open interest.",
+                   "Open interest is end-of-day and has no side: it cannot say who is long or short.", "Each contract's implied volatility is held fixed as the price moves; no new trading is assumed.",
+                   "Whether dealers hedge dynamically, and how much, is not observed: the sign and size of any price impact are hypotheses (Garleanu, Pedersen and Poteshman 2009; Barbon and Buraschi 2020), not established facts."]
     strikes = sorted(set(oi.index) | set(by_row.index))
     rows = [{"strike": float(k), "call_oi": float(oi["C"].get(k, 0.0)), "put_oi": float(oi["P"].get(k, 0.0)), "call_volume": float(vol["C"].get(k, 0.0)), "put_volume": float(vol["P"].get(k, 0.0)),
              "call_gex": float(by_row["C"].get(k, 0.0)), "put_gex": float(by_row["P"].get(k, 0.0))} for k in strikes]
@@ -710,7 +761,9 @@ def positioning(chain: pd.DataFrame, expiry=None, grid_points: int = 41, span: f
     return {"scope": label, "spot": spot, "rows": rows, "call_oi": total_c, "put_oi": total_p, "put_call_oi": total_p / total_c if total_c > 0 else None, "call_volume": float(vol["C"].sum()), "put_volume": float(vol["P"].sum()),
             "call_wall": None if call_wall is None else float(call_wall), "put_wall": None if put_wall is None else float(put_wall), "max_pain": pain,
             "gex": {"net": float(now.sum()), "calls": float(now[book["right"] == "C"].sum()), "puts": float(now[book["right"] == "P"].sum()), "flip": flip,
-                    "curve": {"spot": [round(float(x), 4) for x in levels], "net": [round(float(x), 2) for x in net]}}}
+                    "curve": {"spot": [round(float(x), 4) for x in levels], "net": [round(float(x), 2) for x in net]}, "scenario": label_d, "dealer_share": dealer_share, "basis": "assumed dealer positioning"},
+            "gross_gamma": {"total": float(gross.sum()), "calls": float(gross[is_call].sum()), "puts": float(gross[~is_call].sum()), "basis": "observed: open interest times gamma, with no sign"},
+            "scenarios": scenarios, "uncertainty": uncertainty, "assumptions": assumptions}
 
 
 def max_pain(call_oi: pd.Series, put_oi: pd.Series) -> float:

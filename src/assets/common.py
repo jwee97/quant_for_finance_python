@@ -54,10 +54,12 @@ def overall_source(parts: dict[str, str]) -> str:
     return kinds.pop() if len(kinds) == 1 else "mixed"
 
 
-def envelope(kind: str, data: dict, parts: dict[str, str], warnings: list[str] | None = None, as_of=None, notes: list[str] | None = None) -> dict:
+def envelope(kind: str, data: dict, parts: dict[str, str], warnings: list[str] | None = None, as_of=None, notes: list[str] | None = None, provenance: dict | None = None) -> dict:
     """A payload with its provenance: ``kind``, ``source``, ``sources`` (per part), ``warnings`` (things the reader must know) and ``notes`` (how it was made). ``data`` keys come first-class."""
     out = {"kind": kind, "source": overall_source(parts), "sources": dict(parts), "warnings": list(warnings or []), "notes": list(notes or []),
            "as_of": None if as_of is None else str(pd.Timestamp(as_of).date())}
+    from . import provenance as prov
+    out["data_provenance" if "provenance" in data else "provenance"] = prov.build(parts, as_of=as_of, warnings=[], **(provenance or {}))     # the one schema every workspace shows: kind, observed time, freshness, instrument, assumptions
     clash = set(out) & set(data)
     if clash:
         raise ValueError(f"payload keys {sorted(clash)} are reserved for provenance")

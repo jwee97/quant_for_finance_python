@@ -740,3 +740,9 @@ table.obs td:nth-child(2) { white-space: normal; max-width: 280px; }
 .obs-source .page-image { border: 1px solid var(--axis); border-radius: 6px; margin-top: 8px; }
 .obs-source .card.inner { padding: 10px; border: 1px solid var(--axis); border-radius: 8px; margin-top: 8px; }
 .chip.tone-good { border-color: var(--good, #2a7); } .chip.tone-warn { border-color: var(--warn, #c80); } .chip.tone-crit { border-color: var(--crit, #c33); }
+
+/* provenance: kind and freshness */
+.prov .fresh { font-size: 12px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--axis); }
+.prov .fresh-stale { border-color: var(--warn, #c80); color: var(--warn, #c80); }
+.prov .fresh-fresh { border-color: var(--good, #2a7); }
+.prov .src.kind-synthetic { outline: 1px dashed var(--warn, #c80); }

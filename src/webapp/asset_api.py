@@ -63,14 +63,14 @@ def _floats(body: dict, key: str, default: list, lo: float, hi: float, limit: in
     return vals
 
 
-def _wrap(kind: str, data: dict, parts: dict, warnings=(), as_of=None, notes=()) -> dict:
+def _wrap(kind: str, data: dict, parts: dict, warnings=(), as_of=None, notes=(), provenance: dict | None = None) -> dict:
     """A payload with its provenance. The analytics keep their own ``notes`` and ``warnings`` inside the data they return; they are folded into the envelope's lists, and their ``source`` (a single word the
     parts already say better) is dropped, so nothing clashes with the provenance keys."""
     data = dict(data)
     notes, warnings = list(notes) + list(data.pop("notes", None) or []), list(warnings) + list(data.pop("warnings", None) or [])
     notes = list(dict.fromkeys(notes))
     data.pop("source", None)
-    return clean(common.envelope(kind, data, parts, list(dict.fromkeys(warnings)), as_of, notes))
+    return clean(common.envelope(kind, data, parts, list(dict.fromkeys(warnings)), as_of, notes, provenance))
 
 
 class AssetApi:
@@ -310,19 +310,31 @@ class AssetApi:
         gamma exposure with the price at which it flips sign."""
         underlying, rate, dividend, premium = self._option_params(q)
         chain, ctx, source, notes = self._option_chain(underlying, rate, dividend, premium)
+        dealer = str(q.get("dealer") or oa.DEFAULT_DEALER)
+        if dealer.startswith("custom:"):                                                          # custom:<call sign>,<put sign>, each between -1 and 1
+            try:
+                dealer = tuple(float(x) for x in dealer[7:].split(","))
+                if len(dealer) != 2:
+                    raise ValueError
+            except ValueError:
+                raise ApiError("dealer custom:<call sign>,<put sign> takes two numbers between -1 and 1") from None
+        share = _number(q, "dealer_share", 1.0, 0.0, 1.0)
         try:
             expiry = pd.Timestamp(q["expiry"]) if q.get("expiry") and q.get("expiry") != "all" else None
-            view = oa.positioning(chain, expiry)
+            view = oa.positioning(chain, expiry, dealer=dealer, dealer_share=share)
         except ValueError as exc:
             raise ApiError(str(exc)) from None
         data = {"underlying": underlying, "expiry": None if expiry is None else str(expiry.date()), "expiries": [e for e in oa.expiry_list(chain) if e["dte"] >= 1], "positioning": view,
                 "references": {"positioning": references("options", "positioning")}}
         warnings = ["The chain has no open interest (the file did not carry it), so there is nothing to show."] if view["call_oi"] + view["put_oi"] == 0 else []
         simulated = source == "simulated"
+        if not view["uncertainty"]["sign_agrees_across_scenarios"]:
+            warnings.append("The sign of the net gamma exposure depends on who is assumed to hold the other side: the four standard assumptions disagree, so the net figure is a property of the assumption, not of the market.")
         return _wrap("options_positioning", data, {"underlying_price": "platform" if simulated else source, "open_interest": source}, warnings, ctx.as_of,
-                     notes + ["Open interest has no sign: who is long and who is short is not in the data. The gamma exposure counts calls as positive and puts as negative, the convention that follows if dealers hold the other "
-                              "side of customers who sell calls and buy puts. Treat it as a map of where the hedging sensitivity sits, not as dealers' books.",
-                              "Max pain is a folk rule for the settlement of one expiry; the evidence behind it is that prices tend to cluster at strikes with large open interest near expiry."])
+                     notes + ["Open interest has no sign: who is long and who is short is not in the data. Gross gamma (open interest times gamma) is observed; the net gamma exposure is conditional on an ASSUMED "
+                              "dealer position, chosen above and compared with the other standard assumptions. Whether dealers hedge dynamically, and with what price impact, is a hypothesis.",
+                              "Max pain is a folk rule for the settlement of one expiry; the evidence behind it is that prices tend to cluster at strikes with large open interest near expiry."],
+                     provenance={"instrument": f"{underlying} options" + ("" if expiry is None else f" {expiry.date()}"), "assumptions": view["assumptions"]})
 
     def options_surface(self, q: dict) -> dict:
         """``GET /api/options/surface?underlying=SPY``: the implied-volatility surface (strike by expiry), the term structure, the skew metrics of every expiry and the static no-arbitrage checks."""
@@ -342,7 +354,7 @@ class AssetApi:
         american = bool(self._downloaded("options", "chain").get(underlying[3:], {}).get("american_style", True)) if downloaded else True
         band = 0.05 if american else 0.15
         try:
-            arb = oa.arbitrage_view(chain, liquid_only=downloaded, band=band)                  # a downloaded chain is real quotes, delayed: only the live ones near the forward say anything
+            arb = oa.arbitrage_view(chain, liquid_only=downloaded, band=band, exercise="american" if american and downloaded else "european")                  # a downloaded chain is real quotes, delayed: only the live ones near the forward say anything
         except Exception:                                                                      # a diagnostic must not take the page down
             arb = {"rows": [], "tick": None, "tolerance": None}
         if downloaded:

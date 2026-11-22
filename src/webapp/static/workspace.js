@@ -56,17 +56,23 @@
   const catalog = () => (catalogPromise = catalogPromise || api("/api/assets/catalog").catch((e) => { catalogPromise = null; throw e; }));
 
   /* ---------- provenance: where the numbers come from ---------- */
+  const KIND_TEXT = { observed_live: "Live observed", observed_delayed: "Delayed observed", historical_observed: "Historical observed", calibrated_model: "Calibrated model", synthetic: "Synthetic", mixed: "Mixed sources" };
   function provenance(root, p) {
-    const box = h("div", "prov", root), badge = h("span", "src " + p.source, box, sourceText(p.source));
-    badge.title = SOURCE_HELP[p.source] || "";
+    const box = h("div", "prov", root), pv = p.data_provenance || (p.provenance && p.provenance.kind ? p.provenance : null), kind = pv ? pv.kind : null;
+    const badge = h("span", "src " + p.source + (kind ? " kind-" + kind : ""), box, kind ? KIND_TEXT[kind] || kind : sourceText(p.source));
+    badge.title = kind ? (pv.help || "") : (SOURCE_HELP[p.source] || ""); badge.dataset.role = "provenance-kind"; if (kind) badge.dataset.kind = kind;
     if (p.as_of) h("span", "", box, "as of " + p.as_of);
+    if (pv && pv.freshness && pv.freshness !== "unknown") { const f = h("span", "fresh fresh-" + pv.freshness, box, pv.freshness === "fresh" ? "fresh" : pv.freshness === "stale" ? `stale (${Math.round(pv.age_hours)} h old)` : pv.freshness === "historical" ? "historical" : "not an observation"); f.dataset.role = "provenance-freshness"; }
+    if (pv && pv.instrument) h("span", "", box, pv.instrument);
     const parts = Object.entries(p.sources || {});
     if (parts.length > 1) {
       const list = h("span", "srcs", box);
       for (const [k, v] of parts) { const item = h("span", "", list); item.appendChild(document.createTextNode(k.replace(/_/g, " ").replace("@", " on ") + ": ")); h("b", "", item, sourceText(v)); }
     }
-    flags(root, p.warnings || []);
-    if ((p.notes || []).length) { const d = h("details", "how", root); h("summary", "", d, "How this was made"); const ul = h("ul", "", d); for (const n of p.notes) h("li", "", ul, n); }
+    flags(root, [...(p.warnings || []), ...((pv && pv.warnings) || []).filter((w) => !(p.warnings || []).includes(w))]);
+    if (pv && pv.calibration) h("p", "hint", root, `Model calibration: ${pv.calibration.status}${pv.calibration.rmse !== undefined ? `, RMSE ${Number(pv.calibration.rmse).toFixed(4)}` : ""}${pv.calibration.fit_date ? `, fitted ${pv.calibration.fit_date}` : ""}.`);
+    const notes = [...(p.notes || [])];
+    if (notes.length || (pv && (pv.assumptions || []).length)) { const d = h("details", "how", root); h("summary", "", d, "How this was made"); const ul = h("ul", "", d); for (const n of notes) h("li", "", ul, n); for (const a of ((pv && pv.assumptions) || [])) if (!notes.includes(a)) h("li", "", ul, a); }
   }
   function flags(root, list, title) {
     const shown = list.slice(0, 4), rest = list.slice(4);

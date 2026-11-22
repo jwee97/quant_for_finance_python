@@ -24,10 +24,13 @@ def _missing_years(ends: list[date]) -> list[str]:
     return [str(y) for y in range(ys[0], ys[-1] + 1) if y not in have]
 
 
-def company(store, security_id: int) -> dict:
+def company(store, security_id: int, _bulk: dict | None = None) -> dict:
     sid = int(security_id)
-    periods = store.periods([sid])
-    obs = store.observations([sid])
+    if _bulk is None:
+        periods, obs = store.periods([sid]), store.observations([sid])
+    else:
+        periods = _bulk["periods"].get(sid, _bulk["empty_periods"])
+        obs = _bulk["obs"].get(sid, _bulk["empty_obs"])
     out: dict = {"security_id": sid}
     with store.db.transaction() as c:
         sec = c.execute("SELECT ticker, company_name, currency FROM securities WHERE security_id = ?", (sid,)).fetchone()
@@ -50,7 +53,7 @@ def company(store, security_id: int) -> dict:
         out["latest_quarter"] = None if qs.empty else {"period": qs.iloc[-1]["fiscal_period"], "period_end": str(qs.iloc[-1]["period_end"])[:10], "provider": qs.iloc[-1]["provider"]}
         out["missing_periods"] = _missing_years([pd.Timestamp(e).date() for e in fy["period_end"]])
         out["restatements"] = int((periods["vintage"] > 0).sum())
-        out["source_conflicts"] = len(sources.compare(store, sid, only_conflicts=True))
+        out["source_conflicts"] = len(sources.compare(store, sid, only_conflicts=True, frames=None if _bulk is None else {"periods": periods, "obs": obs, "prefs": _bulk["prefs"], "confirmed": _bulk["confirmed"]}))
         out["unconfirmed_observations"], out["unresolved_observations"], out["custom_confirmed"] = waiting, unresolved, custom
         latest_ids = list(fy[fy["period_end"] == fy["period_end"].max()]["period_id"]) if len(fy) else []      # every source's row for the latest annual period
         usable = obs[obs["period_id"].isin(latest_ids) & ~obs["quality_flag"].isin(("unverified", "identity_error", "negative_value", "suspicious_jump", "provider_disagreement"))]
@@ -74,5 +77,10 @@ def company(store, security_id: int) -> dict:
 
 def overview(store, security_ids: list[int] | None = None) -> dict:
     ids = security_ids if security_ids is not None else [int(i) for i in store.securities()["security_id"]]
-    rows = [company(store, i) for i in ids]
+    periods, obs = store.periods(ids), store.observations(ids)                                      # loaded once for every company: one query, not one per company
+    with store.db.transaction() as c:
+        confirmed = {(r[0], r[1]) for r in c.execute("SELECT financial_period_id, metric_code FROM observation_provenance WHERE verified = 1").fetchall()}
+    bulk = {"periods": {k: v for k, v in periods.groupby("security_id")}, "obs": {k: v for k, v in obs.groupby("security_id")}, "empty_periods": periods.iloc[0:0], "empty_obs": obs.iloc[0:0],
+            "prefs": store.source_preferences(ids), "confirmed": confirmed}
+    rows = [company(store, i, bulk) for i in ids]
     return {"companies": rows, "n": len(rows), "needing_attention": sum(1 for r in rows if r["status"] != "ok"), "unconfirmed_total": sum(r["unconfirmed_observations"] for r in rows)}

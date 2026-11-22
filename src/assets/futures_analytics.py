@@ -358,16 +358,56 @@ def roll_analysis(data: CurveData, roll_days: int = 5, window: int = 120) -> dic
         if len(px) and len(px2):
             past.append({"contract": c, "next": nxt_c, "expiry": str(pd.Timestamp(e).date()), "roll_date": str(d.date()), "spread": float(px2["price"].iloc[-1] - px["price"].iloc[-1]),
                          "oi_crossover": None if (x := oi_crossover(data, c, nxt_c)) is None else str(x.date())})
+    decomposition = roll_decomposition(data, front, nxt, spread_points, exec_cost, window=252)
     flags: list[str] = []
     add_flag(flags, front["dte"] <= roll_days + 2, f"the {front['contract']} contract expires in {front['dte']} days: roll now")
     add_flag(flags, cross is not None and as_of >= cross, "open interest has already moved to the next contract: the front is thinning")
-    add_flag(flags, np.isfinite(spread_points) and spread_points > 0, f"the curve is in contango at the front: rolling a long position costs about {abs(spread_points) * spec.multiplier:,.0f} per contract")
+    add_flag(flags, np.isfinite(spread_points) and spread_points > 0, f"the curve is in contango at the front: the next contract is {abs(spread_points) * spec.multiplier:,.0f} per contract above the front. That gap is not a loss from rolling "
+             "(the roll itself is done at one day's prices); a long position earns it back or not depending on how the curve moves: if it stays as it is, the position rolls down by that amount as time passes")
     return {"root": data.root, "as_of": str(as_of.date()), "current_contract": front["contract"], "next_contract": nxt["contract"], "front_expiry": front["expiry"], "days_to_expiry": front["dte"],
             "roll_days": int(roll_days), "calendar_roll_date": str(cal.date()), "oi_crossover": None if cross is None else str(cross.date()),
             "suggested_roll_date": str(pd.Timestamp(suggested).date()), "days_to_roll": int((pd.Timestamp(suggested) - as_of).days),
             "calendar_spread_points": float(spread_points), "calendar_spread_dollars": float(spread_points * spec.multiplier), "execution_cost_dollars": float(exec_cost),
-            "roll_cost_dollars": float(spread_points * spec.multiplier + exec_cost), "roll_cost_pct": float(spread_points / front["price"]), "annualised_roll": front["roll_yield"],
+            "roll_cost_dollars": float(exec_cost), "roll_cost_pct": float(exec_cost / (front["price"] * spec.multiplier)), "roll_cost_note": "execution cost only: the calendar spread is a price difference, not a cost of rolling",
+            "decomposition": decomposition, "annualised_roll": front["roll_yield"],
             "history": hist, "past_rolls": past, "risk_flags": flags}
+
+
+def roll_decomposition(data: CurveData, front: dict, nxt: dict, spread_points: float, exec_cost: float, window: int = 252) -> dict:
+    """What "the cost of a roll" is made of, kept apart because only one of them is a cost:
+
+    * ``calendar_spread``: next contract's price less the front's. A price *difference* between two contracts on the same day. Nobody pays it: the old contract is sold and the new one bought at that day's
+      prices, so the roll changes nothing in the value of the position (before costs).
+    * ``implied_roll_down``: what a long position in the next contract would make or lose, per contract, **if the whole curve were unchanged** when that contract becomes the front (a static-curve
+      assumption, the usual meaning of "roll yield"): ``-(spread) x multiplier``. It is a scenario, not a forecast; the curve usually moves.
+    * ``execution_cost``: the half-spread of the calendar spread plus two commissions: the only part that is a real cash cost of rolling.
+    * ``realised_roll_contribution``: what the history says rolling contributed: the excess return of holding the front contract and rolling, minus the return of the spot price over the same days, summed in
+      logs over the last ``window`` days (it also contains changes in the basis; it needs a spot series).
+    * ``realised_excess_return``: the total return of the roll strategy over the window, before collateral interest and costs.
+    """
+    spec = data.spec
+    out = {"calendar_spread": {"points": float(spread_points), "dollars_per_contract": float(spread_points * spec.multiplier), "kind": "price difference, not a cost"},
+           "implied_roll_down": {"dollars_per_contract_long": float(-spread_points * spec.multiplier), "assumption": "the whole curve is unchanged when the next contract becomes the front (a scenario, not a forecast)"},
+           "execution_cost": {"dollars_per_contract": float(exec_cost), "kind": "cash cost of trading the roll: half the calendar-spread bid-ask and two commissions"}}
+    try:
+        ex = excess_return_series(data.long[["date", "contract", "expiry", "price"]], 5).tail(window)
+    except (KeyError, ValueError):
+        ex = pd.Series(dtype=float)
+    if len(ex) >= 20:
+        total = float(np.log1p(ex).sum())
+        out["realised_excess_return"] = {"log_return": total, "days": int(len(ex)), "from": str(ex.index[0].date()), "to": str(ex.index[-1].date()), "basis": "roll strategy excess return, before collateral interest and costs"}
+        if data.spot is not None:
+            sp = data.spot.reindex(ex.index).ffill().dropna()
+            if len(sp) >= 20:
+                spot_ret = float(np.log(sp.iloc[-1] / sp.iloc[0]))
+                out["realised_roll_contribution"] = {"log_return": total - spot_ret, "spot_log_return": spot_ret, "days": int(len(sp)), "basis": "excess return minus spot return (includes basis changes)"}
+        if "realised_roll_contribution" not in out:
+            out["realised_roll_contribution"] = None
+            out["realised_roll_contribution_note"] = "needs a spot series: this curve has none, so the realised roll contribution cannot be separated from the price move of the underlying"
+    else:
+        out["realised_excess_return"] = None
+        out["realised_roll_contribution"] = None
+    return out
 
 
 # ------------------------------------------------------------------------------------------------------------------ carry and basis

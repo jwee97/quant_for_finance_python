@@ -42,6 +42,8 @@ class Quotes:
     iv: np.ndarray
     weight: np.ndarray | None = None
     expiries: list = field(default_factory=list)
+    bid_iv: np.ndarray | None = None                 # the implied volatility of the bid and of the ask of each quote: the band inside which a model's volatility is as good as the market's
+    ask_iv: np.ndarray | None = None
 
     def __post_init__(self):
         self.T, self.K, self.iv = (np.asarray(x, dtype=float) for x in (self.T, self.K, self.iv))
@@ -51,6 +53,25 @@ class Quotes:
             raise ValueError("times, strikes and implied volatilities must be positive and finite")
         if self.weight is not None:
             self.weight = np.asarray(self.weight, dtype=float)
+        for name in ("bid_iv", "ask_iv"):
+            v = getattr(self, name)
+            if v is not None:
+                v = np.asarray(v, dtype=float)
+                if len(v) != len(self.T):
+                    raise ValueError(f"{name} needs one value per quote")
+                setattr(self, name, v)
+
+    def subset(self, mask) -> "Quotes":
+        """The quotes where ``mask`` is true (the same market, fewer points): for fitting on part of a chain and testing on the rest."""
+        m = np.asarray(mask, dtype=bool)
+        pick = lambda a: None if a is None else np.asarray(a)[m]  # noqa: E731
+        return Quotes(self.S, self.r, self.q, self.T[m], self.K[m], self.iv[m], pick(self.weight), [], pick(self.bid_iv), pick(self.ask_iv))
+
+    def half_width(self) -> np.ndarray:
+        """Half the bid-ask band in volatility (NaN where the bid or ask has no volatility): inside it the market itself cannot say which volatility is right."""
+        if self.bid_iv is None or self.ask_iv is None:
+            return np.full(len(self.T), np.nan)
+        return np.maximum(self.ask_iv - self.bid_iv, 0.0) / 2.0
 
     @property
     def forward(self) -> np.ndarray:
@@ -125,8 +146,16 @@ def quotes_from_chain(chain, max_expiries: int = 6, min_dte: int = 7, window: fl
         frames.append(s)
         expiries.append(str(np.datetime64(e, "D")))
     use = pd.concat(frames)
+    bid_iv, ask_iv = np.full(len(use), np.nan), np.full(len(use), np.nan)
+    for right, call in (("C", True), ("P", False)):
+        sel = (use["right"] == right).to_numpy()
+        if sel.any():
+            h = use[sel]
+            args = (h["underlying"].to_numpy(), h["strike"].to_numpy(), h["T"].to_numpy(), h["rate"].to_numpy(), h["dividend"].to_numpy(), call)
+            bid_iv[sel] = implied_vol(h["bid"].to_numpy(), *args)
+            ask_iv[sel] = implied_vol(h["ask"].to_numpy(), *args)
     return Quotes(float(use["underlying"].iloc[0]), float(use["rate"].median()), float(use["dividend"].median()), use["T"].to_numpy(), use["strike"].to_numpy(), use["iv"].to_numpy(),
-                  expiries=expiries)
+                  expiries=expiries, bid_iv=bid_iv, ask_iv=ask_iv)
 
 
 @dataclass
@@ -151,11 +180,18 @@ class Calibration:
     std_errors: dict = field(default_factory=dict)
     at_bounds: list = field(default_factory=list)
     condition: float = float("nan")
+    loss: str = "iv"
+    n_params: int = 0
+    bic: float = float("nan")
+    residuals: np.ndarray | None = None              # model volatility less market volatility, per quote (NaN where the model price has no volatility)
+    trace: list = field(default_factory=list)        # (evaluation number, best cost so far): how the optimiser converged
+    within_band: float = float("nan")                # the share of quotes whose model volatility lies inside the market's bid-ask band (NaN without a band)
 
     def summary(self) -> dict:
         return {"model": self.model.name, "label": self.model.label, "params": dict(self.model.params), "rmse": self.rmse, "mae": self.mae, "max_error": self.max_error, "n_quotes": self.n_quotes,
                 "n_expiries": self.n_expiries, "success": self.success, "seconds": self.seconds, "n_evals": self.n_evals, "n_failed": self.n_failed, "by_expiry": self.by_expiry,
-                "std_errors": dict(self.std_errors), "at_bounds": list(self.at_bounds), "condition": self.condition}
+                "std_errors": dict(self.std_errors), "at_bounds": list(self.at_bounds), "condition": self.condition, "loss": self.loss, "n_params": self.n_params, "bic": self.bic,
+                "within_band": self.within_band, "trace": [[int(a), float(b)] for a, b in self.trace[-200:]]}
 
 
 def model_otm_prices(model: levy.Model, quotes: Quotes, step: float = 0.15, max_upper: float = 2000.0) -> np.ndarray:
@@ -217,12 +253,21 @@ def starting_points(cls: type[levy.Model], quotes: Quotes) -> list[dict]:
     return out
 
 
-def calibrate(model: str | type[levy.Model], quotes: Quotes, start: dict | None = None, fixed: dict | None = None, step: float = 0.15, max_nfev: int = 120, n_starts: int = 2) -> Calibration:
+def calibrate(model: str | type[levy.Model], quotes: Quotes, start: dict | None = None, fixed: dict | None = None, step: float = 0.15, max_nfev: int = 120, n_starts: int = 2,
+              loss: str = "iv") -> Calibration:
     """Fit ``model``'s parameters (the same for every expiry) to ``quotes`` by bounded least squares on the vega-scaled price errors.
 
     ``start`` overrides the starting point, ``fixed`` holds some parameters at given values (say ``rho`` for Heston), ``n_starts`` tries that many starting points and keeps the best.
     A parameter set outside the model's validity region (no exponential moment of order one, the price not a martingale) counts as a large error, which steers the search back.
+
+    ``loss`` chooses what is minimised: ``"iv"`` (the default: every quote counts equally in volatility terms), ``"vega"`` (errors weighted by the square root of each quote's vega, so the quotes that
+    carry the most price information, the ones near the money, count more), ``"band"`` (the error is measured from the edge of the market's bid-ask band: a model volatility inside the band is as good as
+    the market's own and costs nothing; needs ``bid_iv`` and ``ask_iv``; a quote without a band is treated as having none).
     """
+    if loss not in ("iv", "vega", "band"):
+        raise ValueError("loss is iv, vega or band")
+    if loss == "band" and quotes.bid_iv is None:
+        raise ValueError("loss 'band' needs the bid and ask volatilities of the quotes")
     cls = levy.MODELS[model] if isinstance(model, str) else model
     fixed = dict(fixed or {})
     names = [k for k in cls.param_names if k not in fixed]
@@ -235,6 +280,10 @@ def calibrate(model: str | type[levy.Model], quotes: Quotes, start: dict | None 
     w = np.ones(len(target)) if quotes.weight is None else quotes.weight
     counter = {"n": 0}
     big = 1.0
+    trace: list = []
+    best_cost = [np.inf]
+    shape = np.sqrt(vega / vega.max()) if loss == "vega" else np.ones(len(target))
+    half = np.nan_to_num(quotes.half_width(), nan=0.0) if loss == "band" else np.zeros(len(target))
 
     def build(x) -> levy.Model | None:
         try:
@@ -258,7 +307,15 @@ def calibrate(model: str | type[levy.Model], quotes: Quotes, start: dict | None 
         except (FloatingPointError, ValueError, OverflowError):
             return np.full(len(target), big)
         r = w * (px - target) / vega
-        return np.where(np.isfinite(r), r, big)
+        if loss == "band":                                                                          # the part of the error beyond the market's own uncertainty
+            r = np.sign(r) * np.maximum(np.abs(r) - half, 0.0)
+        r = r * shape
+        r = np.where(np.isfinite(r), r, big)
+        c = 0.5 * float(r @ r)
+        if c < best_cost[0]:
+            best_cost[0] = c
+            trace.append((counter["n"], c))
+        return r
 
     t0 = time.perf_counter()
     starts = [start] if start is not None else starting_points(cls, quotes)[:max(1, n_starts)]
@@ -287,8 +344,15 @@ def calibrate(model: str | type[levy.Model], quotes: Quotes, start: dict | None 
     se = np.full(len(names), np.nan)
     if np.isfinite(cond) and cond < 1e12:
         se = np.sqrt(np.maximum(np.diag(np.linalg.inv(J.T @ J)), 0.0) * 2.0 * best.cost / max(J.shape[0] - J.shape[1], 1))
+    rss = float(np.sum(err[good] ** 2))
+    n_good = int(good.sum())
+    bic = n_good * np.log(max(rss / n_good, 1e-300)) + len(names) * np.log(n_good)
+    within = float("nan")
+    if quotes.bid_iv is not None and np.isfinite(quotes.half_width()).any():
+        has = good & np.isfinite(quotes.bid_iv) & np.isfinite(quotes.ask_iv)
+        within = float(np.mean((iv[has] >= quotes.bid_iv[has] - 1e-12) & (iv[has] <= quotes.ask_iv[has] + 1e-12))) if has.any() else float("nan")
     return Calibration(fitted, float(np.sqrt(np.mean(err[good] ** 2))), float(np.mean(np.abs(err[good]))), float(np.max(np.abs(err[good]))), len(err), len(quotes.maturities), iv, bool(best.success),
-                       str(best.message), time.perf_counter() - t0, counter["n"], int((~good).sum()), by, {k: float(v) for k, v in zip(names, se)}, at_bounds, cond)
+                       str(best.message), time.perf_counter() - t0, counter["n"], int((~good).sum()), by, {k: float(v) for k, v in zip(names, se)}, at_bounds, cond, loss, len(names), float(bic), err, trace, within)
 
 
 def compare_models(quotes: Quotes, models=("merton", "kou", "vg", "nig", "heston"), **kw) -> list[Calibration]:

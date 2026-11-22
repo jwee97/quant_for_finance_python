@@ -725,3 +725,26 @@ def test_the_workspaces_are_served_with_query_strings_and_the_token(assets):
         assert json.loads(body)["status"] == "done" and json.loads(body)["result"]["kind"] == "options_backtest"
     finally:
         running.stop()
+
+
+def test_the_positioning_endpoint_separates_observed_gamma_from_assumed_dealer_positions_and_says_how_much_the_assumption_matters(assets):
+    base = _safe(assets.extra_get["/api/options/positioning"]({"underlying": "AAA"}))
+    p = base["positioning"]
+    assert p["gross_gamma"]["total"] > 0 and p["gex"]["basis"] == "assumed dealer positioning" and set(p["scenarios"]) >= {"dealers_long_all", "dealers_short_all"}
+    assert base["provenance"]["kind"] == "mixed" and base["provenance"]["instrument"].startswith("AAA options") and any("ASSUMED" in a for a in base["provenance"]["assumptions"])
+    assert not p["uncertainty"]["sign_agrees_across_scenarios"] and any("depends on who is assumed" in w for w in base["warnings"])
+    short = assets.extra_get["/api/options/positioning"]({"underlying": "AAA", "dealer": "dealers_short_all", "dealer_share": 0.5})["positioning"]
+    assert short["gex"]["scenario"] == "dealers_short_all" and short["gex"]["net"] == pytest.approx(-0.5 * p["gross_gamma"]["total"])
+    custom = assets.extra_get["/api/options/positioning"]({"underlying": "AAA", "dealer": "custom:1,0"})["positioning"]
+    assert custom["gex"]["scenario"] == "custom" and custom["gex"]["net"] == pytest.approx(p["gross_gamma"]["calls"])
+    for bad, text in (({"dealer": "nobody"}, "dealer is one of"), ({"dealer": "custom:5,0"}, "between -1 and 1"), ({"dealer": "custom:x"}, "two numbers"), ({"dealer_share": 3}, "between")):
+        with pytest.raises(ApiError, match=text):
+            assets.extra_get["/api/options/positioning"]({"underlying": "AAA", **bad})
+
+
+def test_every_asset_payload_carries_provenance_and_a_simulated_chain_is_synthetic_not_empirical(assets):
+    out = _safe(assets.extra_get["/api/options/chain"]({"underlying": "AAA"}))
+    pv = out["provenance"]
+    assert pv["parts"]["chain"] == "synthetic" and pv["kind"] in ("synthetic", "mixed") and any("synthetic" in w.lower() for w in pv["warnings"])
+    roll = _safe(assets.extra_get["/api/futures/roll"]({"root": "CL"}))
+    assert roll["provenance"]["kind"] in ("synthetic", "mixed") and roll["roll"]["decomposition"]["calendar_spread"]["kind"] == "price difference, not a cost"

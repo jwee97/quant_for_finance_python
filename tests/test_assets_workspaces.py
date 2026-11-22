@@ -242,7 +242,10 @@ def test_open_interest_moves_to_the_next_contract_before_expiry(cl):
         assert abs(gap - fa.ROOTS["CL"].roll_oi_days) <= 4
     assert roll["calendar_roll_date"] == str((pd.Timestamp(roll["front_expiry"]) - pd.Timedelta(days=5)).date())
     spec = fa.ROOTS["CL"]
-    assert roll["roll_cost_dollars"] == pytest.approx(roll["calendar_spread_points"] * spec.multiplier + spec.spread_ticks * spec.tick_value + 2.0 * spec.commission)
+    assert roll["roll_cost_dollars"] == pytest.approx(spec.spread_ticks * spec.tick_value + 2.0 * spec.commission) == pytest.approx(roll["execution_cost_dollars"]), "only the execution is a cost of rolling"
+    dec = roll["decomposition"]
+    assert dec["calendar_spread"]["dollars_per_contract"] == pytest.approx(roll["calendar_spread_dollars"]) and dec["implied_roll_down"]["dollars_per_contract_long"] == pytest.approx(-roll["calendar_spread_dollars"])
+    assert "scenario" in dec["implied_roll_down"]["assumption"] and dec["calendar_spread"]["kind"] == "price difference, not a cost"
     assert min(pd.Timestamp(roll["suggested_roll_date"]), pd.Timestamp(roll["calendar_roll_date"])) == pd.Timestamp(roll["suggested_roll_date"])
     h = roll["history"]
     assert len(h["dates"]) == len(h["front"]) == len(h["next"]) == len(h["spread"]) and h["spread"][-1] == pytest.approx(h["next"][-1] - h["front"][-1], abs=1e-3)

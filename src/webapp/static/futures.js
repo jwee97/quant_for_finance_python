@@ -319,8 +319,13 @@
     tile(k, "Calendar roll", W.dayMonth(r.calendar_roll_date), { text: `${r.calendar_roll_date.slice(0, 4)} · ${r.roll_days} days before expiry` });
     const hs = r.history, hasOi = [...hs.oi_front, ...hs.oi_next].some((v) => v !== null && v !== undefined);              // a downloaded curve may come from a feed without open interest
     tile(k, "Open-interest crossover", !hasOi ? "No data" : r.oi_crossover ? W.dayMonth(r.oi_crossover) : "not yet", { text: !hasOi ? "this curve has no open interest" : r.oi_crossover ? `${r.oi_crossover.slice(0, 4)} · the next contract holds more` : `${r.next_contract} is still the smaller one` }, "", "The date from which the next contract's open interest stays above the front's");
-    tile(k, "Cost of the roll", smoney(-r.roll_cost_dollars), { text: `${pct(r.roll_cost_pct, 2)} of the position's value` }, "", "For a LONG position: the calendar spread you pay when selling the old contract and buying the next, plus a tick of execution cost. Negative means you pay; a short position earns it.");
-    tile(k, "Calendar spread", num(r.calendar_spread_points, 3), { text: `${money(r.calendar_spread_dollars)} per contract` }, "", "Next contract's price less the front's");
+    const dc = r.decomposition;
+    tile(k, "Execution cost of the roll", smoney(-r.execution_cost_dollars), { text: "per contract, the only cash cost" }, "", "Half the bid-ask of the calendar spread plus two commissions: what trading the roll costs. The calendar spread below is not a cost: the old contract is sold and the next bought at one day's prices.");
+    tile(k, "Calendar spread (a price difference)", num(r.calendar_spread_points, 3), { text: `${money(r.calendar_spread_dollars)} per contract` }, "", "Next contract's price less the front's. Not a loss: nobody pays it when rolling.");
+    tile(k, "Implied roll-down, if the curve stays put", smoney(dc.implied_roll_down.dollars_per_contract_long), { text: "a scenario for a long, not a forecast" }, "", dc.implied_roll_down.assumption);
+    const rr = dc.realised_roll_contribution, re = dc.realised_excess_return;
+    tile(k, "Realised roll contribution", rr ? pct(rr.log_return, 1) : "n/a", { text: rr ? `over ${rr.days} days: excess return less the spot move` : (dc.realised_roll_contribution_note || "needs a spot series") }, "", "What rolling actually contributed in the history: the excess return of the roll strategy minus the spot return, including basis changes.");
+    tile(k, "Realised excess return of the roll strategy", re ? pct(re.log_return, 1) : "n/a", { text: re ? `${re.from} to ${re.to}, before collateral interest and costs` : "too little history" }, "", "The total return of holding the front contract and rolling, before collateral interest and costs: the sum of the spot move and the roll contribution.");
     tile(k, "Annualised roll", pct(r.annualised_roll, 1), { text: r.annualised_roll >= 0 ? "a long earns" : "a long pays" });
     const ch = h("div", "charts", root);
     chartCard(ch, "Front and next contract", "The two contracts' prices over the last 120 days; the gap is the calendar spread you cross when you roll.", {
@@ -335,7 +340,7 @@
     const past = h("div", "card", root); h("h3", "", past, "The rolls of the past year");
     if (r.past_rolls.length) table(past, [{ label: "Contract", get: (x) => x.contract }, { label: "Rolled into", get: (x) => x.next }, { label: "Expiry", get: (x) => x.expiry }, { label: "Calendar roll", get: (x) => x.roll_date }, { label: "Spread at the roll", num: true, get: (x) => num(x.spread, 3) }, { label: "Open-interest crossover", get: (x) => x.oi_crossover || (hasOi ? "never" : "no data") }], r.past_rolls);
     else h("p", "hint", past, "No contract in this file has expired yet, so there is no past roll to show. A downloaded curve gains them as later downloads are merged into it.");
-    W.hint(root, "The cost shown is for a long position; a short position's is the opposite. Execution cost is one tick per leg. Prices and open interest are simulated unless your file or a download has them.");
+    W.hint(root, "Four different things: the calendar spread (a price difference), the implied roll-down (what a long makes or loses if the curve stays unchanged: a scenario), the execution cost (real) and what the history says rolling contributed (realised). Prices and open interest are simulated unless your file or a download has them.");
   }
 
   /* ---------- carry and basis ---------- */

@@ -102,9 +102,11 @@ def parity_forward(df_expiry: pd.DataFrame) -> dict:
     return {"forward": float(F), "rate": float(-np.log(disc) / T) if disc > 0 and T > 0 else float("nan"), "rmse": float(np.sqrt(np.mean(resid ** 2)))}
 
 
-def arbitrage_report(chain: pd.DataFrame, tol: float = 1e-8) -> pd.DataFrame:
+def arbitrage_report(chain: pd.DataFrame, tol: float = 1e-8, exercise: str = "european") -> pd.DataFrame:
     """Static-arbitrage violations in the MID prices of ONE quote date. One row per violation type with the count tested and the number violated (beyond ``tol``).
-    ``chain`` must have ``mid``, ``T``, ``F``, ``k``, ``strike``, ``right``, ``expiry``, ``rate`` (use ``normalise_chain``) and, for the calendar test, an ``iv`` column."""
+    ``exercise`` is the exercise style of the options. Parity is an *equality* only for European options; for American ones the bounds are ``F e^{-rT} - K <= C - P <= F e^{-(r-q)T} - K e^{-rT}``
+    (a call on a dividend payer may be exercised early and an in-the-money put always may), so an American chain is tested against the bounds, never against the equality. Vertical-spread and butterfly
+    conditions hold for both styles. ``chain`` must have ``mid``, ``T``, ``F``, ``k``, ``strike``, ``right``, ``expiry``, ``rate`` (use ``normalise_chain``) and, for the calendar test, an ``iv`` column."""
     rows = []
     v_tests = v_bad = b_tests = b_bad = p_tests = p_bad = 0
     for expiry, g in chain.groupby("expiry"):
@@ -122,13 +124,20 @@ def arbitrage_report(chain: pd.DataFrame, tol: float = 1e-8) -> pd.DataFrame:
         pivot = g.pivot_table(index="strike", columns="right", values="mid").dropna()
         if len(pivot):
             T, F, r = g["T"].iloc[0], g["F"].iloc[0], g["rate"].iloc[0]
-            gap = pivot["C"] - pivot["P"] - np.exp(-r * T) * (F - pivot.index.to_numpy())
             half_spread = g.groupby("strike").apply(lambda x: (x["ask"] - x["bid"]).sum() / 2.0, include_groups=False).reindex(pivot.index)
             p_tests += len(pivot)
-            p_bad += int((gap.abs() > half_spread + tol).sum())
+            if exercise == "american":
+                diff = pivot["C"] - pivot["P"]
+                lower = np.exp(-r * T) * F - pivot.index.to_numpy()
+                spot = float(g["underlying"].iloc[0]) if "underlying" in g else float(F * np.exp(-(r * T)))              # without a spot column the forward discounted at r (no dividend) bounds it
+                upper = spot - np.exp(-r * T) * pivot.index.to_numpy()
+                p_bad += int(((diff < lower - half_spread - tol) | (diff > upper + half_spread + tol)).sum())
+            else:
+                gap = pivot["C"] - pivot["P"] - np.exp(-r * T) * (F - pivot.index.to_numpy())
+                p_bad += int((gap.abs() > half_spread + tol).sum())
     rows += [{"check": "vertical spread (price monotone in strike)", "tested": v_tests, "violations": v_bad},
              {"check": "butterfly (price convex in strike)", "tested": b_tests, "violations": b_bad},
-             {"check": "put-call parity within the spread", "tested": p_tests, "violations": p_bad}]
+             {"check": "put-call parity within the spread" if exercise != "american" else "put-call bounds (American options)", "tested": p_tests, "violations": p_bad}]
     if "iv" in chain:
         cal_tests = cal_bad = 0
         otm = otm_quotes(chain)
