@@ -166,6 +166,11 @@ CREATE TABLE IF NOT EXISTS custom_observations (
     period_type TEXT, fiscal_period TEXT, scope TEXT, statement TEXT, page INTEGER, table_ref TEXT, column_header TEXT, extraction_method TEXT, extractor_version TEXT, taxonomy_version TEXT,
     filing_date TEXT, pit_quality TEXT NOT NULL DEFAULT 'filed', vintage INTEGER NOT NULL DEFAULT 0, confirmed_at TEXT NOT NULL, created_at TEXT NOT NULL, superseded INTEGER NOT NULL DEFAULT 0);
 CREATE INDEX IF NOT EXISTS ix_custom_security ON custom_observations(security_id, metric_code, period_end);
+-- Cumulative (year-to-date) observations exactly as reported; standalone quarters are derived from them (quarters.py) and never replace them.
+CREATE TABLE IF NOT EXISTS ytd_observations (
+    security_id INTEGER NOT NULL REFERENCES securities(security_id) ON DELETE CASCADE, metric_code TEXT NOT NULL, fiscal_year INTEGER NOT NULL, cum_period TEXT NOT NULL, period_end TEXT NOT NULL,
+    value REAL NOT NULL, currency TEXT, filing_date TEXT, source TEXT, vintage INTEGER NOT NULL DEFAULT 0, note TEXT, created_at TEXT NOT NULL,
+    PRIMARY KEY (security_id, metric_code, fiscal_year, cum_period, vintage));
 -- A person's choice of which provider's figure to use for one figure of one period (the rest are kept, nothing is overwritten).
 CREATE TABLE IF NOT EXISTS source_preferences (
     security_id INTEGER NOT NULL REFERENCES securities(security_id) ON DELETE CASCADE, metric_code TEXT NOT NULL, period_end TEXT NOT NULL, provider TEXT NOT NULL, note TEXT, chosen_at TEXT NOT NULL,

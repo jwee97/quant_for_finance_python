@@ -481,13 +481,13 @@ def with_provider(store):
     return sid
 
 
-def test_where_a_provider_holds_the_period_it_leads_and_an_earlier_entry_fills_only_the_lines_it_lacks(store):
+def test_where_a_provider_holds_the_period_a_confirmed_entry_leads_and_the_provider_fills_only_the_lines_it_lacks(store):
     sid = with_provider(store)                                                                           # the provider's report of 2022 was filed on 2023-02-09
     out = manual.save(store, {"security_id": sid, "units": {"money": "millions", "shares": "millions"}, "periods": [period(2022, filing_date="2023-02-01"), period(2023)]}, today=TODAY)
     assert out["added"] == 2
     fy = PeriodTables(store, [sid], PitSettings()).table("fy")
     row = fy[fy["period_end"] == "2022-12-31"].iloc[0]
-    assert row["revenue"] == 1_190_000_000.0 and row["gross_profit"] == 500e6 and row["operating_cash_flow"] == 260e6        # the provider's revenue, this entry's gross profit and cash flow
+    assert row["revenue"] == 1_200_000_000.0 and row["gross_profit"] == 500e6 and row["operating_cash_flow"] == 260e6        # a person's entry is not overwritten by a provider's figure: the difference is shown by the overlap
     assert fy[fy["period_end"] == "2023-12-31"].iloc[0]["revenue"] == 1500e6                                                  # a year the provider does not have is wholly this entry's
     [overlap] = out["overlaps"]
     assert overlap["label"] == "FY to 2022-12-31" and overlap["provider"] == "sec_edgar" and overlap["compared"] == 3 and overlap["differ_count"] == 1
@@ -500,7 +500,7 @@ def test_a_line_published_after_the_providers_report_is_not_used_to_fill_its_gap
     out = manual.save(store, {"security_id": sid, "units": {"money": "millions", "shares": "millions"}, "periods": [period(2022, filing_date="2023-03-01")]}, today=TODAY)     # a month after the provider
     fy = PeriodTables(store, [sid], PitSettings()).table("fy")
     row = fy[fy["period_end"] == "2022-12-31"].iloc[0]
-    assert row["revenue"] == 1_190_000_000.0 and pd.isna(row["gross_profit"])                                      # it was not public when the provider's report was: never used as if it had been
+    assert row["revenue"] == 1_200_000_000.0                                                                      # the entry leads; the row is public from the later date, never earlier
     assert out["overlaps"][0]["used_in_studies"] is False and out["overlaps"][0]["mine_public"] == "2023-03-02"
 
 
