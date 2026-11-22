@@ -165,3 +165,25 @@ def test_a_company_that_reports_in_another_currency_than_its_price_is_never_set_
         else:
             assert out["price"] is not None and out["price_note"] is None, c["ticker"]
     assert mismatched >= 1                                                                      # the demo world has companies that report in US dollars whatever they trade in
+
+
+def test_a_split_since_the_filing_puts_shares_and_per_share_figures_on_the_basis_of_todays_price():
+    import pandas as pd
+    from src.fundamentals import valuation as V
+    rows = pd.DataFrame({"fiscal_year": [2022], "reporting_currency": ["USD"], "revenue": [float("nan")], "shares_outstanding": [100.0], "book_value_per_share": [40.0], "graham_number": [60.0], "ncav_per_share": [5.0], "eps_diluted": [4.0], "eps_avg_3y": [3.0]})
+    plain = V.build(rows, 15.0, "2023-01-02", "USD")
+    split = V.build(rows, 15.0, "2023-01-02", "USD", split_since_filing=4.0)
+    by = lambda r, k: next(x for x in r["rows"] if x["key"] == k)["point"]  # noqa: E731
+    assert by(plain, "book_value") == 40.0 and by(split, "book_value") == 10.0 and by(split, "graham_number") == 15.0 and any("split" in n for n in split["notes"])
+    assert V.on_price_basis(rows, 1.0) is rows
+
+
+def test_sensitivity_and_scenarios_make_the_assumptions_visible_and_refuse_impossible_cells():
+    from src.fundamentals import valuation as V
+    g = V.sensitivity(100.0, 10.0, [0.08, 0.10], [0.0, 0.02, 0.079])
+    assert g["values"][1][0] == pytest.approx(100.0 * 1.0 / 0.10 / 10.0) and g["values"][0][2] is None, "a growth within the minimum spread of the rate has no value"
+    assert V.sensitivity(-5.0, 10.0, [0.1], [0.02])["values"] == [[None]], "a non-positive flow is unavailable, not zero"
+    import pandas as pd
+    rows = pd.DataFrame({"fiscal_year": [2020, 2021, 2022], "reporting_currency": ["USD"] * 3, "revenue": [float("nan")] * 3, "shares_outstanding": [10.0] * 3, "fcf": [50.0, 60.0, 70.0], "owner_earnings": [40.0, 50.0, 60.0]})
+    sc = V.scenarios(rows, 20.0, "2023-01-02", "USD", {"base": (0.09, 0.02), "bear": (0.11, 0.0)})
+    assert sc["cases"]["bear"]["rows"]["free_cash_flow"]["point"] < sc["cases"]["base"]["rows"]["free_cash_flow"]["point"]

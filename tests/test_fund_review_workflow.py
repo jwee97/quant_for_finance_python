@@ -398,3 +398,56 @@ def test_figures_in_another_currency_never_fill_a_gap_in_the_leading_providers_r
         c.execute("INSERT INTO fundamental_observations (financial_period_id, metric_code, value, currency, provider, quality_flag, created_at) VALUES (?, 'total_assets', 9e12, 'KRW', 'sec_edgar', 'ok', ?)", (pid, now))
     t = PeriodTables(store, [sid])
     assert float(t.fy["revenue"].iloc[0]) == 1000.0 and t.fy["total_assets"].isna().all(), "a KRW balance sheet is not mixed into a USD income statement"
+
+
+def test_data_health_counts_what_is_held_missing_unconfirmed_and_conflicting(store):
+    from src.fundamentals import datahealth
+    sid = _two_sources(store)
+    h = datahealth.company(store, sid)
+    assert h["latest_annual"]["period_end"] == "2022-12-31" and h["source_conflicts"] == 1 and h["missing_periods"] == [] and h["restatements"] == 0
+    assert h["factor_readiness"] == pytest.approx(0.2) and "revenue" not in h["factor_inputs_missing"] and h["status"].startswith("attention") and "source conflicts" in h["status"]
+    svc, item, sid2 = imported(store)
+    again = datahealth.company(store, sid)
+    assert again["unconfirmed_observations"] > 20 and "unconfirmed observations" in again["status"], "what the scanner found and nobody confirmed is counted, not hidden"
+    assert datahealth.overview(store)["needing_attention"] >= 1
+
+
+def test_a_corrected_figure_changes_the_data_fingerprint_that_the_counts_could_not_see(store):
+    from src.fundamentals import snapshot
+    sid = _two_sources(store)
+    a = snapshot.version(store)
+    assert snapshot.check(store, a)["same"] is True and snapshot.check(store, "3c/10o/5p@2020-01-01")["same"] is None
+    with store.db.transaction() as c:                                                                   # the same number of observations, one value corrected
+        c.execute("UPDATE fundamental_observations SET value = value + 1 WHERE metric_code = 'revenue' AND provider = 'sec_edgar'")
+    out = snapshot.check(store, a)
+    assert out["same"] is False and "changed" in out["reason"] and a.split("#")[0] == snapshot.version(store).split("#")[0], "the counts are identical: only the content hash differs"
+    store.set_source_preference(sid, "revenue", "2022-12-31", "sec_edgar")
+    assert snapshot.check(store, snapshot.version(store))["same"] is True
+
+
+def test_year_to_date_figures_confirmed_in_the_review_are_kept_as_reported_and_give_the_standalone_quarters(store):
+    from src.fundamentals import quarters
+    svc, item, sid = imported(store, filed="2021-11-05")
+    svc.review(item, {"confirm_periods": True})
+    ytd = [("2020-12-26", "Q1", 100.0), ("2021-03-27", "H1", 250.0), ("2021-06-26", "Q3YTD", 390.0)]       # a fiscal year that starts 2020-09-27
+    rows = [{"action": "add", "label": "Operating cash flow, year to date", "value": v, "period_end": end, "period_start": "2020-09-27", "period_type": "YTD", "currency": "USD", "unit": "millions",
+             "metric": "operating_cash_flow", "group": "cash_flow", "confirm": True} for end, _, v in ytd]
+    rows.append({"action": "add", "label": "Operating cash flow", "value": 600.0, "period_end": "2021-09-25", "period_start": "2020-09-27", "period_type": "ANNUAL", "currency": "USD", "unit": "millions",
+                 "metric": "operating_cash_flow", "group": "cash_flow", "confirm": True})
+    svc.decide(item, rows)
+    plan = svc.plan(item)
+    assert [c["why"].split(")")[0] for c in plan["will_commit_custom"]] == ["year-to-date (Q1", "year-to-date (H1", "year-to-date (Q3YTD"] and not plan["cannot_commit"]
+    svc.approve(item, security={"security_id": sid})
+    with store.db.transaction() as c:
+        kept = c.execute("SELECT cum_period, value, fiscal_year FROM ytd_observations ORDER BY value").fetchall()
+        derived = c.execute("SELECT p.fiscal_period, o.value, o.source_metric FROM fundamental_observations o JOIN financial_periods p ON p.id = o.financial_period_id WHERE p.provider = 'derived' ORDER BY p.period_end").fetchall()
+    assert [(k[0], k[1] / 1e6, k[2]) for k in kept] == [("Q1", 100.0, 2021), ("H1", 250.0, 2021), ("Q3YTD", 390.0, 2021)], "the cumulative figures as reported, in the fiscal year that ends 2021"
+    assert [(d[0], d[1] / 1e6) for d in derived] == [("Q1", 100.0), ("Q2", 150.0), ("Q3", 140.0), ("Q4", 210.0)] and all(d[2].startswith("derived: ") for d in derived)
+
+
+def test_a_year_to_date_figure_without_a_start_date_cannot_be_published(store):
+    svc, item, sid = imported(store)
+    svc.review(item, {"confirm_periods": True})
+    svc.decide(item, [{"action": "add", "label": "Revenue, nine months", "value": 5, "period_end": "2021-06-26", "period_type": "YTD", "currency": "USD", "unit": "millions", "metric": "revenue", "confirm": True},
+                      {"action": "confirm", "ids": [find(svc, item, metric="total_assets", column_role="CURRENT_PERIOD")[0]["obs_id"]]}])
+    assert any("needs its start date" in x["reason"] for x in svc.plan(item)["cannot_commit"])

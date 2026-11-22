@@ -171,6 +171,13 @@ CREATE TABLE IF NOT EXISTS ytd_observations (
     security_id INTEGER NOT NULL REFERENCES securities(security_id) ON DELETE CASCADE, metric_code TEXT NOT NULL, fiscal_year INTEGER NOT NULL, cum_period TEXT NOT NULL, period_end TEXT NOT NULL,
     value REAL NOT NULL, currency TEXT, filing_date TEXT, source TEXT, vintage INTEGER NOT NULL DEFAULT 0, note TEXT, created_at TEXT NOT NULL,
     PRIMARY KEY (security_id, metric_code, fiscal_year, cum_period, vintage));
+-- Security master: the names a security has had (a ticker change keeps the security_id and its history) and the listings that belong to one issuer (a company on two exchanges is one issuer, two securities).
+CREATE TABLE IF NOT EXISTS security_aliases (
+    security_id INTEGER NOT NULL REFERENCES securities(security_id) ON DELETE CASCADE, ticker TEXT NOT NULL, exchange TEXT NOT NULL DEFAULT '', valid_from TEXT NOT NULL, valid_to TEXT, note TEXT,
+    PRIMARY KEY (security_id, ticker, exchange, valid_from));
+CREATE INDEX IF NOT EXISTS ix_alias_ticker ON security_aliases(ticker, exchange);
+CREATE TABLE IF NOT EXISTS issuer_links (security_id INTEGER PRIMARY KEY REFERENCES securities(security_id) ON DELETE CASCADE, issuer_id TEXT NOT NULL, primary_listing INTEGER NOT NULL DEFAULT 0);
+CREATE INDEX IF NOT EXISTS ix_issuer ON issuer_links(issuer_id);
 -- A person's choice of which provider's figure to use for one figure of one period (the rest are kept, nothing is overwritten).
 CREATE TABLE IF NOT EXISTS source_preferences (
     security_id INTEGER NOT NULL REFERENCES securities(security_id) ON DELETE CASCADE, metric_code TEXT NOT NULL, period_end TEXT NOT NULL, provider TEXT NOT NULL, note TEXT, chosen_at TEXT NOT NULL,

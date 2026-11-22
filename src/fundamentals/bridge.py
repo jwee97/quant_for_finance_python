@@ -561,8 +561,8 @@ def _num(x) -> str:
 
 def _record(ctx: ResearchContext, spec: PortfolioSpec, info: dict, name: str, result: dict) -> str:
     """Keep what a backtest was and what it found (not its series) so it can be shown, compared and run again; the id is a hash of what defines it, the data it ran on included."""
-    counts = ctx.store.counts()
-    version = f"{counts['companies']}c/{counts['observations']}o/{counts['price_rows']}p"
+    from . import snapshot
+    version = snapshot.version(ctx.store).split("@", 1)[0]                                       # counts and the content hash: a corrected figure changes it
     body = json.dumps(clean({"signal": {k: info.get(k) for k in ("label", "kind", "parts", "alphas")}, "portfolio": spec.describe(), "universe": ctx.spec.describe(), "freq": ctx.freq,
                              "entry_lag": ctx.entry_lag, "data": version}), sort_keys=True)
     key = "bt-" + hashlib.sha1(body.encode()).hexdigest()[:12]

@@ -353,7 +353,15 @@ class Workbench:
         close = self.store.closes([sid])
         price = None if close.empty or pd.isna(close.iloc[-1, 0]) else float(close.iloc[-1, 0])
         when = None if close.empty else str(close.index[-1].date())
-        return clean({**yardsticks.build(fy, price, when, info.get("currency"), float(rate), float(growth)), "references": references("fundamentals", "valuation")})
+        factor = 1.0
+        if not close.empty and len(fy):                                                          # splits since the last filing became public
+            from . import corporate_actions
+            splits, _ = corporate_actions.detect(close, self.store.prices([sid]).reindex(close.index))
+            since = pd.Timestamp(fy["available_date"].iloc[-1]) if "available_date" in fy.columns and pd.notna(fy["available_date"].iloc[-1]) else None
+            for sp in splits:
+                if since is None or sp["date"] > since:
+                    factor *= sp["ratio"]
+        return clean({**yardsticks.build(fy, price, when, info.get("currency"), float(rate), float(growth), factor), "references": references("fundamentals", "valuation")})
 
     def set_price_symbol(self, security_id: int, symbol: str) -> dict:
         if self.store.get_security(int(security_id)) is None:

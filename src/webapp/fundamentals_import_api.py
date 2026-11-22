@@ -35,7 +35,7 @@ class ImportRoutes:
 
     def import_get_routes(self) -> dict:
         return {"/api/fund/import/history": self.import_history, "/api/fund/import/batch": self.import_batch, "/api/fund/import/item": self.import_item, "/api/fund/import/provenance": self.import_provenance,
-                "/api/fund/coverage/overview": self.coverage_overview, "/api/fund/connectors": self.connectors, "/api/fund/pit/asof": self.pit_asof, "/api/fund/import/diagnostics": self.import_diagnostics, "/api/fund/import/observations": self.import_observations, "/api/fund/import/plan": self.import_plan, "/api/fund/import/source": self.import_source, "/api/fund/custom": self.custom_observations, "/api/fund/sources/compare": self.sources_compare, "/api/fund/lineage": self.lineage_route, "/api/fund/alpha/inputs": self.alpha_inputs_route, "/api/fund/import/extractions": self.import_extractions, "/api/fund/import/candidates": self.import_candidates}
+                "/api/fund/coverage/overview": self.coverage_overview, "/api/fund/connectors": self.connectors, "/api/fund/pit/asof": self.pit_asof, "/api/fund/import/diagnostics": self.import_diagnostics, "/api/fund/import/observations": self.import_observations, "/api/fund/import/plan": self.import_plan, "/api/fund/import/source": self.import_source, "/api/fund/custom": self.custom_observations, "/api/fund/sources/compare": self.sources_compare, "/api/fund/lineage": self.lineage_route, "/api/fund/health": self.health_route, "/api/fund/sectors": self.sectors_route, "/api/fund/alpha/inputs": self.alpha_inputs_route, "/api/fund/import/extractions": self.import_extractions, "/api/fund/import/candidates": self.import_candidates}
 
     def import_post_routes(self) -> dict:
         return {"/api/fund/import/create": self.import_create, "/api/fund/import/chunk": self.import_chunk, "/api/fund/import/urls": self.import_urls, "/api/fund/import/process": self.import_process,
@@ -276,6 +276,18 @@ class ImportRoutes:
             return v[0] if isinstance(v, list) else v
         sid = self._int({"security_id": one("security_id")}, "security_id")
         return {"rows": self._guard(sources.compare, self.bench("real").store, sid, None, str(one("conflicts") or "").lower() in ("1", "true"))}
+
+    def health_route(self, q: dict) -> dict:
+        """``GET /api/fund/health[?security_id]``: per company: latest filing and quarter, missing years, source conflicts, unconfirmed observations, restatements, factor readiness, last provider refresh."""
+        from ..fundamentals import datahealth
+        v = q.get("security_id")
+        v = v[0] if isinstance(v, list) else v
+        return self._guard(datahealth.overview, self.bench("real").store, [int(v)] if v else None)
+
+    def sectors_route(self, q: dict) -> dict:
+        """``GET /api/fund/sectors``: the sector figures that can be confirmed in the importer and used as factors, and which factors do not apply to banks, insurers and REITs."""
+        from ..fundamentals import sectors
+        return {"figures": sectors.catalogue(), "not_applicable": {k: sorted(v) for k, v in sectors.NOT_APPLICABLE.items()}, "reasons": sectors.REASON}
 
     def lineage_route(self, q: dict) -> dict:
         """``GET /api/fund/lineage?security_id&metric&period_end[&basis=fy|ttm]``: how a derived figure was calculated: formula, input observations with their source, periods, warnings."""

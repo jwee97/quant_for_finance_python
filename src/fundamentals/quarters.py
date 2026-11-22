@@ -10,7 +10,7 @@ instants, not cumulative: they are never differenced.
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 from . import canonical
 from .schema import now_iso
@@ -58,6 +58,16 @@ def decumulate(cum: dict[str, dict]) -> dict:
     return out
 
 
+def fiscal_year_of_start(period_start: str) -> int:
+    """The fiscal year a cumulative period belongs to, named by the year the fiscal year *ends* (a year starting 2023-04-01 is 2024): every cumulative figure of one year shares its start date."""
+    d = date.fromisoformat(period_start)
+    try:
+        nxt = d.replace(year=d.year + 1)
+    except ValueError:                                                                                   # 29 February
+        nxt = d.replace(year=d.year + 1, day=28)
+    return (nxt - timedelta(days=1)).year
+
+
 def save_cumulative(store, security_id: int, metric: str, fiscal_year: int, cum_period: str, period_end: str, value: float, currency: str | None, filing_date: str | None = None,
                     source: str = "manual", vintage: int = 0, note: str = "") -> None:
     """Keep one cumulative observation as reported (never overwritten by a derived quarter)."""
@@ -79,6 +89,13 @@ def derive(store, security_id: int, write: bool = False) -> list[dict]:
     grouped: dict[tuple, dict] = {}
     for m, fy, cp, end, v, ccy, filed, vint in rows:
         grouped.setdefault((m, fy), {})[cp] = {"value": v, "period_end": end, "filing_date": filed, "vintage": vint, "currency": ccy}      # the latest vintage of each input
+    with store.db.transaction() as c:                                                                      # the full year, from the annual figures held (not derived ones): the fourth quarter is the year less nine months
+        annual = c.execute("SELECT o.metric_code, p.period_end, o.value, o.currency, p.filing_date FROM fundamental_observations o JOIN financial_periods p ON p.id = o.financial_period_id "
+                           "WHERE p.security_id = ? AND p.fiscal_period = 'FY' AND p.provider != 'derived' AND p.vintage = 0", (int(security_id),)).fetchall()
+    for m, end, v, ccy, filed in annual:
+        key = (m, int(str(end)[:4]))
+        if key in grouped and "FY" not in grouped[key]:
+            grouped[key]["FY"] = {"value": v, "period_end": str(end)[:10], "filing_date": filed, "vintage": 0, "currency": ccy}
     derived = []
     for (m, fy), cum in sorted(grouped.items()):
         ccys = {x["currency"] for x in cum.values() if x["currency"]}

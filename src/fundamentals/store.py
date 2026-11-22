@@ -384,9 +384,28 @@ class FundamentalsStore:
             else:
                 conn.execute("INSERT OR REPLACE INTO source_preferences (security_id, metric_code, period_end, provider, note, chosen_at) VALUES (?, ?, ?, ?, ?, ?)", (int(security_id), metric_code, period_end, provider, note[:200], now_iso()))
 
+    def family_overrides(self) -> dict[int, str]:
+        """A person's choice of sector family (bank, insurer, reit, general) per company, kept in ``meta``."""
+        import json
+        with self.db.transaction() as c:
+            row = c.execute("SELECT value FROM meta WHERE key = 'sector_family_overrides'").fetchone()
+        return {int(k): v for k, v in json.loads(row[0]).items()} if row else {}
+
+    def set_family(self, security_id: int, family: str | None) -> None:
+        import json
+        cur = {str(k): v for k, v in self.family_overrides().items()}
+        if family is None:
+            cur.pop(str(int(security_id)), None)
+        elif family in ("bank", "insurer", "reit", "general"):
+            cur[str(int(security_id))] = family
+        else:
+            raise ValueError("family is bank, insurer, reit or general")
+        with self.db.transaction() as c:
+            c.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('sector_family_overrides', ?)", (json.dumps(cur),))
+
     ESTIMATED_LAG_DAYS = 120
 
-    def custom_observations(self, security_ids: list[int] | None = None, as_of: str | None = None) -> list[dict]:
+    def custom_observations(self, security_ids: list[int] | None = None, as_of: str | None = None, history: bool = False) -> list[dict]:
         """The confirmed figures that are not canonical lines, **as they were known on** ``as_of``: a figure counts from the day its report was public (``filing_date``; when that was not given, the period end plus
         a conservative lag), and of several vintages of the same figure the latest one public by then is returned. Nothing a person did not confirm is ever in this table."""
         sql, args = "SELECT * FROM custom_observations WHERE superseded = 0", []
@@ -403,6 +422,9 @@ class FundamentalsStore:
             avail = r["filing_date"] or (date.fromisoformat(r["period_end"]) + timedelta(days=self.ESTIMATED_LAG_DAYS)).isoformat()
             r["available_from"] = avail
             if as_of and avail > as_of:
+                continue
+            if history:
+                out[len(out)] = r                                                                              # every vintage, for a point-in-time panel
                 continue
             out[(r["security_id"], r["metric_code"], r["period_end"], r["currency"], r["scope"])] = r                 # later vintages overwrite earlier ones
         return list(out.values())

@@ -243,11 +243,11 @@ def _peg_inverse(ctx):
 
 
 @factor("graham_number_to_price", "Graham number to price", "value", 1, ("graham_number",), "The Graham number (the root of 22.5 times average earnings per share times book value per share) over the price: above 1 is inside Graham's limit.")
-def _graham_to_price(ctx): return ctx.to_trading(ctx.panel("graham_number")) / _positive(ctx.price())
+def _graham_to_price(ctx): return ctx.to_trading(ctx.per_share_on_price_basis(ctx.panel("graham_number"))) / _positive(ctx.price())
 
 
 @factor("ncav_to_price", "Net current asset value to price", "value", 1, ("ncav_per_share",), "Current assets less all liabilities, per share, over the price: Graham bought at 1.5 or more (a price of two-thirds or less).")
-def _ncav_to_price(ctx): return ctx.to_trading(ctx.panel("ncav_per_share")) / _positive(ctx.price())
+def _ncav_to_price(ctx): return ctx.to_trading(ctx.per_share_on_price_basis(ctx.panel("ncav_per_share"))) / _positive(ctx.price())
 
 
 @factor("magic_formula", "Magic Formula (Greenblatt)", "value", 1, ("operating_income", "greenblatt_roc"),
@@ -337,13 +337,19 @@ def available(ctx: ResearchContext) -> dict[str, bool]:
 def compute(ctx: ResearchContext, name: str) -> pd.DataFrame:
     """The raw panel of factor ``name`` (cached on the context); infinities become missing values."""
     key = ("factor", name)
+    if key not in ctx._cache and name.startswith("custom:"):                                  # a figure confirmed in the importer that is not a canonical line (sector figures among them)
+        from . import sectors
+        ctx._cache[key] = sectors.custom_panel(ctx, name)
+        return ctx._cache[key]
     if key not in ctx._cache:
         f = get(name)
         for need in f.needs:
             if not ctx.has(need):
                 raise FundamentalsError(f"factor {name!r} needs {need!r}, which the database does not have for this universe")
         raw = f.fn(ctx)
-        ctx._cache[key] = raw.replace([np.inf, -np.inf], np.nan).reindex(index=ctx.dates, columns=ctx.ids)
+        from . import sectors
+        raw = sectors.apply(ctx, name, raw.replace([np.inf, -np.inf], np.nan).reindex(index=ctx.dates, columns=ctx.ids))      # a line that does not apply to a bank is missing for banks, not a low score
+        ctx._cache[key] = raw
     return ctx._cache[key]
 
 

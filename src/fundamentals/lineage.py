@@ -92,3 +92,37 @@ def alpha_inputs(store, fields: list[str], security_ids: list[int] | None = None
                     "flagged_out": int(len(excluded)), "estimated_availability": int((usable["pit_quality"] == "estimated").sum()), "unconfirmed_readings_waiting": int(waiting.get(f, 0)),
                     "status": "ok" if len(usable) else "no research-ready data"})
     return out
+
+
+def valuation_inputs(ctx, security_id: int, date: str) -> dict:
+    """Exactly what a market capitalisation and an enterprise value on ``date`` were built from: the unadjusted close and the day it is from, the share count and the day its filing became public, the splits
+    carried across, the reporting and trading currency with the exchange rate used, each balance-sheet component in both currencies, and what makes a ratio unavailable (negative earnings or equity, a
+    non-positive enterprise value). Nothing is estimated: a missing input is listed as missing."""
+    sid = int(security_id)
+    if sid not in ctx.ids:
+        return {"security_id": sid, "available": False, "reason": "not in this research universe"}
+    d = ctx.dates[ctx.dates.get_indexer([pd.Timestamp(date)], method="pad")[0]] if len(ctx.dates) else pd.Timestamp(date)
+    at = lambda frame: (None if pd.isna(frame.loc[d, sid]) else float(frame.loc[d, sid]))  # noqa: E731
+    raw_shares = ctx.panel("shares_outstanding").fillna(ctx.panel("weighted_avg_shares_diluted"))
+    rep, trade = ctx.reporting_currency().get(sid), ctx.info.loc[sid, "currency"]
+    one = pd.DataFrame(1.0, index=ctx.dates, columns=ctx.ids)
+    fx = at(ctx.to_trading(one))
+    comps = {k: at(ctx.panel(k)) for k in ("total_debt", "cash_and_equivalents", "cash", "minority_interest", "preferred_equity", "net_income", "shareholders_equity", "operating_income")}
+    if ctx.has("temporary_equity"):
+        comps["temporary_equity"] = at(ctx.panel("temporary_equity"))
+    mc, ev = at(ctx.market_cap()), at(ctx.enterprise_value())
+    unavailable = []
+    if mc is None:
+        unavailable.append("no market capitalisation: a price or a share count is missing")
+    if comps["net_income"] is not None and comps["net_income"] <= 0:
+        unavailable.append("net income is not positive: no meaningful P/E (the earnings yield is negative)")
+    if comps["shareholders_equity"] is not None and comps["shareholders_equity"] <= 0:
+        unavailable.append("shareholders' equity is not positive: no meaningful price-to-book")
+    if ev is None or ev <= 0:
+        unavailable.append("enterprise value is missing or not positive: no EV multiples")
+    if rep and trade and rep != trade and fx is None:
+        unavailable.append(f"no {rep}/{trade} exchange rate on this date: balance-sheet components cannot be put in the trading currency")
+    return {"security_id": sid, "date": str(d)[:10], "available": mc is not None, "price": at(ctx.price()), "price_basis": "unadjusted close, last close within five trading days", "trading_currency": trade,
+            "reporting_currency": rep, "exchange_rate_reporting_to_trading": fx, "shares_filed": at(raw_shares), "split_factor_since_filing": at(ctx.split_factor(raw_shares)), "shares_used": at(ctx.shares()),
+            "market_cap": mc, "enterprise_value": ev, "components_reporting_currency": comps, "splits_found": [s for s in getattr(ctx, "splits", []) if s["security_id"] == sid],
+            "unavailable_because": unavailable, "point_in_time": "every panel value is the latest figure public on or before the date (filing date plus the information lag)"}

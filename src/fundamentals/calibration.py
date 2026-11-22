@@ -33,6 +33,7 @@ from scipy import stats
 
 from .discovery import STAGES, Discovery, DiscoverySpec, bh_qvalues
 from .evaluate import holding_returns
+from . import snapshot
 from .jsonutil import clean
 from .research import ResearchContext, horizon_days
 from .schema import now_iso
@@ -233,7 +234,7 @@ def save(store: FundamentalsStore, result: dict) -> str:
     counts = store.counts()
     with store.db.transaction() as conn:
         conn.execute("INSERT OR REPLACE INTO experiments (experiment_id, kind, created_at, spec, data_version, code_version, summary, status) VALUES (?,?,?,?,?,?,?,?)",
-                     (experiment_id, "placebo", now_iso(), json.dumps(clean(result["spec"])), f"{counts['companies']}c/{counts['observations']}o/{counts['price_rows']}p@{now_iso()[:10]}", "fundamentals-1",
+                     (experiment_id, "placebo", now_iso(), json.dumps(clean(result["spec"])), snapshot.version(store), "fundamentals-1",
                       json.dumps(clean({"summary": result["summary"], "reading": result["reading"], "runs": result["runs"], "strictness": result["strictness"], "real": result.get("real")})), "finished"))
     return experiment_id
 

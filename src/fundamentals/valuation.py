@@ -79,11 +79,47 @@ def _money(v: float) -> str:
     return f"{v:,.2f}"
 
 
-def build(rows: pd.DataFrame, price: float | None, price_date: str | None, trading_currency: str | None, rate: float = DEFAULT_RATE, growth: float = DEFAULT_GROWTH) -> dict:
+PER_SHARE_COLUMNS = ("graham_number", "ncav_per_share", "book_value_per_share", "eps_avg_3y", "eps_diluted", "eps_basic")
+COUNT_COLUMNS = ("shares_outstanding", "weighted_avg_shares_diluted")
+
+
+def on_price_basis(rows: pd.DataFrame, split_since_filing: float) -> pd.DataFrame:
+    """The last filing's share count and per-share figures put on the basis of today's unadjusted price: a split since the filing multiplies the shares and divides every per-share figure."""
+    if not split_since_filing or abs(split_since_filing - 1.0) < 1e-12:
+        return rows
+    out = rows.copy()
+    for c in PER_SHARE_COLUMNS:
+        if c in out.columns:
+            out[c] = out[c] / split_since_filing
+    for c in COUNT_COLUMNS:
+        if c in out.columns:
+            out[c] = out[c] * split_since_filing
+    return out
+
+
+def sensitivity(flow: float, shares: float, rates: list[float], growths: list[float]) -> dict:
+    """Value per share of a capitalised flow over a grid of discount rates and perpetual growth rates; a cell is ``None`` where the flow is not positive or the rate does not exceed the growth by the minimum
+    spread. The grid is the assumptions made visible: nothing is hidden behind one point estimate."""
+    grid = [[None if (not shares or shares <= 0 or rate - g < MIN_SPREAD - 1e-12) else (None if perpetuity(flow, rate, g) is None else perpetuity(flow, rate, g) / shares) for g in growths] for rate in rates]
+    return {"rates": rates, "growths": growths, "values": grid, "flow": flow, "shares": shares}
+
+
+def scenarios(rows: pd.DataFrame, price: float | None, price_date: str | None, trading_currency: str | None, cases: dict[str, tuple[float, float]], split_since_filing: float = 1.0) -> dict:
+    """Named assumption sets (``{"base": (0.09, 0.02), "bear": (0.11, 0.0)}``) run through :func:`build`, side by side: the per-share bar of every yardstick under every case."""
+    out = {}
+    for name, (r, g) in cases.items():
+        res = build(rows, price, price_date, trading_currency, float(r), float(g), split_since_filing)
+        out[name] = {"inputs": res["inputs"], "rows": {x["key"]: {"low": x["low"], "point": x["point"], "high": x["high"], "missing": x["missing"]} for x in res["rows"]}}
+    return {"cases": out, "yardsticks": [x["key"] for x in build(rows, price, price_date, trading_currency, DEFAULT_RATE, DEFAULT_GROWTH, split_since_filing)["rows"]]}
+
+
+def build(rows: pd.DataFrame, price: float | None, price_date: str | None, trading_currency: str | None, rate: float = DEFAULT_RATE, growth: float = DEFAULT_GROWTH,
+          split_since_filing: float = 1.0) -> dict:
     """The yardsticks for one company. ``rows`` are its fiscal years in order (the derived metrics of :mod:`metrics` and :mod:`scores` already attached); ``price`` is the last unadjusted close."""
     check_inputs(rate, growth)
     if rows.empty:
         raise FundamentalsError("this company has no annual statements to value")
+    rows = on_price_basis(rows, split_since_filing)
     currency = str(rows["reporting_currency"].iloc[-1]) if "reporting_currency" in rows.columns and pd.notna(rows["reporting_currency"].iloc[-1]) else None
     shares = _last(rows, "shares_outstanding")
     if not math.isfinite(shares) or shares <= 0:
@@ -150,7 +186,7 @@ def build(rows: pd.DataFrame, price: float | None, price_date: str | None, tradi
     ref = {"value": float(price), "date": price_date, "currency": trading_currency} if comparable else None
     tests = _graham_price_tests(rows, price) if comparable else []
     return {"inputs": {"rate": rate, "growth": growth, "band": BAND, "min_spread": MIN_SPREAD}, "fiscal_year": year, "currency": currency, "price": ref, "price_note": why, "rows": out, "graham_tests": tests,
-            "notes": ["Each bar is what the share would be worth if one rule's assumption held; they are not forecasts, and they disagree on purpose.",
+            "split_since_filing": split_since_filing, "notes": (["A stock split since the last filing (factor %.4g) is applied: shares are multiplied and per-share figures divided, so they are on the basis of today's price." % split_since_filing] if abs(split_since_filing - 1.0) > 1e-12 else []) + ["Each bar is what the share would be worth if one rule's assumption held; they are not forecasts, and they disagree on purpose.",
                       "Debt that the statements do not report counts as none; cash that they do not report counts as none."]}
 
 

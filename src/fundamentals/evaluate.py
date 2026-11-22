@@ -431,6 +431,23 @@ def premium_reading(fm: dict) -> str:
 
 
 # ------------------------------------------------------------------------------------------------------------------ the study
+def reproducibility(ctx: ResearchContext, spec: EvalSpec, signal: pd.DataFrame, ls: dict) -> dict:
+    """What a result stands on, so it can be repeated and questioned: the data fingerprint (it changes when a figure is corrected or restated), the universe and sample dates, how missing values were treated,
+    the companies a factor does not apply to (banks have no gross margin), the factor and calculation versions and the portfolio assumptions."""
+    from . import metrics, sectors, snapshot
+    cells = signal.size
+    try:
+        na = sectors.applicability(ctx, spec.factor) if spec.factor else None
+    except Exception:
+        na = None
+    return {"data_version": snapshot.version(ctx.store), "universe": ctx.describe(), "sample": {"first": str(signal.index[0])[:10] if len(signal) else None, "last": str(signal.index[-1])[:10] if len(signal) else None,
+            "dates": int(len(signal)), "frequency": ctx.freq, "entry_lag_days": ctx.entry_lag}, "missing_data": {"treatment": "a missing value is missing: it is never filled with zero or the median unless a transformation step says so",
+            "share_missing": float(signal.isna().to_numpy().sum() / cells) if cells else None}, "not_applicable": na,
+            "factor": {"name": spec.factor, "calculation_version": metrics.VERSION, "code_version": "fundamentals-1"}, "assumptions": {"horizon": spec.horizon, "quantiles": spec.quantiles, "cost_bps": spec.cost_bps, "borrow_bps": spec.borrow_bps, "weighting": spec.weighting, "steps": spec.steps,
+            "point_in_time": "figures are used from the day they were public plus the information lag", "prices": "unadjusted close for size and value, adjusted close for returns", "splits": f"{len(getattr(ctx, 'splits', []))} found"},
+            "notes": list(ctx.notes)}
+
+
 def evaluate(ctx: ResearchContext, signal: pd.DataFrame, spec: EvalSpec | None = None, label: str = "signal") -> dict:
     """Evaluate a ready signal panel. See the module docstring for what is measured; the result is plain JSON (numbers, strings, lists)."""
     spec = spec or EvalSpec()
@@ -521,6 +538,7 @@ def evaluate(ctx: ResearchContext, signal: pd.DataFrame, spec: EvalSpec | None =
     result = {"label": label, "spec": spec.describe(), "universe": ctx.describe(), "ic": stats_ic, "quantiles": quant, "portfolio": portfolio, "decay": decay, "breakdown": breakdown,
               "stability": stability, "warnings": warnings, "charts": charts, "n_dates": int(len(signal)), "average_companies": float(coverage.mean()) if len(coverage) else 0.0,
               "power": power, "premium": premium}
+    result["reproducibility"] = reproducibility(ctx, spec, signal, ls)
     result["verdict"] = verdict(result)
     result["evidence_level"] = evidence_level(stats_ic.get("t_stat"), (portfolio.get("net") or {}).get("sharpe"))
     result["explain"] = explain(result, spec, ctx, ls["frac"])

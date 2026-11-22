@@ -24,7 +24,7 @@ from dataclasses import asdict, dataclass
 import numpy as np
 import pandas as pd
 
-from . import metrics
+from . import corporate_actions, metrics
 from .errors import FundamentalsError
 from .pit import PeriodTables, PitSettings
 from .schema import DEVELOPED
@@ -91,6 +91,8 @@ class ResearchContext:
         self.close = store.closes(self.ids, start, end).reindex(index=self.adj.index, columns=self.ids)
         self.volume = store.volumes(self.ids, start, end).reindex(index=self.adj.index, columns=self.ids)
         self.notes: list[str] = []
+        self.splits: list[dict] = []
+        self.unexplained_price_moves: list[dict] = []
         if self.close.isna().all().all():
             self.close = self.adj
             self.notes.append("only adjusted prices are stored, so market capitalisation is approximate (a split after a date changes the price it is built from)")
@@ -268,10 +270,26 @@ class ResearchContext:
         cross.loc[:, same.index[same]] = 1.0
         return amount * cross.reindex(index=amount.index, columns=amount.columns)
 
+    def split_factor(self, panel: pd.DataFrame) -> pd.DataFrame:
+        """The factor for ``panel`` (a share count, or a per-share figure) between the day its value last changed and each date: the splits since the filing it came from (see :mod:`corporate_actions`)."""
+        if "split_cum" not in self._cache:
+            cum, splits, other = corporate_actions.cumulative_log(self.close, self.adj)
+            self._cache["split_cum"], self.splits, self.unexplained_price_moves = self._as_of(cum), splits, other
+            if splits:
+                self.notes.append(f"{len(splits)} stock split(s) found in the prices: share counts and per-share figures are put on the basis of the date's price")
+            if other:
+                self.notes.append(f"{len(other)} large price move(s) that are not usual split ratios were left alone (merger, spin-off or data error?)")
+        return corporate_actions.since_update(panel, self._cache["split_cum"])
+
+    def per_share_on_price_basis(self, panel: pd.DataFrame) -> pd.DataFrame:
+        """A per-share figure from a filing, divided by the splits since that filing, so it can be set against the date's unadjusted price."""
+        return panel / self.split_factor(panel)
+
     def shares(self) -> pd.DataFrame:
         if "shares" not in self._cache:
             have = self.panel("shares_outstanding")
-            self._cache["shares"] = have.fillna(self.panel("weighted_avg_shares_diluted"))
+            raw = have.fillna(self.panel("weighted_avg_shares_diluted"))
+            self._cache["shares"] = raw * self.split_factor(raw)                       # a split after the filing multiplies the shares the price is for
         return self._cache["shares"]
 
     def market_cap(self) -> pd.DataFrame:

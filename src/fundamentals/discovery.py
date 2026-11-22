@@ -45,6 +45,7 @@ from . import expr as X
 from . import transforms
 from .errors import FundamentalsError
 from .evaluate import PERIODS_PER_YEAR, EvalSpec, ic_stats, long_short, monotonicity, newey_west, overlap_lags, quantile_returns, rank_ic
+from . import snapshot
 from .jsonutil import clean
 from .library import AlphaLibrary, build_signal, settings_hash
 from .research import FREQ_DAYS, ResearchContext, UniverseSpec, horizon_days
@@ -651,7 +652,7 @@ class Discovery:
         counts_now = self.store.counts()
         with self.store.db.transaction() as conn:
             conn.execute("INSERT OR REPLACE INTO experiments (experiment_id, kind, created_at, spec, data_version, code_version, summary, status) VALUES (?,?,?,?,?,?,?,?)",
-                         (run_id, "discovery", now_iso(), json.dumps(clean(spec.describe())), f"{counts_now['companies']}c/{counts_now['observations']}o/{counts_now['price_rows']}p@{now_iso()[:10]}",
+                         (run_id, "discovery", now_iso(), json.dumps(clean(spec.describe())), snapshot.version(self.store),
                           "fundamentals-1", json.dumps(clean(counts)), "finished"))
 
     # ------------------------------------------------------------------------------------------------------------ reporting

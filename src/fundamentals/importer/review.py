@@ -69,6 +69,15 @@ def _changed(o: dict) -> bool:
     return any(o.get(f"user_{k}") is not None and o.get(f"user_{k}") != (o.get(k) if k != "metric" else o.get("metric_guess")) for k in USER_FIELDS)
 
 
+def _cumulative_label(e: dict) -> str | None:
+    """Which cumulative period a year-to-date figure is: 3 months (Q1), 6 (H1) or 9 (Q3YTD), from its start and end dates."""
+    if not e.get("period_start") or not e.get("period_end"):
+        return None
+    d0, d1 = date.fromisoformat(e["period_start"]), date.fromisoformat(e["period_end"])
+    months = round((d1 - d0).days / 30.44)
+    return {3: "Q1", 6: "H1", 9: "Q3YTD"}.get(months)
+
+
 def custom_code(label: str) -> str:
     """A stable code for a figure that is not a canonical line: ``custom:`` and the label in lower case words."""
     return "custom:" + (re.sub(r"[^a-z0-9]+", "_", (label or "").lower()).strip("_")[:60] or "unnamed")
@@ -336,6 +345,13 @@ class ReviewMixin:
             if not e["period_end"]:
                 skipped.append({"obs_id": o["obs_id"], "reason": f"{where}: no period"})
                 continue
+            if e["canonical"] and e["period_type"] in ("YTD", "HALF_YEAR_YTD") and canonical.METRICS[e["canonical"]].kind in ("flow", "per_share") and canonical.METRICS[e["canonical"]].statement in ("income", "cashflow"):
+                label = _cumulative_label(e)
+                if label is None:
+                    skipped.append({"obs_id": o["obs_id"], "reason": f"{where}: a year-to-date figure needs its start date (or the number of months) to be stored: set the period start"})
+                else:
+                    custom.append({**o, "why_custom": f"year-to-date ({label}) figure: kept as reported and used to derive the standalone quarter", "ytd": label})
+                continue
             if e["unit"] == "percent" or o["is_percent"] or not e["canonical"] or (e["currency"] and base_ccy and e["currency"] != base_ccy):
                 reason = "percentage or ratio" if (e["unit"] == "percent" or o["is_percent"]) else "not a canonical line" if not e["canonical"] else f"{e['currency']} differs from the report's {base_ccy}: stored under its own currency"
                 custom.append({**o, "why_custom": reason})
@@ -385,6 +401,16 @@ class ReviewMixin:
     def _publish_custom(self, item_id: int, security_id: int, custom: list[dict], filing_date: str | None) -> int:
         it = self.item(item_id)
         n = 0
+        ytd = [o for o in custom if o.get("ytd")]
+        custom = [o for o in custom if not o.get("ytd")]
+        if ytd:
+            from .. import quarters
+            for o in ytd:
+                e = o["effective"]
+                quarters.save_cumulative(self.store, security_id, e["canonical"], quarters.fiscal_year_of_start(e["period_start"]), o["ytd"], e["period_end"], e["value"] * factor(e["unit"]) / factor("units"), e["currency"], filing_date,
+                                         source=it["source_name"] or "import", note=f"import item {item_id}, page {o['page']}")
+                n += 1
+            quarters.derive(self.store, security_id, write=True)
         with self.store.db.transaction() as c:
             for o in custom:
                 e = o["effective"]

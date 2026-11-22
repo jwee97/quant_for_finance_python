@@ -332,3 +332,13 @@ def test_the_histogram_of_the_ic_has_twenty_bins_edges_rounded_to_five_places_an
     assert h["counts"] == [int(c) for c in counts] and h["edges"] == [round(float(e), 5) for e in edges] and len(h["edges"]) == 21
     assert E._hist(pd.Series([0.1, 0.2, 0.3, 0.4])) == {"edges": [], "counts": []}
     assert sum(E._hist(pd.Series([0.1, 0.2, 0.3, 0.4, 0.5]))["counts"]) == 5
+
+
+def test_a_result_says_what_data_universe_dates_missing_data_treatment_and_assumptions_it_stands_on(ctx):
+    r = E.evaluate_factor(ctx, E.EvalSpec(factor="fcf_yield", premium=False))
+    rep = r["reproducibility"]
+    assert "#" in rep["data_version"] and rep["sample"]["dates"] == r["n_dates"] and rep["sample"]["first"] < rep["sample"]["last"]
+    assert "never filled" in rep["missing_data"]["treatment"] and 0 <= rep["missing_data"]["share_missing"] <= 1
+    assert rep["factor"]["name"] == "fcf_yield" and rep["assumptions"]["cost_bps"] == 10.0 and rep["assumptions"]["quantiles"] == 5 and rep["not_applicable"]["factor"] == "fcf_yield"
+    again = E.evaluate_factor(ctx, E.EvalSpec(factor="fcf_yield", premium=False))["reproducibility"]["data_version"]
+    assert again.split("#")[1].split("@")[0] == rep["data_version"].split("#")[1].split("@")[0], "the same data gives the same fingerprint"
