@@ -85,20 +85,10 @@
     save(root, d, ctx);
   }
 
-  /* Keep this run: the request that produced it (so it can be sent again), its headline metrics, provenance and the software version; the list and comparison are at /api/experiments. */
   function save(root, d, ctx) {
-    const box = h("div", "card", root); box.dataset.role = "save-experiment"; h("h3", "", box, "Save this run");
-    h("p", "hint", box, "Stores the settings, the headline numbers, where the data came from and the software version, so the run can be repeated and compared with another.");
-    const name = h("input", "", box); name.type = "text"; name.value = `${d.a}/${d.b} spread`; name.setAttribute("aria-label", "experiment name");
-    const btn = h("button", "primary", box, "Save"), out = h("span", "hint", box);
-    btn.addEventListener("click", async () => {
-      btn.disabled = true;
-      try {
-        const st = d.backtest.settings, rec = await Q.api("/api/experiments/save", { kind: "futures_spread", name: name.value, request: { path: "/api/futures/spread", query: { a: d.a, b: d.b, lookback: st.lookback, entry: st.entry, exit: st.exit, stop: st.stop, cost_bps: st.cost_bps, simulated: ctx.simulated ? 1 : 0 } },
-          metrics: { summary: d.backtest.summary, adf_p: d.diagnostics.adf.p_value, hedge_ratio: d.hedge_ratio.ols }, provenance: d.provenance, universe: [d.a, d.b], assumptions: d.provenance && d.provenance.assumptions });
-        out.textContent = ` Saved as ${rec.id} (config ${rec.config_hash}, result ${rec.result_hash}).`;
-      } catch (e) { out.textContent = " " + (e && e.message ? e.message : String(e)); } finally { btn.disabled = false; }
-    });
+    const st = d.backtest.settings;
+    window.Experiments.saveButton(root, { kind: "futures_spread", name: `${d.a}/${d.b} spread`, request: { path: "/api/futures/spread", query: { a: d.a, b: d.b, lookback: st.lookback, entry: st.entry, exit: st.exit, stop: st.stop, cost_bps: st.cost_bps, simulated: ctx.simulated ? 1 : 0 } },
+      metrics: { summary: d.backtest.summary, adf_p: d.diagnostics.adf.p_value, hedge_ratio: d.hedge_ratio.ols }, provenance: d.provenance, universe: [d.a, d.b], assumptions: d.provenance && d.provenance.assumptions });
   }
 
   window.FuturesResearch = { research, spread };

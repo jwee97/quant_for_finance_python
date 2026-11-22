@@ -13,8 +13,8 @@
   const F = {
     id: "futures", root: "#futures", view: "#view-futures", title: "Futures", api: 12, mode: "curve", busy: "", results: {}, errors: {}, cache: new Map(), guard: null, go: null, progress: null,
     about: "Read a futures curve, decide when to roll, see carry and basis, read the price history of any futures product, check the margin of a book and test a strategy on several roots. The prices are a model unless you download real data (below) or bring a file.",
-    modes: [["curve", "Curve"], ["roll", "Roll"], ["carry", "Carry and basis"], ["history", "History"], ["margin", "Margin"], ["backtest", "Backtest"], ["signals", "Signals"], ["research", "Term-structure research"], ["spread", "Spread lab"]],
-    runLabel: { curve: "Refresh", roll: "Refresh", carry: "Refresh", history: "Refresh", margin: "Check the margin", backtest: "Run the backtest", signals: "Read the signals", research: "Refresh", spread: "Run the spread lab" },
+    modes: [["curve", "Curve"], ["roll", "Roll"], ["carry", "Carry and basis"], ["history", "History"], ["margin", "Margin"], ["backtest", "Backtest"], ["signals", "Signals"], ["research", "Term-structure research"], ["spread", "Spread lab"], ["saved", "Saved runs"]],
+    runLabel: { curve: "Refresh", roll: "Refresh", carry: "Refresh", history: "Refresh", margin: "Check the margin", backtest: "Run the backtest", signals: "Read the signals", research: "Refresh", spread: "Run the spread lab", saved: "Refresh" },
     blurb: { curve: "Price by contract month, how the curve has moved, how its shape changed through time, what moves it (its principal components), the roll yield of each contract and the contract specification.",
       roll: "Which contract you hold, the next one, the suggested roll date (by calendar and by open interest), what the roll costs, and the rolls of the past.",
       carry: "Carry (the annualised roll yield) through time against the range of its own last year, its average in each calendar month, and the basis: how far a futures price sits from the spot price.",
@@ -23,6 +23,7 @@
       backtest: "Trade carry, trend, breakout, skewness or a mix across the roots through the platform's pipeline, with the strategy's own settings: costed, lagged and volatility-targeted like any other backtest, with the risk measures and how the book was spread.",
       research: "The curve as a research object: every calendar spread, the history and z-score of one, contango and backwardation regimes, how the curve changed, liquidity by contract, the expiry and roll calendar and other markets' shapes beside it.",
       spread: "A relative-value bench for two roots: hedge ratio, stationarity and cointegration tests, half-life, rolling correlation, seasonality, regimes and a walk-forward mean-reversion backtest with its realism label. A statistical relationship is a hypothesis, not an arbitrage.",
+      saved: "The research runs you saved (Spread lab and others): compare two to eight of them, see which settings differ and whether a repeat reproduced.",
       signals: "What every rule says about every root today (trend of several kinds, carry, basis momentum, skewness, the variance-ratio switch), each as a strength against its own usual size, and where the rules agree." },
     form: { root: "CL", series: "", rollDays: "5", spacing: "21", dates: "3", contracts: "12", book: [], equity: "100000", scale: "1", near: "7", strategy: "carry_ts", params: {}, roots: new Set(["CL", "NG", "GC", "HG", "ES"]), data: "simulated", rNear: "1", rFar: "2", rCompare: "NG", sA: "CL", sB: "NG", sLookback: "126", sEntry: "2", sExit: "0.5", sStop: "4", sCost: "3", sSim: false, realRoots: null, frequency: "weekly", targetVol: "", cost: "2" },
     catalog: null,
@@ -255,6 +256,7 @@
         return steps;
       }, "Reading the curve…");
     }
+    if (m === "saved") return W.request(F, () => [{ modes: ["saved"], path: "/api/experiments", query: {}, cacheKey: key("saved", Date.now()) }], "Reading the saved runs…");
     if (m === "research") return W.request(F, () => {
       const q = { root: f.root, near: Number(f.rNear), far: Number(f.rFar), compare: f.rCompare }; return [{ modes: ["research"], path: "/api/futures/research", query: q, cacheKey: key("research", q) }];
     }, "Reading the term structure…");
@@ -278,7 +280,7 @@
     return W.request(F, () => [{ modes: ["backtest"], job: true, path: "/api/futures/strategy/backtest", body: { strategy: f.strategy, data: f.data, roots: f.data === "real" ? [...realChosen()] : [...f.roots], frequency: f.frequency, params: f.params[f.strategy] || {},
       target_vol: f.targetVol === "" ? undefined : Number(f.targetVol) / 100, cost_bps: Number(f.cost) } }], "Running the backtest…");
   };
-  F.auto = () => { if ((CURVE_MODES.has(F.mode) || F.mode === "research" || (F.mode === "history" && F.form.series)) && F.catalog) F.run(true); };
+  F.auto = () => { if ((CURVE_MODES.has(F.mode) || F.mode === "research" || F.mode === "saved" || (F.mode === "history" && F.form.series)) && F.catalog) F.run(true); };
   F.empty = (root) => {
     const text = { history: ["Read a price history", "Download a futures product with iTick (the card below: choose iTick, search, press Download real data) and its returns, volatility, drawdown and biggest moves appear here."],
       margin: ["Check the margin of a book", "Add the contracts you hold (or load the example) to see the notional, the margin they need, the leverage and how far you are from a margin call."],
@@ -288,7 +290,7 @@
     Q.labEmpty(root, F, text[0], [text[1]], F.runLabel[F.mode]);
   };
   F.draw = () => Q.drawLab(F);
-  F.build = (root, d, body) => ({ curve: buildCurve, roll: buildRoll, carry: buildCarry, history: buildHistory, margin: buildMargin, backtest: buildBacktest, signals: buildSignals, research: (r, d) => window.FuturesResearch.research(r, d, { header, nameOf: (x) => x.root }), spread: (r, d) => window.FuturesResearch.spread(r, d, { header, simulated: F.form.sSim }) })[F.mode](root, d, body);
+  F.build = (root, d, body) => ({ curve: buildCurve, roll: buildRoll, carry: buildCarry, history: buildHistory, margin: buildMargin, backtest: buildBacktest, signals: buildSignals, research: (r, d) => window.FuturesResearch.research(r, d, { header, nameOf: (x) => x.root }), saved: (r, d) => window.Experiments.view(r, d, { header, lab: F }), spread: (r, d) => window.FuturesResearch.spread(r, d, { header, simulated: F.form.sSim }) })[F.mode](root, d, body);
   const header = (root, title, sub) => Q.labHead(root, title, sub, GUIDE);
 
   /* ---------- curve ---------- */

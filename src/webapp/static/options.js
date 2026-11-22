@@ -20,12 +20,13 @@
     id: "options", root: "#options", view: "#view-options", title: "Options", api: 13, mode: "overview", busy: "", results: {}, errors: {}, cache: new Map(), guard: null, go: null, progress: null,
     about: "Read an option chain, see the distribution it implies and where the open interest sits, see what a book of options is exposed to, draw what a structure pays and test a rolling strategy. The chain is a model quoted at the underlying's real price unless you download a real one (free, below) or bring your own file.",
     modes: [["overview", "Overview"], ["chain", "Chain"], ["smile", "Smile and skew"], ["surface", "Surface and term"], ["research", "Surface research"], ["distribution", "Implied distribution"], ["positioning", "Open interest and gamma"], ["fit", "Model fit"], ["validate", "Model validation"],
-      ["price", "Model prices"], ["hedge", "Hedging cost"], ["risk", "Greeks and risk"], ["strategy", "Strategy builder"], ["backtest", "Backtest"]],
+      ["price", "Model prices"], ["hedge", "Hedging cost"], ["risk", "Greeks and risk"], ["strategy", "Strategy builder"], ["backtest", "Backtest"], ["saved", "Saved runs"]],
     groups: [["Market intelligence", ["overview", "chain", "smile", "surface", "research", "distribution", "positioning"]], ["Model laboratory", ["fit", "validate", "price", "hedge"]], ["Strategy studio", ["strategy"]],
-      ["Portfolio and validation", ["risk", "backtest"]]],
-    runLabel: { research: "Refresh", validate: "Validate the models", overview: "Refresh", chain: "Refresh", smile: "Refresh", surface: "Refresh", distribution: "Refresh", positioning: "Refresh", fit: "Fit the models", price: "Price the product", hedge: "Cost the hedge", risk: "Revalue the book",
+      ["Portfolio and validation", ["risk", "backtest", "saved"]]],
+    runLabel: { saved: "Refresh", research: "Refresh", validate: "Validate the models", overview: "Refresh", chain: "Refresh", smile: "Refresh", surface: "Refresh", distribution: "Refresh", positioning: "Refresh", fit: "Fit the models", price: "Price the product", hedge: "Cost the hedge", risk: "Revalue the book",
       strategy: "Draw the payoff", backtest: "Run the backtest" },
     blurb: { research: "The surface in the coordinates a volatility researcher uses: log-forward-moneyness, total variance and delta, with a fitted SVI slice per expiry, its residuals against the bid-ask, butterfly and calendar diagnostics, and a joint SSVI fit.",
+      saved: "The research runs you saved from Surface research, Model validation and the Strategy builder: compare two to eight, see which settings differ and whether a repeat reproduced.",
       validate: "Fit the models, then judge them on quotes they were not fitted to, on complexity and on numerical health: not on the in-sample error alone.", overview: "Implied against realised volatility, where it ranks, the put-call balance, the term structure and the skew: the page to open first.",
       chain: "Calls and puts side by side for one expiry: bid, ask, implied volatility, delta, volume and open interest, with the at-the-money row marked and stale or wide quotes flagged.",
       smile: "How implied volatility changes with strike (the smile), across expiries, and what that says about the price of crash protection (risk reversal, butterfly).",
@@ -38,7 +39,7 @@
       risk: "Delta, gamma, vega and theta of a book of options and shares, by expiry, and what it would make or lose when the price and implied volatility move.",
       strategy: "Choose one of twenty-five structures and see its payoff at expiry, today and half way, where the price is likely to end, its profit by price and day, its Greeks by price, its break-evens, maximum profit and loss, margin and odds; set up to three others beside it.",
       backtest: "Sell or buy premium on a schedule on a simulated option market: one strategy, one setting varied to see how fragile the choice is, or every strategy side by side; with the equity curve, the risk measures, where the profit came from by Greek, the costs and the trades." },
-    form: { underlying: "", expiry: "", window: "15", rate: "", dividend: "", premium: "15", hideStale: false, minOi: "", rExpiries: "8", vLoss: "iv", vMode: "strikes", dealer: "calls_long_puts_short", dealerShare: "100",
+    form: { underlying: "", expiry: "", window: "15", rate: "", dividend: "", premium: "15", hideStale: false, minOi: "", rExpiries: "8", vLoss: "iv", vMode: "strikes", dealer: "calls_long_puts_short", dealerShare: "100", volRule: "sticky_strike", skewSlope: "",
       book: [], spotShocks: "-10, -5, -2, 0, 2, 5, 10", volShocks: "-5, 0, 5, 10", days: "0",
       strategy: "long_straddle", sDte: "30", sFar: "", offset: "5", width: "5", quantity: "1", fill: "mid", spread: "5", commission: "0.65", viewVol: "", viewDrift: "", horizon: "", legs: [], compare: new Set(),
       bt: "short_put", btMode: "single", btDays: "252", btSeed: "0", btCapital: "100000", btPremium: "25", btCommission: "0.65", btFill: "100", btParams: {}, btTiming: false, btWindow: "21", btThreshold: "0",
@@ -250,6 +251,8 @@
       const s = sec("3. Stress");
       Q.labField(s, { key: "spotShocks", label: "Price moves (%)", kind: "text", placeholder: "-10, -5, 0, 5, 10", help: "Up to nine, separated by commas" }, f, after);
       Q.labField(s, { key: "volShocks", label: "Implied volatility moves (points)", kind: "text", placeholder: "-5, 0, 5, 10" }, f, after);
+      Q.labField(s, { key: "volRule", label: "When the price moves, implied volatility…", kind: "choice", options: [["sticky_strike", "stays at each strike (sticky-strike)"], ["sticky_delta", "follows the smile with the price (sticky-delta)"]], help: "The same stress is also shown under the other rule, so you see how much the assumption is worth" }, f, after);
+      Q.labField(s, { key: "skewSlope", label: "Skew slope (volatility per unit of ln K/F, blank = the chain's)", kind: "number", step: 0.05, min: -5, max: 5, help: "Sticky-delta needs the slope of the smile; blank reads it from the chain's 30-day expiry" }, f, after);
       Q.labField(s, { key: "days", label: "Days that pass", kind: "number", step: 1, min: 0, max: 365, help: "Zero values the book today; more shows the time decay as well" }, f, after);
     }
     if (m === "strategy") {
@@ -269,7 +272,7 @@
       const c = sec("3. Costs and view", false);
       Q.labField(c, { key: "fill", label: "Entry price", kind: "choice", options: [["mid", "The model's mid"], ["worst", "Cross the spread"]] }, f, after);
       for (const s of [{ key: "spread", label: "Bid-ask spread as a share of the price (%)", kind: "number", step: 1, min: 0, max: 100 }, { key: "commission", label: "Commission per contract ($)", kind: "number", step: 0.05, min: 0 },
-        { key: "viewVol", label: "Volatility for the odds (%, blank = the at-the-money)", kind: "number", step: 0.5, min: 1 }, { key: "viewDrift", label: "Expected return of the underlying (% a year, blank = rate less dividend)", kind: "number", step: 1 },
+        { key: "viewVol", label: "Volatility for the odds (%, blank = the at-the-money)", kind: "number", step: 0.5, min: 1 }, { key: "viewDrift", label: "Expected return of the underlying (% a year, blank = rate less dividend)", kind: "number", step: 1 }, { key: "skewSlope", label: "Skew slope for the sticky-delta lines (blank = the chain's)", kind: "number", step: 0.05, min: -5, max: 5 },
         { key: "horizon", label: "Days to the horizon (blank = the first expiry)", kind: "number", step: 1, min: 1 }]) Q.labField(c, s, f, after);
       h("p", "hint", c, "The probability of profit and the expected value assume a lognormal price with one volatility, not the smile: read them as a first estimate.");
       if (cat) {
@@ -365,16 +368,17 @@
     }, "Pricing under the models…");
     if (m === "hedge") return W.request(O, () => [{ modes: ["hedge"], job: true, path: "/api/models/hedge", body: { ...settings(), call: f.hRight === "call", expiry: f.expiry || undefined, strike_pct: Number(f.hStrike),
       vol: f.hVol === "" ? undefined : Number(f.hVol), cost_bp: Number(f.hCost), steps: f.hSteps === "" ? undefined : Number(f.hSteps), risk_aversion: Number(f.hRisk), paths: Number(f.hPaths), seed: Number(f.hSeed) } }], "Costing the hedge…");
+    if (m === "saved") return W.request(O, () => [{ modes: ["saved"], path: "/api/experiments", query: {}, cacheKey: key("saved", Date.now()) }], "Reading the saved runs…");
     if (m === "risk") return W.request(O, () => {
       const spots = W.percentList(f.spotShocks, "Price moves"), vols = W.percentList(f.volShocks, "Implied volatility moves");
-      return [{ modes: ["risk"], path: "/api/options/portfolio-risk", body: { ...settings(), positions: legsBody(f.book, "book"), spot_shocks: spots, vol_shocks: vols, days: Number(f.days) || 0 } }];
+      return [{ modes: ["risk"], path: "/api/options/portfolio-risk", body: { ...settings(), positions: legsBody(f.book, "book"), spot_shocks: spots, vol_shocks: vols, days: Number(f.days) || 0, vol_rule: f.volRule, skew_slope: f.skewSlope === "" ? undefined : Number(f.skewSlope) } }];
     }, "Revaluing the book…");
     if (m === "strategy") return W.request(O, () => {
       const body = { ...settings(), strategy: f.strategy === "custom" ? undefined : f.strategy, fill: f.fill };
       if (f.strategy === "custom") body.legs = legsBody(f.legs, "structure");
       else Object.assign(body, { dte: Number(f.sDte), far_dte: f.sFar === "" ? undefined : Number(f.sFar), offset: Number(f.offset) / 100, width: Number(f.width) / 100, quantity: Number(f.quantity) });
       Object.assign(body, { spread_pct: Number(f.spread) / 100, commission: Number(f.commission), view_vol: f.viewVol === "" ? undefined : Number(f.viewVol) / 100, view_drift: f.viewDrift === "" ? undefined : Number(f.viewDrift) / 100, horizon_days: f.horizon === "" ? undefined : Number(f.horizon),
-        compare: [...f.compare].filter((x) => x !== f.strategy) });
+        compare: [...f.compare].filter((x) => x !== f.strategy), skew_slope: f.skewSlope === "" ? undefined : Number(f.skewSlope) });
       return [{ modes: ["strategy"], path: "/api/options/strategy/payoff", body }];
     }, "Pricing the legs…");
     const params = {};
@@ -389,7 +393,7 @@
       return steps;
     }, f.btMode === "compare" ? "Running every strategy…" : f.btMode === "sweep" ? "Running the backtest and the sweep…" : "Running the backtest…");
   };
-  O.auto = () => { if (ANALYTIC.has(O.mode) && O.form.underlying) O.run(true); };
+  O.auto = () => { if (O.mode === "saved") O.run(true); else if (ANALYTIC.has(O.mode) && O.form.underlying) O.run(true); };
   O.empty = (root) => {
     const text = { validate: ["Validate the pricing models", "Fit the models, hold some quotes out, and compare them on error out of sample, parameters needed, numerical health and time."], research: ["Research the surface", "Fit an SVI slice to every expiry and see the residuals, the bid-ask bands and the arbitrage diagnostics."], fit: ["Fit the pricing models to this chain", "Fit Merton, Kou, variance gamma, NIG and Heston to the out-of-the-money quotes and see which reproduces the smile, how much better it does than a flat volatility, and what each implies for the odds of a fall. About half a minute for all five."],
       price: ["Price a product under every model", "Choose a digital, barrier, average-price or American option. Each model is fitted to the chain (once per session) and prices it. The spread between them, set beside their spread on the plain option at the same strike (which is only how well each fits), is the model risk of the product, which no vanilla quote can tell you."],
@@ -400,7 +404,7 @@
     Q.labEmpty(root, O, text[0], [text[1]], O.runLabel[O.mode]);
   };
   O.draw = () => Q.drawLab(O);
-  O.build = (root, d, body) => ({ research: (r, x) => window.OptionsResearch.research(r, x, { header, nameOf }), validate: (r, x) => window.OptionsResearch.validate(r, x, { header, nameOf }), overview: buildOverview, chain: buildChain, smile: buildSmile, surface: buildSurface, distribution: buildDistribution, positioning: buildPositioning, fit: buildFit, price: buildPrice, hedge: buildHedge, risk: buildRisk, strategy: buildStrategy, backtest: buildBacktest })[O.mode](root, d, body);
+  O.build = (root, d, body) => ({ saved: (r, x) => window.Experiments.view(r, x, { header, lab: O }), research: (r, x, b) => window.OptionsResearch.research(r, x, { header, nameOf, body: b }), validate: (r, x, b) => window.OptionsResearch.validate(r, x, { header, nameOf, body: b, underlying: O.form.underlying }), overview: buildOverview, chain: buildChain, smile: buildSmile, surface: buildSurface, distribution: buildDistribution, positioning: buildPositioning, fit: buildFit, price: buildPrice, hedge: buildHedge, risk: buildRisk, strategy: buildStrategy, backtest: buildBacktest })[O.mode](root, d, body);
 
   /* ---------- overview ---------- */
   const header = (root, title, sub, guide) => Q.labHead(root, title, sub, guide || GUIDE);
@@ -680,6 +684,7 @@
         rowTitle: "Price", colTitle: "Implied volatility (points)", mark: (i, j) => cell(i, j) && cell(i, j).spot_shock === worst.spot_shock && cell(i, j).vol_shock === worst.vol_shock, label: "Stress grid", tipRows: (i, j) => [["From the Greeks", smoney(cell(i, j).taylor)], ["Left out by the Greeks", smoney(cell(i, j).residual)]] }),
       table: (b) => table(b, [{ label: "Price", num: true, get: (s) => W.signed(s.spot_shock * 100, 1) + "%" }, { label: "Volatility (pts)", num: true, get: (s) => W.signed(s.vol_shock * 100, 1) }, { label: "Profit and loss", num: true, get: (s) => smoney(s.pnl) },
         { label: "Greeks estimate", num: true, get: (s) => smoney(s.taylor) }, { label: "Left out", num: true, get: (s) => smoney(s.residual) }], d.stress) });
+    window.OptionsResearch.riskExtras(root, d, { header });
     W.hint(root, "Greeks are slopes at today's price; a large move is revalued with Black-Scholes, which is why the 'left out' column grows with the size of the move. Each option is priced at the volatility the surface gives at its strike, moved by the volatility shock in parallel.");
   }
 
@@ -712,6 +717,7 @@
     tile(k, "Margin (indicative)", money(a.margin.estimate), { text: a.margin.cash_secured ? "cash held against the put" : a.margin.defined_risk ? "defined risk" : "naked short options" }, "", a.margin.basis);
     const ch = h("div", "charts", root), keep = c.spot.map((_, n) => n).filter((n) => c.spot[n] > 0), at = (arr) => keep.map((n) => arr[n]), xs = at(c.spot);        // the grid starts at a price of zero to find the worst case; the picture starts above it
     const series = [{ name: "At the horizon", color: css("--s1"), values: at(c.expiry) }, { name: "Today", color: css("--s2"), values: at(c.now), width: 1.5 }, { name: "Half way", color: css("--s3"), values: at(c.half), width: 1.5 },
+      ...(a.volatility_rules && a.volatility_rules.skew_slope ? [{ name: "Today, sticky-delta", color: css("--s2"), dash: "2 3", width: 1.3, values: at(c.now_sticky_delta) }] : []),
       ...others.map((o, i) => ({ name: label(o.strategy), color: Q.colorOf(3 + i), dash: "5 4", width: 1.5, values: at(o.curve) }))];
     const own = [...at(c.expiry), ...at(c.now), ...at(c.half)], span = Math.max(...own, 0) - Math.min(...own, 0), ylim = others.length ? [Math.min(...own, 0) - 0.35 * span, Math.max(...own, 0) + 0.35 * span] : undefined;       // beside other structures the axis fits this one and theirs are cut off
     chartCard(ch, "Profit and loss by price of the underlying", `At the horizon (the line, shaded blue where it makes money and red where it loses), today, and half way to it. The dashed lines mark today's price and the break-evens (labelled with their prices).${others.length ? " The dashed coloured lines are the structures you chose to compare, each at its horizon; the vertical range fits this structure, so a line that runs off the picture is a structure with far more to win or lose." : ""}`, { wide: true,
@@ -727,6 +733,7 @@
         { label: "Probability of profit", num: true, get: (x) => x.pop }, { label: "Expected value", num: true, get: (x) => x.ev }, { label: "Margin", num: true, get: (x) => x.margin }], [line(name + " (this one)", a), ...others.map((o) => line(label(o.strategy), o))]);
       h("p", "note", cmp, "All are priced at the chain's own volatilities with the same expiry, distance, width and number of contracts, and their odds use the same volatility and drift. The expected value is zero at the market's own view except for what the spread, the commission and the smile take or give.");
     }
+    window.OptionsResearch.strategyExtras(ch, a, d, { body: O.results.strategy && O.results.strategy.body });
     const dn = a.density, centers = dn.edges.slice(0, -1).map((e, i) => (e + dn.edges[i + 1]) / 2), dens = dn.mass.map((m, i) => m / (dn.edges[i + 1] - dn.edges[i])), zs = zonesOf(c, a.breakevens, dn.edges[0], dn.edges[dn.edges.length - 1]);
     chartCard(ch, "Where the price may end up", `The chance of each price at the horizon (${a.horizon_days} days) with the volatility and drift behind the odds (${pct(a.view_vol, 1)} and ${pct(a.view_drift, 1)} a year). Blue is where the structure makes money at the horizon and red where it loses; the area under the curve inside the blue is the probability of profit, ${pct(a.prob_profit, 0)}.`, {
       draw: (b) => C.line(b, { xs: centers, xLabel: "Price at the horizon", series: [{ name: "Chance per $1", color: css("--s1"), values: dens }], area: true, areaBase: 0, include: 0, baseline: 0, yFormat: (v) => (v * 100).toFixed(1) + "%", tipFormat: (v) => (v * 100).toFixed(3) + "% per $1",

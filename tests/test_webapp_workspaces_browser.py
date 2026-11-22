@@ -876,3 +876,38 @@ def test_the_options_views_are_arranged_in_four_workflows_and_the_new_research_v
     ws.wait_for_selector("#options-results [data-role=gex-scenarios]", timeout=120_000)
     assert "How much the assumption matters" in ws.inner_text("#options-results") and "Gross gamma (observed)" in ws.inner_text("#options-results")
     assert [p for p in ws.problems if not p.startswith("HTTP 400")] == []
+
+
+def test_the_open_items_views_draw_portfolio_groups_probability_audit_3d_surface_and_saved_runs(ws):
+    ws.click("#tab-options")
+    ws.wait_for_selector("#options-results .tile", timeout=90_000)
+    _mode(ws, "options", "research")
+    ws.wait_for_selector("#options-results [data-role=surface-3d] canvas", timeout=120_000)
+    assert ws.locator("#options-results [data-role=save-experiment]").count() == 1
+    ws.click("#options-results [data-role=save-experiment] button.primary")
+    ws.wait_for_selector("#options-results [data-role=save-experiment]:has-text('Saved as')", timeout=30_000)
+    ws.click("#options-results [data-role=save-experiment] button.primary")
+    ws.wait_for_timeout(500)
+    _mode(ws, "options", "risk")
+    _open_all(ws, "view-options")
+    ws.click("#view-options button:has-text('Load an example')")
+    _run(ws, "options")
+    ws.wait_for_selector("#options-results [data-role=risk-attribution]", timeout=120_000)
+    text = ws.inner_text("#options-results")
+    assert "Vanna" in text and "Volga" in text and "Exposure by underlying and by strategy" in text and ws.locator("#options-results [data-role=risk-groups] table").count() >= 2
+    _mode(ws, "options", "strategy")
+    _run(ws, "options")
+    ws.wait_for_selector("#options-results [data-role=probability-audit]", timeout=120_000)
+    assert "risk-neutral" in ws.inner_text("#options-results [data-role=probability-audit]") and ws.locator("#options-results [data-role=vol-rules]").count() == 1
+    _mode(ws, "options", "validate")
+    _run(ws, "options")
+    ws.wait_for_selector("#options-results [data-role=chain-history]", timeout=400_000)
+    assert "Keep today" in ws.inner_text("#options-results [data-role=chain-history]")
+    _mode(ws, "options", "saved")
+    ws.wait_for_selector("#options-results [data-role=experiments]", timeout=60_000)
+    assert "surface research" in ws.inner_text("#options-results [data-role=experiments]")
+    ws.click("#options-results [data-role=experiments] input[type=checkbox] >> nth=0")
+    ws.click("#options-results [data-role=experiments] input[type=checkbox] >> nth=1")
+    ws.click("#options-results [data-role=experiments] button[data-role=compare]")
+    ws.wait_for_selector("#options-results [data-role=comparison]", timeout=30_000)
+    assert "same request" in ws.inner_text("#options-results [data-role=comparison]")

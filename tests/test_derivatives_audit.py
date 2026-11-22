@@ -313,3 +313,83 @@ def test_a_calendar_violation_between_expiries_is_found_and_the_report_says_what
     assert any("finite grid" in s for s in r["limits"])
     with pytest.raises(ValueError, match="cannot be fitted"):
         oa.surface_research(chain.iloc[:4])
+
+
+# ---------------------------------------------------------------- portfolio: cross-Greeks, grouping, volatility rules, probability audit
+def _book():
+    return [{"type": "option", "right": "C", "strike": 100, "dte": 30, "iv": 0.25, "quantity": -2, "underlying": "A", "strategy": "cc"},
+            {"type": "option", "right": "P", "strike": 95, "dte": 60, "iv": 0.28, "quantity": 1, "underlying": "A", "strategy": "hedge"},
+            {"type": "stock", "quantity": 200, "underlying": "A", "strategy": "cc"},
+            {"type": "option", "right": "C", "strike": 50, "dte": 30, "iv": 0.3, "quantity": 3, "underlying": "B", "spot": 52, "strategy": "x"}]
+
+
+def test_vanna_and_volga_match_finite_differences():
+    from src.assets import options_analytics as oa
+    pos = [{"type": "option", "right": "C", "strike": 105, "dte": 45, "iv": 0.3, "quantity": 1}]
+    b = oa.position_values(pos, 100.0, 0.03, 0.01, "2026-01-01").iloc[0]
+    up = oa.position_values(pos, 100.0, 0.03, 0.01, "2026-01-01", shock_vol=0.01).iloc[0]
+    dn = oa.position_values(pos, 100.0, 0.03, 0.01, "2026-01-01", shock_vol=-0.01).iloc[0]
+    assert b["vanna"] == pytest.approx((up["delta"] - dn["delta"]) / 2.0, rel=2e-3)
+    assert b["volga"] == pytest.approx((up["vega"] - dn["vega"]) / 2.0, rel=2e-3)
+
+
+def test_portfolio_groups_sum_to_the_book_and_the_rules_differ_only_with_a_skew():
+    from src.assets import options_analytics as oa
+    r = oa.portfolio_risk(_book(), 100.0, 0.04, 0.0, "2026-01-01", vol_rule="sticky_delta", skew_slope=-0.3)
+    assert sum(g["delta_dollars"] for g in r["by_underlying"]) == pytest.approx(r["totals"]["delta_dollars"]) and {g["strategy"] for g in r["by_strategy"]} == {"cc", "hedge", "x"}
+    assert r["rule_gap"] > 1.0 and any("correlation of one" in f for f in r["risk_flags"])
+    flat = oa.portfolio_risk(_book(), 100.0, 0.04, 0.0, "2026-01-01", vol_rule="sticky_delta", skew_slope=0.0)
+    assert flat["rule_gap"] == pytest.approx(0.0, abs=1e-9)
+
+
+def test_attribution_sums_to_the_pnl_and_small_moves_leave_little_unexplained():
+    from src.assets import options_analytics as oa
+    r = oa.portfolio_risk(_book()[:3], 100.0, 0.04, 0.0, "2026-01-01", spot_shocks=(-0.01, 0.01), vol_shocks=(0.0, 0.01))
+    for row in r["stress"]:
+        assert sum(row["attribution"].values()) == pytest.approx(row["pnl"], abs=1e-6)
+        assert abs(row["attribution"]["unexplained"]) < 0.05 * max(abs(row["pnl"]), 50.0) + 1.0
+
+
+def test_probability_of_profit_is_labelled_risk_neutral_and_shows_its_sensitivity():
+    from src.assets import options_analytics as oa
+    chain = oa.build_model_chain(100.0, "2026-01-02", 0.2, 0.2)
+    legs, ctx = oa.named_structure(chain, 100.0, "short_strangle", 30)
+    out = oa.strategy_analysis(legs, 100.0, ctx["forward"], 0.2)
+    p = out["probability"]
+    assert p["measure"].startswith("risk-neutral") and len(p["table"]) == 9 and p["range"][0] <= out["prob_profit"] <= p["range"][1] + 1e-9
+    assert any("not the real-world frequency" in c for c in p["caveats"]) and p["distribution"].startswith("lognormal")
+    seen = oa.strategy_analysis(legs, 100.0, ctx["forward"], 0.2, view_vol=0.3, view_drift=0.05)["probability"]
+    assert seen["measure"].startswith("the view you set")
+
+
+def test_implied_distribution_is_a_martingale_density_and_matches_second_difference_of_prices():
+    import numpy as np
+    from src.assets import options_analytics as oa
+    chain = oa.build_model_chain(100.0, "2026-01-02", 0.2, 0.2)
+    exp = oa.nearest_expiry(chain, 20)
+    d = oa.implied_distribution(chain, exp)
+    assert d["area"] == pytest.approx(1.0, abs=0.05) and d["moments"]["mean_price_over_forward"] == pytest.approx(1.0, abs=0.01) and d["fit"]["negative_share"] < 0.02
+    # Breeden-Litzenberger directly: the second difference of the fitted-smile call prices in strike, discounted back, against the density
+    from src.derivatives.pricing import bsm_price as price
+    T, F = d["dte"] / 365.0, d["forward"]
+    smile = d["smile"]
+    ks = np.array(smile["strike"]); iv = np.array(smile["fit_iv"])
+    mid = len(ks) // 2
+    h = float(ks[mid + 1] - ks[mid])
+    c = lambda i: price(F, ks[i], T, 0.0, 0.0, iv[i], True)  # noqa: E731
+    second = (c(mid + 1) - 2 * c(mid) + c(mid - 1)) / h ** 2
+    dens = np.interp(ks[mid], d["price"], d["density"])
+    assert second == pytest.approx(dens, rel=0.35)
+
+
+def test_strategy_shows_sticky_delta_lines_and_early_exercise_notes():
+    from src.assets import options_analytics as oa
+    chain = oa.build_model_chain(100.0, "2026-01-02", 0.2, 0.2)
+    legs, ctx = oa.named_structure(chain, 100.0, "short_strangle", 30)
+    flat = oa.strategy_analysis(legs, 100.0, ctx["forward"], 0.2)
+    assert flat["volatility_rules"]["max_gap_now"] == pytest.approx(0.0, abs=1e-6)
+    skewed = oa.strategy_analysis(legs, 100.0, ctx["forward"], 0.2, skew_slope=-0.4)
+    assert skewed["volatility_rules"]["max_gap_now"] > 1.0 and len(skewed["curve"]["now_sticky_delta"]) == len(skewed["curve"]["now"])
+    deep = [{"type": "option", "right": "P", "strike": 130.0, "dte": 60, "quantity": -1, "iv": 0.2}]
+    out = oa.strategy_analysis(deep, 100.0, 100.0, 0.2, rate=0.08)
+    assert out["early_exercise"] and "exercis" in out["early_exercise"][0]["why"]

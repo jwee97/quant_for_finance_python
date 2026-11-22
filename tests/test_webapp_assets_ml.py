@@ -802,3 +802,32 @@ def test_experiments_can_be_saved_listed_compared_and_deleted_through_the_api(as
         assets.extra_get["/api/experiments/get"]({"id": a["id"]})
     with pytest.raises(ApiError):
         assets.extra_post["/api/experiments/save"]({"kind": "bogus", "name": "x", "request": req, "metrics": metrics})
+
+
+def test_chain_snapshots_refuse_simulated_data_and_stability_needs_three_dates(assets):
+    from src.assets import options_analytics as oa
+    from src.assets.option_history import History
+    with pytest.raises(ApiError, match="simulated"):
+        assets.extra_post["/api/options/snapshot"]({"underlying": "AAA"})
+    out = assets.extra_get["/api/options/history"]({"underlying": "AAA"})
+    assert out["stability"] is None and out["needed"] == 3 and any("at least 3" in w for w in out["warnings"])
+    hist = History(assets.root)
+    for i, day in enumerate(("2026-01-02", "2026-01-05", "2026-01-06")):
+        hist.save("TST", oa.build_model_chain(100.0 + i, day, 0.2 + 0.01 * i, 0.2), day, "downloaded")
+    got = assets.extra_get["/api/options/history"]({"underlying": "TST", "model": "bs"})
+    assert got["dates"] == ["2026-01-02", "2026-01-05", "2026-01-06"] and got["stability"]["model"] == "bs" and len(got["stability"]["rows"]) == 3
+
+
+def test_portfolio_risk_returns_groups_cross_greeks_attribution_and_the_other_volatility_rule(assets):
+    book = [{"type": "option", "right": "C", "strike": 100, "dte": 30, "quantity": -2, "underlying": "AAA", "strategy": "cc"}, {"type": "stock", "quantity": 200, "underlying": "AAA", "strategy": "cc"},
+            {"type": "option", "right": "P", "strike": 95, "dte": 60, "quantity": 1, "strategy": "hedge"}]
+    out = _safe(assets.extra_post["/api/options/portfolio-risk"]({"underlying": "AAA", "positions": book, "vol_rule": "sticky_delta", "skew_slope": -0.3}))
+    assert {g["strategy"] for g in out["by_strategy"]} == {"cc", "hedge"} and "vanna_delta_per_vol_point" in out["totals"] and out["vol_rule"] == "sticky_delta" and out["other_rule"] == "sticky_strike"
+    assert out["stress"][0]["attribution"].keys() >= {"delta", "gamma", "vega", "vanna", "volga", "theta", "smile_move", "unexplained"} and out["rule_gap"] > 0
+    with pytest.raises(ApiError, match="own iv"):
+        assets.extra_post["/api/options/portfolio-risk"]({"underlying": "AAA", "positions": [{"type": "option", "right": "C", "strike": 50, "dte": 30, "quantity": 1, "spot": 52}]})
+
+
+def test_a_strategy_returns_the_probability_audit_and_sticky_delta_lines(assets):
+    out = _safe(assets.extra_post["/api/options/strategy/payoff"]({"underlying": "AAA", "strategy": "short_strangle", "skew_slope": -0.4}))["analysis"]
+    assert out["probability"]["measure"].startswith("risk-neutral") and out["volatility_rules"]["skew_slope"] == -0.4 and "now_sticky_delta" in out["curve"] and isinstance(out["early_exercise"], list)

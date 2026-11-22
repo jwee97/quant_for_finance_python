@@ -783,17 +783,26 @@ def _years(position: dict, as_of: pd.Timestamp) -> float:
     return max((pd.Timestamp(position["expiry"]) - as_of).days, 0) / 365.0
 
 
-def position_values(positions: list[dict], spot: float, rate: float, dividend: float, as_of, shock_spot: float = 0.0, shock_vol: float = 0.0, days: float = 0.0) -> pd.DataFrame:
+VOL_RULES = {"sticky_strike": "each strike keeps its implied volatility when the spot moves (the smile stays put in strike)",
+             "sticky_delta": "each strike's volatility follows its moneyness: the smile moves with the spot, using the skew slope (volatility per unit of ln K/S)"}
+
+
+def position_values(positions: list[dict], spot: float, rate: float, dividend: float, as_of, shock_spot: float = 0.0, shock_vol: float = 0.0, days: float = 0.0, vol_rule: str = "sticky_strike", skew_slope: float = 0.0) -> pd.DataFrame:
     """Value and Greeks of each position at a shocked market: spot x (1 + ``shock_spot``), every implied volatility + ``shock_vol`` (decimal points), ``days`` of time passed. ``quantity`` is in contracts
     (option) or shares (``type: "stock"``). Dollar values include the multiplier (default 100)."""
+    if vol_rule not in VOL_RULES:
+        raise ValueError(f"vol_rule must be one of {list(VOL_RULES)}")
     as_of = pd.Timestamp(as_of)
     rows = []
-    s = spot * (1.0 + shock_spot)
     for i, pos in enumerate(positions):
+        spot0 = float(pos.get("spot") or spot)                                      # a position in another underlying carries its own spot; the shock is applied to every underlying alike
+        s = spot0 * (1.0 + shock_spot)
+        under = str(pos.get("underlying") or "")
+        tag = str(pos.get("strategy") or "")
         qty = float(pos.get("quantity", 0.0))
         if str(pos.get("type", "option")) == "stock":
-            rows.append({"i": i, "kind": "stock", "label": "shares", "expiry": None, "dte": None, "strike": None, "right": None, "quantity": qty, "iv": None, "value": qty * s, "delta": qty, "gamma": 0.0,
-                         "vega": 0.0, "theta": 0.0, "rho": 0.0})
+            rows.append({"i": i, "kind": "stock", "label": "shares", "underlying": under, "strategy": tag, "expiry": None, "dte": None, "strike": None, "right": None, "quantity": qty, "iv": None, "value": qty * s,
+                         "delta": qty, "gamma": 0.0, "vega": 0.0, "theta": 0.0, "rho": 0.0, "vanna": 0.0, "volga": 0.0, "spot0": spot0})
             continue
         mult = float(pos.get("multiplier", MULTIPLIER))
         right = str(pos.get("right", "C")).upper()[:1]
@@ -806,57 +815,111 @@ def position_values(positions: list[dict], spot: float, rate: float, dividend: f
         iv = float(pos.get("iv") or 0.0)
         if iv <= 0:
             raise ValueError("every option position needs an implied volatility (iv)")
-        sigma = max(iv + shock_vol, 0.01)
+        slide = -skew_slope * math.log(s / spot0) if vol_rule == "sticky_delta" and s > 0 else 0.0
+        sigma = max(iv + slide + shock_vol, 0.01)
         call = right == "C"
         if T <= 0:
             price = float(max(s - K, 0.0) if call else max(K - s, 0.0))
             g = {k: 0.0 for k in ("delta", "gamma", "vega", "theta", "rho")}
             g["delta"] = float((1.0 if s > K else 0.0) if call else (-1.0 if s < K else 0.0))
+            g["vanna"] = g["volga"] = 0.0
         else:
             price = float(bsm_price(s, K, T, rate, dividend, sigma, call))
             raw = bsm_greeks(s, K, T, rate, dividend, sigma, call)
             g = {k: float(raw[k]) for k in ("delta", "gamma", "vega", "theta", "rho")}
+            rt = math.sqrt(T)
+            d1 = (math.log(s / K) + (rate - dividend + 0.5 * sigma ** 2) * T) / (sigma * rt)
+            d2 = d1 - sigma * rt
+            g["vanna"] = float(-math.exp(-dividend * T) * norm.pdf(d1) * d2 / sigma)             # d delta / d sigma
+            g["volga"] = float(g["vega"] * d1 * d2 / sigma)                                      # d vega / d sigma
         e = pos.get("expiry") or (as_of + pd.Timedelta(days=int(pos["dte"]))).date()
-        rows.append({"i": i, "kind": "option", "label": f"{right} {K:g}", "expiry": str(pd.Timestamp(e).date()), "dte": int(round(_years(pos, as_of) * 365)), "strike": K, "right": right, "quantity": qty,
+        rows.append({"i": i, "kind": "option", "label": f"{right} {K:g}", "underlying": under, "strategy": tag, "spot0": spot0, "expiry": str(pd.Timestamp(e).date()), "dte": int(round(_years(pos, as_of) * 365)), "strike": K, "right": right, "quantity": qty,
                      "iv": iv, "value": qty * mult * price, "delta": qty * mult * g["delta"], "gamma": qty * mult * g["gamma"], "vega": qty * mult * g["vega"] / 100.0, "theta": qty * mult * g["theta"] / 365.0,
-                     "rho": qty * mult * g["rho"] / 100.0, "price": price})
+                     "rho": qty * mult * g["rho"] / 100.0, "vanna": qty * mult * g["vanna"] / 100.0, "volga": qty * mult * g["volga"] / 1e4, "price": price, "iv_used": sigma})
     return pd.DataFrame(rows)
 
 
+def _group_totals(base: pd.DataFrame, by: str) -> list[dict]:
+    """Dollar Greeks of the options and shares of each value of ``by`` ("underlying", "expiry" or "strategy"); a row with no value of it is grouped as "(none)"."""
+    out = []
+    frame = base.copy()
+    frame[by] = frame[by].fillna("").replace("", "(none)") if by in frame else "(none)"
+    for key, grp in frame.groupby(by, sort=True):
+        d = float((grp["delta"] * grp["spot0"]).sum())
+        out.append({by: str(key), "positions": int(len(grp)), "value": float(grp["value"].sum()), "delta_dollars": d, "gamma_pnl_1pct": float(0.5 * (grp["gamma"] * (0.01 * grp["spot0"]) ** 2).sum()),
+                    "vega_per_point": float(grp["vega"].sum()), "theta_per_day": float(grp["theta"].sum()), "rho_per_1pct": float(grp["rho"].sum()),
+                    "vanna_delta_per_vol_point": float(grp["vanna"].sum()), "volga_vega_per_vol_point": float(grp["volga"].sum())})
+    return out
+
+
+def _attribution(base: pd.DataFrame, ds: float, dv: float, days: float, pnl: float, rule: str, skew_slope: float) -> dict:
+    """Split a revaluation P&L into the Greeks' contributions: delta, gamma, vega, the cross-term vanna (a spot move changes delta by a volatility move), volga (vega's own convexity), theta, the smile moving with the
+    spot (only under sticky_delta), and what the Taylor expansion does not capture (higher orders, expiry kinks)."""
+    opt = base[base["kind"] == "option"]
+    dS = base["spot0"] * ds
+    dvp = dv * 100.0
+    slide = (-skew_slope * math.log(1.0 + ds) * 100.0) if rule == "sticky_delta" else 0.0
+    parts = {"delta": float((base["delta"] * dS).sum()), "gamma": float((0.5 * base["gamma"] * dS ** 2).sum()), "vega": float(opt["vega"].sum() * dvp),
+             "vanna": float((base["vanna"] * dS).sum() * dvp), "volga": float(0.5 * opt["volga"].sum() * dvp ** 2), "theta": float(base["theta"].sum() * days), "smile_move": float(opt["vega"].sum() * slide)}
+    parts["unexplained"] = float(pnl - sum(parts.values()))
+    return parts
+
+
 def portfolio_risk(positions: list[dict], spot: float, rate: float = DEFAULT_RATE, dividend: float = 0.0, as_of=None, spot_shocks=(-0.05, -0.02, 0.0, 0.02, 0.05),
-                   vol_shocks=(-0.05, 0.0, 0.05), days: float = 0.0) -> dict:
+                   vol_shocks=(-0.05, 0.0, 0.05), days: float = 0.0, vol_rule: str = "sticky_strike", skew_slope: float = 0.0) -> dict:
     """Greeks and stress of a book of options (and shares). Returns the position table, the totals (dollar delta, share-equivalent delta, gamma P&L of a 1% move, vega per point, theta per day, rho per
-    1 pt) and by expiry, and a stress grid of spot and volatility shocks: the full revaluation P&L next to the Taylor approximation from the Greeks and the part the Greeks miss."""
+    1 pt, and the cross-Greeks vanna and volga), the exposure grouped by expiry, underlying and strategy tag, and a stress grid of spot and volatility shocks: the full revaluation P&L, its attribution to the
+    Greeks and what they miss, under the chosen volatility rule (``sticky_strike`` or ``sticky_delta``) and the same grid under the other rule so that the assumption's weight is visible.
+
+    A position may name its ``underlying``, its own ``spot`` and a ``strategy`` tag. A stress shock is applied to every underlying alike: that is a correlation of one between them, an assumption, and the
+    answer says so when the book has more than one underlying."""
     if not positions:
         raise ValueError("add at least one position")
     if len(positions) > 60:
         raise ValueError("at most 60 positions")
+    if vol_rule not in VOL_RULES:
+        raise ValueError(f"vol_rule must be one of {list(VOL_RULES)}")
     as_of = pd.Timestamp(as_of if as_of is not None else pd.Timestamp.today().normalize())
     base = position_values(positions, spot, rate, dividend, as_of)
-    tot = {"value": float(base["value"].sum()), "delta_shares": float(base["delta"].sum()), "delta_dollars": float(base["delta"].sum() * spot), "gamma": float(base["gamma"].sum()),
-           "gamma_pnl_1pct": float(0.5 * base["gamma"].sum() * (0.01 * spot) ** 2), "vega_per_point": float(base["vega"].sum()), "theta_per_day": float(base["theta"].sum()), "rho_per_1pct": float(base["rho"].sum())}
+    dd = float((base["delta"] * base["spot0"]).sum())
+    tot = {"value": float(base["value"].sum()), "delta_shares": float(base["delta"].sum()), "delta_dollars": dd, "gamma": float(base["gamma"].sum()),
+           "gamma_pnl_1pct": float((0.5 * base["gamma"] * (0.01 * base["spot0"]) ** 2).sum()), "vega_per_point": float(base["vega"].sum()), "theta_per_day": float(base["theta"].sum()),
+           "rho_per_1pct": float(base["rho"].sum()), "vanna_delta_per_vol_point": float(base["vanna"].sum()), "volga_vega_per_vol_point": float(base["volga"].sum())}
     by_expiry = []
     for expiry, grp in base[base["kind"] == "option"].groupby("expiry"):
-        by_expiry.append({"expiry": expiry, "dte": int(grp["dte"].iloc[0]), "delta_dollars": float(grp["delta"].sum() * spot), "gamma_pnl_1pct": float(0.5 * grp["gamma"].sum() * (0.01 * spot) ** 2),
+        by_expiry.append({"expiry": expiry, "dte": int(grp["dte"].iloc[0]), "delta_dollars": float((grp["delta"] * grp["spot0"]).sum()), "gamma_pnl_1pct": float(0.5 * (grp["gamma"] * (0.01 * grp["spot0"]) ** 2).sum()),
                           "vega_per_point": float(grp["vega"].sum()), "theta_per_day": float(grp["theta"].sum())})
     by_expiry.sort(key=lambda r: r["dte"])
-    stress = []
-    for ds in spot_shocks:
-        for dv in vol_shocks:
-            shocked = position_values(positions, spot, rate, dividend, as_of, ds, dv, days)
-            pnl = float(shocked["value"].sum() - base["value"].sum())
-            d_spot = spot * ds
-            taylor = tot["delta_shares"] * d_spot + 0.5 * tot["gamma"] * d_spot ** 2 + tot["vega_per_point"] * dv * 100.0 + tot["theta_per_day"] * days
-            stress.append({"spot_shock": float(ds), "vol_shock": float(dv), "pnl": pnl, "taylor": float(taylor), "residual": pnl - float(taylor)})
+    underlyings = sorted({u for u in base["underlying"].fillna("") if u})
+
+    def grid(rule: str) -> list[dict]:
+        out = []
+        for ds in spot_shocks:
+            for dv in vol_shocks:
+                shocked = position_values(positions, spot, rate, dividend, as_of, ds, dv, days, rule, skew_slope)
+                pnl = float(shocked["value"].sum() - base["value"].sum())
+                att = _attribution(base, ds, dv, days, pnl, rule, skew_slope)
+                taylor = pnl - att["unexplained"]
+                out.append({"spot_shock": float(ds), "vol_shock": float(dv), "pnl": pnl, "taylor": float(taylor), "residual": att["unexplained"], "attribution": att})
+        return out
+    stress = grid(vol_rule)
+    other = "sticky_delta" if vol_rule == "sticky_strike" else "sticky_strike"
+    alt = grid(other)
+    rule_gap = max(abs(a["pnl"] - b["pnl"]) for a, b in zip(stress, alt))
     worst = min(stress, key=lambda r: r["pnl"])
     flags: list[str] = []
     add_flag(flags, tot["gamma"] < 0 and abs(tot["gamma_pnl_1pct"]) > 0.01 * abs(tot["value"]) + 1.0, "net short gamma: losses accelerate in a large move")
     add_flag(flags, tot["vega_per_point"] < 0, "net short vega: a rise in implied volatility loses money")
     add_flag(flags, tot["theta_per_day"] > 0 and tot["gamma"] < 0, "collecting time decay while short gamma: the classic premium-selling profile")
     add_flag(flags, worst["pnl"] < -0.5 * max(abs(tot["delta_dollars"]), 1.0) and worst["pnl"] < 0, f"the worst stress scenario loses {worst['pnl']:,.0f}")
+    add_flag(flags, len(underlyings) > 1, "the stress moves every underlying by the same percentage (a correlation of one): a diversified book is shown as if it were one position")
+    add_flag(flags, skew_slope == 0.0 and rule_gap > 1e-9, "the volatility rule is sticky-strike or sticky-delta with a zero skew slope: set the skew slope to see the rules differ")
     positions_out = [{k: (None if (isinstance(v, float) and not np.isfinite(v)) else v) for k, v in r.items()} for r in base.to_dict("records")]
-    return {"spot": float(spot), "positions": positions_out, "totals": tot, "by_expiry": by_expiry, "stress": stress, "spot_shocks": [float(x) for x in spot_shocks], "vol_shocks": [float(x) for x in vol_shocks],
-            "worst": worst, "risk_flags": flags}
+    return {"spot": float(spot), "positions": positions_out, "totals": tot, "by_expiry": by_expiry, "by_underlying": _group_totals(base, "underlying"), "by_strategy": _group_totals(base, "strategy"),
+            "stress": stress, "stress_other_rule": alt, "vol_rule": vol_rule, "other_rule": other, "rule_gap": float(rule_gap), "vol_rules": VOL_RULES, "skew_slope": float(skew_slope),
+            "spot_shocks": [float(x) for x in spot_shocks], "vol_shocks": [float(x) for x in vol_shocks], "worst": worst, "risk_flags": flags,
+            "assumptions": ["Black-Scholes revaluation of every option at the shocked spot, volatility and date (European exercise: an American option's early-exercise value is not included)",
+                            f"volatility rule: {VOL_RULES[vol_rule]}", "vanna and volga are analytic; the Taylor terms use the Greeks of today"]}
 
 
 # ------------------------------------------------------------------------------------------------------------------ strategies
@@ -1094,6 +1157,73 @@ def _greeks_curve(legs: list[dict], prices: list[float], rate: float, dividend: 
     return {"spot": [round(float(x), 4) for x in s], **{k: [round(float(x), 5) for x in v] for k, v in out.items()}}
 
 
+def chain_skew_slope(chain: pd.DataFrame, dte: float = 30.0) -> float:
+    """The slope of implied volatility against ln(K/F) (volatility per unit) of the expiry nearest ``dte`` days, by least squares over its out-of-the-money quotes within 10% of the forward: the skew a sticky-delta
+    revaluation slides along. Zero if the expiry has too few quotes."""
+    try:
+        q = otm_smile(_expiry_slice(chain, nearest_expiry_to(chain, dte)))
+    except ValueError:
+        return 0.0
+    q = q[np.abs(q["k"]) <= 0.10]
+    if len(q) < 4 or float(np.ptp(q["k"])) <= 0:
+        return 0.0
+    return float(np.polyfit(q["k"].to_numpy(), q["iv"].to_numpy(), 1)[0])
+
+
+def early_exercise_notes(legs: list[dict], spot: float, rate: float, dividend: float, sigma_of, mult: float) -> list[dict]:
+    """Short options that an American-style holder may exercise early: the leg is priced here as European, so where its European value is below its intrinsic value (an in-the-money put with high rates, a deep in-the-money
+    call) exercise is already worth more than holding, and a short call whose time value is below the dividend still to be paid is at risk of assignment before the ex-dividend date."""
+    out = []
+    for l in legs:
+        if l["type"] != "option" or l["quantity"] >= 0:
+            continue
+        call = l["right"] == "C"
+        T = l["dte"] / 365.0
+        eu = float(bsm_price(spot, l["strike"], T, rate, dividend, sigma_of(l), call))
+        intrinsic = max(spot - l["strike"], 0.0) if call else max(l["strike"] - spot, 0.0)
+        if intrinsic <= 0:
+            continue
+        time_value = eu - intrinsic
+        why = None
+        if time_value < 0:
+            why = "the European value is below the intrinsic value: an American holder gains by exercising now"
+        elif call and dividend > 0 and time_value < spot * dividend * T:
+            why = "the time value is less than the dividends still to come: assignment before the ex-dividend date is likely"
+        elif time_value < 0.05 * intrinsic:
+            why = "almost all intrinsic value: little reason for the holder to wait, assignment is plausible"
+        if why:
+            out.append({"leg": f"{l['right']} {l['strike']:g} ({l['dte']}d)", "european_value": eu, "intrinsic": float(intrinsic), "time_value": float(time_value), "why": why})
+    return out
+
+
+def probability_audit(legs, spot, rate, dividend, sigma_of, mult, cost, H, atm_vol, vv, mu, pop, ev, view_given: bool) -> dict:
+    """What the probability of profit rests on. It is an integral of the payoff over ONE assumed distribution of the spot at the horizon (lognormal, one volatility, one drift), so it is a statement about that
+    distribution, not a forecast. With no view given the distribution is the risk-neutral one (drift r - q, the market's at-the-money volatility): its probabilities are the market's prices of states, not
+    real-world frequencies, and they differ from them by the risk premium (equity index puts are priced above the frequency of the falls they insure). The table shows how much the number moves when the
+    volatility and the drift move: a probability that swings by many points across plausible choices is not a precise number."""
+    z = np.linspace(-6.0, 6.0, 1201)
+    w = norm.pdf(z)
+    w = w / w.sum()
+
+    def at(vol: float, drift: float) -> tuple[float, float]:
+        s_T = spot * np.exp((drift - 0.5 * vol ** 2) * H + vol * math.sqrt(H) * z)
+        pnl = sum(_leg_value(l, s_T, H, sigma_of, rate, dividend, mult) for l in legs) - cost
+        return float(w[pnl > 0].sum()), float((w * pnl).sum())
+    rn = rate - dividend
+    table = []
+    for vm in (0.8, 1.0, 1.2):
+        for name, drift in (("risk-neutral drift (r - q)", rn), ("zero drift", 0.0), ("risk-neutral + 6% a year", rn + 0.06)):
+            p, e = at(vv * vm, drift)
+            table.append({"vol_multiple": vm, "vol": float(vv * vm), "drift": name, "prob_profit": p, "expected_value": e})
+    ps = [r["prob_profit"] for r in table]
+    measure = "the view you set (volatility and drift)" if view_given else "risk-neutral (the market's own volatility, drift r - q)"
+    return {"measure": measure, "distribution": "lognormal with a single volatility: no skew, no jumps, no fat tails", "prob_profit": pop, "expected_value": ev, "range": [float(min(ps)), float(max(ps))],
+            "sensitive": bool(max(ps) - min(ps) > 0.10), "table": table, "vol_used_vs_atm": float(vv / atm_vol) if atm_vol else None,
+            "reading": ("the probability moves by more than ten points across plausible volatility and drift: treat it as a range" if max(ps) - min(ps) > 0.10 else "the probability is steady across the volatilities and drifts tried: still conditional on the lognormal shape"),
+            "caveats": ["the profit at a horizon before expiry values the legs left with Black-Scholes at their own volatilities",
+                        "a risk-neutral probability of profit is not the real-world frequency of profit", "with a skewed smile a lognormal under-weights the tail that put-heavy or call-heavy structures depend on"]}
+
+
 def strategy_analysis(legs: list[dict], spot: float, forward: float, atm_vol: float, rate: float = DEFAULT_RATE, dividend: float = 0.0, skew_slope: float = 0.0, view_vol: float | None = None,
                       view_drift: float | None = None, horizon_days: int | None = None, fill: str = "mid", spread_pct: float = 0.05, commission: float = 0.65, mult: float = MULTIPLIER,
                       points: int = 241, cash_secured: bool = False) -> dict:
@@ -1131,6 +1261,9 @@ def strategy_analysis(legs: list[dict], spot: float, forward: float, atm_vol: fl
     exp_pnl = value_at(H) - cost
     now_pnl = value_at(0.0) - cost
     mid_pnl = value_at(H / 2.0) - cost
+    slide = -skew_slope * np.log(np.maximum(s, 1e-9) / spot)                          # sticky-delta: each strike's volatility moves with the smile as the spot moves
+    now_sd = sum(_leg_value(l, s, 0.0, (lambda leg: sigma_of(leg) + slide), rate, dividend, mult) for l in legs) - cost
+    mid_sd = sum(_leg_value(l, s, H / 2.0, (lambda leg: sigma_of(leg) + slide), rate, dividend, mult) for l in legs) - cost
     # extremes: finite where the curve is flat beyond the strikes; unlimited where its slope is not
     top_slope = sum(l["quantity"] * (mult if l["right"] == "C" else 0.0) for l in opts) + sum(l["quantity"] for l in legs if l["type"] == "stock") if not any(l["dte"] > horizon_d for l in opts) else None
     if top_slope is None:                                                           # later legs still have value at the horizon: read the slope from the curve instead
@@ -1162,6 +1295,7 @@ def strategy_analysis(legs: list[dict], spot: float, forward: float, atm_vol: fl
     pnl_T = sum(_leg_value(l, s_T, H, sigma_of, rate, dividend, mult) for l in legs) - cost
     pop = float(w[pnl_T > 0].sum())
     ev = float((w * pnl_T).sum())
+    probability = probability_audit(legs, spot, rate, dividend, sigma_of, mult, cost, H, atm_vol, vv, mu, pop, ev, view_given=view_vol not in (None, "") or view_drift not in (None, ""))
     greeks = position_values([{**l, "iv": sigma_of(l)} if l["type"] == "option" else l for l in legs], spot, rate, dividend, pd.Timestamp.today().normalize())
     g = {"delta_shares": float(greeks["delta"].sum()), "delta_dollars": float(greeks["delta"].sum() * spot), "gamma": float(greeks["gamma"].sum()), "gamma_pnl_1pct": float(0.5 * greeks["gamma"].sum() * (0.01 * spot) ** 2),
          "vega_per_point": float(greeks["vega"].sum()), "theta_per_day": float(greeks["theta"].sum()), "rho_per_1pct": float(greeks["rho"].sum())}
@@ -1175,9 +1309,13 @@ def strategy_analysis(legs: list[dict], spot: float, forward: float, atm_vol: fl
     add_flag(flags, not margin["defined_risk"] and not margin["cash_secured"], "naked short options: margin and gap risk are large, and the estimate is indicative only")
     return {"legs": legs_out, "cost": float(cost), "net_debit": float(max(cost, 0.0)), "net_credit": float(max(-cost, 0.0)), "horizon_days": horizon_d, "spot": float(spot), "forward": float(forward),
             "max_profit": max_profit, "max_loss": max_loss, "unlimited_profit": unlimited_profit, "unlimited_loss": unlimited_loss, "breakevens": _breakevens(s, exp_pnl), "greeks": g,
-            "margin": {**margin, "estimate": float(margin_total)}, "prob_profit": pop, "expected_value": ev, "view_vol": vv, "view_drift": mu,
+            "margin": {**margin, "estimate": float(margin_total)}, "prob_profit": pop, "expected_value": ev, "probability": probability, "view_vol": vv, "view_drift": mu,
             "reward_risk": (max_profit / risk if (max_profit is not None and risk) else None),
-            "curve": {"spot": [round(float(x), 4) for x in s], "expiry": [round(float(x), 2) for x in exp_pnl], "now": [round(float(x), 2) for x in now_pnl], "half": [round(float(x), 2) for x in mid_pnl]},
+            "curve": {"spot": [round(float(x), 4) for x in s], "expiry": [round(float(x), 2) for x in exp_pnl], "now": [round(float(x), 2) for x in now_pnl], "half": [round(float(x), 2) for x in mid_pnl],
+                      "now_sticky_delta": [round(float(x), 2) for x in now_sd], "half_sticky_delta": [round(float(x), 2) for x in mid_sd]},
+            "volatility_rules": {"drawn": {"now": "sticky_strike", "half": "sticky_strike"}, "also": "sticky_delta", "skew_slope": float(skew_slope), "rules": VOL_RULES, "max_gap_now": float(np.max(np.abs(now_sd - now_pnl))),
+                                 "note": "the T+0 and half-way lines hold each leg's volatility fixed (sticky-strike); the sticky-delta lines let it follow the smile with the skew slope" + ("" if skew_slope else " (the skew slope is zero, so the two coincide: set it to see them differ)")},
+            "early_exercise": early_exercise_notes(legs, spot, rate, dividend, sigma_of, mult),
             "density": density, "grid": grid, "greeks_curve": gcurve, "risk_flags": flags}
 
 

@@ -85,11 +85,11 @@ class AssetApi:
     def get_routes(self) -> dict:
         return {"/api/assets/catalog": self.catalog, "/api/options/chain": self.options_chain, "/api/options/surface": self.options_surface, "/api/options/distribution": self.options_distribution,
                 "/api/options/positioning": self.options_positioning, "/api/options/surface/research": self.options_surface_research, "/api/futures/curve": self.futures_curve,
-                "/api/futures/roll": self.futures_roll, "/api/futures/research": self.futures_research, "/api/futures/spread": self.futures_spread, "/api/experiments": self.experiments_list, "/api/experiments/get": self.experiments_get, "/api/futures/series": self.futures_series, "/api/crypto/overview": self.crypto_overview, "/api/crypto/funding": self.crypto_funding, "/api/crypto/cross-exchange": self.crypto_cross_exchange}
+                "/api/futures/roll": self.futures_roll, "/api/futures/research": self.futures_research, "/api/futures/spread": self.futures_spread, "/api/experiments": self.experiments_list, "/api/options/history": self.options_history, "/api/experiments/get": self.experiments_get, "/api/futures/series": self.futures_series, "/api/crypto/overview": self.crypto_overview, "/api/crypto/funding": self.crypto_funding, "/api/crypto/cross-exchange": self.crypto_cross_exchange}
 
     def post_routes(self) -> dict:
         return {"/api/options/portfolio-risk": self.options_portfolio_risk, "/api/options/strategy/payoff": self.options_strategy_payoff, "/api/options/strategy/backtest": self.options_strategy_backtest,
-                "/api/options/strategy/sweep": self.options_strategy_sweep, "/api/options/strategy/walkforward": self.options_strategy_walkforward, "/api/options/strategy/compare": self.options_strategy_compare, "/api/futures/margin": self.futures_margin, "/api/experiments/save": self.experiments_save, "/api/experiments/delete": self.experiments_delete, "/api/experiments/compare": self.experiments_compare, "/api/futures/strategy/backtest": self.futures_strategy_backtest, "/api/futures/signals": self.futures_signals, "/api/crypto/signals": self.crypto_signals, "/api/crypto/strategy/backtest": self.crypto_strategy_backtest}
+                "/api/options/strategy/sweep": self.options_strategy_sweep, "/api/options/strategy/walkforward": self.options_strategy_walkforward, "/api/options/strategy/compare": self.options_strategy_compare, "/api/futures/margin": self.futures_margin, "/api/experiments/save": self.experiments_save, "/api/options/snapshot": self.options_snapshot, "/api/experiments/delete": self.experiments_delete, "/api/experiments/compare": self.experiments_compare, "/api/futures/strategy/backtest": self.futures_strategy_backtest, "/api/futures/signals": self.futures_signals, "/api/crypto/signals": self.crypto_signals, "/api/crypto/strategy/backtest": self.crypto_strategy_backtest}
 
     # ------------------------------------------------------------------------------------------------------------ user files
     def _user_files(self, folder: str) -> dict[str, Path]:
@@ -397,8 +397,11 @@ class AssetApi:
             if kind not in ("option", "stock"):
                 raise ApiError(f"position {i + 1}: type must be option or stock")
             qty = _number(p, "quantity", 0.0, -1e6, 1e6)
+            tags = {k: str(p[k])[:24] for k in ("underlying", "strategy") if p.get(k)}
+            if p.get("spot") not in (None, ""):
+                tags["spot"] = _number(p, "spot", 0.0, 0.0001, 1e9)
             if kind == "stock":
-                out.append({"type": "stock", "quantity": qty})
+                out.append({"type": "stock", "quantity": qty, **tags})
                 continue
             right = _choice(p, "right", "C", ("C", "P", "c", "p")).upper()
             strike = _number(p, "strike", 0.0, 0.01, 1e7)
@@ -412,8 +415,10 @@ class AssetApi:
             listed = oa.nearest_expiry_to(chain, (exp - as_of).days)
             iv = _number(p, "iv", 0.0, 0.0, 5.0) if p.get("iv") not in (None, "") else 0.0
             if iv <= 0:
+                if "spot" in tags:
+                    raise ApiError(f"position {i + 1}: a position with its own spot needs its own iv (the chain loaded is for {chain.attrs.get('underlying', 'another underlying')})")
                 iv = oa.iv_lookup(chain, listed, strike)
-            out.append({"type": "option", "right": right, "strike": strike, "quantity": qty, "expiry": str(exp.date()), "iv": float(iv)})
+            out.append({"type": "option", "right": right, "strike": strike, "quantity": qty, "expiry": str(exp.date()), "iv": float(iv), **tags})
         return out
 
     def options_portfolio_risk(self, body: dict) -> dict:
@@ -426,7 +431,8 @@ class AssetApi:
         vol_shocks = _floats(body, "vol_shocks", [-0.05, 0.0, 0.05], -0.5, 1.0)
         days = _number(body, "days", 0.0, 0, 365)
         try:
-            risk = oa.portfolio_risk(positions, ctx.spot, float(chain["rate"].iloc[0]), float(chain["dividend"].iloc[0]), ctx.as_of, spot_shocks, vol_shocks, days)
+            risk = oa.portfolio_risk(positions, ctx.spot, float(chain["rate"].iloc[0]), float(chain["dividend"].iloc[0]), ctx.as_of, spot_shocks, vol_shocks, days,
+                                     _choice(body, "vol_rule", "sticky_strike", tuple(oa.VOL_RULES)), _number(body, "skew_slope", 0.0, -3.0, 3.0))
         except ValueError as exc:
             raise ApiError(str(exc)) from None
         return _wrap("options_portfolio_risk", {"underlying": underlying, **risk}, {"prices": "platform" if simulated else source, "volatilities": source},
@@ -456,7 +462,7 @@ class AssetApi:
             view_drift = None if body.get("view_drift") in (None, "") else _number(body, "view_drift", 0.0, -2.0, 2.0)
             horizon = None if body.get("horizon_days") in (None, "") else _number(body, "horizon_days", built["dte"], 1, 800, integer=True)
             common = {"rate": float(chain["rate"].iloc[0]), "dividend": float(chain["dividend"].iloc[0]), "view_vol": view_vol, "view_drift": view_drift, "horizon_days": horizon,
-                      "fill": _choice(body, "fill", "mid", ("mid", "worst")), "spread_pct": _number(body, "spread_pct", 0.05, 0.0, 1.0), "commission": _number(body, "commission", 0.65, 0.0, 50.0)}
+                      "skew_slope": _number(body, "skew_slope", oa.chain_skew_slope(chain, dte), -5.0, 5.0), "fill": _choice(body, "fill", "mid", ("mid", "worst")), "spread_pct": _number(body, "spread_pct", 0.05, 0.0, 1.0), "commission": _number(body, "commission", 0.65, 0.0, 50.0)}
             result = oa.strategy_analysis(legs, ctx.spot, built["forward"], atm, cash_secured=(name == "cash_secured_put"), **common)
             unknown = [x for x in others if x not in oa.STRATEGY_INFO]
             if unknown:
@@ -708,6 +714,57 @@ class AssetApi:
         warn = [] if diag["stationary_at_5pct"] else ["The spread does not pass the stationarity test at 5%: the backtest below is a test of a hypothesis the data do not support."]
         return _wrap("futures_spread", out, {"prices": common.overall_source({r: c.source for r, c in ((a, ca), (b, cb))})}, warn, frame.index[-1], ca.notes + cb.notes,
                      provenance={"instrument": f"{a}/{b} excess-return spread", "assumptions": ["legs are the log excess-return indices of the front contract (roll days 5)", "costs are one flat figure in basis points of traded notional"]})
+
+    # ------------------------------------------------------------------------------------------------------------ chain history and calibration stability
+    def options_snapshot(self, body: dict) -> dict:
+        """``POST /api/options/snapshot``: keep today's chain of an underlying (one file per date) so that calibrations can be followed through time. A simulated chain is refused unless ``simulated`` is true."""
+        from ..assets.option_history import History
+        underlying, rate, dividend, premium = self._option_params(body)
+        chain, ctx, source, notes = self._option_chain(underlying, rate, dividend, premium)
+        if source == "simulated" and not body.get("simulated"):
+            raise ApiError("this chain is simulated: its parameters are set by the platform, so a history of it says nothing about a market. Download a real chain (the Free data card) or send simulated=true to keep it knowingly")
+        try:
+            out = History(self.root).save(underlying, chain, ctx.as_of, source)
+        except ValueError as exc:
+            raise ApiError(str(exc)) from None
+        return _wrap("options_snapshot", out, {"chain": source}, [], ctx.as_of, notes)
+
+    def options_history(self, q: dict) -> dict:
+        """``GET /api/options/history?underlying=SPY&model=heston``: the dates kept and, with at least three, how the parameters of a model move from one date to the next (each calibration starts from the previous
+        one) and how stable they are. With fewer dates the answer says how many more are needed instead of a number."""
+        from ..assets.option_history import History
+        from ..derivatives import calibration as cal, model_validation as mv
+        underlying = str(q.get("underlying") or "SPY")
+        model = _choice(q, "model", "heston", ("heston", "merton", "kou", "vg", "nig", "bs"))
+        try:
+            hist = History(self.root)
+            dates = hist.dates(underlying)
+        except ValueError as exc:
+            raise ApiError(str(exc)) from None
+        out: dict = {"underlying": underlying, "dates": dates, "snapshots": hist.meta(underlying), "model": model, "needed": max(3 - len(dates), 0)}
+        warnings: list[str] = []
+        if len(dates) < 3:
+            out["stability"] = None
+            warnings.append(f"{len(dates)} dated chains are kept; stability needs at least 3 (take a snapshot on each trading day: one chain per date is all a free source gives).")
+        else:
+            quotes, used = [], []
+            for d in dates[-30:]:
+                try:
+                    quotes.append(cal.quotes_from_chain(hist.load(underlying, d)))
+                    used.append(d)
+                except ValueError as exc:
+                    warnings.append(f"{d}: skipped ({exc})")
+            if len(quotes) < 3:
+                out["stability"] = None
+                warnings.append("fewer than three of the kept chains have enough quotes to calibrate")
+            else:
+                try:
+                    out["stability"] = mv.stability(model, quotes, used)
+                except ValueError as exc:
+                    raise ApiError(str(exc)) from None
+        kinds = {m["source"] for m in out["snapshots"]}
+        return _wrap("options_history", out, {"chain": "simulated" if kinds == {"simulated"} else "downloaded" if kinds <= {"downloaded"} else "mixed"}, warnings, pd.Timestamp(dates[-1]) if dates else None,
+                     ["Each calibration starts from the previous one, which makes the path smoother than independent fits would be; the instability measure is the mean day-to-day change of each parameter over its range."])
 
     # ------------------------------------------------------------------------------------------------------------ saved experiments
     def _experiments(self):
