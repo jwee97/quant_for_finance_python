@@ -22,7 +22,7 @@ from tests.test_webapp_data import CBOE, YAHOO, _crypto_routes, yahoo_route
 
 sync_api = pytest.importorskip("playwright.sync_api")
 
-SOURCES = {"Platform data", "Your file", "Downloaded: free data", "Simulated: a model", "Mixed sources"}
+SOURCES = {"Platform data", "Your file", "Downloaded: free data", "Simulated: a model", "Mixed sources", "Synthetic", "Delayed observed", "Historical observed", "Calibrated model", "Live observed"}
 
 
 def _start(tmp_path_factory, tag):
@@ -98,7 +98,7 @@ def _wait_until(page, expression, timeout=60.0):
 
 
 # ------------------------------------------------------------------------------------------------------ options, futures and crypto
-@pytest.mark.parametrize("tab, ready, expected", [("options", "#options-results .tile", {"Simulated: a model", "Mixed sources"}), ("futures", "#futures-results .tile", {"Simulated: a model", "Mixed sources"}),
+@pytest.mark.parametrize("tab, ready, expected", [("options", "#options-results .tile", {"Simulated: a model", "Synthetic", "Mixed sources"}), ("futures", "#futures-results .tile", {"Simulated: a model", "Synthetic", "Mixed sources"}),
                                                   ("crypto", "#crypto-results .tile", {"Mixed sources"})])
 def test_each_asset_tab_opens_on_a_read_only_view_that_says_where_its_numbers_come_from(ws, tab, ready, expected):
     ws.click(f"#tab-{tab}")
@@ -164,7 +164,7 @@ def test_the_options_positioning_view_maps_open_interest_walls_and_gamma(ws):
     pills = ws.locator("#options-results .filters .tabsmall button")
     assert pills.nth(0).inner_text() == "All expiries" and pills.nth(0).get_attribute("aria-pressed") == "true"
     pills.nth(4).click()
-    _wait_until(ws, "document.querySelectorAll('#options-results .earnrow .tile').length > 5", timeout=120.0)
+    _wait_until(ws, "document.querySelector('#options-results .earnrow') && document.querySelector('#options-results .earnrow').innerText.includes('Max pain')", timeout=120.0)
     assert "Max pain" in ws.inner_text("#options-results .earnrow")                                                         # an expiry has one; all of them together do not
     assert chart_points(ws.locator("#options-results")) > 20
 
@@ -285,6 +285,22 @@ def test_the_futures_backtest_lists_strategies_by_group_with_their_settings_and_
     for i in (1, 2, 3):
         boxes.nth(i).uncheck()
     assert ws.locator("#futures .runbar button.primary").is_disabled() and "at least two roots" in ws.inner_text("#futures .runbar")                    # a cross-sectional strategy needs two roots
+
+
+def test_the_futures_research_and_spread_views_draw_and_refuse_simulated_legs_unless_allowed(ws):
+    ws.click("#tab-futures")
+    ws.wait_for_selector("#futures-results .tile", timeout=90_000)
+    _mode(ws, "futures", "research")
+    ws.wait_for_selector("#futures-results [data-role=liquidity]", timeout=180_000)
+    text = ws.inner_text("#futures-results")
+    assert "Calendar spread" in text and "Expiry and roll calendar" in text and ws.locator("#futures-results [data-role=expiry-calendar] tbody tr").count() >= 6
+    _mode(ws, "futures", "spread")
+    _open_all(ws, "view-futures")
+    ws.check("#view-futures input[data-key=sSim]")
+    _run(ws, "futures")
+    ws.wait_for_selector("#futures-results [data-role=realism]", timeout=300_000)
+    text = ws.inner_text("#futures-results")
+    assert "Stationarity (ADF)" in text and "Realism: simplified" in text and "hypothesis" in text and ws.locator("#futures-results svg.chart").count() >= 2
 
 
 def test_the_futures_signals_board_reads_every_rule_on_every_root(ws):
@@ -842,3 +858,21 @@ def test_a_strategy_backtest_on_each_market_tab_says_what_it_bought_and_sold(ws,
         assert "About how many" in text or "there is no count of units" in text
     else:
         assert "Contracts" in text and card.locator("[data-role=actions-simulated]").count() == 1 and ("Put " in text or "Call " in text) and "Open contracts" not in card.locator("[data-role=actions-orders]").inner_text()
+
+
+def test_the_options_views_are_arranged_in_four_workflows_and_the_new_research_views_draw(ws):
+    ws.click("#tab-options")
+    ws.wait_for_selector("#options-results .tile", timeout=90_000)
+    groups = ws.locator("#options .labtop .tabgroup .tabgroup-label").all_inner_texts()
+    assert [g.lower() for g in groups] == [x.lower() for x in ["Market intelligence", "Model laboratory", "Strategy studio", "Portfolio and validation"]]
+    assert ws.locator("#options .labtop [role=tab]").count() >= 14, "every earlier view keeps its own button"
+    _mode(ws, "options", "research")
+    ws.wait_for_selector("#options-results [data-role=svi-slices]", timeout=120_000)
+    text = ws.inner_text("#options-results")
+    assert "What is not guaranteed" in text and ws.locator("#options-results [data-role=svi-residuals]").count() == 1 and ws.locator("#options-results .banner.err").count() == 0
+    kind = ws.locator("#options-results [data-role=provenance-kind]").first
+    assert kind.get_attribute("data-kind") in ("synthetic", "mixed") and "Simulated" in text or "Synthetic" in text
+    _mode(ws, "options", "positioning")
+    ws.wait_for_selector("#options-results [data-role=gex-scenarios]", timeout=120_000)
+    assert "How much the assumption matters" in ws.inner_text("#options-results") and "Gross gamma (observed)" in ws.inner_text("#options-results")
+    assert [p for p in ws.problems if not p.startswith("HTTP 400")] == []

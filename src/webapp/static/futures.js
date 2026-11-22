@@ -13,16 +13,18 @@
   const F = {
     id: "futures", root: "#futures", view: "#view-futures", title: "Futures", api: 12, mode: "curve", busy: "", results: {}, errors: {}, cache: new Map(), guard: null, go: null, progress: null,
     about: "Read a futures curve, decide when to roll, see carry and basis, read the price history of any futures product, check the margin of a book and test a strategy on several roots. The prices are a model unless you download real data (below) or bring a file.",
-    modes: [["curve", "Curve"], ["roll", "Roll"], ["carry", "Carry and basis"], ["history", "History"], ["margin", "Margin"], ["backtest", "Backtest"], ["signals", "Signals"]],
-    runLabel: { curve: "Refresh", roll: "Refresh", carry: "Refresh", history: "Refresh", margin: "Check the margin", backtest: "Run the backtest", signals: "Read the signals" },
+    modes: [["curve", "Curve"], ["roll", "Roll"], ["carry", "Carry and basis"], ["history", "History"], ["margin", "Margin"], ["backtest", "Backtest"], ["signals", "Signals"], ["research", "Term-structure research"], ["spread", "Spread lab"]],
+    runLabel: { curve: "Refresh", roll: "Refresh", carry: "Refresh", history: "Refresh", margin: "Check the margin", backtest: "Run the backtest", signals: "Read the signals", research: "Refresh", spread: "Run the spread lab" },
     blurb: { curve: "Price by contract month, how the curve has moved, how its shape changed through time, what moves it (its principal components), the roll yield of each contract and the contract specification.",
       roll: "Which contract you hold, the next one, the suggested roll date (by calendar and by open interest), what the roll costs, and the rolls of the past.",
       carry: "Carry (the annualised roll yield) through time against the range of its own last year, its average in each calendar month, and the basis: how far a futures price sits from the spot price.",
       history: "The daily price history of a futures product downloaded from iTick or Yahoo Finance: returns, volatility, drawdown, the calendar months and the biggest one-day moves. It is one price series, so there is no curve, roll or carry here.",
       margin: "Notional, initial and maintenance margin, leverage and the distance to a margin call for a book of futures, with warnings for heavy use, concentration and contracts close to expiry.",
       backtest: "Trade carry, trend, breakout, skewness or a mix across the roots through the platform's pipeline, with the strategy's own settings: costed, lagged and volatility-targeted like any other backtest, with the risk measures and how the book was spread.",
+      research: "The curve as a research object: every calendar spread, the history and z-score of one, contango and backwardation regimes, how the curve changed, liquidity by contract, the expiry and roll calendar and other markets' shapes beside it.",
+      spread: "A relative-value bench for two roots: hedge ratio, stationarity and cointegration tests, half-life, rolling correlation, seasonality, regimes and a walk-forward mean-reversion backtest with its realism label. A statistical relationship is a hypothesis, not an arbitrage.",
       signals: "What every rule says about every root today (trend of several kinds, carry, basis momentum, skewness, the variance-ratio switch), each as a strength against its own usual size, and where the rules agree." },
-    form: { root: "CL", series: "", rollDays: "5", spacing: "21", dates: "3", contracts: "12", book: [], equity: "100000", scale: "1", near: "7", strategy: "carry_ts", params: {}, roots: new Set(["CL", "NG", "GC", "HG", "ES"]), data: "simulated", realRoots: null, frequency: "weekly", targetVol: "", cost: "2" },
+    form: { root: "CL", series: "", rollDays: "5", spacing: "21", dates: "3", contracts: "12", book: [], equity: "100000", scale: "1", near: "7", strategy: "carry_ts", params: {}, roots: new Set(["CL", "NG", "GC", "HG", "ES"]), data: "simulated", rNear: "1", rFar: "2", rCompare: "NG", sA: "CL", sB: "NG", sLookback: "126", sEntry: "2", sExit: "0.5", sStop: "4", sCost: "3", sSim: false, realRoots: null, frequency: "weekly", targetVol: "", cost: "2" },
     catalog: null,
   };
   const contractColor = W.palette();
@@ -117,6 +119,8 @@
   /* ---------- the form ---------- */
   F.check = () => {
     if (!F.catalog) return "Loading the list of roots…";
+    if (F.mode === "spread" && F.form.sA === F.form.sB) return "Choose two different roots.";
+    if (F.mode === "research" && Number(F.form.rFar) <= Number(F.form.rNear)) return "The far contract must be later than the near one.";
     if (F.mode === "history" && !F.form.series) return "Download a product first (the card below: choose Yahoo's search or iTick).";
     if (F.mode === "backtest" || F.mode === "signals") {
       const chosen = F.form.data === "real" ? realChosen() : F.form.roots, info = strategyInfo(F.form.strategy);
@@ -140,6 +144,25 @@
         Q.labField(b, { key: "dates", label: "How many curves", kind: "choice", options: [["2", "2"], ["3", "3"], ["4", "4"], ["5", "5"], ["6", "6"]] }, f, () => F.run(true));
         Q.labField(b, { key: "contracts", label: "Contracts shown", kind: "choice", options: [["6", "the nearest 6"], ["12", "the nearest 12"], ["24", "the nearest 24"], ["60", "the nearest 60"], ["0", "every contract the file has"]], help: "How far out the forward curve and its table go. The shape through time follows up to 24 contract months; what moves the curve stays on the nearest 8" }, f, () => F.run(true));
       }
+    }
+    if (m === "research") {
+      const b = sec("1. Root and spread"), opts = cat.futures_roots.map((r) => [r.id, `${r.id}: ${r.name}`]);
+      Q.labField(b, { key: "root", label: "Futures root", kind: "choice", options: opts }, f, () => F.run(true));
+      Q.labField(b, { key: "rNear", label: "Near contract (rank)", kind: "number", step: 1, min: 1, max: 12 }, f, () => F.run(true));
+      Q.labField(b, { key: "rFar", label: "Far contract (rank)", kind: "number", step: 1, min: 2, max: 24 }, f, () => F.run(true));
+      Q.labField(b, { key: "rCompare", label: "Compare with (roots, comma separated)", kind: "text" }, f, () => F.run(true));
+    }
+    if (m === "spread") {
+      const b = sec("1. The two legs"), opts = cat.futures_roots.map((r) => [r.id, `${r.id}: ${r.name}${r.source === "simulated" ? " (simulated)" : ""}`]);
+      Q.labField(b, { key: "sA", label: "Leg A", kind: "choice", options: opts }, f, after);
+      Q.labField(b, { key: "sB", label: "Leg B", kind: "choice", options: opts }, f, after);
+      Q.labField(b, { key: "sSim", label: "Allow simulated curves", kind: "bool", help: "Off: a root without a real curve is refused instead of being replaced by the model. On: the provenance badge says the result is simulated." }, f, after);
+      const t = sec("2. Walk-forward rule", false);
+      Q.labField(t, { key: "sLookback", label: "Lookback (days)", kind: "number", step: 1, min: 40, max: 750 }, f, after);
+      Q.labField(t, { key: "sEntry", label: "Enter beyond |z|", kind: "number", step: 0.1, min: 0.5, max: 6 }, f, after);
+      Q.labField(t, { key: "sExit", label: "Exit within |z|", kind: "number", step: 0.1, min: 0, max: 3 }, f, after);
+      Q.labField(t, { key: "sStop", label: "Stop beyond |z|", kind: "number", step: 0.1, min: 1, max: 10 }, f, after);
+      Q.labField(t, { key: "sCost", label: "Cost (basis points of traded notional)", kind: "number", step: 0.5, min: 0, max: 100 }, f, after);
     }
     if (m === "history") {
       const b = sec("1. Product"), list = cat.futures_series || [];
@@ -232,6 +255,13 @@
         return steps;
       }, "Reading the curve…");
     }
+    if (m === "research") return W.request(F, () => {
+      const q = { root: f.root, near: Number(f.rNear), far: Number(f.rFar), compare: f.rCompare }; return [{ modes: ["research"], path: "/api/futures/research", query: q, cacheKey: key("research", q) }];
+    }, "Reading the term structure…");
+    if (m === "spread") return W.request(F, () => {
+      const q = { a: f.sA, b: f.sB, lookback: Number(f.sLookback), entry: Number(f.sEntry), exit: Number(f.sExit), stop: Number(f.sStop), cost_bps: Number(f.sCost), simulated: f.sSim ? 1 : 0 };
+      return [{ modes: ["spread"], path: "/api/futures/spread", query: q, cacheKey: key("spread", q) }];
+    }, "Testing the spread…");
     if (m === "history") {
       return W.request(F, () => {
         if (!f.series) throw new Error("Download a product first");
@@ -248,16 +278,17 @@
     return W.request(F, () => [{ modes: ["backtest"], job: true, path: "/api/futures/strategy/backtest", body: { strategy: f.strategy, data: f.data, roots: f.data === "real" ? [...realChosen()] : [...f.roots], frequency: f.frequency, params: f.params[f.strategy] || {},
       target_vol: f.targetVol === "" ? undefined : Number(f.targetVol) / 100, cost_bps: Number(f.cost) } }], "Running the backtest…");
   };
-  F.auto = () => { if ((CURVE_MODES.has(F.mode) || (F.mode === "history" && F.form.series)) && F.catalog) F.run(true); };
+  F.auto = () => { if ((CURVE_MODES.has(F.mode) || F.mode === "research" || (F.mode === "history" && F.form.series)) && F.catalog) F.run(true); };
   F.empty = (root) => {
     const text = { history: ["Read a price history", "Download a futures product with iTick (the card below: choose iTick, search, press Download real data) and its returns, volatility, drawdown and biggest moves appear here."],
       margin: ["Check the margin of a book", "Add the contracts you hold (or load the example) to see the notional, the margin they need, the leverage and how far you are from a margin call."],
       backtest: ["Backtest a futures strategy", "Carry, trend, breakout, skewness or a mix across the roots, with the strategy's own settings, costed and lagged like every other backtest here. On the simulated roots the prices are a model, so it checks the machinery, not the strategy; on a real curve (VX, Deribit) it is a backtest."],
+      spread: ["Test a spread", "Choose two roots and press Run the spread lab: hedge ratio, stationarity and cointegration tests, half-life and a walk-forward backtest. Roots without a real curve are refused unless you allow simulated ones."],
       signals: ["Read what the rules say today", "Every trend rule, carry, basis momentum, skewness and the variance-ratio switch, on every root you tick, each as a strength against its own usual size, and where they agree."] }[F.mode] || ["Read the curve", "Loading."];
     Q.labEmpty(root, F, text[0], [text[1]], F.runLabel[F.mode]);
   };
   F.draw = () => Q.drawLab(F);
-  F.build = (root, d, body) => ({ curve: buildCurve, roll: buildRoll, carry: buildCarry, history: buildHistory, margin: buildMargin, backtest: buildBacktest, signals: buildSignals })[F.mode](root, d, body);
+  F.build = (root, d, body) => ({ curve: buildCurve, roll: buildRoll, carry: buildCarry, history: buildHistory, margin: buildMargin, backtest: buildBacktest, signals: buildSignals, research: (r, d) => window.FuturesResearch.research(r, d, { header, nameOf: (x) => x.root }), spread: (r, d) => window.FuturesResearch.spread(r, d, { header, simulated: F.form.sSim }) })[F.mode](root, d, body);
   const header = (root, title, sub) => Q.labHead(root, title, sub, GUIDE);
 
   /* ---------- curve ---------- */

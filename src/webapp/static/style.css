@@ -746,3 +746,8 @@ table.obs td:nth-child(2) { white-space: normal; max-width: 280px; }
 .prov .fresh-stale { border-color: var(--warn, #c80); color: var(--warn, #c80); }
 .prov .fresh-fresh { border-color: var(--good, #2a7); }
 .prov .src.kind-synthetic { outline: 1px dashed var(--warn, #c80); }
+
+/* a workspace's views arranged in named workflows */
+.tabsmall .tabgroup { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-right: 14px; padding-right: 10px; border-right: 1px solid var(--axis); }
+.tabsmall .tabgroup:last-child { border-right: 0; }
+.tabsmall .tabgroup-label { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin-right: 4px; }

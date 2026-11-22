@@ -83,7 +83,7 @@ def test_the_fit_says_it_is_a_model_fitted_to_a_model_and_flags_what_deserves_ca
 
 def test_the_smiles_line_up_with_the_models_and_the_best_one_follows_the_market(fitted):
     smiles = fitted["smiles"]
-    assert 2 <= len(smiles) <= 5 and smiles == sorted(smiles, key=lambda s: s["dte"]), "up to four spread along the curve, and the 30-day expiry the density is drawn for"
+    assert 2 <= len(smiles) <= 7 and smiles == sorted(smiles, key=lambda s: s["dte"]), "up to six spread along the curve, and the 30-day expiry the density is drawn for"
     assert any(abs(s["dte"] - fitted["density"]["dte"]) < 1e-6 for s in smiles), "the smile of the expiry the density describes is among them"
     for s in smiles:
         n = len(s["strike"])

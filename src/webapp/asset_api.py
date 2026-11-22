@@ -85,11 +85,11 @@ class AssetApi:
     def get_routes(self) -> dict:
         return {"/api/assets/catalog": self.catalog, "/api/options/chain": self.options_chain, "/api/options/surface": self.options_surface, "/api/options/distribution": self.options_distribution,
                 "/api/options/positioning": self.options_positioning, "/api/options/surface/research": self.options_surface_research, "/api/futures/curve": self.futures_curve,
-                "/api/futures/roll": self.futures_roll, "/api/futures/research": self.futures_research, "/api/futures/series": self.futures_series, "/api/crypto/overview": self.crypto_overview, "/api/crypto/funding": self.crypto_funding, "/api/crypto/cross-exchange": self.crypto_cross_exchange}
+                "/api/futures/roll": self.futures_roll, "/api/futures/research": self.futures_research, "/api/futures/spread": self.futures_spread, "/api/experiments": self.experiments_list, "/api/experiments/get": self.experiments_get, "/api/futures/series": self.futures_series, "/api/crypto/overview": self.crypto_overview, "/api/crypto/funding": self.crypto_funding, "/api/crypto/cross-exchange": self.crypto_cross_exchange}
 
     def post_routes(self) -> dict:
         return {"/api/options/portfolio-risk": self.options_portfolio_risk, "/api/options/strategy/payoff": self.options_strategy_payoff, "/api/options/strategy/backtest": self.options_strategy_backtest,
-                "/api/options/strategy/sweep": self.options_strategy_sweep, "/api/options/strategy/walkforward": self.options_strategy_walkforward, "/api/options/strategy/compare": self.options_strategy_compare, "/api/futures/margin": self.futures_margin, "/api/futures/strategy/backtest": self.futures_strategy_backtest, "/api/futures/signals": self.futures_signals, "/api/crypto/signals": self.crypto_signals, "/api/crypto/strategy/backtest": self.crypto_strategy_backtest}
+                "/api/options/strategy/sweep": self.options_strategy_sweep, "/api/options/strategy/walkforward": self.options_strategy_walkforward, "/api/options/strategy/compare": self.options_strategy_compare, "/api/futures/margin": self.futures_margin, "/api/experiments/save": self.experiments_save, "/api/experiments/delete": self.experiments_delete, "/api/experiments/compare": self.experiments_compare, "/api/futures/strategy/backtest": self.futures_strategy_backtest, "/api/futures/signals": self.futures_signals, "/api/crypto/signals": self.crypto_signals, "/api/crypto/strategy/backtest": self.crypto_strategy_backtest}
 
     # ------------------------------------------------------------------------------------------------------------ user files
     def _user_files(self, folder: str) -> dict[str, Path]:
@@ -676,6 +676,83 @@ class AssetApi:
         out["spec"] = {"name": data.spec.name, "exchange": data.spec.exchange, "multiplier": data.spec.multiplier, "tick_size": data.spec.tick_size, "tick_value": data.spec.tick_value, "expiry_rule": data.spec.rule}
         return _wrap("futures_research", out, self._curve_parts(data, margins=False), [], data.as_of, data.notes + ["A calendar spread is a price difference between two contracts, not a profit or a cost of anything until a position is opened and closed."],
                      provenance={"instrument": f"{data.root} futures", "assumptions": ["contract identifiers and expiries follow the exchange rule for the root (holidays not modelled)", "ranks (F1, F2 ...) are rebuilt on every date from the contracts then alive"]})
+
+    def futures_spread(self, q: dict) -> dict:
+        """``GET /api/futures/spread?a=CL&b=NG&lookback=126&entry=2&exit=0.5&stop=4&cost_bps=3&simulated=0``: the relative-value bench for the spread ``ln I_A - beta ln I_B`` of two roots' excess-return indices:
+        hedge ratio (OLS, total least squares, rolling), stationarity and cointegration tests, half-life, rolling correlation, seasonality, regimes and a walk-forward mean-reversion backtest. A simulated curve is
+        refused unless ``simulated=1`` is sent, and then the provenance says so."""
+        from ..assets import spread_lab as sl
+        a, b = str(q.get("a") or "CL").upper(), str(q.get("b") or "NG").upper()
+        if a == b:
+            raise ApiError("choose two different roots")
+        ca, cb = self._curve(a), self._curve(b)
+        allow = str(q.get("simulated") or "0") in ("1", "true")
+        sims = [c.root for c in (ca, cb) if c.source == "simulated"]
+        if sims and not allow:
+            raise ApiError(f"{', '.join(sims)} has no real curve (simulated data would be used): download or upload it, or send simulated=1 to study the simulated curve knowingly")
+        lookback = _number(q, "lookback", 126, 40, 750, integer=True)
+        try:
+            ia, ib = sl.leg_index(ca), sl.leg_index(cb)
+            frame = pd.concat([ia, ib], axis=1, keys=["a", "b"]).dropna()
+            if len(frame) < 120:
+                raise ValueError(f"only {len(frame)} dates are common to {a} and {b}")
+            hr = sl.hedge_ratio(frame["a"], frame["b"], min(252, max(60, len(frame) // 3)))
+            spread = frame["a"] - hr["ols"] * frame["b"]
+            diag = sl.diagnostics(frame["a"], frame["b"], spread)
+            bt = sl.backtest(frame["a"], frame["b"], lookback, _number(q, "entry", 2.0, 0.5, 6.0), _number(q, "exit", 0.5, 0.0, 3.0), _number(q, "stop", 4.0, 1.0, 10.0), _number(q, "cost_bps", 3.0, 0.0, 100.0), _number(q, "max_leverage", 1.0, 0.1, 5.0))
+        except ValueError as exc:
+            raise ApiError(str(exc)) from None
+        step = max(1, len(spread) // 600)
+        out = {"a": a, "b": b, "hedge_ratio": hr, "diagnostics": diag, "backtest": bt, "spread": {"dates": [str(d.date()) for d in spread.index[::step]], "values": [round(float(v), 5) for v in spread.iloc[::step]]},
+               "hypothesis": "A statistical relationship between two prices is a hypothesis: stationarity and cointegration tests on a sample can fail to reject by chance, and relationships break."}
+        warn = [] if diag["stationary_at_5pct"] else ["The spread does not pass the stationarity test at 5%: the backtest below is a test of a hypothesis the data do not support."]
+        return _wrap("futures_spread", out, {"prices": common.overall_source({r: c.source for r, c in ((a, ca), (b, cb))})}, warn, frame.index[-1], ca.notes + cb.notes,
+                     provenance={"instrument": f"{a}/{b} excess-return spread", "assumptions": ["legs are the log excess-return indices of the front contract (roll days 5)", "costs are one flat figure in basis points of traded notional"]})
+
+    # ------------------------------------------------------------------------------------------------------------ saved experiments
+    def _experiments(self):
+        from ..assets import experiments as ex
+        return ex, ex.Store(self.root)
+
+    def experiments_list(self, q: dict) -> dict:
+        """``GET /api/experiments?kind=``: the saved research runs, newest first."""
+        ex, st = self._experiments()
+        kind = q.get("kind") or None
+        if kind and kind not in ex.KINDS:
+            raise ApiError(f"kind must be one of {list(ex.KINDS)}")
+        return {"experiments": st.list(kind), "kinds": list(ex.KINDS)}
+
+    def experiments_get(self, q: dict) -> dict:
+        ex, st = self._experiments()
+        try:
+            return st.get(str(q.get("id") or ""))
+        except (KeyError, ValueError):
+            raise ApiError("no such experiment") from None
+
+    def experiments_save(self, body: dict) -> dict:
+        """``POST /api/experiments/save``: keep a run with the request that produced it, its metrics and provenance, the software version and two hashes (see ``assets/experiments.py``)."""
+        ex, st = self._experiments()
+        try:
+            return st.save(str(body.get("kind") or "other"), str(body.get("name") or ""), body.get("request") or {}, body.get("metrics") or {}, body.get("provenance") if isinstance(body.get("provenance"), dict) else None,
+                           _list(body.get("assumptions") or []), _list(body.get("universe") or []), str(body.get("notes") or ""))
+        except ValueError as exc:
+            raise ApiError(str(exc)) from None
+
+    def experiments_delete(self, body: dict) -> dict:
+        ex, st = self._experiments()
+        try:
+            st.delete(str(body.get("id") or ""))
+        except (KeyError, ValueError):
+            raise ApiError("no such experiment") from None
+        return {"deleted": body.get("id")}
+
+    def experiments_compare(self, body: dict) -> dict:
+        """``POST /api/experiments/compare``: 2 to 8 saved runs side by side: metrics, the settings that differ, and what the hashes say about reproducibility."""
+        ex, st = self._experiments()
+        try:
+            return st.compare([str(i) for i in _list(body.get("ids") or [])])
+        except (KeyError, ValueError) as exc:
+            raise ApiError(str(exc) if isinstance(exc, ValueError) else "no such experiment") from None
 
     def futures_roll(self, q: dict) -> dict:
         """``GET /api/futures/roll?root=CL&roll_days=5``: the contract held and the next, the suggested roll date, the open-interest crossover, the cost of the roll and its histories."""

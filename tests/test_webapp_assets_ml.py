@@ -774,3 +774,31 @@ def test_option_strategy_settings_can_be_chosen_by_walk_forward_and_the_cost_of_
     for bad, text in (({"sweep_values": [0.1]}, "2 to 9"), ({"sweep_values": [0.1, 5.0]}, "")):
         with pytest.raises(ApiError, match=text or None):
             assets.extra_post["/api/options/strategy/walkforward"]({"strategy": "short_put", "sweep_param": "delta", **bad})
+
+
+def test_the_futures_spread_endpoint_refuses_simulated_curves_unless_asked_and_labels_them(assets):
+    with pytest.raises(ApiError, match="simulated"):
+        assets.extra_get["/api/futures/spread"]({"a": "CL", "b": "NG"})
+    out = _safe(assets.extra_get["/api/futures/spread"]({"a": "CL", "b": "NG", "simulated": "1"}))
+    assert out["provenance"]["kind"] in ("synthetic", "mixed") and out["diagnostics"]["adf"]["p_value"] <= 1
+    assert out["backtest"]["validation"]["realism"]["label"] == "simplified" and "hypothesis" in out
+    with pytest.raises(ApiError, match="different"):
+        assets.extra_get["/api/futures/spread"]({"a": "CL", "b": "CL", "simulated": "1"})
+
+
+def test_experiments_can_be_saved_listed_compared_and_deleted_through_the_api(assets):
+    req = {"path": "/api/futures/spread", "query": {"a": "CL", "b": "NG", "simulated": 1}}
+    out = _safe(assets.extra_get["/api/futures/spread"]({"a": "CL", "b": "NG", "simulated": "1"}))
+    metrics = out["backtest"]["summary"]
+    a = assets.extra_post["/api/experiments/save"]({"kind": "futures_spread", "name": "CL/NG run 1", "request": req, "metrics": metrics, "provenance": out["provenance"]})
+    b = assets.extra_post["/api/experiments/save"]({"kind": "futures_spread", "name": "CL/NG run 2", "request": req, "metrics": metrics, "provenance": out["provenance"]})
+    assert a["config_hash"] == b["config_hash"] and a["result_hash"] == b["result_hash"] and a["provenance"]["kind"] in ("synthetic", "mixed")
+    assert {e["id"] for e in assets.extra_get["/api/experiments"]({"kind": "futures_spread"})["experiments"]} >= {a["id"], b["id"]}
+    cmp = assets.extra_post["/api/experiments/compare"]({"ids": [a["id"], b["id"]]})
+    assert any("reproduced" in w for w in cmp["warnings"]) and cmp["metrics"]
+    assert assets.extra_get["/api/experiments/get"]({"id": a["id"]})["software"]["python"]
+    assets.extra_post["/api/experiments/delete"]({"id": a["id"]})
+    with pytest.raises(ApiError, match="no such"):
+        assets.extra_get["/api/experiments/get"]({"id": a["id"]})
+    with pytest.raises(ApiError):
+        assets.extra_post["/api/experiments/save"]({"kind": "bogus", "name": "x", "request": req, "metrics": metrics})

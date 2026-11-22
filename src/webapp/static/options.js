@@ -9,8 +9,8 @@
   const STRUCTURES_GUIDE = "technique-option-structures-distribution-and-positioning";
   const GUIDES = { fit: "technique-option-pricing-models-and-calibration", price: "technique-exotic-and-american-options", hedge: "technique-hedging-with-transaction-costs", distribution: STRUCTURES_GUIDE, positioning: STRUCTURES_GUIDE,
     strategy: STRUCTURES_GUIDE, backtest: "technique-option-strategies-and-vol-premium" };
-  const ANALYTIC = new Set(["overview", "chain", "smile", "surface", "distribution", "positioning"]);
-  const MODEL_MODES = new Set(["fit", "price", "hedge"]);
+  const ANALYTIC = new Set(["overview", "chain", "smile", "surface", "research", "distribution", "positioning"]);
+  const MODEL_MODES = new Set(["fit", "validate", "price", "hedge"]);
   const MODEL_SLOT = { market: 0, heston: 1, nig: 2, vg: 3, merton: 4, kou: 6 };                  // a colour for each model that does not change with what else is shown (the palette's own order, without its second green)
   const modelColor = (id) => (id === "bs" || id === "bs_continuous" ? css("--muted") : Q.colorOf(MODEL_SLOT[id] === undefined ? 6 : MODEL_SLOT[id]));
   const ALL_MODELS = ["merton", "kou", "vg", "nig", "heston"];
@@ -19,11 +19,14 @@
   const O = {
     id: "options", root: "#options", view: "#view-options", title: "Options", api: 13, mode: "overview", busy: "", results: {}, errors: {}, cache: new Map(), guard: null, go: null, progress: null,
     about: "Read an option chain, see the distribution it implies and where the open interest sits, see what a book of options is exposed to, draw what a structure pays and test a rolling strategy. The chain is a model quoted at the underlying's real price unless you download a real one (free, below) or bring your own file.",
-    modes: [["overview", "Overview"], ["chain", "Chain"], ["smile", "Smile and skew"], ["surface", "Surface and term"], ["distribution", "Implied distribution"], ["positioning", "Open interest and gamma"], ["fit", "Model fit"],
+    modes: [["overview", "Overview"], ["chain", "Chain"], ["smile", "Smile and skew"], ["surface", "Surface and term"], ["research", "Surface research"], ["distribution", "Implied distribution"], ["positioning", "Open interest and gamma"], ["fit", "Model fit"], ["validate", "Model validation"],
       ["price", "Model prices"], ["hedge", "Hedging cost"], ["risk", "Greeks and risk"], ["strategy", "Strategy builder"], ["backtest", "Backtest"]],
-    runLabel: { overview: "Refresh", chain: "Refresh", smile: "Refresh", surface: "Refresh", distribution: "Refresh", positioning: "Refresh", fit: "Fit the models", price: "Price the product", hedge: "Cost the hedge", risk: "Revalue the book",
+    groups: [["Market intelligence", ["overview", "chain", "smile", "surface", "research", "distribution", "positioning"]], ["Model laboratory", ["fit", "validate", "price", "hedge"]], ["Strategy studio", ["strategy"]],
+      ["Portfolio and validation", ["risk", "backtest"]]],
+    runLabel: { research: "Refresh", validate: "Validate the models", overview: "Refresh", chain: "Refresh", smile: "Refresh", surface: "Refresh", distribution: "Refresh", positioning: "Refresh", fit: "Fit the models", price: "Price the product", hedge: "Cost the hedge", risk: "Revalue the book",
       strategy: "Draw the payoff", backtest: "Run the backtest" },
-    blurb: { overview: "Implied against realised volatility, where it ranks, the put-call balance, the term structure and the skew: the page to open first.",
+    blurb: { research: "The surface in the coordinates a volatility researcher uses: log-forward-moneyness, total variance and delta, with a fitted SVI slice per expiry, its residuals against the bid-ask, butterfly and calendar diagnostics, and a joint SSVI fit.",
+      validate: "Fit the models, then judge them on quotes they were not fitted to, on complexity and on numerical health: not on the in-sample error alone.", overview: "Implied against realised volatility, where it ranks, the put-call balance, the term structure and the skew: the page to open first.",
       chain: "Calls and puts side by side for one expiry: bid, ask, implied volatility, delta, volume and open interest, with the at-the-money row marked and stale or wide quotes flagged.",
       smile: "How implied volatility changes with strike (the smile), across expiries, and what that says about the price of crash protection (risk reversal, butterfly).",
       surface: "The whole implied-volatility surface at once, the term structure and the checks that a surface admits no free lunch.",
@@ -35,7 +38,7 @@
       risk: "Delta, gamma, vega and theta of a book of options and shares, by expiry, and what it would make or lose when the price and implied volatility move.",
       strategy: "Choose one of twenty-five structures and see its payoff at expiry, today and half way, where the price is likely to end, its profit by price and day, its Greeks by price, its break-evens, maximum profit and loss, margin and odds; set up to three others beside it.",
       backtest: "Sell or buy premium on a schedule on a simulated option market: one strategy, one setting varied to see how fragile the choice is, or every strategy side by side; with the equity curve, the risk measures, where the profit came from by Greek, the costs and the trades." },
-    form: { underlying: "", expiry: "", window: "15", rate: "", dividend: "", premium: "15", hideStale: false, minOi: "", dealer: "calls_long_puts_short", dealerShare: "100",
+    form: { underlying: "", expiry: "", window: "15", rate: "", dividend: "", premium: "15", hideStale: false, minOi: "", rExpiries: "8", vLoss: "iv", vMode: "strikes", dealer: "calls_long_puts_short", dealerShare: "100",
       book: [], spotShocks: "-10, -5, -2, 0, 2, 5, 10", volShocks: "-5, 0, 5, 10", days: "0",
       strategy: "long_straddle", sDte: "30", sFar: "", offset: "5", width: "5", quantity: "1", fill: "mid", spread: "5", commission: "0.65", viewVol: "", viewDrift: "", horizon: "", legs: [], compare: new Set(),
       bt: "short_put", btMode: "single", btDays: "252", btSeed: "0", btCapital: "100000", btPremium: "25", btCommission: "0.65", btFill: "100", btParams: {}, btTiming: false, btWindow: "21", btThreshold: "0",
@@ -229,7 +232,14 @@
         { key: "premium", label: "Implied over realised variance (%)", kind: "number", step: 1, help: "How much richer the model's implied volatility is than the recent realised volatility. The simulated chain only." }]) Q.labField(b, s, f, after);
       h("p", "hint", b, "Used to build and price the simulated chain. They change the numbers, so they are part of what you are looking at; a chain from your own file ignores them except for the rate and dividend it lacks, and a downloaded chain brings its own (the dividend of each expiry is read from the market's forward).");
     }
-    if (m === "fit") modelFitForm(sec);
+    if (m === "fit" || m === "validate") modelFitForm(sec);
+    if (m === "validate") {
+      const v = sec("Validation");
+      Q.labField(v, { key: "vLoss", label: "What the fit minimises", kind: "choice", options: [["iv", "Every quote equally, in volatility"], ["vega", "Weighted by vega (near the money counts more)"], ["band", "Distance outside the bid-ask band"]] }, f, after);
+      Q.labField(v, { key: "vMode", label: "Quotes held out", kind: "choice", options: [["strikes", "A quarter of the strikes of every expiry"], ["expiry", "The longest expiry"]] }, f, after);
+      h("p", "hint", v, "A model is judged on quotes it was not fitted to, on how many parameters it needs and on whether its parameters sit at their bounds: a single in-sample error rewards flexibility.");
+    }
+    if (m === "research") { const b = sec("2. Surface"); Q.labField(b, { key: "rExpiries", label: "Expiries to fit", kind: "number", step: 1, min: 2, max: 14 }, f, rerun); }
     if (m === "price") modelPriceForm(sec);
     if (m === "hedge") modelHedgeForm(sec);
     if (m === "risk") {
@@ -324,6 +334,7 @@
     if (ANALYTIC.has(m)) {
       if (!fromForm) W.dropCache(O);                                                                       // the Refresh button asks again; a change in the form asks only for what it changed
       return W.request(O, () => {
+        if (m === "research") { const a = { ...settings(), expiries: Number(f.rExpiries) }; return [{ modes: ["research"], path: "/api/options/surface/research", query: a, cacheKey: key("research", a) }]; }
         if (m === "distribution" || m === "positioning") { const a = { ...settings(), expiry: f.expiry || undefined, ...(m === "positioning" ? { dealer: f.dealer, dealer_share: Number(f.dealerShare) / 100 } : {}) }; return [{ modes: [m], path: "/api/options/" + m, query: a, cacheKey: key(m, a) }]; }
         const q = chainQuery(), steps = [];
         if (m !== "surface") steps.push({ modes: m === "smile" ? ["overview", "chain", "smile"] : ["overview", "chain"], path: "/api/options/chain", query: q, cacheKey: key("chain", q) });
@@ -340,6 +351,10 @@
       if (!f.fitModels.size) throw new Error("Choose at least one model to fit");
       return [{ modes: ["fit"], job: true, path: "/api/models/fit", body: { ...settings(), models: [...f.fitModels], max_expiries: Number(f.fitExpiries), min_dte: Number(f.fitMinDte), window: Number(f.fitWindow) / 100 } }];
     }, "Fitting the models…");
+    if (m === "validate") return W.request(O, () => {
+      if (!f.fitModels.size) throw new Error("Choose at least one model to validate");
+      return [{ modes: ["validate"], job: true, path: "/api/models/validate", body: { ...settings(), models: [...f.fitModels], max_expiries: Number(f.fitExpiries), min_dte: Number(f.fitMinDte), window: Number(f.fitWindow) / 100, loss: f.vLoss, mode: f.vMode } }];
+    }, "Fitting and testing the models…");
     if (m === "price") return W.request(O, () => {
       if (!f.priceModels.size) throw new Error("Choose at least one model to price under");
       const body = { ...settings(), product: f.pProduct, call: f.pRight === "call", expiry: f.expiry || undefined, strike_pct: Number(f.pStrike), models: [...f.priceModels] };
@@ -376,7 +391,7 @@
   };
   O.auto = () => { if (ANALYTIC.has(O.mode) && O.form.underlying) O.run(true); };
   O.empty = (root) => {
-    const text = { fit: ["Fit the pricing models to this chain", "Fit Merton, Kou, variance gamma, NIG and Heston to the out-of-the-money quotes and see which reproduces the smile, how much better it does than a flat volatility, and what each implies for the odds of a fall. About half a minute for all five."],
+    const text = { validate: ["Validate the pricing models", "Fit the models, hold some quotes out, and compare them on error out of sample, parameters needed, numerical health and time."], research: ["Research the surface", "Fit an SVI slice to every expiry and see the residuals, the bid-ask bands and the arbitrage diagnostics."], fit: ["Fit the pricing models to this chain", "Fit Merton, Kou, variance gamma, NIG and Heston to the out-of-the-money quotes and see which reproduces the smile, how much better it does than a flat volatility, and what each implies for the odds of a fall. About half a minute for all five."],
       price: ["Price a product under every model", "Choose a digital, barrier, average-price or American option. Each model is fitted to the chain (once per session) and prices it. The spread between them, set beside their spread on the plain option at the same strike (which is only how well each fits), is the model risk of the product, which no vanilla quote can tell you."],
       hedge: ["Cost the hedge of an option", "Hedging a sold option means trading the underlying, and every trade costs. See what that does to the price, where the no-trade band lies and which rule loses least on simulated paths."],
       risk: ["Value a book of options", "Add the options and shares you hold (or load the example), choose the moves to test and revalue: Greeks by expiry and a stress grid of price against implied volatility."],
@@ -385,7 +400,7 @@
     Q.labEmpty(root, O, text[0], [text[1]], O.runLabel[O.mode]);
   };
   O.draw = () => Q.drawLab(O);
-  O.build = (root, d, body) => ({ overview: buildOverview, chain: buildChain, smile: buildSmile, surface: buildSurface, distribution: buildDistribution, positioning: buildPositioning, fit: buildFit, price: buildPrice, hedge: buildHedge, risk: buildRisk, strategy: buildStrategy, backtest: buildBacktest })[O.mode](root, d, body);
+  O.build = (root, d, body) => ({ research: (r, x) => window.OptionsResearch.research(r, x, { header, nameOf }), validate: (r, x) => window.OptionsResearch.validate(r, x, { header, nameOf }), overview: buildOverview, chain: buildChain, smile: buildSmile, surface: buildSurface, distribution: buildDistribution, positioning: buildPositioning, fit: buildFit, price: buildPrice, hedge: buildHedge, risk: buildRisk, strategy: buildStrategy, backtest: buildBacktest })[O.mode](root, d, body);
 
   /* ---------- overview ---------- */
   const header = (root, title, sub, guide) => Q.labHead(root, title, sub, guide || GUIDE);

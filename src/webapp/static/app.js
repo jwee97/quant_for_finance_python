@@ -1274,9 +1274,15 @@
     const top = h("div", "labtop", panel); h("h2", "", top, lab.title); h("p", "hint", top, lab.about);
     if (lab.modes.length > 1) {                                                              // a tab with one mode has nothing to switch between
       const pills = h("div", "tabsmall", top); pills.setAttribute("role", "tablist"); pills.setAttribute("aria-label", lab.title + " views");
-      for (const [key, text] of lab.modes) {
-        const b = h("button", "", pills, text); b.dataset.mode = key; b.setAttribute("role", "tab"); b.setAttribute("aria-selected", String(key === lab.mode)); b.setAttribute("aria-controls", lab.id + "-results");
-        b.addEventListener("click", () => { lab.mode = key; renderLab(lab); });
+      const label = new Map(lab.modes), clusters = lab.groups ? lab.groups : [[null, lab.modes.map((m) => m[0])]];              // a workspace may arrange its views in named workflows; every view keeps its own button
+      for (const [group, keys] of clusters) {
+        let host = pills;
+        if (group) { host = h("span", "tabgroup", pills); host.setAttribute("role", "group"); host.setAttribute("aria-label", group); h("span", "tabgroup-label", host, group); }
+        for (const key of keys) {
+          if (!label.has(key)) continue;
+          const b = h("button", "", host, label.get(key)); b.dataset.mode = key; b.setAttribute("role", "tab"); b.setAttribute("aria-selected", String(key === lab.mode)); b.setAttribute("aria-controls", lab.id + "-results");
+          b.addEventListener("click", () => { lab.mode = key; renderLab(lab); });
+        }
       }
       tabKeys(pills, () => { const now = document.querySelector(`#${lab.id} .labtop [role="tab"][aria-selected="true"]`); if (now) now.focus(); });
     }
