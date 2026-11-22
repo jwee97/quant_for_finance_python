@@ -307,6 +307,7 @@
         for (const c of cov) h("li", "", ul, `${c.provider === "itick" ? "Earlier iTick downloads (imported, read only, kept apart from Massive's data)" : "Massive"} · ${c.asset_class}: ${c.series} series, ${Number(c.rows).toLocaleString("en-US")} rows, ${c.first ? c.first.slice(0, 10) : "?"} to ${c.last ? c.last.slice(0, 10) : "?"}${c.last_sync ? `, last synchronised ${c.last_sync.replace("T", " ").replace("Z", " UTC")}` : ""}${c.stale ? ` · ${c.stale} ended more than five days ago` : ""}`);
       } else h("p", "hint", box, "Nothing stored from Massive for this tab yet.");
       for (const w of info.warnings || []) { const p = h("p", "hint", box, w); p.style.color = Q.css("--warn"); }
+      if ((info.unsupported || []).length) { const d = h("details", "", box), sm = h("summary", "", d, "What Massive cannot supply here"); sm.dataset.role = "massive-unsupported"; const ul = h("ul", "hint", d); for (const u of info.unsupported) h("li", "", ul, u); }
       const row = h("div", "row tight", box), probe = h("button", "btn small", row, "Check what my plan includes (about 15 requests)"), test = h("button", "btn small", row, "Test the connection (one request)"), out = h("span", "hint", row);
       probe.type = test.type = "button"; out.dataset.role = "massive-result";
       probe.addEventListener("click", async () => {

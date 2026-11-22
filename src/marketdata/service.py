@@ -63,7 +63,9 @@ class MarketDataService:
         if refused:
             warnings.append("not included in your plan (as Massive answered): " + ", ".join(refused))
         verified = [c for c in caps if c["checked_at"]]
-        return {"provider": "massive", "label": "Massive", **d, "capabilities": caps, "verified": len(verified), "coverage": list(by.values()), "jobs": self.store.jobs(5), "warnings": warnings,
+        unsupported = ["futures quotes (not in the documentation that was read)", "crypto trades and quotes (not read)", "historical implied volatility and Greeks from the provider (not read: calculated here and labelled)",
+                       "open interest of futures (no endpoint carries it)", "stocks of other countries' exchanges, and forex"]
+        return {"provider": "massive", "label": "Massive", "unsupported": unsupported, **d, "capabilities": caps, "verified": len(verified), "coverage": list(by.values()), "jobs": self.store.jobs(5), "warnings": warnings,
                 "integrity": self.store.integrity(), "last_probe": max((c["checked_at"] for c in caps if c["checked_at"]), default=None)}
 
     # ------------------------------------------------------------------------------------------------------------ bars

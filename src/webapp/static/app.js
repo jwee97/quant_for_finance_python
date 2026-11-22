@@ -1828,7 +1828,7 @@
     if (booted && wantedTab() === name) showTab(name, route().args);
   }
   window.QL = { exportChart, loading, livePanel, C, h, fmt, $, api, css, store, toast, copy, download, num, pct, money, smoney, axisMoney, bad, bps, grouped, plain, unsign, colorOf, SLOTS, tile, chartCard, actionsCard, simpleTable, sampleRows, keepScroll, labField, checkList, numbers,
-    labHead, labBanner, labEmpty, labOld, syncLab, renderLab, drawLab, openGuide, serverApi, RESTART, notice, registerWorkspace, registerPage, setTheme, onNavigate: (fn) => NAV.push(fn), onResult: (fn) => RESULT.push(fn), onLabDraw: (fn) => LABDRAW.push(fn), applyContext, setupContext, setupBody, applySetup, lab: (name) => WORKSPACES[name], route, currentTab: () => current, labelPx, running, S, setupGuide, waitJob, keyHistory,
+    labHead, labBanner, labEmpty, labOld, syncLab, renderLab, drawLab, openGuide, serverApi, RESTART, notice, registerWorkspace, registerPage, setTheme, onNavigate: (fn) => NAV.push(fn), onResult: (fn) => RESULT.push(fn), onLabDraw: (fn) => LABDRAW.push(fn), applyContext, setupContext, setupBody, applySetup, lab: (name) => WORKSPACES[name], route, currentTab: () => current, labelPx, running, S, setupGuide, waitJob,
     universeBody, pickAllocator, useStrategy, setTrials, showTab, refsLine, fieldFor };
   boot();
 })();

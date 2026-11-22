@@ -122,3 +122,11 @@ def test_the_probe_records_what_the_key_can_and_cannot_reach(tmp_path):
     assert caps["stocks.quotes"].status == "not_entitled" and caps["futures.trades"].status == "not_entitled" and caps["options.trades"].status == "not_entitled"
     again = MassiveProvider(MassiveClient(key=KEY, root=tmp_path, session=FakeMassive()), root=tmp_path)
     assert {c.dataset: c.status for c in again.get_provider_capabilities() if c.asset_class == "stocks"}["quotes"] == "not_entitled"      # remembered across restarts
+
+
+def test_the_provider_implements_the_interface_the_service_needs(tmp_path):
+    from src.marketdata.models import MarketDataProvider
+    p, _ = make(tmp_path)
+    for name in MarketDataProvider.__dict__:
+        if name.startswith("get_"):
+            assert callable(getattr(p, name)), name

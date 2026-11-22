@@ -453,6 +453,22 @@ def test_the_options_tab_downloads_a_real_chain_analyses_it_as_downloaded_data_a
     assert _badge(page, "options") in {"Simulated: a model", "Mixed sources"} and page.locator("#options .fdres").count() == 0
 
 
+def test_the_massive_source_of_the_futures_card_shows_the_setup_guide_without_a_key_and_never_asks_for_one_on_the_page(free, monkeypatch):
+    monkeypatch.delenv("MASSIVE_API_KEY", raising=False)
+    page = free
+    page.click("#tab-futures")
+    page.wait_for_selector("#futures details.freedata button[data-action=download]")
+    page.locator("#futures [data-role=source] button", has_text="Massive").click()
+    page.wait_for_selector("#futures [data-role=massive-box] .setup")
+    box = page.inner_text("#futures [data-role=massive-box]")
+    assert "Massive is not set up yet" in box and "MASSIVE_API_KEY" in box and "never goes through this page" in box
+    assert page.locator("#futures [data-role=massive-box] input, #futures [data-role=massive-box] textarea").count() == 0
+    assert "iTick" not in page.inner_text("#futures details.freedata")
+    page.click("#futures details.freedata button[data-action=download]")
+    page.wait_for_selector("#futures details.freedata .fdres, #futures details.freedata .banner", timeout=60_000)
+    assert "MASSIVE_API_KEY" in page.inner_text("#futures details.freedata")
+
+
 def test_the_futures_tab_downloads_a_curve_chooses_it_and_says_what_the_feed_lacks(free):
     page = free
     page.click("#tab-futures")
