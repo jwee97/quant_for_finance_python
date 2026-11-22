@@ -31,7 +31,7 @@
 
 ## Known limits
 
-* Plotly, echarts-gl and AG Grid are not vendored: fetching them was not permitted in this environment, so the 3D viewer is a small canvas painter (no lighting, no picking) and the tables are the existing ones. Drop the library files under `src/webapp/static/vendor/` if you want them used.
+* Plotly and AG Grid are optional: `pip install plotly dash-ag-grid` then `python scripts/vendor_libs.py` copies `plotly.min.js` and the AG Grid bundle (and its style sheets, if the version has them) into `src/webapp/static/vendor/`. The Options surface then uses Plotly's 3D surface with hover and the Saved runs view uses an AG Grid table (sort, filter, tick rows). Without the files the canvas viewer and the plain tables are used. The hand-over is tested with stand-in files; the real bundles have not been run in this environment. echarts-gl is not used (Plotly covers the surface).
 * Chain history exists only for the dates a person keeps; a free source gives today's chain only.
 * The default data are simulated unless real data are downloaded or supplied; every view says which.
 * Backtests omit bid-ask crossing, margin financing, contract-multiplier effects on sizing, and liquidity limits; the realism label names them.

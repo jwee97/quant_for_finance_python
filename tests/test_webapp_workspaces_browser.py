@@ -918,3 +918,33 @@ def test_the_open_items_views_draw_portfolio_groups_probability_audit_3d_surface
     ws.wait_for_selector("#futures-results .tile", timeout=90_000)
     _mode(ws, "futures", "saved")
     ws.wait_for_selector("#futures-results [data-role=experiments]", timeout=60_000)
+
+
+def test_optional_libraries_are_used_when_their_files_exist_and_ignored_otherwise(ws, live_ws):
+    """Stand-in files prove the loading and the hand-over (the real libraries are copied in by scripts/vendor_libs.py); with no files the canvas viewer and plain table are used (tested above)."""
+    from pathlib import Path
+    vendor = Path(__file__).resolve().parent.parent / "src" / "webapp" / "static" / "vendor"
+    stubs = {"plotly.min.js": "window.Plotly={newPlot:function(d,t){d.dataset.traces=t[0].type;d.dataset.points=t[0].z.length;}};",
+             "ag-grid-community.min.js": "window.agGrid={createGrid:function(el,o){el.dataset.rows=o.rowData.length;el.dataset.cols=o.columnDefs.length;}};"}
+    made = []
+    try:
+        for name, body in stubs.items():
+            p = vendor / name
+            assert not p.exists(), "a real library is installed: this stand-in test must not overwrite it"
+            p.write_text(body)
+            made.append(p)
+        ws.goto(live_ws.url)
+        ws.wait_for_selector(".chip")
+        ws.click("#tab-options")
+        ws.wait_for_selector("#options-results .tile", timeout=90_000)
+        _mode(ws, "options", "research")
+        ws.wait_for_selector("#options-results [data-engine=plotly][data-traces=surface]", state="attached", timeout=120_000)
+        assert ws.locator("#options-results [data-role=surface-3d] canvas").count() == 0
+        ws.click("#options-results [data-role=save-experiment] button.primary")
+        ws.wait_for_selector("#options-results [data-role=save-experiment]:has-text('Saved as')", timeout=30_000)
+        _mode(ws, "options", "saved")
+        ws.wait_for_selector("#options-results [data-role=experiments]", timeout=60_000)
+        ws.wait_for_selector("#options-results [data-grid=ag-grid][data-cols=\"6\"]", state="attached", timeout=30_000)
+    finally:
+        for p in made:
+            p.unlink()

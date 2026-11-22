@@ -18,6 +18,7 @@ from __future__ import annotations
 import gzip
 import hashlib
 import json
+from html import escape as html_escape
 import os
 import secrets
 import ssl
@@ -37,7 +38,7 @@ from .api import ApiError, App
 
 STATIC = Path(__file__).parent / "static"
 JS = "text/javascript; charset=utf-8"
-FILES = {"app.js": JS, "style.css": "text/css; charset=utf-8", "charts.js": JS, "tradechart.js": JS, "charts_ec.js": JS, "vendor/echarts.min.js": JS, "vendor/echarts.LICENSE": "text/plain; charset=utf-8", "vendor/echarts.NOTICE": "text/plain; charset=utf-8", "workspace.js": JS, "shell.js": JS, "research.js": JS, "pages.js": JS, "regime.js": JS, "finml.js": JS, "alphalab.js": JS, "strategy.js": JS, "universe.js": JS, "modelcompare.js": JS, "evidence.js": JS, "compare.js": JS, "options.js": JS, "experiments.js": JS, "surface3d.js": JS, "options_research.js": JS, "futures_research.js": JS, "futures.js": JS, "crypto.js": JS, "ml.js": JS, "tune.js": JS, "forecast.js": JS, "signals.js": JS, "scenarios.js": JS, "rates.js": JS, "fundamentals.js": JS, "fundamentals_lab.js": JS, "fundamentals_enter.js": JS, "fundamentals_import.js": JS, "fundamentals_review.js": JS, "fundamentals_research.js": JS}
+FILES = {"app.js": JS, "style.css": "text/css; charset=utf-8", "charts.js": JS, "tradechart.js": JS, "charts_ec.js": JS, "vendor/echarts.min.js": JS, "vendor/plotly.min.js": JS, "vendor/plotly.LICENSE": "text/plain; charset=utf-8", "vendor/ag-grid-community.min.js": JS, "vendor/ag-grid-community.LICENSE": "text/plain; charset=utf-8", "vendor/ag-grid.css": "text/css; charset=utf-8", "vendor/ag-theme-quartz.css": "text/css; charset=utf-8", "libs.js": JS, "vendor/echarts.LICENSE": "text/plain; charset=utf-8", "vendor/echarts.NOTICE": "text/plain; charset=utf-8", "workspace.js": JS, "shell.js": JS, "research.js": JS, "pages.js": JS, "regime.js": JS, "finml.js": JS, "alphalab.js": JS, "strategy.js": JS, "universe.js": JS, "modelcompare.js": JS, "evidence.js": JS, "compare.js": JS, "options.js": JS, "experiments.js": JS, "surface3d.js": JS, "options_research.js": JS, "futures_research.js": JS, "futures.js": JS, "crypto.js": JS, "ml.js": JS, "tune.js": JS, "forecast.js": JS, "signals.js": JS, "scenarios.js": JS, "rates.js": JS, "fundamentals.js": JS, "fundamentals_lab.js": JS, "fundamentals_enter.js": JS, "fundamentals_import.js": JS, "fundamentals_review.js": JS, "fundamentals_research.js": JS}
 MAX_BODY = 200_000
 MAX_QUERY_FIELDS = 40
 LOOPBACK = {"127.0.0.1", "localhost", "::1", "[::1]"}
@@ -272,9 +273,9 @@ def make_handler(app: App, token: str, port_holder: list, access: str | None = N
                 self._redirect("/login", {"Set-Cookie": f"{SESSION_COOKIE}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0"})
             elif path in ("/", "/index.html"):
                 if self._guard(False):
-                    html = (STATIC / "index.html").read_text(encoding="utf-8").replace("__TOKEN__", token)
+                    html = (STATIC / "index.html").read_text(encoding="utf-8").replace("__TOKEN__", token).replace("__LIBS__", html_escape(json.dumps({"plotly": (STATIC / "vendor" / "plotly.min.js").is_file(), "ag-grid": (STATIC / "vendor" / "ag-grid-community.min.js").is_file(), "ag-grid-css": [f for f in ("ag-grid.css", "ag-theme-quartz.css") if (STATIC / "vendor" / f).is_file()]}), quote=True))
                     self._send(HTTPStatus.OK, html.encode(), "text/html; charset=utf-8")
-            elif path.startswith("/static/") and path[8:] in FILES:
+            elif path.startswith("/static/") and path[8:] in FILES and (STATIC / path[8:]).is_file():
                 if self._guard(False):
                     self._send(HTTPStatus.OK, (STATIC / path[8:]).read_bytes(), FILES[path[8:]], revalidate=True)
             elif path.startswith("/api/"):

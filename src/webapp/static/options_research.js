@@ -144,9 +144,18 @@
   /* The implied-volatility surface as a rotatable 3D shape (drawn on a canvas; the heatmap beside it carries the same numbers). */
   function surface3d(parent, s) {
     const c = h("div", "card", parent); c.dataset.role = "surface-3d"; h("h3", "", c, "Implied volatility surface in 3D");
-    h("p", "hint", c, "Drag to rotate, wheel to zoom, arrow keys when focused. Cells outside the quoted strikes stay open: nothing is extrapolated.");
-    const z = s.grid.iv.map((row, i) => row.map((v, j) => (s.grid.observed[i][j] ? v : null)));
-    window.Surface3D.draw(c, { x: s.grid.k, y: s.grid.expiries.map((e) => e.dte), z, xLabel: "log-moneyness", yLabel: "days", zLabel: "implied vol", format: (v) => pct(v, 1), label: "Implied volatility surface" });
+    h("p", "hint", c, "Drag to rotate, wheel to zoom. Cells outside the quoted strikes stay open: nothing is extrapolated.");
+    const z = s.grid.iv.map((row, i) => row.map((v, j) => (s.grid.observed[i][j] ? v : null))), days = s.grid.expiries.map((e) => e.dte);
+    const fallback = () => window.Surface3D.draw(c, { x: s.grid.k, y: days, z, xLabel: "log-moneyness", yLabel: "days", zLabel: "implied vol", format: (v) => pct(v, 1), label: "Implied volatility surface" });
+    if (!window.Libs) { fallback(); return; }
+    window.Libs.load("plotly").then((P) => {
+      if (!P || !P.newPlot) { fallback(); return; }
+      const div = h("div", "", c); div.dataset.engine = "plotly"; div.style.cssText = "width:100%;height:380px";
+      const cs = (n, d) => getComputedStyle(document.documentElement).getPropertyValue(n).trim() || d;
+      P.newPlot(div, [{ type: "surface", x: s.grid.k, y: days, z: z.map((r) => r.map((v) => (v === null ? null : v * 100))), connectgaps: false, colorscale: "Viridis", colorbar: { title: "IV %", len: 0.6 },
+        hovertemplate: "k %{x:.3f}<br>%{y:.0f} days<br>IV %{z:.2f}%<extra></extra>" }],
+        { margin: { l: 0, r: 0, t: 0, b: 0 }, paper_bgcolor: "rgba(0,0,0,0)", font: { color: cs("--ink", "#222") }, scene: { xaxis: { title: "log-moneyness" }, yaxis: { title: "days" }, zaxis: { title: "implied vol (%)" } } }, { responsive: true, displaylogo: false });
+    });
   }
 
   window.OptionsResearch = { research, validate, riskExtras, strategyExtras, history, surface3d };
