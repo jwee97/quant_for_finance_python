@@ -758,3 +758,19 @@ def test_the_futures_research_endpoint_returns_spreads_regimes_liquidity_calenda
     assert out["provenance"]["instrument"] == "CL futures" and any("price difference" in n for n in out["notes"])
     with pytest.raises(ApiError, match="later contract"):
         assets.extra_get["/api/futures/research"]({"root": "CL", "near": 3, "far": 2})
+
+
+def test_a_futures_backtest_carries_bootstrap_intervals_and_a_realism_label_that_names_the_missing_frictions(assets):
+    out = finished(assets, assets.extra_post["/api/futures/strategy/backtest"]({"strategy": "carry_ts", "roots": ["CL", "NG"]}))
+    v = out["validation"]
+    assert v["realism"]["label"] == "simplified" and "daily variation margin" in v["realism"]["not_modelled"] and "initial margin and collateral financing" in v["realism"]["not_modelled"]
+    assert "roll execution cost (calendar-spread half-spread)" in v["realism"]["modelled"] and v["bootstrap"]["available"] and out["provenance"]["kind"] in ("synthetic", "mixed")
+
+
+def test_option_strategy_settings_can_be_chosen_by_walk_forward_and_the_cost_of_choosing_is_reported(assets):
+    out = finished(assets, assets.extra_post["/api/options/strategy/walkforward"]({"strategy": "short_put", "sweep_param": "delta", "sweep_values": [0.1, 0.2, 0.3], "days": 504, "train": 126, "test": 42}))
+    assert len(out["folds"]) >= 4 and all(f["test"][0] > f["train"][1] for f in out["folds"]) and out["in_sample_best"].startswith("delta=") and "gap" in out and out["oos_bootstrap"]["available"]
+    assert out["provenance"]["kind"] == "synthetic"
+    for bad, text in (({"sweep_values": [0.1]}, "2 to 9"), ({"sweep_values": [0.1, 5.0]}, "")):
+        with pytest.raises(ApiError, match=text or None):
+            assets.extra_post["/api/options/strategy/walkforward"]({"strategy": "short_put", "sweep_param": "delta", **bad})

@@ -1419,8 +1419,24 @@ def run_strategy_backtest(name: str, params: dict | None = None, n_days: int = 2
             "actions": option_actions(result, spot),
             "recent_trades": [{k: (str(v.date()) if isinstance(v, pd.Timestamp) else (float(v) if isinstance(v, (int, float, np.floating, np.integer)) else str(v))) for k, v in row.items()}
                               for row in result.trades.tail(12).to_dict("records")],
+            "validation": backtest_validation(returns, "options", fill_fraction, commission),
             "notes": ["The option market is simulated (an SSVI surface with a built-in variance risk premium and jump risk); it is not historical data.",
                       "Returns are daily P&L over a fixed capital: margin and funding are not modelled."]}
+
+
+OPTION_BACKTEST_MODELLED = {"bid-ask spread crossed on every fill": True, "commissions": True, "no look-ahead: signal at one close, trade at a later quote": True, "expiry settlement": True,
+                            "assignment and early exercise (American options)": False, "margin requirements and funding": False, "liquidity limits (volume, open interest, size)": False, "contract multiplier": True,
+                            "dividends and discounting in valuation": True}
+
+
+def backtest_validation(returns: pd.Series, instrument: str, fill_fraction: float, commission: float, bootstrap_resamples: int = 600) -> dict:
+    """The evidence beside a backtest's numbers: bootstrap confidence intervals and the realism checklist (see :mod:`derivatives.validation`)."""
+    from ..derivatives import validation as val
+    modelled = dict(OPTION_BACKTEST_MODELLED)
+    modelled["bid-ask spread crossed on every fill"] = fill_fraction > 0
+    modelled["commissions"] = commission > 0
+    return {"bootstrap": val.bootstrap(returns, n=bootstrap_resamples), "realism": val.realism(instrument, modelled, {"assignment and early exercise (American options)": "contracts are cash-settled at expiry as European options",
+                                                                                                                     "margin requirements and funding": "returns are over a fixed capital; cash earns nothing"})}
 
 
 SWEEP_POINTS = (2, 9)
@@ -1458,6 +1474,26 @@ def run_strategy_sweep(name: str, param: str, values: list, params: dict | None 
         rows.append({"value": checked[param], **_headline(run_strategy_backtest(name, checked, **kwargs))})
     default = BACKTEST_PARAMS[name][param]["default"]
     return {"strategy": name, "param": param, "rows": rows, "base": parse_backtest_params(name, params).get(param, default), "default": default, "params": dict(params or {})}
+
+
+def run_strategy_walkforward(name: str, param: str, values: list, params: dict | None = None, train: int = 126, test: int = 42, progress=None, **kwargs) -> dict:
+    """Choose ``param`` among ``values`` by walk-forward: each fold picks the value with the best Sharpe ratio on its training days and is judged on the days after (see :mod:`derivatives.validation`).
+    Every value is run once over the whole period (the strategy's decisions on a day depend only on the past, so its returns on a later window are what it would have made); the folds only decide
+    which run's returns are read in which window. ``kwargs`` are those of ``run_strategy_backtest``."""
+    from ..derivatives import validation as val
+    runs = check_sweep(name, param, values, params)
+    n_days = int(kwargs.get("n_days", 252))
+    series = {}
+    for i, checked in enumerate(runs):
+        if progress:
+            progress(f"{param.replace('_', ' ')} = {checked[param]:g} ({i + 1} of {len(runs)})")
+        res, _ = _backtest_result(name, checked, n_days, int(kwargs.get("seed", 0)), float(kwargs.get("capital", 100_000.0)), float(kwargs.get("premium", 0.25)), float(kwargs.get("commission", 0.65)),
+                                  float(kwargs.get("fill_fraction", 1.0)), parse_timing(kwargs.get("timing")))
+        series[f"{param}={checked[param]:g}"] = res.returns.dropna()
+    out = val.walk_forward(series, train=train, test=test)
+    out.update({"strategy": name, "param": param, "values": [r[param] for r in runs], "train_days": int(train), "test_days": int(test), "n_days": n_days,
+                "note": "The market is simulated: this measures how much choosing a setting in advance costs on it, not whether the strategy has an edge."})
+    return out
 
 
 def run_strategy_comparison(names: list | None = None, progress=None, **kwargs) -> dict:

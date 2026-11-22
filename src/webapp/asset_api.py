@@ -89,7 +89,7 @@ class AssetApi:
 
     def post_routes(self) -> dict:
         return {"/api/options/portfolio-risk": self.options_portfolio_risk, "/api/options/strategy/payoff": self.options_strategy_payoff, "/api/options/strategy/backtest": self.options_strategy_backtest,
-                "/api/options/strategy/sweep": self.options_strategy_sweep, "/api/options/strategy/compare": self.options_strategy_compare, "/api/futures/margin": self.futures_margin, "/api/futures/strategy/backtest": self.futures_strategy_backtest, "/api/futures/signals": self.futures_signals, "/api/crypto/signals": self.crypto_signals, "/api/crypto/strategy/backtest": self.crypto_strategy_backtest}
+                "/api/options/strategy/sweep": self.options_strategy_sweep, "/api/options/strategy/walkforward": self.options_strategy_walkforward, "/api/options/strategy/compare": self.options_strategy_compare, "/api/futures/margin": self.futures_margin, "/api/futures/strategy/backtest": self.futures_strategy_backtest, "/api/futures/signals": self.futures_signals, "/api/crypto/signals": self.crypto_signals, "/api/crypto/strategy/backtest": self.crypto_strategy_backtest}
 
     # ------------------------------------------------------------------------------------------------------------ user files
     def _user_files(self, folder: str) -> dict[str, Path]:
@@ -538,6 +538,32 @@ class AssetApi:
             return _wrap("options_sweep", out, {"market": "simulated"}, [], None, ["Every value is run on the same simulated market and seed; only the setting changes."])
 
         return self.app.submit_task(f"options: sweep {name} {param}", work)
+
+    def options_strategy_walkforward(self, body: dict) -> dict:
+        """``POST /api/options/strategy/walkforward``: choose one setting of a rolling option strategy by walk-forward (``sweep_param``, ``sweep_values``, ``train`` and ``test`` days) and see the out-of-sample
+        result against the best setting of the whole period, with a bootstrap interval; run as a job on the simulated option market."""
+        name = str(body.get("strategy") or "short_put")
+        param = str(body.get("sweep_param") or "")
+        values = body.get("sweep_values")
+        if not isinstance(values, list) or not 2 <= len(values) <= 9:
+            raise ApiError("sweep_values must be a list of 2 to 9 numbers")
+        train, test = _number(body, "train", 126, 40, 400, integer=True), _number(body, "test", 42, 10, 200, integer=True)
+        days = _number(body, "days", 504, 252, 756, integer=True)
+        try:
+            oa.check_sweep(name, param, values, body.get("params"))
+        except ValueError as exc:
+            raise ApiError(str(exc)) from None
+        kwargs = {"n_days": days, "seed": _number(body, "seed", 0, 0, 10_000, integer=True), "premium": _number(body, "premium", 0.25, -0.3, 1.0), "commission": _number(body, "commission", 0.65, 0.0, 20.0),
+                  "fill_fraction": _number(body, "fill", 1.0, 0.0, 1.0)}
+
+        def work(progress):
+            try:
+                out = oa.run_strategy_walkforward(name, param, values, body.get("params"), train, test, progress, **kwargs)
+            except ValueError as exc:
+                raise ApiError(str(exc)) from None
+            return _wrap("options_walkforward", out, {"option_market": "simulated"}, [], None, [out.pop("note")])
+
+        return self.app.submit_task(f"options: walk-forward {name} over {param}", work)
 
     def options_strategy_compare(self, body: dict) -> dict:
         """``POST /api/options/strategy/compare``: every rolling strategy (or the ``strategies`` named) at its defaults on one simulated market, run as a job."""

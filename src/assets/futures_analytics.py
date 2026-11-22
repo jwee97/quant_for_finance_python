@@ -639,6 +639,27 @@ def roll_costs(specs: dict, curves: dict | None = None) -> dict:
     return out
 
 
+FUTURES_BACKTEST_MODELLED = {"bid-ask spread crossed on every fill": False, "commissions": False, "no look-ahead: signal at one close, trade at a later price": True, "contract multiplier and tick size": False,
+                             "daily variation margin": False, "initial margin and collateral financing": False, "contract rolling on a stated rule": True, "roll execution cost (calendar-spread half-spread)": False,
+                             "liquidity limits (volume, open interest, size)": False, "expiry and delivery conventions": True}
+FUTURES_BACKTEST_NOTES = {"bid-ask spread crossed on every fill": "costs are one flat one-way figure in basis points of the traded notional, not a spread paid per fill", "commissions": "inside the flat cost in basis points",
+                          "contract multiplier and tick size": "positions are weights of a return series, not whole contracts: no lot size or tick rounding",
+                          "daily variation margin": "returns are on notional, no cash account", "initial margin and collateral financing": "no collateral, no interest on it",
+                          "no look-ahead: signal at one close, trade at a later price": "the platform pipeline lags the signal one bar"}
+
+
+def futures_backtest_validation(out: dict, roll_cost: bool, cost_bps: float) -> dict:
+    """Bootstrap intervals and the realism checklist of a futures backtest result (see :mod:`derivatives.validation`); the checklist is filled from what the pipeline actually does."""
+    from ..derivatives import validation as val
+    modelled = dict(FUTURES_BACKTEST_MODELLED)
+    modelled["roll execution cost (calendar-spread half-spread)"] = bool(roll_cost)
+    modelled["commissions"] = cost_bps > 0
+    eq = pd.Series(out.get("equity") or [], index=pd.to_datetime(out.get("dates") or []), dtype=float)
+    returns = eq.pct_change().dropna() if len(eq) > 1 else pd.Series(dtype=float)
+    notes = dict(FUTURES_BACKTEST_NOTES)
+    return {"bootstrap": val.bootstrap(returns, n=600), "realism": val.realism("futures", modelled, notes)}
+
+
 def run_futures_strategy(config, strategy: str, roots: list[str] | None = None, frequency: str | None = None, lookback: int | None = None, target_vol: float | None = None, cost_bps: float = 2.0,
                          as_of=None, curves: dict[str, CurveData] | None = None, params: dict | None = None, roll_cost: bool = True) -> dict:
     """Run one of ``FUTURES_STRATEGIES`` through the platform pipeline: on the SIMULATED roots, or, given ``curves`` (``{root: CurveData}`` of downloaded or user files), on those real contract tables.
@@ -687,7 +708,8 @@ def run_futures_strategy(config, strategy: str, roots: list[str] | None = None, 
     rolls = roll_costs({r: held[r].spec for r in chosen}, held) if roll_cost else {}
     out = run_strategy(sub, config, spec["model"], settings, rebalance=frequency, target_vol=target_vol, cost_bps=float(cost_bps), label=spec["label"],
                        allocator=spec["allocator"], holding_cost={r: v["yearly"] for r, v in rolls.items()} or None, units=False)
-    out.update({"strategy": strategy, "label": spec["label"], "text": spec["text"], "roots": sorted(chosen), "cost_bps": float(cost_bps), "source": "real" if real else "simulated",
+    out.update({"validation": futures_backtest_validation(out, roll_cost, float(cost_bps)), "strategy": strategy, "label": spec["label"], "text": spec["text"], "roots": sorted(chosen), "cost_bps": float(cost_bps),
+                "source": "real" if real else "simulated",
                 "roll_costs": [{"root": r, **v} for r, v in sorted(rolls.items())]})
     if out.get("actions") and not real:
         out["actions"]["simulated"] = True
