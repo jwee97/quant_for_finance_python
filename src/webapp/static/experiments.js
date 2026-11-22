@@ -5,6 +5,16 @@
   const Q = window.QL, W = window.WS;
   if (!Q || !W) return;
   const h = Q.h, table = Q.simpleTable;
+  const metricsOf = {};                                              // kind -> (the answer of the stored request) -> the numbers a saved run keeps; each view registers its own, so saving and repeating use one definition
+
+  /* Send the stored request again and judge the answer against the saved numbers. */
+  async function repeat(id) {
+    const rec = await Q.api("/api/experiments/get?id=" + encodeURIComponent(id)), req = rec.request, fn = metricsOf[rec.kind];
+    if (!fn) throw new Error(`no way to repeat a "${rec.kind}" run in this page`);
+    let res = req.body ? await Q.api(req.path, req.body) : await Q.api(req.path + (req.query && Object.keys(req.query).length ? "?" + new URLSearchParams(Object.entries(req.query).filter(([, v]) => v !== undefined && v !== null)).toString() : ""));
+    if (res && res.job) res = await Q.waitJob(res.job, () => {}, 1000);
+    return Q.api("/api/experiments/check", { id, metrics: fn(res) });
+  }
 
   function saveButton(root, spec) {
     const box = h("div", "card", root); box.dataset.role = "save-experiment"; h("h3", "", box, "Save this run");
@@ -33,6 +43,16 @@
       const tr = rows[i]; if (!tr) return;
       const cb = h("input", "", tr.firstChild); cb.type = "checkbox"; cb.setAttribute("aria-label", "compare " + r.name); cb.dataset.id = r.id;
       cb.addEventListener("change", () => { if (cb.checked) chosen.add(r.id); else chosen.delete(r.id); });
+      const rep = h("button", "btn", tr.lastChild, "Repeat"); rep.type = "button"; rep.dataset.role = "repeat";
+      rep.addEventListener("click", async () => {
+        rep.disabled = true; out.replaceChildren();
+        try {
+          const c = await repeat(r.id), box = h("div", "card", out); box.dataset.role = "repeat-result"; h("h3", "", box, `Repeat of "${r.name}": ${c.reproduced ? "reproduced" : "differs"}`);
+          h("p", "hint", box, c.reading);
+          if (c.differences.length) table(box, [{ label: "Metric", get: (x) => x.metric }, { label: "Saved", num: true, get: (x) => (x.stored === null ? "missing" : Q.num(x.stored, 6)) }, { label: "Repeat", num: true, get: (x) => (x.repeat === null ? "missing" : Q.num(x.repeat, 6)) }], c.differences);
+          h("p", "note", box, `Software then: ${JSON.stringify(c.software_then)}; now: ${JSON.stringify(c.software_now)}`);
+        } catch (e) { h("p", "note", out, e.message); } finally { rep.disabled = false; }
+      });
       const del = h("button", "btn", tr.lastChild, "Delete"); del.type = "button";
       del.addEventListener("click", async () => { try { await Q.api("/api/experiments/delete", { id: r.id }); Q.renderLab(ctx.lab); } catch (e) { out.textContent = e.message; } });
     });
@@ -49,5 +69,5 @@
     });
   }
 
-  window.Experiments = { saveButton, view };
+  window.Experiments = { saveButton, view, repeat, metricsOf };
 })();

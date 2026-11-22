@@ -393,3 +393,19 @@ def test_strategy_shows_sticky_delta_lines_and_early_exercise_notes():
     deep = [{"type": "option", "right": "P", "strike": 130.0, "dte": 60, "quantity": -1, "iv": 0.2}]
     out = oa.strategy_analysis(deep, 100.0, 100.0, 0.2, rate=0.08)
     assert out["early_exercise"] and "exercis" in out["early_exercise"][0]["why"]
+
+
+def test_beta_scales_the_shock_per_underlying_and_american_revaluation_adds_early_exercise_value():
+    from src.assets import options_analytics as oa
+    book = [{"type": "option", "right": "C", "strike": 100, "dte": 30, "iv": 0.25, "quantity": 1, "underlying": "A"},
+            {"type": "option", "right": "C", "strike": 50, "dte": 30, "iv": 0.3, "quantity": 1, "underlying": "B", "spot": 50, "beta": 0.0}]
+    r = oa.portfolio_risk(book, 100.0, 0.04, 0.0, "2026-01-01", spot_shocks=(0.1,), vol_shocks=(0.0,))
+    only_a = oa.portfolio_risk(book[:1], 100.0, 0.04, 0.0, "2026-01-01", spot_shocks=(0.1,), vol_shocks=(0.0,))
+    assert r["stress"][0]["pnl"] == pytest.approx(only_a["stress"][0]["pnl"])        # a beta of zero leaves B untouched
+    assert not any("correlation of one" in f for f in r["risk_flags"])
+    put = [{"type": "option", "right": "P", "strike": 130, "dte": 60, "iv": 0.2, "quantity": -1}]
+    eu = oa.position_values(put, 100.0, 0.08, 0.0, "2026-01-01").iloc[0]["value"]
+    am = oa.position_values(put, 100.0, 0.08, 0.0, "2026-01-01", exercise="american").iloc[0]["value"]
+    assert am < eu - 0.5 * 100 * 0.01                                                # the American put is worth more, so a short one is worth less (more negative)
+    out = oa.portfolio_risk(put, 100.0, 0.08, 0.0, "2026-01-01", exercise="american")
+    assert out["exercise"] == "american" and any("American exercise" in f for f in out["risk_flags"])

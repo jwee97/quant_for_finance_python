@@ -831,3 +831,15 @@ def test_portfolio_risk_returns_groups_cross_greeks_attribution_and_the_other_vo
 def test_a_strategy_returns_the_probability_audit_and_sticky_delta_lines(assets):
     out = _safe(assets.extra_post["/api/options/strategy/payoff"]({"underlying": "AAA", "strategy": "short_strangle", "skew_slope": -0.4}))["analysis"]
     assert out["probability"]["measure"].startswith("risk-neutral") and out["volatility_rules"]["skew_slope"] == -0.4 and "now_sticky_delta" in out["curve"] and isinstance(out["early_exercise"], list)
+
+
+def test_a_saved_run_can_be_repeated_and_judged_through_the_api(assets):
+    req = {"path": "/api/futures/spread", "query": {"a": "CL", "b": "NG", "simulated": 1}}
+    first = _safe(assets.extra_get["/api/futures/spread"](dict(req["query"])))
+    metrics = {"summary": first["backtest"]["summary"], "adf_p": first["diagnostics"]["adf"]["p_value"], "hedge_ratio": first["hedge_ratio"]["ols"]}
+    rec = assets.extra_post["/api/experiments/save"]({"kind": "futures_spread", "name": "repeatable", "request": req, "metrics": metrics})
+    again = _safe(assets.extra_get["/api/futures/spread"](dict(req["query"])))
+    ok = assets.extra_post["/api/experiments/check"]({"id": rec["id"], "metrics": {"summary": again["backtest"]["summary"], "adf_p": again["diagnostics"]["adf"]["p_value"], "hedge_ratio": again["hedge_ratio"]["ols"]}})
+    assert ok["reproduced"] and not ok["differences"]
+    bad = assets.extra_post["/api/experiments/check"]({"id": rec["id"], "metrics": {**metrics, "hedge_ratio": metrics["hedge_ratio"] + 1}})
+    assert not bad["reproduced"] and bad["differences"][0]["metric"] == "hedge_ratio"

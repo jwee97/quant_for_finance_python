@@ -85,10 +85,11 @@
     save(root, d, ctx);
   }
 
+  window.Experiments.metricsOf.futures_spread = (d) => ({ summary: d.backtest.summary, adf_p: d.diagnostics.adf.p_value, hedge_ratio: d.hedge_ratio.ols });
   function save(root, d, ctx) {
     const st = d.backtest.settings;
     window.Experiments.saveButton(root, { kind: "futures_spread", name: `${d.a}/${d.b} spread`, request: { path: "/api/futures/spread", query: { a: d.a, b: d.b, lookback: st.lookback, entry: st.entry, exit: st.exit, stop: st.stop, cost_bps: st.cost_bps, simulated: ctx.simulated ? 1 : 0 } },
-      metrics: { summary: d.backtest.summary, adf_p: d.diagnostics.adf.p_value, hedge_ratio: d.hedge_ratio.ols }, provenance: d.provenance, universe: [d.a, d.b], assumptions: d.provenance && d.provenance.assumptions });
+      metrics: window.Experiments.metricsOf.futures_spread(d), provenance: d.provenance, universe: [d.a, d.b], assumptions: d.provenance && d.provenance.assumptions });
   }
 
   window.FuturesResearch = { research, spread };

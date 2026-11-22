@@ -25,7 +25,7 @@ from scipy.stats import norm
 
 from ..derivatives.greeks import bsm_greeks
 from ..derivatives.iv import implied_vol, implied_vol_bachelier
-from ..derivatives.pricing import bsm_price
+from ..derivatives.pricing import binomial_price, bsm_price
 from ..derivatives.schema import normalise_chain
 from ..derivatives.synthetic import SyntheticMarketSpec, chain_for_date
 from .common import AssetSnapshot, add_flag, liquidity_score, nice_step, percentile_rank, range_rank, realized_vol
@@ -787,7 +787,7 @@ VOL_RULES = {"sticky_strike": "each strike keeps its implied volatility when the
              "sticky_delta": "each strike's volatility follows its moneyness: the smile moves with the spot, using the skew slope (volatility per unit of ln K/S)"}
 
 
-def position_values(positions: list[dict], spot: float, rate: float, dividend: float, as_of, shock_spot: float = 0.0, shock_vol: float = 0.0, days: float = 0.0, vol_rule: str = "sticky_strike", skew_slope: float = 0.0) -> pd.DataFrame:
+def position_values(positions: list[dict], spot: float, rate: float, dividend: float, as_of, shock_spot: float = 0.0, shock_vol: float = 0.0, days: float = 0.0, vol_rule: str = "sticky_strike", skew_slope: float = 0.0, exercise: str = "european") -> pd.DataFrame:
     """Value and Greeks of each position at a shocked market: spot x (1 + ``shock_spot``), every implied volatility + ``shock_vol`` (decimal points), ``days`` of time passed. ``quantity`` is in contracts
     (option) or shares (``type: "stock"``). Dollar values include the multiplier (default 100)."""
     if vol_rule not in VOL_RULES:
@@ -796,13 +796,17 @@ def position_values(positions: list[dict], spot: float, rate: float, dividend: f
     rows = []
     for i, pos in enumerate(positions):
         spot0 = float(pos.get("spot") or spot)                                      # a position in another underlying carries its own spot; the shock is applied to every underlying alike
-        s = spot0 * (1.0 + shock_spot)
+        beta = float(pos.get("beta", 1.0))                                          # how much of the market shock this underlying takes (1: all of it; 0: none)
+        s = spot0 * (1.0 + shock_spot * beta)
+        style = str(pos.get("style") or exercise)
+        if style not in ("european", "american"):
+            raise ValueError("exercise must be european or american")
         under = str(pos.get("underlying") or "")
         tag = str(pos.get("strategy") or "")
         qty = float(pos.get("quantity", 0.0))
         if str(pos.get("type", "option")) == "stock":
             rows.append({"i": i, "kind": "stock", "label": "shares", "underlying": under, "strategy": tag, "expiry": None, "dte": None, "strike": None, "right": None, "quantity": qty, "iv": None, "value": qty * s,
-                         "delta": qty, "gamma": 0.0, "vega": 0.0, "theta": 0.0, "rho": 0.0, "vanna": 0.0, "volga": 0.0, "spot0": spot0})
+                         "delta": qty, "gamma": 0.0, "vega": 0.0, "theta": 0.0, "rho": 0.0, "vanna": 0.0, "volga": 0.0, "spot0": spot0, "beta": beta})
             continue
         mult = float(pos.get("multiplier", MULTIPLIER))
         right = str(pos.get("right", "C")).upper()[:1]
@@ -824,7 +828,7 @@ def position_values(positions: list[dict], spot: float, rate: float, dividend: f
             g["delta"] = float((1.0 if s > K else 0.0) if call else (-1.0 if s < K else 0.0))
             g["vanna"] = g["volga"] = 0.0
         else:
-            price = float(bsm_price(s, K, T, rate, dividend, sigma, call))
+            price = float(binomial_price(s, K, T, rate, dividend, sigma, call, american=True, steps=max(60, min(300, int(T * 365 * 2)))) if style == "american" else bsm_price(s, K, T, rate, dividend, sigma, call))
             raw = bsm_greeks(s, K, T, rate, dividend, sigma, call)
             g = {k: float(raw[k]) for k in ("delta", "gamma", "vega", "theta", "rho")}
             rt = math.sqrt(T)
@@ -833,7 +837,7 @@ def position_values(positions: list[dict], spot: float, rate: float, dividend: f
             g["vanna"] = float(-math.exp(-dividend * T) * norm.pdf(d1) * d2 / sigma)             # d delta / d sigma
             g["volga"] = float(g["vega"] * d1 * d2 / sigma)                                      # d vega / d sigma
         e = pos.get("expiry") or (as_of + pd.Timedelta(days=int(pos["dte"]))).date()
-        rows.append({"i": i, "kind": "option", "label": f"{right} {K:g}", "underlying": under, "strategy": tag, "spot0": spot0, "expiry": str(pd.Timestamp(e).date()), "dte": int(round(_years(pos, as_of) * 365)), "strike": K, "right": right, "quantity": qty,
+        rows.append({"i": i, "kind": "option", "label": f"{right} {K:g}", "underlying": under, "strategy": tag, "spot0": spot0, "beta": beta, "style": style, "expiry": str(pd.Timestamp(e).date()), "dte": int(round(_years(pos, as_of) * 365)), "strike": K, "right": right, "quantity": qty,
                      "iv": iv, "value": qty * mult * price, "delta": qty * mult * g["delta"], "gamma": qty * mult * g["gamma"], "vega": qty * mult * g["vega"] / 100.0, "theta": qty * mult * g["theta"] / 365.0,
                      "rho": qty * mult * g["rho"] / 100.0, "vanna": qty * mult * g["vanna"] / 100.0, "volga": qty * mult * g["volga"] / 1e4, "price": price, "iv_used": sigma})
     return pd.DataFrame(rows)
@@ -856,23 +860,24 @@ def _attribution(base: pd.DataFrame, ds: float, dv: float, days: float, pnl: flo
     """Split a revaluation P&L into the Greeks' contributions: delta, gamma, vega, the cross-term vanna (a spot move changes delta by a volatility move), volga (vega's own convexity), theta, the smile moving with the
     spot (only under sticky_delta), and what the Taylor expansion does not capture (higher orders, expiry kinks)."""
     opt = base[base["kind"] == "option"]
-    dS = base["spot0"] * ds
+    dS = base["spot0"] * ds * base["beta"]
     dvp = dv * 100.0
-    slide = (-skew_slope * math.log(1.0 + ds) * 100.0) if rule == "sticky_delta" else 0.0
+    slide = (-skew_slope * np.log(1.0 + ds * base["beta"]) * 100.0) if rule == "sticky_delta" else 0.0
     parts = {"delta": float((base["delta"] * dS).sum()), "gamma": float((0.5 * base["gamma"] * dS ** 2).sum()), "vega": float(opt["vega"].sum() * dvp),
-             "vanna": float((base["vanna"] * dS).sum() * dvp), "volga": float(0.5 * opt["volga"].sum() * dvp ** 2), "theta": float(base["theta"].sum() * days), "smile_move": float(opt["vega"].sum() * slide)}
+             "vanna": float((base["vanna"] * dS).sum() * dvp), "volga": float(0.5 * opt["volga"].sum() * dvp ** 2), "theta": float(base["theta"].sum() * days), "smile_move": float((opt["vega"] * (slide[opt.index] if hasattr(slide, "loc") else slide)).sum())}
     parts["unexplained"] = float(pnl - sum(parts.values()))
     return parts
 
 
 def portfolio_risk(positions: list[dict], spot: float, rate: float = DEFAULT_RATE, dividend: float = 0.0, as_of=None, spot_shocks=(-0.05, -0.02, 0.0, 0.02, 0.05),
-                   vol_shocks=(-0.05, 0.0, 0.05), days: float = 0.0, vol_rule: str = "sticky_strike", skew_slope: float = 0.0) -> dict:
+                   vol_shocks=(-0.05, 0.0, 0.05), days: float = 0.0, vol_rule: str = "sticky_strike", skew_slope: float = 0.0, exercise: str = "european") -> dict:
     """Greeks and stress of a book of options (and shares). Returns the position table, the totals (dollar delta, share-equivalent delta, gamma P&L of a 1% move, vega per point, theta per day, rho per
     1 pt, and the cross-Greeks vanna and volga), the exposure grouped by expiry, underlying and strategy tag, and a stress grid of spot and volatility shocks: the full revaluation P&L, its attribution to the
     Greeks and what they miss, under the chosen volatility rule (``sticky_strike`` or ``sticky_delta``) and the same grid under the other rule so that the assumption's weight is visible.
 
-    A position may name its ``underlying``, its own ``spot`` and a ``strategy`` tag. A stress shock is applied to every underlying alike: that is a correlation of one between them, an assumption, and the
-    answer says so when the book has more than one underlying."""
+    A position may name its ``underlying``, its own ``spot``, a ``strategy`` tag and a ``beta`` (the share of the market shock its underlying takes: 1 by default, so every underlying moves alike, a correlation of
+    one; the answer says so when the book has several underlyings all at beta 1). ``exercise="american"`` revalues the options on a binomial tree (the Greeks stay Black-Scholes, so the difference lands in the
+    unexplained column of the attribution)."""
     if not positions:
         raise ValueError("add at least one position")
     if len(positions) > 60:
@@ -880,7 +885,7 @@ def portfolio_risk(positions: list[dict], spot: float, rate: float = DEFAULT_RAT
     if vol_rule not in VOL_RULES:
         raise ValueError(f"vol_rule must be one of {list(VOL_RULES)}")
     as_of = pd.Timestamp(as_of if as_of is not None else pd.Timestamp.today().normalize())
-    base = position_values(positions, spot, rate, dividend, as_of)
+    base = position_values(positions, spot, rate, dividend, as_of, exercise=exercise)
     dd = float((base["delta"] * base["spot0"]).sum())
     tot = {"value": float(base["value"].sum()), "delta_shares": float(base["delta"].sum()), "delta_dollars": dd, "gamma": float(base["gamma"].sum()),
            "gamma_pnl_1pct": float((0.5 * base["gamma"] * (0.01 * base["spot0"]) ** 2).sum()), "vega_per_point": float(base["vega"].sum()), "theta_per_day": float(base["theta"].sum()),
@@ -896,7 +901,7 @@ def portfolio_risk(positions: list[dict], spot: float, rate: float = DEFAULT_RAT
         out = []
         for ds in spot_shocks:
             for dv in vol_shocks:
-                shocked = position_values(positions, spot, rate, dividend, as_of, ds, dv, days, rule, skew_slope)
+                shocked = position_values(positions, spot, rate, dividend, as_of, ds, dv, days, rule, skew_slope, exercise)
                 pnl = float(shocked["value"].sum() - base["value"].sum())
                 att = _attribution(base, ds, dv, days, pnl, rule, skew_slope)
                 taylor = pnl - att["unexplained"]
@@ -912,13 +917,14 @@ def portfolio_risk(positions: list[dict], spot: float, rate: float = DEFAULT_RAT
     add_flag(flags, tot["vega_per_point"] < 0, "net short vega: a rise in implied volatility loses money")
     add_flag(flags, tot["theta_per_day"] > 0 and tot["gamma"] < 0, "collecting time decay while short gamma: the classic premium-selling profile")
     add_flag(flags, worst["pnl"] < -0.5 * max(abs(tot["delta_dollars"]), 1.0) and worst["pnl"] < 0, f"the worst stress scenario loses {worst['pnl']:,.0f}")
-    add_flag(flags, len(underlyings) > 1, "the stress moves every underlying by the same percentage (a correlation of one): a diversified book is shown as if it were one position")
+    add_flag(flags, len(underlyings) > 1 and bool((base["beta"] == 1.0).all()), "the stress moves every underlying by the same percentage (a correlation of one): set a beta on a position to let its underlying take a different share of the market move")
+    add_flag(flags, exercise == "american", "American exercise: option values come from a binomial tree; the Greeks and the attribution's Taylor terms are Black-Scholes, so early-exercise value shows as unexplained")
     add_flag(flags, skew_slope == 0.0 and rule_gap > 1e-9, "the volatility rule is sticky-strike or sticky-delta with a zero skew slope: set the skew slope to see the rules differ")
     positions_out = [{k: (None if (isinstance(v, float) and not np.isfinite(v)) else v) for k, v in r.items()} for r in base.to_dict("records")]
     return {"spot": float(spot), "positions": positions_out, "totals": tot, "by_expiry": by_expiry, "by_underlying": _group_totals(base, "underlying"), "by_strategy": _group_totals(base, "strategy"),
             "stress": stress, "stress_other_rule": alt, "vol_rule": vol_rule, "other_rule": other, "rule_gap": float(rule_gap), "vol_rules": VOL_RULES, "skew_slope": float(skew_slope),
             "spot_shocks": [float(x) for x in spot_shocks], "vol_shocks": [float(x) for x in vol_shocks], "worst": worst, "risk_flags": flags,
-            "assumptions": ["Black-Scholes revaluation of every option at the shocked spot, volatility and date (European exercise: an American option's early-exercise value is not included)",
+            "exercise": exercise, "assumptions": [("binomial-tree revaluation of every option (American exercise)" if exercise == "american" else "Black-Scholes revaluation of every option at the shocked spot, volatility and date (European exercise: early-exercise value is not included)"),
                             f"volatility rule: {VOL_RULES[vol_rule]}", "vanna and volga are analytic; the Taylor terms use the Greeks of today"]}
 
 

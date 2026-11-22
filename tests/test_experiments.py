@@ -45,3 +45,13 @@ def test_bad_input_and_path_traversal_are_refused(tmp_path):
         st.get("../../etc/passwd")
     with pytest.raises(ValueError):
         st.compare(["only-one"])
+
+
+def test_a_repeat_is_judged_against_the_saved_numbers(tmp_path):
+    st = ex.Store(tmp_path)
+    r = _save(st)
+    same = st.check_repeat(r["id"], {"summary": {"sharpe": 1.0, "trades": 10}})
+    assert same["reproduced"] and same["differences"] == []
+    off = st.check_repeat(r["id"], {"summary": {"sharpe": 1.3, "trades": 10}})
+    assert not off["reproduced"] and off["differences"][0]["metric"] == "summary.sharpe" and "data, the random seed or the code" in off["reading"]
+    assert not st.check_repeat(r["id"], {"summary": {"sharpe": 1.0}})["reproduced"]            # a missing number is a difference

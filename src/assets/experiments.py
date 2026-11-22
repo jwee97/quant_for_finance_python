@@ -114,6 +114,23 @@ class Store:
             raise KeyError(eid)
         p.unlink()
 
+    def check_repeat(self, eid: str, metrics: dict, rel: float = 1e-6) -> dict:
+        """Judge a repeat of a saved run: the repeat's metrics against the stored ones. ``reproduced`` is true if every stored number is matched to ``rel`` (relative; absolute below 1e-9) and no number is new or
+        missing. The two hashes of the repeat are returned so a changed result can be told apart from a changed request: the request is the stored one, so only the data or the code can have changed."""
+        rec = self.get(eid)
+        new = flat_metrics(metrics)
+        old = rec["metrics"]
+        diffs = []
+        for k in sorted(set(old) | set(new)):
+            a, b = old.get(k), new.get(k)
+            if a is None or b is None:
+                diffs.append({"metric": k, "stored": a, "repeat": b})
+            elif abs(a - b) > max(1e-9, rel * max(abs(a), abs(b))):
+                diffs.append({"metric": k, "stored": a, "repeat": b, "change": b - a})
+        return {"id": eid, "reproduced": not diffs, "differences": diffs[:40], "n_metrics": len(old), "stored_result_hash": rec["result_hash"], "repeat_result_hash": digest({k: round(v, 8) for k, v in new.items()}),
+                "software_then": rec["software"], "software_now": software_version(self.root),
+                "reading": "the repeat matches the saved run" if not diffs else "the repeat differs from the saved run: the request is the same, so the data, the random seed or the code changed (compare the software versions)"}
+
     def compare(self, ids: list[str]) -> dict:
         if not 2 <= len(ids) <= 8:
             raise ValueError("choose 2 to 8 experiments to compare")

@@ -89,7 +89,7 @@ class AssetApi:
 
     def post_routes(self) -> dict:
         return {"/api/options/portfolio-risk": self.options_portfolio_risk, "/api/options/strategy/payoff": self.options_strategy_payoff, "/api/options/strategy/backtest": self.options_strategy_backtest,
-                "/api/options/strategy/sweep": self.options_strategy_sweep, "/api/options/strategy/walkforward": self.options_strategy_walkforward, "/api/options/strategy/compare": self.options_strategy_compare, "/api/futures/margin": self.futures_margin, "/api/experiments/save": self.experiments_save, "/api/options/snapshot": self.options_snapshot, "/api/experiments/delete": self.experiments_delete, "/api/experiments/compare": self.experiments_compare, "/api/futures/strategy/backtest": self.futures_strategy_backtest, "/api/futures/signals": self.futures_signals, "/api/crypto/signals": self.crypto_signals, "/api/crypto/strategy/backtest": self.crypto_strategy_backtest}
+                "/api/options/strategy/sweep": self.options_strategy_sweep, "/api/options/strategy/walkforward": self.options_strategy_walkforward, "/api/options/strategy/compare": self.options_strategy_compare, "/api/futures/margin": self.futures_margin, "/api/experiments/save": self.experiments_save, "/api/options/snapshot": self.options_snapshot, "/api/experiments/delete": self.experiments_delete, "/api/experiments/check": self.experiments_check, "/api/experiments/compare": self.experiments_compare, "/api/futures/strategy/backtest": self.futures_strategy_backtest, "/api/futures/signals": self.futures_signals, "/api/crypto/signals": self.crypto_signals, "/api/crypto/strategy/backtest": self.crypto_strategy_backtest}
 
     # ------------------------------------------------------------------------------------------------------------ user files
     def _user_files(self, folder: str) -> dict[str, Path]:
@@ -398,6 +398,10 @@ class AssetApi:
                 raise ApiError(f"position {i + 1}: type must be option or stock")
             qty = _number(p, "quantity", 0.0, -1e6, 1e6)
             tags = {k: str(p[k])[:24] for k in ("underlying", "strategy") if p.get(k)}
+            if p.get("beta") not in (None, ""):
+                tags["beta"] = _number(p, "beta", 1.0, -5.0, 5.0)
+            if p.get("style"):
+                tags["style"] = _choice(p, "style", "european", ("european", "american"))
             if p.get("spot") not in (None, ""):
                 tags["spot"] = _number(p, "spot", 0.0, 0.0001, 1e9)
             if kind == "stock":
@@ -432,7 +436,7 @@ class AssetApi:
         days = _number(body, "days", 0.0, 0, 365)
         try:
             risk = oa.portfolio_risk(positions, ctx.spot, float(chain["rate"].iloc[0]), float(chain["dividend"].iloc[0]), ctx.as_of, spot_shocks, vol_shocks, days,
-                                     _choice(body, "vol_rule", "sticky_strike", tuple(oa.VOL_RULES)), _number(body, "skew_slope", 0.0, -3.0, 3.0))
+                                     _choice(body, "vol_rule", "sticky_strike", tuple(oa.VOL_RULES)), _number(body, "skew_slope", 0.0, -3.0, 3.0), _choice(body, "exercise", "european", ("european", "american")))
         except ValueError as exc:
             raise ApiError(str(exc)) from None
         return _wrap("options_portfolio_risk", {"underlying": underlying, **risk}, {"prices": "platform" if simulated else source, "volatilities": source},
@@ -802,6 +806,14 @@ class AssetApi:
         except (KeyError, ValueError):
             raise ApiError("no such experiment") from None
         return {"deleted": body.get("id")}
+
+    def experiments_check(self, body: dict) -> dict:
+        """``POST /api/experiments/check``: ``{id, metrics}`` where ``metrics`` come from sending the stored request again; says whether the repeat reproduced the saved numbers."""
+        ex, st = self._experiments()
+        try:
+            return st.check_repeat(str(body.get("id") or ""), body.get("metrics") or {})
+        except (KeyError, ValueError):
+            raise ApiError("no such experiment") from None
 
     def experiments_compare(self, body: dict) -> dict:
         """``POST /api/experiments/compare``: 2 to 8 saved runs side by side: metrics, the settings that differ, and what the hashes say about reproducibility."""

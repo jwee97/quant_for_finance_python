@@ -39,7 +39,7 @@
       risk: "Delta, gamma, vega and theta of a book of options and shares, by expiry, and what it would make or lose when the price and implied volatility move.",
       strategy: "Choose one of twenty-five structures and see its payoff at expiry, today and half way, where the price is likely to end, its profit by price and day, its Greeks by price, its break-evens, maximum profit and loss, margin and odds; set up to three others beside it.",
       backtest: "Sell or buy premium on a schedule on a simulated option market: one strategy, one setting varied to see how fragile the choice is, or every strategy side by side; with the equity curve, the risk measures, where the profit came from by Greek, the costs and the trades." },
-    form: { underlying: "", expiry: "", window: "15", rate: "", dividend: "", premium: "15", hideStale: false, minOi: "", rExpiries: "8", vLoss: "iv", vMode: "strikes", dealer: "calls_long_puts_short", dealerShare: "100", volRule: "sticky_strike", skewSlope: "",
+    form: { underlying: "", expiry: "", window: "15", rate: "", dividend: "", premium: "15", hideStale: false, minOi: "", rExpiries: "8", vLoss: "iv", vMode: "strikes", dealer: "calls_long_puts_short", dealerShare: "100", volRule: "sticky_strike", skewSlope: "", exercise: "european",
       book: [], spotShocks: "-10, -5, -2, 0, 2, 5, 10", volShocks: "-5, 0, 5, 10", days: "0",
       strategy: "long_straddle", sDte: "30", sFar: "", offset: "5", width: "5", quantity: "1", fill: "mid", spread: "5", commission: "0.65", viewVol: "", viewDrift: "", horizon: "", legs: [], compare: new Set(),
       bt: "short_put", btMode: "single", btDays: "252", btSeed: "0", btCapital: "100000", btPremium: "25", btCommission: "0.65", btFill: "100", btParams: {}, btTiming: false, btWindow: "21", btThreshold: "0",
@@ -142,6 +142,11 @@
         for (const [el, k, ph, title] of [[strike, "strike", "strike", "Strike price"], [dte, "dte", "days", "Days to expiry"], [qty, "quantity", "quantity", "Contracts or shares: positive buys, negative sells"]]) {
           el.type = "number"; el.step = "any"; el.value = x[k]; el.placeholder = ph; el.title = title; el.setAttribute("aria-label", `${title} of row ${i + 1}`); el.addEventListener("input", () => { x[k] = el.value; onChange(); });
         }
+        if (list === O.form.book) {                                                              // the book can tag a row with a strategy and give it a share of the market shock
+          const extra = h("div", "l2", row), tag = h("input", "", extra), beta = h("input", "", extra);
+          tag.type = "text"; tag.placeholder = "strategy tag"; tag.title = "Group this row with others of the same tag (Exposure by strategy)"; tag.value = x.tag || ""; tag.setAttribute("aria-label", "strategy tag of row " + (i + 1)); tag.addEventListener("input", () => { x.tag = tag.value; onChange(); });
+          beta.type = "number"; beta.step = "any"; beta.placeholder = "beta 1"; beta.title = "Share of the stress price move this row takes (1: all of it, 0: none)"; beta.value = x.beta || ""; beta.setAttribute("aria-label", "beta of row " + (i + 1)); beta.addEventListener("input", () => { x.beta = beta.value; onChange(); });
+        }
         type.setAttribute("aria-label", "type of row " + (i + 1)); right.setAttribute("aria-label", "call or put, row " + (i + 1)); rm.setAttribute("aria-label", "remove row " + (i + 1));
         const sync = () => { const stock = x.type === "stock"; right.disabled = strike.disabled = dte.disabled = stock; };
         type.addEventListener("change", () => { x.type = type.value; sync(); onChange(); }); right.addEventListener("change", () => { x.right = right.value; onChange(); });
@@ -162,9 +167,10 @@
     if (!list.length) throw new Error(`Add at least one row to the ${what}`);
     return list.map((x, i) => {
       const q = Number(x.quantity); if (!isFinite(q) || q === 0) throw new Error(`Row ${i + 1} needs a quantity (positive to buy, negative to sell)`);
-      if (x.type === "stock") return { type: "stock", quantity: q };
+      const extra = what === "book" ? { ...(x.tag ? { strategy: x.tag } : {}), ...(x.beta !== undefined && x.beta !== "" ? { beta: Number(x.beta) } : {}) } : {};
+      if (x.type === "stock") return { type: "stock", quantity: q, ...extra };
       const k = Number(x.strike), d = Number(x.dte); if (!(k > 0)) throw new Error(`Row ${i + 1} needs a strike`); if (!(d >= 1)) throw new Error(`Row ${i + 1} needs days to expiry of at least 1`);
-      return { type: "option", right: x.right, strike: k, dte: d, quantity: q };
+      return { type: "option", right: x.right, strike: k, dte: d, quantity: q, ...extra };
     });
   }
   const underlyingField = (box, after) => {
@@ -252,6 +258,7 @@
       Q.labField(s, { key: "spotShocks", label: "Price moves (%)", kind: "text", placeholder: "-10, -5, 0, 5, 10", help: "Up to nine, separated by commas" }, f, after);
       Q.labField(s, { key: "volShocks", label: "Implied volatility moves (points)", kind: "text", placeholder: "-5, 0, 5, 10" }, f, after);
       Q.labField(s, { key: "volRule", label: "When the price moves, implied volatility…", kind: "choice", options: [["sticky_strike", "stays at each strike (sticky-strike)"], ["sticky_delta", "follows the smile with the price (sticky-delta)"]], help: "The same stress is also shown under the other rule, so you see how much the assumption is worth" }, f, after);
+      Q.labField(s, { key: "exercise", label: "Exercise style of the options", kind: "choice", options: [["european", "European (Black-Scholes)"], ["american", "American (binomial tree)"]], help: "American revalues every option on a tree; the Greeks stay Black-Scholes, so early-exercise value shows as unexplained" }, f, after);
       Q.labField(s, { key: "skewSlope", label: "Skew slope (volatility per unit of ln K/F, blank = the chain's)", kind: "number", step: 0.05, min: -5, max: 5, help: "Sticky-delta needs the slope of the smile; blank reads it from the chain's 30-day expiry" }, f, after);
       Q.labField(s, { key: "days", label: "Days that pass", kind: "number", step: 1, min: 0, max: 365, help: "Zero values the book today; more shows the time decay as well" }, f, after);
     }
@@ -371,7 +378,7 @@
     if (m === "saved") return W.request(O, () => [{ modes: ["saved"], path: "/api/experiments", query: {}, cacheKey: key("saved", Date.now()) }], "Reading the saved runs…");
     if (m === "risk") return W.request(O, () => {
       const spots = W.percentList(f.spotShocks, "Price moves"), vols = W.percentList(f.volShocks, "Implied volatility moves");
-      return [{ modes: ["risk"], path: "/api/options/portfolio-risk", body: { ...settings(), positions: legsBody(f.book, "book"), spot_shocks: spots, vol_shocks: vols, days: Number(f.days) || 0, vol_rule: f.volRule, skew_slope: f.skewSlope === "" ? undefined : Number(f.skewSlope) } }];
+      return [{ modes: ["risk"], path: "/api/options/portfolio-risk", body: { ...settings(), positions: legsBody(f.book, "book"), spot_shocks: spots, vol_shocks: vols, days: Number(f.days) || 0, vol_rule: f.volRule, exercise: f.exercise, skew_slope: f.skewSlope === "" ? undefined : Number(f.skewSlope) } }];
     }, "Revaluing the book…");
     if (m === "strategy") return W.request(O, () => {
       const body = { ...settings(), strategy: f.strategy === "custom" ? undefined : f.strategy, fill: f.fill };

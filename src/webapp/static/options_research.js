@@ -42,7 +42,7 @@
       { label: "In band", get: (x) => (x.inside_band === null ? "n/a" : x.inside_band ? "yes" : "no") }], worstRows);
     const lim = h("details", "how", root); h("summary", "", lim, "What is not guaranteed"); const ul = h("ul", "", lim); for (const x of s.limits) h("li", "", ul, x);
     if (window.Experiments) window.Experiments.saveButton(root, { kind: "options_surface", name: `${ctx.nameOf(d)} surface research`, request: { path: "/api/options/surface/research", query: ctx.body || {} },
-      metrics: { svi_mean_error_pts: mean, butterfly_failing_slices: arb.butterfly_violating_slices, calendar_failing_pairs: arb.calendar_violating_pairs, ssvi_error_pts: ss ? ss.rmse_vol_points : null }, provenance: d.provenance, universe: [d.underlying || ctx.nameOf(d)], assumptions: d.provenance && d.provenance.assumptions });
+      metrics: window.Experiments.metricsOf.options_surface(d), provenance: d.provenance, universe: [d.underlying || ctx.nameOf(d)], assumptions: d.provenance && d.provenance.assumptions });
   }
 
   function validate(root, d, ctx) {
@@ -68,10 +68,18 @@
     W.hint(root, sc.caveat);
     const best = sc.models.find((m) => m.model === sc.preferred_by_combined_rank) || sc.models[0];
     if (window.Experiments && best) window.Experiments.saveButton(root, { kind: "options_calibration", name: `${ctx.nameOf(d)} model validation`, request: { path: "/api/models/validate", body: ctx.body || {} },
-      metrics: { n_quotes: d.n_quotes, combined_rank_score: sc.combined_rank_score, preferred: { in_sample: best.in_sample_rmse, held_out: best.out_of_sample_rmse, bic: best.bic, params: best.n_params } }, provenance: d.provenance, universe: [d.underlying || ctx.nameOf(d)], assumptions: d.provenance && d.provenance.assumptions });
+      metrics: window.Experiments.metricsOf.options_calibration(d), provenance: d.provenance, universe: [d.underlying || ctx.nameOf(d)], assumptions: d.provenance && d.provenance.assumptions });
     history(root, { underlying: d.underlying || ctx.underlying, model: sc.preferred_by_combined_rank });
   }
 
+  if (window.Experiments) {
+    const M = window.Experiments.metricsOf;
+    M.options_surface = (d) => { const sl = d.surface.slices, ar = d.surface.arbitrage_summary, ss = d.surface.ssvi && !d.surface.ssvi.error ? d.surface.ssvi : null;
+      return { svi_mean_error_pts: sl.reduce((a, x) => a + x.rmse_vol_points, 0) / sl.length, butterfly_failing_slices: ar.butterfly_violating_slices, calendar_failing_pairs: ar.calendar_violating_pairs, ssvi_error_pts: ss ? ss.rmse_vol_points : null }; };
+    M.options_strategy = (d) => { const a = d.analysis; return { prob_profit: a.prob_profit, expected_value: a.expected_value, max_profit: a.max_profit, max_loss: a.max_loss, cost: a.cost, margin: a.margin.estimate, greeks: a.greeks }; };
+    M.options_calibration = (d) => { const sc = d.scorecard, best = sc.models.find((m) => m.model === sc.preferred_by_combined_rank) || sc.models[0];
+      return { n_quotes: d.n_quotes, combined_rank_score: sc.combined_rank_score, preferred: { in_sample: best.in_sample_rmse, held_out: best.out_of_sample_rmse, bic: best.bic, params: best.n_params } }; };
+  }
   const smoney = (v) => (v === null || v === undefined || Number.isNaN(v) ? "n/a" : (v < 0 ? "-" : "+") + "$" + Math.abs(v).toLocaleString(undefined, { maximumFractionDigits: 0 }));
 
   /* The book's cross-Greeks, its exposure by underlying and by strategy tag, the stress P&L split into the Greeks' contributions and the same stress under the other volatility rule. */
@@ -107,7 +115,7 @@
       table(e, [{ label: "Leg", get: (x) => x.leg }, { label: "European value", num: true, get: (x) => num(x.european_value, 2) }, { label: "Intrinsic", num: true, get: (x) => num(x.intrinsic, 2) }, { label: "Why it matters", get: (x) => x.why }], a.early_exercise);
     }
     if (window.Experiments) window.Experiments.saveButton(parent, { kind: "options_strategy", name: `${d.strategy || "own legs"} on ${d.underlying}`, request: { path: "/api/options/strategy/payoff", body: ctx.body || {} },
-      metrics: { prob_profit: a.prob_profit, expected_value: a.expected_value, max_profit: a.max_profit, max_loss: a.max_loss, cost: a.cost, margin: a.margin.estimate, greeks: a.greeks }, provenance: d.provenance, universe: [d.underlying], assumptions: d.provenance && d.provenance.assumptions });
+      metrics: window.Experiments.metricsOf.options_strategy(d), provenance: d.provenance, universe: [d.underlying], assumptions: d.provenance && d.provenance.assumptions });
   }
 
   /* Dated chains kept on this machine and how a model's parameters move between them. */
