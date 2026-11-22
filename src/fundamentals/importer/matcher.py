@@ -19,7 +19,7 @@ from datetime import date
 from decimal import Decimal
 
 from .. import canonical
-from . import checks, periods as period_module, statements, taxonomy
+from . import checks, observations as observations_module, periods as period_module, statements, taxonomy
 from . import pdf as pdf_module
 from .ir import Document
 from .model import ColumnRole, FinancialCandidate, normalise
@@ -105,6 +105,12 @@ def build(doc: Document, hint: dict | None = None) -> dict:
             rejections.append({"reason": s.why, "table": s.table.table_id, "page": s.table.page, "title": s.table.title[:80]})
     for s in primary + summary + other:
         statements.resolve_columns(s, ctx, year_end)
+    for s in sts:                                                                                      # tables that map to no known line still have columns: their figures are observations too
+        if s not in primary and s not in summary and s not in other:
+            try:
+                statements.resolve_columns(s, ctx, year_end)
+            except Exception:                                                                          # a table nobody asked for must never stop the statements being read
+                s.columns = []
     if year_end is None:                                                                              # a balance sheet names its date in full ("31 December 2023"): that is the fiscal year end the bare-year headings share
         named = Counter((date.fromisoformat(c.period_end).month, date.fromisoformat(c.period_end).day) for s in primary if s.kind == "BS" for c in s.columns if c.usable and not c.guessed)
         for s in primary:                                                                              # "As at 31 March 2020" in a balance sheet's title or heading
@@ -325,6 +331,12 @@ def build(doc: Document, hint: dict | None = None) -> dict:
     draft["presentations"] = presentations[:400]
     draft["scoped"] = scoped[:400]
     draft["cross_values"] = cross
+    try:
+        draft["raw_observations"] = observations_module.collect(sts, cands, base_unit, currency, snap, doc.reader.get("name", "layout"), draft["standard"] | {"extractor": taxonomy.EXTRACTOR_VERSION,
+                                                                 "mapping": mapping.version, "taxonomy": taxonomy.TAXONOMY_VERSION})
+    except Exception as error:                                                                         # the archive of observations never blocks the statements
+        draft["raw_observations"] = []
+        draft["notes"].append(f"The archive of all figures could not be built ({error}).")
     draft["checks"] = checks.run(draft, cross, conflicts)
     draft["conflicts_between_candidates"] = conflicts
     draft["confidence"] = checks.confidence_summary(draft)

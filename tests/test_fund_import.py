@@ -222,8 +222,10 @@ def test_nothing_is_stored_until_approval_and_every_stored_figure_says_where_it_
     loose = svc.create_batch("no company chosen")
     stray = svc.add_file(loose, "stray.htm", ixbrl("2022-12-31", year="2022", start="2022-01-01"))[0]
     svc.process(loose)
+    svc.decide(stray["item_id"], [{"action": "confirm_suggested"}])
     with pytest.raises(FundamentalsError, match="choose the company"):
         svc.approve(stray["item_id"], security={})
+    svc.decide(item["item_id"], [{"action": "confirm_suggested"}])
     out = svc.approve(item["item_id"], security={"security_id": sid(store)})
     assert out["item"]["status"] == "saved" and out["saved"][0]["lines"] >= 5
     periods = store.periods([sid(store)])
@@ -232,7 +234,7 @@ def test_nothing_is_stored_until_approval_and_every_stored_figure_says_where_it_
     prov = {p["metric_code"]: p for p in svc.provenance(sid(store))}
     assert prov["revenue"]["accession"] == "0000000001-24-000005" and prov["revenue"]["taxonomy_tag"] == "us-gaap:Revenues" and prov["revenue"]["reported_value"] == 1200e6
     assert prov["revenue"]["extraction_method"] == "xbrl" and prov["revenue"]["edited"] == 0 and prov["revenue"]["source_kind"] == "xbrl"
-    with pytest.raises(FundamentalsError, match="already saved"):
+    with pytest.raises(FundamentalsError, match="already saved|is saved"):
         svc.approve(item["item_id"], security={"security_id": sid(store)})
     again = svc.add_file(batch, "same-again.htm", ixbrl())[0]
     assert again["status"] == "duplicate" and "already saved" in again["error"], "a file already saved is not read again"
@@ -242,14 +244,17 @@ def test_a_figure_that_differs_from_the_held_one_needs_a_decision_and_a_later_fi
     batch = svc.create_batch("restate", sid(store))
     first = svc.add_file(batch, "orig.htm", ixbrl())[0]
     svc.process(batch, hint={"filing_date": "2024-02-08"})
+    svc.decide(first["item_id"], [{"action": "confirm_suggested"}])
     svc.approve(first["item_id"], security={"security_id": sid(store)})
     changed = ixbrl(flows={"Revenues": 1180, "NetIncomeLoss": 150, "OperatingIncomeLoss": 220})
     second = svc.add_file(batch, "amended.htm", changed)[0]
     svc.process(batch, hint={"filing_date": "2024-09-30"})
     item = svc.item(second["item_id"], full=True)
     assert item["status"] == "needs_review" and any(c["kind"] == "restatement" and c["metric"] == "revenue" and c["stored"] == 1200e6 and c["imported"] == 1180e6 for c in item["draft"]["conflicts"])
+    svc.decide(second["item_id"], [{"action": "confirm_suggested"}])
     with pytest.raises(FundamentalsError, match="restatement"):
         svc.approve(second["item_id"], security={"security_id": sid(store)})
+    svc.decide(second["item_id"], [{"action": "confirm_suggested"}])
     out = svc.approve(second["item_id"], security={"security_id": sid(store)}, decision="restate")
     assert out["saved"][0]["vintage"] == 1
     stored = store.periods([sid(store)]).sort_values("vintage")
@@ -262,6 +267,7 @@ def test_a_duplicate_of_held_figures_is_said_to_add_nothing_and_a_hundredfold_un
     batch = svc.create_batch("dup", sid(store))
     a = svc.add_file(batch, "a.htm", ixbrl())[0]
     svc.process(batch, hint={"filing_date": "2024-02-08"})
+    svc.decide(a["item_id"], [{"action": "confirm_suggested"}])
     svc.approve(a["item_id"], security={"security_id": sid(store)})
     b = svc.add_file(batch, "b.csv", b"Line item,FY2023\nRevenue,1200\nNet income,150\nTotal assets,5000\n(in millions)\n")[0]
     svc.process(batch)
@@ -271,6 +277,8 @@ def test_a_duplicate_of_held_figures_is_said_to_add_nothing_and_a_hundredfold_un
     svc.process(batch)
     bad = svc.item(c["item_id"], full=True)
     assert any(i["kind"] == "units_vs_history" and i["level"] == "error" for i in bad["issues"])
+    svc.review(c["item_id"], {"confirm_periods": True})
+    svc.decide(c["item_id"], [{"action": "confirm_suggested"}])
     with pytest.raises(FundamentalsError, match="not approved"):
         svc.approve(c["item_id"], security={"security_id": sid(store)})
 

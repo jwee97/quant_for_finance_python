@@ -184,33 +184,33 @@ def _structured(svc, store, revenue_conf):
     return svc.add_structured(batch, "r.pdf", None, b"unique-" + str(revenue_conf).encode(), draft, kind="file")["item_id"], sid
 
 
-def test_a_low_confidence_figure_is_stored_unverified_kept_out_of_research_until_confirmed(store):
+def test_only_what_a_person_confirmed_is_stored_whatever_the_scanners_confidence(store):
     svc = ImportService(store)
-    item, sid = _structured(svc, store, 0.5)
+    item, sid = _structured(svc, store, 0.5)                                                          # revenue read with a confidence of 0.5, the others with the draft's own
     issues = svc.item(item, full=True)["issues"]
     assert any(i["kind"] == "low_confidence" for i in issues)
+    rows = svc.observations(item)["rows"]
+    net = [o["obs_id"] for o in rows if o["metric_guess"] == "net_income"]
+    svc.decide(item, [{"action": "confirm", "ids": net}])                                              # a person confirms net income only
     svc.approve(item)
     obs = store.observations([sid])
     flags = dict(zip(obs["metric_code"], obs["quality_flag"]))
-    assert flags["revenue"] == "unverified" and flags["net_income"] == "ok" and "unverified" in quality.DEFAULT_EXCLUDE and "unverified" in PitSettings().exclude_flags
+    assert flags == {"net_income": "ok"}, "revenue was not confirmed, so it is not in the research store at all (high confidence or low)"
     tables = PeriodTables(store, [sid])
-    assert tables.fy["revenue"].isna().all() and tables.fy["net_income"].notna().all(), "research does not see the unverified figure"
-    quality.check_security(store, sid)                                                         # the data-quality pass must not clear it
-    assert dict(zip(store.observations([sid])["metric_code"], store.observations([sid])["quality_flag"]))["revenue"] == "unverified"
+    assert tables.fy["net_income"].notna().all() and ("revenue" not in tables.fy or tables.fy["revenue"].isna().all())
     with store.db.transaction() as c:
-        row = c.execute("SELECT confidence, verified, extractor_version, statement FROM observation_provenance WHERE metric_code = 'revenue'").fetchone()
-    assert row[0] == 0.5 and row[1] == 0 and row[2] == "9.9.9" and row[3] == "income statement"
-    assert svc.verify_saved(item, ["revenue"])["confirmed"] == 1
-    assert PeriodTables(store, [sid]).fy["revenue"].notna().all()
+        row = c.execute("SELECT confidence, verified, extractor_version, statement FROM observation_provenance WHERE metric_code = 'net_income'").fetchone()
+    assert row[1] == 1 and row[2] == "9.9.9"
+    assert svc.observations(item, status="UNCONFIRMED")["total"] >= 1, "the unconfirmed figures stay in the archive for review"
 
 
-def test_a_person_who_types_or_confirms_a_low_confidence_figure_makes_it_verified(store):
+def test_a_person_who_confirms_a_low_confidence_figure_stores_it(store):
     svc = ImportService(store)
     item, sid = _structured(svc, store, 0.4)
     svc.review(item, {"verify": ["revenue"]})
     svc.approve(item)
     flags = dict(zip(store.observations([sid])["metric_code"], store.observations([sid])["quality_flag"]))
-    assert flags["revenue"] == "ok"
+    assert flags == {"revenue": "ok"}
 
 
 # ------------------------------------------------------------------------------------------------------------------------ versioned extractions and reprocessing
@@ -223,6 +223,7 @@ def test_reprocessing_keeps_every_reading_and_never_touches_stored_figures(store
     svc.process(batch, hint={"country": "US", "filing_date": "2024-02-20"})
     first = svc.extractions(item)
     assert len(first) == 1 and first[0]["extractor_version"] == taxonomy.EXTRACTOR_VERSION and first[0]["standard"] == "us-gaap"
+    svc.decide(item, [{"action": "confirm_suggested"}])
     svc.approve(item, security={"security_id": sid})
     before = store.observations([sid]).sort_values(["metric_code", "period_id"]).reset_index(drop=True)
     monkeypatch.setattr(taxonomy, "EXTRACTOR_VERSION", "2.1.0")

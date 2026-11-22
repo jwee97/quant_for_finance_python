@@ -35,13 +35,13 @@ class ImportRoutes:
 
     def import_get_routes(self) -> dict:
         return {"/api/fund/import/history": self.import_history, "/api/fund/import/batch": self.import_batch, "/api/fund/import/item": self.import_item, "/api/fund/import/provenance": self.import_provenance,
-                "/api/fund/coverage/overview": self.coverage_overview, "/api/fund/connectors": self.connectors, "/api/fund/pit/asof": self.pit_asof, "/api/fund/import/diagnostics": self.import_diagnostics, "/api/fund/import/extractions": self.import_extractions, "/api/fund/import/candidates": self.import_candidates}
+                "/api/fund/coverage/overview": self.coverage_overview, "/api/fund/connectors": self.connectors, "/api/fund/pit/asof": self.pit_asof, "/api/fund/import/diagnostics": self.import_diagnostics, "/api/fund/import/observations": self.import_observations, "/api/fund/import/plan": self.import_plan, "/api/fund/import/source": self.import_source, "/api/fund/custom": self.custom_observations, "/api/fund/sources/compare": self.sources_compare, "/api/fund/lineage": self.lineage_route, "/api/fund/alpha/inputs": self.alpha_inputs_route, "/api/fund/import/extractions": self.import_extractions, "/api/fund/import/candidates": self.import_candidates}
 
     def import_post_routes(self) -> dict:
         return {"/api/fund/import/create": self.import_create, "/api/fund/import/chunk": self.import_chunk, "/api/fund/import/urls": self.import_urls, "/api/fund/import/process": self.import_process,
                 "/api/fund/import/review": self.import_review, "/api/fund/import/approve": self.import_approve, "/api/fund/import/reject": self.import_reject, "/api/fund/import/filings": self.import_filings,
                 "/api/fund/import/filings/add": self.import_filings_add, "/api/fund/coverage/backfill": self.coverage_backfill, "/api/fund/connectors/search": self.connectors_search, "/api/fund/connectors/fetch": self.connectors_fetch,
-                "/api/fund/pit/export": self.pit_export, "/api/fund/import/verify": self.import_verify, "/api/fund/import/reprocess": self.import_reprocess}
+                "/api/fund/pit/export": self.pit_export, "/api/fund/import/decide": self.import_decide, "/api/fund/sources/prefer": self.sources_prefer, "/api/fund/import/verify": self.import_verify, "/api/fund/import/reprocess": self.import_reprocess}
 
     # ------------------------------------------------------------------------------------------------------------ plumbing
     def _importer(self) -> ImportService:
@@ -213,6 +213,107 @@ class ImportRoutes:
         if not isinstance(edits, dict):
             raise ApiError("edits must be a dictionary")
         return self._guard(self._importer().review, self._int(body, "item_id"), edits)
+
+    def import_observations(self, q: dict) -> dict:
+        """``GET /api/fund/import/observations?item_id&group&status&q&unmapped&sort&desc&limit&offset``: a page of the figures the scanner found in an item, with the counts by group and by decision."""
+        def one(k, d=None):
+            v = q.get(k, d)
+            return v[0] if isinstance(v, list) else v
+        from ..fundamentals import canonical
+        out = self._guard(self._importer().observations, self._int({"item_id": one("item_id")}, "item_id"), one("group"), one("status"), one("q"), str(one("unmapped", "")).lower() in ("1", "true"), one("sort") or "page",
+                          str(one("desc", "")).lower() in ("1", "true"), min(int(one("limit", 200) or 200), 1000), int(one("offset", 0) or 0), one("role"))
+        return {**out, "metrics": [{"code": c, "label": m.label} for c, m in canonical.METRICS.items()]}
+
+    def import_decide(self, body: dict) -> dict:
+        """``POST /api/fund/import/decide {item_id, actions}``: a person's decisions on observations (confirm, correct, exclude, unresolve, reset, add, confirm_suggested)."""
+        actions = body.get("actions")
+        if not isinstance(actions, list):
+            raise ApiError("actions must be a list")
+        return self._guard(self._importer().decide, self._int(body, "item_id"), actions)
+
+    def import_plan(self, q: dict) -> dict:
+        """``GET /api/fund/import/plan?item_id``: the final-approval screen: counts and the exact observations an approval would commit."""
+        v = q.get("item_id")
+        return self._guard(self._importer().plan, self._int({"item_id": v[0] if isinstance(v, list) else v}, "item_id"))
+
+    def import_source(self, q: dict) -> dict:
+        """``GET /api/fund/import/source?item_id&page&bbox``: the page of the stored PDF as a PNG (base64) with the observation's box highlighted, so a figure is checked against the page it came from."""
+        def one(k):
+            v = q.get(k)
+            return v[0] if isinstance(v, list) else v
+        return self._guard(self._source_page, self._int({"item_id": one("item_id")}, "item_id"), int(one("page") or 1), one("bbox"))
+
+    def _source_page(self, item_id: int, page: int, bbox) -> dict:
+        import base64
+        svc = self._importer()
+        it = svc.item(item_id)
+        data = svc._blob(it["content_hash"])
+        if data is None or it["source_kind"] != "pdf":
+            raise FundamentalsError("the source page can be shown for a stored PDF only")
+        try:
+            import pymupdf
+        except ImportError:
+            raise FundamentalsError("showing the page needs PyMuPDF (pip install pymupdf)") from None
+        doc = pymupdf.open(stream=data, filetype="pdf")
+        if not 1 <= page <= len(doc):
+            raise FundamentalsError(f"the PDF has {len(doc)} pages")
+        pg = doc[page - 1]
+        box = None
+        if bbox:
+            try:
+                box = [float(x) for x in (bbox.split(",") if isinstance(bbox, str) else bbox)]
+                pg.draw_rect(pymupdf.Rect(*box), color=(1, 0.3, 0), fill=(1, 0.85, 0), fill_opacity=0.35, width=1.2)
+            except Exception:
+                box = None
+        pix = pg.get_pixmap(matrix=pymupdf.Matrix(1.5, 1.5))
+        return {"page": page, "pages": len(doc), "scale": 1.5, "bbox": box, "width": pix.width, "height": pix.height, "png": base64.b64encode(pix.tobytes("png")).decode()}
+
+    def sources_compare(self, q: dict) -> dict:
+        """``GET /api/fund/sources/compare?security_id[&conflicts=1]``: every provider's and every import's figure for the same line and period side by side, the differences, and which one is used."""
+        from ..fundamentals import sources
+        def one(k):
+            v = q.get(k)
+            return v[0] if isinstance(v, list) else v
+        sid = self._int({"security_id": one("security_id")}, "security_id")
+        return {"rows": self._guard(sources.compare, self.bench("real").store, sid, None, str(one("conflicts") or "").lower() in ("1", "true"))}
+
+    def lineage_route(self, q: dict) -> dict:
+        """``GET /api/fund/lineage?security_id&metric&period_end[&basis=fy|ttm]``: how a derived figure was calculated: formula, input observations with their source, periods, warnings."""
+        from ..fundamentals import lineage
+        from ..fundamentals.pit import PeriodTables
+        def one(k):
+            v = q.get(k)
+            return v[0] if isinstance(v, list) else v
+        sid = self._int({"security_id": one("security_id")}, "security_id")
+        store = self.bench("real").store
+        try:
+            return self._guard(lineage.explain, store, PeriodTables(store, [sid]), sid, str(one("metric") or ""), str(one("period_end") or ""), one("basis") or "fy")
+        except KeyError:
+            raise ApiError("no such metric") from None
+
+    def alpha_inputs_route(self, q: dict) -> dict:
+        """``GET /api/fund/alpha/inputs?fields=revenue,net_income[&security_id]``: what a factor's inputs stand on before it runs (coverage, sources, flagged-out, unconfirmed readings waiting)."""
+        from ..fundamentals import lineage
+        v = q.get("fields")
+        fields = [x for x in str(v[0] if isinstance(v, list) else v or "").split(",") if x]
+        sid = q.get("security_id")
+        sid = sid[0] if isinstance(sid, list) else sid
+        return {"rows": self._guard(lineage.alpha_inputs, self.bench("real").store, fields, [int(sid)] if sid else None)}
+
+    def sources_prefer(self, body: dict) -> dict:
+        """``POST /api/fund/sources/prefer {security_id, metric, period_end, provider | null, note?}``: choose which source's figure research uses (null returns to the priority order). Nothing is deleted."""
+        store = self.bench("real").store
+        provider = body.get("provider") or None
+        self._guard(store.set_source_preference, self._int(body, "security_id"), str(body.get("metric") or ""), str(body.get("period_end") or ""), provider, str(body.get("note") or ""))
+        return {"ok": True}
+
+    def custom_observations(self, q: dict) -> dict:
+        """``GET /api/fund/custom?security_id&as_of``: the confirmed figures that are not canonical lines (research-ready), as known on ``as_of`` when given."""
+        def one(k):
+            v = q.get(k)
+            return v[0] if isinstance(v, list) else v
+        sid = one("security_id")
+        return {"rows": self._guard(self.bench("real").store.custom_observations, [int(sid)] if sid else None, one("as_of"))}
 
     def import_approve(self, body: dict) -> dict:
         """``POST /api/fund/import/approve {item_id, security_id | company, decision?, restated_on?}``: store the item's periods, with their provenance, once every check passes."""

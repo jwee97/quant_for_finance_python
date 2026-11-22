@@ -26,6 +26,7 @@ from pathlib import Path
 from .. import manual
 from ..errors import FundamentalsError
 from ..schema import now_iso
+from .review import ReviewMixin
 from . import ai_extract, arelle_check, checks as checks_module, docling_adapter, engine, reconcile, tabular, taxonomy, xbrl
 from . import html as html_reader
 from . import pdf as pdf_reader
@@ -80,15 +81,8 @@ def lifecycle(status: str, draft: dict | None) -> str:
 
 
 def _unverified(p: dict) -> dict:
-    """The lines whose reading is below the confidence threshold and that no person has confirmed or typed: they are stored flagged ``unverified``, which research excludes."""
-    out = {}
-    for code, s in (p.get("sources") or {}).items():
-        if code not in p["values"] or s.get("verified") or s.get("edited"):
-            continue
-        failed = any(c.get("status") == "FAIL" for c in (s.get("checks") or []))                          # a line in a failed reconciliation is not released to research on the strength of an approval alone
-        if (s.get("confidence") is not None and s["confidence"] < checks_module.LOW_CONFIDENCE) or failed:
-            out[code] = "unverified"
-    return out
+    """The lines no person has confirmed. Scanner confidence is not consulted: a high confidence does not confirm, and a missing one does not either; editing a figure does not confirm it."""
+    return {code: "unverified" for code, s in {**{c: {} for c in p["values"]}, **(p.get("sources") or {})}.items() if code in p["values"] and not s.get("confirmed")}
 
 
 def _diff(old: dict | None, new: dict) -> dict:
@@ -100,7 +94,7 @@ def _diff(old: dict | None, new: dict) -> dict:
             "added": [{"period": f"{k[0]} to {k[1]}", "code": k[2], "now": b[k]} for k in sorted(b.keys() - a.keys())][:100], "removed": [{"period": f"{k[0]} to {k[1]}", "code": k[2], "was": a[k]} for k in sorted(a.keys() - b.keys())][:100]}
 
 
-class ImportService:
+class ImportService(ReviewMixin):
     def __init__(self, store, fetcher: Fetcher | None = None, fx_fetch=None):
         self.store = store
         self.fetcher = fetcher or Fetcher()
@@ -372,6 +366,7 @@ class ImportService:
         batch = self._batch(it["batch_id"])
         issues = self._issues(draft, batch)
         review = bool(draft.get("review_required")) or any(i["level"] in ("error", "warning") for i in issues)
+        self._store_observations(item_id, draft)
         self._set(item_id, draft=draft, issues=issues, status="needs_review" if review else "extracted", method=draft.get("method"), error=None)
         self._record_extraction(item_id, draft)
         return self.item(item_id)
@@ -423,6 +418,10 @@ class ImportService:
             return {"item_id": item_id, "changed": False, "error": str(error), "versions": self.extractions(item_id)}
         draft["source"] = {"file": it["source_name"], "url": it["source_url"], "content_hash": it["content_hash"], "kind": it["source_kind"]}
         diff = _diff(old, draft)
+        if it["status"] not in ("saved", "duplicate", "rejected"):
+            self._store_observations(item_id, draft)                                                   # new figures are added, reviewed ones are kept as the person left them
+        else:
+            draft.pop("raw_observations", None)
         self._record_extraction(item_id, draft)
         if it["status"] not in ("saved", "duplicate", "rejected"):
             batch = self._batch(it["batch_id"])
@@ -496,7 +495,7 @@ class ImportService:
                 issues.append({"level": "error" if hard else "warning", "message": r["message"], "period": None, "field": None, "kind": "validation:" + r["kind"]})
         low = [(p, code) for p in draft["periods"] for code in _unverified(p)]
         if low:
-            issues.append({"level": "warning", "message": f"{len(low)} figure(s) were read with low confidence (below {checks_module.LOW_CONFIDENCE:.0%}); approved, they are stored as unverified and kept out of research until you confirm them against the page (tick Confirmed on the line) or correct them.",
+            issues.append({"level": "info", "message": f"{len(low)} figure(s) are not confirmed: only figures you confirm are stored for research (confidence is shown as a hint and never confirms anything).",
                            "period": None, "field": None, "kind": "low_confidence"})
         for f in draft.get("fallbacks") or []:
             if f["step"] == "assessment":                                                                  # the reasons a reading was judged unreliable, shown with the validation findings
@@ -588,12 +587,19 @@ class ImportService:
             raise FundamentalsError("this item has no extracted draft to edit")
         draft = copy.deepcopy(base)
         if edits.get("units"):
+            self._relabel_unit(item_id, draft["units"]["money"], str(edits["units"].get("money") or draft["units"]["money"]))
             draft["units"] = {"money": str(edits["units"].get("money") or draft["units"]["money"]), "shares": str(edits["units"].get("shares") or draft["units"]["shares"])}
             draft["units_stated"] = True
+        edited_cells: list = []
+        moved: list = []
+        if edits.get("meta"):
+            self._apply_meta(item_id, draft, edits["meta"])
+        old_currency = draft.get("currency")
         if "currency" in edits:
             currency_module.restore(draft)                                              # a currency typed by a person is the currency the figures are in: undo any conversion first
             draft["currency"] = (str(edits["currency"]).upper()[:3] or None)
             draft.pop("convert_to", None)
+            self._relabel_currency(item_id, old_currency, draft["currency"])
         if "convert_to" in edits:
             draft["convert_to"] = (str(edits["convert_to"]).strip().upper()[:3] or None)
             if draft["convert_to"] and not manual.CURRENCY.match(draft["convert_to"]):
@@ -608,10 +614,14 @@ class ImportService:
             for i, p in enumerate(draft["periods"]):
                 e = incoming[i] if i < len(incoming) and isinstance(incoming[i], dict) else {}
                 if e.get("drop"):
+                    moved.append(((p["fiscal_period"], p["period_end"]), None))
                     continue
+                before = (p["fiscal_period"], p["period_end"])
                 for k in ("fiscal_period", "period_end", "fiscal_year", "filing_date", "currency"):
                     if k in e and e[k] not in (None, ""):
                         p[k] = e[k]
+                if (p["fiscal_period"], p["period_end"]) != before:
+                    moved.append((before, (p["fiscal_period"], p["period_end"])))
                 for code, v in (e.get("values") or {}).items():
                     if code not in manual.canonical.METRICS:
                         raise FundamentalsError(f"{code} is not a line this application knows")
@@ -623,13 +633,16 @@ class ImportService:
                         if p["values"].get(code) != number:
                             p["values"][code] = number
                             src["edited"] = True
+                            edited_cells.append((p["fiscal_period"], p["period_end"], code, number))
                 keep.append(p)
             draft["periods"] = keep
             if not keep:
                 raise FundamentalsError("every period was dropped: reject the item instead")
+        self._sync_edits(item_id, draft, edited_cells, moved)
         if edits.get("confirm_periods"):                                                                # a person confirms the dates the importer had to infer
             for p in draft["periods"]:
                 p["guessed"] = False
+            self._accept_periods(item_id)
             draft.setdefault("corrections", []).append({"kind": "periods_confirmed", "at": now_iso()})
         if edits.get("override") is not None:
             ov = edits["override"] or {}
@@ -638,17 +651,18 @@ class ImportService:
             if kinds and len(note) < 8:
                 raise FundamentalsError("an override needs a note of at least a few words saying why the finding is acceptable")
             draft["overrides"] = {"kinds": kinds, "note": note[:300], "at": now_iso()} if kinds else None
+            if "period_unresolved" in kinds:                                                           # a written override of the period finding is a person's acceptance of the inferred dates
+                self._accept_periods(item_id)
             draft.setdefault("corrections", []).append({"kind": "override", "kinds": kinds, "note": note[:300], "at": now_iso()})
         for sel in edits.get("select") or []:
             self._apply_selection(draft, sel)
         if edits.get("remap"):
             self._apply_remap(draft, edits["remap"])
         verify = edits.get("verify")
-        if verify:
-            for p in draft["periods"]:
-                for code in (list(p["values"]) if verify == "all" else verify):
-                    if code in p["values"]:
-                        p.setdefault("sources", {}).setdefault(code, {"tag": None, "method": "manual-edit", "unit": draft["units"]["money"]})["verified"] = True
+        if verify:                                                                                     # a person's explicit confirmation of the scanner's chosen figures (all, or the named lines)
+            self._confirm_lines(item_id, draft, verify)
+        if edits.get("observations"):
+            self.decide(item_id, edits["observations"])
         batch = self._batch(it["batch_id"])
         issues = self._issues(draft, batch)
         self._set(item_id, reviewed=draft, issues=issues, status="needs_review" if any(i["level"] in ("error", "warning") for i in issues) else "extracted")
@@ -668,9 +682,14 @@ class ImportService:
         it = self.item(item_id, full=True)
         if it["status"] in ("saved", "duplicate", "rejected"):
             raise FundamentalsError(f"this item is already {it['status']}")
-        draft = it["reviewed"] or it["draft"]
-        if draft is None:
+        if (it["reviewed"] or it["draft"]) is None:
             raise FundamentalsError("this item has no extracted draft: process the batch first")
+        draft, custom, skipped = self.publishable(item_id)                                             # only what a person confirmed
+        conflicts_between = [x for x in skipped if x.get("conflict")]
+        if conflicts_between:
+            raise FundamentalsError("not approved: " + conflicts_between[0]["reason"])
+        if not draft["periods"] and not custom:
+            raise FundamentalsError("not approved: no observation has been confirmed. Confirm the figures you checked (or all the scanner's suggestions) in the review, then approve")
         batch = self._batch(it["batch_id"])
         security = security or ({"security_id": batch["security_id"]} if batch.get("security_id") else None)
         if not security or not (security.get("security_id") or security.get("company")):
@@ -697,11 +716,14 @@ class ImportService:
         result = manual.save(self.store, entry, mode, restated_on)
         sid = int(result.get("security_id") or entry.get("security_id") or 0)
         saved = self._provenance(sid, draft, entry, it)
+        filing = next((p.get("filing_date") for p in entry["periods"] if p.get("filing_date")), None) or (it.get("hint") or {}).get("filing_date")
+        n_custom = self._publish_custom(item_id, sid, custom, filing)
+        self._mark_published(item_id)
         self._set(item_id, status="saved", saved_periods=saved)
         with self.store.db.transaction() as c:
             if not batch.get("security_id"):
                 c.execute("UPDATE import_batches SET security_id = ? WHERE batch_id = ?", (sid, it["batch_id"]))
-        return {"item": self.item(item_id), "saved": saved, "counts": result.get("counts")}
+        return {"item": self.item(item_id), "saved": saved, "counts": result.get("counts"), "custom_saved": n_custom}
 
     def _provenance(self, security_id: int, draft: dict, entry: dict, it: dict) -> list[dict]:
         saved = []
@@ -723,7 +745,7 @@ class ImportService:
                         continue
                     s = (src.get("sources") or {}).get(code, {})
                     v = draft.get("versions") or {}
-                    verified = bool(s.get("verified") or s.get("edited") or s.get("confidence") is None or s["confidence"] >= checks_module.LOW_CONFIDENCE)
+                    verified = bool(s.get("confirmed"))                                                     # only a person's confirmation; never the scanner's confidence, never an edit
                     ov = draft.get("overrides") or {}
                     failed = any(ch.get("status") == "FAIL" for ch in (s.get("checks") or []))
                     vstatus = "OVERRIDDEN" if failed and ov.get("kinds") else "FAIL" if failed else "PASS" if any(ch.get("status") == "PASS" for ch in (s.get("checks") or [])) else "UNCONFIRMED"

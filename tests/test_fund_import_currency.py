@@ -52,6 +52,7 @@ def test_a_report_in_another_currency_is_blocked_with_the_way_out(store):
     item, _ = _item(svc, store, _draft())
     issues = svc.item(item, full=True)["issues"]
     assert any(i["level"] == "error" and i["kind"] == "currency" and "Convert to USD" in i["message"] for i in issues)
+    svc.decide(item, [{"action": "confirm_suggested"}])
     with pytest.raises(FundamentalsError, match="not approved: the report is in JPY"):
         svc.approve(item)
 
@@ -69,6 +70,7 @@ def test_converting_fetches_the_rates_once_uses_average_for_flows_and_closing_fo
     assert p["values"]["shares_outstanding"] == 1000.0, "a count of shares is not an amount of money"
     assert 0.0100 < average < closing < 0.0110 + 1e-9, "a rising yen: the year's average is below the year-end rate"
     assert p["sources"]["revenue"]["original_currency"] == "JPY" and "converted to USD" in p["sources"]["revenue"]["unit"] and p["sources"]["revenue"]["reported"] == 1_000_000.0
+    svc.decide(item, [{"action": "confirm_suggested"}])
     done = svc.approve(item)
     assert done["item"]["status"] == "saved"
     cur = set(store.periods([sid])["reporting_currency"].dropna())
@@ -96,6 +98,7 @@ def test_no_rate_means_no_conversion_and_a_reason_not_a_guess(store):
     out = svc.review(item, {"convert_to": "USD"})
     assert any(i["level"] == "error" and "no JPY/USD exchange rate" in i["message"] for i in out["issues"])
     assert out["reviewed"]["periods"][0]["values"]["revenue"] == 1_000_000.0 and out["reviewed"]["currency"] == "JPY"
+    svc.decide(item, [{"action": "confirm_suggested"}])
     with pytest.raises(FundamentalsError, match="not approved"):
         svc.approve(item)
 
@@ -116,6 +119,7 @@ def test_a_real_change_of_reporting_currency_can_be_declared_and_is_stored_as_re
     item, sid = _item(svc, store, d)
     out = svc.review(item, {"currency_change_ok": True})
     assert not [i for i in out["issues"] if i["level"] == "error"] and any(i["level"] == "warning" and "really changed" in i["message"] for i in out["issues"])
+    svc.decide(item, [{"action": "confirm_suggested"}])
     svc.approve(item)
     assert set(store.periods([sid])["reporting_currency"].dropna()) == {"USD", "JPY"}
 

@@ -331,6 +331,8 @@ def test_a_guessed_period_blocks_approval_until_confirmed_or_overridden_with_a_r
     svc, item, sid = _imported(store, "samsung")                                                          # bare years in the headings: the day and month are assumed
     issues = svc.item(item, full=True)["issues"]
     assert any(i["level"] == "error" and i["kind"] == "validation:period_unresolved" for i in issues)
+    with pytest.raises(FundamentalsError, match="inferred"):                                             # an inferred period cannot be confirmed until a person accepts or corrects it
+        svc.decide(item, [{"action": "confirm_suggested"}])
     with pytest.raises(FundamentalsError, match="not approved"):
         svc.approve(item, security={"security_id": sid})
     with pytest.raises(FundamentalsError, match="needs a note"):
@@ -338,6 +340,7 @@ def test_a_guessed_period_blocks_approval_until_confirmed_or_overridden_with_a_r
     svc.review(item, {"confirm_periods": True})
     out = svc.item(item, full=True)
     assert not any(i["level"] == "error" for i in out["issues"])
+    svc.decide(item, [{"action": "confirm_suggested"}])
     svc.approve(item, security={"security_id": sid})
     with store.db.transaction() as c:
         row = c.execute("SELECT currency, unit_multiplier, raw_value_text, normalized_value_text, table_ref, column_role, validation_status, period_type FROM observation_provenance WHERE metric_code = 'revenue' AND reported_value = 236806988").fetchone()
@@ -354,6 +357,7 @@ def test_an_override_needs_a_reason_is_recorded_and_the_figures_it_released_stay
     svc.review(item, {"override": {"kinds": ["period_unresolved"], "note": "periods checked against the report's cover page"}})
     out = svc.item(item, full=True)
     assert any(i["kind"] == "override" and "checked against" in i["message"] for i in out["issues"])
+    svc.decide(item, [{"action": "confirm_suggested"}])
     svc.approve(item, security={"security_id": sid})
     with store.db.transaction() as c:
         assert c.execute("SELECT COUNT(*) FROM observation_provenance WHERE metric_code = 'total_assets' AND validation_status IN ('PASS', 'UNCONFIRMED', 'OVERRIDDEN')").fetchone()[0] >= 1
@@ -366,8 +370,8 @@ def test_unapproved_and_unverified_figures_never_reach_research(store):
     assert store.observations([sid]).empty, "nothing is stored before approval"
     assert PeriodTables(store, [sid]).fy.empty or PeriodTables(store, [sid]).fy["revenue"].isna().all()
     it = svc.item(item, full=True)
-    if any(i["level"] == "error" for i in it["issues"]):
-        svc.review(item, {"confirm_periods": True})
+    svc.review(item, {"confirm_periods": True})
+    svc.decide(item, [{"action": "confirm_suggested"}])
     svc.approve(item, security={"security_id": sid})
     obs = store.observations([sid])
     flags = dict(zip(obs["metric_code"], obs["quality_flag"]))

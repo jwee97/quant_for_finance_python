@@ -115,6 +115,7 @@ def run_filing(path: Path, entry: dict, trace: bool = False) -> dict:
     res["fallbacks"] = [f["step"] for f in draft.get("fallbacks", []) if f["step"] != "assessment"]
     res["assessment"] = (draft.get("assessment") or {}).get("unreliable", [])
     cands = draft.get("candidates") or []
+    res["raw"] = raw_coverage(draft, entry)
     for end, pt, vals in _periods_of(entry):
         for m, v in vals.items():
             exp = Decimal(str(v)) * Decimal(e["unit_multiplier"])
@@ -135,6 +136,61 @@ def run_filing(path: Path, entry: dict, trace: bool = False) -> dict:
                 obs["root_cause_hint"] = _hint(obs, draft)
             res["observations"].append(obs)
     return res
+
+
+def raw_coverage(draft: dict, entry: dict) -> dict:
+    """Raw extraction coverage, kept apart from canonical coverage: how many of the expected figures appear **anywhere** among the observations the scanner archived (whatever line it guessed, whatever the
+    column), and how many archived observations are unmapped. A figure found here but missing from the canonical result was read correctly and mislabelled or mis-ranked; a figure missing here was never read."""
+    e = entry["expected"]
+    raw = draft.get("raw_observations") or []
+    scale = {"units": 1, "thousands": 1e3, "millions": 1e6, "billions": 1e9, "percent": 1}
+    found = {(round(abs(o["value"]) * scale.get(o.get("unit") or "units", 1), 2)) for o in raw if not o.get("is_percent")}
+    exp = [(m, end, abs(v) * e["unit_multiplier"]) for end, pt, vals in _periods_of(entry) for m, v in vals.items()]
+    hit = [x for x in exp if round(x[2], 2) in found or round(x[2] / e["unit_multiplier"], 2) in {round(abs(o["value"]), 2) for o in raw}]
+    return {"observations": len(raw), "unmapped": sum(1 for o in raw if not o.get("metric_guess")), "selected": sum(1 for o in raw if o.get("selected")), "expected": len(exp), "expected_in_archive": len(hit),
+            "raw_recall": round(len(hit) / len(exp), 4) if exp else None, "groups": {g: sum(1 for o in raw if o.get("group") == g) for g in sorted({o.get("group") for o in raw})},
+            "missing_from_archive": [{"metric": m, "period_end": end, "expected": x} for m, end, x in exp if (m, end, x) not in hit][:50]}
+
+
+def workflow(path: Path, entry: dict) -> dict:
+    """The review workflow on this filing in a throw-away database: nothing is stored before a person confirms; confirming stores exactly the confirmed figures; a decision survives reading the file again;
+    unmapped observations remain available; the research tables never contain an unconfirmed figure."""
+    import tempfile
+    from ..providers.base import CompanyProfile
+    from ..store import FundamentalsStore
+    from .pipeline import ImportService
+    out: dict = {"ran": True}
+    try:
+        with tempfile.TemporaryDirectory() as d:
+            store = FundamentalsStore(Path(d) / "bench.db")
+            store.upsert_security(CompanyProfile("manual", "bench:1", "BENCH", entry.get("issuer") or "Benchmark", exchange="X", market="US", country="US", currency=entry["expected"]["currency"]))
+            sid = int(store.securities().iloc[0]["security_id"])
+            svc = ImportService(store)
+            batch = svc.create_batch("benchmark", sid)
+            item = svc.add_file(batch, path.name, path.read_bytes())[0]["item_id"]
+            svc.process(batch, hint={**(entry.get("hint") or {}), "filing_date": "2021-03-01"})
+            rows = svc.observations(item, limit=1000)
+            out["archived"], out["unmapped_archived"] = rows["total"], svc.observations(item, unmapped=True)["total"]
+            out["nothing_stored_before_confirmation"] = store.observations([sid]).empty
+            out["all_start_unconfirmed"] = all(o["status"] == "UNCONFIRMED" for o in rows["rows"])
+            svc.review(item, {"confirm_periods": True})
+            some = [o["obs_id"] for o in rows["rows"] if o["selected"]][:3]
+            svc.decide(item, [{"action": "confirm", "ids": some}])
+            svc.reprocess(item, entry.get("hint") or {})
+            out["confirmation_persists_after_reprocessing"] = all(svc.observation(i)["status"] in ("CONFIRMED", "CORRECTED_AND_CONFIRMED") for i in some)
+            plan = svc.plan(item)
+            if plan["approvable"]:
+                svc.approve(item, security={"security_id": sid})
+                stored = store.observations([sid])
+                direct = set(stored[stored["quality_flag"] != "derived"]["metric_code"])                       # exact arithmetic on confirmed figures is marked derived and may be added
+                out["stored_only_confirmed"] = direct == {l["metric"] for l in plan["will_commit"]} and len(plan["will_commit"]) <= len(some)
+                out["research_gate_holds"] = bool((stored["quality_flag"] != "unverified").all()) if len(stored) else True
+            else:
+                out["stored_only_confirmed"] = out["research_gate_holds"] = None
+                out["note"] = "the confirmed figures could not be published (see the plan)"
+    except Exception as error:                                                                            # a workflow failure is a finding, not a crash of the benchmark
+        out["error"] = f"{type(error).__name__}: {str(error)[:200]}"
+    return out
 
 
 def _hint(obs: dict, draft: dict) -> str:
@@ -168,6 +224,20 @@ def summarize(results: list[dict]) -> dict:
                 "false_positive_observations": sum(1 for o in ex if o["status"] == "wrong") + sum(len(r["spurious_periods"]) for r in rs),
                 "fallback_usage": {k: sum(1 for r in rs if k in (r.get("fallbacks") or [])) for k in sorted({f for r in rs for f in (r.get("fallbacks") or [])})},
                 "median_seconds": sorted(r.get("seconds", 0) for r in rs)[len(rs) // 2] if rs else None, "max_peak_memory_mb": max((r.get("peak_memory_mb", 0) for r in rs), default=None)}
+    def wf(rs, key):
+        v = [r["workflow"][key] for r in rs if r.get("workflow") and r["workflow"].get(key) is not None]
+        return round(sum(1 for x in v if x) / len(v), 4) if v else None
+
+    def block_plus(rs):
+        b = block_core(rs)
+        raw = [r["raw"] for r in rs if r.get("raw")]
+        b.update(raw_observations=sum(r["observations"] for r in raw), unmapped_observations=sum(r["unmapped"] for r in raw), raw_recall=(round(sum(r["expected_in_archive"] for r in raw) / max(1, sum(r["expected"] for r in raw)), 4) if raw else None),
+                 canonical_recall=b["recall"], workflow_filings=sum(1 for r in rs if r.get("workflow")), workflow_errors=sum(1 for r in rs if (r.get("workflow") or {}).get("error")),
+                 workflow_nothing_stored_before_confirmation=wf(rs, "nothing_stored_before_confirmation"), workflow_confirmation_persists=wf(rs, "confirmation_persists_after_reprocessing"),
+                 workflow_stored_only_confirmed=wf(rs, "stored_only_confirmed"), workflow_research_gate_holds=wf(rs, "research_gate_holds"))
+        return b
+    block_core = block
+    block = block_plus
     out = {"all": block(results)}
     for split in sorted({r["split"] for r in results}):
         out[split] = block([r for r in results if r["split"] == split])
@@ -189,9 +259,9 @@ def write_outputs(results: list[dict], summary: dict, out: Path) -> None:
                             o.get("expected_unit_multiplier"), o.get("extracted_unit_multiplier"), o.get("extracted_scope"), o.get("confidence"), (o.get("source") or {}).get("page"), o.get("reason") or o.get("root_cause_hint", "")])
     rows = "".join(f"<tr><td>{html.escape(str(r['file']))}</td><td>{html.escape(str(r.get('status')))}</td><td>{html.escape(str(r.get('validation')))}</td><td>{sum(1 for o in r['observations'] if o['status'] == 'correct')}/{len(r['observations'])}</td>"
                    f"<td>{html.escape(', '.join(r.get('fallbacks') or []))}</td><td>{r.get('seconds', '')}</td></tr>" for r in results)
-    srows = "".join(f"<tr><td>{html.escape(k)}</td>" + "".join(f"<td>{html.escape(str(v.get(m)))}</td>" for m in ("filings", "processing_success", "critical_metric_accuracy", "recall", "precision_of_extracted", "auto_approvable_critical_precision", "rejection_or_review_rate", "false_positive_observations")) + "</tr>" for k, v in summary.items())
+    srows = "".join(f"<tr><td>{html.escape(k)}</td>" + "".join(f"<td>{html.escape(str(v.get(m)))}</td>" for m in ("filings", "processing_success", "critical_metric_accuracy", "raw_recall", "recall", "precision_of_extracted", "auto_approvable_critical_precision", "rejection_or_review_rate", "false_positive_observations")) + "</tr>" for k, v in summary.items())
     (out / "summary.html").write_text(f"<!doctype html><meta charset=utf-8><title>Importer benchmark</title><style>body{{font:14px system-ui;margin:24px}}td,th{{border:1px solid #8886;padding:4px 8px}}table{{border-collapse:collapse;margin:12px 0}}</style>"
-                                      f"<h1>Importer benchmark</h1><p>{len(results)} filing(s). A filing that was not processed is not counted as passed.</p><h2>Summary</h2><table><tr><th>split</th><th>filings</th><th>processed</th><th>critical accuracy</th><th>recall</th><th>precision (extracted)</th><th>precision (auto-approvable critical)</th><th>review rate</th><th>false positives</th></tr>{srows}</table>"
+                                      f"<h1>Importer benchmark</h1><p>{len(results)} filing(s). A filing that was not processed is not counted as passed.</p><h2>Summary</h2><table><tr><th>split</th><th>filings</th><th>processed</th><th>critical accuracy</th><th>raw recall</th><th>recall</th><th>precision (extracted)</th><th>precision (auto-approvable critical)</th><th>review rate</th><th>false positives</th></tr>{srows}</table>"
                                       f"<h2>Filings</h2><table><tr><th>file</th><th>status</th><th>validation</th><th>correct</th><th>fallbacks</th><th>seconds</th></tr>{rows}</table><p>See failures.json for the root-cause trail of every wrong or missing observation.</p>")
 
 
@@ -200,10 +270,15 @@ def main(argv=None) -> int:
     ap.add_argument("--filings", required=True, help="directory holding the filings")
     ap.add_argument("--expected", required=True, help="the reference file (see the module docstring)")
     ap.add_argument("--output", required=True, help="directory for results.json, results.csv, failures.json, summary.html")
+    ap.add_argument("--no-workflow", action="store_true", help="skip the review-workflow checks (confirmation, persistence, research gating) that run on every processed filing")
     ap.add_argument("--trace", action="store_true", help="keep the structured decision trace of every filing in results.json")
     a = ap.parse_args(argv)
     expected = json.loads(Path(a.expected).read_text())
     results = [run_filing(Path(a.filings) / f["file"], f, a.trace) for f in expected["filings"]]
+    if not a.no_workflow:
+        for r, f in zip(results, expected["filings"]):
+            if r["processed"]:
+                r["workflow"] = workflow(Path(a.filings) / f["file"], f)
     summary = summarize(results)
     write_outputs(results, summary, Path(a.output))
     allb = summary["all"]

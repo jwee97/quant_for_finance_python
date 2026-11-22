@@ -53,10 +53,29 @@ def test_the_modes_are_in_the_tab_and_a_filing_is_read_reviewed_and_approved_wit
         assert "Inline XBRL filing" in review.inner_text() and "0000000001-24-000005" in review.inner_text()
         revenue = review.locator("input[data-code=revenue][data-col='0']")
         assert float(revenue.input_value()) == 1200e6 and "us-gaap:Revenues" in revenue.get_attribute("title")
+        review.locator("button[data-step='4']").click()                                                   # step 4: warnings
         assert "no filing date" in review.locator("[data-role=import-issues]").inner_text()
+        review.locator("button[data-step='1']").click()                                                   # step 1: filing details
         review.locator("[data-role=import-filing-date]").first.fill("2024-02-08")
         review.locator("button[data-action=import-correct]").click()
         _wait_until(page, "!document.querySelector('[data-role=import-issues]').textContent.includes('no filing date')", 20)
+        review = page.locator("[data-role=import-review]")
+        review.locator("button[data-step='3']").click()                                                   # step 3: nothing is confirmed until the person says so
+        try:
+            page.wait_for_selector("[data-role=obs-table] tbody tr", timeout=8000)
+        except Exception:
+            pane = review.locator("[data-pane='3']").inner_text()[:500]
+            raise AssertionError(f"{page.problems} :: {pane}")
+        assert page.locator("[data-role=obs-table] tbody tr[data-status=UNCONFIRMED]").count() >= 5 and page.locator("[data-role=obs-table] tbody tr[data-status=CONFIRMED]").count() == 0
+        review.locator("button[data-step='5']").click()                                                   # step 5: approval is refused until something is confirmed
+        page.wait_for_selector("[data-role=plan-counts]")
+        assert review.locator("button[data-action=import-approve]").is_disabled()
+        review.locator("button[data-step='3']").click()
+        review.locator("button[data-action=obs-confirm-suggested]").click()
+        _wait_until(page, "document.querySelectorAll('[data-role=obs-table] tbody tr[data-status=CONFIRMED]').length >= 5", 20)
+        review.locator("button[data-step='5']").click()
+        page.wait_for_selector("[data-role=plan-table] tbody tr")
+        review.locator("[data-role=plan-ack]").check()
         page.locator("[data-role=import-review] button[data-action=import-approve]").click()
         _wait_until(page, "document.querySelector('[data-role=import-items] tbody tr[data-status=saved]') !== null", 30)
         saved = page.evaluate("async () => (await QL.api('/api/fund/import/provenance?security_id=' + %d)).rows.length" % page.evaluate("async () => (await QL.api('/api/fund/companies?q=RNI')).companies[0].security_id"))

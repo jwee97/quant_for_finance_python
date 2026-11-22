@@ -76,6 +76,7 @@ def test_provenance_of_an_import_travels_with_the_figure_and_the_manifest_makes_
     batch = svc.create_batch("b", sid)
     it = svc.add_file(batch, "0000000001-24-000005.htm", ixbrl())[0]
     svc.process(batch, hint={"filing_date": "2024-02-08"})
+    svc.decide(it["item_id"], [{"action": "confirm_suggested"}])
     svc.approve(it["item_id"], security={"security_id": sid})
     manifest = pitstore.export(s, tmp_path / "pit")
     again = pitstore.export(s, tmp_path / "pit")

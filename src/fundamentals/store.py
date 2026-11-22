@@ -367,6 +367,46 @@ class FundamentalsStore:
             frame[c] = pd.to_datetime(frame[c])
         return frame
 
+    def source_preferences(self, security_ids: list[int] | None = None) -> list[dict]:
+        sql, args = "SELECT security_id, metric_code, period_end, provider, note, chosen_at FROM source_preferences", []
+        if security_ids is not None:
+            sql += f" WHERE security_id IN ({','.join('?' * len(security_ids))})"
+            args = [int(i) for i in security_ids]
+        with self.db.transaction() as conn:
+            return [dict(zip(("security_id", "metric_code", "period_end", "provider", "note", "chosen_at"), r)) for r in conn.execute(sql, args).fetchall()]
+
+    def set_source_preference(self, security_id: int, metric_code: str, period_end: str, provider: str | None, note: str = "") -> None:
+        """Choose which provider's figure is used for ``metric_code`` in the period ending ``period_end`` (``None`` removes the choice and the priority order applies again)."""
+        from .schema import now_iso
+        with self.db.transaction() as conn:
+            if provider is None:
+                conn.execute("DELETE FROM source_preferences WHERE security_id = ? AND metric_code = ? AND period_end = ?", (int(security_id), metric_code, period_end))
+            else:
+                conn.execute("INSERT OR REPLACE INTO source_preferences (security_id, metric_code, period_end, provider, note, chosen_at) VALUES (?, ?, ?, ?, ?, ?)", (int(security_id), metric_code, period_end, provider, note[:200], now_iso()))
+
+    ESTIMATED_LAG_DAYS = 120
+
+    def custom_observations(self, security_ids: list[int] | None = None, as_of: str | None = None) -> list[dict]:
+        """The confirmed figures that are not canonical lines, **as they were known on** ``as_of``: a figure counts from the day its report was public (``filing_date``; when that was not given, the period end plus
+        a conservative lag), and of several vintages of the same figure the latest one public by then is returned. Nothing a person did not confirm is ever in this table."""
+        sql, args = "SELECT * FROM custom_observations WHERE superseded = 0", []
+        if security_ids is not None:
+            sql += f" AND security_id IN ({','.join('?' * len(security_ids))})"
+            args += [int(i) for i in security_ids]
+        with self.db.transaction() as conn:
+            cur = conn.execute(sql + " ORDER BY security_id, metric_code, period_end, vintage", args)
+            cols = [d[0] for d in cur.description]
+            rows = [dict(zip(cols, r)) for r in cur.fetchall()]
+        from datetime import date, timedelta
+        out: dict = {}
+        for r in rows:
+            avail = r["filing_date"] or (date.fromisoformat(r["period_end"]) + timedelta(days=self.ESTIMATED_LAG_DAYS)).isoformat()
+            r["available_from"] = avail
+            if as_of and avail > as_of:
+                continue
+            out[(r["security_id"], r["metric_code"], r["period_end"], r["currency"], r["scope"])] = r                 # later vintages overwrite earlier ones
+        return list(out.values())
+
     def observations(self, security_ids: list[int] | None = None, metrics: list[str] | None = None) -> pd.DataFrame:
         """Long frame: ``period_id, security_id, metric_code, value, quality_flag, provider, is_restated, currency, source_metric`` (the periods come from :meth:`periods`)."""
         sql = ("SELECT o.financial_period_id AS period_id, p.security_id, o.metric_code, o.value, o.quality_flag, o.provider, o.is_restated, o.currency, o.source_metric "

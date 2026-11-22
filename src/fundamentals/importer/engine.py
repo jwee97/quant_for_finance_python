@@ -24,7 +24,7 @@ import hashlib
 from collections import OrderedDict
 
 from ..errors import FundamentalsError
-from . import checks, matcher, taxonomy
+from . import checks, matcher, observations, taxonomy
 from .ir import Document
 from .layout import html_layout, pdf_layout, pdfplumber_layout, xlsx_layout
 
@@ -180,7 +180,9 @@ def _targeted(data: bytes, kind: str, doc: Document, draft: dict, hint: dict, fa
         take = after > before
         fallbacks.append({"step": "second-table-reading", "pages": pages, "reason": "re-read the affected pages with an independent word splitter and looser grouping", "before": list(before), "after": list(after), "accepted": take})
         if take:
-            draft, doc = alt["draft"], alt["doc"]
+            earlier = draft.get("raw_observations") or []
+            draft, doc = copy.copy(alt["draft"]), alt["doc"]
+            draft["raw_observations"] = observations.merge(list(draft.get("raw_observations") or []), earlier, " (earlier reading, kept)")      # a better reading never discards what the first one read
             if assess(draft)["reliable"]:
                 return draft, doc
     else:
@@ -206,7 +208,9 @@ def _targeted(data: bytes, kind: str, doc: Document, draft: dict, hint: dict, fa
                 take = after > before
                 fallbacks.append({"step": "ocr-pages", "pages": todo, "reason": "OCR of the pages that have no text layer", "before": list(before), "after": list(after), "accepted": take})
                 if take:
+                    earlier = draft.get("raw_observations") or []
                     draft, doc = ocr_draft, ocr_doc
+                    draft["raw_observations"] = observations.merge(list(draft.get("raw_observations") or []), earlier, " (earlier reading, kept)")
             except FundamentalsError as error:
                 fallbacks.append({"step": "ocr-pages", "pages": todo, "reason": str(error)[:160], "accepted": False})
         else:

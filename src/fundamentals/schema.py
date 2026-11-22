@@ -149,6 +149,27 @@ CREATE TABLE IF NOT EXISTS import_extractions (
     id INTEGER PRIMARY KEY, item_id INTEGER NOT NULL REFERENCES import_items(item_id) ON DELETE CASCADE, extractor_version TEXT NOT NULL, mapping_version TEXT, taxonomy_version TEXT, standard TEXT,
     method TEXT, lines INTEGER, mean_confidence REAL, draft TEXT NOT NULL, created_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS ix_extractions_item ON import_extractions(item_id, id);
+-- Layer 1 and 2 of an import: every figure the scanner found (mapped or not) and what a person decided about it. ``status`` is the person's decision, never the scanner's confidence.
+CREATE TABLE IF NOT EXISTS raw_observations (
+    obs_id INTEGER PRIMARY KEY, item_id INTEGER NOT NULL REFERENCES import_items(item_id) ON DELETE CASCADE, obs_key TEXT NOT NULL, grp TEXT, label TEXT, value_text TEXT, value REAL NOT NULL,
+    is_percent INTEGER NOT NULL DEFAULT 0, page INTEGER, table_ref TEXT, row_ref INTEGER, col_ref INTEGER, bbox TEXT, column_header TEXT, column_role TEXT, period_start TEXT, period_end TEXT,
+    period_type TEXT, period_guessed INTEGER NOT NULL DEFAULT 0, fiscal_period TEXT, currency TEXT, unit TEXT, scope TEXT, statement TEXT, table_title TEXT, metric_guess TEXT, selected INTEGER NOT NULL DEFAULT 0,
+    guess_reason TEXT, method TEXT, extractor_version TEXT, mapping_version TEXT, taxonomy_version TEXT, extraction_id INTEGER, origin TEXT NOT NULL DEFAULT 'scanner',
+    status TEXT NOT NULL DEFAULT 'UNCONFIRMED', user_value REAL, user_currency TEXT, user_unit TEXT, user_period_start TEXT, user_period_end TEXT, user_period_type TEXT, user_fiscal_period TEXT,
+    user_scope TEXT, user_metric TEXT, custom_label TEXT, note TEXT, confirmed_at TEXT, history TEXT NOT NULL DEFAULT '[]', published INTEGER NOT NULL DEFAULT 0, orphaned INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE (item_id, obs_key));
+CREATE INDEX IF NOT EXISTS ix_rawobs_item ON raw_observations(item_id, grp, status);
+-- Layer 3 for figures that are not a line of the canonical taxonomy: confirmed by a person, stored with the period, currency, unit and the date the report was public.
+CREATE TABLE IF NOT EXISTS custom_observations (
+    id INTEGER PRIMARY KEY, security_id INTEGER NOT NULL REFERENCES securities(security_id) ON DELETE CASCADE, obs_id INTEGER, import_item_id INTEGER, content_hash TEXT, metric_code TEXT NOT NULL,
+    label TEXT NOT NULL, original_label TEXT, value REAL NOT NULL, original_value REAL, currency TEXT, unit TEXT, unit_multiplier REAL NOT NULL DEFAULT 1, period_start TEXT, period_end TEXT NOT NULL,
+    period_type TEXT, fiscal_period TEXT, scope TEXT, statement TEXT, page INTEGER, table_ref TEXT, column_header TEXT, extraction_method TEXT, extractor_version TEXT, taxonomy_version TEXT,
+    filing_date TEXT, pit_quality TEXT NOT NULL DEFAULT 'filed', vintage INTEGER NOT NULL DEFAULT 0, confirmed_at TEXT NOT NULL, created_at TEXT NOT NULL, superseded INTEGER NOT NULL DEFAULT 0);
+CREATE INDEX IF NOT EXISTS ix_custom_security ON custom_observations(security_id, metric_code, period_end);
+-- A person's choice of which provider's figure to use for one figure of one period (the rest are kept, nothing is overwritten).
+CREATE TABLE IF NOT EXISTS source_preferences (
+    security_id INTEGER NOT NULL REFERENCES securities(security_id) ON DELETE CASCADE, metric_code TEXT NOT NULL, period_end TEXT NOT NULL, provider TEXT NOT NULL, note TEXT, chosen_at TEXT NOT NULL,
+    PRIMARY KEY (security_id, metric_code, period_end));
 CREATE INDEX IF NOT EXISTS ix_prov_period ON observation_provenance(financial_period_id, metric_code);
 CREATE INDEX IF NOT EXISTS ix_prov_accession ON observation_provenance(accession);
 """

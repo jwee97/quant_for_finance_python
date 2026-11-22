@@ -871,7 +871,7 @@ def test_the_sec_leads_a_period_both_providers_have_and_the_other_fills_only_wha
     sid = _fill(svc)
     other = [PeriodStatement("FY", "2019-09-28", {"revenue": 1.0, "rnd": 2.0, "cost_of_goods_sold": 3.0, "capex": 4.0}, fiscal_year=2019, filing_date="2019-10-31", reporting_currency="USD")]
     svc.store.store_financials(sid, "openfilings", other)
-    assert PitSettings().provider_priority == ("sec_edgar", "openfilings", "simulated") and PitSettings().rank("sec_edgar") == 0
+    assert PitSettings().provider_priority == ("manual", "sec_edgar", "openfilings", "simulated") and PitSettings().rank("sec_edgar") == 1 and PitSettings().rank("manual") == 0
     row = PeriodTables(svc.store, [sid]).fy.set_index("fiscal_year").loc[2019]
     assert row["revenue"] == 260174e6 and row["research_and_development"] == value(by_year(load("AAPL"))[2019], "research_and_development")
 

@@ -63,6 +63,13 @@ def test_a_file_sent_in_pieces_is_put_together_read_reviewed_and_approved_with_i
     assert item["status"] in ("extracted", "needs_review") and item["draft"]["periods"][0]["values"]["revenue"] == 1200e6 and item["draft"]["company"]["ticker"] == "RNI"
     reviewed = post(app, "/api/fund/import/review", item_id=item_id, edits={"periods": [{"filing_date": "2024-02-08"}]})
     assert reviewed["reviewed"]["periods"][0]["filing_date"] == "2024-02-08" and reviewed["draft"]["periods"][0]["filing_date"] is None
+    with pytest.raises(Exception, match="no observation has been confirmed"):
+        post(app, "/api/fund/import/approve", item_id=item_id, security_id=sid)
+    obs = get(app, "/api/fund/import/observations", item_id=item_id)
+    assert obs["total"] >= 5 and obs["by_status"]["UNCONFIRMED"] == obs["total"] and all(o["status"] == "UNCONFIRMED" for o in obs["rows"])
+    post(app, "/api/fund/import/decide", item_id=item_id, actions=[{"action": "confirm_suggested"}])
+    plan = get(app, "/api/fund/import/plan", item_id=item_id)
+    assert plan["approvable"] and plan["counts"]["confirmed"] >= 5 and {l["metric"] for l in plan["will_commit"]} >= {"revenue", "net_income", "total_assets"}
     approved = post(app, "/api/fund/import/approve", item_id=item_id, security_id=sid)
     assert approved["item"]["status"] == "saved" and approved["saved"][0]["lines"] >= 5
     rows = get(app, "/api/fund/import/provenance", security_id=sid, fiscal_period="FY", period_end="2023-12-31")["rows"]

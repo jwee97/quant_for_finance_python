@@ -730,3 +730,13 @@ table.data.review th input[type=date], table.data.review th select { display: bl
 #fundamentals .chip { display: inline-block; padding: 1px 8px; margin-right: 6px; border-radius: 10px; font-size: 12px; border: 1px solid var(--rule, #8886); color: var(--muted, #6b7280); }
 #fundamentals .chip.on { color: var(--good, #15803d); border-color: var(--good, #15803d); }
 #fundamentals .chip.on.warn { color: var(--warn, #b45309); border-color: var(--warn, #b45309); }
+
+/* Report import wizard */
+.wiz-pane[hidden] { display: none; }
+.wiz-pane { margin-top: 10px; }
+table.obs tr.dim td { opacity: .55; text-decoration: line-through; }
+table.obs td, table.obs th { white-space: nowrap; }
+table.obs td:nth-child(2) { white-space: normal; max-width: 280px; }
+.obs-source .page-image { border: 1px solid var(--axis); border-radius: 6px; margin-top: 8px; }
+.obs-source .card.inner { padding: 10px; border: 1px solid var(--axis); border-radius: 8px; margin-top: 8px; }
+.chip.tone-good { border-color: var(--good, #2a7); } .chip.tone-warn { border-color: var(--warn, #c80); } .chip.tone-crit { border-color: var(--crit, #c33); }

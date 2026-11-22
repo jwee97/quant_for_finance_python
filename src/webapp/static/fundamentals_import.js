@@ -207,7 +207,15 @@
     const card = W.card(root, `Review: ${it.source_name}`, `${METHOD_WORD[draft.method] || draft.method}${draft.accession ? " · filing " + draft.accession : ""}${draft.document_type ? " · " + draft.document_type : ""}. ${it.reviewed ? "Showing your corrections; the first reading is kept." : ""}`);
     card.dataset.role = "import-review"; card.dataset.item = it.item_id;
     for (const n of draft.notes || []) h("p", "hint", card, n);
-    const bar = h("div", "row tight", card);
+    const built = {};
+    const steps = IM.stepper ? IM.stepper(card, (n) => {                                                  // the wizard: the panels of steps 2, 3 and 5 are built when they are first opened
+      if (n === 2 && !built[2]) { built[2] = 1; IM.observationsPanel(steps[2].obs, s.itemData, false); }
+      if (n === 3 && !built[3]) { built[3] = 1; IM.observationsPanel(steps[3].obs, s.itemData, true); }
+      if (n === 5) IM.planPanel(steps[5].plan, s.itemData, steps[5].approve);
+    }) : null;
+    const P = (n) => (steps ? steps[n] : card);
+    if (steps) { steps[2].obs = h("div", "", steps[2]); steps[3].obs = h("div", "", steps[3]); steps[5].plan = h("div", "", steps[5]); }
+    const bar = h("div", "row tight", P(1));
     const un = h("select", "", h("label", "f", bar, "Amounts are in")); un.dataset.role = "import-units"; un.setAttribute("aria-label", "unit of the amounts");
     for (const [v, l] of UNITS) { const o = h("option", "", un, l); o.value = v; if (v === (draft.units || {}).money) o.selected = true; }
     const edits = { periods: draft.periods.map(() => ({ values: {} })) };
@@ -222,7 +230,7 @@
     const chg = h("input", "", h("label", "f", bar, "The company's reporting currency really changed")); chg.type = "checkbox"; chg.checked = !!draft.currency_change_ok; chg.dataset.role = "import-currency-change";
     chg.addEventListener("change", () => { edits.currency_change_ok = chg.checked; });
     un.addEventListener("change", () => { unitEdit.money = un.value; });
-    const wrap = h("div", "scroll", card), t = h("table", "data review", wrap), hd = h("tr", "", h("thead", "", t));
+    const wrap = h("div", "scroll", P(1)), t = h("table", "data review", wrap), hd = h("tr", "", h("thead", "", t));
     h("th", "", hd, "Line");
     draft.periods.forEach((p, j) => {
       const th = h("th", "num", hd), sel = h("select", "", th); sel.setAttribute("aria-label", `fiscal period of column ${j + 1}`);
@@ -259,21 +267,23 @@
         s.itemData = await FD.send("/api/fund/import/review", { item_id: it.item_id, edits }); await refreshBatch(); Q.renderLab(FD);
       } catch (e) { Q.toast(e.message); }
     });
-    lifecycleChips(card, it, draft);
-    issuesBlock(card, s.itemData.issues || []);
-    overrideBlock(card, draft, edits);
-    statementsBlock(card, draft);
-    candidatesBlock(card, it, draft, edits);
-    presentationsBlock(card, draft);
-    conflictsBlock(card, draft.conflicts || []);
-    const act = h("div", "row tight", card);
+    if (steps) metaBlock(P(1), draft, edits);
+    lifecycleChips(P(1), it, draft);
+    issuesBlock(P(4), s.itemData.issues || []);
+    overrideBlock(P(4), draft, edits);
+    statementsBlock(P(2), draft);
+    candidatesBlock(P(3), it, draft, edits);
+    presentationsBlock(P(2), draft);
+    conflictsBlock(P(4), draft.conflicts || []);
+    const act = h("div", "row tight", P(5));
     let decision = null;
     if ((draft.conflicts || []).length) {
       const sel = h("select", "", h("label", "f", act, "These differ from held figures: store them as")); sel.dataset.role = "import-decision"; sel.setAttribute("aria-label", "what to do with figures that differ from held ones");
       for (const [v, l] of [["", "(choose)"], ["restate", "a restatement: a new vintage, public from its filing date"], ["correct", "a correction: replace the held figures (they were a mistake)"], ["skip", "skip the periods that differ"]]) { const o = h("option", "", sel, l); o.value = v; }
       sel.addEventListener("change", () => { decision = sel.value || null; });
     }
-    const ok = h("button", "btn primary", act, "Approve and store"); ok.type = "button"; ok.dataset.action = "import-approve"; ok.disabled = it.status === "saved";
+    const ok = h("button", "btn primary", act, "Approve and store"); ok.type = "button"; ok.dataset.action = "import-approve"; ok.disabled = it.status === "saved" || !!steps;
+    if (steps) steps[5].approve = ok;
     ok.addEventListener("click", async () => {
       try {
         const r = await FD.send("/api/fund/import/approve", { item_id: it.item_id, security_id: s.sid || (s.batchData && s.batchData.security_id) || undefined, decision: decision || undefined });
@@ -282,6 +292,7 @@
     });
     const rej = h("button", "btn", act, "Reject"); rej.type = "button"; rej.dataset.action = "import-reject"; rej.disabled = it.status === "saved";
     rej.addEventListener("click", async () => { try { await FD.send("/api/fund/import/reject", { item_id: it.item_id, reason: "rejected after review" }); s.itemData = null; await refreshBatch(); Q.renderLab(FD); } catch (e) { Q.toast(e.message); } });
+    if (steps) steps.go(IM.s.wiz ? IM.s.wiz.step : 1);
     if (it.status === "saved") {
       const ver = h("button", "btn small", act, "Confirm the low-confidence figures against the page"); ver.type = "button"; ver.dataset.action = "import-verify";
       ver.title = "Releases the figures that were stored as unverified to research. Do this only after checking them against the page.";
@@ -293,6 +304,25 @@
   }
   /* The five states of an import are separate: read, validated, needs a person, approved, committed to the database. */
   const LIFE = [["EXTRACTED", "Extraction completed"], ["VALIDATED", "Validation passed"], ["REVIEW_REQUIRED", "Manual review required"], ["APPROVED", "Import approved"], ["COMMITTED", "Database committed"]];
+  /* Step 1: the filing's own details, suggested from what was read and editable. */
+  function metaBlock(box, draft, edits) {
+    const m = Object.assign({}, draft.meta || {}), row = h("div", "row tight", box); row.dataset.role = "import-meta"; edits.meta = edits.meta || {};
+    const p0 = (draft.periods || [])[0] || {}, std = (draft.standard || {}).standard || "", co = draft.company || {};
+    const f = (label, key, value, type, opts) => {
+      const l = h("label", "f", row, label); let el;
+      if (opts) { el = h("select", "", l); for (const o of opts) { const op = h("option", "", el, o || "(unknown)"); op.value = o; if (o === value) op.selected = true; } } else { el = h("input", "", l); el.type = type || "text"; el.value = value || ""; }
+      el.dataset.meta = key; el.setAttribute("aria-label", label); el.addEventListener("change", () => { edits.meta[key] = el.value; });
+    };
+    f("Company", "company", m.company || co.name); f("Ticker", "ticker", m.ticker || co.ticker); f("Exchange", "exchange", m.exchange || co.exchange);
+    f("Filing type", "filing_type", m.filing_type || draft.document_type, "text", ["", "Annual report", "10-K", "10-Q", "20-F", "Interim report", "Quarterly report", "Prospectus", "Other"].concat(m.filing_type && !["Annual report", "10-K", "10-Q", "20-F", "Interim report", "Quarterly report", "Prospectus", "Other"].includes(m.filing_type) ? [m.filing_type] : []));
+    f("Accounting standard", "accounting_standard", m.accounting_standard || std, "text", ["", "us-gaap", "ifrs", "k-ifrs", "j-gaap", "sfrs-i", "cas", "hkfrs", "uk-gaap", "other"].concat(std && !["us-gaap", "ifrs", "k-ifrs", "j-gaap", "sfrs-i", "cas", "hkfrs", "uk-gaap", "other"].includes(std) ? [std] : []));
+    f("Fiscal year", "fiscal_year", m.fiscal_year || p0.fiscal_year, "number"); f("Fiscal period", "fiscal_period", m.fiscal_period || p0.fiscal_period, "text", ["", "FY", "Q1", "Q2", "Q3", "Q4", "H1", "H2"]);
+    f("Period start", "period_start", m.period_start || p0.start_date, "date"); f("Period end", "period_end", m.period_end || p0.period_end, "date");
+    f("Publication or filing date", "publication_date", m.publication_date || p0.filing_date, "date"); f("Consolidation scope", "scope", m.scope, "text", ["", "consolidated", "parent", "segment", "unspecified"]);
+    h("p", "hint", box, "Suggested from what was read; change anything that is wrong, then “Save corrections and check again”. The publication date is the day the figures became public: research uses them only from that day.");
+    const acc = h("button", "btn small", box, "Accept the inferred periods"); acc.type = "button"; acc.dataset.action = "import-accept-periods"; acc.title = "Inferred dates are never used silently: accept them (or correct them) before their figures can be confirmed.";
+    acc.addEventListener("click", async () => { try { s.itemData = await FD.send("/api/fund/import/review", { item_id: s.itemData.item_id, edits: { confirm_periods: true } }); Q.toast("Inferred periods accepted"); Q.renderLab(FD); } catch (e) { Q.toast(e.message); } });
+  }
   function lifecycleChips(card, it, draft) {
     const state = it.lifecycle || "EXTRACTED", order = { UPLOADED: 0, EXTRACTING: 0, EXTRACTED: 1, VALIDATING: 1, VALIDATED: 2, REVIEW_REQUIRED: 2, APPROVED: 3, COMMITTED: 4, FAILED: 0, REJECTED: 0 };
     const row = h("div", "row tight", card); row.dataset.role = "import-lifecycle"; row.setAttribute("aria-label", `import state: ${state}`);

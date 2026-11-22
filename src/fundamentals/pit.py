@@ -38,7 +38,7 @@ class PitSettings:
     use_estimated: bool = True                  # False: periods without a real filing date are left out altogether
     exclude_flags: tuple = DEFAULT_EXCLUDE      # observations carrying these quality flags are treated as missing
     max_age_days: tuple = (("fy", 640), ("ttm", 540))        # a year, the slowest usual filing lag, and a margin: later than that the company has stopped reporting
-    provider_priority: tuple = ("sec_edgar", "openfilings", "simulated")
+    provider_priority: tuple = ("manual", "sec_edgar", "openfilings", "simulated")      # figures a person confirmed (imports and typed reports) are not overwritten by a provider's update
     naive_availability: bool = False            # a diagnostic only: treat every figure as known on its period end, to measure how much look-ahead would flatter a result
 
     def lag_for(self, fiscal_period: str) -> int:
@@ -139,7 +139,26 @@ class PeriodTables:
                 wide[code] = np.nan
         rows = periods.merge(wide, left_on="period_id", right_index=True, how="inner")
         rows["rank"] = rows["provider"].map(s.rank)
-        return self._merge_providers(rows)
+        merged = self._merge_providers(rows)
+        return self._apply_preferences(rows, merged)
+
+    def _apply_preferences(self, rows: pd.DataFrame, merged: pd.DataFrame) -> pd.DataFrame:
+        """A person's choice of source for a figure (``source_preferences``) replaces the priority order for that figure. The availability date of the row becomes the later of the two, so a preference can never
+        make a figure visible before the day its chosen source made it public."""
+        try:
+            prefs = self.store.source_preferences(self.security_ids)
+        except Exception:                                                              # a store without the table (an old database) has no preferences
+            return merged
+        for pf in prefs:
+            sel = rows[(rows["security_id"] == pf["security_id"]) & (rows["period_end"] == pd.Timestamp(pf["period_end"])) & (rows["provider"] == pf["provider"])]
+            if sel.empty or pf["metric_code"] not in sel.columns or sel[pf["metric_code"]].isna().all():
+                continue
+            at = (merged["security_id"] == pf["security_id"]) & (merged["period_end"] == pd.Timestamp(pf["period_end"]))
+            if not at.any():
+                continue
+            merged.loc[at, pf["metric_code"]] = float(sel[pf["metric_code"]].dropna().iloc[0])
+            merged.loc[at, "available_date"] = merged.loc[at, "available_date"].combine(sel["available_date"].iloc[0], max)
+        return merged
 
     @staticmethod
     def _merge_providers(rows: pd.DataFrame) -> pd.DataFrame:
@@ -150,8 +169,10 @@ class PeriodTables:
         key = ["security_id", "fiscal_period", "period_end"]
         lead_available = rows.groupby(key)["available_date"].transform("first")
         late = rows["available_date"] > lead_available
+        lead_currency = rows.groupby(key)["reporting_currency"].transform("first")
+        other_currency = rows["reporting_currency"].notna() & lead_currency.notna() & (rows["reporting_currency"] != lead_currency)     # figures in another currency never fill a gap: the ratios would mix currencies
         metric_cols = list(canonical.METRICS)
-        rows.loc[late, metric_cols] = np.nan
+        rows.loc[late | other_currency, metric_cols] = np.nan
         merged = rows.groupby(key, sort=False).first().reset_index()                 # first() takes the first non-missing value of each column, in provider order
         return merged.sort_values(["security_id", "period_end"]).reset_index(drop=True)
 

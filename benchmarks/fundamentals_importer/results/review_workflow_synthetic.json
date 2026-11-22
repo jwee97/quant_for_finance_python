@@ -1,0 +1,267 @@
+{
+ "note": "SYNTHETIC look-alikes of seven FY2020 report structures (tests/fixtures/real_like.py). Not the original PDFs. Values are the task's reference values where the fixture uses them.",
+ "before_after": {
+  "canonical_values_kept_before": 137,
+  "observations_archived_after": 228,
+  "unmapped_observations_kept_after": 19
+ },
+ "summary": {
+  "filings": 7,
+  "processed": 7,
+  "processing_success": 1.0,
+  "statement_coverage": 0.8096,
+  "expected_observations": 44,
+  "correct": 44,
+  "wrong": 0,
+  "missing": 0,
+  "recall": 1.0,
+  "coverage": 1.0,
+  "precision_of_extracted": 1.0,
+  "critical_metric_accuracy": 1.0,
+  "auto_approvable_critical": 0,
+  "auto_approvable_critical_precision": null,
+  "review_required_filings": 7,
+  "rejection_or_review_rate": 1.0,
+  "currency_accuracy": 1.0,
+  "unit_accuracy": 1.0,
+  "period_accuracy": 1.0,
+  "standard_accuracy": 1.0,
+  "false_positive_observations": 0,
+  "fallback_usage": {
+   "second-table-reading": 4
+  },
+  "median_seconds": 0.233,
+  "max_peak_memory_mb": 17.5,
+  "raw_observations": 228,
+  "unmapped_observations": 19,
+  "raw_recall": 1.0,
+  "canonical_recall": 1.0,
+  "workflow_filings": 7,
+  "workflow_errors": 0,
+  "workflow_nothing_stored_before_confirmation": 1.0,
+  "workflow_confirmation_persists": 1.0,
+  "workflow_stored_only_confirmed": 1.0,
+  "workflow_research_gate_holds": 1.0
+ },
+ "filings": [
+  {
+   "file": "toyota.pdf",
+   "status": "processed",
+   "validation": "REVIEW_REQUIRED",
+   "raw": {
+    "observations": 47,
+    "unmapped": 0,
+    "selected": 26,
+    "expected": 9,
+    "expected_in_archive": 9,
+    "raw_recall": 1.0,
+    "groups": {
+     "balance_sheet": 18,
+     "cash_flow": 4,
+     "income_statement": 15,
+     "summary": 10
+    },
+    "missing_from_archive": []
+   },
+   "workflow": {
+    "ran": true,
+    "archived": 47,
+    "unmapped_archived": 0,
+    "nothing_stored_before_confirmation": true,
+    "all_start_unconfirmed": true,
+    "confirmation_persists_after_reprocessing": true,
+    "stored_only_confirmed": true,
+    "research_gate_holds": true
+   },
+   "seconds": 3.219,
+   "peak_memory_mb": 17.5
+  },
+  {
+   "file": "samsung.pdf",
+   "status": "processed",
+   "validation": "REVIEW_REQUIRED",
+   "raw": {
+    "observations": 38,
+    "unmapped": 0,
+    "selected": 18,
+    "expected": 7,
+    "expected_in_archive": 7,
+    "raw_recall": 1.0,
+    "groups": {
+     "balance_sheet": 12,
+     "cash_flow": 4,
+     "income_statement": 20,
+     "segment": 2
+    },
+    "missing_from_archive": []
+   },
+   "workflow": {
+    "ran": true,
+    "archived": 38,
+    "unmapped_archived": 0,
+    "nothing_stored_before_confirmation": true,
+    "all_start_unconfirmed": true,
+    "confirmation_persists_after_reprocessing": true,
+    "stored_only_confirmed": true,
+    "research_gate_holds": true
+   },
+   "seconds": 0.654,
+   "peak_memory_mb": 7.6
+  },
+  {
+   "file": "apple.pdf",
+   "status": "processed",
+   "validation": "REVIEW_REQUIRED",
+   "raw": {
+    "observations": 30,
+    "unmapped": 2,
+    "selected": 26,
+    "expected": 6,
+    "expected_in_archive": 6,
+    "raw_recall": 1.0,
+    "groups": {
+     "balance_sheet": 8,
+     "cash_flow": 3,
+     "income_statement": 15,
+     "other": 4
+    },
+    "missing_from_archive": []
+   },
+   "workflow": {
+    "ran": true,
+    "archived": 30,
+    "unmapped_archived": 2,
+    "nothing_stored_before_confirmation": true,
+    "all_start_unconfirmed": true,
+    "confirmation_persists_after_reprocessing": true,
+    "stored_only_confirmed": true,
+    "research_gate_holds": true
+   },
+   "seconds": 0.068,
+   "peak_memory_mb": 0.2
+  },
+  {
+   "file": "singtel.pdf",
+   "status": "processed",
+   "validation": "REVIEW_REQUIRED",
+   "raw": {
+    "observations": 40,
+    "unmapped": 2,
+    "selected": 22,
+    "expected": 5,
+    "expected_in_archive": 5,
+    "raw_recall": 1.0,
+    "groups": {
+     "balance_sheet": 32,
+     "cash_flow": 2,
+     "income_statement": 6
+    },
+    "missing_from_archive": []
+   },
+   "workflow": {
+    "ran": true,
+    "archived": 40,
+    "unmapped_archived": 2,
+    "nothing_stored_before_confirmation": true,
+    "all_start_unconfirmed": true,
+    "confirmation_persists_after_reprocessing": true,
+    "stored_only_confirmed": true,
+    "research_gate_holds": true
+   },
+   "seconds": 0.067,
+   "peak_memory_mb": 0.2
+  },
+  {
+   "file": "byd.pdf",
+   "status": "processed",
+   "validation": "REVIEW_REQUIRED",
+   "raw": {
+    "observations": 20,
+    "unmapped": 4,
+    "selected": 10,
+    "expected": 4,
+    "expected_in_archive": 4,
+    "raw_recall": 1.0,
+    "groups": {
+     "balance_sheet": 2,
+     "income_statement": 8,
+     "summary": 10
+    },
+    "missing_from_archive": []
+   },
+   "workflow": {
+    "ran": true,
+    "archived": 20,
+    "unmapped_archived": 4,
+    "nothing_stored_before_confirmation": true,
+    "all_start_unconfirmed": true,
+    "confirmation_persists_after_reprocessing": true,
+    "stored_only_confirmed": true,
+    "research_gate_holds": true
+   },
+   "seconds": 0.352,
+   "peak_memory_mb": 13.9
+  },
+  {
+   "file": "tencent.pdf",
+   "status": "processed",
+   "validation": "REVIEW_REQUIRED",
+   "raw": {
+    "observations": 31,
+    "unmapped": 3,
+    "selected": 23,
+    "expected": 9,
+    "expected_in_archive": 9,
+    "raw_recall": 1.0,
+    "groups": {
+     "balance_sheet": 6,
+     "income_statement": 14,
+     "notes": 3,
+     "summary": 8
+    },
+    "missing_from_archive": []
+   },
+   "workflow": {
+    "ran": true,
+    "archived": 31,
+    "unmapped_archived": 3,
+    "nothing_stored_before_confirmation": true,
+    "all_start_unconfirmed": true,
+    "confirmation_persists_after_reprocessing": true,
+    "stored_only_confirmed": true,
+    "research_gate_holds": true
+   },
+   "seconds": 0.233,
+   "peak_memory_mb": 1.4
+  },
+  {
+   "file": "asml.pdf",
+   "status": "processed",
+   "validation": "REVIEW_REQUIRED",
+   "raw": {
+    "observations": 22,
+    "unmapped": 8,
+    "selected": 12,
+    "expected": 4,
+    "expected_in_archive": 4,
+    "raw_recall": 1.0,
+    "groups": {
+     "income_statement": 22
+    },
+    "missing_from_archive": []
+   },
+   "workflow": {
+    "ran": true,
+    "archived": 22,
+    "unmapped_archived": 8,
+    "nothing_stored_before_confirmation": true,
+    "all_start_unconfirmed": true,
+    "confirmation_persists_after_reprocessing": true,
+    "stored_only_confirmed": true,
+    "research_gate_holds": true
+   },
+   "seconds": 0.192,
+   "peak_memory_mb": 1.3
+  }
+ ]
+}

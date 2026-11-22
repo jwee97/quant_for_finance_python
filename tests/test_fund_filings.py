@@ -299,6 +299,7 @@ def test_a_connectors_draft_goes_through_review_and_is_stored_with_its_source(tm
     assert item["status"] in ("extracted", "needs_review") and item["source_kind"] == "api" and item["method"] == "dart-api"
     again = svc.add_from_connector(batch, c, ref)[0]
     assert again["status"] == "duplicate", "the same answer is not imported twice"
+    svc.decide(item["item_id"], [{"action": "confirm_suggested"}])
     out = svc.approve(item["item_id"], security={"security_id": sid})
     assert out["saved"][0]["lines"] >= 6
     prov = {p["metric_code"]: p for p in svc.provenance(sid)}
