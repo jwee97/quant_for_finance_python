@@ -81,8 +81,8 @@ def test_without_a_key_the_card_gives_the_steps_to_add_the_secret_and_shows_no_f
     page.wait_for_selector("#futures [data-role=finzdata-box] .setup")
     guide = page.inner_text("#futures [data-role=finzdata-box]")
     assert "Finzdata is not set up yet" in guide and "FINZDATA_API_KEY" in guide and "finzdata.com" in guide and "Copy the secret name" in guide
-    assert page.locator("#futures .finder").count() == 0 and "iTick" not in guide
-    assert [b.inner_text() for b in page.locator("#futures [data-role=source] button").all()] == ["Yahoo: curves", "Finzdata: every contract", "Yahoo: search any future", "iTick: any product"]
+    assert page.locator("#futures .finder").count() == 0 and "Massive" not in guide
+    assert [b.inner_text() for b in page.locator("#futures [data-role=source] button").all()] == ["Yahoo: curves", "Finzdata: every contract", "Yahoo: search any future", "Massive: every contract"]
     assert not page.problems, page.problems
     page.close()
 

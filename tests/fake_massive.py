@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 
 BASE = "https://api.massive.com"
+KEY = "TESTKEY123456"
 
 
 class Resp:
@@ -105,19 +106,24 @@ class FakeMassive:
                                  "strike_price": float(k), "exercise_style": "american", "shares_per_contract": 100})
             return self._page(rows, path, q)
         if path.startswith("/v3/snapshot/options/"):
-            rows = [{"details": {"ticker": "O:SPY240719C00100000", "contract_type": "call", "expiration_date": "2024-07-19", "strike_price": 100, "exercise_style": "american", "shares_per_contract": 100},
+            rows = [{"details": {"ticker": "O:SPY240719C00100000", "contract_type": "call", "expiration_date": str((pd.Timestamp(self.today) + pd.Timedelta(days=30)).date()), "strike_price": 100, "exercise_style": "american", "shares_per_contract": 100},
                      "greeks": {"delta": 0.5, "gamma": 0.05, "theta": -0.1, "vega": 0.2}, "implied_volatility": 0.22, "open_interest": 1234, "day": {"close": 3.1, "volume": 50},
                      "last_quote": {"bid": 3.0, "ask": 3.2, "bid_size": 5, "ask_size": 6}, "last_trade": {"price": 3.1}, "underlying_asset": {"price": 100.2}},
-                    {"details": {"ticker": "O:SPY240719P00100000", "contract_type": "put", "expiration_date": "2024-07-19", "strike_price": 100}, "open_interest": 10, "day": {"close": 2.9},
+                    {"details": {"ticker": "O:SPY240719P00100000", "contract_type": "put", "expiration_date": str((pd.Timestamp(self.today) + pd.Timedelta(days=30)).date()), "strike_price": 100}, "open_interest": 10, "day": {"close": 2.9},
                      "last_quote": {"bid": 2.8, "ask": 3.0}, "underlying_asset": {"price": 100.2}}]
             return self._page(rows, path, q)
         if path == "/futures/v1/contracts":
-            date = q.get("date")
+            date, gte = q.get("date"), q.get("last_trade_date.gte")
+            today = pd.Timestamp(self.today)
             rows = []
-            for i, (code, last) in enumerate([("CLN4", "2024-06-20"), ("CLQ4", "2024-07-22"), ("CLU4", "2024-08-20"), ("CLV4", "2024-09-20"), ("CLG4", "2024-02-20")]):
-                if date and not (pd.Timestamp("2024-01-01") <= pd.Timestamp(date) <= pd.Timestamp(last)):
+            for code, off in [("CLN4", 6), ("CLQ4", 38), ("CLU4", 67), ("CLV4", 98), ("CLG4", -114)]:
+                last = today + pd.Timedelta(days=off)
+                if date and not (today - pd.Timedelta(days=500) <= pd.Timestamp(date) <= last):
                     continue
-                rows.append({"ticker": code, "product_code": q.get("product_code") or "CL", "first_trade_date": "2023-01-02", "last_trade_date": last, "settlement_date": last, "active": True, "type": "single"})
+                if gte and last < pd.Timestamp(gte):
+                    continue
+                rows.append({"ticker": code, "product_code": q.get("product_code") or "CL", "first_trade_date": str((today - pd.Timedelta(days=500)).date()), "last_trade_date": str(last.date()),
+                             "settlement_date": str(last.date()), "active": True, "type": "single"})
             return self._page(rows, path, q)
         if path == "/futures/v1/products":
             return self._page([{"product_code": "CL", "name": "Crude Oil", "trading_venue": "XNYM", "sector": "energy"}], path, q)

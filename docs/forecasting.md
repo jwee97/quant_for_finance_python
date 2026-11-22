@@ -6,7 +6,7 @@ The short version of what the record says on the platform's ETFs: the *spread* o
 
 ## Five minutes, with SPY
 
-1. Open the **Backtest** tab and look at the ticker list. The platform's 15 ETFs are there to begin with, and you can add symbols from Yahoo Finance or iTick. The Forecast tab uses that list, the same data source and the same start date.
+1. Open the **Backtest** tab and look at the ticker list. The platform's 15 ETFs are there to begin with, and you can add symbols from Yahoo Finance or Massive. The Forecast tab uses that list, the same data source and the same start date.
 2. Open **Forecast**. Under *1. Which stock, how far ahead* choose **SPY** and **1 month (21 trading days)**.
 3. Under *2. Which methods* the random walk is ticked and cannot be unticked: it is the yardstick that every other method has to beat. *Recommended* ticks eleven methods (RiskMetrics, Hull-White, GJR-GARCH, filtered historical simulation, HAR, the Markov chain on volatility, the hidden Markov model, the Gaussian processes on recent moves and on the drift, the Kalman trend and the analogues); *All of them* adds the rest and the two blends; *Fast ones only* leaves out the methods whose fit takes seconds. Hover a name for what it does.
 4. Under *3. How thorough* choose **Quick** (four years of past forecasts, one a month, 500 simulated futures each), **Standard** (eight years, one every two weeks, 1,000 futures) or **Thorough** (twelve years, one a week, 2,000 futures). With every method on SPY, Standard took 89 seconds on a four-core machine with nothing else running (the recommended eleven took 36 seconds); Quick took 26 seconds and Thorough 3.5 minutes. A slower machine, a Replit workspace for one, takes longer. *Random seed* makes a run repeatable.
@@ -199,7 +199,7 @@ A forecasting test that cannot tell a method that works from one that does not i
 - **It is not advice and not a strategy.** A method can describe the spread of returns well and make no money, and the other way round; how good a forecast is and how much a rule built on it earns are different questions, and the Backtest tab answers the second. The chance of a rise on the page is a probability, not a signal.
 - **One ticker, one history.** The ranking is for one stock over one stretch. Another period, another stock or another horizon would rank the methods differently, and the order among the best few is within what luck could change.
 - **Daily prices only.** No intraday data, order flow, earnings, news or macro series enter any method (the HAR model uses the day's high and low where the data have them).
-- **Yahoo Finance and iTick data are free and unaudited.** The platform's 15 ETFs are the versioned, cleaned dataset. A ticker with fewer than about three years of prices cannot be tested (the page says how long it needs).
+- **Yahoo Finance data are free and unaudited; Massive's depend on your plan.** The platform's 15 ETFs are the versioned, cleaned dataset. A ticker with fewer than about three years of prices cannot be tested (the page says how long it needs).
 - **Future dates skip weekends** and ignore exchange holidays, so a date on the fan can be a day out.
 - **The methods are fitted by maximum likelihood or least squares**, not by full Bayesian inference; the Gaussian processes use a few hundred points and a few kernel numbers learned from them, and the hidden Markov model has two regimes.
 - **A run is not checkpointed.** If the app stops during a run (on Replit, when the workspace goes idle) the run shows as stopped and has to be started again.

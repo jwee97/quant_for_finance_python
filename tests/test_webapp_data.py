@@ -384,4 +384,4 @@ def test_the_status_lists_the_new_options_of_the_futures_card(app):
     assert futures["max_contracts"] == ff.MAX_CONTRACTS and "max" in futures["history"] and "10y" in futures["history"] and futures["deribit"] == ["curve", "history"]
     assert {r["id"] for r in futures["roots"]} >= {"CL", "VX"} and "Volatility" in futures["groups"]
     ids = {s["id"] for s in futures["sources"]}
-    assert {"yahoo", "cboe_cfe", "deribit", "itick"} <= ids
+    assert {"yahoo", "cboe_cfe", "deribit", "massive"} <= ids

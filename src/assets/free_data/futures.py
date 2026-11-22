@@ -18,8 +18,7 @@ does not have is any contract that has expired: a curve you download today start
 day with every download. ``fetch_deribit_history`` takes the whole past instead: Deribit keeps the daily chart of a future after it has expired, so the monthly and quarterly futures since 2019 come
 back in one download (prices are the last trade of each day, volume is in dollars, and there is no open interest in a chart).
 
-**Any futures product (iTick).** iTick serves one daily price series per product (``NQ``, ``HSI``, ``RB``), not one per contract month, so it cannot draw a curve; ``data_itick`` downloads it
-as a price history, which the Futures tab's History view reads. The product list is ``itick_catalog``.
+**Any futures product (Massive).** Massive serves every contract of a product with its session bars and settlement prices, so ``assets.free_data.massive`` builds a real curve from it (no open interest).
 """
 
 from __future__ import annotations

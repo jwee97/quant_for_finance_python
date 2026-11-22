@@ -53,7 +53,7 @@ def test_without_a_key_the_status_says_where_to_put_it_the_finder_still_works_an
     assert z["configured"] is False and z["setup"] == "key" and "FINZDATA_API_KEY" in z["problem"] and z["key_variable"] == "FINZDATA_API_KEY" and z["stored"] == []
     assert st["kinds"]["futures"]["finzdata_status"] == z
     assert next(s for s in st["kinds"]["futures"]["sources"] if s["id"] == "finzdata")["needs_key"]
-    assert [s["id"] for s in st["kinds"]["futures"]["sources"]] == ["yahoo", "finzdata", "cboe_cfe", "deribit", "itick"]
+    assert [s["id"] for s in st["kinds"]["futures"]["sources"]] == ["massive", "yahoo", "finzdata", "cboe_cfe", "deribit"]
     assert get(app, "/api/data/search", kind="futures", source="finzdata", q="crude")["results"][0]["root"] == "CL"          # the list ships with the app
     with pytest.raises(ApiError, match="not set up"):
         app.extra_post["/api/data/fetch"]({"kind": "futures", "source": "finzdata", "items": ["ES"]})

@@ -5,15 +5,15 @@ from __future__ import annotations
 import glob
 import os
 
+import pandas as pd
 import pytest
 
 from src.utils.config import load_config
 from src.webapp import server
 from src.webapp.api import App
-from src.webapp.providers import ITickProvider, RateLimiter
-from src.webapp.universe import TickerStore, UniverseBuilder, itick_source
+from src.webapp.universe import TickerStore, UniverseBuilder, massive_source
 from tests.app_roots import isolated_root
-from tests.fake_itick import KEY, FakeClock, FakeITick
+from tests.fake_massive import KEY, FakeMassive
 from tests.test_webapp import _default, _fetch
 from tests.test_webapp_labs import _rich
 
@@ -36,31 +36,6 @@ def live(tmp_path_factory):
     config = load_config()
     store = TickerStore(tmp_path_factory.mktemp("prices"), fetch=_fetch)
     app = App(config, builder=UniverseBuilder(config, store, default_loader=_default), root=isolated_root(tmp_path_factory.mktemp("root"), config))
-    running = server.start(app, "127.0.0.1", 0)
-    yield running
-    running.stop()
-
-
-def _app_with_itick(tmp, key):
-    config = load_config()
-    fake, clock = FakeITick(), FakeClock()
-    provider = ITickProvider(key=key, base_url="https://api-free.itick.org", limiter=RateLimiter(5, clock=clock.now, sleep=clock.sleep), transport=fake, sleep=clock.sleep)
-    builder = UniverseBuilder(config, TickerStore(tmp / "yahoo", fetch=_fetch), default_loader=_default, sources={"itick": itick_source(tmp, provider, tmp / "itick")})
-    return App(config, builder=builder, root=isolated_root(tmp / "root", config)), fake
-
-
-@pytest.fixture(scope="module")
-def live_itick(tmp_path_factory):
-    app, fake = _app_with_itick(tmp_path_factory.mktemp("with_key"), KEY)
-    running = server.start(app, "127.0.0.1", 0)
-    running.fake = fake
-    yield running
-    running.stop()
-
-
-@pytest.fixture(scope="module")
-def live_no_key(tmp_path_factory):
-    app, fake = _app_with_itick(tmp_path_factory.mktemp("without_key"), "")
     running = server.start(app, "127.0.0.1", 0)
     yield running
     running.stop()
@@ -191,27 +166,6 @@ def test_an_app_older_than_the_page_says_so_instead_of_leaving_empty_lists(brows
         assert "The app is older than this page" in text and "Stop the app and press Run again" in text and "reports version 1" in text
         assert pg.locator(".layout").is_hidden() and pg.locator("#run").count() == 0
         assert pg.locator("#notice button:has-text('Reload this page')").count() == 1
-        assert not pg.problems, pg.problems
-    finally:
-        pg.close()
-
-
-def test_the_first_release_with_data_sources_sent_no_version_and_is_still_accepted(browser, live_itick):
-    pg = _page_with(browser, live_itick, rewrite=lambda catalog: catalog.pop("api_version", None))
-    try:
-        pg.wait_for_selector(".chip")
-        assert pg.locator("#notice .banner").count() == 0 and pg.locator("#u-source-select option").count() == 2 and pg.locator("#run").is_enabled()
-        assert not pg.problems, pg.problems
-    finally:
-        pg.close()
-
-
-def test_a_restart_notice_is_shown_when_the_code_changed_after_the_app_started_and_the_page_still_works(browser, live_itick):
-    pg = _page_with(browser, live_itick, rewrite=lambda catalog: catalog.update(restart_needed=True))
-    try:
-        pg.wait_for_selector(".chip")
-        assert "updated after it started" in pg.inner_text("#notice") and pg.locator("#notice .banner.err").count() == 0
-        assert pg.locator("#u-source-select option").count() == 2 and pg.locator("#s-body select").first.locator("option").count() > 10 and pg.locator("#run").is_enabled()
         assert not pg.problems, pg.problems
     finally:
         pg.close()
@@ -474,43 +428,6 @@ def test_the_source_menu_offers_yahoo_alone_when_the_app_has_no_other_source(pag
 
 
 @pytest.fixture()
-def page_itick(browser, live_itick):
-    pg = browser.new_page(viewport={"width": 1400, "height": 1000})
-    pg.problems = []
-    pg.on("pageerror", lambda e: pg.problems.append(f"pageerror: {e}"))
-    pg.on("console", lambda m: pg.problems.append(f"console {m.type}: {m.text}") if m.type == "error" else None)
-    pg.goto(live_itick.url)
-    pg.wait_for_selector(".chip")
-    yield pg
-    assert not pg.problems, pg.problems
-    assert KEY not in pg.content() and KEY not in pg.evaluate("JSON.stringify(Object.assign({}, localStorage))")        # the key is nowhere in the page, not even in what it remembers
-    pg.close()
-
-
-def test_choosing_itick_downloads_when_you_run_waits_for_the_limit_and_never_shows_the_key(page_itick, live_itick):
-    pg, fake = page_itick, live_itick.fake
-    assert pg.locator("#u-source-select option").all_inner_texts() == ["Yahoo Finance", "iTick"]
-    pg.select_option("#u-source-select", "itick")
-    assert "5 calls a minute" in pg.inner_text("#u-source") and "ITICK_API_KEY" in pg.inner_text("#u-source")
-    assert pg.locator("#u-source .setup").count() == 0 and pg.locator("#u-source button:has-text('Test the iTick connection')").count() == 1      # a key exists: no set-up guide, a test button
-    pg.click("button:text-is('Clear')")
-    pg.fill("input[aria-label='tickers to add']", "NVDA, MSFT")
-    pg.click("button:text-is('Add')")
-    pg.wait_for_selector(".chip.pending", state="detached", timeout=30_000)
-    assert fake.calls == [], "adding a ticker must not spend any of the rate-limited calls"
-    assert "↓" in pg.inner_text("#u-chips") and "downloaded when you run" in pg.inner_text("#u-chips") and "calls" in pg.inner_text("#u-chips")
-    pg.click("text=Test the iTick connection")
-    pg.wait_for_selector("#u-source-result:has-text('iTick works')", timeout=30_000)
-    assert len(fake.calls) == 1
-    _choose_strategy(pg, "ma_crossover")
-    _run_and_wait(pg)
-    assert "· iTick ·" in pg.inner_text(".head .sub") and "2 tickers" in pg.inner_text(".head .sub")
-    pg.wait_for_selector("#u-chips .chip:has-text('✓')")
-    assert "↓" not in pg.inner_text("#u-chips") and len(fake.calls) > 4
-    assert set(fake.tokens) == {KEY}
-
-
-@pytest.fixture()
 def page_no_key(browser, live_no_key, monkeypatch):
     pg = browser.new_page(viewport={"width": 1400, "height": 1000})
     pg.problems = []
@@ -523,51 +440,6 @@ def page_no_key(browser, live_no_key, monkeypatch):
     pg.close()
 
 
-def test_the_setup_guide_copies_the_secret_name_and_its_reload_button_keeps_iTick_selected(browser, live_no_key, monkeypatch):
-    monkeypatch.delenv("ITICK_API_KEY", raising=False)
-    context = browser.new_context(permissions=["clipboard-read", "clipboard-write"], viewport={"width": 1400, "height": 1000})
-    pg = context.new_page()
-    problems = []
-    pg.on("pageerror", lambda e: problems.append(str(e)))
-    try:
-        pg.goto(live_no_key.url)
-        pg.wait_for_selector(".chip")
-        pg.select_option("#u-source-select", "itick")
-        pg.click("#u-source button:has-text('Copy the secret name')")
-        pg.wait_for_selector(".toast")
-        assert "copied" in pg.inner_text(".toast") and pg.evaluate("navigator.clipboard.readText()") == "ITICK_API_KEY"
-        with pg.expect_navigation():
-            pg.click("#u-source button:has-text('I added it and restarted: reload')")
-        pg.wait_for_selector("#u-source .setup")
-        assert pg.locator("#u-source-select").input_value() == "itick"                                               # the choice survives the reload
-        assert not problems, problems
-    finally:
-        context.close()
-
-
-def test_without_a_key_the_page_says_how_to_set_one_up_and_refuses_the_download(page_no_key, monkeypatch):
-    monkeypatch.delenv("ITICK_API_KEY", raising=False)
-    pg = page_no_key
-    assert pg.locator("#u-source-select option").all_inner_texts() == ["Yahoo Finance", "iTick (not set up)"]
-    pg.select_option("#u-source-select", "itick")
-    text = pg.inner_text("#u-source")
-    assert "ITICK_API_KEY" in text and "Secrets" in text and "never sent to this page" in text
-    assert pg.locator("#u-source button:has-text('Test the iTick connection')").count() == 0                       # the test button waits for a key (the steps may still mention it)
-    steps = pg.locator("#u-source .setup ol.steps li")
-    assert steps.count() == 4 and pg.locator("#u-source .setup code").inner_text() == "ITICK_API_KEY"
-    assert "Stop" in steps.nth(2).inner_text() and "Run" in steps.nth(2).inner_text() and "reload" in steps.nth(2).inner_text()
-    assert pg.locator("#u-source .setup button").all_inner_texts() == ["Copy the secret name", "I added it and restarted: reload"]
-    assert pg.locator("#u-source input").count() == 0 and pg.locator("#u-source textarea").count() == 0       # there is nowhere on the page to type a key
-    pg.click("button:text-is('Clear')")
-    pg.fill("input[aria-label='tickers to add']", "NVDA")
-    pg.click("button:text-is('Add')")
-    pg.wait_for_selector(".chip.pending", state="detached", timeout=30_000)
-    assert pg.locator(".chip.bad").count() == 1 and "not set up" in pg.inner_text("#u-chips")
-    pg.select_option("#u-source-select", "yahoo")                                  # Yahoo does not need it: the same ticker is checked again against the other source
-    pg.wait_for_selector(".chip.pending", state="detached", timeout=30_000)
-
-
-# ------------------------------------------------------------------------------------------------------ the Execution and Cash flows tabs
 @pytest.fixture(scope="module")
 def live_labs(tmp_path_factory):
     """A server whose platform data also has dollar volume and the ten-year yield (the redemption and liability tools need them)."""
@@ -786,3 +658,139 @@ def test_an_app_older_than_the_new_tabs_still_runs_the_backtest_and_says_so_on_t
         assert not pg.problems, pg.problems
     finally:
         pg.close()
+
+
+# ------------------------------------------------------------------------------------------------------------------ Massive as a price source
+def _app_with_massive(tmp, key):
+    from src.marketdata.client import MassiveClient
+    from src.marketdata.massive import MassiveProvider
+    from src.marketdata.service import MarketDataService
+
+    config = load_config()
+    fake = FakeMassive(page=100000, today=str(pd.Timestamp.now().date()))
+    service = MarketDataService(tmp, MassiveProvider(MassiveClient(key=key, root=tmp, session=fake, sleep=lambda s: None), root=tmp))
+    builder = UniverseBuilder(config, TickerStore(tmp / "yahoo", fetch=_fetch), default_loader=_default, sources={"massive": massive_source(tmp, service, tmp / "massive")})
+    return App(config, builder=builder, root=isolated_root(tmp / "root", config)), fake
+
+
+@pytest.fixture(scope="module")
+def live_massive(tmp_path_factory):
+    app, fake = _app_with_massive(tmp_path_factory.mktemp("with_key"), KEY)
+    running = server.start(app, "127.0.0.1", 0)
+    running.fake = fake
+    yield running
+    running.stop()
+
+
+@pytest.fixture(scope="module")
+def live_no_key(tmp_path_factory):
+    app, fake = _app_with_massive(tmp_path_factory.mktemp("without_key"), "")
+    running = server.start(app, "127.0.0.1", 0)
+    yield running
+    running.stop()
+
+
+def test_the_first_release_with_data_sources_sent_no_version_and_is_still_accepted(browser, live_massive):
+    pg = _page_with(browser, live_massive, rewrite=lambda catalog: catalog.pop("api_version", None))
+    try:
+        pg.wait_for_selector(".chip")
+        assert pg.locator("#notice .banner").count() == 0 and pg.locator("#u-source-select option").count() == 2 and pg.locator("#run").is_enabled()
+        assert not pg.problems, pg.problems
+    finally:
+        pg.close()
+
+
+def test_a_restart_notice_is_shown_when_the_code_changed_after_the_app_started_and_the_page_still_works(browser, live_massive):
+    pg = _page_with(browser, live_massive, rewrite=lambda catalog: catalog.update(restart_needed=True))
+    try:
+        pg.wait_for_selector(".chip")
+        assert "updated after it started" in pg.inner_text("#notice") and pg.locator("#notice .banner.err").count() == 0
+        assert pg.locator("#u-source-select option").count() == 2 and pg.locator("#s-body select").first.locator("option").count() > 10 and pg.locator("#run").is_enabled()
+        assert not pg.problems, pg.problems
+    finally:
+        pg.close()
+
+
+@pytest.fixture()
+def page_massive(browser, live_massive):
+    pg = browser.new_page(viewport={"width": 1400, "height": 1000})
+    pg.problems = []
+    pg.on("pageerror", lambda e: pg.problems.append(f"pageerror: {e}"))
+    pg.on("console", lambda m: pg.problems.append(f"console {m.type}: {m.text}") if m.type == "error" else None)
+    pg.goto(live_massive.url)
+    pg.wait_for_selector(".chip")
+    yield pg
+    assert not pg.problems, pg.problems
+    assert KEY not in pg.content() and KEY not in pg.evaluate("JSON.stringify(Object.assign({}, localStorage))")        # the key is nowhere in the page, not even in what it remembers
+    pg.close()
+
+
+def test_choosing_massive_downloads_when_you_run_and_never_shows_the_key(page_massive, live_massive):
+    pg, fake = page_massive, live_massive.fake
+    assert pg.locator("#u-source-select option").all_inner_texts() == ["Yahoo Finance", "Massive"]
+    pg.select_option("#u-source-select", "massive")
+    assert "MASSIVE_API_KEY" in pg.inner_text("#u-source")
+    assert pg.locator("#u-source .setup").count() == 0 and pg.locator("#u-source button:has-text('Test the Massive connection')").count() == 1      # a key exists: no set-up guide, a test button
+    pg.click("button:text-is('Clear')")
+    pg.fill("input[aria-label='tickers to add']", "NVDA, MSFT")
+    pg.click("button:text-is('Add')")
+    pg.wait_for_selector(".chip.pending", state="detached", timeout=30_000)
+    assert fake.calls == [], "adding a ticker must not spend any request"
+    assert "↓" in pg.inner_text("#u-chips") and "downloaded when you run" in pg.inner_text("#u-chips")
+    pg.click("text=Test the Massive connection")
+    pg.wait_for_selector("#u-source-result:has-text('Massive answered')", timeout=30_000)
+    assert len(fake.calls) == 1
+    _choose_strategy(pg, "ma_crossover")
+    _run_and_wait(pg)
+    assert "· Massive ·" in pg.inner_text(".head .sub") and "2 tickers" in pg.inner_text(".head .sub")
+    pg.wait_for_selector("#u-chips .chip:has-text('✓')")
+    assert "↓" not in pg.inner_text("#u-chips") and len(fake.calls) > 2
+
+
+@pytest.fixture()
+def page_no_key(browser, live_no_key, monkeypatch):
+    monkeypatch.delenv("MASSIVE_API_KEY", raising=False)
+    pg = browser.new_page(viewport={"width": 1400, "height": 1000})
+    pg.problems = []
+    pg.on("pageerror", lambda e: pg.problems.append(f"pageerror: {e}"))
+    pg.on("console", lambda m: pg.problems.append(f"console {m.type}: {m.text}") if m.type == "error" else None)
+    pg.goto(live_no_key.url)
+    pg.wait_for_selector(".chip")
+    yield pg
+    assert not pg.problems, pg.problems
+    pg.close()
+
+
+def test_the_setup_guide_copies_the_secret_name_and_its_reload_button_keeps_massive_selected(browser, live_no_key, monkeypatch):
+    monkeypatch.delenv("MASSIVE_API_KEY", raising=False)
+    context = browser.new_context(permissions=["clipboard-read", "clipboard-write"], viewport={"width": 1400, "height": 1000})
+    pg = context.new_page()
+    problems = []
+    pg.on("pageerror", lambda e: problems.append(str(e)))
+    try:
+        pg.goto(live_no_key.url)
+        pg.wait_for_selector(".chip")
+        pg.select_option("#u-source-select", "massive")
+        pg.click("#u-source button:has-text('Copy the secret name')")
+        pg.wait_for_selector(".toast")
+        assert "copied" in pg.inner_text(".toast") and pg.evaluate("navigator.clipboard.readText()") == "MASSIVE_API_KEY"
+        with pg.expect_navigation():
+            pg.click("#u-source button:has-text('I added it and restarted: reload')")
+        pg.wait_for_selector("#u-source .setup")
+        assert pg.locator("#u-source-select").input_value() == "massive"                                              # the choice survives the reload
+        assert not problems, problems
+    finally:
+        context.close()
+
+
+def test_without_a_key_the_page_says_how_to_set_one_up_and_refuses_the_download(page_no_key):
+    pg = page_no_key
+    assert pg.locator("#u-source-select option").all_inner_texts() == ["Yahoo Finance", "Massive (not set up)"]
+    pg.select_option("#u-source-select", "massive")
+    text = pg.inner_text("#u-source")
+    assert "MASSIVE_API_KEY" in text and "Secrets" in text and "never sent to this page" in text
+    assert pg.locator("#u-source button:has-text('Test the Massive connection')").count() == 0
+    steps = pg.locator("#u-source .setup ol.steps li")
+    assert steps.count() == 4 and pg.locator("#u-source .setup code").inner_text() == "MASSIVE_API_KEY"
+    assert pg.locator("#u-source .setup button").all_inner_texts() == ["Copy the secret name", "I added it and restarted: reload"]
+    assert pg.locator("#u-source input").count() == 0 and pg.locator("#u-source textarea").count() == 0       # there is nowhere on the page to type a key

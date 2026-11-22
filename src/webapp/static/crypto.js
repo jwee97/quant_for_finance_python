@@ -34,24 +34,22 @@
   const setCatalog = (c) => { X.catalog = c; if (!c.crypto_symbols.some((s) => s.id === X.form.symbol)) X.form.symbol = "BTC"; };
   const WHAT = { history: "Daily history (spot, perpetual, funding)", venues: "Real quotes and order books, now", funding: "OKX funding history" };
   const DAYS = [["260", "260 days (the least the tab needs)"], ["400", "400 days"], ["730", "2 years"], ["1000", "1000 days"]];
-  let itick = null;                                                                          // the server's iTick status, kept by the card for its time estimate
-  /* The Free data card: a coin's history and funding from OKX (or spot alone from Kraken, Bitstamp and Coinbase), and its quotes and order books on up to six venues at this moment; or, from iTick, a coin's
-     daily history against USDT (spot only). */
+  /* The Free data card: a coin's history and funding from OKX (or spot alone from Kraken, Bitstamp and Coinbase), and its quotes and order books on up to six venues at this moment; or, from Massive, a coin's
+     daily SPOT history against the US dollar (never a futures price: Deribit and the exchanges supply derivatives). */
   const FREE = {
     kind: "crypto", title: "Real crypto data (free)",
-    intro: "Download real prices for coins other than BTC and ETH, the real quotes and order books of a coin on Coinbase, Kraken, Bitstamp, OKX and Deribit, and OKX's funding history. No account and no key. iTick (needs your key) can supply a coin's daily history instead, spot only. What is downloaded replaces the simulation for that coin, venue or book, and is labelled.",
+    intro: "Download real prices for coins other than BTC and ETH, the real quotes and order books of a coin on Coinbase, Kraken, Bitstamp, OKX and Deribit, and OKX's funding history. No account and no key. Massive (needs your key) can supply a coin's daily spot history instead. What is downloaded replaces the simulation for that coin, venue or book, and is labelled.",
     defaults: () => ({ source: "exchanges", chosen: new Set(["SOL"]), extra: "", what: new Set(["history", "venues", "funding"]), days: "400" }),
     controls: (box, f, ks, changed, redraw) => {
-      itick = ks.itick_status;
-      const seg = W.seg(box, [["exchanges", "Exchanges: OKX, Coinbase, Kraken …"], ["itick", "iTick: daily history"]], f.source, (v) => { f.source = v; redraw(); });
+      const seg = W.seg(box, [["exchanges", "Exchanges: OKX, Coinbase, Kraken …"], ["massive", "Massive: daily spot history"]], f.source, (v) => { f.source = v; redraw(); });
       seg.setAttribute("role", "group"); seg.setAttribute("aria-label", "data source"); seg.dataset.role = "source";
       h("span", "hint", box, "Pick coins:");
       W.picks(box, ks.coins.map((c) => [c, c]), f.chosen, changed);
-      if (f.source === "itick") {
-        Q.labField(box, { key: "extra", label: "Other coins (separated by spaces)", kind: "text", placeholder: "DOT ATOM", help: "Any coin iTick quotes against USDT (about " + ks.itick.coins + " of them)" }, f, changed);
-        W.itickBox(box, ks.itick_status, "crypto");
-        h("p", "hint", box, "iTick has the daily closes of a coin against USDT: spot only, no perpetual, funding or order books (the exchanges have those). Which exchange its prices come from is not documented. BTC and ETH keep the platform's longer Deribit history.");
-        Q.labField(box, { key: "days", label: "Days of history", kind: "choice", options: DAYS, help: "Each 1,000 daily bars cost one call of your plan" }, f, changed);
+      if (f.source === "massive") {
+        Q.labField(box, { key: "extra", label: "Other coins (separated by spaces)", kind: "text", placeholder: "DOT ATOM", help: "Any coin Massive lists against the dollar (search with the Massive finder or type the symbol)" }, f, changed);
+        W.massiveBox(box, ks.massive_status, "crypto");
+        h("p", "hint", box, "Massive has the daily closes of a coin against the dollar: SPOT only, no perpetual, funding or order books (the exchanges and Deribit have those, and are the only source of dated crypto futures here). BTC and ETH keep the platform's longer Deribit history.");
+        Q.labField(box, { key: "days", label: "Days of history", kind: "choice", options: DAYS, help: "A repeat download asks only for the newest days: the bars are stored. Your plan sets how far back Massive answers" }, f, changed);
         return;
       }
       Q.labField(box, { key: "extra", label: "Other coins (separated by spaces)", kind: "text", placeholder: "DOT ATOM", help: "A coin symbol listed on OKX, Kraken, Bitstamp or Coinbase" }, f, changed);
@@ -62,15 +60,13 @@
     request: (f) => {
       const items = [...f.chosen, ...String(f.extra).toUpperCase().split(/[\s,;]+/).filter(Boolean)];
       if (!items.length) throw new Error("Pick a coin, or type one");
-      if (f.source === "itick") return { kind: "crypto", source: "itick", items, what: ["history"], days: Number(f.days) };
+      if (f.source === "massive") return { kind: "crypto", source: "massive", items, what: ["history"], days: Number(f.days) };
       if (!f.what.size) throw new Error("Tick what to download");
       return { kind: "crypto", items, what: ["history", "venues", "funding"].filter((w) => f.what.has(w)), days: Number(f.days) };
     },
     estimate: (b) => {
-      if (b.source !== "itick") return b.items.length * (b.what.length * 5);
-      const info = itick || {}, cpm = info.calls_per_minute || 5, page = info.page_size || 1000, free = info.calls_available_now === undefined ? cpm : info.calls_available_now;
-      const calls = b.items.length * Math.max(1, Math.ceil(b.days / page));
-      return 2 * calls + Math.max(0, calls - free) * (60 / cpm);
+      if (b.source === "massive") return b.items.length * 8;
+      return b.items.length * (b.what.length * 5);
     },
     describe: (rec) => rec.item === "history" ? [`${rec.name} · daily history`, `${rec.source} · ${rec.rows} days to ${rec.as_of}`] : rec.item === "venues" ? [`${rec.coin} · order books`, `${(rec.venues || []).length} venues: ${(rec.venues || []).join(", ")}`]
       : [`${rec.coin} · OKX funding`, `${rec.rows} days to ${rec.as_of}`],

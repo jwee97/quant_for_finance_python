@@ -699,12 +699,53 @@ def cmd_serve(args, config) -> int:
     return serve(config, args.host, args.port, not args.no_browser)
 
 
-def cmd_itick_test(args, config) -> int:
-    from .webapp.providers import ITickProvider
+def cmd_massive_test(args, config) -> int:
+    """Check MASSIVE_API_KEY with one request; with --probe, ask once per dataset what the plan includes (about fifteen requests). The key is never printed."""
+    from .marketdata.massive import MassiveProvider
+    from .marketdata.models import MarketDataError
+    from .marketdata.prices import MassivePrices
+    from .marketdata.service import MarketDataService
 
-    out = ITickProvider(root=config.root).test(args.symbol, kind=args.kind)
+    svc = MarketDataService(config.root)
+    out = MassivePrices(svc).test(args.symbol, kind=args.kind)
     print(("OK: " if out["ok"] else "FAILED: ") + out["message"])
+    if args.probe and out["ok"]:
+        try:
+            caps = MassiveProvider.probe(svc.provider)
+        except MarketDataError as exc:
+            print("FAILED: " + str(exc))
+            return 1
+        for c in caps:
+            print(f"  {c.asset_class:8s} {c.dataset:15s} {c.status:12s} {c.detail[:70]}")
     return 0 if out["ok"] else 1
+
+
+def cmd_market_sync(args, config) -> int:
+    """Bring stored Massive bars up to date, incrementally."""
+    from .marketdata.models import MarketDataError
+    from .marketdata.service import MarketDataService
+
+    svc = MarketDataService(config.root)
+    code = 0
+    for sym in args.symbols:
+        try:
+            r = svc.sync_bars(sym, args.asset_class, args.start, adjusted=not args.unadjusted, progress=print, force=args.force)
+            print(f"{sym}: " + ("up to date" if r["skipped"] else f"+{r['added']} rows, {r['revised']} revised") + "".join(f"\n  warning: {w}" for w in r.get("warnings", [])))
+        except MarketDataError as exc:
+            print(f"{sym}: FAILED {exc}")
+            code = 1
+    return code
+
+
+def cmd_market_migrate(args, config) -> int:
+    """Import the earlier iTick downloads into the normalised store (read only; repeating it imports nothing twice)."""
+    from .marketdata import legacy
+
+    out = legacy.migrate(config.root)
+    print(out["counts"], "integrity ok" if out["integrity"]["ok"] else out["integrity"])
+    for f in out["files"]:
+        print("  ", f["status"], f["file"])
+    return 0 if out["integrity"]["ok"] else 1
 
 
 def cmd_algo(args, config) -> int:
@@ -970,9 +1011,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--db", choices=["research", "runs"], default="research"); p.set_defaults(func=cmd_sql)
     p = sub.add_parser("serve", help="open the dashboard: backtest on your own tickers, compare runs, build formula strategies, read the guides")
     p.add_argument("--host", default="127.0.0.1"); p.add_argument("--port", type=int, default=8765); p.add_argument("--no-browser", action="store_true"); p.set_defaults(func=cmd_serve)
-    p = sub.add_parser("itick-test", help="spend one iTick call to check your ITICK_API_KEY, the host and the daily interval (the key is never printed)")
-    p.add_argument("--symbol", default="AAPL"); p.add_argument("--kind", choices=["futures", "crypto"], default=None, help="test that tab's own data (a plan can include stocks and not futures)")
-    p.set_defaults(func=cmd_itick_test)
+    p = sub.add_parser("massive-test", help="check your MASSIVE_API_KEY with one request (--probe: ask once per dataset what your plan includes); the key is never printed")
+    p.add_argument("--symbol", default="AAPL"); p.add_argument("--kind", choices=["futures", "crypto"], default=None); p.add_argument("--probe", action="store_true"); p.set_defaults(func=cmd_massive_test)
+    p = sub.add_parser("market-sync", help="bring stored Massive bars up to date (incremental, gap-filling)")
+    p.add_argument("symbols", nargs="+"); p.add_argument("--asset-class", choices=["stocks", "options", "futures", "crypto", "indices"], default="stocks"); p.add_argument("--start")
+    p.add_argument("--unadjusted", action="store_true"); p.add_argument("--force", action="store_true"); p.set_defaults(func=cmd_market_sync)
+    p = sub.add_parser("market-migrate", help="import the earlier iTick downloads into the normalised store as provider itick (read only, repeatable)"); p.set_defaults(func=cmd_market_migrate)
     p = sub.add_parser("new-strategy", help="write a template for your own strategy into user_strategies/"); p.add_argument("name"); p.set_defaults(func=cmd_new_strategy)
     p = sub.add_parser("ask", help="ask the research database a question in words"); p.add_argument("question", nargs="+"); p.add_argument("--llm", help="model that writes the SQL (needs the anthropic package and an API key)"); p.set_defaults(func=cmd_ask)
     p = sub.add_parser("causal", help="causal estimators against simulated worlds with a known effect"); p.add_argument("--n", type=int, default=3000); p.add_argument("--seed", type=int, default=7); p.set_defaults(func=cmd_causal)

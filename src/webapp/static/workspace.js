@@ -278,26 +278,50 @@
     }
     return box;
   }
-  /* iTick in a card: either the steps that turn it on (the key is never typed into this page) or the plan's allowance and a button that spends one call (two when the first host does not recognise the key)
-     to show what the account returns. ``info`` is the server's iTick status (GET /api/data/status); ``kind`` ("futures" or "crypto") makes the test ask for that tab's own data, because a plan can include
-     stocks and not futures. */
-  function itickBox(parent, info, kind) {
-    const box = h("div", "itick", parent);
-    if (!info || !info.configured) {
-      if (info && info.setup === "key") Q.setupGuide(box, "Come back to this card, choose iTick and press Download real data.");
-      else { const w = h("p", "hint", box, (info && info.problem) || "iTick is not available."); w.style.color = Q.css("--warn"); }
-      return box;
-    }
-    h("p", "hint", box, `Your iTick key is set. Your plan allows ${info.calls_per_minute} call${info.calls_per_minute === 1 ? "" : "s"} a minute (${info.calls_available_now} free right now), shared with the Backtest tab: a download waits between calls and says so while it does. Requests go to ${info.host || "iTick"}.`);
-    const past = Q.keyHistory(info.history); if (past) h("p", "hint", box, past);
-    const row = h("div", "row tight", box), test = h("button", "btn small", row, "Test the iTick connection (one or two calls)"), out = h("span", "hint", row); test.type = "button";
-    out.dataset.role = "itick-test-result";
-    test.addEventListener("click", async () => {
-      test.disabled = true; out.textContent = "Testing…"; out.style.color = "";
-      try { const r = await api("/api/source/test", kind ? { source: "itick", kind } : { source: "itick" }); out.textContent = r.message; out.style.color = Q.css(r.ok ? "--good-text" : "--crit"); }
-      catch (e) { out.textContent = e.message; out.style.color = Q.css("--crit"); }
-      test.disabled = false;
-    });
+  /* Massive in a card: either the steps that turn it on (the key is never typed into this page) or its connection, what the key was VERIFIED to reach (asked once per dataset, remembered), the stored coverage and
+     freshness, and the warnings. ``st`` is the server's Massive status (GET /api/data/status, ``massive_status``); ``kind`` ("futures", "crypto" or "options") picks the datasets of that tab. Nothing is shown
+     as available that was not asked. */
+  const BADGE = { available: ["available", "--good-text"], not_entitled: ["not in your plan", "--crit"], no_data: ["answered, no data", "--warn"], error: ["error", "--crit"], documented: ["not checked yet", "--muted"] };
+  function massiveBox(parent, st, kind) {
+    const box = h("div", "massive", parent); box.dataset.role = "massive-box";
+    const draw = (info) => {
+      box.replaceChildren();
+      if (!info || !info.configured) {
+        if (info && info.problem && !/not set up/.test(info.problem)) { const w = h("p", "hint", box, info.problem); w.style.color = Q.css("--warn"); }
+        else Q.setupGuide(box, "Come back to this card, choose Massive and press Check what my plan includes.");
+        return;
+      }
+      const classes = kind === "options" ? ["options", "stocks"] : [kind], caps = (info.capabilities || []).filter((c) => classes.includes(c.asset_class));
+      h("p", "hint", box, `Massive is connected (key set; requests go to ${info.base_url || "api.massive.com"}). ${info.verified || 0} dataset${info.verified === 1 ? "" : "s"} verified so far${info.last_probe ? `, last on ${info.last_probe.replace("T", " ").replace("Z", " UTC")}` : ""}.`);
+      const t = h("table", "data compact", h("div", "scroll", box)); t.dataset.role = "massive-entitlements";
+      const head = h("tr", "", h("thead", "", t)); for (const x of ["Dataset", "Status", "What was seen", "Plan, per Massive's documentation"]) h("th", "", head, x);
+      const body = h("tbody", "", t);
+      for (const c of caps) {
+        const row = h("tr", "", body), bd = BADGE[c.status] || BADGE.documented;
+        h("td", "", row, `${c.asset_class} ${c.dataset.replace(/_/g, " ")}`); const sc = h("td", "", row, bd[0]); sc.style.color = Q.css(bd[1]); sc.dataset.status = c.status;
+        h("td", "", row, c.checked_at ? `${c.detail || ""} (${c.checked_at.slice(0, 10)})` : "not asked yet"); h("td", "", row, c.plan_note || "");
+      }
+      const cov = (info.coverage || []).filter((c) => classes.includes(c.asset_class));
+      if (cov.length) {
+        const ul = h("ul", "hint", box); ul.dataset.role = "massive-coverage";
+        for (const c of cov) h("li", "", ul, `${c.provider === "itick" ? "Earlier iTick downloads (imported, read only, kept apart from Massive's data)" : "Massive"} · ${c.asset_class}: ${c.series} series, ${Number(c.rows).toLocaleString("en-US")} rows, ${c.first ? c.first.slice(0, 10) : "?"} to ${c.last ? c.last.slice(0, 10) : "?"}${c.last_sync ? `, last synchronised ${c.last_sync.replace("T", " ").replace("Z", " UTC")}` : ""}${c.stale ? ` · ${c.stale} ended more than five days ago` : ""}`);
+      } else h("p", "hint", box, "Nothing stored from Massive for this tab yet.");
+      for (const w of info.warnings || []) { const p = h("p", "hint", box, w); p.style.color = Q.css("--warn"); }
+      const row = h("div", "row tight", box), probe = h("button", "btn small", row, "Check what my plan includes (about 15 requests)"), test = h("button", "btn small", row, "Test the connection (one request)"), out = h("span", "hint", row);
+      probe.type = test.type = "button"; out.dataset.role = "massive-result";
+      probe.addEventListener("click", async () => {
+        probe.disabled = true; out.textContent = "Asking Massive…"; out.style.color = "";
+        try { const j = await api("/api/market/probe", { asset_classes: classes.includes("stocks") && kind === "options" ? ["stocks", "options"] : [kind] }); const r = await Q.waitJob(j.job, (v) => { out.textContent = v.message; }, 800); draw(r); }
+        catch (e) { out.textContent = e.message; out.style.color = Q.css("--crit"); probe.disabled = false; }
+      });
+      test.addEventListener("click", async () => {
+        test.disabled = true; out.textContent = "Testing…"; out.style.color = "";
+        try { const r = await api("/api/source/test", kind ? { source: "massive", kind } : { source: "massive" }); out.textContent = r.message; out.style.color = Q.css(r.ok ? "--good-text" : "--crit"); }
+        catch (e) { out.textContent = e.message; out.style.color = Q.css("--crit"); }
+        test.disabled = false;
+      });
+    };
+    draw(st);
     return box;
   }
   /* Finzdata in a card: the steps that turn it on (the key is never typed into this page), or the day's calls and the markets already stored with how long each has before a window of 30 days slides past
@@ -347,13 +371,13 @@
     go.addEventListener("click", () => show(false));
     return box;
   }
-  /* A search over the products iTick lists (the list is bundled with the app: searching costs no call). ``chosen`` is a Set of items such as "US:NQ" and ``names`` an object that remembers the name of each,
+  /* A search over the products Massive lists (one request per search) or a bundled list. ``chosen`` is a Set of items such as "US:NQ" and ``names`` an object that remembers the name of each,
      so a chosen product keeps its label when the search moves on. ``opts``: kind ("futures" or "crypto"), regions [{id, name}] and groups for the futures filters, ``after`` (called when the choice changes). */
   function finder(parent, chosen, names, opts) {
     const box = h("div", "finder", parent), chips = h("div", "picks chosen", box), bar = h("div", "finderbar", box), q = h("input", "", bar), hits = h("div", "hits", box), note = h("p", "hint", box);
     const finz = opts.source === "finzdata";
     q.type = "search"; q.placeholder = opts.kind === "crypto" ? "Search a coin: sol, doge, avalanche" : finz ? "Search a market: nasdaq, crude, gold, euro, dax" : "Search a product: nasdaq, crude, gold, hang seng, rebar"; q.spellcheck = false;
-    q.setAttribute("aria-label", finz ? "search Finzdata markets" : "search iTick products");
+    q.setAttribute("aria-label", finz ? "search Finzdata markets" : "search Massive products");
     q.dataset.role = "finder-search";
     const state = { region: "", group: "" };
     const select = (label, key, options) => {
@@ -381,9 +405,9 @@
         const b = h("button", "hit", hits); b.type = "button"; b.dataset.value = r.item; b.setAttribute("aria-pressed", String(chosen.has(r.item)));
         h("b", "", b, r.item); h("span", "", b, r.name + (r.exchange ? " · " + r.exchange : "") + (r.kind === "contract" ? " · one contract" : "") + (finz ? ` · ${r.group}${r.history_from ? " · since " + r.history_from : ""}${r.contracts ? " · " + r.contracts + " contracts" : ""}` : ""));
         if (finz && r.stored_to) { const tag = h("span", "access ok", b, "✓ stored to " + r.stored_to); tag.title = `${r.stored_days} days are stored here`; }
-        if (r.access) {                                                                      // what iTick gave this key when it was asked: the list is iTick's, the plan is yours
+        if (r.access) {                                                                      // what the provider gave this key when it was asked
           const tag = h("span", "access " + (r.access.ok ? "ok" : "no"), b, r.access.ok ? "✓ worked" : "✗ not for your key");
-          tag.title = (r.access.ok ? "iTick returned this product for your key" : "iTick did not return this product for your key") + " on " + r.access.at + (r.access.why ? ": " + r.access.why : "") + ". It may have changed since.";
+          tag.title = (r.access.ok ? "returned for your key" : "not returned for your key") + " on " + r.access.at + (r.access.why ? ": " + r.access.why : "") + ". It may have changed since.";
         }
         b.addEventListener("click", () => {
           if (chosen.has(r.item)) chosen.delete(r.item); else { chosen.add(r.item); names[r.item] = r.name; }
@@ -392,7 +416,7 @@
       }
       const typed = String(q.value).trim();
       if (!res.results.length) {
-        note.textContent = opts.kind === "crypto" ? "iTick's list has no such coin." : opts.source === "yahoo" ? "No future in the bundled list matches: ask Yahoo, below." : finz ? "No market in Finzdata's list matches: try the symbol, or refresh the list from Finzdata below." : "No product in the list matches.";
+        note.textContent = opts.kind === "crypto" ? "Massive lists no such spot pair against the dollar." : opts.source === "yahoo" ? "No future in the bundled list matches: ask Yahoo, below." : finz ? "No market in Finzdata's list matches: try the symbol, or refresh the list from Finzdata below." : "No product in the list matches.";
         if (opts.source === "yahoo") {
           if (/^[A-Za-z0-9]{1,9}=F$/.test(typed)) {
             const item = typed.toUpperCase(), use = h("button", "link", note, ` Try ${item} anyway`); use.type = "button";
@@ -438,7 +462,7 @@
       const mine = ++seq;
       if (ask) ask.hidden = !String(q.value).trim();
       try { const res = await api("/api/data/search" + qs({ kind: opts.kind, source: opts.source, q: q.value, region: state.region, group: state.group, limit: 24 })); if (mine === seq) paintHits(res); }
-      catch (e) { if (mine === seq) { hits.replaceChildren(); note.textContent = e.status === 404 ? "The app behind this page cannot search iTick's list: it is older than the page. " + Q.RESTART : e.message; } }
+      catch (e) { if (mine === seq) { hits.replaceChildren(); note.textContent = e.status === 404 ? "The app behind this page cannot search Massive's list: it is older than the page. " + Q.RESTART : e.message; } }
     };
     q.addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(look, 200); });
     paintChosen(); look();
@@ -538,5 +562,5 @@
     st.busy = ""; paintLive(lab);
   }
 
-  window.WS = { pipelineResult, riskCharts, riskGrid, pctAxis, request, dropCache, catalog, refreshCatalog, dataCard, picks, finder, itickBox, finzdataBox, finzdataContracts, ago, provenance, flags, seg, pills, meter, palette, kv, sub, hint, card, signed, points, shortDate, dayMonth, percentList, csvDownload, qs, sourceText };
+  window.WS = { pipelineResult, riskCharts, riskGrid, pctAxis, request, dropCache, catalog, refreshCatalog, dataCard, picks, finder, massiveBox, finzdataBox, finzdataContracts, ago, provenance, flags, seg, pills, meter, palette, kv, sub, hint, card, signed, points, shortDate, dayMonth, percentList, csvDownload, qs, sourceText };
 })();

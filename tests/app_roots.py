@@ -1,6 +1,6 @@
 """A root folder of its own for a test app.
 
-An app keeps its state under ``<root>/data/user`` (the record of every background run, downloads, the iTick counters), and its guides under ``<root>/docs``. A test that gave the app the repository as its root
+An app keeps its state under ``<root>/data/user`` (the record of every background run, downloads, the market-data counters), and its guides under ``<root>/docs``. A test that gave the app the repository as its root
 wrote those records into the working tree. This gives it a new folder instead: the repository's guides and downloaded market data are linked in, and ``data/user`` is new and empty.
 """
 

@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS bars(provider TEXT, asset_class TEXT, symbol TEXT, ti
   open REAL, high REAL, low REAL, close REAL, volume REAL, vwap REAL, transactions REAL, settlement_price REAL, fetched_at TEXT,
   PRIMARY KEY(provider, asset_class, symbol, timespan, multiplier, adjusted, ts));
 CREATE TABLE IF NOT EXISTS series(provider TEXT, asset_class TEXT, symbol TEXT, timespan TEXT, multiplier INTEGER, adjusted INTEGER, first_ts TEXT, last_ts TEXT, rows INTEGER,
-  version INTEGER, status TEXT, last_sync TEXT, endpoint TEXT, origin TEXT, notes TEXT,
+  version INTEGER, status TEXT, last_sync TEXT, endpoint TEXT, origin TEXT, notes TEXT, covered_from TEXT, covered_to TEXT,
   PRIMARY KEY(provider, asset_class, symbol, timespan, multiplier, adjusted));
 CREATE TABLE IF NOT EXISTS versions(provider TEXT, asset_class TEXT, symbol TEXT, timespan TEXT, multiplier INTEGER, adjusted INTEGER, version INTEGER, at TEXT, added INTEGER, revised INTEGER,
   first_ts TEXT, last_ts TEXT, reason TEXT);
@@ -120,7 +120,8 @@ class MarketStore:
             span = c.execute("SELECT MIN(ts), MAX(ts), COUNT(*) FROM bars WHERE provider=? AND asset_class=? AND symbol=? AND timespan=? AND multiplier=? AND adjusted=?", key).fetchone()
             prev = c.execute("SELECT version FROM series WHERE provider=? AND asset_class=? AND symbol=? AND timespan=? AND multiplier=? AND adjusted=?", key).fetchone()
             version = (prev[0] if prev else 0) + (1 if (added or revised or not prev) else 0)
-            c.execute("INSERT OR REPLACE INTO series VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (*key, span[0], span[1], span[2], version, status, fetched, endpoint, origin, notes))
+            old = c.execute("SELECT covered_from, covered_to FROM series WHERE provider=? AND asset_class=? AND symbol=? AND timespan=? AND multiplier=? AND adjusted=?", key).fetchone() or (None, None)
+            c.execute("INSERT OR REPLACE INTO series VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (*key, span[0], span[1], span[2], version, status, fetched, endpoint, origin, notes, old[0] or span[0], old[1] or span[1]))
             if added or revised or not prev:
                 c.execute("INSERT INTO versions VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)", (*key, version, fetched, added, revised, stamps[0] if stamps else None, stamps[-1] if stamps else None, reason))
         return {"added": added, "revised": revised, "version": version, "rows": span[2], "first": span[0], "last": span[1]}
@@ -165,6 +166,15 @@ class MarketStore:
         with self._conn() as c:
             c.row_factory = sqlite3.Row
             return [dict(r) for r in c.execute("SELECT version, at, added, revised, first_ts, last_ts, reason FROM versions WHERE provider=? AND asset_class=? AND symbol=? AND timespan=? AND multiplier=? AND adjusted=? ORDER BY version", key)]
+
+    def mark_covered(self, key: tuple, lo: str, hi: str) -> None:
+        """Record that the provider was asked, and answered, for ``lo`` to ``hi``: a request whose answer begins later (a listing date, a plan's history depth, a weekend) is not repeated."""
+        with self._lock, self._conn() as c:
+            r = c.execute("SELECT covered_from, covered_to FROM series WHERE provider=? AND asset_class=? AND symbol=? AND timespan=? AND multiplier=? AND adjusted=?", key).fetchone()
+            if r is None:
+                return
+            c.execute("UPDATE series SET covered_from=?, covered_to=? WHERE provider=? AND asset_class=? AND symbol=? AND timespan=? AND multiplier=? AND adjusted=?",
+                      (min(filter(None, [r[0], lo])), max(filter(None, [r[1], hi])), *key))
 
     def set_status(self, key: tuple, status: str, notes: str | None = None) -> None:
         with self._lock, self._conn() as c:

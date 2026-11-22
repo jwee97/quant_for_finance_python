@@ -11,7 +11,7 @@ services:
       - "${QUANT_LAB_BIND:-127.0.0.1}:5000:5000"
     environment:
       QUANT_LAB_ACCESS_CODE: ${QUANT_LAB_ACCESS_CODE:-}    # a code the page asks for before it serves anything; read from the shell or from .env next to this file
-      ITICK_API_KEY: ${ITICK_API_KEY:-}
+      MASSIVE_API_KEY: ${MASSIVE_API_KEY:-}
       FINZDATA_API_KEY: ${FINZDATA_API_KEY:-}
     volumes:
       - ./data/user:/app/data/user                         # the databases, downloads and results survive a restart and a rebuild. Create it first (mkdir -p data/user) or Docker makes it owned by root and the app cannot write to it

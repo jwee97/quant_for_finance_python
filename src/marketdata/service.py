@@ -73,10 +73,11 @@ class MarketDataService:
             return [(start or str(pd.Timestamp(end) - pd.Timedelta(days=365 * 5))[:10], end, "initial download")]
         need: list[tuple[str, str, str]] = []
         first, last = info["first_ts"][:10], info["last_ts"][:10]
-        if start and start < first:
+        cov_from, cov_to = (info.get("covered_from") or first)[:10], (info.get("covered_to") or last)[:10]
+        if start and start < min(first, cov_from):
             need.append((start, first, "earlier history"))
         fresh = (time.time() - time.mktime(time.strptime(info["last_sync"], "%Y-%m-%dT%H:%M:%SZ")) + time.timezone) < FRESH_SECONDS if info.get("last_sync") else False
-        if info.get("status") != "expired" and end > last and (force or not fresh):
+        if info.get("status") != "expired" and end > max(last, cov_to) and (force or not fresh):
             need.append((str((pd.Timestamp(last) - pd.Timedelta(days=OVERLAP_DAYS)).date()), end, "newer bars"))
         if key[3] == "day":
             for a, b, _n in self.store.missing_ranges(key, start):
@@ -114,6 +115,9 @@ class MarketDataService:
                         r = self.store.upsert_bars(key, bars.frame, bars.provenance.endpoint, reason=why)
                         added += r["added"]
                         revised += r["revised"]
+                        self.store.mark_covered(key, lo, hi)
+                    elif self.store.series_info(key):
+                        self.store.mark_covered(key, lo, hi)
                     warnings += bars.warnings
             info = self.store.series_info(key)
             if info is None:

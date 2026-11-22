@@ -10,7 +10,7 @@ when the SEC refuses a program the ticker file), checks sizes and dates rather t
 ``skipped``  it cannot be judged now: it needs something that is not set (the SEC wants a contact), or the options market is closed and Cboe's delayed quotes carry no offers (it answered in the
              shape the parser reads, so nothing is known against the feed).
 
-The exit code is 1 if anything is ``broken`` (with ``--strict``, ``refused`` too), so a scheduled workflow fails exactly when a feed changed. iTick is not checked: it needs a key, and the author has
+The exit code is 1 if anything is ``broken`` (with ``--strict``, ``refused`` too), so a scheduled workflow fails exactly when a feed changed. Massive is not checked: it needs a key, and the author has
 never had a working one.
 
     python experiments/live_feed_smoke.py [--only cboe,sec] [--json FILE] [--strict]

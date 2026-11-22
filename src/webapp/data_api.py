@@ -1,8 +1,12 @@
 """The Free data endpoints of the Options, Futures and Crypto tabs: download real data from free public sources so that nothing has to be found and formatted by hand.
 
 ``GET  /api/data/status``   what is downloaded (with where from and when), what each tab can ask for, and which downloads are running
-``GET  /api/data/search``   the products of iTick's bundled list that match a search (futures) or the coins it quotes (crypto); with ``source=yahoo``, the futures Yahoo lists; with ``source=finzdata``,
+``GET  /api/data/search``   the futures products or the crypto pairs Massive lists that match a search (one call); with ``source=yahoo``, the futures Yahoo lists; with ``source=finzdata``,
                             Finzdata's 139 markets (no call)
+``GET  /api/market/status`` Massive's connection, verified entitlements, coverage, freshness and warnings (never the key)
+``POST /api/market/probe``  (a job) ask Massive once per dataset what this key can reach and remember the answers
+``POST /api/market/sync``   (a job) bring stored bars of symbols up to date incrementally
+``POST /api/market/migrate`` import the downloads earlier versions made from iTick into the normalised store, as provider ``itick``
 ``GET  /api/data/contracts`` every contract Finzdata lists for a root, with what is stored of each (``root=ES``; one call, or none within a day of the last)
 ``POST /api/data/lookup``  ask Yahoo's lookup service for the futures matching a word, and keep what it finds (one to three calls); with ``source=finzdata``, fetch Finzdata's own list of markets (one call)
 ``POST /api/data/fetch``    (a job) download for one tab: ``{"kind": "options" | "futures" | "crypto", "items": [...], ...settings}``
@@ -12,8 +16,9 @@ The browser names what it wants (a ticker, a futures root, a coin) and a few bou
 download runs on its own worker, apart from the backtests, because a slow feed must not make a backtest wait nor the reverse. One download per tab at a time. The files and their records are kept by
 ``assets.free_data.store`` under ``data/user/downloads/``; the workspaces read them and label what they show ``downloaded``.
 
-**iTick** is one more source for the three tabs (the key is the ``ITICK_API_KEY`` secret of the Backtest tab's iTick source, whose provider and call allowance are shared): the daily price history of any
-futures product, a coin's daily history, and the daily prices of an option underlying. It has no option data and no per-contract futures prices; see ``data_itick``.
+**Massive** (``MASSIVE_API_KEY``) is the keyed source for the three tabs, through ``marketdata.MarketDataService`` (one client, one limiter, one normalised store): contract-level futures curves with settlement
+prices, a coin's daily SPOT history, the daily prices of an option underlying, Massive's chain snapshot and chains rebuilt for past dates; see ``assets.free_data.massive``. What the key may use is
+verified by the entitlement probe, not assumed. Downloads that earlier versions made from iTick stay readable and are imported, as provider ``itick``, by ``marketdata.legacy``.
 
 **Finzdata** is a futures source with a key of its own (the ``FINZDATA_API_KEY`` secret): every individual contract of 139 markets with open interest, which the free plan shows for the last 30 days
 only. A download is merged into the file of the last one, so the history grows; see ``data_finzdata``.
@@ -21,6 +26,7 @@ only. A download is merged into the file of the last one, so the history grows; 
 
 from __future__ import annotations
 
+import re
 import threading
 import traceback
 from concurrent.futures import ThreadPoolExecutor
@@ -32,7 +38,7 @@ from ..assets.free_data import cboe_futures as cb
 from ..assets.free_data import crypto as fc
 from ..assets.free_data import finzdata_catalog as fzc
 from ..assets.free_data import futures as ff
-from ..assets.free_data import itick_catalog as ic
+from ..assets.free_data import massive as fm
 from ..assets.free_data import options as fo
 from ..assets.free_data import yahoo_futures as yf
 from ..assets.free_data.http import FetchError, Http
@@ -40,20 +46,21 @@ from ..assets.free_data.sources import describe
 from ..assets.free_data.store import KINDS, DownloadStore
 from ..assets.options_analytics import DEFAULT_RATE
 from . import data_finzdata as dfz
-from . import data_itick as di
+from ..marketdata import legacy as market_legacy
+from ..marketdata.models import MarketDataError
+from ..marketdata.service import MarketDataService
 from .api import ApiError, Job, _number
 from .finzdata import FinzdataError
 from .payload import clean
-from .providers import ITickError, RateLimitTimeout
+from .providers import RateLimitTimeout
 
 MAX_ITEMS = 15
 OPTION_PRESETS = ("SPY", "QQQ", "IWM", "DIA", "TLT", "GLD", "AAPL", "MSFT", "NVDA", "TSLA", "AMZN", "SPX")
 WHAT = ("history", "venues", "funding")
-SOURCE_IDS = {"options": ("cboe", "yahoo", "deribit", "itick"), "futures": ("yahoo", "finzdata", "cboe_cfe", "deribit", "itick"), "crypto": ("okx", "coinbase", "kraken", "bitstamp", "deribit", "itick")}
-FUTURES_SOURCES = ("yahoo", "itick", "yahoo_series", "finzdata")   # the curve of each contract month, the price history of a product from iTick, or of any future Yahoo lists, or every contract of a Finzdata market
-CRYPTO_SOURCES = ("exchanges", "itick")
-PRICE_SOURCES = ("itick", "yahoo")                         # where an option underlying's daily prices can come from
-BARS_PER_YEAR = {"future": 260, "crypto": 365, "stock": 252}
+SOURCE_IDS = {"options": ("massive", "cboe", "yahoo", "deribit"), "futures": ("massive", "yahoo", "finzdata", "cboe_cfe", "deribit"), "crypto": ("massive", "okx", "coinbase", "kraken", "bitstamp", "deribit")}
+FUTURES_SOURCES = ("yahoo", "massive", "yahoo_series", "finzdata")   # the curve of each contract month from Yahoo or Massive, the price history of any future Yahoo lists, or every contract of a Finzdata market
+CRYPTO_SOURCES = ("exchanges", "massive")
+PRICE_SOURCES = ("massive", "yahoo")                         # where an option underlying's daily prices can come from
 HOSTS = {"query1.finance.yahoo.com": 0.5, "www.okx.com": 0.12, "api.kraken.com": 0.3, "cdn.cboe.com": 0.15, "www-api.cboe.com": 0.15, "www.deribit.com": 0.15}
 DERIBIT_MODES = ("curve", "history")                       # Bitcoin and Ether futures: today's strip with open interest, or every monthly and quarterly future since 2019 from the daily charts
 FUTURES_HISTORY = ("6mo", "1y", "2y", "5y", "10y", "max")
@@ -74,6 +81,15 @@ def _items(body: dict, check, limit: int = MAX_ITEMS) -> list[str]:
         if name not in out:
             out.append(name)
     return out
+
+
+def _items_of(value, allowed: tuple) -> list[str]:
+    """The members of ``value`` (a list) that are in ``allowed``; all of ``allowed`` when it is empty. An unknown member is an error."""
+    if not value:
+        return list(allowed)
+    if not isinstance(value, list) or any(v not in allowed for v in value):
+        raise ApiError(f"must be a list from {list(allowed)}")
+    return list(value)
 
 
 def _check_option_item(x: str) -> str:
@@ -101,9 +117,20 @@ def _check_yahoo_future(x: str) -> str:
     return symbol
 
 
+def _check_symbol(x: str) -> str:
+    """A Massive ticker: a stock (AAPL), an option (O:SPY240719C00100000), a crypto pair (X:BTCUSD), an index (I:SPX) or a futures contract (CLN4)."""
+    t = x.strip()
+    if not re.fullmatch(r"(?:[OXIC]:)?[A-Za-z0-9._-]{1,30}", t):
+        raise ValueError(f"'{x}' is not a Massive ticker")
+    return t
+
+
 def _check_product(x: str) -> str:
-    region, code = ic.parse_item(x)
-    return f"{region}:{code}"
+    """A Massive futures product code (``CL``, ``ES``, ``6E``): letters and digits."""
+    code = x.strip().upper()
+    if not re.fullmatch(r"[A-Z0-9]{1,8}", code):
+        raise ValueError(f"'{x}' is not a futures product code (letters and digits, such as CL or ES)")
+    return code
 
 
 def _choice(body: dict, key: str, default: str, allowed: tuple) -> str:
@@ -118,6 +145,12 @@ class DataApi:
         self.app = app
         self.root = Path(app.root)
         self.store = DownloadStore(self.root)
+        shared = getattr(app.builder.sources.get("massive"), "provider", None)
+        self.market = getattr(shared, "service", None) or MarketDataService(self.root)      # one client, limiter and store for the Backtest tab and the data cards; a test replaces ``app.data.market.provider.client.session`` with a fake transport
+        try:
+            market_legacy.migrate(self.root, self.market.store)           # earlier iTick downloads become provider ``itick`` datasets: read only, once, harmless to repeat
+        except Exception:                                                # noqa: BLE001 - an import problem must never stop the app; /api/market/migrate shows it
+            traceback.print_exc()
         self.finz = dfz.FinzdataData(self.root, self.store)             # a test sets ``app.data.finz.client`` to a client with a fake transport
         self.http: Http | None = None                      # a test (or an app that must go through its own proxy) can set a client with another transport
         self.yfinance = None                               # likewise the ``yfinance`` module the option-chain fallback uses
@@ -126,64 +159,102 @@ class DataApi:
         self._pool = ThreadPoolExecutor(max_workers=1)     # downloads wait for each other, never for a backtest
 
     def get_routes(self) -> dict:
-        return {"/api/data/status": self.status, "/api/data/search": self.search, "/api/data/contracts": self.contracts}
+        return {"/api/data/status": self.status, "/api/data/search": self.search, "/api/data/contracts": self.contracts, "/api/market/status": self.market_status}
 
     def post_routes(self) -> dict:
-        return {"/api/data/fetch": self.fetch, "/api/data/delete": self.delete, "/api/data/lookup": self.lookup}
+        return {"/api/data/fetch": self.fetch, "/api/data/delete": self.delete, "/api/data/lookup": self.lookup, "/api/market/probe": self.market_probe, "/api/market/sync": self.market_sync,
+                "/api/market/migrate": self.market_migrate}
 
-    # ------------------------------------------------------------------------------------------------------------ iTick
-    def _itick(self):
-        """The Backtest tab's iTick provider: one key, one rate limiter and one call allowance for the whole app."""
-        source = self.app.builder.sources.get("itick")
-        provider = getattr(source, "provider", None)
-        if provider is None:
-            raise ApiError("iTick is not part of this app")
-        return provider
-
-    def _itick_status(self) -> dict:
-        """Whether iTick can be used and what its plan allows right now: only whether a key exists is ever reported, never the key."""
+    # ------------------------------------------------------------------------------------------------------------ Massive
+    def _massive_status(self) -> dict:
+        """Whether Massive can be used and what is known about the key's plan: only whether a key exists is ever reported, never the key."""
         try:
-            d = self._itick().describe()
-        except ApiError as exc:
-            return {"configured": False, "problem": str(exc), "setup": "", "calls_per_minute": 0, "calls_available_now": 0, "page_size": 1000, "bars_per_year": BARS_PER_YEAR}
-        keep = {k: d[k] for k in ("configured", "problem", "setup", "calls_per_minute", "calls_available_now", "page_size", "host") if k in d}
-        return {**keep, "bars_per_year": BARS_PER_YEAR, "max_calls_per_run": getattr(self._itick(), "max_calls_per_run", 60)}
+            return self.market.status()
+        except Exception as exc:                                                       # noqa: BLE001 - a broken store must not take the whole page down
+            return {"configured": False, "problem": f"{type(exc).__name__}: {exc}", "capabilities": [], "coverage": [], "warnings": [str(exc)]}
 
-    def _need_itick(self) -> None:
-        ok, why = self._itick().available()
+    def _need_massive(self) -> None:
+        ok, why = self.market.provider.client.available()
         if not ok:
             raise ApiError(why)
+
+    def market_status(self, q: dict | None = None) -> dict:
+        """``GET /api/market/status``: connection, verified entitlements (what was asked and answered), coverage and freshness of the stored data, usage, integrity and warnings."""
+        return clean(self._massive_status())
+
+    def market_probe(self, body: dict) -> dict:
+        """``POST /api/market/probe`` (a job): about fifteen one-row requests, one per dataset, recording what the key may use. Spends requests; run it after changing plan."""
+        self._need_massive()
+        classes = tuple(c for c in _items_of(body.get("asset_classes"), ("stocks", "options", "futures", "crypto")))
+
+        def work(progress):
+            progress("asking Massive what this key can reach")
+            try:
+                self.market.provider.probe(classes)
+            except MarketDataError as exc:
+                raise ApiError(str(exc)) from None
+            return clean(self._massive_status())
+        return self.app.submit_task("Massive: check entitlements", work, kind="data", lane="data")
+
+    def market_sync(self, body: dict) -> dict:
+        """``POST /api/market/sync`` (a job): ``{"symbols": [...], "asset_class": "stocks", "start": "2020-01-01", "adjusted": true}``: incremental bars into the normalised store."""
+        self._need_massive()
+        ac = _choice(body, "asset_class", "stocks", ("stocks", "options", "futures", "crypto", "indices"))
+        symbols = _items({"items": body.get("symbols")}, lambda x: _check_symbol(x), limit=40)
+        start, force = (str(body.get("start") or "") or None), bool(body.get("force"))
+        adjusted = body.get("adjusted", True) is not False
+
+        def work(progress):
+            out = []
+            for i, sym in enumerate(symbols):
+                progress(f"{sym} ({i + 1} of {len(symbols)})")
+                try:
+                    r = self.market.sync_bars(sym, ac, start, adjusted=adjusted, progress=progress, force=force)
+                    out.append({"symbol": sym, "ok": True, "added": r["added"], "revised": r["revised"], "skipped": r["skipped"], "warnings": r.get("warnings", []), "info": r.get("info")})
+                except MarketDataError as exc:
+                    out.append({"symbol": sym, "ok": False, "message": str(exc), "kind": exc.kind})
+                    if exc.kind in ("auth", "not_configured", "cancelled"):
+                        break
+            if not any(o["ok"] for o in out):
+                raise ApiError("Nothing could be synchronised. " + " | ".join(dict.fromkeys(o["message"] for o in out))[:600])
+            return clean({"results": out, "status": self._massive_status()})
+        return self.app.submit_task(f"Massive: synchronise {len(symbols)} {ac} symbol(s)", work, kind="data", lane="data")
+
+    def market_migrate(self, body: dict) -> dict:
+        """``POST /api/market/migrate``: import the earlier iTick downloads (read only) into the normalised store as provider ``itick``; repeating it imports nothing twice."""
+        return clean(market_legacy.migrate(self.root, self.market.store))
 
     # ------------------------------------------------------------------------------------------------------------ status
     def _presets(self) -> dict:
         roots = list(ff.FREE_ROOTS.values())
         return {
             "options": {"symbols": list(OPTION_PRESETS), "crypto": list(fo.DERIBIT_CURRENCIES), "max_dte": [30, 90, 180, 365, 730], "defaults": {"max_dte": 365},
-                        "prices": {"sources": [{"id": "itick", "text": "iTick (needs your key)"}, {"id": "yahoo", "text": "Yahoo Finance"}], "years": [1, 2, 3, 5, 10], "defaults": {"years": 3, "source": "yahoo"}}},
+                        "prices": {"sources": [{"id": "massive", "text": "Massive (needs your key)"}, {"id": "yahoo", "text": "Yahoo Finance"}], "years": [1, 2, 3, 5, 10], "defaults": {"years": 3, "source": "yahoo"}},
+                        "chains": {"sources": [{"id": "free", "text": "Cboe, then Yahoo (free, live)"}, {"id": "massive", "text": "Massive: current snapshot (needs your key)"}, {"id": "massive_past", "text": "Massive: a past date, rebuilt from daily closes"}]}},
             "futures": {"roots": [{"id": r.root, "name": r.name, "exchange": r.exchange, "group": r.group} for r in roots + list(cb.CBOE_ROOTS.values())], "groups": list(dict.fromkeys(r.group for r in roots + list(cb.CBOE_ROOTS.values()))),
                         "crypto": [{"id": k, "name": v} for k, v in ff.CRYPTO_ROOTS.items()], "history": list(FUTURES_HISTORY), "max_contracts": ff.MAX_CONTRACTS, "deribit": list(DERIBIT_MODES),
                         "defaults": {"contracts": 10, "history": "1y", "deribit": "curve"},
-                        "itick": {"regions": [{"id": k, "name": v} for k, v in ic.REGION_NAMES.items()], "groups": ic.groups(), "years": [1, 2, 3, 5, 10, 20], "products": len(ic.futures_products()), "defaults": {"years": 5}},
+                        "massive": {"years": [1, 2, 3, 5], "defaults": {"years": 1}},
                         "yahoo": {"groups": yf.groups(self._yahoo_list()), "years": [1, 2, 3, 5, 10, 20], "products": len(yf.catalog(self._yahoo_list())), "defaults": {"years": 5}},
                         "finzdata": {"groups": fzc.groups(self.finz.live_roots()), "markets": len(fzc.markets(self.finz.live_roots())[0]), "max_calls_per_root": dfz.MAX_CALLS_PER_ROOT}},
             "crypto": {"coins": list(fc.DEFAULT_COINS), "what": [{"id": "history", "text": "Daily history: spot, perpetual and funding"}, {"id": "venues", "text": "Real quotes and order books on six venues, now"},
                                                                   {"id": "funding", "text": "OKX funding history, for the funding view"}], "defaults": {"days": 400, "what": list(WHAT)},
-                       "itick": {"coins": len(ic.coins())}},
+                       "massive": {"note": "daily SPOT closes against the US dollar; Deribit and the exchanges supply derivatives"}},
         }
 
     def status(self, q: dict | None = None) -> dict:
         """``GET /api/data/status``: for each tab, its downloads (newest first, each with its source, address, dates, row count and notes), the sources it can use and what it offers to download."""
         presets = self._presets()
-        itick = self._itick_status()
-        kinds = {k: {"downloads": self.store.list(k), "sources": describe(SOURCE_IDS[k]), "itick_status": itick, **presets[k]} for k in KINDS}
+        massive = self._massive_status()
+        kinds = {k: {"downloads": self.store.list(k), "sources": describe(SOURCE_IDS[k]), "massive_status": massive, **presets[k]} for k in KINDS}
         finzdata = self.finz.status()
         kinds["futures"]["finzdata_status"] = finzdata
-        return clean({"kinds": kinds, "running": sorted(self._running), "directory": "data/user/downloads/", "limits": {"items": MAX_ITEMS}, "itick": itick, "finzdata": finzdata,
+        return clean({"kinds": kinds, "running": sorted(self._running), "directory": "data/user/downloads/", "limits": {"items": MAX_ITEMS}, "massive": clean(massive), "finzdata": finzdata,
                       "note": "Free public feeds: no account and no key, but delayed, unaudited and somebody else's service. A provider can refuse an address (common on shared cloud hosts) or change its format. "
-                              "iTick and Finzdata are the exceptions: each needs your key (the ITICK_API_KEY and FINZDATA_API_KEY secrets) and counts every call against your plan."})
+                              "Massive and Finzdata are the exceptions: each needs your key (the MASSIVE_API_KEY and FINZDATA_API_KEY secrets), and what your plan includes decides what they return."})
 
     def search(self, q: dict) -> dict:
-        """``GET /api/data/search?kind=futures&q=nasdaq&region=US&group=Energy&limit=30``: products from iTick's bundled list (no call is made), best match first; ``kind=crypto`` searches its coins;
+        """``GET /api/data/search?kind=futures&q=crude&group=energy&limit=30``: futures products from Massive (one call); ``kind=crypto`` searches its spot pairs against the dollar;
         ``source=yahoo`` searches the futures Yahoo lists (the bundled snapshot and what earlier lookups added)."""
         kind = str(q.get("kind") or "futures")
         text = str(q.get("q") or "")[:60]
@@ -199,21 +270,30 @@ class DataApi:
                 raise ApiError(f"group must be one of {list(yf.GROUPS)}")
             return clean({"kind": kind, "source": "yahoo", **yf.search(text, group, None, limit, self._yahoo_list()), "groups": yf.groups(self._yahoo_list())})
         if kind == "futures":
-            region = str(q.get("region") or "").upper() or None
-            if region is not None and region not in ic.REGIONS:
-                raise ApiError(f"region must be one of {list(ic.REGIONS)}")
-            group = str(q.get("group") or "") or None
-            found = ic.search(text, region, group, limit)
+            self._need_massive()
             try:
-                seen = self._itick().access("future")                              # what iTick returned or refused for this key lately: the list is iTick's, the plan is yours
-            except ApiError:
-                seen = {}                                                          # an app without the iTick source has no marks to show
-            for row in found["results"]:
-                if row["item"] in seen:
-                    row["access"] = seen[row["item"]]
-            return clean({"kind": kind, **found, "groups": ic.groups(region)})
+                t = self.market.provider.get_instruments("futures", search=text or None, limit=min(max(limit, 20), 200), max_pages=1)
+            except MarketDataError as exc:
+                raise ApiError(str(exc)) from None
+            f = t.frame
+            rows = [{"item": str(r.get("product_code")), "code": str(r.get("product_code")), "name": str(r.get("name") or r.get("product_code")), "exchange": str(r.get("trading_venue") or ""), "region": "US",
+                     "group": str(r.get("sector") or r.get("asset_class") or "")} for r in f.to_dict("records")] if len(f) else []
+            group = str(q.get("group") or "")
+            if group:
+                rows = [r for r in rows if r["group"] == group]
+            return clean({"kind": kind, "source": "massive", "results": rows[:limit], "total": len(rows), "shown": min(limit, len(rows)), "groups": sorted({r["group"] for r in rows if r["group"]})})
         if kind == "crypto":
-            return clean({"kind": kind, **ic.search_coins(text, limit)})
+            self._need_massive()
+            try:
+                t = self.market.provider.get_instruments("crypto", search=text or None, limit=min(max(limit, 20), 200), max_pages=1)
+            except MarketDataError as exc:
+                raise ApiError(str(exc)) from None
+            rows = []
+            for r in t.frame.to_dict("records") if len(t.frame) else []:
+                m = str(r.get("ticker", ""))
+                if m.startswith("X:") and m.endswith("USD") and not m.endswith("USDT"):
+                    rows.append({"coin": m[2:-3], "item": m[2:-3], "name": str(r.get("name") or m)})
+            return clean({"kind": kind, "source": "massive", "results": rows[:limit], "total": len(rows), "shown": min(limit, len(rows))})
         raise ApiError("kind must be futures or crypto")
 
     def contracts(self, q: dict) -> dict:
@@ -251,7 +331,7 @@ class DataApi:
                 raise ApiError(str(exc)) from None
             return clean({"kind": "futures", "source": "finzdata", **done, **self.finz.search(str(body.get("q") or ""), None, 30)})
         if str(body.get("kind") or "futures") != "futures" or str(body.get("source") or "yahoo") != "yahoo":
-            raise ApiError("only the futures of Yahoo Finance can be looked up this way; iTick's list is searched with no call")
+            raise ApiError("only the futures of Yahoo Finance can be looked up this way; Massive's products are searched with source=massive")
         http = self.http or Http(pauses=HOSTS, retries=1, backoff=1.5, cooldown=60.0)
         try:
             found = yf.lookup(http, str(body.get("q") or ""), self._yahoo_list())
@@ -271,18 +351,18 @@ class DataApi:
         return {"item": item or d.name, "what": d.item, "ok": True, "name": d.name, "message": summary, "source": rec.get("source"), "as_of": rec.get("as_of"), "rows": rec.get("rows")}
 
     def _fail(self, item: str, what: str, exc: Exception) -> dict:
-        if isinstance(exc, (FetchError, ValueError, ApiError, ITickError, RateLimitTimeout)):          # FinzdataError is a FetchError
+        if isinstance(exc, (FetchError, ValueError, ApiError, MarketDataError, RateLimitTimeout)):          # FinzdataError is a FetchError
             message = str(exc)
         else:
             traceback.print_exc()
             message = f"{type(exc).__name__}: {exc}"
         out = {"item": item, "what": what, "ok": False, "message": message}
-        if isinstance(exc, RateLimitTimeout) or (isinstance(exc, (ITickError, FinzdataError)) and exc.fatal):
-            out["fatal"] = True                                                   # nothing else asked of iTick or Finzdata in this run can work: the loop stops spending calls
+        if isinstance(exc, RateLimitTimeout) or (isinstance(exc, FinzdataError) and exc.fatal) or (isinstance(exc, MarketDataError) and exc.kind in ("auth", "not_configured", "entitlement")):
+            out["fatal"] = True                                                   # nothing else asked of this provider in this run can work: the loop stops spending requests
         return out
 
     def _known(self, kind: str, name: str, source_id: str, columns: dict) -> pd.DataFrame | None:
-        """An earlier iTick download of ``name`` as a frame indexed by date (so only the newest bars are fetched), or ``None``. A file from another source is never extended with iTick's bars."""
+        """An earlier download of ``name`` from ``source_id`` as a frame indexed by date, or ``None``. A file from another source is never extended with this source's bars."""
         record = self.store.meta(kind, name)
         if not record or record.get("source_id") != source_id or not str(record.get("file", "")).endswith(".csv"):
             return None
@@ -293,12 +373,16 @@ class DataApi:
         except (OSError, ValueError, KeyError):
             return None
 
-    def _one_option(self, http: Http, item: str, s: dict) -> list[dict]:
+    def _one_option(self, http: Http, item: str, s: dict, progress=None) -> list[dict]:
         if "chain" not in s["what"]:
             return []
         try:
             if item.startswith("deribit:"):
                 d = fo.fetch_deribit_chain(http, item.split(":", 1)[1], s["max_dte"])
+            elif s["chain_source"] == "massive":
+                d = fm.chain(self.market, item, s["rate"], s["max_dte"], progress)
+            elif s["chain_source"] == "massive_past":
+                d = fm.historical_chain(self.market, item, s["chain_date"], s["rate"], min(s["max_dte"], 120), progress=progress)
             else:
                 d = fo.fetch_chain(http, item, s["rate"], s["max_dte"], self.yfinance)
             return [self._save(d, f"{d.meta['contracts']:,} contracts on {d.meta['expiries']} expiries, quotes of {d.meta['as_of']} ({d.meta['source']})", {"items": [item], "max_dte": s["max_dte"], "rate": s["rate"]})]
@@ -312,8 +396,8 @@ class DataApi:
         if item.startswith("deribit:"):
             return [{"item": item, "what": "prices", "ok": True, "skipped": True, "message": f"left alone: the platform already holds the {item.split(':', 1)[1]} price history"}]
         try:
-            if s["prices_source"] == "itick":
-                d = di.underlying_prices(self._itick(), item, s["years"], progress)
+            if s["prices_source"] == "massive":
+                d = fm.underlying_prices(self.market, item, s["years"], progress)
             else:
                 d = fo.fetch_underlying_prices(http, item, s["years"])
             return [self._save(d, f"{d.meta['bars']:,} daily prices, {d.meta['first_date']} to {d.meta['as_of']} ({d.meta['source']})", {"items": [item], "what": ["prices"], "prices_source": s["prices_source"], "years": s["years"]}, item)]
@@ -347,15 +431,13 @@ class DataApi:
         except Exception as exc:                                              # noqa: BLE001
             return [self._fail(item, "curve", exc)]
 
-    def _one_series(self, item: str, s: dict, progress) -> list[dict]:
-        """A futures product's daily price history from iTick; an earlier download of it is only topped up."""
+    def _one_massive_curve(self, item: str, s: dict, progress) -> list[dict]:
+        """A futures product's contract-level history from Massive, saved as the curve the Futures tab reads; the stored bars make a repeat ask only for the newest sessions."""
         try:
-            region, code = ic.parse_item(item)
-            known = self._known("futures", di.series_name(region, code), "itick", {})
-            d = di.futures_series(self._itick(), region, code, s["years"], known, progress)
-            return [self._save(d, f"{len(d.frame):,} daily bars, {d.meta['first_date']} to {d.meta['as_of']} (iTick)", {"source": "itick", "items": [item], "years": s["years"]}, item)]
+            d = fm.futures_curve(self.market, item, s["years"], progress)
+            return [self._save(d, f"{d.meta['contracts']} contracts, {len(d.frame):,} rows to {d.meta['as_of']} (Massive)", {"source": "massive", "items": [item], "years": s["years"]}, item)]
         except Exception as exc:                                              # noqa: BLE001
-            return [self._fail(item, "series", exc)]
+            return [self._fail(item, "curve", exc)]
 
     def _one_yahoo_series(self, http: Http, item: str, s: dict, progress) -> list[dict]:
         """The daily price history of one future Yahoo lists (a continuous series such as ES=F, or one contract): one call, saved for the History view."""
@@ -373,10 +455,9 @@ class DataApi:
                     if coin in ("BTC", "ETH"):
                         out.append({"item": coin, "what": "history", "ok": True, "skipped": True, "message": f"left alone: the platform already holds Deribit's {coin} history, which is longer than a download"})
                         continue
-                    if s["source"] == "itick":
-                        known = self._known("crypto", coin, "itick", {"time": "date", "spot": "close"})
-                        d = di.coin_history(self._itick(), coin, s["days"], known, progress)
-                        out.append(self._save(d, f"{d.meta['first_date']} to {d.meta['as_of']} ({d.meta['source']})", {"source": "itick", "items": [coin], "what": ["history"], "days": s["days"]}, coin))
+                    if s["source"] == "massive":
+                        d = fm.coin_history(self.market, coin, s["days"], progress)
+                        out.append(self._save(d, f"{d.meta['first_date']} to {d.meta['as_of']} ({d.meta['source']})", {"source": "massive", "items": [coin], "what": ["history"], "days": s["days"]}, coin))
                         continue
                     d = fc.fetch_history(http, coin, s["days"], progress)
                     out.append(self._save(d, f"{d.meta['first_date']} to {d.meta['as_of']} ({d.meta['source']})", {"items": [coin], "what": ["history"], "days": s["days"]}, coin))
@@ -398,13 +479,14 @@ class DataApi:
                 raise ApiError("what must be a list from ['chain', 'prices']")
             return _items(body, _check_option_item), {"max_dte": _number(body, "max_dte", 365, 7, fo.MAX_DTE, integer=True), "rate": _number(body, "rate", DEFAULT_RATE, -0.02, 0.2),
                                                        "what": [w for w in ("chain", "prices") if w in what], "prices_source": _choice(body, "prices_source", "yahoo", PRICE_SOURCES),
-                                                       "years": _number(body, "years", 3, 1, 10, integer=True)}
+                                                       "years": _number(body, "years", 3, 1, 10, integer=True), "chain_source": _choice(body, "chain_source", "free", ("free", "massive", "massive_past")),
+                                                       "chain_date": self._chain_date(body)}
         if kind == "futures":
             source = _choice(body, "source", "yahoo", FUTURES_SOURCES)
             if source == "finzdata":
                 return _items(body, dfz.check_root, limit=40), {"source": "finzdata"}
-            if source == "itick":
-                return _items(body, _check_product), {"source": "itick", "years": _number(body, "years", 5, 1, 20, integer=True)}
+            if source == "massive":
+                return _items(body, _check_product), {"source": "massive", "years": _number(body, "years", 1, 1, 5, integer=True)}
             if source == "yahoo_series":
                 return _items(body, _check_yahoo_future), {"source": "yahoo_series", "years": _number(body, "years", 5, 1, 20, integer=True)}
             history = str(body.get("history") or "1y")
@@ -414,26 +496,27 @@ class DataApi:
             contracts = None if str(raw).lower() in ("0", "all") else _number(body, "contracts", 10, 2, ff.MAX_CONTRACTS, integer=True)        # None: every contract Yahoo lists
             return _items(body, _check_root), {"source": "yahoo", "contracts": contracts, "history": history, "deribit": _choice(body, "deribit", "curve", DERIBIT_MODES)}
         source = _choice(body, "source", "exchanges", CRYPTO_SOURCES)
-        what = body.get("what") or (["history"] if source == "itick" else list(WHAT))
+        what = body.get("what") or (["history"] if source == "massive" else list(WHAT))
         if not isinstance(what, list) or not what or any(w not in WHAT for w in what):
             raise ApiError(f"what must be a list from {list(WHAT)}")
-        if source == "itick" and what != ["history"]:
-            raise ApiError("iTick has only the daily history of a coin; the order books and the funding come from the exchanges")
+        if source == "massive" and what != ["history"]:
+            raise ApiError("Massive supplies the daily spot history of a coin; the order books, perpetuals and funding come from the exchanges and Deribit")
         return _items(body, fc.check_coin), {"source": source, "days": _number(body, "days", 400, fc.MIN_DAYS, 1500, integer=True), "what": [w for w in WHAT if w in what]}
 
-    def _itick_calls(self, kind: str, items: list[str], s: dict) -> int:
-        """About how many iTick calls a request takes (zero when it does not use iTick): one per page of the provider's page size, at least one per item."""
-        page = max(int(self._itick_status().get("page_size") or 1000), 10)
-        if kind == "futures" and s.get("source") == "itick":
-            return sum(max(1, -(-int(s["years"] * BARS_PER_YEAR["future"]) // page)) for _ in items)
-        if kind == "crypto" and s.get("source") == "itick":
-            return sum(max(1, -(-int(s["days"]) // page)) for coin in items if coin not in ("BTC", "ETH"))
-        if kind == "options" and "prices" in s["what"] and s["prices_source"] == "itick":
-            return sum(max(1, -(-int(s["years"] * BARS_PER_YEAR["stock"]) // page)) for item in items if not item.startswith("deribit:"))
-        return 0
+    @staticmethod
+    def _chain_date(body: dict) -> str | None:
+        if str(body.get("chain_source") or "") != "massive_past":
+            return None
+        try:
+            day = pd.Timestamp(str(body.get("chain_date") or ""))
+        except (ValueError, TypeError):
+            raise ApiError("chain_date must be a date (YYYY-MM-DD) for a chain rebuilt from a past day") from None
+        if pd.isna(day) or day >= pd.Timestamp.now().normalize():
+            raise ApiError("chain_date must be a past date")
+        return str(day.date())
 
-    def _uses_itick(self, kind: str, s: dict) -> bool:
-        return (kind in ("futures", "crypto") and s.get("source") == "itick") or (kind == "options" and "prices" in s["what"] and s["prices_source"] == "itick")
+    def _uses_massive(self, kind: str, s: dict) -> bool:
+        return (kind in ("futures", "crypto") and s.get("source") == "massive") or (kind == "options" and (s.get("chain_source", "free") != "free" or ("prices" in s["what"] and s["prices_source"] == "massive")))
 
     def fetch(self, body: dict) -> dict:
         """``POST /api/data/fetch`` (a job): download for one tab. The job's result lists every item with whether it worked and why not; a download where nothing worked is an error whose message says why."""
@@ -448,12 +531,8 @@ class DataApi:
             left = self.finz.client.describe()["calls_left"]
             if 2 * len(items) > left:
                 raise ApiError(f"this download needs at least {2 * len(items)} Finzdata calls (two for each market) and {left} are left today: choose fewer markets, or try tomorrow")
-        if self._uses_itick(kind, settings):
-            self._need_itick()
-            calls, provider = self._itick_calls(kind, items, settings), self._itick()
-            if calls > provider.max_calls_per_run:
-                raise ApiError(f"this download needs about {calls} iTick calls (around {int(provider.limiter.estimate_seconds(calls) / 60) + 1} minutes at {provider.limiter.calls} calls a minute), more than the "
-                               f"{provider.max_calls_per_run} allowed in one run: choose fewer products or fewer years")
+        if self._uses_massive(kind, settings):
+            self._need_massive()
         with self._lock:
             if kind in self._running:
                 raise ApiError(f"a {kind} download is already running: wait for it to finish")
@@ -466,19 +545,19 @@ class DataApi:
                 for i, item in enumerate(items):
                     progress(f"{kind}: {item} ({i + 1} of {len(items)})")
                     if kind == "options":
-                        results += self._one_option(http, item, settings) + self._one_prices(http, item, settings, progress)
+                        results += self._one_option(http, item, settings, progress) + self._one_prices(http, item, settings, progress)
                     elif kind == "futures":
                         if settings["source"] == "finzdata":
                             results += self._one_finzdata(item, settings, progress)
-                        elif settings["source"] == "itick":
-                            results += self._one_series(item, settings, progress)
+                        elif settings["source"] == "massive":
+                            results += self._one_massive_curve(item, settings, progress)
                         elif settings["source"] == "yahoo_series":
                             results += self._one_yahoo_series(http, item, settings, progress)
                         else:
                             results += self._one_root(http, item, settings, progress)
                     else:
                         results += self._one_coin(http, item, settings, progress)
-                    if results and results[-1].get("fatal"):                  # iTick refused the key or the plan: asking again for the rest would only spend calls
+                    if results and results[-1].get("fatal"):                  # the provider refused the key or the plan: asking again for the rest would only spend requests
                         results += [{"item": rest, "what": results[-1]["what"], "ok": False, "message": results[-1]["message"]} for rest in items[i + 1:]]
                         break
             finally:

@@ -41,7 +41,7 @@ from .jobs import ACTIVE, BEAT, JobLog
 RETRYABLE = ("error", "cancelled", "interrupted")
 RETRY_KINDS = ("backtest", "regime")                                   # runs whose request is all there is to them: no files, no keys, nothing that changed under them
 REQUEST_LIMIT = 20_000                                               # a request larger than this is not kept with the job
-from .universe import CLASSES, MAX_TICKERS, TickerStore, UniverseBuilder, UniverseError, itick_source, normalise
+from .universe import CLASSES, MAX_TICKERS, TickerStore, UniverseBuilder, UniverseError, massive_source, normalise
 
 COMBINATIONS = {
     "equal": "Average the models' forecasts",
@@ -81,7 +81,7 @@ SAFE_SLUG = re.compile(r"^[a-z0-9][a-z0-9_-]{0,80}$")
 
 # What the page needs from this server. 1 was the first catalogue; 2 added data sources (``sources``), the ticker-count check (``/api/requirements``), earnings and trades; 3 added the Execution and
 # Cash flows tabs (``/api/exec``, ``/api/cash``); 4 added the Options, Futures, Crypto and Machine learning workspaces (``asset_api``, ``ml_api``); 5 added the Free data downloads of the Options, Futures and
-# Crypto tabs (``data_api``) and the ``downloaded`` source kind those tabs now read; 6 added iTick data to the Futures, Crypto and Options cards; 7 added the Yahoo futures search and the Clear buttons
+# Crypto tabs (``data_api``) and the ``downloaded`` source kind those tabs now read; 6 added a keyed provider's data to the Futures, Crypto and Options cards; 7 added the Yahoo futures search and the Clear buttons
 # of the background runs (``/api/jobs/clear``); 8 added the Tune tab (``tune_api``); 9 added the Forecast tab (``forecast_api``); 10 added the option-model modes of the Options tab (``models_api``); 11 added the Fundamentals tab (``fundamentals_api``); 12 added the signals board, the strategy settings and the curve views of the Futures tab and the new strategies and
 # views of the Crypto tab; 13 added the implied-distribution and open-interest views, the structure comparison and the backtest sweep of the Options tab and the new scores of the Fundamentals tab; 14 added the Enter reports mode of the Fundamentals tab (financial reports typed or pasted in by the person, stored in the database); 15 added the Rates tab (Nelson-Siegel and Svensson yield curves, the dynamic factors of a history of curves) and the normal (Bachelier) volatility of the Options tab's smile; 16 added the Scenarios tab (resampling, statistical and learned scenario generators, with a quality table); 17 added the Signals tab (follows, one run across markets, changes, a record of every signal issued, a daily schedule and alerts). 18 added the research workspace (sessions with a shared context, saved results, the Market Regime Lab and the Research Comparison: ``research_api``); 19 added the Financial ML Lab; 20 added the training history, the storage and machine pages; 21 added the Alpha, Risk and Portfolio Lab (``lab_api``). The page compares it with its own number and says so
 # when the server behind it is older (the files were updated while the app was running, so it still runs the old code): the whole page needs 2, and the newer tabs ask for 3 or more on their own, so an
@@ -211,7 +211,7 @@ class App:
     def __init__(self, config, store: TickerStore | None = None, builder: UniverseBuilder | None = None, root: Path | None = None):
         self.config, self.root = config, Path(root or config.root)
         load_library()
-        self.builder = builder or UniverseBuilder(config, store or TickerStore(self.root / "data" / "user" / "prices"), sources={"itick": itick_source(self.root)})
+        self.builder = builder or UniverseBuilder(config, store or TickerStore(self.root / "data" / "user" / "prices"), sources={"massive": massive_source(self.root)})
         self.jobs: dict[str, Job] = {}
         self.appdb = AppDb(self.root / "data" / "user" / "app.db")           # training history, every job ever run, kept answers (src/store/appdb.py)
         self.appdb.mark_interrupted()                                         # a training the last run of the app died in is marked as such, with what it had done by then
@@ -292,7 +292,7 @@ class App:
             raise ApiError(str(error)) from None
 
     def test_source(self, body: dict) -> dict:
-        """Check that a data source works with one cheap call (for iTick: the key, the host, the plan and the daily interval). Never returns the key."""
+        """Check that a data source works with one cheap call (for Massive: the key and the plan's stock bars). Never returns the key."""
         try:
             src = self.builder.source(body.get("source"))
         except UniverseError as error:

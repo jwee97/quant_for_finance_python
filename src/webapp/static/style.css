@@ -487,7 +487,7 @@ ul.plain { margin: 0 0 6px; padding-left: 20px; display: grid; gap: 2px; font-si
 .finder .hits button.hit:hover { background: var(--ghost); }
 .finder .hits button.hit[aria-pressed="true"] { background: var(--ghost); }
 .finder .hits button.hit[aria-pressed="true"] b::before { content: "✓ "; color: var(--good-text); }
-.itick { display: grid; gap: 6px; }
+.massive { display: grid; gap: 6px; }
 .finder .hits button.hit .access { font-size: 11px; white-space: nowrap; }
 .finder .hits button.hit .access.ok { color: var(--good-text); }
 .finder .hits button.hit .access.no { color: var(--warn); }

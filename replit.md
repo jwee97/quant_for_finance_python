@@ -47,22 +47,18 @@ Those sources need no account, no key and no Secret, and nothing has to be sourc
 source searches every future Yahoo Finance lists (about 340 in the list that ships with the
 app, and *Ask Yahoo for what you typed* finds the rest by name) and downloads its daily price
 history, no key needed, to read in the History view. Yahoo has CME Group and ICE US futures
-only; iTick's list below has Hong Kong and mainland China as well.
+only.
 
-**iTick** is the optional second source of the Futures and Crypto cards (choose it above
-the list of roots or coins) and of the Options card's price download. It uses the same
-`ITICK_API_KEY` Secret as the Backtest tab's iTick source (see below), the same 5-calls-a-
-minute limit and the same cost per download, and it gives you the daily price history of
-**any** of about 1,600 futures products (search the list in the card; you are not limited
-to the 44 roots), a coin's daily history, and an option underlying's daily prices. It has
-no option data and no curve (iTick keeps one series per futures product, not one per
-contract month). A card with iTick chosen and no key set shows the steps that turn it on.
-The author could not call iTick with a working key, so press **Test the iTick connection** in
-the card once the Secret is set: it spends one call (two if the first iTick host does not
-recognise the key) and says what your account returns. If a product is "not found", iTick
-says its code is wrong or it is not in your plan; the test then also tries NQ, iTick's own
-example, to tell a plan without futures from one missing product, and the search marks what
-your key could and could not get.
+**Massive** (formerly Polygon.io) is the optional keyed source of the Futures, Crypto and Options
+cards (choose it above the list of roots or coins) and of the Backtest tab. It uses the
+`MASSIVE_API_KEY` Secret (see below). It gives the contract-level history of a futures product
+with exchange settlement prices (so a real curve, roll and carry; no open interest), a coin's daily
+spot history (never a futures price), the current option chain with the provider's own implied
+volatility and Greeks, a past day's chain rebuilt from daily closes (no quotes exist for it, and
+the file says so), and an option underlying's daily prices. Which of these your key may use depends
+on your plan: press **Check what my plan includes** in the card once the Secret is set (about 15
+one-row requests); it records what was answered, refused or empty, and the card shows it. A card
+with Massive chosen and no key set shows the steps that turn it on.
 
 **Finzdata** is the optional third source of the Futures card (*Finzdata: every contract*). It
 gives the daily price, volume and **open interest of every contract month** of 139 markets, so
@@ -126,7 +122,7 @@ you afterwards that the run was lost. What that means in practice:
   or an Autoscale one.)
 - **Do not publish the dashboard to keep it awake.** A Reserved VM never sleeps, and would keep
   the app and its runs alive, but a published address is open to anyone who has it, and this
-  dashboard has no login (see the access warning at the top): strangers could spend your iTick
+  dashboard has no login (see the access warning at the top): strangers could spend your Massive
   calls and your machine. Add authentication first, or use your own computer or server, where a
   process lives as long as the machine does. If you do publish it, `.replit` has the `[deployment]`
   run command that Publish needs (the same server command as Run; without it Replit says "Could not
@@ -143,7 +139,7 @@ nothing extra. See [docs/ml_platform.md](docs/ml_platform.md) for how to switch 
 ## Locking the page with an access code
 
 A Replit preview address can be opened by anyone who has the link, and the page hands its per-launch token to whoever loads it, so the token alone does not keep a stranger out of your backtests, your
-background runs or your iTick allowance. To ask for a code first, add a Secret named `QUANT_LAB_ACCESS_CODE` (Tools > Secrets) with a code you choose, then **Stop** and **Run**. The page, its scripts and
+background runs or your Massive requests. To ask for a code first, add a Secret named `QUANT_LAB_ACCESS_CODE` (Tools > Secrets) with a code you choose, then **Stop** and **Run**. The page, its scripts and
 the API are then served only to a browser that has typed the code into a small form. The browser keeps a cookie (HttpOnly, SameSite=Strict, and Secure behind Replit's HTTPS) that the app forgets when it
 restarts; ten wrong guesses in five minutes close the form for five minutes; `/logout` signs a browser out. Without the secret nothing changes. The code is compared in constant time and is never written to
 a log, a file or a page.
@@ -171,7 +167,7 @@ python -m pytest tests/test_webapp.py
 The demo and default universe use the imported cached market data. New ticker
 requests use the data source chosen in the dashboard: Yahoo Finance (the default;
 it needs network access and is subject to provider availability/rate limits) or
-iTick (it needs an API key; see below). Core dashboard use needs no API keys.
+Massive (it needs an API key; see below). Core dashboard use needs no API keys.
 Optional Anthropic assistant features need their separate dependency and
 `ANTHROPIC_API_KEY`; they are not configured as part of this setup.
 
@@ -188,51 +184,35 @@ Optional Anthropic assistant features need their separate dependency and
    market's newest bar. Update before that, or schedule `python experiments/finzdata_update.py`
    (`--status` shows the table and makes no call).
 
-The same rules as for the iTick key apply: it lives only in Secrets, is sent in one request header
+The same rules as for the Massive key apply: it lives only in Secrets, is sent in one request header
 to `api.finzdata.com` over HTTPS and never put in a page, a log line or a file, and Finzdata's
 terms give a key to one person to be used from one place at a time (do not run the app and a second
 program on the same key at once). **Run the Actions workflow *live feeds* once after adding the
 secret**: it is the first time anything calls the service with a key, and it prints the columns
 the service really sends.
 
-## Using iTick: keeping the API key safe
+## Using Massive: keeping the API key safe
 
-1. In the Replit workspace open **Tools**, then **Secrets** (under *Setup*), choose
-   **New Secret**, enter the key `ITICK_API_KEY` and your iTick API key as the
-   value, and **Add Secret**. Stop the app and press **Run** again so it starts
-   with the secret. Replit encrypts secrets and passes them to the app as
-   environment variables.
-2. In the dashboard choose **iTick** under *Download other tickers from* and press
-   **Test the iTick connection** (or run `python -m src itick-test` in the Shell): it
-   spends one call (two if the first iTick host does not recognise the key) and shows
-   which host answered and whether the key, the plan and the daily interval work.
+1. Copy your API key from your Massive dashboard. In Replit open **Tools**, then **Secrets**, then
+   **New Secret**, enter the key `MASSIVE_API_KEY` and your key as the value, and click **Add
+   Secret**. Press **Stop** and **Run** again: an app only sees the Secrets that existed when it
+   started. On your own computer use `export MASSIVE_API_KEY=...` or a git-ignored `.env` file.
+2. In the dashboard choose **Massive** under *Download other tickers from* and press **Test the
+   Massive connection** (or run `python -m src massive-test` in the Shell; add `--probe` to ask
+   once per dataset what your plan includes): it spends one request and shows what came back.
+   The key is never printed.
 
-Rules for the key:
-
-- It lives only in Secrets. Never paste it into a chat, an issue, a commit or a
-  file. In particular do not put it in `.replit` (its `[env]` section is committed
-  to the repository), `replit.nix` or `config/*.yaml`.
-- The server reads it from the environment, sends it to iTick in one request
-  header over HTTPS, and never puts it in a page, a response, a log line, an error
-  message or a cache file. The page only learns whether a key exists.
-- Anyone you add to the Repl as a collaborator can see secret values. A Repl that
-  is not published is still reachable by anyone who has its link: they cannot see
-  the key, but they can use the dashboard and so spend your iTick calls. Do not
-  share the link.
-- If a key leaks, create a new one in your iTick account and replace the secret.
-- If iTick says the key is not valid: paste the key again with no quotes or spaces, then
-  Stop and Run (a secret is read when the app starts). The app sends it to
-  `api-free.itick.org`, iTick's free-trial host, and asks `api.itick.org`, its production
-  host, once if the first does not know it; the test button says which one answered. An HTTP
-  403 means the key is known but your plan does not include that data (futures, for
-  example). [docs/dashboard.md](docs/dashboard.md#if-itick-rejects-the-key) has the details.
-
-The free plan allows 5 calls a minute. The app enforces that for every iTick call
-(a download waits and the progress line says so), remembers recent calls across
-restarts in `data/user/itick_calls.json`, caches downloads for a day and tops them
-up with one call per ticker. See [docs/dashboard.md](docs/dashboard.md) for the
-settings (`ITICK_CALLS_PER_MINUTE`, `ITICK_BASE_URL`, `ITICK_DAILY_KTYPE`, ...) and
-for what is and is not verified about iTick's data.
+- The server reads the key from the environment and sends it to Massive in one request header
+  (`Authorization: Bearer`, over HTTPS only, never in an address and never to another host); the
+  page never receives it and every message is redacted.
+- People you add to the Repl can see its Secrets; a Repl link that is not published is still a
+  link, so anyone who has it can use the dashboard and spend your Massive requests (they cannot
+  see the key). Do not paste the key into a chat or a file.
+- If a key leaks, create a new one in your Massive account and replace the secret.
+- Requests are pooled, paginated, retried with exponential backoff (HTTP 429, 5xx, dropped
+  connections) and counted (`data/user/massive/usage.json`). A plan with a request limit sets
+  `MASSIVE_CALLS_PER_MINUTE`. See [docs/market_data.md](docs/market_data.md) for the endpoints,
+  the entitlement checks, the stored data and what is and is not verified.
 
 ## Using the Fundamentals tab: SEC EDGAR (free, no key) and OpenFilings keys
 
@@ -248,7 +228,7 @@ The Fundamentals tab ([docs/fundamentals.md](docs/fundamentals.md)) works with n
 4. Open the **Company explorer**, type a name such as `Nvidia`, press **Search OpenFilings (1 credit)**, then **Add** on the company you meant (free) and **Fetch statements** (about 11 credits). The explorer lists only companies you have added, so it is empty until you do; the Data manager's *Add companies* box takes tickers such as `us:NVDA` if you already know them.
 5. The **Overview** keeps the order for you: until the database is ready it opens on a checklist (*Not ready to study yet*) that ticks the key, the companies, their statements and their prices, marks the next step and puts the button for it beside it. After a fetch, the Data manager offers to load the prices with one click (they are free). A study of a few dozen companies has little power, and the Overview says so in numbers once there is something to measure.
 
-Rules for the key are those for the iTick key above: it lives only in Secrets, the page never receives it (it learns only which slots are filled), it is sent in a header and never in an address, and it is never printed or logged; the database keeps only a salted one-way hash to tell keys apart in the usage counts. Nothing in the page or the command line accepts a key.
+Rules for the key are those for the Massive key above: it lives only in Secrets, the page never receives it (it learns only which slots are filled), it is sent in a header and never in an address, and it is never printed or logged; the database keeps only a salted one-way hash to tell keys apart in the usage counts. Nothing in the page or the command line accepts a key.
 
 **More than one key.** The page lists five slots, `OPENFILINGS_API_KEY_1` to `OPENFILINGS_API_KEY_5`; the app also reads a plain `OPENFILINGS_API_KEY`, a comma-separated list in `OPENFILINGS_API_KEYS` and numbers up to `_20`. Several keys of one account share one allowance, and OpenFilings' usage policy does not allow rotating accounts or keys to get past its quotas, so the app does not: the first working key does all the work unless you press *Use this key* on another in the Data manager (the choice is kept, and refused while the key in use has spent its allowance), a later key is a standby that takes over only if the key in use is rejected as invalid, and when the allowance is spent the work stops until it resets (the Data manager says when). More credits come from a larger plan or prepaid top-ups.
 

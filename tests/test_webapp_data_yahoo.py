@@ -29,8 +29,8 @@ def test_the_status_offers_yahoos_list_and_the_search_reads_it_with_no_call(data
     assert len(metals["results"]) == 5 and {r["group"] for r in metals["results"]} == {"Metals"} and metals["total"] > 15
     start = _safe(app.extra_get["/api/data/search"]({"kind": "futures", "source": "yahoo"}))
     assert [r["item"] for r in start["results"]][:3] == ["CL=F", "NG=F", "HO=F"]
-    other = _safe(app.extra_get["/api/data/search"]({"kind": "futures", "q": "nasdaq"}))
-    assert other["results"][0]["item"] == "US:NQ" and "source" not in other, "without a source the search is still iTick's list"
+    with pytest.raises(ApiError, match="Massive is not set up"):
+        app.extra_get["/api/data/search"]({"kind": "futures", "q": "nasdaq"})                       # without a source the search is Massive's, which needs its key
     with pytest.raises(ApiError, match="group must be one of"):
         app.extra_get["/api/data/search"]({"kind": "futures", "source": "yahoo", "group": "Everything"})
     assert f.calls == [], "searching the list makes no call"
@@ -46,7 +46,7 @@ def test_a_lookup_asks_yahoo_keeps_the_answer_and_the_next_search_finds_it(data_
     again = _safe(app.extra_get["/api/data/search"]({"kind": "futures", "source": "yahoo", "q": "oat"}))
     assert again["results"][0]["item"] == "OATZ=F" and again["results"][0]["name"] == "Oat Futures", "kept: the search finds it without a call"
     assert (app.root / "data" / "user" / "yahoo_futures.json").exists() and len(f.calls) == 1
-    for body, text in (({"kind": "crypto", "q": "sol"}, "only the futures of Yahoo"), ({"kind": "futures", "source": "itick", "q": "es"}, "only the futures of Yahoo"),
+    for body, text in (({"kind": "crypto", "q": "sol"}, "only the futures of Yahoo"), ({"kind": "futures", "source": "massive", "q": "es"}, "only the futures of Yahoo"),
                        ({"kind": "futures", "source": "yahoo", "q": ""}, "a word or two"), ({"kind": "futures", "source": "yahoo", "q": "x" * 50}, "a word or two")):
         with pytest.raises(ApiError, match=text):
             app.extra_post["/api/data/lookup"](body)

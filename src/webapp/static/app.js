@@ -230,22 +230,12 @@
     const ok = S.tickers.filter((x) => x.status !== "bad");
     return { assets: ok.map((x) => x.t), start: S.start || "", data_source: S.source, asset_class: new Set(ok.map((x) => x.cls)).size > 1 ? "mixed" : (ok[0] ? ok[0].cls : "") };
   }
-  /* What turns iTick on. The key is never typed into this page: it goes into a Replit secret, and an app only sees the secrets that existed when it started. */
-  const KEY_NAME = "ITICK_API_KEY";
-  /* What iTick did with the key lately (times and iTick's own words, never the key): shown beside the connection test, so that a refusal comes with its history. */
-  function keyHistory(hist) {
-    if (!hist || (!hist.accepted && !hist.refused)) return "";
-    const when = (e) => e.at.replace("T", " ").replace("Z", " UTC").slice(0, 20), parts = [];
-    if (hist.accepted) parts.push(`iTick last accepted this key on ${when(hist.accepted)}`);
-    if (hist.refused) parts.push(`last refused it on ${when(hist.refused)}${hist.refused.said ? ` ("${hist.refused.said}")` : ""}`);
-    let out = parts.join(", ") + ".";
-    if (hist.accepted && hist.refused && hist.refused.at > hist.accepted.at) out += hist.same_key === false ? " The key in the secret is not the one that last worked." : " It is the same key that last worked: look for an ended trial, a reset key or a limit to certain addresses in the iTick dashboard.";
-    return out;
-  }
-  const ITICK_GUIDE = { product: "iTick", name: KEY_NAME, get: "Copy your API key from your iTick account.",
-                        last: "Choose iTick here and press Test the iTick connection (it spends one call, or two if the first iTick host does not recognise the key)." };
+  /* What turns Massive on. The key is never typed into this page: it goes into a Replit secret, and an app only sees the secrets that existed when it started. */
+  const KEY_NAME = "MASSIVE_API_KEY";
+  const MASSIVE_GUIDE = { product: "Massive", name: KEY_NAME, get: "Copy your API key from your Massive dashboard (massive.com).",
+                          last: "Choose Massive here and press Test the Massive connection (it spends one request); the Futures, Options and Crypto tabs can then check what your plan includes." };
   function setupGuide(box, last, who) {                                                       // ``last``: the final step, when the guide is shown somewhere other than the Backtest tab; ``who``: another service's key (name, product, where to get it)
-    who = who || ITICK_GUIDE;
+    who = who || MASSIVE_GUIDE;
     const guide = h("div", "setup", box);
     const lead = h("p", "", guide, `${who.product} is not set up yet. It takes about two minutes, and the key never goes through this page.`); lead.style.color = css("--warn");
     const steps = h("ol", "steps", guide);
@@ -268,13 +258,12 @@
     if (!cur.available) {
       if (cur.setup === "key") setupGuide(box);
       else { const w = h("p", "hint", box, cur.problem); w.style.color = css("--warn"); }
-    } else if (cur.name === "itick") {
-      h("p", "hint", box, `Your plan allows ${cur.calls_per_minute} call${cur.calls_per_minute === 1 ? "" : "s"} a minute; the app waits between calls and says so while it does. A ticker costs about one call per four years of daily history, once; after that a top-up is one call. Requests go to ${cur.host || "iTick"}.`);
-      const past = keyHistory(cur.history); if (past) h("p", "hint", box, past);
+    } else if (cur.name === "massive") {
+      h("p", "hint", box, `Requests go to ${cur.host || "Massive"}. Daily bars are adjusted for splits as Massive defines it; how far back and how recent depends on your plan (the Futures, Options and Crypto tabs show what your key can reach).`);
     }
     if (cur.symbols) { const more = h("button", "link", box, "How to write symbols"), para = h("p", "hint", box, cur.symbols + "."); para.hidden = true; more.addEventListener("click", () => { para.hidden = !para.hidden; }); }
-    if (cur.name === "itick" && cur.available) {
-      const row = h("div", "row tight", box), test = h("button", "btn", row, "Test the iTick connection (one or two calls)"), out = h("span", "hint", row); out.id = "u-source-result";
+    if (cur.name === "massive" && cur.available) {
+      const row = h("div", "row tight", box), test = h("button", "btn", row, "Test the Massive connection (one request)"), out = h("span", "hint", row); out.id = "u-source-result";
       test.addEventListener("click", async () => {
         test.disabled = true; out.textContent = "Testing…"; out.style.color = "";
         try { const r = await api("/api/source/test", { source: S.source }); out.textContent = r.message; out.style.color = css(r.ok ? "--good-text" : "--crit"); }

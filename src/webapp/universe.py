@@ -1,6 +1,6 @@
 """Turning a list of tickers into a ``MarketBundle``.
 
-The platform's 15 ETFs come from the cleaned, versioned dataset (with point-in-time macro series). Any other ticker is downloaded from the data source you choose (Yahoo Finance, or iTick
+The platform's 15 ETFs come from the cleaned, versioned dataset (with point-in-time macro series). Any other ticker is downloaded from the data source you choose (Yahoo Finance, or Massive
 with an API key; see ``providers``) and cached under ``data/user`` for a day, separately for each source. A mixed universe takes the platform's prices for the platform's tickers and the
 downloads for the rest, keeps weekdays on which at least 60% of the tickers traded, and never fills a missing price. One ticker is a valid universe; whether a strategy can use it is
 for ``framework.requirements`` to say.
@@ -20,7 +20,6 @@ from pathlib import Path
 import pandas as pd
 
 from ..framework.data import MarketBundle, bundle_from_prices, load_default_bundle
-from .providers import ITickProvider, lookup_egress_ip
 
 TICKER = re.compile(r"^[A-Z0-9^][A-Z0-9.^=\-]{0,11}$")
 MAX_TICKERS, MIN_TICKERS, MIN_OBSERVATIONS, TTL_SECONDS = 40, 1, 300, 24 * 3600
@@ -196,13 +195,16 @@ class Source:
         return info
 
 
-def itick_source(root: Path, provider: ITickProvider | None = None, directory: Path | None = None) -> Source:
-    """The iTick source: its own cache folder, a provider that reads the key from the environment, and no downloading while a ticker is merely being checked."""
-    provider = provider or ITickProvider(root=root, ip_lookup=lookup_egress_ip)
-    store = TickerStore(directory or Path(root) / "data" / "user" / "prices_itick", fetch=provider, provider="itick")
-    return Source("itick", "iTick", store, provider, downloads_on_check=False, default_years=10,
-                  note="Daily prices as iTick delivers them (not documented as adjusted for splits or dividends). Needs the ITICK_API_KEY secret; every call counts against your plan's rate limit. "
-                       "Without a start date it downloads the last ten years; choose an earlier date for more.")
+def massive_source(root: Path, service=None, directory: Path | None = None) -> Source:
+    """The Massive source: its own cache folder (so two sources never mix), a fetcher on the shared market-data service, and no downloading while a ticker is merely being checked."""
+    from ..marketdata.prices import MassivePrices
+    from ..marketdata.service import MarketDataService
+
+    provider = MassivePrices(service or MarketDataService(root))
+    store = TickerStore(directory or Path(root) / "data" / "user" / "prices_massive", fetch=provider, provider="massive")
+    return Source("massive", "Massive", store, provider, downloads_on_check=False, default_years=10,
+                  note="Daily prices from Massive (formerly Polygon.io), adjusted for splits as Massive defines it (dividends are not in the price). Needs the MASSIVE_API_KEY secret; the history depth and "
+                       "recency depend on your plan. Without a start date it downloads the last ten years.")
 
 
 class UniverseBuilder:

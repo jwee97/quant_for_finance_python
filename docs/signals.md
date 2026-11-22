@@ -28,7 +28,7 @@ quant signals history --id <id>
 * *The data ends on …, N trading days ago: these are that day's signals, not today's.* Stocks, futures and options are called stale after three trading days without a new bar, crypto after two days.
 * *These signals are read on simulated data.* The Futures tab's built-in roots and the Options tab's model chains are simulations. They show how the board reads; they are not a market.
 
-The platform's own 15 ETF files are a fixed dataset that ends when it was built. With **Download new prices first** ticked, the tab reads those tickers from your data source (Yahoo Finance or iTick) like any other ticker, so the signals reach the last close. If the download fails the run still happens on the old files and says so.
+The platform's own 15 ETF files are a fixed dataset that ends when it was built. With **Download new prices first** ticked, the tab reads those tickers from your data source (Yahoo Finance or Massive) like any other ticker, so the signals reach the last close. If the download fails the run still happens on the old files and says so.
 
 **What the rules agree on.** For each asset: how many rules are long, short or without a view, and the view in words. *Long* or *short* means at least half the rules net out that way; *leaning* means a fifth; otherwise *mixed*.
 
