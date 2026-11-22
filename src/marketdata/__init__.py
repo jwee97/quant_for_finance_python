@@ -1,12 +1,6 @@
-"""Vendor-neutral market data: normalised events with availability timestamps, data contracts, a point-in-time store, loaders and adapters. See ``events`` for the schema."""
+"""One market-data layer: Dashboard -> API -> MarketDataService -> provider adapter (Massive) -> storage -> analytics.
 
-from .adapters import (concat_events, events_from_bundle, events_from_curve_panel, events_from_depth, events_from_funding, events_from_futures_table, events_from_fx_market, events_from_lob,
-                       events_from_option_chains, events_from_prices)
-from .contracts import DataContract, QualityReport, UniverseHistory, apply_contract, fill_missing_bars, stale_flags
-from .events import COLUMNS, EVENT_TYPES
-from .loaders import (RestPollingAdapter, ReplayStream, StreamAdapter, WebSocketAdapter, http_fetcher, load_arrow, load_csv, load_events, load_jsonl, load_parquet, load_sql, write_arrow,
-                      write_csv, write_jsonl, write_parquet, write_sql)
-from .schema import assert_valid, normalise_events, validate_events
-from .store import Obs, PointInTimeStore, PriceSnapshot
-
-__all__ = [n for n in dir() if not n.startswith("_")]
+``client`` is the shared HTTP client (key, pooling, pagination, rate limiting, retries, usage); ``models`` the typed requests and answers; ``massive`` the adapter that knows Massive's endpoints and
+nothing about options maths or curves; ``storage`` the normalised, versioned, provenance-keeping store; ``service`` the incremental download and gap logic; ``legacy`` the one-off import of the
+iTick downloads that earlier versions of the app made. Asset-specific calculations (Greeks, curves, carry) stay in ``assets``.
+"""
