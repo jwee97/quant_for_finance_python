@@ -1073,3 +1073,23 @@ def test_the_vol_surface_fits_a_phone_screen_without_horizontal_scrolling(browse
         assert not page.problems, page.problems
     finally:
         page.close()
+
+
+def test_a_chain_row_quoted_on_one_side_only_still_draws_the_table(ws):
+    """A short expiry can have a strike with a put and no call (or the reverse): the table must draw, with the missing side marked, not stay empty."""
+    import json as _json
+
+    def one_sided(route):
+        resp = route.fetch()
+        body = _json.loads(resp.text())
+        rows = body["chain"]["rows"]
+        rows[0]["call"] = None
+        rows[1]["put"] = None
+        route.fulfill(response=resp, body=_json.dumps(body))
+    ws.route("**/api/options/chain*", one_sided)
+    ws.click("#tab-options")
+    ws.wait_for_selector("#options-results .tile", timeout=90_000)
+    _mode(ws, "options", "chain")
+    ws.wait_for_selector("#options-results table.chain tbody tr", timeout=60_000)
+    assert ws.locator("#options-results table.chain td.none").count() == 2 and "no quote" in ws.inner_text("#options-results table.chain")
+    assert "strikes shown" in ws.inner_text("#options-results") and ws.locator("#options-results button:has-text('Download this expiry')").count() == 1
