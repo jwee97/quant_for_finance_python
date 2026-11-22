@@ -27,7 +27,8 @@ MONTH_CODES = "FGHJKMNQUVXZ"
 
 def contract_calendar(start, end, months=tuple(range(1, 13)), rule: str = "third_friday") -> pd.DataFrame:
     """Expiry dates between ``start`` and ``end`` for the delivery ``months`` (1-12). ``rule``: ``third_friday`` (equity index), ``business_day_before_25th`` (CME energy: three
-    business days before the 25th calendar day), ``15th`` (the 15th, rolled back to a business day) or ``last_business_day``. Returns ``contract`` (e.g. ``H22``) and ``expiry``."""
+    business days before the 25th calendar day), ``15th`` (the 15th, rolled back to a business day) or ``last_business_day``; and the exchange rules ``cme_crude`` (CL: three business days before the 25th of the month before delivery),
+    ``cme_natgas`` (NG: three business days before the first day of the delivery month) and ``third_last_business_day`` (COMEX metals). Exchange holidays are not modelled: a date can be a day off. Returns ``contract`` (e.g. ``H22``) and ``expiry``."""
     rows = []
     for ts in pd.date_range(pd.Timestamp(start) - pd.offsets.MonthBegin(1), pd.Timestamp(end) + pd.DateOffset(months=18), freq="MS"):
         if ts.month not in months:
@@ -42,8 +43,18 @@ def contract_calendar(start, end, months=tuple(range(1, 13)), rule: str = "third
             exp = exp if exp.weekday() < 5 else exp - pd.offsets.BDay(1)
         elif rule == "last_business_day":
             exp = ts + pd.offsets.BMonthEnd(0)
+        elif rule == "cme_crude":                                                                  # CL: three business days before the 25th calendar day of the month BEFORE the delivery month
+            prev = ts - pd.DateOffset(months=1)
+            d25 = pd.Timestamp(prev.year, prev.month, 25)
+            if d25.weekday() >= 5:
+                d25 = d25 - pd.offsets.BDay(1)                                                      # the 25th is not a business day: count back from the business day before it
+            exp = d25 - pd.offsets.BDay(3)
+        elif rule == "cme_natgas":                                                                  # NG: three business days before the first calendar day of the delivery month
+            exp = ts - pd.offsets.BDay(3)
+        elif rule == "third_last_business_day":                                                     # GC, SI, HG: the third last business day of the delivery month
+            exp = (ts + pd.offsets.BMonthEnd(0)) - pd.offsets.BDay(2)
         else:
-            raise ValueError("rule must be third_friday, business_day_before_25th, 15th or last_business_day")
+            raise ValueError("rule must be third_friday, business_day_before_25th, 15th, last_business_day, cme_crude, cme_natgas or third_last_business_day")
         rows.append({"contract": f"{MONTH_CODES[ts.month - 1]}{ts.year % 100:02d}", "delivery_month": ts, "expiry": pd.Timestamp(exp)})
     return pd.DataFrame(rows).sort_values("expiry").reset_index(drop=True)
 

@@ -31,7 +31,7 @@ class ModelsApi:
         return {"/api/models/plan": self.plan}
 
     def post_routes(self) -> dict:
-        return {"/api/models/fit": self.fit, "/api/models/price": self.price, "/api/models/hedge": self.hedge}
+        return {"/api/models/fit": self.fit, "/api/models/price": self.price, "/api/models/hedge": self.hedge, "/api/models/validate": self.validate}
 
     def plan(self, q: dict | None = None) -> dict:
         """``GET /api/models/plan``: what the three forms choose among."""
@@ -94,6 +94,40 @@ class ModelsApi:
             return _wrap("option_model_fit", data, {"quotes": mkt["source"], "fitted_models": "simulated"}, warnings, mkt["ctx"].as_of, notes + list(mkt["notes"]))
 
         return self.app.submit_task(f"option models: fit {', '.join(ids)} to {mkt['underlying']}", work)
+
+    # ------------------------------------------------------------------------------------------------------------ validate
+    def validate(self, body: dict) -> dict:
+        """``POST /api/models/validate`` (a job). ``body``: the chain (``underlying`` ...), ``models`` (default all five), the quote settings of ``fit``, ``loss`` (``iv``, ``vega`` or ``band``: what the fit
+        minimises), ``mode`` (``strikes``: hold out a share of the strikes; ``expiry``: hold out the longest expiry) and ``seed``. Every model is fitted, tested on the held-out quotes and scored on fit,
+        out-of-sample error, complexity, numerical health and time; the residual map of the model with the best combined rank is returned. Returns ``{"job": id}``."""
+        from ..derivatives import calibration as cal
+        from ..derivatives import model_validation as mv
+        ids, settings, mkt = self._ids(body), self._settings(body), self._market(body)
+        loss, mode = str(body.get("loss") or "iv"), str(body.get("mode") or "strikes")
+        if loss not in ("iv", "vega", "band"):
+            raise ApiError("loss is iv, vega or band")
+        if mode not in ("strikes", "expiry"):
+            raise ApiError("mode is strikes or expiry")
+        seed = int(_number(body, "seed", 0, 0, 10_000, integer=True))
+        quotes = self._quotes(mkt, settings)
+
+        def work(progress) -> dict:
+            progress("fitting and testing the models")
+            try:
+                card = mv.scorecard(quotes, tuple(ids), mode=mode, seed=seed, loss=loss, n_starts=1, max_nfev=80)
+            except ValueError as exc:
+                raise ApiError(str(exc)) from None
+            best = card["preferred_by_combined_rank"]
+            grid = None
+            if best:
+                fit = cal.calibrate(best, quotes, loss=loss, n_starts=1, max_nfev=80)
+                grid = {"model": best, **mv.residual_grid(fit, quotes)}
+            data = {"underlying": mkt["underlying"], "scorecard": card, "residual_grid": grid, "n_quotes": int(len(quotes.T)), "expiries": quotes.expiries, "loss": loss}
+            calibration = {"status": "calibrated" if best else "failed", "model": best, "rmse": next((r["in_sample_rmse"] for r in card["models"] if r.get("model") == best), None), "fit_date": str(mkt["ctx"].as_of.date())}
+            return _wrap("option_model_validation", data, {"quotes": mkt["source"], "fitted_models": "model"}, [], mkt["ctx"].as_of, list(mkt["notes"]) + [card["caveat"]],
+                         provenance={"instrument": f"{mkt['underlying']} options", "calibration": calibration, "assumptions": [f"loss: {loss}", f"held out: {mode}", "models are fitted to out-of-the-money mid volatilities"]})
+
+        return self.app.submit_task(f"option models: validate {', '.join(ids)} on {mkt['underlying']}", work)
 
     # ------------------------------------------------------------------------------------------------------------ price
     def price(self, body: dict) -> dict:

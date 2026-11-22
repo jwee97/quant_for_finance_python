@@ -278,3 +278,16 @@ def test_the_endpoints_are_served_over_http_and_refusals_are_400s(app):
     finally:
         running.stop()
     assert om.FIT_MODELS == ("merton", "kou", "vg", "nig", "heston")
+
+
+def test_validation_scores_models_on_several_criteria_and_returns_a_residual_map_with_calibration_provenance(app):
+    out = _run(app, "/api/models/validate", underlying=UND, models=["merton", "vg"], loss="iv", mode="strikes", max_expiries=3)
+    card = out["scorecard"]
+    assert [r["model"] for r in card["models"]] == ["merton", "vg"] and set(card["ranks"]) == {"in_sample_rmse", "out_of_sample_rmse", "bic", "seconds"}
+    assert out["residual_grid"]["model"] == card["preferred_by_combined_rank"] and out["residual_grid"]["unit"].startswith("volatility")
+    pv = out["provenance"]
+    assert pv["calibration"]["status"] == "calibrated" and pv["kind"] == "mixed" and any("synthetic" in w.lower() for w in pv["warnings"]), "models fitted to simulated quotes are not empirical"
+    assert any("single chain" in n.lower() for n in out["notes"])
+    for bad, text in (({"loss": "mse"}, "loss is"), ({"mode": "random"}, "mode is")):
+        with pytest.raises(ApiError, match=text):
+            app.extra_post["/api/models/validate"]({"underlying": UND, **bad})

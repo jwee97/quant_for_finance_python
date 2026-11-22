@@ -1478,3 +1478,90 @@ def run_strategy_comparison(names: list | None = None, progress=None, **kwargs) 
         curves[name] = out["equity"]
         dates, bench = out["dates"], out["benchmark"]
     return {"rows": rows, "dates": dates, "equity": curves, "benchmark": bench, "params": {k: v for k, v in kwargs.items() if k in ("n_days", "seed", "capital", "premium", "commission", "fill_fraction", "timing")}}
+
+
+# ------------------------------------------------------------------------------------------------------------------ the surface as a research object
+def surface_research(chain: pd.DataFrame, max_expiries: int = 10, min_points: int = 6, k_points: int = 41) -> dict:
+    """The surface in the coordinates a volatility researcher works in, with its fit and its diagnostics.
+
+    Per out-of-the-money quote: the strike, the **log-forward-moneyness** ``k = ln(K / F)``, the Black-Scholes **delta**, the implied volatility, the **total implied variance** ``w = iv^2 T`` and the band of
+    ``w`` that the bid and the ask imply (an option's volatility is only known to within its spread). Per expiry an **SVI** slice is fitted to ``w(k)`` with its residuals (fit less market, in total
+    variance and in volatility points), whether the fit sits inside the bid-ask band, and its **butterfly** condition (Gatheral's ``g(k) >= 0`` on a grid wider than the quotes). Across expiries the
+    **calendar** condition (total variance must not fall with expiry at a fixed ``k``) is tested between neighbouring fitted slices; and a joint **SSVI** surface is fitted with its Gatheral-Jacquier
+    sufficient conditions.
+
+    What is and is not guaranteed: SSVI with parameters passing its conditions is free of static arbitrage by construction. The independent per-expiry SVI fits are checked numerically on a finite grid of ``k``
+    and **can** violate the calendar condition between slices, or beyond the grid, without the check seeing it; the quotes themselves are mid prices and may contain violations the fit smooths away.
+    Nothing here extrapolates beyond the strikes quoted: the grids leave those cells empty."""
+    from ..derivatives import surface as sv
+    g = chain.copy()
+    k_all = np.log(g["strike"] / g["F"]) if "F" in g else np.log(g["strike"] / (g["underlying"] * np.exp((g["rate"] - g["dividend"]) * g["T"])))
+    g = g.assign(k=k_all)
+    otm = g[(((g["right"] == "P") & (g["strike"] <= g["F"])) | ((g["right"] == "C") & (g["strike"] > g["F"]))) & np.isfinite(g["iv"]) & (g["iv"] > 0) & (g["T"] > 0)]
+    groups = [(e, s.sort_values("strike")) for e, s in otm.groupby("expiry") if len(s) >= min_points]
+    groups.sort(key=lambda t: float(t[1]["T"].iloc[0]))
+    if len(groups) > max_expiries:
+        keep = np.unique(np.round(np.linspace(0, len(groups) - 1, max_expiries)).astype(int))
+        groups = [groups[i] for i in keep]
+    if not groups:
+        raise ValueError(f"no expiry has {min_points} usable out-of-the-money quotes: the surface cannot be fitted")
+    slices, quotes_out, fits = [], [], []
+    k_lo = min(float(s["k"].min()) for _, s in groups)
+    k_hi = max(float(s["k"].max()) for _, s in groups)
+    grid = np.linspace(k_lo, k_hi, k_points)
+    for e, s in groups:
+        T = float(s["T"].iloc[0])
+        k, iv = s["k"].to_numpy(), s["iv"].to_numpy()
+        spread_iv = np.full(len(s), np.nan)
+        bid_iv = np.full(len(s), np.nan)
+        ask_iv = np.full(len(s), np.nan)
+        for right, call in (("C", True), ("P", False)):
+            sel = (s["right"] == right).to_numpy()
+            if sel.any():
+                h = s[sel]
+                a = (h["underlying"].to_numpy(), h["strike"].to_numpy(), h["T"].to_numpy(), h["rate"].to_numpy(), h["dividend"].to_numpy(), call)
+                bid_iv[sel], ask_iv[sel] = implied_vol(h["bid"].to_numpy(), *a), implied_vol(h["ask"].to_numpy(), *a)
+        spread_iv = ask_iv - bid_iv
+        weights = 1.0 / np.maximum(np.nan_to_num(spread_iv, nan=np.nanmedian(spread_iv) if np.isfinite(spread_iv).any() else 0.05), 0.002) ** 2          # a tight quote is trusted more than a wide one
+        weights = weights / weights.mean()
+        fit = sv.fit_svi_slice(k, iv, T, weights=weights, n_starts=8)
+        w_mkt, w_fit = iv ** 2 * T, fit.w(k)
+        gk = fit.density_g(np.linspace(k_lo - 0.5, k_hi + 0.5, 241))
+        band = (np.where(np.isfinite(ask_iv), ask_iv ** 2 * T, np.nan), np.where(np.isfinite(bid_iv), bid_iv ** 2 * T, np.nan))
+        inside = np.isfinite(band[0]) & np.isfinite(band[1]) & (w_fit >= band[1] - 1e-12) & (w_fit <= band[0] + 1e-12)
+        has = np.isfinite(band[0]) & np.isfinite(band[1])
+        ga = (s["underlying"].to_numpy(), s["strike"].to_numpy(), s["T"].to_numpy(), s["rate"].to_numpy(), s["dividend"].to_numpy(), iv)
+        dl = np.where((s["right"] == "C").to_numpy(), bsm_greeks(*ga, True)["delta"], bsm_greeks(*ga, False)["delta"])
+        for i in range(len(s)):
+            quotes_out.append({"expiry": str(pd.Timestamp(e).date()), "dte": int(round(T * 365)), "strike": float(s["strike"].iloc[i]), "right": str(s["right"].iloc[i]), "k": float(k[i]), "delta": float(dl[i]),
+                               "iv": float(iv[i]), "bid_iv": None if not np.isfinite(bid_iv[i]) else float(bid_iv[i]), "ask_iv": None if not np.isfinite(ask_iv[i]) else float(ask_iv[i]), "w": float(w_mkt[i]),
+                               "w_bid": None if not np.isfinite(band[1][i]) else float(band[1][i]), "w_ask": None if not np.isfinite(band[0][i]) else float(band[0][i]), "w_fit": float(w_fit[i]),
+                               "iv_residual": float(np.sqrt(max(w_fit[i], 1e-12) / T) - iv[i]), "inside_band": bool(inside[i]) if has[i] else None})
+        slices.append({"expiry": str(pd.Timestamp(e).date()), "dte": int(round(T * 365)), "T": T, "params": {"a": fit.a, "b": fit.b, "rho": fit.rho, "m": fit.m, "s": fit.s}, "rmse_vol_points": float(fit.rmse * 100.0),
+                       "min_butterfly_g": float(gk.min()), "butterfly_free_on_grid": bool(gk.min() >= -1e-8 and np.all(fit.w(np.linspace(k_lo - 0.5, k_hi + 0.5, 241)) > 0)), "quotes": int(len(s)),
+                       "share_inside_band": float(inside[has].mean()) if has.any() else None, "atm_total_variance": float(fit.w(0.0))})
+        fits.append((T, fit))
+    calendar = []
+    for (T1, f1), (T2, f2) in zip(fits[:-1], fits[1:]):
+        lo = max(k_lo, k_lo)
+        gap = f2.w(grid) - f1.w(grid)
+        calendar.append({"from_dte": int(round(T1 * 365)), "to_dte": int(round(T2 * 365)), "min_w_difference": float(gap.min()), "violated": bool(gap.min() < -1e-9), "share_of_grid_violated": float((gap < -1e-9).mean())})
+    iv_grid = [[float(np.sqrt(max(f.w(x), 1e-12) / T)) for x in grid] for T, f in fits]
+    w_grid = [[float(f.w(x)) for x in grid] for T, f in fits]
+    observed = [[bool(min(s["k"]) <= x <= max(s["k"])) for x in grid] for _, s in groups]
+    ssvi = None
+    try:
+        q = otm[otm["expiry"].isin([e for e, _ in groups])][["k", "iv", "T"]].reset_index(drop=True)
+        surf = sv.fit_ssvi(q)
+        ssvi = {"rho": surf.rho, "eta": surf.eta, "gamma": surf.gamma, "expiries": [float(x) for x in surf.expiries], "atm_total_variance": [float(x) for x in surf.thetas], "conditions": surf.arbitrage_free(),
+                "rmse_vol_points": float(np.sqrt(np.mean((surf.iv(q["k"].to_numpy(), q["T"].to_numpy()) - q["iv"].to_numpy()) ** 2)) * 100.0)}
+    except (ValueError, FloatingPointError, np.linalg.LinAlgError) as error:
+        ssvi = {"error": f"the SSVI fit failed: {error}"}
+    limits = ["SSVI is free of static arbitrage by construction only where its sufficient conditions (reported) hold; the per-expiry SVI fits are independent, so they can violate the calendar condition between expiries.",
+              "The butterfly and calendar tests run on a finite grid of log-moneyness: a violation between grid points or beyond it would not be seen.",
+              "Cells outside the strikes actually quoted are empty: nothing is extrapolated.",
+              "The inputs are mid prices of listed options (American-style for US equity options: their volatilities are Black-Scholes volatilities, not exercise-adjusted)."]
+    return {"coordinates": {"k": "ln(strike / forward)", "w": "total implied variance, iv squared times T", "delta": "Black-Scholes delta of the quote"}, "slices": slices, "quotes": quotes_out,
+            "grid": {"k": [float(x) for x in grid], "expiries": [{"expiry": s["expiry"], "dte": s["dte"]} for s in slices], "iv": iv_grid, "w": w_grid, "observed": observed},
+            "calendar": calendar, "ssvi": ssvi, "limits": limits, "arbitrage_summary": {"butterfly_violating_slices": int(sum(not s["butterfly_free_on_grid"] for s in slices)),
+                                                                                    "calendar_violating_pairs": int(sum(c["violated"] for c in calendar)), "slices": len(slices)}}

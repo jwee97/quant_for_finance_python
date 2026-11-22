@@ -54,7 +54,7 @@ def test_each_expiry_rule_puts_the_date_where_the_exchange_does():
     assert expiries("last_business_day") == {"G21": pd.Timestamp("2021-02-26"), "K21": pd.Timestamp("2021-05-31"), "M21": pd.Timestamp("2021-06-30"), "Q21": pd.Timestamp("2021-08-31")}, "the last weekday of the month"
     assert expiries("15th") == {"G21": pd.Timestamp("2021-02-15"), "K21": pd.Timestamp("2021-05-14"), "M21": pd.Timestamp("2021-06-15"), "Q21": pd.Timestamp("2021-08-13")}, "the 15th, or the Friday before it"
     assert expiries("business_day_before_25th") == {"G21": pd.Timestamp("2021-02-22"), "K21": pd.Timestamp("2021-05-20"), "M21": pd.Timestamp("2021-06-22"), "Q21": pd.Timestamp("2021-08-20")}, "three business days before the 25th"
-    with pytest.raises(ValueError, match="rule must be third_friday, business_day_before_25th, 15th or last_business_day"):
+    with pytest.raises(ValueError, match="rule must be third_friday, business_day_before_25th, 15th, last_business_day, cme_crude, cme_natgas or third_last_business_day"):
         contract_calendar("2021-01-04", "2021-12-31", rule="first_monday")
 
 
@@ -162,3 +162,13 @@ def test_the_return_of_a_rank_is_that_of_the_contract_that_held_the_rank_the_day
     assert np.isnan(out.at[index[1], "F1"]), "A, first yesterday, is not in the curve today"
     assert out.at[index[1], "F2"] == pytest.approx(112.0 / 110.0 - 1.0), "B, second yesterday, is first today: its price today over its price yesterday"
     assert out.at[index[2], "F1"] == pytest.approx(113.0 / 112.0 - 1.0) and out.at[index[2], "F2"] == pytest.approx(121.0 / 120.0 - 1.0)
+
+
+def test_the_exchange_rules_for_crude_natural_gas_and_comex_metals_match_the_published_last_trading_days():
+    def one(rule, months, label):
+        cal = contract_calendar("2021-01-04", "2021-01-04", months=months, rule=rule)
+        return dict(zip(cal["contract"], cal["expiry"]))[label]
+    assert one("cme_crude", (2,), "G21") == pd.Timestamp("2021-01-20"), "CLG21 stopped trading on 20 January 2021: the month before delivery, not in it"
+    assert one("cme_crude", (11,), "X21") == pd.Timestamp("2021-10-20") and one("cme_crude", (10,), "V21") == pd.Timestamp("2021-09-21"), "the 25th of September 2021 was a Saturday: count back from Friday the 24th"
+    assert one("cme_natgas", (2,), "G21") == pd.Timestamp("2021-01-27") and one("cme_natgas", (10,), "V21") == pd.Timestamp("2021-09-28")
+    assert one("third_last_business_day", (2,), "G21") == pd.Timestamp("2021-02-24") and one("third_last_business_day", (8,), "Q21") == pd.Timestamp("2021-08-27")

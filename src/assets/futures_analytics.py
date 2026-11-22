@@ -48,13 +48,13 @@ class RootSpec:
 
 
 ROOTS: dict[str, RootSpec] = {
-    "CL": RootSpec("CL", "WTI crude oil", "NYMEX", "commodity", 1000.0, 0.01, tuple(range(1, 13)), "business_day_before_25th",
+    "CL": RootSpec("CL", "WTI crude oil", "NYMEX", "commodity", 1000.0, 0.01, tuple(range(1, 13)), "cme_crude",
                    SchwartzSmithParams(kappa=1.2, sigma_chi=0.30, mu_xi=0.02, sigma_xi=0.22, rho=0.3, lambda_chi=0.08, mu_xi_star=0.01, s0=70.0), 6500.0, 5900.0, 8, 1.0, 1.5),
-    "NG": RootSpec("NG", "Henry Hub natural gas", "NYMEX", "commodity", 10000.0, 0.001, tuple(range(1, 13)), "business_day_before_25th",
+    "NG": RootSpec("NG", "Henry Hub natural gas", "NYMEX", "commodity", 10000.0, 0.001, tuple(range(1, 13)), "cme_natgas",
                    SchwartzSmithParams(kappa=2.0, sigma_chi=0.55, mu_xi=0.0, sigma_xi=0.25, rho=0.2, lambda_chi=-0.10, mu_xi_star=0.0, seasonal_amp=0.10, seasonal_peak_month=1, s0=3.0), 3500.0, 3200.0, 7, 2.0, 1.5),
-    "GC": RootSpec("GC", "Gold", "COMEX", "metal", 100.0, 0.10, (2, 4, 6, 8, 10, 12), "last_business_day",
+    "GC": RootSpec("GC", "Gold", "COMEX", "metal", 100.0, 0.10, (2, 4, 6, 8, 10, 12), "third_last_business_day",
                    SchwartzSmithParams(kappa=0.5, sigma_chi=0.02, mu_xi=0.05, sigma_xi=0.14, rho=0.0, lambda_chi=0.0, mu_xi_star=0.04, s0=2000.0), 9000.0, 8200.0, 12, 1.0, 1.5),
-    "HG": RootSpec("HG", "Copper", "COMEX", "commodity", 25000.0, 0.0005, tuple(range(1, 13)), "last_business_day",
+    "HG": RootSpec("HG", "Copper", "COMEX", "commodity", 25000.0, 0.0005, tuple(range(1, 13)), "third_last_business_day",
                    SchwartzSmithParams(kappa=1.0, sigma_chi=0.12, mu_xi=0.03, sigma_xi=0.20, rho=0.2, lambda_chi=0.03, mu_xi_star=0.015, s0=4.0), 5500.0, 5000.0, 10, 2.0, 1.5),
     "ES": RootSpec("ES", "E-mini S&P 500", "CME", "equity_index", 50.0, 0.25, (3, 6, 9, 12), "third_friday",
                    SchwartzSmithParams(kappa=1.0, sigma_chi=0.03, mu_xi=0.08, sigma_xi=0.16, rho=0.0, lambda_chi=0.0, mu_xi_star=0.02, s0=5000.0), 12500.0, 11400.0, 8, 1.0, 1.25),

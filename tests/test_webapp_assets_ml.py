@@ -748,3 +748,13 @@ def test_every_asset_payload_carries_provenance_and_a_simulated_chain_is_synthet
     assert pv["parts"]["chain"] == "synthetic" and pv["kind"] in ("synthetic", "mixed") and any("synthetic" in w.lower() for w in pv["warnings"])
     roll = _safe(assets.extra_get["/api/futures/roll"]({"root": "CL"}))
     assert roll["provenance"]["kind"] in ("synthetic", "mixed") and roll["roll"]["decomposition"]["calendar_spread"]["kind"] == "price difference, not a cost"
+
+
+def test_the_futures_research_endpoint_returns_spreads_regimes_liquidity_calendar_and_comparison(assets):
+    earlier = assets.extra_get["/api/futures/curve"]({"root": "CL"})["history"][1]["date"]
+    out = _safe(assets.extra_get["/api/futures/research"]({"root": "CL", "compare": "NG", "from": earlier}))
+    assert out["spread_matrix"]["convention"].startswith("column contract less row") and out["spread_history"]["pair"] == "F1/F2" and out["liquidity"]["has_open_interest"]
+    assert out["calendar"]["rule"] == "cme_crude" and {c["root"] for c in out["compare"]["curves"]} == {"CL", "NG"} and out["change"]["contracts"]
+    assert out["provenance"]["instrument"] == "CL futures" and any("price difference" in n for n in out["notes"])
+    with pytest.raises(ApiError, match="later contract"):
+        assets.extra_get["/api/futures/research"]({"root": "CL", "near": 3, "far": 2})

@@ -84,8 +84,8 @@ class AssetApi:
     # ------------------------------------------------------------------------------------------------------------ routes
     def get_routes(self) -> dict:
         return {"/api/assets/catalog": self.catalog, "/api/options/chain": self.options_chain, "/api/options/surface": self.options_surface, "/api/options/distribution": self.options_distribution,
-                "/api/options/positioning": self.options_positioning, "/api/futures/curve": self.futures_curve,
-                "/api/futures/roll": self.futures_roll, "/api/futures/series": self.futures_series, "/api/crypto/overview": self.crypto_overview, "/api/crypto/funding": self.crypto_funding, "/api/crypto/cross-exchange": self.crypto_cross_exchange}
+                "/api/options/positioning": self.options_positioning, "/api/options/surface/research": self.options_surface_research, "/api/futures/curve": self.futures_curve,
+                "/api/futures/roll": self.futures_roll, "/api/futures/research": self.futures_research, "/api/futures/series": self.futures_series, "/api/crypto/overview": self.crypto_overview, "/api/crypto/funding": self.crypto_funding, "/api/crypto/cross-exchange": self.crypto_cross_exchange}
 
     def post_routes(self) -> dict:
         return {"/api/options/portfolio-risk": self.options_portfolio_risk, "/api/options/strategy/payoff": self.options_strategy_payoff, "/api/options/strategy/backtest": self.options_strategy_backtest,
@@ -335,6 +335,25 @@ class AssetApi:
                               "dealer position, chosen above and compared with the other standard assumptions. Whether dealers hedge dynamically, and with what price impact, is a hypothesis.",
                               "Max pain is a folk rule for the settlement of one expiry; the evidence behind it is that prices tend to cluster at strikes with large open interest near expiry."],
                      provenance={"instrument": f"{underlying} options" + ("" if expiry is None else f" {expiry.date()}"), "assumptions": view["assumptions"]})
+
+    def options_surface_research(self, q: dict) -> dict:
+        """``GET /api/options/surface/research?underlying=SPY&expiries=8``: the surface in log-forward-moneyness, delta and total-variance coordinates with a fitted SVI slice per expiry (residuals, bid-ask bands,
+        butterfly condition), the calendar condition between slices, a joint SSVI fit with its arbitrage conditions, and what is not guaranteed."""
+        underlying, rate, dividend, premium = self._option_params(q)
+        chain, ctx, source, notes = self._option_chain(underlying, rate, dividend, premium)
+        n = int(_number(q, "expiries", 8, 2, 14, integer=True))
+        try:
+            out = oa.surface_research(chain, max_expiries=n)
+        except ValueError as exc:
+            raise ApiError(str(exc)) from None
+        warnings = []
+        if out["arbitrage_summary"]["butterfly_violating_slices"]:
+            warnings.append(f"{out['arbitrage_summary']['butterfly_violating_slices']} fitted slice(s) fail the butterfly condition on the grid.")
+        if out["arbitrage_summary"]["calendar_violating_pairs"]:
+            warnings.append(f"{out['arbitrage_summary']['calendar_violating_pairs']} pair(s) of neighbouring fitted slices violate the calendar condition.")
+        return _wrap("options_surface_research", {"underlying": underlying, "surface": out}, {"quotes": "platform" if source == "simulated" else source, "fitted_surface": "simulated" if source == "simulated" else "model"},
+                     warnings, ctx.as_of, notes + out["limits"], provenance={"instrument": f"{underlying} options", "assumptions": out["limits"],
+                     "calibration": {"status": "calibrated", "model": "SVI per expiry, SSVI jointly", "rmse": float(np.mean([s["rmse_vol_points"] for s in out["slices"]]) / 100.0), "fit_date": str(ctx.as_of.date())}})
 
     def options_surface(self, q: dict) -> dict:
         """``GET /api/options/surface?underlying=SPY``: the implied-volatility surface (strike by expiry), the term structure, the skew metrics of every expiry and the static no-arbitrage checks."""
@@ -603,6 +622,34 @@ class AssetApi:
             return fn(*args)
         except ValueError:
             return None
+
+    def futures_research(self, q: dict) -> dict:
+        """``GET /api/futures/research?root=CL&date=&compare=NG,ES&from=&near=1&far=2``: the term-structure research views: the matrix of calendar spreads on a date, the history and z-score of one spread, the
+        contango and backwardation regimes, how the curve changed between two dates, liquidity by contract, the expiry and roll calendar, and the shape of other markets' curves beside this one."""
+        from . import asset_api as _self  # noqa: F401
+        from ..assets import futures_research as fr
+        data = self._curve(str(q.get("root") or "CL"))
+        date = q.get("date") or None
+        near, far = _number(q, "near", 1, 1, 12, integer=True), _number(q, "far", 2, 2, 24, integer=True)
+        if far <= near:
+            raise ApiError("far must be a later contract than near")
+        out: dict = {"root": data.root}
+        try:
+            out["spread_matrix"] = fr.spread_matrix(data, date)
+            out["spread_history"] = fr.spread_history(data, near, far)
+            out["regimes"] = self._optional(fr.regime_analysis, data)
+            out["liquidity"] = fr.liquidity(data, date)
+            out["calendar"] = fr.expiry_calendar(data, 12)
+            if q.get("from"):
+                out["change"] = fr.change_decomposition(data, q["from"], date or data.as_of)
+            roots = [r for r in str(q.get("compare") or "").replace(" ", "").split(",") if r and r != data.root]
+            if roots:
+                out["compare"] = fr.compare_curves({data.root: data, **{r: self._curve(r) for r in roots[:5]}}, date)
+        except ValueError as exc:
+            raise ApiError(str(exc)) from None
+        out["spec"] = {"name": data.spec.name, "exchange": data.spec.exchange, "multiplier": data.spec.multiplier, "tick_size": data.spec.tick_size, "tick_value": data.spec.tick_value, "expiry_rule": data.spec.rule}
+        return _wrap("futures_research", out, self._curve_parts(data, margins=False), [], data.as_of, data.notes + ["A calendar spread is a price difference between two contracts, not a profit or a cost of anything until a position is opened and closed."],
+                     provenance={"instrument": f"{data.root} futures", "assumptions": ["contract identifiers and expiries follow the exchange rule for the root (holidays not modelled)", "ranks (F1, F2 ...) are rebuilt on every date from the contracts then alive"]})
 
     def futures_roll(self, q: dict) -> dict:
         """``GET /api/futures/roll?root=CL&roll_days=5``: the contract held and the next, the suggested roll date, the open-interest crossover, the cost of the roll and its histories."""

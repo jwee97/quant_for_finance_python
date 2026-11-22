@@ -273,3 +273,43 @@ def test_the_margin_dashboard_uses_the_contract_multiplier_and_scales_margin_by_
     assert row["notional"] == pytest.approx(-2 * row["price"] * cl.spec.multiplier) and row["gross_notional"] == pytest.approx(abs(row["notional"]))
     assert row["initial_margin"] == pytest.approx(2 * cl.spec.initial_margin) and out["leverage"] == pytest.approx(row["gross_notional"] / 100_000.0)
     assert any("illustrative" in n.lower() for n in out["notes"]), "margins are labelled illustrative, never presented as the exchange's"
+
+
+# ------------------------------------------------------------------------------------------------------------------ the surface as a research object
+def _smiley(days=(20, 45, 90), skew=-0.6, curv=0.6, base=0.2):
+    chain = flat_chain(days=days, width=0.4, step=2.0).copy()
+    T = chain["T"] if "T" in chain else (chain["expiry"] - chain["date"]).dt.days / 365.0
+    k = np.log(chain["strike"] / chain["F"]) if "F" in chain else np.log(chain["strike"] / chain["underlying"])
+    iv = base + skew * 0.1 * k + curv * 0.5 * k ** 2
+    rows = chain.copy()
+    px = []
+    for right, K, t, v, S, r, q in zip(rows["right"], rows["strike"], rows["T"], iv, rows["underlying"], rows["rate"], rows["dividend"]):
+        px.append(float(P.bsm_price(S, K, t, r, q, v, right == "C")))
+    rows["mid"] = px
+    rows["bid"], rows["ask"] = rows["mid"] * 0.99, rows["mid"] * 1.01
+    rows["iv"] = iv
+    return rows
+
+
+def test_surface_research_fits_svi_per_expiry_inside_the_bid_ask_with_residuals_and_arbitrage_diagnostics():
+    chain = _smiley()
+    r = oa.surface_research(chain, max_expiries=3)
+    assert len(r["slices"]) == 3 and all(s["rmse_vol_points"] < 0.35 for s in r["slices"]) and r["arbitrage_summary"]["butterfly_violating_slices"] == 0
+    q = r["quotes"]
+    assert {"k", "delta", "w", "w_bid", "w_ask", "w_fit", "iv_residual"} <= set(q[0]) and all(x["w_bid"] <= x["w"] <= x["w_ask"] for x in q if x["w_bid"] and x["w_ask"])
+    assert all(0 < x["delta"] < 0.55 for x in q if x["right"] == "C") and all(-0.55 < x["delta"] < 0 for x in q if x["right"] == "P"), "the out-of-the-money options: calls have delta below a half, puts above minus a half"
+    assert r["ssvi"]["conditions"]["free"] in (True, False) and r["grid"]["k"] == sorted(r["grid"]["k"]) and len(r["grid"]["iv"]) == 3 and any("calendar" in s.lower() for s in r["limits"])
+
+
+def test_a_calendar_violation_between_expiries_is_found_and_the_report_says_what_it_cannot_guarantee():
+    chain = _smiley(days=(20, 45)).copy()
+    late = chain["expiry"] == chain["expiry"].max()
+    chain.loc[late, "iv"] = chain.loc[late, "iv"] * 0.6                                                    # the later expiry has less total variance than the earlier one
+    for i in chain[late].index:
+        chain.loc[i, "mid"] = float(P.bsm_price(chain.loc[i, "underlying"], chain.loc[i, "strike"], chain.loc[i, "T"], chain.loc[i, "rate"], chain.loc[i, "dividend"], chain.loc[i, "iv"], chain.loc[i, "right"] == "C"))
+    chain["bid"], chain["ask"] = chain["mid"] * 0.99, chain["mid"] * 1.01
+    r = oa.surface_research(chain, max_expiries=2)
+    assert r["arbitrage_summary"]["calendar_violating_pairs"] == 1 and r["calendar"][0]["violated"] and r["calendar"][0]["share_of_grid_violated"] > 0.5
+    assert any("finite grid" in s for s in r["limits"])
+    with pytest.raises(ValueError, match="cannot be fitted"):
+        oa.surface_research(chain.iloc[:4])
