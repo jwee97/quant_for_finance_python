@@ -539,6 +539,11 @@ def evaluate(ctx: ResearchContext, signal: pd.DataFrame, spec: EvalSpec | None =
               "stability": stability, "warnings": warnings, "charts": charts, "n_dates": int(len(signal)), "average_companies": float(coverage.mean()) if len(coverage) else 0.0,
               "power": power, "premium": premium}
     result["reproducibility"] = reproducibility(ctx, spec, signal, ls)
+    try:
+        from . import walkforward
+        result["walk_forward"] = walkforward.run(ctx, signal, spec.horizon, train=min(36, max(12, len(signal) // 3)), test=min(12, max(4, len(signal) // 10)))
+    except Exception as error:                                                                      # a validation add-on never stops the evaluation
+        result["walk_forward"] = {"folds": [], "reason": f"not run: {error}", "oos": None}
     result["verdict"] = verdict(result)
     result["evidence_level"] = evidence_level(stats_ic.get("t_stat"), (portfolio.get("net") or {}).get("sharpe"))
     result["explain"] = explain(result, spec, ctx, ls["frac"])

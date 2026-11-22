@@ -334,6 +334,11 @@ def available(ctx: ResearchContext) -> dict[str, bool]:
     return {n: all(ctx.has(need) for need in f.needs) for n, f in FACTORS.items()}
 
 
+def _market_based(f) -> bool:
+    text = f"{f.name} {f.text}".lower()
+    return any(k in text for k in ("market cap", "enterprise value", "price", "_to_ev", "yield", "size", "beta", "momentum"))
+
+
 def compute(ctx: ResearchContext, name: str) -> pd.DataFrame:
     """The raw panel of factor ``name`` (cached on the context); infinities become missing values."""
     key = ("factor", name)
@@ -347,8 +352,10 @@ def compute(ctx: ResearchContext, name: str) -> pd.DataFrame:
             if not ctx.has(need):
                 raise FundamentalsError(f"factor {name!r} needs {need!r}, which the database does not have for this universe")
         raw = f.fn(ctx)
-        from . import sectors
+        from . import corporate_actions, sectors
         raw = sectors.apply(ctx, name, raw.replace([np.inf, -np.inf], np.nan).reindex(index=ctx.dates, columns=ctx.ids))      # a line that does not apply to a bank is missing for banks, not a low score
+        if _market_based(f):                                                                               # between a recorded spin-off or merger and the next filing the price and the statements describe different companies
+            raw = raw.where(~corporate_actions.unreliable_mask(ctx))
         ctx._cache[key] = raw
     return ctx._cache[key]
 

@@ -60,3 +60,66 @@ def since_update(panel: pd.DataFrame, cum_at_dates: pd.DataFrame) -> pd.DataFram
         base = cum[c].to_numpy()[last]
         out[c] = np.exp(cum[c].to_numpy() - base)
     return out.where(panel.notna(), 1.0)
+
+
+# ------------------------------------------------------------------------------------------------------------------------ spin-offs, mergers and the like
+EVENT_KINDS = ("spin_off", "merger", "acquisition", "delisting", "reorganisation", "other")
+
+
+def record_event(store, security_id: int, event_date: str, kind: str, counterparty: str = "", value_fraction: float | None = None, note: str = "") -> None:
+    """Record something the prices cannot tell apart from a data error: a spin-off (``value_fraction`` is the share of the company's value that left), a merger or acquisition, a reorganisation. Splits are
+    found automatically and need no record. The statements do not reflect the event until the next filing after it, so between the two dates market-based figures are not reliable."""
+    from datetime import date as _d
+    from .errors import FundamentalsError
+    from .schema import now_iso
+    if kind not in EVENT_KINDS:
+        raise FundamentalsError(f"kind is one of {', '.join(EVENT_KINDS)}")
+    try:
+        _d.fromisoformat(event_date)
+    except ValueError:
+        raise FundamentalsError("event_date is a date such as 2021-06-30") from None
+    if value_fraction is not None and not 0 < value_fraction < 1:
+        raise FundamentalsError("value_fraction is the share of value that left, between 0 and 1 (0.3 for a spin-off worth 30% of the company)")
+    with store.db.transaction() as c:
+        c.execute("INSERT OR REPLACE INTO corporate_events (security_id, event_date, kind, counterparty, value_fraction, note, recorded_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                  (int(security_id), event_date, kind, counterparty[:120], value_fraction, note[:300], now_iso()))
+
+
+def events(store, security_ids: list[int] | None = None) -> list[dict]:
+    sql, args = "SELECT security_id, event_date, kind, counterparty, value_fraction, note FROM corporate_events", []
+    if security_ids is not None:
+        sql += f" WHERE security_id IN ({','.join('?' * len(security_ids))})"
+        args = [int(i) for i in security_ids]
+    with store.db.transaction() as c:
+        return [dict(zip(("security_id", "event_date", "kind", "counterparty", "value_fraction", "note"), r)) for r in c.execute(sql + " ORDER BY event_date", args).fetchall()]
+
+
+def unreliable_mask(ctx) -> pd.DataFrame:
+    """Dates by companies, True where market-based figures cannot be trusted: from a recorded event until the first rebalance date on which a filing newer than the event is the latest the company has
+    (a spin-off's business is still in the statements, an acquirer's new shares are not yet in its share count). A delisting ends the company's series and needs no window."""
+    out = pd.DataFrame(False, index=ctx.dates, columns=ctx.ids)
+    evs = [e for e in events(ctx.store, ctx.ids) if e["kind"] != "delisting"]
+    if not evs:
+        return out
+    rev = ctx.panel("revenue").where(lambda x: x.notna())
+    for e in evs:
+        sid, day = e["security_id"], pd.Timestamp(e["event_date"])
+        after = ctx.dates[ctx.dates >= day]
+        if not len(after) or sid not in out.columns:
+            continue
+        col = ctx.tables.fy if "fy" in dir(ctx.tables) else None
+        newest = None
+        if col is not None and len(col):
+            fyrows = col[(col["security_id"] == sid) & (col["available_date"] > day)]
+            newest = fyrows["available_date"].min() if len(fyrows) else None
+        stop = newest if newest is not None and pd.notna(newest) else None
+        out.loc[(out.index >= day) & (True if stop is None else out.index < stop), sid] = True
+    return out
+
+
+def candidates(ctx) -> list[dict]:
+    """Large price moves that are not splits and have no recorded event: what a person should look at and, if it is a spin-off or merger, record."""
+    ctx.split_factor(ctx.panel("shares_outstanding")) if getattr(ctx, "_cache", None) is not None and "split_cum" not in ctx._cache else None
+    have = {(e["security_id"], e["event_date"]) for e in events(ctx.store, ctx.ids)}
+    return [{"security_id": o["security_id"], "date": str(o["date"])[:10], "ratio": o["ratio"], "note": "the unadjusted close moved by a factor that is not a usual split ratio: spin-off, merger or a data error?"}
+            for o in getattr(ctx, "unexplained_price_moves", []) if (o["security_id"], str(o["date"])[:10]) not in have]

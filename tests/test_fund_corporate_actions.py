@@ -130,3 +130,42 @@ def test_the_valuation_input_inspector_lists_what_a_market_cap_was_built_from(wo
     assert v["available"] and v["market_cap"] == pytest.approx(v["price"] * v["shares_used"]) and v["shares_used"] == pytest.approx(v["shares_filed"] * v["split_factor_since_filing"])
     assert v["trading_currency"] and v["reporting_currency"] and "components_reporting_currency" in v and v["price_basis"].startswith("unadjusted")
     assert lineage.valuation_inputs(ctx, 99999, d)["available"] is False
+
+
+def test_a_recorded_spin_off_makes_market_based_figures_unreliable_until_the_next_filing(world):
+    from src.fundamentals import factors
+    store = world.store
+    ctx = ResearchContext(store, UniverseSpec())
+    sid = ctx.ids[0]
+    day = ctx.dates[len(ctx.dates) // 2]
+    base = factors.compute(ctx, "earnings_yield")[sid]
+    assert base.notna().sum() > 10
+    with pytest.raises(Exception, match="kind is one of"):
+        corporate_actions.record_event(store, sid, str(day)[:10], "teleport")
+    with pytest.raises(Exception, match="value_fraction"):
+        corporate_actions.record_event(store, sid, str(day)[:10], "spin_off", value_fraction=1.5)
+    corporate_actions.record_event(store, sid, str(day)[:10], "spin_off", "NewCo", 0.3, "distributed to holders")
+    after = ResearchContext(store, UniverseSpec())
+    ey = factors.compute(after, "earnings_yield")[sid]
+    nxt = after.tables.fy[(after.tables.fy["security_id"] == sid) & (after.tables.fy["available_date"] > day)]["available_date"].min()
+    window = ey.index[(ey.index >= day) & (ey.index < nxt)]
+    assert len(window) >= 1 and ey.loc[window].isna().all(), "price and statements describe different companies in this window"
+    assert ey.loc[ey.index >= nxt].notna().any() and ey.loc[ey.index < day].equals(base.loc[base.index < day]), "before the event and after the next filing nothing changes"
+    assert factors.compute(after, "gross_margin")[sid].notna().any(), "a figure that does not use the price is untouched"
+    assert [e["kind"] for e in corporate_actions.events(store, [sid])] == ["spin_off"]
+
+
+def test_an_unusual_price_move_is_offered_as_a_candidate_event_not_applied(world):
+    store = world.store
+    ctx = ResearchContext(store, UniverseSpec())
+    sid, when = ctx.ids[1], ctx.dates[len(ctx.dates) // 3]
+    with store.db.transaction() as c:
+        c.execute("UPDATE prices_daily SET close = close / 2.2 WHERE security_id = ? AND date >= ?", (int(sid), when.strftime("%Y-%m-%d")))
+    after = ResearchContext(store, UniverseSpec())
+    after.market_cap()
+    cand = corporate_actions.candidates(after)
+    assert any(c["security_id"] == sid for c in cand) and not any(s["security_id"] == sid for s in after.splits)
+    corporate_actions.record_event(store, sid, [c["date"] for c in cand if c["security_id"] == sid][0], "spin_off", value_fraction=0.55)
+    again = ResearchContext(store, UniverseSpec())
+    again.market_cap()
+    assert not any(c["security_id"] == sid for c in corporate_actions.candidates(again)), "once recorded it is no longer a candidate"

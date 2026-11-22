@@ -751,13 +751,15 @@ class ImportService(ReviewMixin):
                     vstatus = "OVERRIDDEN" if failed and ov.get("kinds") else "FAIL" if failed else "PASS" if any(ch.get("status") == "PASS" for ch in (s.get("checks") or [])) else "UNCONFIRMED"
                     c.execute("INSERT OR REPLACE INTO observation_provenance (financial_period_id, metric_code, source_kind, source_ref, content_hash, accession, page, taxonomy_tag, reported_value, reported_unit, "
                               "extraction_method, extraction_status, edited, import_item_id, created_at, confidence, statement, scope, extractor_version, mapping_version, original_currency, bbox, verified, "
-                              "currency, unit_multiplier, raw_value_text, normalized_value_text, period_start, period_type, table_ref, row_ref, col_ref, column_role, validation_status, override_note) "
-                              "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                              "currency, unit_multiplier, raw_value_text, normalized_value_text, period_start, period_type, table_ref, row_ref, col_ref, column_role, validation_status, override_note, fx_rate, fx_basis, fx_from, fx_to, fx_source) "
+                              "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                               (pid, code, it["source_kind"], it["source_url"] or it["source_name"], it["content_hash"], draft.get("accession"), s.get("page"), s.get("tag"), s.get("reported", value), s.get("unit"),
                                s.get("method") or draft.get("method"), "approved" if verified else "unverified", 1 if s.get("edited") else 0, it["item_id"], now_iso(), s.get("confidence"), s.get("statement"), s.get("scope"),
                                v.get("extractor"), v.get("mapping"), s.get("original_currency") or (src.get("pre_currency") or ep.get("currency")), json.dumps(s["bbox"]) if s.get("bbox") else None, 1 if verified else 0,
                                s.get("currency") or ep.get("currency"), s.get("unit_multiplier"), s.get("raw_value"), s.get("normalized_value"), src.get("start_date"), src.get("period_type"), s.get("table"), s.get("row"),
-                               s.get("col"), s.get("column_role"), vstatus, ov.get("note") if vstatus == "OVERRIDDEN" else None))
+                               s.get("col"), s.get("column_role"), vstatus, ov.get("note") if vstatus == "OVERRIDDEN" else None,
+                               s.get("fx_rate"), s.get("fx_basis"), s.get("original_currency") if s.get("fx_rate") else None, ep.get("currency") if s.get("fx_rate") else None,
+                               (draft.get("conversion") or {}).get("source") if s.get("fx_rate") else None))
                     n += 1
                 saved.append({"period": f"{ep['fiscal_period']} to {ep['period_end']}", "period_id": pid, "lines": n, "vintage": int(row["vintage"])})
         return saved

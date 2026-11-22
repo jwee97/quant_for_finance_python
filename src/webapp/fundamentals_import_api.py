@@ -35,13 +35,13 @@ class ImportRoutes:
 
     def import_get_routes(self) -> dict:
         return {"/api/fund/import/history": self.import_history, "/api/fund/import/batch": self.import_batch, "/api/fund/import/item": self.import_item, "/api/fund/import/provenance": self.import_provenance,
-                "/api/fund/coverage/overview": self.coverage_overview, "/api/fund/connectors": self.connectors, "/api/fund/pit/asof": self.pit_asof, "/api/fund/import/diagnostics": self.import_diagnostics, "/api/fund/import/observations": self.import_observations, "/api/fund/import/plan": self.import_plan, "/api/fund/import/source": self.import_source, "/api/fund/custom": self.custom_observations, "/api/fund/sources/compare": self.sources_compare, "/api/fund/lineage": self.lineage_route, "/api/fund/health": self.health_route, "/api/fund/sectors": self.sectors_route, "/api/fund/alpha/inputs": self.alpha_inputs_route, "/api/fund/import/extractions": self.import_extractions, "/api/fund/import/candidates": self.import_candidates}
+                "/api/fund/coverage/overview": self.coverage_overview, "/api/fund/connectors": self.connectors, "/api/fund/pit/asof": self.pit_asof, "/api/fund/import/diagnostics": self.import_diagnostics, "/api/fund/import/observations": self.import_observations, "/api/fund/import/plan": self.import_plan, "/api/fund/import/source": self.import_source, "/api/fund/custom": self.custom_observations, "/api/fund/sources/compare": self.sources_compare, "/api/fund/lineage": self.lineage_route, "/api/fund/health": self.health_route, "/api/fund/events": self.events_route, "/api/fund/sectors": self.sectors_route, "/api/fund/alpha/inputs": self.alpha_inputs_route, "/api/fund/import/extractions": self.import_extractions, "/api/fund/import/candidates": self.import_candidates}
 
     def import_post_routes(self) -> dict:
         return {"/api/fund/import/create": self.import_create, "/api/fund/import/chunk": self.import_chunk, "/api/fund/import/urls": self.import_urls, "/api/fund/import/process": self.import_process,
                 "/api/fund/import/review": self.import_review, "/api/fund/import/approve": self.import_approve, "/api/fund/import/reject": self.import_reject, "/api/fund/import/filings": self.import_filings,
                 "/api/fund/import/filings/add": self.import_filings_add, "/api/fund/coverage/backfill": self.coverage_backfill, "/api/fund/connectors/search": self.connectors_search, "/api/fund/connectors/fetch": self.connectors_fetch,
-                "/api/fund/pit/export": self.pit_export, "/api/fund/import/decide": self.import_decide, "/api/fund/sources/prefer": self.sources_prefer, "/api/fund/import/verify": self.import_verify, "/api/fund/import/reprocess": self.import_reprocess}
+                "/api/fund/pit/export": self.pit_export, "/api/fund/import/decide": self.import_decide, "/api/fund/sources/prefer": self.sources_prefer, "/api/fund/screen": self.screen_route, "/api/fund/screen/history": self.screen_history_route, "/api/fund/valuation/scenarios": self.scenarios_route, "/api/fund/events/record": self.event_record, "/api/fund/family": self.family_route, "/api/fund/import/verify": self.import_verify, "/api/fund/import/reprocess": self.import_reprocess}
 
     # ------------------------------------------------------------------------------------------------------------ plumbing
     def _importer(self) -> ImportService:
@@ -277,12 +277,76 @@ class ImportRoutes:
         sid = self._int({"security_id": one("security_id")}, "security_id")
         return {"rows": self._guard(sources.compare, self.bench("real").store, sid, None, str(one("conflicts") or "").lower() in ("1", "true"))}
 
+    def _wb(self, d: dict | None):
+        db = (d or {}).get("db")
+        db = db[0] if isinstance(db, list) else db
+        return self.bench(db if db in ("real", "demo") else "real")
+
+    def _research(self, d: dict | None = None):
+        """One research context per database and data fingerprint, so a screen is not rebuilt for every request and a correction rebuilds it."""
+        from ..fundamentals import snapshot
+        from ..fundamentals.research import ResearchContext, UniverseSpec
+        store = self._wb(d).store
+        if not hasattr(self, "_research_cache"):
+            self._research_cache = {}
+        key = (id(store), snapshot.fingerprint(store)["hash"])
+        if key not in self._research_cache:
+            while len(self._research_cache) >= 2:
+                self._research_cache.pop(next(iter(self._research_cache)))
+            self._research_cache[key] = ResearchContext(store, UniverseSpec())
+        return self._research_cache[key]
+
+    def screen_route(self, body: dict) -> dict:
+        """``POST /api/fund/screen {rules, as_of?, rank_by?, top?, ascending?, within_sector?}``: filter and rank companies on a date from what was public then; every excluded company says why."""
+        from ..fundamentals import screen
+        rules = body.get("rules")
+        if not isinstance(rules, list):
+            raise ApiError("rules must be a list")
+        return self._guard(lambda: screen.run(self._research(body), rules, body.get("as_of") or None, body.get("rank_by") or None, bool(body.get("ascending")), int(body["top"]) if body.get("top") else None,
+                                              bool(body.get("within_sector"))))
+
+    def screen_history_route(self, body: dict) -> dict:
+        """``POST /api/fund/screen/history {rules, start?, end?, step?}``: who passed the rules on each past date, with turnover."""
+        from ..fundamentals import screen
+        if not isinstance(body.get("rules"), list):
+            raise ApiError("rules must be a list")
+        return self._guard(lambda: screen.history(self._research(body), body["rules"], body.get("start") or None, body.get("end") or None, int(body.get("step") or 1)))
+
+    def scenarios_route(self, body: dict) -> dict:
+        """``POST /api/fund/valuation/scenarios {security_id, cases: {name: [rate, growth]}, rates?, growths?}``: the valuation yardsticks under named assumptions, and a rate-by-growth grid."""
+        cases = body.get("cases")
+        if not isinstance(cases, dict):
+            raise ApiError("cases must be a dictionary of name: [discount rate, perpetual growth]")
+        return self._guard(self._wb(body).valuation_scenarios, self._int(body, "security_id"), cases, body.get("rates"), body.get("growths"))
+
+    def events_route(self, q: dict) -> dict:
+        """``GET /api/fund/events``: corporate events a person recorded, and large price moves that are not splits and have no record (candidates)."""
+        from ..fundamentals import corporate_actions
+        ctx = self._research(q)
+        ctx.market_cap()
+        return {"events": corporate_actions.events(self._wb(q).store), "candidates": corporate_actions.candidates(ctx), "splits": [{**s, "date": str(s["date"])[:10]} for s in ctx.splits]}
+
+    def event_record(self, body: dict) -> dict:
+        """``POST /api/fund/events/record {security_id, event_date, kind, counterparty?, value_fraction?, note?}``."""
+        from ..fundamentals import corporate_actions
+        self._guard(corporate_actions.record_event, self._wb(body).store, self._int(body, "security_id"), str(body.get("event_date") or ""), str(body.get("kind") or ""), str(body.get("counterparty") or ""),
+                    body.get("value_fraction"), str(body.get("note") or ""))
+        return {"ok": True}
+
+    def family_route(self, body: dict) -> dict:
+        """``POST /api/fund/family {security_id, family | null}``: say whether a company is a bank, insurer, REIT or general company (the factors that do not apply to it are then missing for it)."""
+        try:
+            self._wb(body).store.set_family(self._int(body, "security_id"), body.get("family") or None)
+        except ValueError as error:
+            raise ApiError(str(error)) from None
+        return {"ok": True}
+
     def health_route(self, q: dict) -> dict:
         """``GET /api/fund/health[?security_id]``: per company: latest filing and quarter, missing years, source conflicts, unconfirmed observations, restatements, factor readiness, last provider refresh."""
         from ..fundamentals import datahealth
         v = q.get("security_id")
         v = v[0] if isinstance(v, list) else v
-        return self._guard(datahealth.overview, self.bench("real").store, [int(v)] if v else None)
+        return self._guard(datahealth.overview, self._wb(q).store, [int(v)] if v else None)
 
     def sectors_route(self, q: dict) -> dict:
         """``GET /api/fund/sectors``: the sector figures that can be confirmed in the importer and used as factors, and which factors do not apply to banks, insurers and REITs."""

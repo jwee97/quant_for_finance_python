@@ -338,13 +338,11 @@ class Workbench:
                       "The Piotroski F-score and the anomaly score are screens, not verdicts: a high anomaly score means 'look closer' and is never evidence of fraud.",
                       "The Altman scores and the Graham tests are screens too: they say where the company stands next to the rule's own sample, not what will happen to it."]})
 
-    def valuation(self, security_id: int, rate: float = yardsticks.DEFAULT_RATE, growth: float = yardsticks.DEFAULT_GROWTH) -> dict:
-        """The yardsticks of :mod:`valuation` for one company, beside its last close: Graham's number and net current asset value, the earnings power value, owner earnings and free cash flow capitalised at
-        ``rate`` with perpetual ``growth``, the Lynch line and book value, each a range per share, and Graham's price tests. Nothing here is a forecast: each bar is what the share would be worth if one rule held."""
+    def _valuation_rows(self, security_id: int):
+        """``(info, fy, price, price_date, split_factor)``: the annual rows, the last unadjusted close and the splits since the last filing became public."""
         info = self.store.get_security(int(security_id))
         if info is None:
             raise FundamentalsError(f"no company with id {security_id}")
-        yardsticks.check_inputs(float(rate), float(growth))
         sid = int(security_id)
         tables = PeriodTables(self.store, [sid], PitSettings())
         metrics.compute(tables, "fy")
@@ -361,6 +359,32 @@ class Workbench:
             for sp in splits:
                 if since is None or sp["date"] > since:
                     factor *= sp["ratio"]
+        return info, fy, price, when, factor
+
+    def valuation_scenarios(self, security_id: int, cases: dict, grid_rates: list | None = None, grid_growths: list | None = None) -> dict:
+        """Named assumption sets side by side, and a rate-by-growth grid of the capitalised free cash flow per share."""
+        info, fy, price, when, factor = self._valuation_rows(security_id)
+        clean_cases = {}
+        for name, v in (cases or {}).items():
+            r, g = float(v[0]), float(v[1])
+            yardsticks.check_inputs(r, g)
+            clean_cases[str(name)[:40]] = (r, g)
+        if not clean_cases:
+            raise FundamentalsError("give at least one case: {name: [discount rate, perpetual growth]}")
+        out = yardsticks.scenarios(fy, price, when, info.get("currency"), clean_cases, factor)
+        rows = yardsticks.on_price_basis(fy, factor)
+        shares = yardsticks._last(rows, "shares_outstanding")
+        flow = yardsticks._mean_of_last(rows, "fcf", yardsticks.SMOOTH)
+        out["sensitivity"] = {"flow": "free cash flow, averaged over the last %d years" % yardsticks.SMOOTH,
+                              **yardsticks.sensitivity(flow, shares, [float(x) for x in (grid_rates or [0.07, 0.08, 0.09, 0.10, 0.11])], [float(x) for x in (grid_growths or [0.0, 0.01, 0.02, 0.03])])}
+        out["price"], out["currency"] = price, info.get("currency")
+        return clean(out)
+
+    def valuation(self, security_id: int, rate: float = yardsticks.DEFAULT_RATE, growth: float = yardsticks.DEFAULT_GROWTH) -> dict:
+        """The yardsticks of :mod:`valuation` for one company, beside its last close: Graham's number and net current asset value, the earnings power value, owner earnings and free cash flow capitalised at
+        ``rate`` with perpetual ``growth``, the Lynch line and book value, each a range per share, and Graham's price tests. Nothing here is a forecast: each bar is what the share would be worth if one rule held."""
+        yardsticks.check_inputs(float(rate), float(growth))
+        info, fy, price, when, factor = self._valuation_rows(security_id)
         return clean({**yardsticks.build(fy, price, when, info.get("currency"), float(rate), float(growth), factor), "references": references("fundamentals", "valuation")})
 
     def set_price_symbol(self, security_id: int, symbol: str) -> dict:

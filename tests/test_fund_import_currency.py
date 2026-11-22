@@ -130,3 +130,14 @@ def test_a_filing_with_two_currencies_inside_it_is_warned_about(store):
     d["periods"].append({**_draft("JPY")["periods"][0], "fiscal_period": "FY", "period_end": "2021-12-31", "fiscal_year": 2021})
     item, _ = _item(svc, store, d)
     assert any("different currencies" in i["message"] for i in svc.item(item, full=True)["issues"])
+
+
+def test_the_exchange_rate_basis_and_currencies_of_a_conversion_are_stored_with_the_figure(store):
+    svc = ImportService(store, fx_fetch=_fx_fetch([]))
+    item, sid = _item(svc, store, _draft())
+    svc.review(item, {"convert_to": "USD"})
+    svc.decide(item, [{"action": "confirm_suggested"}])
+    svc.approve(item)
+    with store.db.transaction() as c:
+        flow = c.execute("SELECT fx_rate, fx_basis, fx_from, fx_to, fx_source, reported_value FROM observation_provenance WHERE metric_code = 'revenue'").fetchone()
+    assert 0.0100 < flow[0] < 0.0111 and flow[1] == "average" and (flow[2], flow[3]) == ("JPY", "USD") and "Yahoo" in flow[4] and flow[5] == 1_000_000.0, "a flow at the average rate of its period, the original kept"

@@ -342,3 +342,10 @@ def test_a_result_says_what_data_universe_dates_missing_data_treatment_and_assum
     assert rep["factor"]["name"] == "fcf_yield" and rep["assumptions"]["cost_bps"] == 10.0 and rep["assumptions"]["quantiles"] == 5 and rep["not_applicable"]["factor"] == "fcf_yield"
     again = E.evaluate_factor(ctx, E.EvalSpec(factor="fcf_yield", premium=False))["reproducibility"]["data_version"]
     assert again.split("#")[1].split("@")[0] == rep["data_version"].split("#")[1].split("@")[0], "the same data gives the same fingerprint"
+
+
+def test_an_evaluation_includes_a_walk_forward_check_with_the_sign_chosen_on_the_past(ctx):
+    r = E.evaluate_factor(ctx, E.EvalSpec(factor="fcf_yield", premium=False))
+    wf = r["walk_forward"]
+    assert wf["folds"] and wf["oos"]["n_dates"] > 0 and wf["reading"] in ("holds out of sample", "weak out of sample", "does not hold out of sample", "no in-sample signal")
+    assert all(f["test"][0] > f["train"][1] for f in wf["folds"]), "every test window starts after its training window ends"
