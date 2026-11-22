@@ -975,6 +975,9 @@ def _volsurf(page, phone=False):
 
 
 def test_the_vol_surface_view_works_without_plotly_with_four_views_and_an_honest_banner(ws):
+    from src.webapp.server import static_file
+    if static_file("vendor/plotly.min.js") is not None:
+        pytest.skip("Plotly is installed here: the no-Plotly fallback is not what this page draws")
     _volsurf(ws)
     text = ws.inner_text("#options-results")
     assert "Quotes used" in text and "Surface coverage" in text and "Calibration" in text and "Plotly.js is not installed" in text
@@ -1004,6 +1007,9 @@ def test_the_vol_surface_uses_plotly_react_with_the_right_axes_colours_hover_and
     from pathlib import Path
     vendor = Path(__file__).resolve().parent.parent / "src" / "webapp" / "static" / "vendor"
     stub = vendor / "plotly.min.js"
+    from src.webapp.server import static_file
+    if static_file("vendor/plotly.min.js") is not None:
+        pytest.skip("a real Plotly is available here: this stand-in test would shadow it")
     assert not stub.exists(), "a real Plotly is vendored: this stand-in test must not overwrite it"
     stub.write_text("""window.Plotly={react:function(d,data,layout,cfg){d.dataset.calls=(+d.dataset.calls||0)+1;d.dataset.types=data.map(function(t){return t.type}).join(',');d.dataset.layout=JSON.stringify(layout);d.dataset.data=JSON.stringify(data.map(function(t){return {type:t.type,colorscale:t.colorscale,hover:t.hovertemplate,zshape:t.z&&t.z.length&&[t.z.length,(t.z[0]&&t.z[0].length)||0],name:t.name,cmin:t.cmin,cmax:t.cmax}}));d.dataset.config=JSON.stringify(cfg);d.on=function(){}},
 relayout:function(d,u){d.dataset.relayout=JSON.stringify(u)},Plots:{resize:function(d){d.dataset.resized=(+d.dataset.resized||0)+1}}};""")
@@ -1050,6 +1056,9 @@ relayout:function(d,u){d.dataset.relayout=JSON.stringify(u)},Plots:{resize:funct
 
 
 def test_the_vol_surface_fits_a_phone_screen_without_horizontal_scrolling(browser, live_ws):
+    from src.webapp.server import static_file
+    if static_file("vendor/plotly.min.js") is not None:
+        pytest.skip("Plotly is installed here: the no-Plotly canvas fallback is not what this page draws")
     page = browser.new_page(viewport={"width": 390, "height": 800})
     page.problems = []
     page.on("pageerror", lambda e: page.problems.append(str(e)))

@@ -37,6 +37,31 @@ from urllib.parse import parse_qs, urlparse
 from .api import ApiError, App
 
 STATIC = Path(__file__).parent / "static"
+
+
+def static_file(rel: str) -> Path | None:
+    """The file behind ``/static/<rel>``: the copy in ``static/`` or, for the optional Plotly and AG Grid bundles, the one inside the installed ``plotly`` / ``dash_ag_grid`` package (so ``pip install plotly`` is
+    enough: nothing has to be copied). ``None`` if there is none."""
+    here = STATIC / rel
+    if here.is_file():
+        return here
+    import importlib.util
+
+    for name, (package, patterns) in {"vendor/plotly.min.js": ("plotly", ["package_data/plotly.min.js"]), "vendor/ag-grid-community.min.js": ("dash_ag_grid", ["ag-grid-community.min.js", "ag-grid-community*.min.js"]),
+                                       "vendor/ag-grid.css": ("dash_ag_grid", ["ag-grid.css"]), "vendor/ag-theme-quartz.css": ("dash_ag_grid", ["ag-theme-quartz.css"])}.items():
+        if rel != name:
+            continue
+        try:
+            spec = importlib.util.find_spec(package)
+        except (ImportError, ValueError):
+            return None
+        if spec and spec.submodule_search_locations:
+            base = Path(spec.submodule_search_locations[0])
+            for pat in patterns:
+                hit = sorted(base.rglob(pat))
+                if hit:
+                    return hit[0]
+    return None
 JS = "text/javascript; charset=utf-8"
 FILES = {"app.js": JS, "style.css": "text/css; charset=utf-8", "charts.js": JS, "tradechart.js": JS, "charts_ec.js": JS, "vendor/echarts.min.js": JS, "vendor/plotly.min.js": JS, "vendor/plotly.LICENSE": "text/plain; charset=utf-8", "vendor/ag-grid-community.min.js": JS, "vendor/ag-grid-community.LICENSE": "text/plain; charset=utf-8", "vendor/ag-grid.css": "text/css; charset=utf-8", "vendor/ag-theme-quartz.css": "text/css; charset=utf-8", "libs.js": JS, "vendor/echarts.LICENSE": "text/plain; charset=utf-8", "vendor/echarts.NOTICE": "text/plain; charset=utf-8", "workspace.js": JS, "shell.js": JS, "research.js": JS, "pages.js": JS, "regime.js": JS, "finml.js": JS, "alphalab.js": JS, "strategy.js": JS, "universe.js": JS, "modelcompare.js": JS, "evidence.js": JS, "compare.js": JS, "options.js": JS, "experiments.js": JS, "surface3d.js": JS, "options_research.js": JS, "vol_surface.js": JS, "futures_research.js": JS, "futures.js": JS, "crypto.js": JS, "ml.js": JS, "tune.js": JS, "forecast.js": JS, "signals.js": JS, "scenarios.js": JS, "rates.js": JS, "fundamentals.js": JS, "fundamentals_lab.js": JS, "fundamentals_enter.js": JS, "fundamentals_import.js": JS, "fundamentals_review.js": JS, "fundamentals_research.js": JS}
 MAX_BODY = 200_000
@@ -273,11 +298,11 @@ def make_handler(app: App, token: str, port_holder: list, access: str | None = N
                 self._redirect("/login", {"Set-Cookie": f"{SESSION_COOKIE}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0"})
             elif path in ("/", "/index.html"):
                 if self._guard(False):
-                    html = (STATIC / "index.html").read_text(encoding="utf-8").replace("__TOKEN__", token).replace("__LIBS__", html_escape(json.dumps({"plotly": (STATIC / "vendor" / "plotly.min.js").is_file(), "ag-grid": (STATIC / "vendor" / "ag-grid-community.min.js").is_file(), "ag-grid-css": [f for f in ("ag-grid.css", "ag-theme-quartz.css") if (STATIC / "vendor" / f).is_file()]}), quote=True))
+                    html = (STATIC / "index.html").read_text(encoding="utf-8").replace("__TOKEN__", token).replace("__LIBS__", html_escape(json.dumps({"plotly": static_file("vendor/plotly.min.js") is not None, "ag-grid": static_file("vendor/ag-grid-community.min.js") is not None, "ag-grid-css": [f for f in ("ag-grid.css", "ag-theme-quartz.css") if static_file("vendor/" + f) is not None]}), quote=True))
                     self._send(HTTPStatus.OK, html.encode(), "text/html; charset=utf-8")
-            elif path.startswith("/static/") and path[8:] in FILES and (STATIC / path[8:]).is_file():
+            elif path.startswith("/static/") and path[8:] in FILES and static_file(path[8:]) is not None:
                 if self._guard(False):
-                    self._send(HTTPStatus.OK, (STATIC / path[8:]).read_bytes(), FILES[path[8:]], revalidate=True)
+                    self._send(HTTPStatus.OK, static_file(path[8:]).read_bytes(), FILES[path[8:]], revalidate=True)
             elif path.startswith("/api/"):
                 if not self._guard(True):
                     return

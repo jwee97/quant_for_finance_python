@@ -35,3 +35,15 @@ def test_check_mode_copies_nothing(tmp_path, monkeypatch):
     mod = _load()
     monkeypatch.setattr(mod, "VENDOR", tmp_path / "vendor")
     assert mod.main(["--check"]) == 0 and not (tmp_path / "vendor").exists()
+
+
+def test_an_installed_plotly_package_is_served_without_copying_anything(tmp_path, monkeypatch):
+    pkg = tmp_path / "pkgs" / "plotly" / "package_data"
+    pkg.mkdir(parents=True)
+    (tmp_path / "pkgs" / "plotly" / "__init__.py").write_text("")
+    (pkg / "plotly.min.js").write_text("/* plotly */")
+    monkeypatch.syspath_prepend(str(tmp_path / "pkgs"))
+    monkeypatch.delitem(sys.modules, "plotly", raising=False)
+    from src.webapp import server
+    hit = server.static_file("vendor/plotly.min.js")
+    assert hit is not None and hit.read_text() == "/* plotly */" and server.static_file("vendor/nothing.js") is None
