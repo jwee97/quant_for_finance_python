@@ -67,7 +67,8 @@
       if (f.source === "massive") {
         W.massiveBox(box, ks.massive_status, "futures");
         h("p", "hint", box, "Massive keeps every contract of a product with its session bars and exchange settlement prices, so this builds a real forward curve (roll, carry, spreads), with no open interest. Search a product, choose how many years.");
-        W.finder(box, f.products, f.names, { kind: "futures", source: "massive", after: changed });
+        if (ks.massive_status && ks.massive_status.configured) W.finder(box, f.products, f.names, { kind: "futures", source: "massive", after: changed });
+        else h("p", "hint", box, "Set up the key above to search Massive's products.");
         Q.labField(box, { key: "years", label: "Years of history", kind: "choice", options: ks.massive.years.map((y) => [String(y), YEARS[y] || y + " years"]), help: "A repeat download asks only for the newest sessions: the bars are stored. Your plan sets how far back Massive answers" }, f, changed);
         return;
       }

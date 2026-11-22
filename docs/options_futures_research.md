@@ -29,6 +29,25 @@
 * **3D surface**: a canvas viewer (`surface3d.js`, no graphics library; rotate, zoom, keyboard) beside the heatmap.
 * **Saved runs**: a Repeat button resends the stored request and judges the new numbers against the saved ones (a changed result with the same request means the data, the seed or the code changed). Save buttons on Surface research, Model validation, the Strategy builder and the Spread lab; a Saved runs view in Options and Futures lists, compares (metrics, differing settings, reproducibility) and deletes them.
 
+## The volatility surface view (Options tab: Volatility surface)
+
+Built in `src/assets/vol_surface.py`, served by `GET /api/options/vol-surface`, drawn by `src/webapp/static/vol_surface.js`.
+
+* **From the quotes, in the data.** Quotes are cleaned and every rejection is counted by reason (no bid or a crossed market, no implied volatility, volatility above 300%, a price too small to carry information, the other
+  side of the chain, duplicates, expired). Coordinates: `ln(K/F)` with each expiry's own forward, or the call delta (a put is placed on the call-delta scale at its own volatility); days to expiry on the other axis.
+* **One grid, masked where there is no quote.** All expiries share the nodes. A node is filled only between two neighbouring quotes of its own expiry that are no further apart than `max(4 x median spacing, 0.10)` in
+  `k` (`0.15` in delta); the value is the linear interpolation of total variance, converted back to volatility. Outside the quoted strikes, inside a gap, and in an expiry with fewer than four quotes the node is empty
+  (`null`): never extrapolated, never bridged, never smoothed. This replaces the staircase of the old canvas viewer at the source.
+* **Raw and fitted apart.** The fitted surface is an SVI slice per expiry, evaluated only at nodes that are supported by quotes, with the error in volatility points, Gatheral's butterfly condition inside and beyond the
+  quoted range, and the calendar condition between neighbouring slices (raw and fitted), counted and located. It exists in the `ln(K/F)` coordinate only.
+* **Too little data.** With fewer than two usable expiries the answer is `smiles_only` (or `empty`) with the reason; the page shows the discrete quotes, not a manufactured surface.
+* **Four synchronised views** (3D surface, 2D heatmap, volatility smiles, term structure) of one payload; volatility and total variance grids are both returned, so the units switch without a request. Server choices
+  (date, side, coordinate, expiry range, comparison date) are in the left panel; display choices (units, raw or fitted, colour range, camera, view) are in the toolbar and survive view changes. The result is cached by
+  underlying, date and settings.
+* **Drawing.** Plotly.js when vendored (`pip install plotly`, `python scripts/vendor_libs.py`): `Plotly.react` updates in place, `uirevision` keeps the camera and zoom, the camera is kept when filters change and a
+  resized or newly shown tab is resized. Without it the app's own ECharts and canvas charts are used and the page says so. The Plotly path is tested with a stand-in object that records what it is given (axes, colour
+  scale, hover text, camera, `react` calls); the real library has not been run in this environment.
+
 ## Known limits
 
 * Plotly and AG Grid are optional: `pip install plotly dash-ag-grid` then `python scripts/vendor_libs.py` copies `plotly.min.js` and the AG Grid bundle (and its style sheets, if the version has them) into `src/webapp/static/vendor/`. The Options surface then uses Plotly's 3D surface with hover and the Saved runs view uses an AG Grid table (sort, filter, tick rows). Without the files the canvas viewer and the plain tables are used. The hand-over is tested with stand-in files; the real bundles have not been run in this environment. echarts-gl is not used (Plotly covers the surface).

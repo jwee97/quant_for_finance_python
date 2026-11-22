@@ -815,6 +815,8 @@ def test_chain_snapshots_refuse_simulated_data_and_stability_needs_three_dates(a
     for i, day in enumerate(("2026-01-02", "2026-01-05", "2026-01-06")):
         hist.save("TST", oa.build_model_chain(100.0 + i, day, 0.2 + 0.01 * i, 0.2), day, "downloaded")
     got = assets.extra_get["/api/options/history"]({"underlying": "TST", "model": "bs"})
+    import shutil
+    shutil.rmtree(hist.dir / "TST", ignore_errors=True)
     assert got["dates"] == ["2026-01-02", "2026-01-05", "2026-01-06"] and got["stability"]["model"] == "bs" and len(got["stability"]["rows"]) == 3
 
 
@@ -843,3 +845,30 @@ def test_a_saved_run_can_be_repeated_and_judged_through_the_api(assets):
     assert ok["reproduced"] and not ok["differences"]
     bad = assets.extra_post["/api/experiments/check"]({"id": rec["id"], "metrics": {**metrics, "hedge_ratio": metrics["hedge_ratio"] + 1}})
     assert not bad["reproduced"] and bad["differences"][0]["metric"] == "hedge_ratio"
+
+
+def test_the_vol_surface_endpoint_returns_one_consistent_data_set_and_caches_it(assets):
+    first = _safe(assets.extra_get["/api/options/vol-surface"]({"underlying": "AAA"}))
+    s = first["surface"]
+    assert s["meta"]["status"] == "surface" and s["meta"]["extrapolated_nodes"] == 0 and first["dates"][0] == "current" and first["provenance"]["calibration"]["status"] == "calibrated"
+    assert len(s["z"]["raw"]["vol"]) == len(s["y"]) and len(s["z"]["fit"]["w"]) == len(s["y"]) and any(t["atm_iv"] for t in s["term"]["rows"])
+    again = _safe(assets.extra_get["/api/options/vol-surface"]({"underlying": "AAA"}))
+    assert again["surface"] == s and len(assets.extra_get["/api/options/vol-surface"].__self__._vol_surface_cache) >= 1
+    delta = _safe(assets.extra_get["/api/options/vol-surface"]({"underlying": "AAA", "coordinate": "delta", "selection": "call", "min_dte": 20, "max_dte": 150}))["surface"]
+    assert delta["z"]["fit"] is None and delta["meta"]["coordinate"] == "delta" and all(20 <= x["dte"] <= 150 for x in delta["slices"])
+    for bad in ({"selection": "x"}, {"coordinate": "q"}, {"date": "1999-01-01"}, {"compare": "2001-02-03"}):
+        with pytest.raises(ApiError):
+            assets.extra_get["/api/options/vol-surface"]({"underlying": "AAA", **bad})
+
+
+def test_a_kept_dated_chain_can_be_the_observation_date_and_the_comparison(assets):
+    from src.assets import options_analytics as oa
+    from src.assets.option_history import History
+    hist = History(assets.root)
+    hist.save("BBB", oa.build_model_chain(100.0, "2025-12-01", 0.3, 0.3), "2025-12-01", "downloaded")
+    try:
+        out = _safe(assets.extra_get["/api/options/vol-surface"]({"underlying": "BBB", "date": "2025-12-01", "compare": "2025-12-01"}))
+        assert out["as_of"] == "2025-12-01" and out["source_kind"] == "snapshot" and "2025-12-01" in out["dates"] and out["surface"]["history"]["term"]
+    finally:
+        import shutil
+        shutil.rmtree(hist.dir / "BBB", ignore_errors=True)

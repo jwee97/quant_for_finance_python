@@ -9,7 +9,7 @@
   const STRUCTURES_GUIDE = "technique-option-structures-distribution-and-positioning";
   const GUIDES = { fit: "technique-option-pricing-models-and-calibration", price: "technique-exotic-and-american-options", hedge: "technique-hedging-with-transaction-costs", distribution: STRUCTURES_GUIDE, positioning: STRUCTURES_GUIDE,
     strategy: STRUCTURES_GUIDE, backtest: "technique-option-strategies-and-vol-premium" };
-  const ANALYTIC = new Set(["overview", "chain", "smile", "surface", "research", "distribution", "positioning"]);
+  const ANALYTIC = new Set(["overview", "chain", "smile", "surface", "volsurf", "research", "distribution", "positioning"]);
   const MODEL_MODES = new Set(["fit", "validate", "price", "hedge"]);
   const MODEL_SLOT = { market: 0, heston: 1, nig: 2, vg: 3, merton: 4, kou: 6 };                  // a colour for each model that does not change with what else is shown (the palette's own order, without its second green)
   const modelColor = (id) => (id === "bs" || id === "bs_continuous" ? css("--muted") : Q.colorOf(MODEL_SLOT[id] === undefined ? 6 : MODEL_SLOT[id]));
@@ -19,13 +19,14 @@
   const O = {
     id: "options", root: "#options", view: "#view-options", title: "Options", api: 13, mode: "overview", busy: "", results: {}, errors: {}, cache: new Map(), guard: null, go: null, progress: null,
     about: "Read an option chain, see the distribution it implies and where the open interest sits, see what a book of options is exposed to, draw what a structure pays and test a rolling strategy. The chain is a model quoted at the underlying's real price unless you download a real one (free, below) or bring your own file.",
-    modes: [["overview", "Overview"], ["chain", "Chain"], ["smile", "Smile and skew"], ["surface", "Surface and term"], ["research", "Surface research"], ["distribution", "Implied distribution"], ["positioning", "Open interest and gamma"], ["fit", "Model fit"], ["validate", "Model validation"],
+    modes: [["overview", "Overview"], ["chain", "Chain"], ["smile", "Smile and skew"], ["surface", "Surface and term"], ["volsurf", "Volatility surface"], ["research", "Surface research"], ["distribution", "Implied distribution"], ["positioning", "Open interest and gamma"], ["fit", "Model fit"], ["validate", "Model validation"],
       ["price", "Model prices"], ["hedge", "Hedging cost"], ["risk", "Greeks and risk"], ["strategy", "Strategy builder"], ["backtest", "Backtest"], ["saved", "Saved runs"]],
-    groups: [["Market intelligence", ["overview", "chain", "smile", "surface", "research", "distribution", "positioning"]], ["Model laboratory", ["fit", "validate", "price", "hedge"]], ["Strategy studio", ["strategy"]],
+    groups: [["Market intelligence", ["overview", "chain", "smile", "surface", "volsurf", "research", "distribution", "positioning"]], ["Model laboratory", ["fit", "validate", "price", "hedge"]], ["Strategy studio", ["strategy"]],
       ["Portfolio and validation", ["risk", "backtest", "saved"]]],
-    runLabel: { saved: "Refresh", research: "Refresh", validate: "Validate the models", overview: "Refresh", chain: "Refresh", smile: "Refresh", surface: "Refresh", distribution: "Refresh", positioning: "Refresh", fit: "Fit the models", price: "Price the product", hedge: "Cost the hedge", risk: "Revalue the book",
+    runLabel: { volsurf: "Refresh", saved: "Refresh", research: "Refresh", validate: "Validate the models", overview: "Refresh", chain: "Refresh", smile: "Refresh", surface: "Refresh", distribution: "Refresh", positioning: "Refresh", fit: "Fit the models", price: "Price the product", hedge: "Cost the hedge", risk: "Revalue the book",
       strategy: "Draw the payoff", backtest: "Run the backtest" },
-    blurb: { research: "The surface in the coordinates a volatility researcher uses: log-forward-moneyness, total variance and delta, with a fitted SVI slice per expiry, its residuals against the bid-ask, butterfly and calendar diagnostics, and a joint SSVI fit.",
+    blurb: { volsurf: "The implied-volatility surface built from the quotes themselves: one grid for every expiry, interpolated only between neighbouring quotes (masked where there are none, never extrapolated), the raw surface apart from the fitted one, in four synchronised views: 3D, heatmap, smiles and term structure.",
+      research: "The surface in the coordinates a volatility researcher uses: log-forward-moneyness, total variance and delta, with a fitted SVI slice per expiry, its residuals against the bid-ask, butterfly and calendar diagnostics, and a joint SSVI fit.",
       saved: "The research runs you saved from Surface research, Model validation and the Strategy builder: compare two to eight, see which settings differ and whether a repeat reproduced.",
       validate: "Fit the models, then judge them on quotes they were not fitted to, on complexity and on numerical health: not on the in-sample error alone.", overview: "Implied against realised volatility, where it ranks, the put-call balance, the term structure and the skew: the page to open first.",
       chain: "Calls and puts side by side for one expiry: bid, ask, implied volatility, delta, volume and open interest, with the at-the-money row marked and stale or wide quotes flagged.",
@@ -39,7 +40,7 @@
       risk: "Delta, gamma, vega and theta of a book of options and shares, by expiry, and what it would make or lose when the price and implied volatility move.",
       strategy: "Choose one of twenty-five structures and see its payoff at expiry, today and half way, where the price is likely to end, its profit by price and day, its Greeks by price, its break-evens, maximum profit and loss, margin and odds; set up to three others beside it.",
       backtest: "Sell or buy premium on a schedule on a simulated option market: one strategy, one setting varied to see how fragile the choice is, or every strategy side by side; with the equity curve, the risk measures, where the profit came from by Greek, the costs and the trades." },
-    form: { underlying: "", expiry: "", window: "15", rate: "", dividend: "", premium: "15", hideStale: false, minOi: "", rExpiries: "8", vLoss: "iv", vMode: "strikes", dealer: "calls_long_puts_short", dealerShare: "100", volRule: "sticky_strike", skewSlope: "", exercise: "european",
+    form: { underlying: "", expiry: "", window: "15", rate: "", dividend: "", premium: "15", hideStale: false, minOi: "", rExpiries: "8", vLoss: "iv", vMode: "strikes", dealer: "calls_long_puts_short", dealerShare: "100", vsSel: "otm", vsCoord: "k", vsMin: "0", vsMax: "400", vsDate: "current", vsCompare: "", volRule: "sticky_strike", skewSlope: "", exercise: "european",
       book: [], spotShocks: "-10, -5, -2, 0, 2, 5, 10", volShocks: "-5, 0, 5, 10", days: "0",
       strategy: "long_straddle", sDte: "30", sFar: "", offset: "5", width: "5", quantity: "1", fill: "mid", spread: "5", commission: "0.65", viewVol: "", viewDrift: "", horizon: "", legs: [], compare: new Set(),
       bt: "short_put", btMode: "single", btDays: "252", btSeed: "0", btCapital: "100000", btPremium: "25", btCommission: "0.65", btFill: "100", btParams: {}, btTiming: false, btWindow: "21", btThreshold: "0",
@@ -245,6 +246,16 @@
       Q.labField(v, { key: "vMode", label: "Quotes held out", kind: "choice", options: [["strikes", "A quarter of the strikes of every expiry"], ["expiry", "The longest expiry"]] }, f, after);
       h("p", "hint", v, "A model is judged on quotes it was not fitted to, on how many parameters it needs and on whether its parameters sit at their bounds: a single in-sample error rewards flexibility.");
     }
+    if (m === "volsurf") {
+      const b = sec("2. Quotes and coordinate"), last = O.results.volsurf && O.results.volsurf.data, dates = last ? last.dates : ["current"];
+      Q.labField(b, { key: "vsDate", label: "Observation date", kind: "choice", options: dates.map((x) => [x, x === "current" ? "Current chain" : x]), help: "The current chain, or a dated chain you kept (Model validation: Keep today's chain)" }, f, rerun);
+      Q.labField(b, { key: "vsSel", label: "Options used", kind: "choice", options: [["otm", "Out of the money (puts below the forward, calls above)"], ["call", "Calls only"], ["put", "Puts only"]] }, f, rerun);
+      Q.labField(b, { key: "vsCoord", label: "Moneyness coordinate", kind: "choice", options: [["k", "Log-forward-moneyness ln(K/F)"], ["delta", "Call delta (no SVI fit)"]] }, f, rerun);
+      const r = sec("3. Expiries");
+      Q.labField(r, { key: "vsMin", label: "From (days)", kind: "number", step: 1, min: 0, max: 5000 }, f, rerun);
+      Q.labField(r, { key: "vsMax", label: "To (days)", kind: "number", step: 1, min: 1, max: 10000 }, f, rerun);
+      Q.labField(r, { key: "vsCompare", label: "Compare the term structure with", kind: "choice", options: [["", "Nothing"], ...dates.filter((x) => x !== "current").map((x) => [x, x])], help: "Needs dated chains kept on this machine" }, f, rerun);
+    }
     if (m === "research") { const b = sec("2. Surface"); Q.labField(b, { key: "rExpiries", label: "Expiries to fit", kind: "number", step: 1, min: 2, max: 14 }, f, rerun); }
     if (m === "price") modelPriceForm(sec);
     if (m === "hedge") modelHedgeForm(sec);
@@ -343,6 +354,7 @@
     if (ANALYTIC.has(m)) {
       if (!fromForm) W.dropCache(O);                                                                       // the Refresh button asks again; a change in the form asks only for what it changed
       return W.request(O, () => {
+        if (m === "volsurf") { const a = { ...settings(), selection: f.vsSel, coordinate: f.vsCoord, min_dte: Number(f.vsMin) || 0, max_dte: Number(f.vsMax) || 10000, date: f.vsDate === "current" ? undefined : f.vsDate, compare: f.vsCompare || undefined }; return [{ modes: ["volsurf"], path: "/api/options/vol-surface", query: a, cacheKey: key("volsurf", a) }]; }
         if (m === "research") { const a = { ...settings(), expiries: Number(f.rExpiries) }; return [{ modes: ["research"], path: "/api/options/surface/research", query: a, cacheKey: key("research", a) }]; }
         if (m === "distribution" || m === "positioning") { const a = { ...settings(), expiry: f.expiry || undefined, ...(m === "positioning" ? { dealer: f.dealer, dealer_share: Number(f.dealerShare) / 100 } : {}) }; return [{ modes: [m], path: "/api/options/" + m, query: a, cacheKey: key(m, a) }]; }
         const q = chainQuery(), steps = [];
@@ -410,7 +422,7 @@
     Q.labEmpty(root, O, text[0], [text[1]], O.runLabel[O.mode]);
   };
   O.draw = () => Q.drawLab(O);
-  O.build = (root, d, body) => ({ saved: (r, x) => window.Experiments.view(r, x, { header, lab: O }), research: (r, x, b) => window.OptionsResearch.research(r, x, { header, nameOf, body: b }), validate: (r, x, b) => window.OptionsResearch.validate(r, x, { header, nameOf, body: b, underlying: O.form.underlying }), overview: buildOverview, chain: buildChain, smile: buildSmile, surface: buildSurface, distribution: buildDistribution, positioning: buildPositioning, fit: buildFit, price: buildPrice, hedge: buildHedge, risk: buildRisk, strategy: buildStrategy, backtest: buildBacktest })[O.mode](root, d, body);
+  O.build = (root, d, body) => ({ volsurf: (r, x) => window.VolSurface.view(r, x, { header, nameOf }), saved: (r, x) => window.Experiments.view(r, x, { header, lab: O }), research: (r, x, b) => window.OptionsResearch.research(r, x, { header, nameOf, body: b }), validate: (r, x, b) => window.OptionsResearch.validate(r, x, { header, nameOf, body: b, underlying: O.form.underlying }), overview: buildOverview, chain: buildChain, smile: buildSmile, surface: buildSurface, distribution: buildDistribution, positioning: buildPositioning, fit: buildFit, price: buildPrice, hedge: buildHedge, risk: buildRisk, strategy: buildStrategy, backtest: buildBacktest })[O.mode](root, d, body);
 
   /* ---------- overview ---------- */
   const header = (root, title, sub, guide) => Q.labHead(root, title, sub, guide || GUIDE);

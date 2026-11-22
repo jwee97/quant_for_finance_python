@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import re
 import threading
+from collections import OrderedDict
 from dataclasses import replace
 from pathlib import Path
 
@@ -84,7 +85,7 @@ class AssetApi:
     # ------------------------------------------------------------------------------------------------------------ routes
     def get_routes(self) -> dict:
         return {"/api/assets/catalog": self.catalog, "/api/options/chain": self.options_chain, "/api/options/surface": self.options_surface, "/api/options/distribution": self.options_distribution,
-                "/api/options/positioning": self.options_positioning, "/api/options/surface/research": self.options_surface_research, "/api/futures/curve": self.futures_curve,
+                "/api/options/positioning": self.options_positioning, "/api/options/surface/research": self.options_surface_research, "/api/options/vol-surface": self.options_vol_surface, "/api/futures/curve": self.futures_curve,
                 "/api/futures/roll": self.futures_roll, "/api/futures/research": self.futures_research, "/api/futures/spread": self.futures_spread, "/api/experiments": self.experiments_list, "/api/options/history": self.options_history, "/api/experiments/get": self.experiments_get, "/api/futures/series": self.futures_series, "/api/crypto/overview": self.crypto_overview, "/api/crypto/funding": self.crypto_funding, "/api/crypto/cross-exchange": self.crypto_cross_exchange}
 
     def post_routes(self) -> dict:
@@ -354,6 +355,62 @@ class AssetApi:
         return _wrap("options_surface_research", {"underlying": underlying, "surface": out}, {"quotes": "platform" if source == "simulated" else source, "fitted_surface": "simulated" if source == "simulated" else "model"},
                      warnings, ctx.as_of, notes + out["limits"], provenance={"instrument": f"{underlying} options", "assumptions": out["limits"],
                      "calibration": {"status": "calibrated", "model": "SVI per expiry, SSVI jointly", "rmse": float(np.mean([s["rmse_vol_points"] for s in out["slices"]]) / 100.0), "fit_date": str(ctx.as_of.date())}})
+
+    def options_vol_surface(self, q: dict) -> dict:
+        """``GET /api/options/vol-surface?underlying=SPY&date=2026-01-02&selection=otm&coordinate=k&min_dte=0&max_dte=400&nx=41&fit=1&compare=2025-12-01``: the volatility surface as built in
+        ``assets/vol_surface.py``: cleaned quotes with every rejection counted, one grid for all expiries, observed-supported nodes only (masked elsewhere, never extrapolated), raw and fitted surfaces apart,
+        diagnostics, the discrete smiles and at-the-money term structure (optionally with the term structure of an earlier kept date). ``date`` picks a kept dated chain (``/api/options/history``); without it
+        the current chain is used. Cached by underlying, date, filters and settings."""
+        from ..assets import vol_surface as vsf
+        from ..assets.option_history import History
+        underlying, rate, dividend, premium = self._option_params(q)
+        selection, coordinate = _choice(q, "selection", "otm", vsf.SELECTIONS), _choice(q, "coordinate", "k", vsf.COORDINATES)
+        min_dte, max_dte = _number(q, "min_dte", 0, 0, 5000), _number(q, "max_dte", 10_000, 1, 10_000)
+        nx = _number(q, "nx", 41, 11, 161, integer=True)
+        fit = str(q.get("fit", "1")).lower() not in ("0", "false", "no")
+        hist = History(self.root)
+        try:
+            kept = hist.dates(underlying)
+        except ValueError:
+            kept = []
+        date = str(q.get("date") or "")
+        compare = str(q.get("compare") or "")
+        for name, d in (("date", date), ("compare", compare)):
+            if d and d != "current" and d not in kept:
+                raise ApiError(f"{name} must be a kept date ({kept if kept else 'none kept yet: use Keep todays chain in the Model validation view'}) or empty for the current chain")
+        chain, ctx, source, notes = self._option_chain(underlying, rate, dividend, premium)
+        as_of = str(ctx.as_of.date())
+        if date and date != "current":
+            chain, source, as_of = hist.load(underlying, date), "snapshot", date
+            chain = oa.prepare_chain(chain)
+        key = (underlying, as_of, source, selection, coordinate, float(min_dte), float(max_dte), nx, fit, compare, round(float(rate or 0), 6), round(float(dividend or 0), 6))
+        cache = self.__dict__.setdefault("_vol_surface_cache", OrderedDict())
+        with self._lock:
+            hit = cache.get(key)
+            if hit is not None:
+                cache.move_to_end(key)
+        if hit is None:
+            try:
+                hit = vsf.build(chain, selection, coordinate, min_dte, max_dte, nx, fit)
+            except ValueError as exc:
+                raise ApiError(str(exc)) from None
+            if compare:
+                hit["history"] = {"date": compare, "term": vsf.term_from_chain(oa.prepare_chain(hist.load(underlying, compare)), selection)}
+            with self._lock:
+                cache[key] = hit
+                while len(cache) > 24:
+                    cache.popitem(last=False)
+        simulated = source == "simulated"
+        data = {"underlying": underlying, "source_kind": source, "dates": ["current"] + kept, "surface": hit}
+        warnings = []
+        m = hit["meta"]
+        if m["status"] != "surface":
+            warnings.append(m["reason"])
+        elif hit["fit"] and (hit["fit"]["calendar"]["violations"] or hit["fit"]["butterfly_failing_slices"]):
+            warnings.append(hit["fit"]["reading"])
+        cal = {"status": "calibrated", "model": "SVI per expiry", "rmse": float(hit["fit"]["mean_rmse_vol_points"] / 100.0), "fit_date": as_of} if hit.get("fit") else {"status": "not_applicable"}
+        return _wrap("options_vol_surface", data, {"quotes": "platform" if simulated else ("downloaded" if source == "snapshot" else source), "fitted_surface": "simulated" if simulated else "model"}, warnings, ctx.as_of if as_of == str(ctx.as_of.date()) else pd.Timestamp(as_of),
+                     notes + hit["limits"], provenance={"instrument": f"{underlying} options", "assumptions": hit["limits"], "calibration": cal})
 
     def options_surface(self, q: dict) -> dict:
         """``GET /api/options/surface?underlying=SPY``: the implied-volatility surface (strike by expiry), the term structure, the skew metrics of every expiry and the static no-arbitrage checks."""

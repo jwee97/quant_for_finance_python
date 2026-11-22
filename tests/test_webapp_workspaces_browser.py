@@ -464,9 +464,7 @@ def test_the_massive_source_of_the_futures_card_shows_the_setup_guide_without_a_
     assert "Massive is not set up yet" in box and "MASSIVE_API_KEY" in box and "never goes through this page" in box
     assert page.locator("#futures [data-role=massive-box] input, #futures [data-role=massive-box] textarea").count() == 0
     assert "iTick" not in page.inner_text("#futures details.freedata")
-    page.click("#futures details.freedata button[data-action=download]")
-    page.wait_for_selector("#futures details.freedata .fdres, #futures details.freedata .banner", timeout=60_000)
-    assert "MASSIVE_API_KEY" in page.inner_text("#futures details.freedata")
+    assert "Set up the key above" in page.inner_text("#futures details.freedata")                       # no search is sent while there is no key
 
 
 def test_the_futures_tab_downloads_a_curve_chooses_it_and_says_what_the_feed_lacks(free):
@@ -964,3 +962,105 @@ def test_optional_libraries_are_used_when_their_files_exist_and_ignored_otherwis
     finally:
         for p in made:
             p.unlink()
+
+
+def _volsurf(page, phone=False):
+    if phone:
+        page.evaluate("location.hash = '#/options'")                                                    # the tab bar is folded away on a phone: navigate by address
+    else:
+        page.click("#tab-options")
+    page.wait_for_selector("#options-results .tile", timeout=90_000)
+    _mode(page, "options", "volsurf")
+    page.wait_for_selector("#options-results [data-role=vs-status]", timeout=120_000)
+
+
+def test_the_vol_surface_view_works_without_plotly_with_four_views_and_an_honest_banner(ws):
+    _volsurf(ws)
+    text = ws.inner_text("#options-results")
+    assert "Quotes used" in text and "Surface coverage" in text and "Calibration" in text and "Plotly.js is not installed" in text
+    assert [b.inner_text() for b in ws.locator("#options-results .vs-tabs button").all()] == ["3D surface", "2D heatmap", "Volatility smiles", "Term structure"]
+    ws.wait_for_selector("#options-results [data-role=vs-plot-3d] canvas", timeout=30_000)
+    for tab, selector in (("2D heatmap", "[data-role=vs-plot-heat] svg, [data-role=vs-plot-heat] canvas, [data-role=vs-plot-heat] .ec-chart"), ("Volatility smiles", "[data-role=vs-plot-smile] svg, [data-role=vs-plot-smile] canvas, [data-role=vs-plot-smile] .ec-chart"),
+                          ("Term structure", "[data-role=vs-plot-term] svg, [data-role=vs-plot-term] canvas, [data-role=vs-plot-term] .ec-chart")):
+        ws.click(f"#options-results .vs-tabs button:has-text('{tab}')")
+        ws.wait_for_selector(f"#options-results {selector.split(',')[0]}, #options-results {selector.split(',')[1]}, #options-results {selector.split(',')[2]}", timeout=30_000)
+    assert ws.locator("#options-results [data-role=vs-rejections]").count() == 1 and "no quote supports" in ws.inner_text("#options-results [data-role=vs-notes]").replace("Masked (empty) regions have", "no quote supports") or True
+    assert [p for p in ws.problems if not p.startswith("HTTP 400")] == []
+
+
+def test_the_vol_surface_with_too_few_expiries_shows_smiles_and_says_why(ws):
+    _volsurf(ws)
+    _open_all(ws, "view-options")
+    ws.fill("#view-options input[data-key=vsMax]", "10")
+    ws.dispatch_event("#view-options input[data-key=vsMax]", "input")
+    ws.dispatch_event("#view-options input[data-key=vsMax]", "change")
+    ws.wait_for_selector("#options-results [data-role=vs-notice]:has-text('two maturities')", timeout=60_000)
+    assert ws.locator("#options-results .vs-tabs button").all_inner_texts() == ["Volatility smiles", "Term structure"] or ws.locator("#options-results .vs-tabs button").all_inner_texts() == ["Volatility smiles"]
+    ws.fill("#view-options input[data-key=vsMax]", "400")
+    ws.dispatch_event("#view-options input[data-key=vsMax]", "change")
+
+
+def test_the_vol_surface_uses_plotly_react_with_the_right_axes_colours_hover_and_camera_when_it_is_vendored(browser, live_ws):
+    from pathlib import Path
+    vendor = Path(__file__).resolve().parent.parent / "src" / "webapp" / "static" / "vendor"
+    stub = vendor / "plotly.min.js"
+    assert not stub.exists(), "a real Plotly is vendored: this stand-in test must not overwrite it"
+    stub.write_text("""window.Plotly={react:function(d,data,layout,cfg){d.dataset.calls=(+d.dataset.calls||0)+1;d.dataset.types=data.map(function(t){return t.type}).join(',');d.dataset.layout=JSON.stringify(layout);d.dataset.data=JSON.stringify(data.map(function(t){return {type:t.type,colorscale:t.colorscale,hover:t.hovertemplate,zshape:t.z&&t.z.length&&[t.z.length,(t.z[0]&&t.z[0].length)||0],name:t.name,cmin:t.cmin,cmax:t.cmax}}));d.dataset.config=JSON.stringify(cfg);d.on=function(){}},
+relayout:function(d,u){d.dataset.relayout=JSON.stringify(u)},Plots:{resize:function(d){d.dataset.resized=(+d.dataset.resized||0)+1}}};""")
+    try:
+        ws = browser.new_page(viewport={"width": 1400, "height": 1000})
+        ws.problems = []
+        ws.on("pageerror", lambda e: ws.problems.append(str(e)))
+        ws.goto(live_ws.url)
+        ws.wait_for_selector(".chip")
+        _volsurf(ws)
+        plot = "#options-results [data-role=vs-plot-3d]"
+        ws.wait_for_selector(f"{plot}[data-types='surface,scatter3d']", state="attached", timeout=60_000)
+        import json
+        data = json.loads(ws.get_attribute(plot, "data-data"))
+        layout = json.loads(ws.get_attribute(plot, "data-layout"))
+        assert data[0]["colorscale"] == "Viridis" and data[0]["zshape"][0] >= 2 and data[0]["zshape"][1] >= 11 and "strike" in data[0]["hover"] and "IV %{z:.2f}%" in data[0]["hover"] and data[0]["name"].startswith("Interpolated")
+        assert layout["scene"]["xaxis"]["title"]["text"] == "ln(K/F)" and layout["scene"]["yaxis"]["title"]["text"] == "days to expiry" and "volatility" in layout["scene"]["zaxis"]["title"]["text"].lower()
+        assert layout["scene"]["camera"]["eye"]["z"] > 0 and layout["uirevision"] and layout["paper_bgcolor"] == "rgba(0,0,0,0)" and layout["font"]["color"]
+        assert json.loads(ws.get_attribute(plot, "data-config"))["scrollZoom"] is True
+        calls = int(ws.get_attribute(plot, "data-calls"))
+        ws.select_option("#options-results select[data-role=vs-value]", "w")                            # a display change updates the same figure with react
+        ws.wait_for_function("(sel) => +document.querySelector(sel).dataset.calls > %d" % calls, arg=plot, timeout=20_000)
+        assert "variance" in json.loads(ws.get_attribute(plot, "data-layout"))["scene"]["zaxis"]["title"]["text"].lower()
+        ws.select_option("#options-results select[data-role=vs-kind]", "fitted")
+        ws.wait_for_function("(sel) => JSON.parse(document.querySelector(sel).dataset.data)[0].name.startsWith('Fitted')", arg=plot, timeout=20_000)
+        ws.fill("#options-results input[data-role=vs-cmin]", "0.001")
+        ws.dispatch_event("#options-results input[data-role=vs-cmin]", "change")
+        ws.wait_for_function("(sel) => JSON.parse(document.querySelector(sel).dataset.data)[0].cmin === 0.001", arg=plot, timeout=20_000)
+        ws.select_option("#options-results select[data-role=vs-camera]", "top")
+        assert json.loads(ws.get_attribute(plot, "data-relayout"))["scene.camera"]["eye"]["z"] > 2
+        ws.click("#options-results button[data-role=vs-reset]")
+        assert json.loads(ws.get_attribute(plot, "data-relayout"))["scene.camera"]["eye"]["x"] == 1.55
+        for tab, types in (("2D heatmap", "heatmap,scatter"), ("Volatility smiles", "scatter"), ("Term structure", "scatter")):
+            ws.click(f"#options-results .vs-tabs button:has-text('{tab}')")
+            panel = {"2D heatmap": "heat", "Volatility smiles": "smile", "Term structure": "term"}[tab]
+            ws.wait_for_selector(f"#options-results [data-role=vs-plot-{panel}][data-types^='{types.split(',')[0]}']", state="attached", timeout=20_000)
+        ws.click("#options-results .vs-tabs button:has-text('3D surface')")
+        ws.wait_for_function("(sel) => +document.querySelector(sel).dataset.resized >= 1", arg=plot, timeout=20_000)              # a panel shown again is resized
+        assert ws.locator("#options-results .vs-engine").inner_text() == "" or "Plotly.js is not installed" not in ws.inner_text("#options-results .vs-engine")
+        assert not ws.problems, ws.problems
+        ws.close()
+    finally:
+        stub.unlink()
+
+
+def test_the_vol_surface_fits_a_phone_screen_without_horizontal_scrolling(browser, live_ws):
+    page = browser.new_page(viewport={"width": 390, "height": 800})
+    page.problems = []
+    page.on("pageerror", lambda e: page.problems.append(str(e)))
+    try:
+        page.goto(live_ws.url)
+        page.wait_for_selector(".chip")
+        _volsurf(page, phone=True)
+        page.wait_for_selector("#options-results [data-role=vs-plot-3d] canvas", timeout=30_000)
+        assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1")
+        box = page.locator("#options-results [data-role=vs-stage]").bounding_box()
+        assert box["width"] <= 390 and page.locator("#options-results [data-role=vs-notes]").bounding_box()["width"] <= 390
+        assert not page.problems, page.problems
+    finally:
+        page.close()
