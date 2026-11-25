@@ -357,7 +357,50 @@ def funding_regimes(f: pd.Series, window: int = 30, high: float = 0.10, low: flo
     return {"current": str(label.iloc[-1]), "since": str(chg.index[-1].date()), "thresholds": {"negative_below": low, "crowded_above": high}, "changes": changes[-12:], "n_changes": len(changes)}
 
 
-def funding_intelligence(series: dict, venues: tuple = ("DERIBIT", "BINANCE", "BYBIT", "OKX"), observed_only: bool = True, days: int = 365, now: datetime | None = None) -> dict:
+def open_interest_view(frame: pd.DataFrame, meta: dict | None = None) -> dict:
+    """Open interest by exchange from a downloaded daily frame (``time`` and one column per venue): the latest value, its 1-, 7- and 30-day change, its percentile in the history held and the history length.
+    Venues report in different units (dollars or coins), so each column is read against its own history and never added to another's."""
+    if frame is None or frame.empty:
+        return unavailable("no open-interest download", ["download open interest (Free data, crypto, 'Open interest by exchange')"])
+    f = frame.copy()
+    f["time"] = pd.to_datetime(f["time"])
+    f = f.set_index("time").sort_index()
+    units = (meta or {}).get("units", {})
+    rows = []
+    for venue in f.columns:
+        s = f[venue].dropna()
+        if len(s) < 2:
+            continue
+        chg = lambda n: float(s.iloc[-1] / s.iloc[-1 - n] - 1.0) if len(s) > n and s.iloc[-1 - n] > 0 else None                  # noqa: E731
+        rows.append({"venue": str(venue), "unit": units.get(venue, "unknown"), "latest": float(s.iloc[-1]), "change_1d": chg(1), "change_7d": chg(7), "change_30d": chg(30), "percentile": percentile_rank(s, float(s.iloc[-1])),
+                     "history_days": int(len(s)), "as_of": str(s.index[-1].date()), "series": {"dates": [str(d.date()) for d in s.index], "values": [round(float(x), 2) for x in s]}})
+    if not rows:
+        return unavailable("the open-interest download holds fewer than two days for every venue")
+    return {"state": "ok", "venues": rows, "units_note": "venues report in different units; read changes and percentiles, not the levels against each other"}
+
+
+def liquidation_view(payload: dict | None) -> dict:
+    """Recent filled liquidations from a downloaded OKX window: the number, the notional (size x contract value x price) of longs and shorts liquidated, the largest event and the window's length. A
+    short window of observations, not a history."""
+    if not payload or not payload.get("events"):
+        return unavailable("no liquidation download", ["download recent liquidations (Free data, crypto, 'Recent liquidations')"])
+    ev = pd.DataFrame(payload["events"])
+    cv = payload.get("contract_value")
+    ev["notional"] = ev["size_contracts"] * (cv if cv else float("nan")) * ev["price"]
+    longs = ev[ev["side"] == "sell"]                                                          # a forced sell closes a long
+    shorts = ev[ev["side"] == "buy"]
+    hours = (ev["time"].max() - ev["time"].min()) / 3.6e6
+    out = {"state": "ok", "venue": payload.get("venue"), "events": int(len(ev)), "window_hours": float(hours), "fetched_at": payload.get("fetched_at"), "longs_liquidated": int(len(longs)), "shorts_liquidated": int(len(shorts)),
+           "note": "only the recent window the exchange keeps; not a history"}
+    if cv:
+        out.update({"longs_notional": float(longs["notional"].sum()), "shorts_notional": float(shorts["notional"].sum()), "largest_notional": float(ev["notional"].max())})
+    else:
+        out["notional"] = "unavailable: the contract value was not fetched, sizes are in contracts"
+    return out
+
+
+def funding_intelligence(series: dict, venues: tuple = ("DERIBIT", "BINANCE", "BYBIT", "OKX"), observed_only: bool = True, days: int = 365, now: datetime | None = None, open_interest: dict | None = None,
+                         liquidations: dict | None = None) -> dict:
     """Funding by coin and venue, normalised to a per-interval rate and an annualised rate (365), with its percentile and z-score, regime changes, the cross-venue dispersion, the spot-perpetual basis
     percentile and the payment calendar. With ``observed_only`` a venue whose funding is simulated is listed as unavailable instead of shown. Open interest, liquidations and dated futures are not
     stored by the platform: they are reported as unavailable with what would be needed."""
@@ -396,8 +439,8 @@ def funding_intelligence(series: dict, venues: tuple = ("DERIBIT", "BINANCE", "B
             if len(b) > 30:
                 basis[sym] = {"basis": float(b.iloc[-1]), "annualised_if_held_8h": float(b.iloc[-1]), "percentile_1y": percentile_rank(b.tail(365), float(b.iloc[-1])), "zscore_90d": last_zscore(b, 90)}
     return {"state": "ok", "observed_only": bool(observed_only), "rows": rows, "unavailable_rows": skipped, "dispersion": by_coin, "basis": basis,
-            "open_interest": unavailable("open interest by exchange is not stored by the platform", ["an exchange integration (OKX, Binance, Bybit public open-interest endpoints)", "a stored daily history of it"]),
-            "liquidations": unavailable("liquidation observations are not stored by the platform", ["an exchange liquidation feed or a vendor history"]),
+            "open_interest": open_interest if open_interest is not None else unavailable("open interest by exchange has not been downloaded", ["download open interest (Free data, crypto: OKX, Bybit and Binance public endpoints)"]),
+            "liquidations": liquidations if liquidations is not None else unavailable("liquidation observations have not been downloaded", ["download recent liquidations (Free data, crypto: OKX keeps a short window)", "a vendor history for anything longer"]),
             "dated_futures": unavailable("the dated-futures term structure is not stored for crypto", ["Deribit or CME dated futures prices by expiry"]),
             "normalisation": "rate per interval = daily rate x interval hours / 24; annualised = daily rate x 365; funding is the rate EARNED BY THE SHORT (positive when longs pay)."}
 

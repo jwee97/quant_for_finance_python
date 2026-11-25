@@ -11,7 +11,7 @@
     mixed: "The curve is neither clearly rising nor clearly falling over its front contracts." };
 
   const F = {
-    id: "futures", root: "#futures", view: "#view-futures", title: "Futures", api: 12, mode: "curve", busy: "", results: {}, errors: {}, cache: new Map(), guard: null, go: null, progress: null,
+    id: "futures", root: "#futures", view: "#view-futures", title: "Futures", api: 12, dataMode: true, mode: "curve", busy: "", results: {}, errors: {}, cache: new Map(), guard: null, go: null, progress: null,
     about: "Read a futures curve, decide when to roll, see carry and basis, read the price history of any futures product, check the margin of a book and test a strategy on several roots. The prices are a model unless you download real data (below) or bring a file.",
     modes: [["curve", "Curve"], ["roll", "Roll"], ["carry", "Carry and basis"], ["history", "History"], ["margin", "Margin"], ["backtest", "Backtest"], ["signals", "Signals"], ["research", "Term-structure research"], ["spread", "Spread lab"], ["saved", "Saved runs"]],
     runLabel: { curve: "Refresh", roll: "Refresh", carry: "Refresh", history: "Refresh", margin: "Check the margin", backtest: "Run the backtest", signals: "Read the signals", research: "Refresh", spread: "Run the spread lab", saved: "Refresh" },

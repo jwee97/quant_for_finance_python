@@ -368,3 +368,88 @@ def fetch_funding(http: Http, coin: str, days: int = 400, progress=None) -> Down
     meta = {"source_id": "okx", "source": "OKX", "url": f"{OKX}/public/funding-rate-history", "as_of": str(frame["time"].iloc[-1].date()), "coin": coin, "venue": "OKX",
             "notes": [f"OKX's funding settlements of {coin}-USDT-SWAP summed per UTC day: the funding earned by a short (positive when longs pay shorts). {len(frame)} days to {frame['time'].iloc[-1].date()}."]}
     return Download("crypto", f"funding_{coin}_OKX", "funding", frame=frame, meta=meta)
+
+
+# ------------------------------------------------------------------------------------------------------------------ open interest and liquidations
+BYBIT = "https://api.bybit.com/v5"
+BINANCE_F = "https://fapi.binance.com/futures/data"
+OI_VENUES = ("OKX", "BYBIT", "BINANCE")
+
+
+def okx_open_interest(http: Http, coin: str, days: int) -> pd.Series:
+    """OKX's open interest of ``coin`` contracts in dollars per UTC day (``rubik/stat/contracts/open-interest-volume``: ``[time, open interest, volume]``, newest first)."""
+    d = http.get_json(f"{OKX}/rubik/stat/contracts/open-interest-volume", {"ccy": coin, "period": "1D"})
+    if not isinstance(d, dict) or str(d.get("code", "0")) != "0" or not d.get("data"):
+        raise FetchError(f"OKX has no open-interest history for {coin} ({(d or {}).get('msg') or 'no data'})", status=404)
+    out = {_day(r[0]): _num(r[1]) for r in d["data"] if len(r) >= 2 and math.isfinite(_num(r[1]))}
+    return pd.Series(out, dtype=float).sort_index().tail(days)
+
+
+def bybit_open_interest(http: Http, coin: str, days: int) -> pd.Series:
+    """Bybit's open interest of the linear ``COINUSDT`` perpetual in COINS per UTC day (``market/open-interest``, ``intervalTime=1d``, newest first), converted by the caller to dollars with a price."""
+    d = http.get_json(f"{BYBIT}/market/open-interest", {"category": "linear", "symbol": f"{coin}USDT", "intervalTime": "1d", "limit": min(max(days, 30), 200)})
+    rows = ((d or {}).get("result") or {}).get("list") if isinstance(d, dict) else None
+    if not rows or str((d or {}).get("retCode", "0")) != "0":
+        raise FetchError(f"Bybit has no open-interest history for {coin}USDT ({(d or {}).get('retMsg') or 'no data'})", status=404)
+    out = {_day(r["timestamp"]): _num(r["openInterest"]) for r in rows if math.isfinite(_num(r.get("openInterest")))}
+    return pd.Series(out, dtype=float).sort_index().tail(days)
+
+
+def binance_open_interest(http: Http, coin: str, days: int) -> pd.Series:
+    """Binance USD-M futures open interest value in dollars per UTC day (``futures/data/openInterestHist``, ``period=1d``; the endpoint keeps about a month)."""
+    d = http.get_json(f"{BINANCE_F}/openInterestHist", {"symbol": f"{coin}USDT", "period": "1d", "limit": min(max(days, 30), 500)})
+    if not isinstance(d, list) or not d:
+        raise FetchError(f"Binance has no open-interest history for {coin}USDT", status=404)
+    out = {_day(r["timestamp"]): _num(r["sumOpenInterestValue"]) for r in d if math.isfinite(_num(r.get("sumOpenInterestValue")))}
+    return pd.Series(out, dtype=float).sort_index().tail(days)
+
+
+def fetch_open_interest(http: Http, coin: str, days: int = 90, progress=None) -> Download:
+    """Daily open interest of the ``coin`` perpetuals on OKX (dollars), Bybit (coins) and Binance (dollars). A venue that does not answer is reported in the notes, not fatal; with no venue at all the
+    download fails. Saved as ``openinterest_<COIN>``, one column per venue. The units differ by venue, so each column is read against its own history (changes, percentiles), never added to another."""
+    coin = check_coin(coin)
+    cols, notes = {}, []
+    for venue, fetch in (("OKX", okx_open_interest), ("BYBIT", bybit_open_interest), ("BINANCE", binance_open_interest)):
+        try:
+            if progress:
+                progress(f"{coin}: open interest from {venue.title()}")
+            cols[venue] = fetch(http, coin, int(days))
+        except (FetchError, ValueError, KeyError, TypeError, IndexError) as exc:
+            notes.append(f"{venue.title()}: {exc}")
+    if not cols:
+        raise FetchError(f"no venue gave open interest for {coin}: " + "; ".join(notes))
+    frame = pd.DataFrame(cols).sort_index()
+    frame.index.name = "time"
+    frame = frame.reset_index()
+    units = {"OKX": "dollars", "BYBIT": "coins", "BINANCE": "dollars"}
+    meta = {"source_id": "exchanges", "source": ", ".join(v.title() for v in cols), "url": "public open-interest endpoints", "as_of": str(frame["time"].iloc[-1].date()), "coin": coin, "venues": list(cols), "units": {v: units[v] for v in cols},
+            "notes": [f"Daily open interest of the {coin} perpetuals on {', '.join(v.title() for v in cols)}; units differ by venue ({', '.join(f'{v}: {units[v]}' for v in cols)}), so changes are comparable but levels are not."] + notes}
+    return Download("crypto", f"openinterest_{coin}", "openinterest", frame=frame, meta=meta)
+
+
+def fetch_liquidations(http: Http, coin: str, progress=None) -> Download:
+    """Recent filled liquidation orders of the ``COIN-USDT`` perpetual on OKX (``public/liquidation-orders``): only the recent ones the exchange keeps, with the side that was liquidated (a ``sell`` order
+    closes a long), the size and the price. This is a short window of observations, not a history; saved as ``liquidations_<COIN>`` with a ``window`` that says how long it is."""
+    coin = check_coin(coin)
+    if progress:
+        progress(f"{coin}: recent liquidations from OKX")
+    d = http.get_json(f"{OKX}/public/liquidation-orders", {"instType": "SWAP", "uly": f"{coin}-USDT", "state": "filled"})
+    if not isinstance(d, dict) or str(d.get("code", "0")) != "0":
+        raise FetchError(f"OKX has no liquidation data for {coin} ({(d or {}).get('msg') or 'no data'})", status=404)
+    try:
+        ct_val = _contract_value(http, f"{coin}-USDT-SWAP")
+    except (FetchError, ValueError, KeyError, TypeError, IndexError):
+        ct_val = float("nan")
+    events = []
+    for inst in d.get("data") or []:
+        for r in inst.get("details") or []:
+            sz, px = _num(r.get("sz")), _num(r.get("bkPx"))
+            if math.isfinite(sz) and math.isfinite(px):
+                events.append({"time": int(r["ts"]), "side": str(r.get("side")), "pos_side": str(r.get("posSide")), "size_contracts": sz, "price": px})
+    if not events:
+        raise FetchError(f"OKX returned no filled liquidations for {coin}-USDT", status=404)
+    events.sort(key=lambda e: e["time"])
+    when = utc_now().isoformat().replace("+00:00", "Z")
+    payload = {"coin": coin, "fetched_at": when, "venue": "OKX", "contract_value": None if not math.isfinite(ct_val) else float(ct_val), "events": events, "window": {"first_ms": events[0]["time"], "last_ms": events[-1]["time"]}}
+    meta = {"source_id": "okx", "source": "OKX", "url": f"{OKX}/public/liquidation-orders", "as_of": when[:10], "coin": coin, "notes": [f"{len(events)} recent filled liquidation orders of {coin}-USDT-SWAP: the exchange keeps only a short window, so this describes the last hours, not a history."]}
+    return Download("crypto", f"liquidations_{coin}", "liquidations", payload=payload, meta=meta)

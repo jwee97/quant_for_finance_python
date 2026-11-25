@@ -57,6 +57,7 @@ from .providers import RateLimitTimeout
 MAX_ITEMS = 15
 OPTION_PRESETS = ("SPY", "QQQ", "IWM", "DIA", "TLT", "GLD", "AAPL", "MSFT", "NVDA", "TSLA", "AMZN", "SPX")
 WHAT = ("history", "venues", "funding")
+WHAT_ALL = WHAT + ("openinterest", "liquidations")                                      # the last two are chosen on purpose: they ask three exchanges and keep only what those answer
 SOURCE_IDS = {"options": ("massive", "cboe", "yahoo", "deribit"), "futures": ("massive", "yahoo", "finzdata", "cboe_cfe", "deribit"), "crypto": ("massive", "okx", "coinbase", "kraken", "bitstamp", "deribit")}
 FUTURES_SOURCES = ("yahoo", "massive", "yahoo_series", "finzdata")   # the curve of each contract month from Yahoo or Massive, the price history of any future Yahoo lists, or every contract of a Finzdata market
 CRYPTO_SOURCES = ("exchanges", "massive")
@@ -238,7 +239,8 @@ class DataApi:
                         "yahoo": {"groups": yf.groups(self._yahoo_list()), "years": [1, 2, 3, 5, 10, 20], "products": len(yf.catalog(self._yahoo_list())), "defaults": {"years": 5}},
                         "finzdata": {"groups": fzc.groups(self.finz.live_roots()), "markets": len(fzc.markets(self.finz.live_roots())[0]), "max_calls_per_root": dfz.MAX_CALLS_PER_ROOT}},
             "crypto": {"coins": list(fc.DEFAULT_COINS), "what": [{"id": "history", "text": "Daily history: spot, perpetual and funding"}, {"id": "venues", "text": "Real quotes and order books on six venues, now"},
-                                                                  {"id": "funding", "text": "OKX funding history, for the funding view"}], "defaults": {"days": 400, "what": list(WHAT)},
+                                                                  {"id": "funding", "text": "OKX funding history, for the funding view"},
+                                                                  {"id": "openinterest", "text": "Open interest by exchange (OKX, Bybit, Binance)"}, {"id": "liquidations", "text": "Recent liquidations (OKX, a short window)"}], "defaults": {"days": 400, "what": list(WHAT)},
                        "massive": {"note": "daily SPOT closes against the US dollar; Deribit and the exchanges supply derivatives"}},
         }
 
@@ -464,6 +466,12 @@ class DataApi:
                 elif what == "venues":
                     d = fc.fetch_venues(http, coin, progress)
                     out.append(self._save(d, f"quotes and books on {len(d.payload['venues'])} venues" + (f", {len(d.payload['failed'])} unavailable" if d.payload["failed"] else ""), {"items": [coin], "what": ["venues"], "days": s["days"]}, coin))
+                elif what == "openinterest":
+                    d = fc.fetch_open_interest(http, coin, min(s["days"], 365), progress)
+                    out.append(self._save(d, f"{d.meta['as_of']}: open interest on {len(d.meta['venues'])} venues", {"items": [coin], "what": ["openinterest"], "days": s["days"]}, coin))
+                elif what == "liquidations":
+                    d = fc.fetch_liquidations(http, coin, progress)
+                    out.append(self._save(d, f"{len(d.payload['events'])} recent liquidations on OKX", {"items": [coin], "what": ["liquidations"], "days": s["days"]}, coin))
                 else:
                     d = fc.fetch_funding(http, coin, s["days"], progress)
                     out.append(self._save(d, f"{d.meta['as_of']}: {len(d.frame)} days of OKX funding", {"items": [coin], "what": ["funding"], "days": s["days"]}, coin))
@@ -497,11 +505,11 @@ class DataApi:
             return _items(body, _check_root), {"source": "yahoo", "contracts": contracts, "history": history, "deribit": _choice(body, "deribit", "curve", DERIBIT_MODES)}
         source = _choice(body, "source", "exchanges", CRYPTO_SOURCES)
         what = body.get("what") or (["history"] if source == "massive" else list(WHAT))
-        if not isinstance(what, list) or not what or any(w not in WHAT for w in what):
-            raise ApiError(f"what must be a list from {list(WHAT)}")
+        if not isinstance(what, list) or not what or any(w not in WHAT_ALL for w in what):
+            raise ApiError(f"what must be a list from {list(WHAT_ALL)}")
         if source == "massive" and what != ["history"]:
             raise ApiError("Massive supplies the daily spot history of a coin; the order books, perpetuals and funding come from the exchanges and Deribit")
-        return _items(body, fc.check_coin), {"source": source, "days": _number(body, "days", 400, fc.MIN_DAYS, 1500, integer=True), "what": [w for w in WHAT if w in what]}
+        return _items(body, fc.check_coin), {"source": source, "days": _number(body, "days", 400, fc.MIN_DAYS, 1500, integer=True), "what": [w for w in WHAT_ALL if w in what]}
 
     @staticmethod
     def _chain_date(body: dict) -> str | None:

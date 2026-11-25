@@ -12,18 +12,26 @@
   const compact = (v) => (Math.abs(v) >= 1e9 ? (v / 1e9).toFixed(1) + "B" : Math.abs(v) >= 1e6 ? (v / 1e6).toFixed(1) + "M" : Math.abs(v) >= 1e3 ? (v / 1e3).toFixed(0) + "k" : String(Math.round(v)));
 
   const X = {
-    id: "crypto", root: "#crypto", view: "#view-crypto", title: "Crypto", api: 12, mode: "overview", busy: "", results: {}, errors: {}, cache: new Map(), guard: null, go: null, progress: null,
+    id: "crypto", root: "#crypto", view: "#view-crypto", title: "Crypto", api: 12, dataMode: true, mode: "market", busy: "", results: {}, errors: {}, cache: new Map(), guard: null, go: null, progress: null,
     about: "A coin at a glance, funding and the basis between spot and the perpetual, spreads between exchanges after fees, the depth of the order books and strategies on the Deribit data. Deribit's BTC and ETH are data; download real prices, books and funding for the rest (free, below) or they are simulated and labelled.",
-    modes: [["overview", "Overview"], ["funding", "Funding"], ["basis", "Basis and carry"], ["cross", "Across exchanges"], ["liquidity", "Liquidity"], ["backtest", "Backtest"], ["signals", "Signals"]],
-    runLabel: { overview: "Refresh", funding: "Refresh", basis: "Refresh", cross: "Refresh", liquidity: "Refresh", backtest: "Run the backtest", signals: "Read the signals" },
-    blurb: { overview: "Trend, funding, momentum, volatility, liquidity and on-chain supply on six cards; the price against its 200-day average (the Mayer multiple), the cone of its volatility, its drawdowns and how it moves against BTC or ETH; spot and the perpetual side by side.",
+    modes: [["market", "Market"], ["overview", "Coin deep dive"], ["derivs", "Funding intelligence"], ["funding", "Funding by venue"], ["basis", "Basis"], ["carry", "Carry P&L"], ["liquidity", "Liquidity"], ["cross", "Across exchanges"], ["exec", "Execution simulator"],
+      ["validate", "Strategy validation"], ["backtest", "Weekday backtest (legacy)"], ["signals", "Signals"], ["liq", "Liquidation risk"]],
+    groups: [["Market Overview", ["market", "overview"]], ["Derivatives Intelligence", ["derivs", "funding", "basis", "carry"]], ["Liquidity & Arbitrage", ["liquidity", "cross", "exec"]], ["Strategy Laboratory", ["validate", "backtest", "signals"]], ["Portfolio Risk", ["liq"]]],
+    runLabel: { market: "Refresh", derivs: "Refresh", carry: "Decompose the carry", exec: "Simulate the order", validate: "Validate the strategy", liq: "Stress the book", overview: "Refresh", funding: "Refresh", basis: "Refresh", cross: "Refresh", liquidity: "Refresh", backtest: "Run the backtest", signals: "Read the signals" },
+    blurb: { market: "The coin at a glance over a window you choose: spot and perpetual price, 24-hour return, realised volatility, funding, the basis and the drawdown, each with its percentile inside the window; volume and open interest are shown as unavailable because the platform does not store them.",
+      derivs: "Funding per interval and annualised, normalised across venues, with percentiles, z-scores, regimes and the payment calendar; dispersion between venues; and what is not stored (open interest, liquidations, dated futures).",
+      carry: "What a long-spot, short-perpetual position earned, split into funding received, basis change, unhedged delta, costs and financing with an explicit residual, plus the margin it needed, funding reversals and the shocks that would have forced a top-up.",
+      exec: "Walk one order through a stored order book: market, limit, or a hypothetical TWAP or VWAP schedule with the assumptions printed; the slippage, the unfilled part and the timing risk.",
+      validate: "Directional, relative-value, derivatives and risk-managed strategies on observed history, on a 24/7 calendar annualised by 365, with costs, constraints, benchmarks and a walk-forward chosen on training windows only.",
+      liq: "Cross-margin liquidation risk of perpetual positions: leverage, the market move at which the account is liquidated, the table of shocks, and each position's own liquidation level.",
+      overview: "Trend, funding, momentum, volatility, liquidity and on-chain supply on six cards; the price against its 200-day average (the Mayer multiple), the cone of its volatility, its drawdowns and how it moves against BTC or ETH; spot and the perpetual side by side.",
       funding: "What each venue charges the longs on the perpetual, by coin and venue, with its z-score and percentile against its own history: where a short is paid most.",
       basis: "How far the perpetual trades from spot, and what holding spot long against the perpetual short (the cash-and-carry trade) would have earned.",
       cross: "Every pair of exchanges: the gap between a buy price and a sell price, less both fees and the slippage. Only a gap that survives that is an opportunity.",
       liquidity: "Spread, depth and the cost of trading $100 thousand, $1 million and $10 million at each venue: from the real order books once you have downloaded them, else from a parametric book.",
       backtest: "Trend of many kinds, the Mayer multiple, volatility management, funding carry, basis and stablecoin flow on Deribit BTC and ETH, with the strategy's own settings, fees and slippage, through the platform's pipeline.",
       signals: "What every rule says about BTC and ETH today (trend of several kinds, the Mayer multiple, volatility management, funding carry, basis, stablecoin flow), as a strength against its own usual size, and where the rules agree." },
-    form: { symbol: "BTC", days: "365", fee: "5", slippage: "1", notional: "1000000", symbols: new Set(["BTC", "ETH", "SOL"]), fundDays: "120", coin: "", strategy: "spot_momentum", params: {}, assets: new Set(["BTC", "ETH"]), frequency: "weekly", targetVol: "", fees: "5", slip: "2", regime: "" },
+    form: { ...window.CryptoResearch.defaults(), symbol: "BTC", days: "365", fee: "5", slippage: "1", notional: "1000000", symbols: new Set(["BTC", "ETH", "SOL"]), fundDays: "120", coin: "", strategy: "spot_momentum", params: {}, assets: new Set(["BTC", "ETH"]), frequency: "weekly", targetVol: "", fees: "5", slip: "2", regime: "" },
     catalog: null,
   };
   W.catalog().then((c) => { X.catalog = c; if (!Q.$(X.view).hidden) Q.renderLab(X); }, () => {});
@@ -78,6 +86,7 @@
   /* ---------- the form ---------- */
   X.check = () => {
     if (!X.catalog) return "Loading the list of coins…";
+    if (window.CryptoResearch.modes.has(X.mode)) { const e = window.CryptoResearch.check(X); if (e) return e; }
     if (X.mode === "funding" && (!X.form.symbols.size || X.form.symbols.size > 6)) return "Choose between one and six coins.";
     if (X.mode === "backtest" && !X.form.assets.size) return "Choose at least one asset.";
     if (X.mode === "backtest" && !strategyInfo(X.form.strategy).available) return "The platform has no data for this strategy.";
@@ -87,6 +96,7 @@
     const f = X.form, after = () => Q.syncLab(X), rerun = () => X.run(true), sec = (title, open = true) => { const d = h("details", "", panel); d.open = open; h("summary", "", d, title); return h("div", "body", d); };
     const m = X.mode, cat = X.catalog;
     if (!cat) { Q.loading(sec("1. Coin"), "Loading the list of coins…"); return; }
+    if (window.CryptoResearch.modes.has(m)) { window.CryptoResearch.sections(X, sec, symbols, after, rerun); if (m !== "validate" && m !== "liq") W.dataCard(panel, X, FREE); return; }
     if (m === "funding") {
       const b = sec("1. Coins"), box = h("div", "checks", b); h("span", "hint", box, "Up to six:");
       for (const s of symbols()) {
@@ -127,7 +137,7 @@
       Q.labField(c, { key: "regime", label: "Regime filter", kind: "choice", options: [["", "The strategy's own"], ["vol_state", "Volatility state"], ["hmm", "Hidden Markov model"], ["gmm", "Gaussian mixture"]], help: "Sets the volatility target by market regime (lower in the stressed one)" }, f, after);
       for (const s of [{ key: "targetVol", label: "Volatility target (% a year, blank = the platform's)", kind: "number", step: 1, min: 1, max: 200 },
         { key: "fees", label: "Exchange fees, one way (bps)", kind: "number", step: 0.5, min: 0, max: 200 }, { key: "slip", label: "Slippage, one way (bps)", kind: "number", step: 0.5, min: 0, max: 200 }]) Q.labField(c, s, f, after);
-      h("p", "hint", c, "Weekday marks and 252-day annualisation, like every other backtest here; funding is earned inside the carry index.");
+      const warn = h("p", "hint", c, "LEGACY: weekday marks and 252-day annualisation, like the platform's equity backtests, on a synthetic carry index. For crypto numbers use Strategy validation, which runs on every calendar day and annualises by 365."); warn.style.color = css("--warn");
     }
   };
 
@@ -135,6 +145,7 @@
   X.run = (fromForm) => {
     const m = X.mode, f = X.form;
     if (!fromForm) W.dropCache(X);
+    if (window.CryptoResearch.modes.has(m)) return window.CryptoResearch.run(X, key);
     if (OVERVIEW_MODES.has(m)) return W.request(X, () => { const q = { symbol: f.symbol, days: Number(f.days), fee_bps: Number(f.fee) }; return [{ modes: ["overview", "basis", "liquidity"], path: "/api/crypto/overview", query: q, cacheKey: key("overview", q) }]; }, "Reading the coin…");
     if (m === "funding") return W.request(X, () => { const q = { symbols: [...f.symbols], days: Number(f.fundDays) }; return [{ modes: ["funding"], path: "/api/crypto/funding", query: q, cacheKey: key("funding", q) }]; }, "Reading funding…");
     if (m === "cross") return W.request(X, () => { const q = { symbol: f.symbol, slippage_bps: Number(f.slippage), notional: Number(f.notional) }; return [{ modes: ["cross"], path: "/api/crypto/cross-exchange", query: q, cacheKey: key("cross", q) }]; }, "Comparing venues…");
@@ -142,12 +153,13 @@
     return W.request(X, () => [{ modes: ["backtest"], job: true, path: "/api/crypto/strategy/backtest", body: { strategy: f.strategy, assets: [...f.assets], frequency: f.frequency, params: f.params[f.strategy] || {},
       target_vol: f.targetVol === "" ? undefined : Number(f.targetVol) / 100, fees_bps: Number(f.fees), slippage_bps: Number(f.slip), regime: f.regime || undefined } }], "Running the backtest…");
   };
-  X.auto = () => { if (X.mode !== "backtest" && X.mode !== "signals" && X.catalog) X.run(true); };
-  X.empty = (root) => (X.mode === "signals"
+  X.auto = () => { if (window.CryptoResearch.modes.has(X.mode)) { if (window.CryptoResearch.auto(X)) X.run(true); return; } if (X.mode !== "backtest" && X.mode !== "signals" && X.catalog) X.run(true); };
+  X.empty = (root) => (window.CryptoResearch.modes.has(X.mode) ? window.CryptoResearch.empty(X, root) : X.mode === "signals"
     ? Q.labEmpty(root, X, "Read what the rules say today", ["Trend of several kinds, the Mayer multiple, volatility management, funding carry, basis and stablecoin flow on BTC and ETH, each as a strength against its own usual size, and where they agree."], X.runLabel.signals)
     : Q.labEmpty(root, X, "Backtest a crypto strategy", ["Trend of many kinds, the Mayer multiple, volatility management, funding carry, basis or stablecoin flow on Deribit BTC and ETH, with the strategy's own settings, fees and slippage, through the platform's pipeline."], X.runLabel.backtest));
   X.draw = () => Q.drawLab(X);
-  X.build = (root, d, body) => ({ overview: buildOverview, funding: buildFunding, basis: buildBasis, cross: buildCross, liquidity: buildLiquidity, backtest: buildBacktest, signals: buildSignals })[X.mode](root, d, body);
+  X.build = (root, d, body) => (window.CryptoResearch.modes.has(X.mode) ? window.CryptoResearch.build(X, root, d, body) : buildLegacy(root, d, body));
+  const buildLegacy = (root, d, body) => ({ overview: buildOverview, funding: buildFunding, basis: buildBasis, cross: buildCross, liquidity: buildLiquidity, backtest: buildBacktest, signals: buildSignals })[X.mode](root, d, body);
   const header = (root, title, sub) => Q.labHead(root, title, sub, GUIDE);
   const STATE_LABEL = { uptrend: "Uptrend", downtrend: "Downtrend", sideways: "Sideways", balanced: "Balanced", crowded_long: "Crowded long", crowded_short: "Crowded short", positive: "Positive", negative: "Negative", flat: "Flat",
     quiet: "Quiet", normal: "Normal", elevated: "Elevated", stressed: "Stressed", deep: "Deep", thin: "Thin", adequate: "Adequate", inflow: "Inflow", outflow: "Outflow", unavailable: "Not available" };
@@ -271,6 +283,7 @@
 
   /* ---------- across exchanges ---------- */
   function buildCross(root, d) {
+    if (d.state === "unavailable") { Q.labHead(root, `${d.symbol} across exchanges`, "no observed quotes", GUIDE); W.provenance(root, d); const b = h("div", "unavail", root); h("strong", "", b, "Quoted spreads: "); b.appendChild(document.createTextNode(d.reason)); h("div", "hint", b, "Needed: " + d.needs.join("; ")); return; }
     const pairs = d.pairs, venues = d.quotes.map((q) => q.venue);
     header(root, `${d.symbol} across exchanges`, `${venues.length} venues · trade size ${money(d.notional)} · buy at the ask, sell at the bid, pay both taker fees and slippage`);
     W.provenance(root, d);
@@ -293,6 +306,8 @@
       { label: "Spread (bps)", num: true, get: (x) => num(x.spread_bps, 3) }, { label: "Taker fee (bps)", num: true, get: (x) => num(x.taker_bps, 1) }], d.quotes);
     if (real) W.hint(q, "Real quotes at one moment. A venue is compared only with others of the same kind: spot with spot, perpetual with perpetual. Taker fees are entry-level assumptions, not your tier.");
     const all = h("div", "card", root); h("h3", "", all, "Every pair, best first"); pairTable(all, pairs.slice().sort((a, b) => b.net_bps - a.net_bps));
+    h("p", "hint", all, "These are quoted top-of-book spreads. A quoted spread is not a confirmed arbitrage: the table below prices the same pairs on the real depth.");
+    if (d.quotes.some((x) => x.source === "downloaded")) window.CryptoResearch.executable(X, root, d.symbol, d.notional);
   }
   const pairTable = (b, rows) => table(b, [{ label: "Buy", get: (p) => p.buy }, { label: "Sell", get: (p) => p.sell }, { label: "Gross (bps)", num: true, get: (p) => num(p.gross_bps, 2) }, { label: "Fees (bps)", num: true, get: (p) => num(p.fees_bps, 1) },
     { label: "Slippage (bps)", num: true, get: (p) => num(p.slippage_bps, 1) }, { label: "Net (bps)", num: true, get: (p) => num(p.net_bps, 2) }, { label: "Net ($)", num: true, get: (p) => smoney(p.net_dollars) }, { label: "Pays?", get: (p) => (p.profitable ? "yes" : "no") }], rows);
@@ -300,6 +315,7 @@
   /* ---------- liquidity ---------- */
   function buildLiquidity(root, d) {
     const books = Object.values(d.books), venues = books.map((b) => b.venue);
+    if (!books.length) { header(root, `${d.symbol} liquidity`, "no observed order book"); W.provenance(root, { ...d, warnings: [] }); const b = h("div", "unavail", root); h("strong", "", b, "Order books: "); b.appendChild(document.createTextNode("no order-book snapshot is stored and observed-only mode does not model one. Download the venue snapshot (Free data) to measure spread, depth and the cost of size.")); return; }
     header(root, `${d.symbol} liquidity`, `${venues.length} venues · spread, depth and the cost of trading size`);
     W.provenance(root, { ...d, warnings: [] });
     const tight = books.reduce((a, b) => (b.spread_bps < a.spread_bps ? b : a)), deep = books.reduce((a, b) => (b.depth["25bp"].bid + b.depth["25bp"].ask > a.depth["25bp"].bid + a.depth["25bp"].ask ? b : a));

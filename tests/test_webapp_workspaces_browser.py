@@ -99,7 +99,7 @@ def _wait_until(page, expression, timeout=60.0):
 
 # ------------------------------------------------------------------------------------------------------ options, futures and crypto
 @pytest.mark.parametrize("tab, ready, expected", [("options", "#options-results .tile", {"Simulated: a model", "Synthetic", "Mixed sources"}), ("futures", "#futures-results .tile", {"Simulated: a model", "Synthetic", "Mixed sources"}),
-                                                  ("crypto", "#crypto-results .tile", {"Mixed sources"})])
+                                                  ("crypto", "#crypto-results .tile", {"Mixed sources", "Historical observed"})])
 def test_each_asset_tab_opens_on_a_read_only_view_that_says_where_its_numbers_come_from(ws, tab, ready, expected):
     ws.click(f"#tab-{tab}")
     ws.wait_for_selector(ready, timeout=90_000)

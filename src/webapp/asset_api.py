@@ -26,6 +26,7 @@ import pandas as pd
 
 from ..assets import common
 from ..assets import crypto_analytics as ca
+from ..assets import crypto_validation as cv
 from ..assets import futures_analytics as fa
 from ..assets import options_analytics as oa
 from ..assets.free_data.store import SAFE_NAME as DOWNLOAD_NAME
@@ -177,7 +178,8 @@ class AssetApi:
                       "option_timing": {"defaults": oa.TIMING_DEFAULTS, "references": references("options", "timing")},
                       "defaults": {"rate": oa.DEFAULT_RATE, "premium": 0.15, "dividend_yields": oa.DIVIDEND_YIELDS}, "futures_roots": roots, "futures_series": dl_series,
                       "futures_strategies": [self._futures_strategy_info(k, v) for k, v in fa.FUTURES_STRATEGIES.items()],
-                      "crypto_symbols": symbols, "crypto_strategies": [self._crypto_strategy_info(k, v) for k, v in ca.CRYPTO_STRATEGIES.items()],
+                      "crypto_symbols": symbols, "crypto_validation": [{"id": k, "label": v["label"], "family": v["family"], "needs": v["needs"], "params": [{"name": n, "default": d} for n, d in v["params"].items()]} for k, v in cv.FAMILIES.items()],
+                      "observed_default": self.observed_default, "crypto_strategies": [self._crypto_strategy_info(k, v) for k, v in ca.CRYPTO_STRATEGIES.items()],
                       "venues": list(ca.VENUE_ORDER), "data_dir": "data/user/", "as_of": str(b.index[-1].date())})
 
     @staticmethod

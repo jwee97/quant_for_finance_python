@@ -124,7 +124,6 @@ def scan(chain: pd.DataFrame, spot: float, prices: pd.Series | None = None, iv_h
                           "detail": "a calendar arbitrage in the quotes, or stale or one-sided quotes in one of the two expiries", "tradable": q[term[i]["expiry"]]["tradable"] and q[term[i + 1]["expiry"]]["tradable"]})
     fv = np.array([f["forward_vol"] if f["forward_vol"] else np.nan for f in fwd])
     for i in range(len(fwd)):
-        others = np.delete(fv, i)
         local = [fv[j] for j in range(max(0, i - 2), min(len(fv), i + 3)) if j != i and np.isfinite(fv[j])]
         if np.isfinite(fv[i]) and len(local) >= 2 and fv[i] > 1.2 * float(np.median(local)) and fv[i] - float(np.median(local)) > 0.02:
             items.append({"kind": "event_vol", "title": f"forward volatility {fv[i]:.1%} between {fwd[i]['from']} and {fwd[i]['to']}, above its neighbours' {float(np.median(local)):.1%}", "metric": float(fv[i]), "z": None,
@@ -152,7 +151,7 @@ def scan(chain: pd.DataFrame, spot: float, prices: pd.Series | None = None, iv_h
                 continue
             if a["atm_iv"] - b["atm_iv"] < 0.01:
                 continue
-            ga, gb = by_expiry[pd.Timestamp(a["expiry"])], by_expiry[pd.Timestamp(b["expiry"])]
+            ga = by_expiry[pd.Timestamp(a["expiry"])]
             k = float(ga.iloc[(ga["strike"] - a["forward"]).abs().argsort()].iloc[0]["strike"])
             try:
                 built = build_real(chain, [{"type": "option", "expiry": a["expiry"], "strike": k, "right": "C", "quantity": -1}, {"type": "option", "expiry": b["expiry"], "strike": k, "right": "C", "quantity": 1}],
@@ -419,7 +418,7 @@ def recommend(chain: pd.DataFrame, spot: float, direction: str = "neutral", move
         row = {"strategy": name, "group": oa.group_of(name), "net_debit": a["net_debit"], "net_credit": a["net_credit"], "max_loss": a["max_loss"], "max_profit": a["max_profit"], "unlimited_loss": a["unlimited_loss"],
                "unlimited_profit": a["unlimited_profit"], "margin": margin, "delta_dollars": float(delta), "vega_per_point": float(vega), "theta_per_day": a["greeks"]["theta_per_day"], "friction": float(friction),
                "pnl_if_right": hyp_pnl, "pnl_if_wrong": wrong_pnl, "right_per_wrong": float(hyp_pnl / -wrong_pnl) if wrong_pnl < 0 and hyp_pnl > 0 else None,
-               "prob_profit_market_view": a["prob_profit"], "legs": [{k: l[k] for k in ("type", "right", "strike", "quantity", "dte") if k in l} for l in legs]}
+               "prob_profit_market_view": a["prob_profit"], "legs": [{**{k: l[k] for k in ("type", "right", "strike", "quantity", "dte") if k in l}, **({"expiry": str(pd.Timestamp(oa.nearest_expiry_to(chain, l["dte"])).date())} if l["type"] == "option" else {})} for l in legs]}
         (excluded.append({"strategy": name, "reason": "; ".join(reasons)}) if reasons else rows.append(row))
     rows.sort(key=lambda r: -(r["pnl_if_right"] + 0.0))
     return {"state": "ok", "hypothesis": {"direction": direction, "move": move, "vol_view": vol_view, "vol_move": vol_move, "horizon_days": horizon_days, "max_loss": max_loss, "margin_budget": margin_budget},

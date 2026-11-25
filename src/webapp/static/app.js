@@ -7,7 +7,16 @@
   const SLOTS = ["--s1", "--s2", "--s3", "--s4", "--s5", "--s6", "--s7", "--s8"];
   const css = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 
+  /* The data mode of the Options, Futures and Crypto tabs: "observed" (the default) refuses the platform's simulated chains, curves, coins and books; "model" allows them, labelled as simulated. Every
+     request to those tabs carries it, so the server never decides silently. */
+  const DATA_PATH = /^\/api\/(options|futures|crypto)\//;
+  const DM = { mode: "observed" };
+  try { const saved = localStorage.getItem("ql.dataMode"); if (saved === "model" || saved === "observed") DM.mode = saved; } catch (e) { /* a private window: the default stands */ }
   async function api(path, body) {
+    if (DATA_PATH.test(path)) {
+      if (body) body = Object.assign({ data_mode: DM.mode }, body);
+      else if (!/[?&]data_mode=/.test(path)) path += (path.includes("?") ? "&" : "?") + "data_mode=" + DM.mode;
+    }
     const res = await fetch(path, { method: body ? "POST" : "GET", headers: Object.assign({ "X-Token": token }, body ? { "Content-Type": "application/json" } : {}), body: body ? JSON.stringify(body) : undefined });
     let data = null; try { data = await res.json(); } catch (e) { data = { error: "the server sent an unreadable response" }; }
     if (!res.ok) { const error = new Error(data.error || res.statusText); error.status = res.status; throw error; }
@@ -1256,11 +1265,29 @@
     lab.busy = ""; syncLab(lab);
     if (lab.mode === mode && !$(lab.view).hidden) lab.draw();
   }
+  function setDataMode(value) {
+    if (value === DM.mode) return;
+    DM.mode = value;
+    try { localStorage.setItem("ql.dataMode", value); } catch (e) { /* not kept */ }
+    for (const lab of Object.values(WORKSPACES)) { if (!lab.dataMode) continue; if (lab.cache) lab.cache.clear(); lab.gen = (lab.gen || 0) + 1; lab.results = {}; lab.errors = {}; }
+    for (const lab of Object.values(WORKSPACES)) if (lab.dataMode && !$(lab.view).hidden) renderLab(lab);
+  }
+  function dataModeBar(top) {
+    const bar = h("div", "datamode", top); bar.dataset.role = "data-mode"; bar.setAttribute("role", "group"); bar.setAttribute("aria-label", "data mode");
+    h("span", "hint", bar, "Data:");
+    const seg = h("span", "seg", bar);
+    for (const [v, text] of [["observed", "Observed only"], ["model", "Model data allowed"]]) {
+      const b = h("button", "", seg, text); b.dataset.mode = v; b.setAttribute("aria-pressed", String(DM.mode === v)); b.addEventListener("click", () => setDataMode(v));
+    }
+    h("span", "hint", bar, DM.mode === "observed" ? "Simulated chains, curves, coins, quotes and books are refused, never substituted." : "Simulated data is shown and labelled simulated: it demonstrates mechanics, not markets.");
+    return bar;
+  }
   function renderLab(lab) {
     const root = $(lab.root); root.replaceChildren();
     if (serverApi() < (lab.api || LAB_API)) { labOld(root, lab.api || LAB_API); return; }
     const panel = h("aside", "card panel", root); panel.setAttribute("aria-label", lab.title + " setup");
     const top = h("div", "labtop", panel); h("h2", "", top, lab.title); h("p", "hint", top, lab.about);
+    if (lab.dataMode) dataModeBar(top);
     if (lab.modes.length > 1) {                                                              // a tab with one mode has nothing to switch between
       const pills = h("div", "tabsmall", top); pills.setAttribute("role", "tablist"); pills.setAttribute("aria-label", lab.title + " views");
       const label = new Map(lab.modes), clusters = lab.groups ? lab.groups : [[null, lab.modes.map((m) => m[0])]];              // a workspace may arrange its views in named workflows; every view keeps its own button
@@ -1289,7 +1316,10 @@
     keepScroll(() => {
       root.replaceChildren();
       const error = lab.errors[lab.mode], got = lab.results[lab.mode];
-      if (error) labBanner(root, "That did not run. ", error, true);
+      if (error) {
+        const banner = labBanner(root, "That did not run. ", error, true);
+        if (/^observed-only mode:/.test(error) && lab.dataMode) { const b = h("button", "btn", banner, "Allow model data"); b.dataset.role = "allow-model"; b.style.marginLeft = "8px"; b.addEventListener("click", () => setDataMode("model")); }
+      }
       if (got) lab.build(root, got.data, got.body); else if (!error) lab.empty(root);
       if (got) for (const fn of LABDRAW) { try { fn(lab, root, got); } catch (e) { console.error("lab hook", e); } }
       if (lab.paint) lab.paint(root);                                                        // what a tab keeps on top of its results (the list of runs in the background) survives every redraw
@@ -1795,6 +1825,7 @@
 
   async function boot() {
     try { S.catalog = await api("/api/catalog"); } catch (e) { $("#results").textContent = "Could not reach the server: " + e.message; return; }
+    try { if (localStorage.getItem("ql.dataMode") === null && S.catalog.observed_default === false) DM.mode = "model"; } catch (e) { if (S.catalog.observed_default === false) DM.mode = "model"; }          // the server's default stands until the reader chooses
     if (serverApi() < PAGE_API) { serverTooOld(); return; }
     if (S.catalog.restart_needed) notice("restart", "The app was updated after it started. ", "It may still be running the old code. " + RESTART);
     const failed = [];
@@ -1828,7 +1859,7 @@
     if (booted && wantedTab() === name) showTab(name, route().args);
   }
   window.QL = { exportChart, loading, livePanel, C, h, fmt, $, api, css, store, toast, copy, download, num, pct, money, smoney, axisMoney, bad, bps, grouped, plain, unsign, colorOf, SLOTS, tile, chartCard, actionsCard, simpleTable, sampleRows, keepScroll, labField, checkList, numbers,
-    labHead, labBanner, labEmpty, labOld, syncLab, renderLab, drawLab, openGuide, serverApi, RESTART, notice, registerWorkspace, registerPage, setTheme, onNavigate: (fn) => NAV.push(fn), onResult: (fn) => RESULT.push(fn), onLabDraw: (fn) => LABDRAW.push(fn), applyContext, setupContext, setupBody, applySetup, lab: (name) => WORKSPACES[name], route, currentTab: () => current, labelPx, running, S, setupGuide, waitJob,
+    labHead, labBanner, labEmpty, setDataMode, dataMode: () => DM.mode, labOld, syncLab, renderLab, drawLab, openGuide, serverApi, RESTART, notice, registerWorkspace, registerPage, setTheme, onNavigate: (fn) => NAV.push(fn), onResult: (fn) => RESULT.push(fn), onLabDraw: (fn) => LABDRAW.push(fn), applyContext, setupContext, setupBody, applySetup, lab: (name) => WORKSPACES[name], route, currentTab: () => current, labelPx, running, S, setupGuide, waitJob,
     universeBody, pickAllocator, useStrategy, setTrials, showTab, refsLine, fieldFor };
   boot();
 })();

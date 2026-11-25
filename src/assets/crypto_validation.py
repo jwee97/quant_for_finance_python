@@ -154,7 +154,6 @@ def signal(name: str, p: dict, params: dict, venue_funding: dict | None = None) 
         trail = f.rolling(int(params["window"])).mean() * PERIODS
         gap = trail.max(axis=1) - trail.min(axis=1)
         on = (gap > float(params["min_gap"])).where(gap.notna())
-        cols = list(trail.columns)
         arr, farr = trail.to_numpy(float), f.to_numpy(float)
         earned = np.full(len(f), np.nan)
         for i in range(1, len(f)):

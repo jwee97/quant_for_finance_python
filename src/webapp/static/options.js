@@ -17,15 +17,20 @@
   const WINDOWS = [["5", "±5%"], ["10", "±10%"], ["15", "±15%"], ["25", "±25%"], ["40", "±40%"]];
 
   const O = {
-    id: "options", root: "#options", view: "#view-options", title: "Options", api: 13, mode: "overview", busy: "", results: {}, errors: {}, cache: new Map(), guard: null, go: null, progress: null,
+    id: "options", root: "#options", view: "#view-options", title: "Options", api: 13, dataMode: true, mode: "overview", busy: "", results: {}, errors: {}, cache: new Map(), guard: null, go: null, progress: null,
     about: "Read an option chain, see the distribution it implies and where the open interest sits, see what a book of options is exposed to, draw what a structure pays and test a rolling strategy. The chain is a model quoted at the underlying's real price unless you download a real one (free, below) or bring your own file.",
     modes: [["overview", "Overview"], ["chain", "Chain"], ["smile", "Smile and skew"], ["surface", "Surface and term"], ["volsurf", "Volatility surface"], ["research", "Surface research"], ["distribution", "Implied distribution"], ["positioning", "Open interest and gamma"], ["fit", "Model fit"], ["validate", "Model validation"],
-      ["price", "Model prices"], ["hedge", "Hedging cost"], ["risk", "Greeks and risk"], ["strategy", "Strategy builder"], ["backtest", "Backtest"], ["saved", "Saved runs"]],
-    groups: [["Market intelligence", ["overview", "chain", "smile", "surface", "volsurf", "research", "distribution", "positioning"]], ["Model laboratory", ["fit", "validate", "price", "hedge"]], ["Strategy studio", ["strategy"]],
+      ["price", "Model prices"], ["hedge", "Hedging cost"], ["risk", "Greeks and risk"], ["scan", "Opportunity scanner"], ["ideas", "Ideas from a view"], ["builder", "Strategy builder"], ["scenarios", "Scenario laboratory"], ["tradecheck", "Trade validation"], ["strategy", "Structure payoff"], ["backtest", "Synthetic validation"], ["saved", "Saved runs"]],
+    groups: [["Market intelligence", ["overview", "chain", "smile", "surface", "volsurf", "research", "distribution", "positioning"]], ["Model laboratory", ["fit", "validate", "price", "hedge"]], ["Strategy Studio", ["scan", "ideas", "builder", "scenarios", "tradecheck", "strategy"]],
       ["Portfolio and validation", ["risk", "backtest", "saved"]]],
     runLabel: { volsurf: "Refresh", saved: "Refresh", research: "Refresh", validate: "Validate the models", overview: "Refresh", chain: "Refresh", smile: "Refresh", surface: "Refresh", distribution: "Refresh", positioning: "Refresh", fit: "Fit the models", price: "Price the product", hedge: "Cost the hedge", risk: "Revalue the book",
-      strategy: "Draw the payoff", backtest: "Run the backtest" },
-    blurb: { volsurf: "The implied-volatility surface built from the quotes themselves: one grid for every expiry, interpolated only between neighbouring quotes (masked where there are none, never extrapolated), the raw surface apart from the fitted one, in four synchronised views: 3D, heatmap, smiles and term structure.",
+      strategy: "Draw the payoff", backtest: "Run the synthetic validation", scan: "Scan the chain", ideas: "Rank the structures", builder: "Price the position", scenarios: "Revalue the position", tradecheck: "Check the trade" },
+    blurb: { scan: "Where the chain looks unusual: implied volatility against its own history and realised volatility, skew dislocations, term-structure kinks, possible event volatility and calendar candidates, each with the freshness and liquidity of the quotes behind it.",
+      ideas: "State a view (direction, volatility, holding period, the loss you accept) and see the structures that fit, ranked by what they pay if you are right and what they lose if you are wrong. A ranking of payoffs, not a forecast.",
+      builder: "Build a position from real listed contracts of the chain: each leg's bid, ask, spread, volume and open interest, your limit prices, the cost at the touch, the mid and your limits, and the payoff at that entry.",
+      scenarios: "Revalue the position under spot, volatility, skew and time shocks: four heatmaps and an attribution of each scenario to the underlying, volatility, skew, time and costs, with the residual shown.",
+      tradecheck: "The checks a trade must pass before it is placed: listed contracts, two-sided and fresh quotes, narrow spreads, limits that can fill, a bounded loss within yours, margin.",
+      volsurf: "The implied-volatility surface built from the quotes themselves: one grid for every expiry, interpolated only between neighbouring quotes (masked where there are none, never extrapolated), the raw surface apart from the fitted one, in four synchronised views: 3D, heatmap, smiles and term structure.",
       research: "The surface in the coordinates a volatility researcher uses: log-forward-moneyness, total variance and delta, with a fitted SVI slice per expiry, its residuals against the bid-ask, butterfly and calendar diagnostics, and a joint SSVI fit.",
       saved: "The research runs you saved from Surface research, Model validation and the Strategy builder: compare two to eight, see which settings differ and whether a repeat reproduced.",
       validate: "Fit the models, then judge them on quotes they were not fitted to, on complexity and on numerical health: not on the in-sample error alone.", overview: "Implied against realised volatility, where it ranks, the put-call balance, the term structure and the skew: the page to open first.",
@@ -40,7 +45,7 @@
       risk: "Delta, gamma, vega and theta of a book of options and shares, by expiry, and what it would make or lose when the price and implied volatility move.",
       strategy: "Choose one of twenty-five structures and see its payoff at expiry, today and half way, where the price is likely to end, its profit by price and day, its Greeks by price, its break-evens, maximum profit and loss, margin and odds; set up to three others beside it.",
       backtest: "Sell or buy premium on a schedule on a simulated option market: one strategy, one setting varied to see how fragile the choice is, or every strategy side by side; with the equity curve, the risk measures, where the profit came from by Greek, the costs and the trades." },
-    form: { underlying: "", expiry: "", window: "15", rate: "", dividend: "", premium: "15", hideStale: false, minOi: "", rExpiries: "8", vLoss: "iv", vMode: "strikes", dealer: "calls_long_puts_short", dealerShare: "100", vsSel: "otm", vsCoord: "k", vsMin: "0", vsMax: "400", vsDate: "current", vsCompare: "", volRule: "sticky_strike", skewSlope: "", exercise: "european",
+    form: { direction: "bullish", move: "5", volView: "neutral", volMove: "3", horizon: "30", maxLoss: "", marginBudget: "", commission: "0.65", underlying: "", expiry: "", window: "15", rate: "", dividend: "", premium: "15", hideStale: false, minOi: "", rExpiries: "8", vLoss: "iv", vMode: "strikes", dealer: "calls_long_puts_short", dealerShare: "100", vsSel: "otm", vsCoord: "k", vsMin: "0", vsMax: "400", vsDate: "current", vsCompare: "", volRule: "sticky_strike", skewSlope: "", exercise: "european",
       book: [], spotShocks: "-10, -5, -2, 0, 2, 5, 10", volShocks: "-5, 0, 5, 10", days: "0",
       strategy: "long_straddle", sDte: "30", sFar: "", offset: "5", width: "5", quantity: "1", fill: "mid", spread: "5", commission: "0.65", viewVol: "", viewDrift: "", horizon: "", legs: [], compare: new Set(),
       bt: "short_put", btMode: "single", btDays: "252", btSeed: "0", btCapital: "100000", btPremium: "25", btCommission: "0.65", btFill: "100", btParams: {}, btTiming: false, btWindow: "21", btThreshold: "0",
@@ -206,6 +211,7 @@
     if (!O.catalog) return "Loading the list of underlyings…";
     if (!O.form.underlying) return "There is no underlying to analyse.";
     if (O.mode === "strategy" && O.form.compare.size > 3) return "Compare at most three other structures.";
+    if (window.OptionsStudio && window.OptionsStudio.modes.has(O.mode)) { const e = window.OptionsStudio.check(O); if (e) return e; }
     if (O.mode === "backtest" && O.form.btMode === "sweep") { try { sweepValues(); } catch (e) { return e.message; } }
     if (O.mode === "fit" && !O.form.fitModels.size) return "Choose at least one model to fit.";
     if (O.mode === "price" && !O.form.priceModels.size) return "Choose at least one model to price under.";
@@ -221,6 +227,7 @@
     const sec = (title, open = true) => { const d = h("details", "", panel); d.open = open; h("summary", "", d, title); return h("div", "body", d); };
     const m = O.mode;
     underlyingField(sec("1. Underlying"), ANALYTIC.has(m) ? rerun : () => { context(); after(); });
+    if (window.OptionsStudio && window.OptionsStudio.modes.has(m)) { window.OptionsStudio.sections(O, sec, after); W.dataCard(panel, O, FREE); return; }
     if (m !== "backtest") W.dataCard(panel, O, FREE);
     if (m === "chain" || m === "smile" || m === "distribution" || m === "positioning") {
       const b = sec(m === "chain" || m === "smile" ? "2. Expiry and strikes" : "2. Expiry");
@@ -351,6 +358,7 @@
   /* ---------- running ---------- */
   O.run = (fromForm) => {
     const m = O.mode, f = O.form;
+    if (window.OptionsStudio && window.OptionsStudio.modes.has(m)) return window.OptionsStudio.run(O, settings);
     if (ANALYTIC.has(m)) {
       if (!fromForm) W.dropCache(O);                                                                       // the Refresh button asks again; a change in the form asks only for what it changed
       return W.request(O, () => {
@@ -411,8 +419,17 @@
       return steps;
     }, f.btMode === "compare" ? "Running every strategy…" : f.btMode === "sweep" ? "Running the backtest and the sweep…" : "Running the backtest…");
   };
-  O.auto = () => { if (O.mode === "saved") O.run(true); else if (ANALYTIC.has(O.mode) && O.form.underlying) O.run(true); };
+  const STUDIO_TRIED = new Set();
+  const studioAuto = () => {                                                              // the studio's contract menus need the chain's expiries: load them once per underlying
+    const k = O.form.underlying + "|" + O.expiries.length;
+    if (O.expiries.length || STUDIO_TRIED.has(k) || !O.form.underlying) return;
+    STUDIO_TRIED.add(k); context().then(() => { if (window.OptionsStudio && window.OptionsStudio.modes.has(O.mode)) Q.renderLab(O); });
+  };
+  O.auto = () => { if (window.OptionsStudio && window.OptionsStudio.modes.has(O.mode)) { studioAuto(); return; }
+    return autoOld(); };
+  const autoOld = () => { if (O.mode === "saved") O.run(true); else if (ANALYTIC.has(O.mode) && O.form.underlying) O.run(true); };
   O.empty = (root) => {
+    if (window.OptionsStudio && window.OptionsStudio.modes.has(O.mode)) { window.OptionsStudio.empty(O, root); return; }
     const text = { validate: ["Validate the pricing models", "Fit the models, hold some quotes out, and compare them on error out of sample, parameters needed, numerical health and time."], research: ["Research the surface", "Fit an SVI slice to every expiry and see the residuals, the bid-ask bands and the arbitrage diagnostics."], fit: ["Fit the pricing models to this chain", "Fit Merton, Kou, variance gamma, NIG and Heston to the out-of-the-money quotes and see which reproduces the smile, how much better it does than a flat volatility, and what each implies for the odds of a fall. About half a minute for all five."],
       price: ["Price a product under every model", "Choose a digital, barrier, average-price or American option. Each model is fitted to the chain (once per session) and prices it. The spread between them, set beside their spread on the plain option at the same strike (which is only how well each fits), is the model risk of the product, which no vanilla quote can tell you."],
       hedge: ["Cost the hedge of an option", "Hedging a sold option means trading the underlying, and every trade costs. See what that does to the price, where the no-trade band lies and which rule loses least on simulated paths."],
@@ -422,7 +439,8 @@
     Q.labEmpty(root, O, text[0], [text[1]], O.runLabel[O.mode]);
   };
   O.draw = () => Q.drawLab(O);
-  O.build = (root, d, body) => ({ volsurf: (r, x) => window.VolSurface.view(r, x, { header, nameOf }), saved: (r, x) => window.Experiments.view(r, x, { header, lab: O }), research: (r, x, b) => window.OptionsResearch.research(r, x, { header, nameOf, body: b }), validate: (r, x, b) => window.OptionsResearch.validate(r, x, { header, nameOf, body: b, underlying: O.form.underlying }), overview: buildOverview, chain: buildChain, smile: buildSmile, surface: buildSurface, distribution: buildDistribution, positioning: buildPositioning, fit: buildFit, price: buildPrice, hedge: buildHedge, risk: buildRisk, strategy: buildStrategy, backtest: buildBacktest })[O.mode](root, d, body);
+  O.build = (root, d, body) => (window.OptionsStudio && window.OptionsStudio.modes.has(O.mode) ? window.OptionsStudio.build(O, root, d, body) : buildOld(root, d, body));
+  const buildOld = (root, d, body) => ({ volsurf: (r, x) => window.VolSurface.view(r, x, { header, nameOf }), saved: (r, x) => window.Experiments.view(r, x, { header, lab: O }), research: (r, x, b) => window.OptionsResearch.research(r, x, { header, nameOf, body: b }), validate: (r, x, b) => window.OptionsResearch.validate(r, x, { header, nameOf, body: b, underlying: O.form.underlying }), overview: buildOverview, chain: buildChain, smile: buildSmile, surface: buildSurface, distribution: buildDistribution, positioning: buildPositioning, fit: buildFit, price: buildPrice, hedge: buildHedge, risk: buildRisk, strategy: buildStrategy, backtest: buildBacktest })[O.mode](root, d, body);
 
   /* ---------- overview ---------- */
   const header = (root, title, sub, guide) => Q.labHead(root, title, sub, guide || GUIDE);
@@ -784,11 +802,32 @@
 
   /* ---------- backtest ---------- */
   const nameOfStrategy = (id) => String(id).replace(/_/g, " ");
+  /* Which kind of backtest this is, what it leaves out, the margin it would have needed, and why the historical kind is not offered (never ranked with this one). */
+  function backtestMode(root, d) {
+    if (d.mode) {
+      const b = h("div", "banner", root); h("strong", "", b, d.mode.label + ". "); b.appendChild(document.createTextNode("A simulated market, not a historical backtest: a result here validates the machinery, not the strategy."));
+      const dd = h("details", "how", root); h("summary", "", dd, "What this validation does not do"); for (const l of d.mode.limitations) h("p", "hint", dd, l.text);
+    }
+    const m = d.margin;
+    if (m && m.available) {
+      const card = h("div", "card", root); h("h3", "", card, "Margin the strategy would have needed (measured, not charged)");
+      W.kv(card, "Indicative margin", [["Peak", money(m.peak, 0) + ` (${pct(m.peak_to_capital, 1)} of capital)`], ["Average while a position is open", money(m.mean_when_held, 0)], ["Days the requirement exceeded the capital", String(m.days_over_capital)],
+        ["Margin-call days (requirement above capital plus P&L)", String(m.margin_call_days) + (m.first_margin_call ? ` · first on ${m.first_margin_call}` : "")], ["Return on the capital", pct(m.return_on_capital, 2)], ["Return on the average margin", m.return_on_margin === null ? "n/a" : pct(m.return_on_margin, 2)]]);
+      h("p", "hint", card, m.basis + ". Not modelled: " + m.not_modelled.join("; ") + ".");
+    }
+    const slot = h("div", "", root);
+    Q.api("/api/options/backtest-modes?underlying=" + encodeURIComponent(O.form.underlying)).then((r) => {
+      const hm = r.modes.find((x) => x.id === "historical"); if (!hm) return;
+      const b = h("div", "unavail", slot); h("strong", "", b, hm.label + ": " + hm.state + ". "); b.appendChild(document.createTextNode(hm.reason)); if (hm.needs && hm.needs.length) h("div", "hint", b, "Needed: " + hm.needs.join("; "));
+      h("div", "hint", b, r.ranking);
+    }, () => {});
+  }
   function buildBacktest(root, d) {
     if (d.kind === "options_compare") return buildCompare(root, d);
     const s = d.summary, os = d.option_summary, tm = d.timing, sweep = O.results.backtest_sweep && O.results.backtest_sweep.data;
     header(root, `${nameOfStrategy(d.strategy)}: simulated option market`, `${d.n_days} trading days · ${d.start} to ${d.end} · capital ${money(d.capital)} · seed ${d.seed}${tm ? ` · traded only while implied volatility is ${pct(tm.threshold, 1)} above realised` : ""}`, GUIDES.backtest);
     W.provenance(root, d);
+    backtestMode(root, d);
     const k = h("div", "earnrow", root);
     tile(k, "Sharpe ratio", num(s.sharpe), { text: `Sortino ${num(s.sortino)} · Calmar ${num(s.calmar)}` });
     tile(k, "Return a year", Q.pct(s.cagr), { text: `volatility ${pct(s.ann_vol)}` });

@@ -766,3 +766,11 @@ table.obs td:nth-child(2) { white-space: normal; max-width: 280px; }
 .vs-notes { margin: 10px 0 24px; max-width: 100%; }
 .vs-tabs button[aria-selected="true"] { font-weight: 600; }
 @media (max-width: 640px) { .vs-bar { flex-direction: column; align-items: stretch; } .vs-plot { height: clamp(300px, 56vh, 480px); } .vs-field input { width: 70px; } }
+
+.datamode { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 6px 0 2px; }
+.datamode .hint { margin: 0; }
+.stud-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+.heat-note { font-size: 12px; color: var(--ink-2); margin: 2px 0 8px; }
+.verdict-ok { color: var(--pos); font-weight: 600; } .verdict-bad { color: var(--neg); font-weight: 600; }
+.unavail { border: 1px dashed var(--axis); border-radius: 8px; padding: 10px 12px; color: var(--ink-2); font-size: 13px; }
+.unavail strong { color: var(--ink); }

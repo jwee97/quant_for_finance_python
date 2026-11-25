@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import inspect
 import json
+import os
 import math
 import re
 import threading
@@ -271,7 +272,7 @@ class App:
         detectors = [{"name": e.name, "description": e.description} for e in DETECTORS.entries() if e.name != "static"]
         default = self.builder.default_bundle()
         return clean({
-            "api_version": API_VERSION, "restart_needed": code_signature() != LAUNCH_SIGNATURE,
+            "api_version": API_VERSION, "restart_needed": code_signature() != LAUNCH_SIGNATURE, "observed_default": os.environ.get("QUANT_OBSERVED_ONLY", "1").lower() not in ("0", "false", "no", "off"),
             "models": models, "allocators": allocators, "detectors": detectors, "combinations": [{"name": k, "description": v} for k, v in COMBINATIONS.items()],
             "default_tickers": list(default.assets), "default_classes": dict(default.asset_class), "classes": list(CLASSES), "max_tickers": MAX_TICKERS,
             "sources": [src.status() for src in self.builder.sources.values()], "default_source": "yahoo",

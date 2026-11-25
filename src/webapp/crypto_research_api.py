@@ -35,6 +35,21 @@ class CryptoResearchApi:
             raise ApiError(f"observed-only mode: {symbol} is {s.source}. Download its history (Free data) or put {symbol}.csv in data/user/crypto/")
         return s
 
+    def _open_interest(self, symbol: str):
+        import pandas as pd
+
+        path = self.api.downloads.files("crypto", "openinterest").get(f"openinterest_{symbol}")
+        if path is None:
+            return None
+        try:
+            return cr.open_interest_view(pd.read_csv(path), self.api.downloads.meta("crypto", f"openinterest_{symbol}"))
+        except (OSError, ValueError):
+            return None
+
+    def _liquidations(self, symbol: str):
+        payload = self.api.downloads.read_json("crypto", f"liquidations_{symbol}")
+        return cr.liquidation_view(payload) if payload else None
+
     # ------------------------------------------------------------------------------------------------------------ routes
     def calendar(self, q: dict) -> dict:
         """``GET /api/crypto/calendar?symbol=BTC``: whether the coin's marks are a 24/7 daily calendar, the annualisation that fits, and what the weekday pipeline would drop."""
@@ -54,11 +69,12 @@ class CryptoResearchApi:
         syms = _list(q.get("symbols") or "BTC,ETH", 6)
         series = {x.upper(): self._observed_series(x) for x in syms}
         try:
-            out = cr.funding_intelligence(series, observed_only=self.api.observed(), days=int(_number(q, "days", 365, 60, 2000, integer=True)))
+            first = next(iter(series))
+            out = cr.funding_intelligence(series, observed_only=self.api.observed(), days=int(_number(q, "days", 365, 60, 2000, integer=True)), open_interest=self._open_interest(first), liquidations=self._liquidations(first))
         except ValueError as exc:
             raise ApiError(str(exc)) from None
         parts = {f"{r['symbol']}@{r['venue']}": r["source"] for r in out["rows"]}
-        parts.update({"open_interest": "unavailable", "liquidations": "unavailable", "dated_futures": "unavailable"})
+        parts.update({"open_interest": "downloaded" if out["open_interest"].get("state") == "ok" else "unavailable", "liquidations": "downloaded" if out["liquidations"].get("state") == "ok" else "unavailable", "dated_futures": "unavailable"})
         return self._wrap("crypto_derivatives", out, parts, [], max(x.as_of for x in series.values()))
 
     def carry(self, q: dict) -> dict:
