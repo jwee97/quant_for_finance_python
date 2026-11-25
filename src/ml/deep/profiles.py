@@ -62,4 +62,4 @@ def estimate(arch: str, n_features: int, lookback: int, width: int, layers: int,
 def suggest_smaller(batch_size: int) -> dict:
     """What to try after a memory failure: half the batch size, with gradient accumulation to keep the effective batch (the optimiser sees the same number of rows per step)."""
     half = max(8, batch_size // 2)
-    return {"batch_size": half, "accumulation_steps": max(1, round(batch_size / half)), "note": "the same effective batch with half the memory per step; the run restarts from its last checkpoint"}
+    return {"batch_size": half, "accumulation_steps": max(1, round(batch_size / half)), "note": "the same effective batch with half the memory per step. A different batch size is a different optimisation, so the old checkpoint cannot be continued exactly: restart as a new run, or warm-start from its weights. Resuming with the SAME settings is possible once memory is free."}

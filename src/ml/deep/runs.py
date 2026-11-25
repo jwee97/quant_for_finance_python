@@ -129,7 +129,14 @@ def detail(root, run_id: str, fit: str | None = None, since: int = 0, now: float
     from .checkpoint import CheckpointManager                                             # PyTorch is imported only when a run's checkpoints are listed
 
     mgr = CheckpointManager(folder)
-    return {"id": run_id, "fit": folder.name, "fits": [f.name for f in folders], "summary": s, "series": series, "n_epochs_total": len(ep), "events": [r for r in rows if r.get("type") not in ("epoch",)], "checkpoints": mgr.listing(),
+    memory = next((e for e in reversed(rows) if e.get("type") == "interrupted" and re.search(r"MemoryError|ResourceLimit|out of memory", str(e.get("reason", "")), re.I)), None)
+    advice = None
+    if memory is not None and s["status"] in ("interrupted", "orphaned"):
+        from . import profiles
+
+        batch = int((((_request(run) or {}).get("body") or {}).get("model") or {}).get("params", {}).get("batch_size", 0) or 0)
+        advice = {"reason": str(memory.get("reason")), **(profiles.suggest_smaller(batch) if batch else {"note": "lower the batch size or the lookback, or choose the conservative profile"})}
+    return {"id": run_id, "fit": folder.name, "fits": [f.name for f in folders], "summary": s, "memory_advice": advice, "series": series, "n_epochs_total": len(ep), "events": [r for r in rows if r.get("type") not in ("epoch",)], "checkpoints": mgr.listing(),
             "request": _request(run), "control": _control_state(folder)}
 
 

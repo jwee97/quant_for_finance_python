@@ -34,6 +34,7 @@ def prepare(root, over: dict, body: dict, path: str, label: str) -> dict | None:
     if not runs.ID.match(run_id):
         raise ApiError("run_id is 3 to 80 letters, digits, '.', '_' or '-'")
     profile = str(body.get("profile") or params.get("profile") or "")
+    profile = "" if profile == "none" else profile
     record = None
     if profile:
         try:
@@ -113,7 +114,7 @@ class TrainingApi:
         except ValueError as exc:
             raise ApiError(str(exc)) from None
         out = {"estimate": est, "suggestion": profiles.suggest_smaller(int(_number(body, "batch_size", 512, 1, 100_000, integer=True))) if est["level"] != "ok" else None}
-        if body.get("profile"):
+        if body.get("profile") and body.get("profile") != "none":
             try:
                 out["profile"] = profiles.apply({"batch_size": int(_number(body, "batch_size", 512, 1, 100_000, integer=True))}, str(body["profile"]))[1]
             except ValueError as exc:

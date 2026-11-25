@@ -17,7 +17,7 @@ HORIZONS = {"type": "text", "help": "Extra forecast horizons in days, comma sepa
 def _deep(**over) -> dict:
     """Settings every PyTorch model shares (the trainer in ``ml.deep.trainer``), with a model's own on top."""
     base = {"lookback": 20, "hidden": 32, "layers": 2, "dropout": 0.1, "epochs": 25, "batch_size": 512, "learning_rate": 0.001, "weight_decay": 0.0001, "patience": 5, "grad_clip": 1.0,
-            "val_fraction": 0.15, "max_rows": 60000, "device": "auto", "horizons": "", "num_threads": 0, "checkpoint_dir": "", "resume": 0, "checkpoint_every": 1, "keep_milestones": 0, "accumulation_steps": 1, "amp": 0, "profile": ""}
+            "val_fraction": 0.15, "max_rows": 60000, "device": "auto", "horizons": "", "num_threads": 0, "checkpoint_dir": "", "resume": 0, "checkpoint_every": 1, "keep_milestones": 0, "accumulation_steps": 1, "amp": 0, "profile": "none"}
     base.update(over)
     return base
 
@@ -36,7 +36,7 @@ DEEP_SPECS = {"device": DEVICE, "horizons": HORIZONS, "checkpoint_dir": {"type":
               "keep_milestones": {"type": "int", "help": "Keep a checkpoint every this many epochs besides the best and the last two (0: none)"},
               "accumulation_steps": {"type": "int", "help": "Gradient accumulation: the optimizer steps every this many batches (the same effective batch with less memory per step)"},
               "amp": {"type": "bool", "help": "Mixed precision (CUDA only)"},
-              "profile": {"type": "choice", "choices": ["", "conservative", "balanced", "performance"], "help": "A resource profile: conservative (Replit, small CPUs), balanced, performance. It sets execution settings only, never the model"}}
+              "profile": {"type": "choice", "choices": ["none", "conservative", "balanced", "performance"], "help": "A resource profile: conservative (Replit, small CPUs), balanced, performance. It sets execution settings only, never the model"}}
 SEQ_SPECS = {**DEEP_SPECS, "loss": LOSS, "rank_weight": {"type": "float", "help": "Weight of the pairwise ranking term of the mse_rank loss"}}
 # 7 leaves: LightGBM grows leaf by leaf with no depth limit, so 15 leaves can make a tree far deeper than XGBoost's depth 3 (at most 8 leaves); on noisy returns the deeper trees fit noise.
 # Measured: on synthetic markets with a planted signal the rank IC rose from 0.14 to 0.20 and from 0.05 to 0.09 (two seeds), on nine large stocks from 0.008 to 0.026 (docs/ml_pipeline_audit.md).

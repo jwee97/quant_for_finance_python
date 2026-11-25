@@ -155,3 +155,16 @@ def test_the_run_folder_does_not_change_the_experiments_fingerprint(app):
     from src.ml.config import build_key, experiment_config
     a = experiment_config({"dataset": BASE["dataset"], "split": BASE["split"], "model": BASE["model"]})
     assert build_key(a) == build_key(experiment_config({"dataset": BASE["dataset"], "split": BASE["split"], "model": BASE["model"]}))
+
+
+def test_a_run_that_stopped_for_lack_of_memory_says_so_and_suggests_what_to_change(tmp_path):
+    fit = runs.base(tmp_path) / "oom-run" / "nbeats-x"
+    fit.mkdir(parents=True)
+    rows = [{"type": "start", "at": 1.0, "epochs": 10}, {"type": "epoch", "epoch": 1, "epochs": 10, "train_loss": 1.0, "val_loss": 1.0, "lr": 0.001, "grad_norm": 1.0, "seconds": 1.0, "best_val": 1.0, "best_epoch": 1, "bad": 0,
+                                                                "patience": 5, "improved": True, "at": 2.0, "checkpoint": None, "peak_mb": 1, "process_rss_mb": 1},
+            {"type": "interrupted", "epoch": 1, "at": 3.0, "reason": "ResourceLimit: the process uses 3900 MB of its 4000 MB"}]
+    (fit / "metrics.jsonl").write_text("\n".join(json.dumps(r) for r in rows))
+    (fit.parent / "request.json").write_text(json.dumps({"body": {"model": {"kind": "nbeats", "params": {"batch_size": 1024}}}}))
+    d = runs.detail(tmp_path, "oom-run")
+    assert d["summary"]["status"] == "interrupted"
+    assert d["memory_advice"]["batch_size"] == 512 and d["memory_advice"]["accumulation_steps"] == 2 and "cannot be continued exactly" in d["memory_advice"]["note"]

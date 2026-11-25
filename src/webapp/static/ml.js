@@ -1648,6 +1648,7 @@
     const head = h("div", "card", box);
     h("h3", "", head, `Run ${d.id}${d.fits.length > 1 ? ` · fit ${d.fit}` : ""}`);
     const st = h("p", "", head); const tag = h("strong", "", st, TR_WORD[sm.status] || sm.status); tag.setAttribute("data-status", sm.status); st.appendChild(document.createTextNode(" · " + (TR_HINT[sm.status] || "")));
+    if (d.memory_advice) { const a = d.memory_advice; const p2 = h("p", "hint", head); p2.setAttribute("data-memory-advice", "1"); p2.appendChild(document.createTextNode(`Stopped for lack of memory (${a.reason}). ${a.batch_size ? `Try a batch size of ${a.batch_size}${a.accumulation_steps > 1 ? ` with ${a.accumulation_steps} accumulation steps` : ""}. ` : ""}${a.note || ""}`)); }
     const k = h("div", "earnrow", head);
     tile(k, "Epoch", `${sm.epoch}${sm.epochs ? " / " + sm.epochs : ""}`, { text: `last written ${ago(sm.last_at)}` });
     tile(k, "Best validation loss", Q.bad(sm.best_val) ? "n/a" : String(+Number(sm.best_val).toPrecision(4)), { text: Q.bad(sm.best_epoch) ? "" : `at epoch ${sm.best_epoch}` });
