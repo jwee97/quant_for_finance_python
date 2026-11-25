@@ -81,3 +81,21 @@ def test_resuming_a_run_that_had_stopped_early_does_not_train_another_epoch(tmp_
     again = tn.fit_network(again_net, batch, loss, 240, 60, cfg)
     assert again.stopped_early and len(again.train_loss) == len(first.train_loss) and again.recovery["level"] == "exact"
     assert again.best_epoch == first.best_epoch
+
+
+def test_a_windows_sharing_violation_during_the_replace_is_retried(tmp_path, monkeypatch):
+    from src.ml.deep import checkpoint as ck
+    real, calls = ck.os.replace, {"n": 0}
+
+    def flaky(src, dst):
+        calls["n"] += 1
+        if calls["n"] <= 2:
+            raise PermissionError("the file is in use by another process")
+        return real(src, dst)
+
+    monkeypatch.setattr(ck.os, "replace", flaky)
+    monkeypatch.setattr(ck.time, "sleep", lambda s: None)
+    mgr = ck.CheckpointManager(tmp_path)
+    mgr.save({"model": {"w": torch.zeros(2)}, "epoch": 0})
+    blob, which, problems = mgr.latest_valid()
+    assert which == "last.pt" and blob["epoch"] == 0 and not problems and calls["n"] > 2

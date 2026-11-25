@@ -160,10 +160,13 @@ class Operation:
                       "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (self.op_key, self.study_id, self.parent_key, self.kind, state, int(self.counts), self.config_hash, self.feature_hash, self.dataset_key,
                                                                 self.data_identity, self.seed, self.experiment_id, _j(detail or {}), _now()))
         self.state = state
+        if state in TERMINAL:
+            _LIVE.discard(self.op_key)
 
     def start(self) -> "Operation":
         if self.state == "registered":
             self._append("running")
+            _LIVE.add(self.op_key)
         return self
 
     def done(self, experiment_id: str | None = None, **detail) -> None:
@@ -195,6 +198,36 @@ class Operation:
         else:
             self.done(**self.finish_detail)
         return False
+
+
+STALE_OPERATION_SECONDS = 1800.0                                       # an operation with no event for this long, in no live process, is taken to have been interrupted
+_LIVE: set[str] = set()                                                # operation keys running in THIS process: never reconciled away while they run
+
+
+def reconcile_interrupted(registry, older_than: float = STALE_OPERATION_SECONDS, study_id: str | None = None) -> list[str]:
+    """Close the operations that a dead process left ``registered`` or ``running``: a search trial, an experiment or a finalisation whose process was killed (a restart, an out-of-memory kill, a closed laptop) never
+    reaches ``done``, ``failed`` or ``cancelled`` and would otherwise stay "running" for ever. Each is ended as ``failed`` with ``interrupted: true`` in its detail, so that it is NEVER read as a completed trial,
+    and it keeps counting as a look (a try that did not finish is still a try: dropping it would flatter the search). Only operations with no event for ``older_than`` seconds that are not live in this process are
+    touched. Returns the keys that were closed."""
+    closed: list[str] = []
+    now = time.time()
+    with registry.transaction() as c:
+        rows = c.execute("SELECT e.* FROM lineage_events e JOIN (SELECT op_key, MAX(seq) AS seq FROM lineage_events GROUP BY op_key) m ON e.op_key=m.op_key AND e.seq=m.seq "
+                         "WHERE e.state IN ('registered','running')" + (" AND e.study_id=?" if study_id else ""), (study_id,) if study_id else ()).fetchall()
+        for r in rows:
+            if r["op_key"] in _LIVE:
+                continue
+            try:
+                at = time.mktime(time.strptime(r["at"], "%Y-%m-%d %H:%M:%S"))                  # ``_now`` writes local time
+            except (TypeError, ValueError):
+                continue
+            if now - at < older_than:
+                continue
+            c.execute("INSERT INTO lineage_events (op_key, study_id, parent_key, kind, state, counts, config_hash, feature_hash, dataset_key, data_identity, seed, experiment_id, detail, at) "
+                      "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (r["op_key"], r["study_id"], r["parent_key"], r["kind"], "failed", r["counts"], r["config_hash"], r["feature_hash"], r["dataset_key"], r["data_identity"], r["seed"],
+                                                                r["experiment_id"], _j({"error": "interrupted: the process that was running this ended before it finished", "interrupted": True, "last_state": r["state"]}), _now()))
+            closed.append(r["op_key"])
+    return closed
 
 
 def active() -> Operation | None:

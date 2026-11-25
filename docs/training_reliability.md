@@ -46,7 +46,7 @@ Routes (`src/webapp/training_api.py`): `GET /api/training/runs`, `GET /api/train
 
 `src/ml/deep/profiles.py`: `conservative` (batch cap 128, fewer loader threads), `balanced` (cap 512), `performance` (cap 2048, mixed precision when CUDA is present). A profile only caps execution settings and reports what it changed; `comparable_with_unprofiled_run` is false whenever it changed the batch size, because a different batch size is a different optimisation. `estimate()` prices a configuration with `ml/resources.deep_mb` and reports a range (x0.7 to x1.8, the model's own rule of thumb is not exact) against the free memory and the cgroup limit. A request whose upper bound exceeds what is free is refused before it is queued, with a smaller batch size suggested; `force: true` overrides.
 
-**Out-of-memory.** A Python `MemoryError` or the resource watchdog ends the job at an epoch boundary after the last checkpoint, and the run is then resumable. A kernel OOM kill (SIGKILL) gives the process no chance to write anything: the run shows as `orphaned`, resumable from the last committed checkpoint, and the monitor says so. The platform cannot prevent the kill, only make it cheap.
+**Out-of-memory.** A Python `MemoryError` or the resource watchdog stops the job in the middle of an epoch; the last committed checkpoint (the previous epoch's) is intact and the run is then resumable. A kernel OOM kill (SIGKILL) gives the process no chance to write anything: the run shows as `orphaned`, resumable from the last committed checkpoint, and the monitor says so. The platform cannot prevent the kill, only make it cheap.
 
 ## 5. Model-by-model compatibility matrix
 
@@ -66,10 +66,39 @@ Routes (`src/webapp/training_api.py`): `GET /api/training/runs`, `GET /api/train
 
 `ml/datasets.py`: a cross-sectional z-score or rank needs at least three assets on a date. With one or two tickers every cell used to become missing and the dataset failed with "no row survives". Now each feature is scaled by the asset's own **expanding** history (`time_series_z`, first 60 days missing), which uses no later observation (`tests/test_ml_small_universe.py::test_time_series_scaling_uses_only_the_past` perturbs the future and compares). The substitution is recorded in the dataset's `meta["normalization"]` (`requested`, `applied`, `note`). When nothing can be built the error lists priced days per asset, the binding rule and the required history. `time_series_z` can also be chosen explicitly for any universe.
 
-## 7. Not implemented or not verified
+## 7. Searches and research operations
+
+A search trial (random, Bayesian, genetic, Optuna) is registered in the study's lineage BEFORE it runs and finished as done, failed or cancelled; every operation counts as a look whatever its end. What was missing: a trial whose process was killed stayed "running" for ever. `research_controls.reconcile_interrupted` (called when the trials or lineage are read) ends operations that have had no event for 30 minutes and are not live in this process as `failed` with `interrupted: true`. They are never read as completed trials and they keep counting (`raw_looks` is unchanged; `tests/test_research_interrupted_operations.py`). The 30 minute threshold is a trade: a trial legitimately running longer in a second process would be closed early (its own `done` still lands afterwards).
+
+An interrupted search is **restarted, not continued**: its completed trials are in the registry and are counted, but the sampler does not pick up from them and the trial that was running is not resumed from a checkpoint.
+
+## 8. Benchmarks
+
+`python scripts/benchmark_training.py` (results in `docs/generated/training_benchmark.json`). Measured on the build machine (CPU only, 4,000 training and 1,000 validation windows of 20 days x 30 features, batch 256, 4 epochs). `commit` is one complete checkpoint write (serialise, fsync, read back and verify, replace) of `last.pt` and `best.pt`; `read` is finding and verifying the newest checkpoint.
+
+| Model | Size | Parameters | Epoch (s) | Checkpoint (MB) | Commit (s) | Read and verify (s) |
+|---|---|---|---|---|---|---|
+| N-BEATS | small | 40 k | 0.08 | 0.43 | 0.027 | 0.004 |
+| N-BEATS | medium | 258 k | 0.15 | 2.8 | 0.039 | 0.007 |
+| N-BEATS | large | 2.0 M | 0.46 | 23.1 | 0.229 | 0.042 |
+| N-HiTS | small | 36 k | 0.07 | 0.39 | 0.017 | 0.003 |
+| N-HiTS | medium | 161 k | 0.14 | 1.7 | 0.032 | 0.006 |
+| N-HiTS | large | 1.1 M | 0.35 | 12.4 | 0.154 | 0.018 |
+
+A checkpoint is the weights plus two Adam moment buffers plus the best weights, about 11 bytes per parameter on disk. For the large networks a commit costs about half an epoch: raise `checkpoint_every` (a checkpoint is still written on every improvement, on the last epoch and on a stop). Process memory is dominated by PyTorch and the data, not by the checkpoint (about 350 to 440 MB for every row). Timings from one run on a shared machine vary by tens of percent; they show orders of magnitude, not a guarantee.
+
+## 9. Windows and Replit
+
+* Checkpoint files are replaced with `os.replace` after an `fsync`; on Windows a virus scanner or the monitor reading the file at that instant can raise a sharing violation, so the replace is retried up to eight times with a growing pause (`tests/test_training_recovery_architectures.py::test_a_windows_sharing_violation_during_the_replace_is_retried` simulates the error; it was not run on Windows).
+* Run folders use only letters, digits, `.`, `_` and `-`, so no name is invalid on Windows; checkpoint files are written under `data/user/training` relative to the app root, never to a temporary directory on another volume.
+* On Replit the monitor prints a warning that a deployment's disk can be replaced on republish; copy `data/user/training` to durable storage for long runs. A Replit workspace that goes idle ends the job like any restart: the run shows as interrupted or orphaned and can be resumed.
+* The training runs on the app's worker threads, with PyTorch threads capped by the container's CPU quota (`resources.default_threads`).
+
+## 10. Not implemented or not verified
 
 * Exact resume of the autoencoder and VAE; checkpointing of the graph models and of the loops listed as "own loops" above.
-* Resuming a **search** (random, Bayesian, genetic) or an Optuna study: the search keeps its trials in the registry and counts every attempt, but an interrupted search is restarted, not continued, and its interrupted trial is not resumed from a checkpoint.
-* A worker **process** separate from the web process: training still runs on the app's worker threads, so an app restart ends the job (the job log marks it `interrupted`, the run is resumable from the monitor).
-* GPU out-of-memory recovery was not exercised (no GPU in the build environment); AMP and `accumulation_steps` are tested for consistency on CPU only.
+* **Continuing** (not restarting) an interrupted search or Optuna study.
+* A worker **process** separate from the web process, with its own heartbeat: training still runs on the app's worker threads, so an app restart ends the job (the job log marks it `interrupted`, the run is resumable from the monitor).
+* GPU out-of-memory recovery was not exercised (no GPU in the build environment); AMP and `accumulation_steps` are tested for consistency on CPU only (`accumulation_steps`; AMP is a no-op on CPU).
 * Gradient histograms and per-layer diagnostics: only the mean gradient norm per epoch is recorded.
+* Windows behaviour was reasoned about and simulated, not run on Windows.

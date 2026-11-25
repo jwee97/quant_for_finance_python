@@ -71,6 +71,18 @@ def restore_rng(state: dict, gen: np.random.Generator | None) -> None:
         gen.bit_generator.state = state["generator"]
 
 
+def _replace(src: Path, dst: Path, attempts: int = 8) -> None:
+    """``os.replace`` that waits out a Windows sharing violation (a virus scanner or the monitor reading the target at that instant raises PermissionError there; on Linux and macOS it never does)."""
+    for k in range(attempts):
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError:
+            if k == attempts - 1:
+                raise
+            time.sleep(0.05 * (k + 1))
+
+
 def _checksum(payload: bytes) -> str:
     return hashlib.sha256(payload).hexdigest()
 
@@ -98,7 +110,7 @@ class CheckpointManager:
         if _checksum(tmp.read_bytes()) != digest or check.get("epoch") != state.get("epoch"):
             tmp.unlink(missing_ok=True)
             raise OSError("the checkpoint did not verify after writing; the previous one was kept")
-        os.replace(tmp, path)
+        _replace(tmp, path)
         sidecar = path.with_name(path.name + ".sha256")
         sidecar.write_text(digest)
         return {"path": str(path), "bytes": len(data), "sha256": digest}
@@ -109,11 +121,11 @@ class CheckpointManager:
         last, prev = self.dir / "last.pt", self.dir / "last.prev.pt"
         info = self._atomic(self.dir / "last.next.pt", state)
         if last.exists():
-            os.replace(last, prev)
+            _replace(last, prev)
             if last.with_name("last.pt.sha256").exists():
-                os.replace(last.with_name("last.pt.sha256"), prev.with_name("last.prev.pt.sha256"))
-        os.replace(self.dir / "last.next.pt", last)
-        (self.dir / "last.next.pt.sha256").replace(last.with_name("last.pt.sha256"))
+                _replace(last.with_name("last.pt.sha256"), prev.with_name("last.prev.pt.sha256"))
+        _replace(self.dir / "last.next.pt", last)
+        _replace(self.dir / "last.next.pt.sha256", last.with_name("last.pt.sha256"))
         if best:
             self._atomic(self.dir / "best.pt", state)
         if self.keep_milestones and (int(state["epoch"]) + 1) % self.keep_milestones == 0:

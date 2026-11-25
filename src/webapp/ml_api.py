@@ -869,8 +869,16 @@ class MlApi(AdvancedRoutes, SelectionRoutes, StrategyRoutes, ResearchRoutes):
             self.registry.delete_experiment(exp_id)
         return {"ok": True, "id": exp_id}
 
+    def _reconcile(self) -> None:
+        """Close the research operations an earlier process left running (a search killed mid-trial): they become failed-with-interrupted, still counted as looks, never as completed trials."""
+        try:
+            rc.reconcile_interrupted(self.registry)
+        except Exception:                                                                   # noqa: BLE001 - housekeeping must never be the reason a read fails
+            pass
+
     def trials(self, q: dict) -> dict:
         """``GET /api/ml/trials?study=&dataset_key=&limit=``: the recorded search trials."""
+        self._reconcile()
         study = str(q["study"]) if q.get("study") else None
         key = str(q["dataset_key"]) if q.get("dataset_key") else None
         for v in (study, key):
@@ -885,6 +893,7 @@ class MlApi(AdvancedRoutes, SelectionRoutes, StrategyRoutes, ResearchRoutes):
     def lineage(self, q: dict) -> dict:
         """``GET /api/ml/lineage?id=<experiment>`` or ``?study=<study>``: the study's operations (every try, with its state, kind, parent and configuration), the raw look counts, the feature sets and configurations
         tried, the evaluation plans, the holdout access history, the tombstones of deleted experiments and the selection evidence. Counts are counts of recorded tries, not estimates of independent trials."""
+        self._reconcile()
         if q.get("id") and q.get("study"):
             raise ApiError("give id or study, not both")
         with _user_errors():
