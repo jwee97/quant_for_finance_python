@@ -133,7 +133,7 @@ def test_checkpoints_hold_the_best_and_the_last_epoch_and_a_run_resumes_from_the
     blob = tn.load_checkpoint(tmp_path / "best.pt", other)
     assert blob["epoch"] == hist.best_epoch and all(torch.equal(a, b) for a, b in zip(net.state_dict().values(), other.state_dict().values()))
     more = tn.fit_network(_toy_net(), batch, loss, n_train, n_val, dataclasses.replace(cfg, epochs=7, resume=True))
-    assert len(more.train_loss) == 3                                                              # epochs 4, 5 and 6: it picked up after the last saved epoch
+    assert len(more.train_loss) == 7 and more.recovery["resumed_from_epoch"] == 4 and more.recovery["level"] in ("exact", "epoch_boundary"), "the history carries the first four epochs and the three new ones"
 
 
 def test_each_refit_checkpoints_into_a_folder_of_its_own_so_resuming_never_skips_a_later_fits_training(ds, tmp_path):

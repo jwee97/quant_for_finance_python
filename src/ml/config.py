@@ -39,7 +39,7 @@ RECOMMENDED: dict = {"dataset": {"target": "excess_ret_21", "horizon": 21}, "sig
                      "backtest": {"rebalance": "monthly", "target_vol": None}}
 SECTIONS = ("dataset", "split", "model", "signal", "backtest", "robustness", "execution")
 HASH_SECTIONS = ("dataset", "split", "model", "signal", "backtest", "execution")      # what decides the numbers (``execution`` only when present: it is absent from the defaults, so no existing hash changes); the robustness switch only decides which extra reports are written
-NORMALIZATIONS = ("none", "cross_sectional_z", "rank")
+NORMALIZATIONS = ("none", "cross_sectional_z", "rank", "time_series_z")
 SCHEMES = ("walk_forward", "expanding", "rolling")
 REBALANCES = ("daily", "weekly", "monthly", "on_change")
 HOLDING_PERIODS = (1, 5, 10, 20)

@@ -33,6 +33,8 @@ from ..targets import forward_return
 from .data import FeatureScaler, SeqAccessor
 from .losses import CROSS_SECTIONAL, LOSSES, cross_sectional
 from .nets import FORECASTERS, build_net
+from . import context as train_context
+from .checkpoint import fingerprint
 from .trainer import TrainConfig, fit_network, resolve_device
 
 AUTOENCODERS = ("autoencoder", "vae")
@@ -127,11 +129,16 @@ class DeepModel(Model):
 
     def _config(self, fit_key: str = "") -> TrainConfig:
         p = self.params
-        folder = p.get("checkpoint_dir") or None
+        ctx = train_context.current()
+        folder = p.get("checkpoint_dir") or (ctx["dir"] if ctx else None) or None
+        resume = bool(p.get("resume", False)) or bool(ctx and ctx["resume"])
         if folder and fit_key:
             folder = str(Path(folder) / f"{self.kind}-{fit_key}")                       # one folder per fit: a walk-forward refits on other windows, and resuming from another window's weights would skip the training
+        skip = {"device", "num_threads", "checkpoint_dir", "resume", "checkpoint_every", "keep_milestones", "epochs", "profile", "accumulation_steps", "amp"}                 # settings that change HOW a run is executed, not WHAT it learns
+        config_fp = fingerprint({"kind": self.kind, "arch": self.arch, "spec": list(getattr(self, "net_spec_", ())), "params": {k: v for k, v in sorted(p.items()) if k not in skip}, "seed": self.seed})
         return TrainConfig(int(p["epochs"]), int(p["batch_size"]), float(p["learning_rate"]), float(p["weight_decay"]), int(p["patience"]), float(p["grad_clip"]), str(p["device"]), self.seed,
-                           int(p.get("num_threads", 0)), folder, bool(p.get("resume", False)))
+                           int(p.get("num_threads", 0)), folder, resume, checkpoint_every=int(p.get("checkpoint_every", 1) or 1), keep_milestones=int(p.get("keep_milestones", 0) or 0),
+                           config_fp=config_fp, data_fp=fit_key, allow_warm_start=bool(ctx and ctx.get("warm")), halt_raises=bool(ctx), accumulation_steps=int(p.get("accumulation_steps", 1) or 1), amp=bool(p.get("amp", False)))
 
     def _split(self, pos: np.ndarray, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
         """Training rows, then (after a purge gap) the validation tail, by time."""

@@ -35,6 +35,7 @@ from ..equity.portfolio import PRESETS as book_presets
 from ..strategies.factor_models import KINDS as learner_kinds
 from ..strategies.factor_timing import CALENDAR_STATES, MACRO_STATES
 from ..ml import live, resources
+from ..ml.deep.context import TrainingHalted
 from ..ml.live import Telemetry
 from ..store.appdb import AppDb, TrainingLog
 from .jobs import ACTIVE, BEAT, JobLog
@@ -160,6 +161,7 @@ class Job:
         self.session = None                                           # the research session this run belongs to, when the request named one
         self.request = None                                           # {"path", "body"} of the request that started it, so that a failed run can be started again
         self.retry_of = None
+        self.training_run = None                                      # the id of the Training monitor run this job writes (a deep network's checkpoints), so that an interrupted job points at what can be resumed
         self.telemetry = Telemetry(on_message=self._say, check=self._check)  # what a network being trained says each epoch (src/ml/live.py): shown in ``view()["live"]`` and as the progress message
 
     def _say(self, text: str) -> None:
@@ -194,7 +196,7 @@ class Job:
     def record(self, disk: bool = False) -> dict:
         """The small summary kept on disk and listed by ``/api/jobs`` (never the result). ``disk`` adds the request that started the run (the list does not show it)."""
         out = {"id": self.id, "label": self.label, "kind": self.kind, "status": self.status, "message": self._message, "error": self.error, "created": self.created, "finished": self.finished, "ref": self.ref,
-               "session": self.session, "retry_of": self.retry_of, "cancelling": self.cancel_event.is_set() and self.status in ACTIVE}
+               "session": self.session, "retry_of": self.retry_of, "training_run": self.training_run, "cancelling": self.cancel_event.is_set() and self.status in ACTIVE}
         if disk and self.request is not None:
             out["request"] = self.request
         return out
@@ -516,6 +518,9 @@ class App:
                 App._cancelled(job, "cancelled: the run had already finished its work, so its result was discarded")
         except JobCancelled:
             App._cancelled(job, "cancelled while running")
+            job.telemetry.abort("cancelled")
+        except TrainingHalted as halt:                              # a stop or pause from the Training monitor: the run is resumable, and nothing half-trained was saved as an experiment
+            App._cancelled(job, str(halt))
             job.telemetry.abort("cancelled")
         except resources.ResourceLimit as error:
             job.status, job.error = "error", str(error)

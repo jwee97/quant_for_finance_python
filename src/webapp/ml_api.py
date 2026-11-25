@@ -10,6 +10,7 @@ under ``<root>/artifacts/ml`` (SQLite for the records, files for the artifacts);
 
 from __future__ import annotations
 
+import contextlib
 import re
 import threading
 from contextlib import contextmanager
@@ -37,6 +38,8 @@ from ..ml import strategy_search as ss
 from ..ml.bundle import InferenceBundle
 from ..ml.config import build_key, experiment_config, load_ml_config, recommended_config, with_recommended
 from ..ml.datasets import UNIVERSES, build_dataset, feature_catalog, resolve_bundle
+from ..ml.deep import context as train_context
+from ..ml.deep.context import CheckpointIncompatible
 from ..ml.deep.manifest import ARCHITECTURES, architecture                      # a table of text: importing it does not import PyTorch
 from ..ml.experiments import RL_KINDS, load_run, rebacktest, run_experiment
 from ..ml import resources
@@ -60,6 +63,7 @@ from .ml_selection_api import SelectionRoutes
 from .ml_research_api import ResearchRoutes
 from .ml_strategy_api import StrategyRoutes
 from .payload import clean
+from .training_api import TrainingApi, prepare as prepare_training
 from .universe import MAX_TICKERS, UniverseError, normalise
 
 ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,100}$")
@@ -101,7 +105,7 @@ ENSEMBLE_TEXT = {"equal": "One over N", "inverse_vol": "Weight by one over trail
 # Which settings the browser may send for each section: ("int"|"float", low, high), ("choice", options), ("bool",) and a few special kinds.
 SPEC = {
     "dataset": {"universe": ("universe",), "feature_groups": ("groups",), "target": ("target",), "horizon": ("int", 1, 252), "lag": ("int", 0, 20), "min_history": ("int", 60, 3000), "winsor": ("float", 0.0, 0.2),
-                "normalize": ("choice", ("none", "cross_sectional_z", "rank")), "start": ("date",), "end": ("date",), "regime_detector": ("choice", ("vol_state", "hmm", "gmm")), "benchmark": ("benchmark",)},
+                "normalize": ("choice", ("none", "cross_sectional_z", "rank", "time_series_z")), "start": ("date",), "end": ("date",), "regime_detector": ("choice", ("vol_state", "hmm", "gmm")), "benchmark": ("benchmark",)},
     "split": {"scheme": ("choice", ("walk_forward", "expanding", "rolling")), "window": ("choice", ("expanding", "rolling")), "rolling_days": ("int", 252, 5000), "min_train_days": ("int", 126, 4000), "refit_every": ("int", 1, 252),
               "embargo": ("int", 0, 60), "validation_fraction": ("float", 0.05, 0.4), "test_fraction": ("float", 0.05, 0.4), "forward_fraction": ("float", 0.05, 0.4)},
     "signal": {"method": ("choice", SIGNAL_METHODS), "tilt": ("float", 0.0, 1.0), "n": ("int", 1, 20), "quantile": ("float", 0.05, 0.5), "threshold": ("float", -10.0, 10.0), "gross": ("float", 0.1, 3.0), "net": ("float", -1.0, 1.0), "max_weight": ("float", 0.02, 1.0),
@@ -196,6 +200,8 @@ def _user_errors():
         yield
     except ApiError:
         raise
+    except CheckpointIncompatible as exc:
+        raise ApiError("the saved training cannot continue safely: " + "; ".join(exc.reasons) + ". Restart it as a new run, or warm-start from its weights if only the data changed.") from None
     except FileNotFoundError as exc:
         raise ApiError(f"a saved file is missing ({Path(str(exc.filename or exc)).name}); the experiment may have been moved or partly deleted") from None
     except ModelUnavailable as exc:
@@ -211,6 +217,7 @@ class MlApi(AdvancedRoutes, SelectionRoutes, StrategyRoutes, ResearchRoutes):
         self._registry: Registry | None = None
         self._lock = threading.Lock()
         self._heavy = threading.Lock()                       # explanations and combinations: numpy work of a few seconds, one request at a time
+        self.training = TrainingApi(app, self)                # the Training Monitor's routes (/api/training/*)
         self.stops: dict[str, threading.Event] = {}          # job id -> the flag that ends that tuning early
 
     # ------------------------------------------------------------------------------------------------------------ routes
@@ -220,7 +227,7 @@ class MlApi(AdvancedRoutes, SelectionRoutes, StrategyRoutes, ResearchRoutes):
                 "/api/ml/lineage": self.lineage, "/api/ml/holdout": self.holdout, "/api/ml/promotion-status": self.promotion_status, "/api/ml/statistical-diagnostics": self.statistical_diagnostics,
                 "/api/ml/null-controls": self.null_controls, "/api/ml/trading-diagnostics": self.trading_diagnostics, "/api/ml/validation-policy": self.validation_policy, "/api/ml/governance": self.governance_status,
                 "/api/ml/alpha-diagnostics": self.alpha_diagnostics, "/api/ml/portfolio-diagnostics": self.portfolio_diagnostics, "/api/ml/improvement-experiment": self.improvement_get,
-                "/api/ml/delay-report": self.delay_report, **self.strategy_get_routes(), **self.research_get_routes(), **self.advanced_get_routes(), **self.selection_get_routes()}
+                "/api/ml/delay-report": self.delay_report, **self.strategy_get_routes(), **self.research_get_routes(), **self.advanced_get_routes(), **self.selection_get_routes(), **self.training.get_routes()}
 
     def post_routes(self) -> dict:
         return {"/api/ml/dataset/build": self.dataset_build, "/api/ml/train": self.train, "/api/ml/rebacktest": self.rebacktest, "/api/ml/search": self.search, "/api/ml/tune": self.tune, "/api/ml/tune/stop": self.tune_stop,
@@ -228,7 +235,7 @@ class MlApi(AdvancedRoutes, SelectionRoutes, StrategyRoutes, ResearchRoutes):
                 "/api/ml/evaluation-plan": self.evaluation_plan, "/api/ml/evaluation-plan/freeze": self.evaluation_plan_freeze, "/api/ml/evaluate": self.evaluate,
                 "/api/ml/null-controls/run": self.null_controls_run, "/api/ml/selection-tests/run": self.selection_tests_run, "/api/ml/validation-policy": self.validation_policy_adopt,
                 "/api/ml/statistical-diagnostics/run": self.diagnostics_run, "/api/ml/multiseed/run": self.multiseed_run, "/api/ml/governance/version": self.governance_version,
-                "/api/ml/governance/action": self.governance_action, "/api/ml/improvement-experiment": self.improvement_run, **self.advanced_post_routes(), **self.selection_post_routes(), **self.strategy_post_routes(), **self.research_post_routes()}
+                "/api/ml/governance/action": self.governance_action, "/api/ml/improvement-experiment": self.improvement_run, **self.advanced_post_routes(), **self.selection_post_routes(), **self.strategy_post_routes(), **self.research_post_routes(), **self.training.post_routes()}
 
     # ------------------------------------------------------------------------------------------------------------ plumbing
     @property
@@ -524,14 +531,21 @@ class MlApi(AdvancedRoutes, SelectionRoutes, StrategyRoutes, ResearchRoutes):
         over = self._overrides(body)
         explain, robust = bool(body.get("explain", True)), bool(body.get("robustness", False))
         label = over.get("name") or f"{over['model']['kind']} on {over.get('dataset', {}).get('universe', 'etf')}"
+        run = prepare_training(self.app.root, over, body, "/api/ml/train", label)         # a deep model gets a run folder (checkpoints, metrics) and the resource profile; any other model: None
 
         def work(progress):
-            with _user_errors():
+            with _user_errors(), (train_context.use(run["dir"], run["resume"], run["warm"]) if run else contextlib.nullcontext()):
                 exp = run_experiment(over, config=self.app.config, builder=self.app.builder, registry=self.registry, progress=progress, explain=explain, robustness=robust or None,
                                      stop_after="validation" if mode == "development" else None, entry_point="api")
-            return {"id": exp.id, "report": exp.report}
+            return {"id": exp.id, "report": exp.report, "training_run": run["run_id"] if run else None}
 
-        return self._submit(f"ml: {label}" + (" (development)" if mode == "development" else ""), work)
+        job = self._submit(f"ml: {label}" + (" (development)" if mode == "development" else ""), work)
+        if run and isinstance(job, dict):
+            live = self.app.jobs.get(job.get("job"))
+            if live is not None:
+                live.training_run = run["run_id"]
+            return {**job, "training_run": run}
+        return job
 
     def rebacktest(self, body: dict) -> dict:
         """``POST /api/ml/rebacktest`` (a job): a saved experiment's predictions under different position rules, rebalancing, costs or with the stress tests, with no refit. Recorded as a child run."""

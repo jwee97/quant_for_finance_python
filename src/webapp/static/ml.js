@@ -34,8 +34,8 @@
   const M = {
     id: "ml", root: "#ml", view: "#view-ml", title: "Machine learning", api: 8, mode: "experiments", busy: "", results: {}, errors: {}, cache: new Map(), guard: null, go: null, progress: null,
     about: "Train models only inside the whole pipeline: features without look-ahead, walk-forward fits, a backtest with costs, and results cut into train, validation, test and forward segments, with every look at the data counted.",
-    modes: [["dataset", "Dataset"], ["train", "Train"], ["experiments", "Experiments"], ["compare", "Compare"], ["explain", "Explain"], ["overfit", "Overfitting"], ["search", "Search"], ["select", "Select"], ["combine", "Combine"], ["forward", "Forward test"], ["controls", "Research controls"]],
-    runLabel: { dataset: "Build the dataset", train: "Train and backtest", experiments: "Refresh", compare: "Compare", explain: "Explain", overfit: "Check again", search: "Run the search", select: "Choose", combine: "Combine", forward: "Record today's signal", controls: "Refresh" },
+    modes: [["dataset", "Dataset"], ["train", "Train"], ["experiments", "Experiments"], ["compare", "Compare"], ["explain", "Explain"], ["overfit", "Overfitting"], ["search", "Search"], ["select", "Select"], ["combine", "Combine"], ["forward", "Forward test"], ["controls", "Research controls"], ["training", "Training monitor"]],
+    runLabel: { dataset: "Build the dataset", train: "Train and backtest", experiments: "Refresh", compare: "Compare", explain: "Explain", overfit: "Check again", search: "Run the search", select: "Choose", combine: "Combine", forward: "Record today's signal", controls: "Refresh", training: "Refresh" },
     blurb: { dataset: "Causal features and forward-looking targets, with each feature's coverage and its information coefficient on the warm-up segment only.",
       train: "Walk-forward training, position rules, a backtest with costs, and the result split into train, validation, test and forward segments.",
       experiments: "Every saved experiment, ranked, with the number of looks at the same data when it ran. Open one, delete one, pick several to compare or combine.",
@@ -45,6 +45,7 @@
       search: "Random trials, then Bayesian, then genetic, on validation only; the best few are run on every segment once, and every trial is counted.",
       select: "Choose among saved experiments on their validation rows only: eligibility gates, the pooled validation net Sharpe, a Pareto comparison and the simplest candidate that is not meaningfully worse.",
       combine: "Ten ways to weight several strategies, each estimated only from the past, side by side.",
+      training: "Every deep-network training on this machine, read from its files on disk: loss and learning rate by epoch, memory, checkpoints, and what to do with a run that was interrupted. Reloading the page loses nothing.",
       forward: "Paper signals recorded as the days arrive, settled when their window ends, with the live rank IC and the drift of each feature against the backtest.",
       controls: "The research record of one experiment: the three independent gates and why each is or is not passed, every try in its study, what was read of the protected test and forward outcomes, and which selection tests applied." },
     catalog: null, catalogError: "", board: null, boardPromise: null, picked: new Set(), cur: Q.store("ml.cur") || "",
@@ -133,7 +134,7 @@
   }
   function prepBlock(b) {
     const f = M.form, after = () => Q.syncLab(M);
-    Q.labField(b, { key: "normalize", label: "Scale features each day", kind: "choice", options: [["cross_sectional_z", "Z-score across assets"], ["rank", "Rank across assets"], ["none", "Leave as they are"]] }, f, after);
+    Q.labField(b, { key: "normalize", label: "Scale features each day", kind: "choice", options: [["cross_sectional_z", "Z-score across assets"], ["rank", "Rank across assets"], ["time_series_z", "Z-score against each asset's own past (works with 1 or 2 tickers)"], ["none", "Leave as they are"]] }, f, after);
     Q.labField(b, { key: "winsor", label: "Clip each tail (% of values)", kind: "number", step: 0.5, min: 0, max: 20 }, f, after);
     Q.labField(b, { key: "minHistory", label: "History an asset needs before it enters (days)", kind: "number", step: 21, min: 60, max: 3000 }, f, after);
     Q.labField(b, { key: "start", label: "First date (blank = all data)", kind: "text", placeholder: "2012-01-31" }, f, after);
@@ -286,6 +287,9 @@
       Q.labField(b, { key: "fStage", label: "Stage", kind: "choice", options: [["", "Any stage"], ...cat.stages.map((s) => [s, cap(s)])] }, f, () => M.run(true));
       Q.labField(b, { key: "fUniverse", label: "Universe", kind: "choice", options: [["", "All universes"], ...cat.universes.map((u) => [u.id, u.id])] }, f, () => M.run(true));
       h("p", "hint", b, `Experiments, models and datasets are kept under ${cat.registry.root}/ (SQLite for the records, files for the predictions and the final model).`);
+    } else if (m === "training") {
+      const b = sec("1. Training runs");
+      h("p", "hint", b, "Runs are read from data/user/training. Metrics are the training and validation loss only: the test and forward segments are never read while a network trains.");
     } else if (m === "dataset") {
       Q.labField(sec("1. Name"), { key: "name", label: "Name", kind: "text", placeholder: "dataset" }, f, after);
       universeBlock(sec("2. Universe")); featureBlock(sec("3. Features")); targetBlock(sec("4. Target"));
@@ -418,6 +422,7 @@
     const m = M.mode, f = M.form;
     if (!M.catalog) { loadCatalog(); return; }
     if (JOB_MODES.has(m)) setTimeout(watchRuns, 1200);                                       // a run that was just started appears in the list of runs
+    if (m === "training") { stopTrainingPoll(); return W.request(M, () => [{ modes: ["training"], path: "/api/training/runs", query: {} }], "Reading the training runs…"); }
     if (m === "experiments") return W.request(M, () => [{ modes: ["experiments"], path: "/api/ml/experiments", query: { sort: f.sort, limit: 100, model: f.fModel, stage: f.fStage, universe: f.fUniverse } }, { modes: ["models"], path: "/api/ml/models", query: {} }], "Reading the registry…");
     if (m === "dataset") return W.request(M, () => [{ modes: ["dataset"], job: true, path: "/api/ml/dataset/build", body: { name: f.name.trim() || "dataset", dataset: datasetBody(f), split: splitBody(f) } }], "Building the dataset…");
     if (m === "train") {
@@ -450,7 +455,7 @@
   M.auto = () => {
     const m = M.mode;
     if (!M.catalog) { loadCatalog(); return; }
-    if (m === "experiments") { M.run(true); return; }
+    if (m === "experiments" || m === "training") { M.run(true); return; }
     if (["compare", "select", "combine", "explain", "overfit", "forward", "controls"].includes(m)) {
       if (!M.board) { ensureBoard(); return; }
       if ((m === "overfit" || m === "forward" || m === "controls") && M.cur) M.run(true);
@@ -468,6 +473,7 @@
     select: ["Choose among experiments", ["Choose one to twenty experiments on the left. Only their validation rows are read. A candidate must meet the data, risk, exposure, liquidity and statistical requirements before it is ranked; the ranking is by the validation net Sharpe of the pooled chronological returns (never an average of fold Sharpe ratios); a Pareto comparison shows the trade-offs, and the simplest candidate that is not meaningfully worse than the highest ranked is selected. Nothing is promoted."]],
     combine: ["Combine strategies", ["Choose two to twelve experiments on the left: ten ways to weight them, each estimated only from the returns up to the day it is used."]],
     forward: ["Forward test", ["Record the saved model's signal for the newest date, settle the signals whose window has passed, and watch the live rank IC and the drift of each feature against the backtest."]],
+    training: ["Training monitor", ["No deep-network training has been run here yet. Train an N-BEATS, N-HiTS, LSTM, GRU, TCN or similar model in the Train view: each run is written to disk epoch by epoch, with a checkpoint, so it can be watched here and resumed after an interruption."]],
     controls: ["Research controls", ["Choose an experiment on the left: its three independent gates (Algorithm Verified, Strategy Validated, Operationally Ready) with the reason each is not passed, every try recorded in its study, what was read of the protected test and forward outcomes, and which selection tests applied."]] };
   M.empty = (root) => Q.labEmpty(root, M, EMPTY[M.mode][0], EMPTY[M.mode][1], M.runLabel[M.mode]);
   M.draw = () => Q.drawLab(M);
@@ -528,6 +534,10 @@
         const stop = h("button", "btn small", li, "Stop"); stop.type = "button"; stop.dataset.action = "stop-run"; stop.title = "End the tuning after the trial it is on; the best so far is still run on every segment";
         stop.addEventListener("click", async () => { stop.disabled = true; try { await api("/api/ml/tune/stop", { job: j.id }); } catch (e) { Q.toast(e.message); stop.disabled = false; } });
       }
+      if (j.training_run) {                                                                    // a deep network's run: its checkpoints can be read, resumed or archived from the monitor
+        const mon = h("button", "btn small", li, ACTIVE.has(j.status) ? "Watch training" : "Training run"); mon.type = "button"; mon.dataset.action = "open-training"; mon.title = "Epoch-by-epoch metrics, checkpoints and, if it was interrupted, resume or restart";
+        mon.addEventListener("click", () => { M.tr.id = ""; M.tr.data = null; go("training"); loadTrainingRun(j.training_run, true); });
+      }
       const clear = h("button", "btn small", li, ACTIVE.has(j.status) ? "Not running? Clear" : "Clear"); clear.type = "button"; clear.dataset.action = "clear-run";
       clear.title = ACTIVE.has(j.status) ? "If the app was stopped or crashed while this ran, take it off the list. A run that really is going in this app cannot be cleared." : "Take this run off the list (a finished experiment stays in the registry).";
       clear.addEventListener("click", () => clearRuns({ id: j.id }));
@@ -537,7 +547,7 @@
       }
     }
   }
-  M.build = (root, d, body) => ({ dataset: buildDataset, train: buildTrain, experiments: buildExperiments, compare: buildCompare, explain: buildExplain, overfit: buildOverfit, search: buildSearch, select: buildSelect, combine: buildCombine, forward: buildForward, controls: buildControls })[M.mode](root, d, body);
+  M.build = (root, d, body) => ({ dataset: buildDataset, train: buildTrain, experiments: buildExperiments, compare: buildCompare, explain: buildExplain, overfit: buildOverfit, search: buildSearch, select: buildSelect, combine: buildCombine, forward: buildForward, controls: buildControls, training: buildTraining })[M.mode](root, d, body);
   const header = (root, title, sub) => Q.labHead(root, title, sub, GUIDE);
 
   /* ---------- opening, deleting and re-running saved experiments ---------- */
@@ -1591,6 +1601,123 @@
       else table(c, [{ label: "Procedure", get: (e) => e.method }, { label: "Status", get: (e) => e.status }, { label: "Result", get: (e) => (e.status !== "applied" ? e.reason || "" : (e.statistic || {}).passes ? "criterion met: " + ((e.statistic || {}).criterion || "") : "criterion not met: " + ((e.statistic || {}).criterion || "")) }], st.latest);
       if ((st.null_studies || []).length) { W.sub(c, "Null controls (false-promotion rate on placebo data)"); table(c, [{ label: "Study", get: (n) => shortId(n.null_id) }, { label: "Replications", num: true, get: (n) => `${n.done}/${n.planned}` }, { label: "Verdict", get: (n) => (n.result || {}).verdict || n.state }], st.null_studies.slice(0, 6)); }
     }
+  }
+
+  /* ---------- the Training monitor ----------
+     Everything shown is read from the run's files on the server (metrics.jsonl, the checkpoint folder, control.json), never from this page's memory: reloading, reopening in another browser or restarting the app shows the
+     same history. While a run is going the page asks for the epochs it has not seen yet every two seconds; a run that stops reporting is shown as interrupted or orphaned, never as running. */
+  M.tr = M.tr || { id: "", fit: "", data: null, series: null, timer: null, error: "", busy: false };
+  const TR_WORD = { running: "Running", completed: "Completed", stopped_early: "Early stopping", stopped: "Stopped by you", paused: "Paused", interrupted: "Interrupted", orphaned: "Orphaned", unknown: "Unknown" };
+  const TR_HINT = { running: "A new epoch was written a moment ago.", completed: "All epochs ran.", stopped_early: "Validation loss stopped improving; the best epoch's weights were kept.", stopped: "Stopped on request after a checkpoint.",
+    paused: "Paused after a checkpoint: resume continues from there.", interrupted: "The process ended without finishing (the app was closed, or the training raised an error). Nothing was resumed automatically.",
+    orphaned: "No end marker and no recent activity: the process may have been killed (for example by the system for lack of memory). The last checkpoint is intact if it validates below." };
+  const RECOVERY_WORD = { exact: "Exact: same weights, optimizer, scheduler, random streams and early-stopping counters; the continued run follows the uninterrupted one on the same software and device.",
+    epoch_boundary: "Epoch boundary: continues from the last finished epoch, but something needed for bit-for-bit continuation differs or is missing.",
+    warm_start: "Warm start: weights only. The optimizer and counters start fresh, so the curve will not match an uninterrupted run.", restart_required: "Restart required: nothing safe can be restored." };
+  const mb = (v) => (Q.bad(v) ? "n/a" : v >= 1024 ? (v / 1024).toFixed(2) + " GB" : Math.round(v) + " MB");
+  const bytesText = (v) => (Q.bad(v) ? "n/a" : v >= 1e9 ? (v / 1e9).toFixed(2) + " GB" : v >= 1e6 ? (v / 1e6).toFixed(1) + " MB" : Math.round(v / 1e3) + " kB");
+  const ago = (t) => { if (!t) return "n/a"; const s = Math.max(0, Date.now() / 1000 - t); return s < 90 ? Math.round(s) + " s ago" : s < 5400 ? Math.round(s / 60) + " min ago" : s < 172800 ? (s / 3600).toFixed(1) + " h ago" : Math.round(s / 86400) + " days ago"; };
+  function stopTrainingPoll() { clearTimeout(M.tr.timer); M.tr.timer = null; }
+  async function trainingPost(path, body, done) {
+    try { const r = await api(path, body); if (done) done(r); return r; } catch (e) { Q.toast(e.message); return null; }
+  }
+  async function loadTrainingRun(id, fresh) {
+    const s = M.tr;
+    if (fresh) { s.id = id; s.series = null; s.data = null; s.fit = ""; }
+    if (s.busy || !isOpen() || M.mode !== "training") return;
+    s.busy = true;
+    try {
+      const since = s.series ? s.series.epoch.length : 0;
+      const d = await api("/api/training/run", { id, fit: s.fit || undefined, since });
+      if (s.id !== id) return;
+      const keys = ["epoch", "train_loss", "val_loss", "lr", "grad_norm", "seconds", "rss_mb", "peak_mb", "best_val"];
+      if (!s.series || !since) s.series = Object.fromEntries(keys.map((k) => [k, d.series[k].slice()]));
+      else for (const k of keys) s.series[k] = s.series[k].concat(d.series[k]);
+      s.data = d; s.error = "";
+    } catch (e) { s.error = e.message; }
+    finally { s.busy = false; }
+    paintTrainingDetail();
+    if (s.data && s.data.summary.status === "running" && !s.error) { stopTrainingPoll(); s.timer = setTimeout(() => loadTrainingRun(id, false), 2000); }
+  }
+  function paintTrainingDetail() { const box = Q.$("#ml-training-detail"); if (box && M.mode === "training") { box.replaceChildren(); trainingDetail(box); } }
+  function trainingDetail(box) {
+    const s = M.tr, d = s.data;
+    if (s.error) { h("p", "hint", box, "Could not read the run: " + s.error); return; }
+    if (!d) { Q.loading(box, "Reading the run…"); return; }
+    const sm = d.summary, ser = s.series, n = ser.epoch.length, running = sm.status === "running";
+    const head = h("div", "card", box);
+    h("h3", "", head, `Run ${d.id}${d.fits.length > 1 ? ` · fit ${d.fit}` : ""}`);
+    const st = h("p", "", head); const tag = h("strong", "", st, TR_WORD[sm.status] || sm.status); tag.setAttribute("data-status", sm.status); st.appendChild(document.createTextNode(" · " + (TR_HINT[sm.status] || "")));
+    const k = h("div", "earnrow", head);
+    tile(k, "Epoch", `${sm.epoch}${sm.epochs ? " / " + sm.epochs : ""}`, { text: `last written ${ago(sm.last_at)}` });
+    tile(k, "Best validation loss", Q.bad(sm.best_val) ? "n/a" : String(+Number(sm.best_val).toPrecision(4)), { text: Q.bad(sm.best_epoch) ? "" : `at epoch ${sm.best_epoch}` });
+    const last = (a) => { for (let i = a.length - 1; i >= 0; i--) if (!Q.bad(a[i])) return a[i]; return null; };
+    tile(k, "Learning rate", n ? String(+Number(last(ser.lr)).toPrecision(3)) : "n/a", { text: "scheduler lowers it when validation stalls" });
+    tile(k, "Process memory", n ? mb(last(ser.rss_mb)) : "n/a", { text: Q.bad(last(ser.peak_mb)) ? "" : `peak ${mb(last(ser.peak_mb))}` });
+    tile(k, "Epoch time", n ? (+last(ser.seconds)).toFixed(1) + " s" : "n/a", { text: n ? `${(ser.seconds.reduce((a, b) => a + (b || 0), 0) / 60).toFixed(1)} min so far` : "" });
+    const rec = (d.events || []).filter((e) => e.type === "resume").pop();
+    if (rec) { const r = h("p", "hint", head); r.setAttribute("data-recovery", rec.level || ""); r.appendChild(document.createTextNode(`Resumed after epoch ${rec.epoch}. ${RECOVERY_WORD[rec.level] || ""}${(rec.reasons || []).length ? " " + rec.reasons.join("; ") + "." : ""}`)); }
+    const row = [];
+    if (running) row.push(["Stop after this epoch", () => trainingPost("/api/training/control", { id: d.id, fit: d.fit, action: "stop" }, () => { Q.toast("Stop requested: it takes effect after the current epoch's checkpoint"); loadTrainingRun(d.id, false); }), "", "Writes a checkpoint, then ends the run; it can be resumed"],
+      ["Pause after this epoch", () => trainingPost("/api/training/control", { id: d.id, fit: d.fit, action: "pause" }, () => { Q.toast("Pause requested"); loadTrainingRun(d.id, false); }), "", "Writes a checkpoint and waits"]);
+    else {
+      const can = sm.resumable && d.request;
+      row.push(["Resume this run", () => resumeRun(d.id, "resume"), "primary", can ? "Continue from the newest valid checkpoint" : "No valid checkpoint or no saved request", !can]);
+      row.push(["Warm start from weights", () => resumeRun(d.id, "warm"), "", "Use only if the data window changed: optimizer and counters start fresh", !can]);
+      row.push(["Restart as a new run", () => resumeRun(d.id, "restart"), "", "A new run from scratch with the same request", !d.request]);
+      row.push(["Archive", () => trainingPost("/api/training/archive", { id: d.id }, () => { M.tr.id = ""; M.tr.data = null; M.run(true); }), "", "Moves it out of the list; its files are kept"]);
+    }
+    actions(head, row);
+    if (d.control) h("p", "hint", head, `A "${d.control}" request is waiting for the end of the current epoch.`);
+    if (!n) { h("p", "hint", box, "No epoch has finished yet."); return; }
+    const xs = ser.epoch, ch = h("div", "grid2", box);
+    const lossSeries = [{ name: "Training loss", color: css("--s1"), values: ser.train_loss, width: 1.5 }, { name: "Validation loss", color: css("--s2"), values: ser.val_loss, dash: "4 3" }];
+    chartCard(ch, "Loss by epoch", "Training loss (solid) on the rows the network learns from and validation loss (dashed) on the later validation tail that early stopping watches. Test and forward results are never shown here.",
+      { wide: true, draw: (b) => C.line(b, { xs, series: lossSeries, xLabel: "epoch", yFormat: (v) => String(+v.toPrecision(3)), tipFormat: (v) => String(+v.toPrecision(4)), height: 260, label: "Training and validation loss by epoch" }),
+        table: (b) => table(b, [{ label: "Epoch", get: (i) => String(xs[i]) }, { label: "Training loss", num: true, get: (i) => (Q.bad(ser.train_loss[i]) ? "" : num(ser.train_loss[i], 5)) }, { label: "Validation loss", num: true, get: (i) => (Q.bad(ser.val_loss[i]) ? "" : num(ser.val_loss[i], 5)) }], xs.map((_, i) => i)) });
+    chartCard(ch, "Learning rate", "Falls by a factor each time validation loss fails to improve for the scheduler's patience.", { draw: (b) => C.line(b, { xs, series: [{ name: "Learning rate", color: css("--s3"), values: ser.lr }], xLabel: "epoch", yFormat: (v) => v.toExponential(0), tipFormat: (v) => v.toExponential(2), height: 200, label: "Learning rate by epoch" }) });
+    chartCard(ch, "Memory", "The training process's resident memory after each epoch, as the operating system reports it. A steady climb is a leak; a flat line is a network that fits.", { draw: (b) => C.line(b, { xs, series: [{ name: "Process memory (MB)", color: css("--s4"), values: ser.rss_mb }], xLabel: "epoch", yFormat: (v) => String(Math.round(v)), tipFormat: (v) => Math.round(v) + " MB", height: 200, label: "Process memory by epoch" }) });
+    if (ser.grad_norm.some((v) => !Q.bad(v))) chartCard(ch, "Gradient norm", "The size of the gradient before clipping. A norm far above the clip value on most epochs means clipping, not the optimizer, is setting the step.", { draw: (b) => C.line(b, { xs, series: [{ name: "Gradient norm", color: css("--s5"), values: ser.grad_norm }], xLabel: "epoch", yFormat: (v) => String(+v.toPrecision(2)), tipFormat: (v) => String(+v.toPrecision(3)), height: 200, label: "Gradient norm by epoch" }) });
+    const ck = h("div", "card", box); h("h3", "", ck, "Checkpoints");
+    if (!d.checkpoints.length) h("p", "hint", ck, "No checkpoint has been written yet.");
+    else table(ck, [{ label: "File", get: (c) => c.file }, { label: "Epoch", num: true, get: (c) => (Q.bad(c.epoch) ? "n/a" : String(c.epoch)) }, { label: "Validation loss", num: true, get: (c) => (Q.bad(c.val_loss) ? "n/a" : num(c.val_loss, 5)) },
+      { label: "Size", num: true, get: (c) => bytesText(c.bytes) }, { label: "Written", get: (c) => ago(c.saved_at) }, { label: "Verified", get: (c) => (c.valid ? "yes" : "damaged: skipped on resume") }], d.checkpoints);
+    const ev = (d.events || []).filter((e) => e.type !== "start");
+    if (ev.length) { const c = h("div", "card", box); h("h3", "", c, "Events"); table(c, [{ label: "When", get: (e) => (e.at ? new Date(e.at * 1000).toLocaleString() : "") }, { label: "Event", get: (e) => e.type + (e.level ? ` (${e.level})` : "") }, { label: "Detail", get: (e) => e.message || (e.reasons || []).join("; ") || (e.epoch !== undefined ? `epoch ${e.epoch}` : "") }], ev); }
+  }
+  async function resumeRun(id, mode) {
+    const r = await trainingPost("/api/training/resume", { id, mode });
+    if (!r) return;
+    Q.toast(mode === "restart" ? "A new run was queued" : "The run was queued and will continue from its checkpoint");
+    M.tr.id = ""; M.tr.data = null; setTimeout(() => M.run(true), 1500);
+  }
+  function buildTraining(root, d) {
+    header(root, "Training monitor", `${d.runs.length} run${d.runs.length === 1 ? "" : "s"} on disk · ${bytesText(d.disk.training_bytes)} of checkpoints and logs`);
+    const k = h("div", "earnrow", root);
+    const running = d.runs.filter((r) => r.status === "running").length, broken = d.runs.filter((r) => r.status === "interrupted" || r.status === "orphaned").length;
+    tile(k, "Running now", String(running), { text: "training on this machine" });
+    tile(k, "Interrupted or orphaned", String(broken), { text: broken ? "resume or archive from the table" : "none", dir: broken ? "down" : "" }, "", "Nothing is resumed automatically: you decide");
+    tile(k, "Free memory", d.machine && d.machine.free_mb ? mb(d.machine.free_mb) : "n/a", { text: d.machine && d.machine.limit_mb ? `limit ${mb(d.machine.limit_mb)}` : "" });
+    tile(k, "Free disk", mb(Q.bad(d.disk.disk_free_bytes) ? null : d.disk.disk_free_bytes / 1048576), { text: "for checkpoints" });
+    if (d.storage_note) W.flags(root, [d.storage_note], "");
+    if (!d.runs.length) { Q.labEmpty(root, M, EMPTY.training[0], EMPTY.training[1], null); return; }
+    const c = h("div", "card", root); h("h3", "", c, "Runs");
+    const wrap = h("div", "scroll", c), tb = h("table", "data", wrap), hr = h("tr", "", h("thead", "", tb));
+    for (const [label, numeric] of [["Run"], ["Model"], ["Status"], ["Epoch", 1], ["Best validation loss", 1], ["Last activity"], ["Size", 1], [""]]) h("th", numeric ? "num" : "", hr, label);
+    const body = h("tbody", "", tb);
+    for (const r of d.runs) {
+      const tr = h("tr", "", body); tr.setAttribute("data-run", r.id);
+      h("td", "", tr, r.id); h("td", "", tr, r.kind || ""); const st = h("td", "", tr, TR_WORD[r.status] || r.status); st.title = TR_HINT[r.status] || ""; st.setAttribute("data-status", r.status);
+      h("td", "num", tr, `${r.epoch}${r.epochs ? " / " + r.epochs : ""}`); h("td", "num", tr, Q.bad(r.best_val) ? "n/a" : String(+Number(r.best_val).toPrecision(4)));
+      h("td", "", tr, ago(r.last_at)); h("td", "num", tr, bytesText(r.disk_bytes));
+      const b = h("button", "btn", h("td", "", tr), M.tr.id === r.id ? "Close" : "Open"); b.type = "button";
+      b.addEventListener("click", () => { if (M.tr.id === r.id) { stopTrainingPoll(); M.tr.id = ""; M.tr.data = null; M.draw(); return; } loadTrainingRun(r.id, true).then(() => 0); M.draw(); });
+    }
+    const box = h("div", "", root); box.id = "ml-training-detail";
+    if (!M.tr.id && d.runs.length) { const first = d.runs.find((r) => r.status === "running") || d.runs[0]; loadTrainingRun(first.id, true); }
+    else if (M.tr.id) loadTrainingRun(M.tr.id, false);
+    paintTrainingDetail();
+    if (running) M.tr.listTimer = setTimeout(() => { if (isOpen() && M.mode === "training") M.run(true); }, 5000);
   }
 
   Q.registerWorkspace("ml", M);

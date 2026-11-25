@@ -97,6 +97,18 @@ def normalise_cross_section(frame: pd.DataFrame, how: str, winsor: float = 0.0, 
     return pd.DataFrame(out, index=frame.index, columns=frame.columns)
 
 
+MIN_CROSS_SECTION = 3                                                                 # fewer assets than this have no cross-section: a z-score or a rank over one or two numbers says nothing
+TS_MIN_PERIODS = 60                                                                    # days of an asset's own history before its time-series z-score exists
+
+
+def normalise_time_series(frame: pd.DataFrame, min_periods: int = TS_MIN_PERIODS) -> pd.DataFrame:
+    """Each asset's feature scaled by its OWN past: ``(x_t - mean(x_1..t)) / std(x_1..t)`` with an expanding window that includes day ``t`` and nothing later (the feature itself is already known at ``t``). It needs no
+    other asset, so it works for one or two tickers, and it uses no later observation, so scaling cannot leak the future. The first ``min_periods`` days of an asset stay missing."""
+    mean = frame.expanding(min_periods=min_periods).mean()
+    sd = frame.expanding(min_periods=min_periods).std()
+    return (frame - mean) / sd.where(sd > 0)
+
+
 def _flatten(frame: pd.DataFrame) -> np.ndarray:
     return frame.to_numpy(dtype=np.float32).reshape(-1)
 
@@ -233,9 +245,19 @@ def build_dataset(bundle, dataset_cfg: dict, name: str = "dataset", extra_target
         targets = {k: f.mask(voided) for k, f in targets.items()}
     idx = pd.MultiIndex.from_product([x.prices.index, x.assets], names=["date", "asset"])
     norm = str(c.get("normalize", "cross_sectional_z"))
+    applied, norm_note = norm, None
+    if norm in ("cross_sectional_z", "rank") and len(x.assets) < MIN_CROSS_SECTION:
+        applied = "time_series_z"                                                                  # a date's cross-section of 1 or 2 assets would be all missing: every row would be dropped without a word
+        norm_note = (f"{norm} needs at least {MIN_CROSS_SECTION} assets on a date and this universe has {len(x.assets)}, so each feature was scaled by the asset's own expanding history instead (time_series_z: uses "
+                     f"only data up to each day; the first {TS_MIN_PERIODS} days of each asset have no value). Choose three or more tickers to use {norm}.")
     cols = {}
     for fname, frame in fs.frames.items():
-        cols[fname] = _flatten(frame if fname in fs.broadcast else normalise_cross_section(frame, norm, float(c.get("winsor", 0.0))))
+        if fname in fs.broadcast:
+            cols[fname] = _flatten(frame)
+        elif applied == "time_series_z":
+            cols[fname] = _flatten(normalise_time_series(frame))
+        else:
+            cols[fname] = _flatten(normalise_cross_section(frame, applied, float(c.get("winsor", 0.0))))
     X = pd.DataFrame(cols, index=idx)
     Y = pd.DataFrame({t: _flatten(f) for t, f in targets.items()}, index=idx)
     seen = x.prices.notna().cumsum()
@@ -249,7 +271,7 @@ def build_dataset(bundle, dataset_cfg: dict, name: str = "dataset", extra_target
               "short_history": int((has_price & inv & ~mark & ~long_enough).sum()), "low_feature_coverage": int((ok & ~coverage).sum())}      # a partition of the date x asset cells with the rows kept
     X, Y = X[keep], Y[keep]
     if X.empty:
-        raise ValueError("no row survives the investability, history and coverage filters: the data is too short for this configuration")
+        raise ValueError(empty_dataset_message(x, has_price, inv, mark, int(c.get("min_history", 252)), causes, norm_note))
     n_dates = len(x.prices.index)
     label = {"convention": CONVENTION, "target": target, "lag": lag, "horizon": horizon, "first_decision": str(x.prices.index[0].date()), "last_decision": str(x.prices.index[-1].date()),
              "last_labelled_decision": str(x.prices.index[max(n_dates - 1 - lag - horizon, 0)].date()), "unlabelled_tail_dates": int(min(lag + horizon, n_dates)),
@@ -259,12 +281,32 @@ def build_dataset(bundle, dataset_cfg: dict, name: str = "dataset", extra_target
     audit = audit_mod.dataset_audit(x.prices, {n: (FEATURES[n].group if n in FEATURES else "derived", f) for n, f in fs.frames.items()}, keep, causes, label,
                                     pit=pit_mod.pit_report(used, getattr(bundle, "macro_meta", None)), sessions=session_report)
     audit["marks"] = {"carried_cells": int(marks.to_numpy().sum()), "policy": "a carried mark is not a tradable price: its row is excluded, its asset is not investable that day, and a label whose entry or exit price is one is void"}
-    meta = {"label_convention": CONVENTION, "audit": audit, "universe": c.get("universe"), "target": target, "kind": kind, "horizon": horizon, "lag": lag, "feature_groups": list(c["feature_groups"]), "normalize": norm, "winsor": float(c.get("winsor", 0.0)),
+    meta = {"label_convention": CONVENTION, "audit": audit, "universe": c.get("universe"), "target": target, "kind": kind, "horizon": horizon, "lag": lag, "feature_groups": list(c["feature_groups"]), "normalize": norm, "normalization": {"requested": norm, "applied": applied, "note": norm_note}, "assets_in_universe": len(x.assets), "winsor": float(c.get("winsor", 0.0)),
             "benchmark": str(c.get("benchmark", "equal_weight")), "skipped": fs.skipped, "broadcast": sorted(fs.broadcast), "targets": names, "data_fingerprint": bundle_fingerprint(bundle),
             "input_manifest": provenance_mod.input_manifest(bundle),
             "target_documentation": {n: describe_target(n, dict(bundle.group or {}), str(c.get("benchmark", "equal_weight")), lag) for n in names if parse_target(n)[0] in ("excess_ret", "sector_ret", "resid_ret")},
             "bundle": getattr(bundle, "name", "bundle"), "min_history": int(c.get("min_history", 252)), **(source or {})}
     return Dataset(name, X, Y, x.prices, x.returns, investable & ~marks, meta, dict(bundle.asset_class or {}), dict(bundle.group or {}))
+
+
+def empty_dataset_message(x, has_price, inv, mark, min_history: int, causes: dict, norm_note: str | None) -> str:
+    """Why no row survived, per asset and in numbers, with what to change: the rule that removed the most cells first."""
+    n_days = len(x.prices.index)
+    per = []
+    for a in x.assets:
+        col = x.prices[a].notna()
+        per.append(f"{a}: {int(col.sum())} priced days" + (f" (first {x.prices.index[col.to_numpy()][0].date()})" if col.any() else " (no prices)"))
+    shown = "; ".join(per[:8]) + (f"; and {len(per) - 8} more" if len(per) > 8 else "")
+    binding = max(causes, key=lambda k: causes[k] if k != "low_feature_coverage" else causes[k] - 1) if any(causes.values()) else "short_history"
+    why = {"no_price": "the assets have no prices on the requested dates", "not_investable": "the assets were not investable (see the universe filters)", "closed_market_mark": "the rows were carried marks of a closed market",
+           "short_history": f"each asset needs min_history = {min_history} priced days before its first row and the data has {n_days} dates in all",
+           "low_feature_coverage": "fewer than half of the features had a value (the longest feature window needs more history than the data has)"}[binding]
+    best = int(x.prices.notna().sum().max()) if len(x.assets) else 0
+    out = f"no row survives the investability, history and coverage filters: {why}. Required {min_history} priced days before the first row; the best asset has {best}. Per asset: {shown}."
+    out += " Lower min_history, widen the date range, or drop the features with the longest windows."
+    if norm_note:
+        out += " " + norm_note
+    return out
 
 
 def _session_inputs(bundle, x, c: dict, lag: int):

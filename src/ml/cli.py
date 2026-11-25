@@ -864,7 +864,7 @@ def register(sub) -> None:
             q.add_argument("--groups", nargs="*", choices=list(GROUPS), help="feature groups (default price momentum mean_reversion volatility volume relative macro)")
             q.add_argument("--target", help="e.g. fwd_ret_5, excess_ret_20, direction_5, rank_5, fwd_vol_20")
             q.add_argument("--horizon", type=int); q.add_argument("--lag", type=int, help="days between decision and the start of the target (default 1, the engine's)")
-            q.add_argument("--normalize", choices=["none", "cross_sectional_z", "rank"]); q.add_argument("--start"); q.add_argument("--end")
+            q.add_argument("--normalize", choices=["none", "cross_sectional_z", "rank", "time_series_z"]); q.add_argument("--start"); q.add_argument("--end")
             q.add_argument("--regime-detector", dest="regime_detector", choices=["vol_state", "hmm", "gmm"]); q.add_argument("--winsor", type=float); q.add_argument("--min-history", dest="min_history", type=int)
 
     def signal_options(q):
