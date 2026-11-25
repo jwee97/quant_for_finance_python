@@ -41,3 +41,15 @@ The Strategy Studio is four workflows: **Opportunity scanner** (`options_studio.
 * Nothing here was run against a live exchange or a live Massive key; the tests use synthetic series, fake books and fake feeds.
 * The carry decomposition treats the inverse (Deribit) perpetual's convexity as residual rather than modelling it in coin.
 * Cross-venue edges use one snapshot read venue by venue, not simultaneously; transfer time, inventory limits and latency are listed as not modelled.
+
+## Audit pass (second round)
+
+* **Independent math tests** (`tests/test_options_math_audit.py`): put-call parity, the chain's forward and log-moneyness, Greeks against finite differences in their stated units (delta per share-equivalent, vega per volatility point, theta per calendar day), implied-volatility round trips, tree convergence and early-exercise value, a condor's extremes, break-evens and odds against brute force and Monte Carlo, Reg-T style margin by hand. All pass.
+* **Scenario attribution** is an exact full revaluation split into delta, gamma, vega, vanna+volga, skew (exact difference), theta, costs and a residual that is reported and never forced to zero.
+* **Surface:** per-expiry SVI fits are labelled *no violation detected on the tested grid*, never globally arbitrage-free; sparse surfaces recommend the smile view; one shared Plotly 3D component (`VolSurface.plain3d`) serves the research card too, with the canvas renderer kept only as the no-Plotly fallback.
+* **Ideas from a view** reports rank stability under +/-50% changes of the stated move and volatility change, and the hold-shares and cash baselines.
+* **Trade validation** can judge a proposed position against a book (before/after Greeks and worst stress).
+* **Empirical options backtest** (`assets/options_historical.py`, `POST /api/options/historical-backtest`): replays stored observed chains at their own bid/ask, refuses simulated snapshots and short histories, never prices a missing quote with a model, and splits in-sample from out-of-sample. Needs at least 20 dated chains.
+* **Crypto:** illustrative per-venue risk tiers, custom tiers and collateral haircuts in the liquidation model (always labelled approximate); a Deribit dated-futures term structure download; the weekday backtest moved to a *Legacy (reproducibility only)* group.
+
+Not done: Massive historical options bid/ask backtests (needs a key and entitlements), historical order-book snapshot storage, and funding/arbitrage replay.

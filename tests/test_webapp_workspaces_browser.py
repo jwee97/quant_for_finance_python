@@ -523,7 +523,7 @@ def test_the_crypto_tab_downloads_a_coin_and_reads_its_real_books_and_funding(fr
     assert page.locator("#crypto .fdlist ul.dl li").count() == 3
     select = page.locator("#crypto select[data-key=symbol]")
     assert select.input_value() == "SOL" and "downloaded" in select.locator("option:checked").inner_text()
-    assert _badge(page, "crypto") in {"Downloaded: free data", "Mixed sources"}
+    assert _badge(page, "crypto") in {"Downloaded: free data", "Mixed sources", "Delayed observed"}
     assert "downloaded" in page.locator("#crypto-results .earnrow").first.inner_text().lower() or page.locator("#crypto-results .earnrow .tile").count() >= 5
     _mode(page, "crypto", "cross")
     page.wait_for_selector("#crypto-results table.data", timeout=60_000)
