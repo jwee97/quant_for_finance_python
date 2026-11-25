@@ -150,7 +150,19 @@ class OptionsStudioApi:
             checks.append({"id": "max_loss", "label": f"the maximum loss is within {max_loss:,.0f}", "ok": (not a["unlimited_loss"]) and -a["max_loss"] <= max_loss, "detail": ""})
         if margin_budget is not None:
             checks.append({"id": "margin", "label": f"the indicative margin is within {margin_budget:,.0f}", "ok": (not a["unlimited_loss"]) and a["margin"]["estimate"] <= margin_budget, "detail": f"indicative {a['margin']['estimate']:,.0f}"})
+        impact = None
+        if body.get("book") not in (None, "", []):
+            if not isinstance(body["book"], list) or not all(isinstance(x, dict) for x in body["book"]) or len(body["book"]) > 40:
+                raise ApiError("book must be a list of up to 40 positions")
+            try:
+                book = [{**x, "quantity": float(x["quantity"])} for x in body["book"]]
+                book = [(oa.chain_legs(chain, [x])[0] if x.get("type", "option") == "option" and not x.get("iv") else x) for x in book]                  # an option without its own volatility takes the chain's at its strike
+                impact = st.portfolio_impact(book, a["legs"], ctx.spot, float(chain["rate"].median()), float(chain["dividend"].median()), ctx.as_of)
+            except (KeyError, TypeError, ValueError) as exc:
+                raise ApiError(f"book: {exc}") from None
+            checks.append({"id": "portfolio", "label": "the worst stress loss of the whole book does not worsen by more than the maximum loss you accept", "ok": max_loss is None or -impact["worst_stress"]["change"] <= max_loss,
+                           "detail": f"worst stress {impact['worst_stress']['before']:,.0f} to {impact['worst_stress']['after']:,.0f}"})
         passed = all(c["ok"] for c in checks)
-        return self._wrap("options_studio_validate", {"underlying": underlying, "checks": checks, "passed": passed, "totals": built["totals"], "margin": a["margin"], "max_loss": a["max_loss"], "max_profit": a["max_profit"],
+        return self._wrap("options_studio_validate", {"underlying": underlying, "checks": checks, "passed": passed, "totals": built["totals"], "portfolio_impact": impact, "margin": a["margin"], "max_loss": a["max_loss"], "max_profit": a["max_profit"],
                                                        "reading": "All checks pass: nothing the platform can see stops this order. It is not a statement that the trade is a good one." if passed else "At least one check fails: see the list."},
                           self._parts(source), built["risk_flags"], ctx.as_of, notes)

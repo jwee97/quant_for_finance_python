@@ -58,9 +58,20 @@
     });
   };
 
+  /* The book of the Greeks and risk view (hypothetical unless you typed your own), sent so that a trade is judged against what is already held. */
+  const bookBody = (O) => { const list = (O.form.book || []).filter((x) => Number(x.quantity)); if (!list.length) return undefined;
+    return list.map((x) => (x.type === "stock" ? { type: "stock", quantity: Number(x.quantity) } : { type: "option", right: x.right, strike: Number(x.strike), dte: Number(x.dte), quantity: Number(x.quantity), iv: Number(x.iv || O.atmIv || 0.25) })); };
+
   /* ---------- the form ---------- */
+  const STAGES = [["scan", "1. Opportunity"], ["ideas", "2. Hypothesis"], ["builder", "3. Construction"], ["scenarios", "4. Scenarios"], ["tradecheck", "5. Validation"]];
+  function stepper(O, box) {
+    const i = STAGES.findIndex(([id]) => id === O.mode), bar = h("div", "row tight", box); bar.dataset.role = "studio-steps";
+    for (const [id, label] of STAGES) { const b = h("button", "btn" + (id === O.mode ? " primary" : ""), bar, label); b.setAttribute("aria-current", String(id === O.mode)); b.addEventListener("click", () => { O.mode = id; Q.renderLab(O); }); }
+    h("p", "hint", box, "One workflow: the underlying, the contracts of the ticket and your limits carry from stage to stage." + (i < STAGES.length - 1 ? ` Next: ${STAGES[i + 1][1].slice(3)}.` : " Last stage: nothing is sent anywhere."));
+  }
   STUDIO.sections = (O, sec, after) => {
     const f = O.form, m = O.mode;
+    if (MODES.has(m)) stepper(O, sec("Workflow"));
     if (m === "ideas") {
       const b = sec("2. Your view");
       Q.labField(b, { key: "direction", label: "Direction", kind: "choice", options: [["bullish", "Bullish"], ["bearish", "Bearish"], ["neutral", "Neutral (stays near here)"]] }, f, after);
@@ -101,7 +112,7 @@
     if (m === "ideas") return W.request(O, () => [{ modes: ["ideas"], path: "/api/options/studio/recommend", body: { ...base, direction: f.direction, move: Number(f.move) / 100, vol_view: f.volView, vol_move: Number(f.volMove) / 100, horizon_days: Number(f.ideaHorizon),
       max_loss: f.maxLoss === "" ? undefined : Number(f.maxLoss), margin_budget: f.marginBudget === "" ? undefined : Number(f.marginBudget) } }], "Ranking the structures…");
     const path = { builder: "/api/options/studio/build", scenarios: "/api/options/studio/scenarios", tradecheck: "/api/options/studio/validate" }[m];
-    return W.request(O, () => [{ modes: [m], path, body: { ...base, legs: legsBody(O), commission: Number(f.commission), ...(m === "tradecheck" ? { max_loss: f.maxLoss === "" ? undefined : Number(f.maxLoss), margin_budget: f.marginBudget === "" ? undefined : Number(f.marginBudget) } : {}) } }],
+    return W.request(O, () => [{ modes: [m], path, body: { ...base, legs: legsBody(O), commission: Number(f.commission), ...(m === "tradecheck" ? { max_loss: f.maxLoss === "" ? undefined : Number(f.maxLoss), margin_budget: f.marginBudget === "" ? undefined : Number(f.marginBudget), book: bookBody(O) } : {}) } }],
       m === "builder" ? "Pricing the contracts…" : m === "scenarios" ? "Revaluing under the scenarios…" : "Checking the trade…");
   };
   STUDIO.empty = (O, root) => {
@@ -146,6 +157,8 @@
         { label: "Vega / pt", num: true, get: (r) => smoney(r.vega_per_point) }, { label: "Spread cost", num: true, get: (r) => money(r.friction, 0) }, { label: "", get: () => "" }], d.ranked);
       d.ranked.forEach((r, i) => { const row = card.querySelectorAll("tbody tr")[i]; if (!row) return; const b = h("button", "btn", row.lastElementChild, "Use these legs"); b.addEventListener("click", () => STUDIO.load(O, r.legs)); });
     }
+    if (d.stability) { h("p", d.stability.stable ? "hint" : "verdict-bad", root, `Stability: ${d.stability.reading} (top structure unchanged in ${d.stability.top_unchanged_in} of ${d.stability.of} perturbed runs).`); }
+    if (d.baselines) h("p", "hint", root, `For comparison: ${smoney(d.baselines.hold_100_shares)} on 100 shares if right, and ${smoney(d.baselines.cash)} in cash. ${d.baselines.note}.`);
     if (d.excluded.length) { const dd = h("details", "how", root); h("summary", "", dd, `Excluded (${d.excluded.length})`); table(dd, [{ label: "Structure", get: (r) => r.strategy.replace(/_/g, " ") }, { label: "Why", get: (r) => r.reason }], d.excluded); }
     const dd = h("details", "how", root); h("summary", "", dd, "Assumptions"); for (const a of d.assumptions) h("p", "hint", dd, a);
     W.hint(root, d.reading);
@@ -179,8 +192,9 @@
     heat("Spot and skew", "Rows: a shift of the skew slope (each strike's volatility moves by shift × ln K/F). Negative steepens the equity skew.", hm.spot_skew.skew, hm.spot_skew.spot, hm.spot_skew.pnl, "Skew shift", "Underlying", (v) => W.signed(v, 2));
     heat("Spot and time", "Rows: days passing with volatility unchanged; the time decay (or gain) of the position against price.", hm.spot_time.days, hm.spot_time.spot, hm.spot_time.pnl, "Days passed", "Underlying", (v) => v + "d");
     const card = h("div", "card", root); h("h3", "", card, "Scenarios and where their P&L comes from");
-    table(card, [{ label: "Scenario", get: (r) => r.name }, { label: "P&L after costs", num: true, get: (r) => smoney(r.pnl) }, { label: "Underlying", num: true, get: (r) => smoney(r.attribution.underlying) }, { label: "Volatility", num: true, get: (r) => smoney(r.attribution.volatility) },
-      { label: "Skew", num: true, get: (r) => smoney(r.attribution.skew) }, { label: "Time", num: true, get: (r) => smoney(r.attribution.time) }, { label: "Costs", num: true, get: (r) => smoney(r.attribution.costs) }, { label: "Residual", num: true, get: (r) => smoney(r.attribution.residual) }], d.scenarios);
+    table(card, [{ label: "Scenario", get: (r) => r.name }, { label: "P&L after costs", num: true, get: (r) => smoney(r.pnl) }, { label: "Delta", num: true, get: (r) => smoney(r.attribution.delta) }, { label: "Gamma", num: true, get: (r) => smoney(r.attribution.gamma) }, { label: "Vega", num: true, get: (r) => smoney(r.attribution.vega) }, { label: "Vanna+volga", num: true, get: (r) => smoney(r.attribution.cross_greeks) },
+      { label: "Skew", num: true, get: (r) => smoney(r.attribution.skew) }, { label: "Theta", num: true, get: (r) => smoney(r.attribution.theta) }, { label: "Costs", num: true, get: (r) => smoney(r.attribution.costs) }, { label: "Residual", num: true, get: (r) => smoney(r.attribution.residual) }], d.scenarios);
+    W.hint(root, d.attribution_method);
     const g = d.greeks_today; W.kv(h("div", "card", root), "Greeks today", [["Delta ($)", smoney(g.delta_dollars)], ["Gamma P&L of a 1% move", smoney(g.gamma_pnl_1pct)], ["Vega per point", smoney(g.vega_per_point)], ["Theta per day", smoney(g.theta_per_day)]]);
     const dd = h("details", "how", root); h("summary", "", dd, "Assumptions"); for (const a of d.assumptions) h("p", "hint", dd, a);
     if (window.Experiments) window.Experiments.saveButton(root, { kind: "options_scenarios", name: `${d.underlying} scenarios`, request: { path: "/api/options/studio/scenarios", body }, metrics: window.Experiments.metricsOf.options_scenarios(d), provenance: d.provenance, universe: [d.underlying], assumptions: d.provenance && d.provenance.assumptions });
@@ -191,6 +205,10 @@
     const card = h("div", "card", root); h("h3", "", card, "Checks");
     table(card, [{ label: "Check", get: (r) => r.label }, { label: "Result", get: (r) => (r.ok ? "pass" : "FAIL") }, { label: "Detail", get: (r) => r.detail }], d.checks);
     h("p", d.passed ? "verdict-ok" : "verdict-bad", root, d.reading);
+    if (d.portfolio_impact) { const pi = d.portfolio_impact, c = h("div", "card", root); h("h3", "", c, "What it does to the book" + (pi.hypothetical_book ? " (hypothetical)" : ""));
+      table(c, [{ label: "", get: (r) => r[0] }, { label: "Before", num: true, get: (r) => smoney(pi.before[r[1]]) }, { label: "After", num: true, get: (r) => smoney(pi.after[r[1]]) }, { label: "Change", num: true, get: (r) => smoney(pi.change[r[1]]) }],
+        [["Delta ($)", "delta_dollars"], ["Gamma P&L, 1% move", "gamma_pnl_1pct"], ["Vega per point", "vega_per_point"], ["Theta per day", "theta_per_day"], ["Vanna", "vanna_delta_per_vol_point"], ["Volga", "volga_vega_per_vol_point"]]);
+      h("p", "hint", c, `Worst stress loss: ${smoney(pi.worst_stress.before)} before, ${smoney(pi.worst_stress.after)} after.`); }
     const k = h("div", "earnrow", root); tile(k, "Cost at the limits", smoney(d.totals.at_limits)); tile(k, "Crossing every spread", smoney(d.totals.at_touch)); tile(k, "Indicative margin", money(d.margin.estimate, 0), { text: d.margin.basis });
   }
   STUDIO.build = (O, root, d, body) => ({ scan: buildScan, ideas: buildIdeas, builder: buildBuilder, scenarios: buildScenarios, tradecheck: buildTradeCheck })[O.mode](O, root, d, body);

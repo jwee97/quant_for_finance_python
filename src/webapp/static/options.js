@@ -820,6 +820,18 @@
       const hm = r.modes.find((x) => x.id === "historical"); if (!hm) return;
       const b = h("div", "unavail", slot); h("strong", "", b, hm.label + ": " + hm.state + ". "); b.appendChild(document.createTextNode(hm.reason)); if (hm.needs && hm.needs.length) h("div", "hint", b, "Needed: " + hm.needs.join("; "));
       h("div", "hint", b, r.ranking);
+      if (hm.state === "available") {
+        const run = h("button", "btn", b, "Run on the stored chains"), out = h("div", "", b); run.addEventListener("click", async () => {
+          run.disabled = true; out.replaceChildren();
+          try {
+            const x = await Q.api("/api/options/historical-backtest", { underlying: O.form.underlying, structure: "cash_secured_put" });
+            if (x.state !== "ok") { h("p", "hint", out, x.reason); return; }
+            table(out, [{ label: "", get: (r) => r[0] }, { label: "Trades", num: true, get: (r) => r[1].trades }, { label: "Total", num: true, get: (r) => smoney(r[1].total) }, { label: "Mean", num: true, get: (r) => smoney(r[1].mean) }, { label: "Win rate", num: true, get: (r) => pct(r[1].win_rate, 0) }, { label: "Worst", num: true, get: (r) => smoney(r[1].worst) }],
+              [["All", x.summary], ["In sample", x.in_sample], ["Out of sample", x.out_of_sample]].filter((r) => r[1]));
+            h("p", "hint", out, x.split_note + ". Not modelled: " + x.not_modelled.join("; ") + ".");
+          } catch (e) { h("p", "hint", out, e.message); } finally { run.disabled = false; }
+        });
+      }
     }, () => {});
   }
   function buildBacktest(root, d) {

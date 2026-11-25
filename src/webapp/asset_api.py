@@ -134,7 +134,7 @@ class AssetApi:
 
     def _post_routes(self) -> dict:
         return {"/api/options/portfolio-risk": self.options_portfolio_risk, "/api/options/strategy/payoff": self.options_strategy_payoff, "/api/options/strategy/backtest": self.options_strategy_backtest,
-                "/api/options/strategy/sweep": self.options_strategy_sweep, "/api/options/strategy/walkforward": self.options_strategy_walkforward, "/api/options/strategy/compare": self.options_strategy_compare, "/api/futures/margin": self.futures_margin, "/api/experiments/save": self.experiments_save, "/api/options/snapshot": self.options_snapshot, "/api/experiments/delete": self.experiments_delete, "/api/experiments/check": self.experiments_check, "/api/experiments/compare": self.experiments_compare, "/api/futures/strategy/backtest": self.futures_strategy_backtest, "/api/futures/signals": self.futures_signals, "/api/crypto/signals": self.crypto_signals, "/api/crypto/strategy/backtest": self.crypto_strategy_backtest}
+                "/api/options/strategy/sweep": self.options_strategy_sweep, "/api/options/strategy/walkforward": self.options_strategy_walkforward, "/api/options/strategy/compare": self.options_strategy_compare, "/api/futures/margin": self.futures_margin, "/api/experiments/save": self.experiments_save, "/api/options/snapshot": self.options_snapshot, "/api/options/historical-backtest": self.options_historical_backtest, "/api/experiments/delete": self.experiments_delete, "/api/experiments/check": self.experiments_check, "/api/experiments/compare": self.experiments_compare, "/api/futures/strategy/backtest": self.futures_strategy_backtest, "/api/futures/signals": self.futures_signals, "/api/crypto/signals": self.crypto_signals, "/api/crypto/strategy/backtest": self.crypto_strategy_backtest}
 
     # ------------------------------------------------------------------------------------------------------------ user files
     def _user_files(self, folder: str) -> dict[str, Path]:
@@ -854,12 +854,29 @@ class AssetApi:
         synthetic = {"id": "synthetic_validation", "label": "Synthetic validation (model market)", "state": "available" if not self.observed() else "needs_model_data",
                      "reason": "" if not self.observed() else "the market is simulated: switch the data mode to 'model data allowed' to run it", "limitations": oa.BACKTEST_LIMITATIONS}
         need = 60
-        historical = {"id": "historical", "label": "Historical backtest (observed chains)", "state": "unavailable", "snapshots": len(dates), "snapshots_needed": need,
-                      "reason": f"{len(dates)} dated chains of {underlying} are stored; a historical backtest replays a dated bid and ask chain on every trading day (at least {need}). The Massive daily aggregates give "
-                                "closes without bid and ask, so rebuilt chains cannot cross a spread.",
-                      "needs": ["a daily snapshot of the chain (the Snapshot button) kept for at least 60 trading days, or a vendor history with historical bid and ask quotes"]}
+        from ..assets import options_historical as oh
+
+        need = oh.MIN_DATES
+        historical = {"id": "historical", "label": "Empirical backtest (stored observed chains)", "state": "available" if len(dates) >= need else "unavailable", "snapshots": len(dates), "snapshots_needed": need,
+                      "reason": (f"{len(dates)} dated chains of {underlying} are stored: enough to replay them at their own bid and ask." if len(dates) >= need else f"{len(dates)} dated chains of {underlying} are stored; an empirical backtest replays a dated bid and ask chain on each date (at least {need}). The Massive daily aggregates give "
+                                "closes without bid and ask, so rebuilt chains cannot cross a spread."),
+                      "needs": [] if len(dates) >= need else [f"a daily snapshot of the chain (the Snapshot button) on at least {need} dates, or a vendor history with historical bid and ask quotes"]}
         return _wrap("options_backtest_modes", {"underlying": underlying, "modes": [synthetic, historical], "ranking": "never combined: the two kinds of result answer different questions and are shown apart"},
                      {"modes": "platform"}, [], dates[-1] if dates else None)
+
+    def options_historical_backtest(self, body: dict) -> dict:
+        """``POST /api/options/historical-backtest``: an empirical backtest of a named structure on the stored observed chains, at their own bid and ask (``assets.options_historical``)."""
+        from ..assets import options_historical as oh
+        from ..assets.option_history import History
+
+        underlying = str(body.get("underlying") or "SPY")
+        structure = str(body.get("structure") or "cash_secured_put")
+        try:
+            out = oh.run(History(self.root), underlying, structure, int(_number(body, "dte", 30, 3, 400, integer=True)), int(_number(body, "every", 7, 1, 90, integer=True)), int(_number(body, "quantity", 1, 1, 100, integer=True)),
+                         _number(body, "commission", 0.65, 0.0, 20.0))
+        except ValueError as exc:
+            raise ApiError(str(exc)) from None
+        return _wrap("options_historical", out, {"chains": "downloaded"} if out.get("state") == "ok" else {"chains": "unavailable"}, [], out.get("last"), [out.get("fills", "")] if out.get("state") == "ok" else [])
 
     def options_history(self, q: dict) -> dict:
         """``GET /api/options/history?underlying=SPY&model=heston``: the dates kept and, with at least three, how the parameters of a model move from one date to the next (each calibration starts from the previous

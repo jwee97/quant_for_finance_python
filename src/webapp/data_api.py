@@ -57,7 +57,7 @@ from .providers import RateLimitTimeout
 MAX_ITEMS = 15
 OPTION_PRESETS = ("SPY", "QQQ", "IWM", "DIA", "TLT", "GLD", "AAPL", "MSFT", "NVDA", "TSLA", "AMZN", "SPX")
 WHAT = ("history", "venues", "funding")
-WHAT_ALL = WHAT + ("openinterest", "liquidations")                                      # the last two are chosen on purpose: they ask three exchanges and keep only what those answer
+WHAT_ALL = WHAT + ("openinterest", "liquidations", "futures")                                      # the last two are chosen on purpose: they ask three exchanges and keep only what those answer
 SOURCE_IDS = {"options": ("massive", "cboe", "yahoo", "deribit"), "futures": ("massive", "yahoo", "finzdata", "cboe_cfe", "deribit"), "crypto": ("massive", "okx", "coinbase", "kraken", "bitstamp", "deribit")}
 FUTURES_SOURCES = ("yahoo", "massive", "yahoo_series", "finzdata")   # the curve of each contract month from Yahoo or Massive, the price history of any future Yahoo lists, or every contract of a Finzdata market
 CRYPTO_SOURCES = ("exchanges", "massive")
@@ -240,7 +240,7 @@ class DataApi:
                         "finzdata": {"groups": fzc.groups(self.finz.live_roots()), "markets": len(fzc.markets(self.finz.live_roots())[0]), "max_calls_per_root": dfz.MAX_CALLS_PER_ROOT}},
             "crypto": {"coins": list(fc.DEFAULT_COINS), "what": [{"id": "history", "text": "Daily history: spot, perpetual and funding"}, {"id": "venues", "text": "Real quotes and order books on six venues, now"},
                                                                   {"id": "funding", "text": "OKX funding history, for the funding view"},
-                                                                  {"id": "openinterest", "text": "Open interest by exchange (OKX, Bybit, Binance)"}, {"id": "liquidations", "text": "Recent liquidations (OKX, a short window)"}], "defaults": {"days": 400, "what": list(WHAT)},
+                                                                  {"id": "openinterest", "text": "Open interest by exchange (OKX, Bybit, Binance)"}, {"id": "liquidations", "text": "Recent liquidations (OKX, a short window)"}, {"id": "futures", "text": "Dated futures term structure (Deribit, a snapshot)"}], "defaults": {"days": 400, "what": list(WHAT)},
                        "massive": {"note": "daily SPOT closes against the US dollar; Deribit and the exchanges supply derivatives"}},
         }
 
@@ -469,6 +469,9 @@ class DataApi:
                 elif what == "openinterest":
                     d = fc.fetch_open_interest(http, coin, min(s["days"], 365), progress)
                     out.append(self._save(d, f"{d.meta['as_of']}: open interest on {len(d.meta['venues'])} venues", {"items": [coin], "what": ["openinterest"], "days": s["days"]}, coin))
+                elif what == "futures":
+                    d = fc.fetch_deribit_futures(http, coin, progress)
+                    out.append(self._save(d, f"{len(d.payload['contracts'])} dated Deribit futures", {"items": [coin], "what": ["futures"], "days": s["days"]}, coin))
                 elif what == "liquidations":
                     d = fc.fetch_liquidations(http, coin, progress)
                     out.append(self._save(d, f"{len(d.payload['events'])} recent liquidations on OKX", {"items": [coin], "what": ["liquidations"], "days": s["days"]}, coin))

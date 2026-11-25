@@ -46,6 +46,10 @@ class CryptoResearchApi:
         except (OSError, ValueError):
             return None
 
+    def _term(self, symbol: str):
+        payload = self.api.downloads.read_json("crypto", f"futures_{symbol}")
+        return cr.futures_term_structure(payload) if payload else None
+
     def _liquidations(self, symbol: str):
         payload = self.api.downloads.read_json("crypto", f"liquidations_{symbol}")
         return cr.liquidation_view(payload) if payload else None
@@ -70,11 +74,11 @@ class CryptoResearchApi:
         series = {x.upper(): self._observed_series(x) for x in syms}
         try:
             first = next(iter(series))
-            out = cr.funding_intelligence(series, observed_only=self.api.observed(), days=int(_number(q, "days", 365, 60, 2000, integer=True)), open_interest=self._open_interest(first), liquidations=self._liquidations(first))
+            out = cr.funding_intelligence(series, observed_only=self.api.observed(), days=int(_number(q, "days", 365, 60, 2000, integer=True)), open_interest=self._open_interest(first), liquidations=self._liquidations(first), term=self._term(first))
         except ValueError as exc:
             raise ApiError(str(exc)) from None
         parts = {f"{r['symbol']}@{r['venue']}": r["source"] for r in out["rows"]}
-        parts.update({"open_interest": "downloaded" if out["open_interest"].get("state") == "ok" else "unavailable", "liquidations": "downloaded" if out["liquidations"].get("state") == "ok" else "unavailable", "dated_futures": "unavailable"})
+        parts.update({"open_interest": "downloaded" if out["open_interest"].get("state") == "ok" else "unavailable", "liquidations": "downloaded" if out["liquidations"].get("state") == "ok" else "unavailable", "dated_futures": "downloaded" if out["dated_futures"].get("state") == "ok" else "unavailable"})
         return self._wrap("crypto_derivatives", out, parts, [], max(x.as_of for x in series.values()))
 
     def carry(self, q: dict) -> dict:
@@ -208,7 +212,17 @@ class CryptoResearchApi:
             except (TypeError, ValueError):
                 raise ApiError("betas must be numbers") from None
         try:
-            out = cr.portfolio_liquidation(positions, collateral, betas, _number(body, "liquidation_fee_bps", 50.0, 0.0, 1000.0))
+            tiers = None
+            if body.get("tiers") is not None:
+                raw = body["tiers"]
+                if not isinstance(raw, dict):
+                    raise ApiError("tiers must be {venue: [[notional_up_to, maintenance_rate, max_leverage], ...]}")
+                tiers = {str(k).upper(): [(float(a) if a is not None else float("inf"), float(b), float(c)) for a, b, c in v] for k, v in raw.items()}
+                missing = {str(p.get("venue", "")).upper() for p in positions} - set(tiers)
+                if missing:
+                    raise ApiError(f"tiers are missing for {sorted(missing)}")
+            out = cr.portfolio_liquidation(positions, collateral, betas, _number(body, "liquidation_fee_bps", 50.0, 0.0, 1000.0), use_tiers=str(body.get("use_tiers", "")).lower() in ("1", "true", "yes"), tiers=tiers,
+                                           collateral_haircut=_number(body, "collateral_haircut", 0.0, 0.0, 0.9), funding_per_day=_number(body, "funding_per_day", 0.0, 0.0, 1e9), days=_number(body, "days", 0.0, 0.0, 365.0))
         except (ValueError, KeyError, TypeError) as exc:
             raise ApiError(str(exc)) from None
         out["betas"] = betas

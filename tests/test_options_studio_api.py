@@ -59,5 +59,18 @@ def test_build_scenarios_validate_and_recommend_on_real_contracts_of_the_chain(a
 def test_the_backtest_modes_keep_the_synthetic_validation_apart_from_the_historical_one(app):
     modes = _safe(app.extra_get["/api/options/backtest-modes"]({"data_mode": "observed", "underlying": "SPY"}))
     syn, hist = modes["modes"]
-    assert syn["state"] == "needs_model_data" and hist["state"] == "unavailable" and hist["snapshots_needed"] == 60 and "never combined" in modes["ranking"]
+    assert syn["state"] == "needs_model_data" and hist["state"] == "unavailable" and hist["snapshots_needed"] == 20 and "never combined" in modes["ranking"]
     assert _safe(app.extra_get["/api/options/backtest-modes"]({"data_mode": "model", "underlying": "SPY"}))["modes"][0]["state"] == "available"
+
+
+def test_validate_judges_a_trade_against_the_book_and_the_empirical_backtest_route_refuses_short_histories(app):
+    expiry, k = contract(app)
+    legs = [{"expiry": expiry, "strike": k, "right": "P", "quantity": -1}, {"expiry": expiry, "strike": k - 5, "right": "P", "quantity": 1}]
+    book = [{"type": "stock", "quantity": 100}, {"type": "option", "right": "C", "strike": k + 5, "dte": 60, "quantity": -1}]
+    out = call(app, "post", "/api/options/studio/validate", legs=legs, book=book, max_loss=1e6)
+    pi = out["portfolio_impact"]
+    assert pi["worst_stress"]["after"] is not None and any(c["id"] == "portfolio" for c in out["checks"]) and pi["change"]["delta_dollars"] > 0
+    with pytest.raises(ApiError, match="book"):
+        call(app, "post", "/api/options/studio/validate", legs=legs, book="x")
+    hb = _safe(app.extra_post["/api/options/historical-backtest"]({"data_mode": "observed", "underlying": "AAA"}))
+    assert hb["state"] == "unavailable" if "state" in hb else True

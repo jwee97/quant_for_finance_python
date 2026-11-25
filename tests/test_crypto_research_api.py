@@ -94,3 +94,12 @@ def test_observed_only_refuses_simulated_chains_curves_coins_and_synthetic_valid
     assert all(r["source"] != "simulated" for r in funding["rows"])
     cross = get(app, "/api/crypto/cross-exchange", symbol="ETH")
     assert cross["state"] == "unavailable" and cross["pairs"] == []
+
+
+def test_liquidation_route_takes_custom_tiers_and_haircuts(app):
+    pos = [{"symbol": "ETH", "venue": "OKX", "side": "long", "notional": 3e5}]
+    flat = _safe(app.extra_post["/api/crypto/liquidation"]({"collateral": 1e5, "betas": {"ETH": 1.0}, "positions": pos}))
+    tiered = _safe(app.extra_post["/api/crypto/liquidation"]({"collateral": 1e5, "betas": {"ETH": 1.0}, "positions": pos, "tiers": {"OKX": [[None, 0.05, 10]]}, "collateral_haircut": 0.1}))
+    assert tiered["liquidation_shock_down"] > flat["liquidation_shock_down"] and tiered["approximate"] and "haircut 10%" in tiered["margin_model"]
+    with pytest.raises(ApiError, match="tiers are missing"):
+        app.extra_post["/api/crypto/liquidation"]({"collateral": 1e5, "positions": pos, "tiers": {"BINANCE": [[None, 0.05, 10]]}})

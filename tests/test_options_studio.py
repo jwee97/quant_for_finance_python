@@ -80,9 +80,9 @@ def test_scenario_pnl_splits_into_underlying_volatility_skew_time_costs_and_an_e
         assert sum(a.values()) == pytest.approx(sc["pnl"], abs=1e-6), sc["name"]
         assert a["costs"] == pytest.approx(-(built["totals"]["spread_cost"] + built["totals"]["commission"]))
     quiet = next(s for s in lab["scenarios"] if s["name"].startswith("quiet"))
-    assert abs(quiet["attribution"]["underlying"]) < 1e-6 and quiet["attribution"]["time"] != 0.0
+    assert abs(quiet["attribution"]["delta"]) < 1e-6 and quiet["attribution"]["theta"] != 0.0
     skew = next(s for s in lab["scenarios"] if s["name"].startswith("skew steepens"))
-    assert skew["attribution"]["skew"] != 0.0 and skew["attribution"]["underlying"] == pytest.approx(0.0, abs=1e-9)
+    assert skew["attribution"]["skew"] != 0.0 and skew["attribution"]["delta"] == pytest.approx(0.0, abs=1e-9)
     with pytest.raises(ValueError):
         st.scenario_lab([{"type": "stock", "quantity": 100}], 100.0, 0.04, 0.0, AS_OF)
 
@@ -134,3 +134,24 @@ def test_a_backtest_reports_its_margin_apart_from_its_pnl_and_labels_itself_synt
     assert oa.backtest_margin(legs, 105.0) == pytest.approx(oa.margin_estimate(legs, 105.0, 0.0)["naked_requirement"])
     hedged = [{"type": "option", "right": "P", "strike": 100.0, "quantity": -1.0}, {"type": "option", "right": "P", "strike": 95.0, "quantity": 1.0}]
     assert oa.backtest_margin(hedged, 105.0) == pytest.approx(500.0, abs=15.0)
+
+
+def test_the_ranking_reports_how_stable_it_is_and_the_baselines(chain):
+    out = st.recommend(chain, 100.0, "bullish", 0.05, "long", 0.03, 30, max_loss=2000.0)
+    s = out["stability"]
+    assert s["of"] == 4 and 0 <= s["top_unchanged_in"] <= 4 and s["reading"] and all(r["top"] for r in s["runs"])
+    assert out["baselines"]["hold_100_shares"] == pytest.approx(100 * 100.0 * 0.05) and out["baselines"]["cash"] == 0.0
+    assert st.recommend(chain, 100.0, "bullish", 0.05, "long", 0.03, 30, stability=False)["stability"] is None
+
+
+def test_a_proposed_position_changes_the_book_by_exactly_its_own_greeks(chain):
+    e, k = pick(chain)
+    legs = st.build_real(chain, [{"type": "option", "expiry": str(e.date()), "strike": k, "right": "C", "quantity": 2}], 100.0)["analysis"]["legs"]
+    book = [{"type": "stock", "quantity": 100.0}, {"type": "option", "right": "P", "strike": 95.0, "dte": 45.0, "quantity": -1.0, "iv": 0.22}]
+    out = st.portfolio_impact(book, legs, 100.0, 0.04, 0.0, AS_OF)
+    alone = st.portfolio_impact([], legs, 100.0, 0.04, 0.0, AS_OF)
+    for key in ("delta_dollars", "vega_per_point", "theta_per_day", "gamma_pnl_1pct"):
+        assert out["change"][key] == pytest.approx(alone["after"][key], rel=1e-9, abs=1e-9), key
+    assert alone["hypothetical_book"] and not out["hypothetical_book"] and out["worst_stress"]["scenario"]
+    with pytest.raises(ValueError):
+        st.portfolio_impact(book, [], 100.0, 0.04, 0.0)

@@ -340,12 +340,12 @@ def scenario_lab(legs: list[dict], spot: float, rate: float, dividend: float, as
         no_skew = pnl(ds, dv, days, 0.0)
         skew_effect = total - no_skew
         tay = oa._attribution(base_frame, ds, dv, days, no_skew, "sticky_strike", 0.0)
-        parts = {"underlying": tay["delta"] + tay["gamma"], "volatility": tay["vega"] + tay["vanna"] + tay["volga"], "skew": skew_effect, "time": tay["theta"], "costs": -float(costs)}
-        explained = parts["underlying"] + parts["volatility"] + parts["time"] + skew_effect
-        parts["residual"] = float(total - explained)
+        parts = {"delta": tay["delta"], "gamma": tay["gamma"], "vega": tay["vega"], "cross_greeks": tay["vanna"] + tay["volga"], "theta": tay["theta"], "skew": skew_effect, "costs": -float(costs)}
+        explained = parts["delta"] + parts["gamma"] + parts["vega"] + parts["cross_greeks"] + parts["theta"] + skew_effect
+        parts["residual"] = float(total - explained)                                    # what the Taylor terms miss (third order and beyond, expiry kinks): reported, never forced to zero
         rows.append({"name": str(sc.get("name", "scenario")), "spot": ds, "vol": dv, "skew": sk, "days": days, "pnl_before_costs": float(total), "pnl": float(total - costs),
                      "return_on_entry": float((total - costs) / abs(entry_cost)) if abs(entry_cost) > 1e-9 else None, "attribution": {k: float(v) for k, v in parts.items()}})
-    return {"state": "ok", "value_today": v0, "heatmaps": {"spot_vol": heat_vol, "spot_skew": heat_skew, "spot_time": heat_time}, "scenarios": rows,
+    return {"state": "ok", "value_today": v0, "attribution_method": "The scenario P&L is an exact full revaluation. Delta, gamma, vega, theta and the cross-Greeks (vanna, volga) are second-order Taylor terms from today's Greeks; skew is an exact revaluation difference; costs are the entry spread and commissions; the residual is total minus these and is not forced to zero.", "heatmaps": {"spot_vol": heat_vol, "spot_skew": heat_skew, "spot_time": heat_time}, "scenarios": rows,
             "greeks_today": {"delta_dollars": float((base_frame["delta"] * base_frame["spot0"]).sum()), "gamma_pnl_1pct": float((0.5 * base_frame["gamma"] * (0.01 * base_frame["spot0"]) ** 2).sum()),
                              "vega_per_point": float(base_frame["vega"].sum()), "theta_per_day": float(base_frame["theta"].sum()), "vanna": float(base_frame["vanna"].sum()), "volga": float(base_frame["volga"].sum())},
             "assumptions": ["Black-Scholes revaluation with each leg's own implied volatility; strikes keep their volatility when the spot moves (sticky strike) unless a skew shift is stated.",
@@ -358,7 +358,7 @@ VIEWS = {"bullish": 1.0, "bearish": -1.0, "neutral": 0.0}
 
 
 def recommend(chain: pd.DataFrame, spot: float, direction: str = "neutral", move: float = 0.05, vol_view: str = "neutral", vol_move: float = 0.03, horizon_days: int = 30,
-            max_loss: float | None = None, margin_budget: float | None = None, quantity: int = 1, top: int = 8, rate: float | None = None, dividend: float | None = None) -> dict:
+            max_loss: float | None = None, margin_budget: float | None = None, quantity: int = 1, top: int = 8, rate: float | None = None, dividend: float | None = None, stability: bool = True) -> dict:
     """Rank the platform's structures by what they would earn IF the stated hypothesis came true by the horizon: the underlying ends ``move`` up (bullish), down (bearish) or within ``move`` of where it is
     (neutral), and implied volatility changes by ``vol_move`` points (long volatility up, short volatility down, neutral none). Each structure is priced on this chain's own quotes and entered at the touch.
     The table also shows what it loses if the opposite happened, so a high hypothesis P&L bought with a large wrong-way loss is visible. Structures that break ``max_loss`` (dollars) or ``margin_budget``
@@ -421,7 +421,21 @@ def recommend(chain: pd.DataFrame, spot: float, direction: str = "neutral", move
                "prob_profit_market_view": a["prob_profit"], "legs": [{**{k: l[k] for k in ("type", "right", "strike", "quantity", "dte") if k in l}, **({"expiry": str(pd.Timestamp(oa.nearest_expiry_to(chain, l["dte"])).date())} if l["type"] == "option" else {})} for l in legs]}
         (excluded.append({"strategy": name, "reason": "; ".join(reasons)}) if reasons else rows.append(row))
     rows.sort(key=lambda r: -(r["pnl_if_right"] + 0.0))
-    return {"state": "ok", "hypothesis": {"direction": direction, "move": move, "vol_view": vol_view, "vol_move": vol_move, "horizon_days": horizon_days, "max_loss": max_loss, "margin_budget": margin_budget},
+    stable = None
+    if stability and rows:
+        order = {r["strategy"]: i for i, r in enumerate(rows)}
+        runs = []
+        for km, kv in ((0.5, 1.0), (1.5, 1.0), (1.0, 0.5), (1.0, 1.5)):
+            alt = recommend(chain, spot, direction, move * km, vol_view, vol_move * kv, horizon_days, max_loss, margin_budget, quantity, len(rows), rate, dividend, stability=False)
+            pos = {r["strategy"]: i for i, r in enumerate(alt["ranked"])}
+            common = [s for s in order if s in pos]
+            rho = float(pd.Series([order[s] for s in common]).corr(pd.Series([pos[s] for s in common]), method="spearman")) if len(common) > 2 else None
+            runs.append({"move_x": km, "vol_move_x": kv, "top": alt["ranked"][0]["strategy"] if alt["ranked"] else None, "rank_correlation": rho})
+        same = sum(1 for r in runs if r["top"] == rows[0]["strategy"])
+        stable = {"runs": runs, "top_unchanged_in": same, "of": len(runs), "stable": bool(same >= 3), "reading": ("the top structure stays first under +/-50% changes of the stated move and volatility change" if same >= 3
+                  else "the top structure changes when the stated move or volatility change is perturbed by 50%: the ranking is fragile, treat it as one of several comparable candidates")}
+    hold = {"hold_100_shares": float(100 * spot * sign * move), "cash": 0.0, "note": "the same move on 100 shares of the underlying, and cash earning nothing, for comparison with the structures' payoff if right"}
+    return {"state": "ok", "stability": stable, "baselines": hold, "hypothesis": {"direction": direction, "move": move, "vol_view": vol_view, "vol_move": vol_move, "horizon_days": horizon_days, "max_loss": max_loss, "margin_budget": margin_budget},
             "ranked": rows[:top], "n_feasible": len(rows), "excluded": excluded, "context": {"forward": ctx["forward"], "atm_iv": ctx["atm_iv"], "expiry": str(pd.Timestamp(ctx["expiry"]).date())},
             "reading": "Ordered by profit if the stated hypothesis is right, after crossing the spread; the 'if wrong' column is the same structure under the opposite move. It is a ranking of payoffs under an assumption, not a forecast.",
             "assumptions": ["each structure is entered at the touch of this chain (buys at the ask, sells at the bid) plus commissions", "Black-Scholes revaluation at the horizon with each leg's own implied volatility",
@@ -439,3 +453,19 @@ def _friction(chain: pd.DataFrame, legs: list[dict], as_of, commission: float = 
         r = g.iloc[(g["strike"] - l["strike"]).abs().argsort()].iloc[0]
         cost += abs(l["quantity"]) * (MULT * (float(r["ask"]) - float(r["bid"])) / 2.0 + commission)
     return float(cost)
+
+
+def portfolio_impact(book: list[dict], proposed: list[dict], spot: float, rate: float, dividend: float, as_of=None) -> dict:
+    """The change a proposed position makes to a book (positions in ``position_values`` form: option ``right``, ``strike``, ``dte``, ``iv``, ``quantity``, shares as ``type: stock``): dollar delta, gamma P&L of
+    a 1% move, vega per point, theta per day, vanna and volga, and the worst loss of the stress grid, before and after, with the contribution of each expiry. A hypothetical book is the caller's to label."""
+    if not proposed:
+        raise ValueError("a proposed position is needed")
+    as_of = pd.Timestamp(as_of if as_of is not None else pd.Timestamp.today().normalize())
+    before = oa.portfolio_risk(book, spot, rate, dividend, as_of) if book else None
+    after = oa.portfolio_risk(list(book) + list(proposed), spot, rate, dividend, as_of)
+    keys = ("delta_dollars", "gamma_pnl_1pct", "vega_per_point", "theta_per_day", "vanna_delta_per_vol_point", "volga_vega_per_vol_point", "rho_per_1pct")
+    b = {k: (before["totals"][k] if before else 0.0) for k in keys}
+    a = {k: after["totals"][k] for k in keys}
+    worst_b = before["worst"]["pnl"] if before else 0.0
+    return {"state": "ok", "hypothetical_book": not bool(book), "before": b, "after": a, "change": {k: a[k] - b[k] for k in keys}, "worst_stress": {"before": float(worst_b), "after": float(after["worst"]["pnl"]), "change": float(after["worst"]["pnl"] - worst_b),
+            "scenario": {"spot": after["worst"]["spot_shock"], "vol": after["worst"]["vol_shock"]}}, "by_expiry_after": after["by_expiry"], "risk_flags": after["risk_flags"]}

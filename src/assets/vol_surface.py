@@ -191,11 +191,17 @@ def build(chain: pd.DataFrame, selection: str = "otm", coordinate: str = "k", mi
                 "poor_fits": int(sum(1 for i, _ in fits if i["fit"].get("quality") == "poor")), "mean_rmse_vol_points": float(np.mean([i["fit"]["rmse_vol_points"] for i, _ in fits])),
                 "calendar_raw": _calendar(raw_w, nodes, y), "reading": "free of the checked static arbitrage on the supported nodes" if False else None}
         bad = diag["calendar"]["violations"] or diag["butterfly_failing_slices"]
+        diag["arbitrage_status"] = "violations_detected" if bad else "none_detected_on_tested_grid"
+        diag["globally_arbitrage_free"] = False                                          # independent per-expiry SVI fits carry no joint no-arbitrage constraint: absence of detected violations is not a guarantee
+        diag["status_text"] = ("Violations detected on the tested grid." if bad else "No violation detected on the tested grid. The slices are fitted independently, so this is NOT a globally arbitrage-free parameterisation (that needs a joint constraint, as in SSVI with its parameter conditions).")
         diag["reading"] = ("static arbitrage found in the fitted slices (see the counts): treat the fitted surface as a description of the quotes, not a tradable model" if bad else
                            "no butterfly or calendar violation on the supported nodes (finite grid; not a proof, and nothing outside the quotes is checked)")
     elif coordinate == "delta" and fit:
         out["limits"].append("The SVI fit is in log-moneyness: switch the coordinate to ln(K/F) to see the fitted surface.")
     sup_cells = int(np.isfinite(raw_w).sum())
+    share = sup_cells / raw_w.size
+    meta["recommended_view"] = "smile" if (len(usable) < 3 or share < 0.4) else "surface"
+    meta["recommend_reason"] = (f"{len(usable)} usable expiries and {share:.0%} of the grid supported by quotes: read the smiles and the quote markers rather than a continuous sheet" if meta["recommended_view"] == "smile" else "")
     meta.update(status="surface", reason="", x_range=[float(lo), float(hi)], dte_range=[min(y), max(y)])
     out.update(x=[float(v) for v in nodes], y=[float(v) for v in y], z=z, fit=diag, coverage={"nodes": int(raw_w.size), "supported": sup_cells, "share": float(sup_cells / raw_w.size)},
                term=_term(slices, usable, fits))

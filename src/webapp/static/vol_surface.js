@@ -107,6 +107,8 @@
     tile(strip, "Quotes used", `${q.kept} of ${q.received}`, { text: `${S.slices.length} expiries listed, ${m0.expiries_usable} usable` }, "", "Quotes that survived the cleaning; the rejections by reason are below.");
     tile(strip, "Surface coverage", m0.status === "surface" ? `${Math.round(cov.share * 100)}%` : "none", { text: m0.status === "surface" ? `${cov.supported} of ${cov.nodes} grid nodes have a quote around them` : "no surface drawn" }, m0.status === "surface" ? "" : "muted", "The rest is masked: no quote supports it, and nothing is extrapolated.");
     tile(strip, "Calibration", S.fit ? `${num(S.fit.mean_rmse_vol_points, 2)} pts` : "n/a", { text: S.fit ? `SVI per expiry · ${S.fit.calendar.violations} calendar, ${S.fit.butterfly_failing_slices} butterfly violations` : "no fit for this coordinate" }, S.fit && (S.fit.calendar.violations || S.fit.butterfly_failing_slices) ? "" : "muted", S.fit ? S.fit.reading : "The SVI fit is in log-moneyness.");
+    if (S.fit && S.fit.status_text) { const a = h("p", "hint", root, S.fit.status_text); a.dataset.role = "vs-arbitrage"; }
+    if (m0.recommended_view === "smile" && m0.recommend_reason) { const a = h("div", "banner", root, m0.recommend_reason); a.dataset.role = "vs-sparse"; if (STATE.tab === "3d" && !STATE.touched) STATE.tab = "smile"; }
     const note = h("div", "vs-notice", root); note.dataset.role = "vs-notice";
     if (m0.status !== "surface") { note.textContent = m0.reason; note.className = "banner err vs-notice"; }
     const tabs = [["3d", "3D surface"], ["heat", "2D heatmap"], ["smile", "Volatility smiles"], ["term", "Term structure"]].filter(([id]) => m0.status === "surface" || (id === "smile" && S.observations.length) || (id === "term" && S.term && S.term.rows.length));
@@ -146,7 +148,7 @@
     };
     const sync = () => { drawn = {}; for (const [id] of tabs) if (id === STATE.tab) draw(id); };
     const show = (id) => {
-      STATE.tab = id;
+      STATE.tab = id; STATE.touched = true;
       for (const b of tabsEl.children) b.setAttribute("aria-selected", String(b.dataset.tab === id));
       for (const [k, p] of Object.entries(panels)) p.parentElement.hidden = k !== id;
       if (!drawn[id]) draw(id); else if (P && P.Plots) P.Plots.resize(panels[id]);                       // a panel drawn while hidden has no size: resize when it shows
@@ -175,5 +177,17 @@
     for (const t of S.limits) h("p", "hint", box, t);
     if (S.fit) h("p", "hint", box, S.fit.reading);
   }
-  window.VolSurface = { view, STATE, model, fig3d, figHeat, figSmiles, figTerm };
+  /* The one 3D surface component: other views (the surface research card) call this instead of drawing their own. ``spec``: x, y (days), z (volatility in decimals, null where unsupported), xLabel. */
+  function plain3d(host, spec, height) {
+    const z = spec.z.map((r) => r.map((v) => (v === null ? null : v * 100)));
+    const div = h("div", "", host); div.dataset.engine = "plotly"; div.style.cssText = `width:100%;height:${height || 380}px`;
+    getPlotly().then((P) => {
+      if (!P || !P.newPlot) { div.remove(); window.Surface3D.draw(host, { x: spec.x, y: spec.y, z: spec.z, xLabel: spec.xLabel, yLabel: "days", zLabel: "implied vol", format: (v) => num(v * 100, 1) + "%", label: "Implied volatility surface" }); return; }
+      const ax = (title) => ({ title, gridcolor: cssv("--grid", "#8884"), color: cssv("--ink", "#222") });
+      P.newPlot(div, [{ type: "surface", x: spec.x, y: spec.y, z, connectgaps: false, colorscale: VIRIDIS.map((c, i) => [i / (VIRIDIS.length - 1), c]), colorbar: { title: "IV %", len: 0.6 }, hovertemplate: spec.xLabel + " %{x:.3f}<br>%{y:.0f} days<br>IV %{z:.2f}%<extra></extra>" }],
+        { margin: { l: 0, r: 0, t: 0, b: 0 }, paper_bgcolor: "rgba(0,0,0,0)", font: { color: cssv("--ink", "#222") }, uirevision: "plain3d", scene: { camera: DEFAULT_CAMERA, xaxis: ax(spec.xLabel), yaxis: ax("days to expiry"), zaxis: ax("implied vol (%)") } }, { responsive: true, displaylogo: false });
+    });
+    return div;
+  }
+  window.VolSurface = { view, STATE, model, fig3d, figHeat, figSmiles, figTerm, plain3d };
 })();

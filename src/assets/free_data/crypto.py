@@ -453,3 +453,35 @@ def fetch_liquidations(http: Http, coin: str, progress=None) -> Download:
     payload = {"coin": coin, "fetched_at": when, "venue": "OKX", "contract_value": None if not math.isfinite(ct_val) else float(ct_val), "events": events, "window": {"first_ms": events[0]["time"], "last_ms": events[-1]["time"]}}
     meta = {"source_id": "okx", "source": "OKX", "url": f"{OKX}/public/liquidation-orders", "as_of": when[:10], "coin": coin, "notes": [f"{len(events)} recent filled liquidation orders of {coin}-USDT-SWAP: the exchange keeps only a short window, so this describes the last hours, not a history."]}
     return Download("crypto", f"liquidations_{coin}", "liquidations", payload=payload, meta=meta)
+
+
+def fetch_deribit_futures(http: Http, coin: str, progress=None) -> Download:
+    """Deribit's dated futures of ``coin`` at this moment (``get_book_summary_by_currency``, ``kind=future``): per expiry the mark price, the underlying (index) price, open interest and 24h volume in dollars.
+    Saved as ``futures_<COIN>`` for the term-structure view. A snapshot, not a history."""
+    coin = check_coin(coin)
+    if progress:
+        progress(f"{coin}: dated futures from Deribit")
+    d = http.get_json(f"{DERIBIT}/get_book_summary_by_currency", {"currency": coin, "kind": "future"})
+    rows = (d or {}).get("result") if isinstance(d, dict) else None
+    if not rows:
+        raise FetchError(f"Deribit lists no futures for {coin}", status=404)
+    out = []
+    for r in rows:
+        name = str(r.get("instrument_name", ""))
+        m = re.match(r"^[A-Z0-9]+-(\d{1,2}[A-Z]{3}\d{2})$", name)
+        if not m:
+            continue                                                                          # the perpetual and any other contract
+        try:
+            expiry = datetime.strptime(m.group(1), "%d%b%y").date().isoformat()
+        except ValueError:
+            continue
+        mark, under = _num(r.get("mark_price")), _num(r.get("underlying_price"))
+        if math.isfinite(mark) and math.isfinite(under) and under > 0:
+            out.append({"instrument": name, "expiry": expiry, "mark_price": mark, "underlying_price": under, "open_interest": _num(r.get("open_interest")), "volume_usd": _num(r.get("volume_usd")),
+                        "timestamp": r.get("creation_timestamp")})
+    if not out:
+        raise FetchError(f"Deribit returned no dated {coin} futures", status=404)
+    when = utc_now().isoformat().replace("+00:00", "Z")
+    payload = {"coin": coin, "fetched_at": when, "venue": "DERIBIT", "contracts": sorted(out, key=lambda c: c["expiry"])}
+    meta = {"source_id": "deribit", "source": "Deribit", "url": f"{DERIBIT}/get_book_summary_by_currency", "as_of": when[:10], "coin": coin, "notes": [f"{len(out)} dated {coin} futures on Deribit at {when}: a snapshot of the term structure, not a history."]}
+    return Download("crypto", f"futures_{coin}", "futures", payload=payload, meta=meta)

@@ -88,7 +88,7 @@ def test_the_crypto_tab_has_five_workflows_and_its_new_views_say_what_is_not_sto
     ws.click("#tab-crypto")
     ws.wait_for_selector("#crypto-results .tile", timeout=90_000)
     labels = [g.locator(".tabgroup-label").text_content() for g in ws.locator("#view-crypto .tabgroup").all()]
-    assert labels == ["Market Overview", "Derivatives Intelligence", "Liquidity & Arbitrage", "Strategy Laboratory", "Portfolio Risk"]
+    assert labels == ["Market Overview", "Derivatives Intelligence", "Liquidity & Arbitrage", "Strategy Laboratory", "Portfolio Risk", "Legacy (reproducibility only)"]
     assert "not stored by the platform" in ws.inner_text("#crypto-results") and "24h return" in ws.inner_text("#crypto-results")
     _mode(ws, "crypto", "derivs")
     ws.wait_for_selector("#crypto-results .card h3:has-text('Funding by coin and venue')", timeout=120_000)

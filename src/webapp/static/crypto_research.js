@@ -11,7 +11,7 @@
   const head = (root, title, sub, d) => { Q.labHead(root, title, sub, GUIDE); if (d) W.provenance(root, d); };
   function unavailable(root, d, title) { const b = h("div", "unavail", root); h("strong", "", b, title + ": "); b.appendChild(document.createTextNode(d.reason || d.detail || "not available")); if (d.needs && d.needs.length) h("div", "hint", b, "Needed: " + d.needs.join("; ")); return b; }
   const fmtTile = (t) => (t.unit === "pct" ? pct(t.value, 2) : t.unit === "usd" ? money(t.value, 2) : num(t.value, 2));
-  R.defaults = () => ({ mkDays: "365", derivSymbols: new Set(["BTC", "ETH"]), notional: "1000000", leverage: "3", cfee: "5", cslip: "2", financing: "0", cdays: "365", eVenue: "", eSide: "buy", eNotional: "100000", eType: "twap", eLimit: "5", eSlices: "6", eReplenish: "50", eProfile: "flat",
+  R.defaults = () => ({ useTiers: true, haircut: "0",  mkDays: "365", derivSymbols: new Set(["BTC", "ETH"]), notional: "1000000", leverage: "3", cfee: "5", cslip: "2", financing: "0", cdays: "365", eVenue: "", eSide: "buy", eNotional: "100000", eType: "twap", eLimit: "5", eSlices: "6", eReplenish: "50", eProfile: "flat",
     eVol: "", eHours: "0", maxAge: "5", feeMode: "taker_taker", vStrategy: "tsmom", vParams: {}, vAssets: new Set(["BTC", "ETH"]), vFee: "5", vSlip: "2", vTarget: "", vLev: "1", vShort: true, vWalk: true, collateral: "100000", betaNote: "",
     positions: [{ symbol: "BTC", venue: "BINANCE", side: "long", notional: "200000" }, { symbol: "ETH", venue: "OKX", side: "short", notional: "50000" }] });
 
@@ -65,6 +65,8 @@
     }
     if (m === "liq") {
       const b = sec("1. Account"); Q.labField(b, { key: "collateral", label: "Collateral (equity, $)", kind: "number", min: 1 }, f, after);
+      Q.labField(b, { key: "useTiers", label: "Use illustrative exchange risk tiers (by position size)", kind: "bool", help: "Not any exchange's current schedule: replace it with your venue's tiers through the API" }, f, after);
+      Q.labField(b, { key: "haircut", label: "Collateral haircut (%)", kind: "number", step: 1, min: 0, max: 90 }, f, after);
       const p = sec("2. Perpetual positions"), box = h("div", "legs", p);
       const draw = () => {
         box.replaceChildren();
@@ -99,7 +101,7 @@
     if (m === "exec") return W.request(X, () => { const q = { symbol: f.symbol, venue: f.eVenue || undefined, side: f.eSide, notional: num_(f.eNotional), order_type: f.eType, limit_bps: num_(f.eLimit), slices: num_(f.eSlices), replenish: num_(f.eReplenish) / 100, profile: f.eProfile, vol_annual: opt(f.eVol) === undefined ? undefined : num_(f.eVol) / 100, horizon_hours: num_(f.eHours) };
       return [{ modes: ["exec"], path: "/api/crypto/execution", query: q, cacheKey: key("exec", q) }]; }, "Walking the order book…");
     if (m === "validate") return W.request(X, () => { const params = f.vParams[f.vStrategy] || {}; return [{ modes: ["validate"], job: true, path: "/api/crypto/validate", body: { strategy: f.vStrategy, assets: [...f.vAssets], params, fees_bps: num_(f.vFee), slippage_bps: num_(f.vSlip), target_vol: opt(f.vTarget) === undefined ? undefined : num_(f.vTarget) / 100, max_leverage: num_(f.vLev), allow_short: f.vShort, walk_forward: f.vWalk } }]; }, "Validating on the 24/7 calendar…");
-    return W.request(X, () => [{ modes: ["liq"], path: "/api/crypto/liquidation", body: { collateral: num_(f.collateral), positions: f.positions.map((p) => ({ symbol: p.symbol, venue: p.venue, side: p.side, notional: num_(p.notional) })) } }], "Revaluing under shocks…");
+    return W.request(X, () => [{ modes: ["liq"], path: "/api/crypto/liquidation", body: { collateral: num_(f.collateral), use_tiers: f.useTiers, collateral_haircut: num_(f.haircut) / 100, positions: f.positions.map((p) => ({ symbol: p.symbol, venue: p.venue, side: p.side, notional: num_(p.notional) })) } }], "Revaluing under shocks…");
   };
   R.auto = (X) => X.mode !== "validate" && X.mode !== "liq" && X.catalog;
   R.empty = (X, root) => { const t = { validate: ["Validate a strategy on observed history", "Directional, relative-value, derivatives and risk-managed strategies on a 24/7 calendar, with costs, constraints, benchmarks and a walk-forward."], liq: ["Stress a perpetual book", "Positions and collateral: leverage, the shock at which the account is liquidated, and the table of shocks."] }[X.mode] || ["Nothing yet", "Press the button."]; Q.labEmpty(root, X, t[0], [t[1]], X.runLabel[X.mode]); };
@@ -143,7 +145,8 @@
       { label: "30d", num: true, get: (r) => (r.change_30d === null ? "" : pct(r.change_30d, 1)) }, { label: "Percentile", num: true, get: (r) => pct(r.percentile, 0) }, { label: "As of", get: (r) => r.as_of }], oi.venues); h("p", "hint", c, oi.units_note + "."); } else unavailable(root, oi, "Open interest by exchange");
     const lq = d.liquidations;
     if (lq.state === "ok") W.kv(h("div", "card", root), "Recent liquidations (" + lq.venue + ", " + num(lq.window_hours, 1) + " hours)", [["Events", String(lq.events)], ["Longs liquidated", String(lq.longs_liquidated) + (lq.longs_notional === undefined ? "" : " · " + money(lq.longs_notional, 0))], ["Shorts liquidated", String(lq.shorts_liquidated) + (lq.shorts_notional === undefined ? "" : " · " + money(lq.shorts_notional, 0))], ["Note", lq.note]]); else unavailable(root, lq, "Liquidations");
-    unavailable(root, d.dated_futures, "Dated futures term structure");
+    const ts = d.dated_futures;
+    if (ts.state === "ok") { const c = h("div", "card", root); h("h3", "", c, "Dated futures term structure (" + ts.venue + ")"); table(c, [{ label: "Contract", get: (r) => r.instrument }, { label: "Days", num: true, get: (r) => num(r.days, 0) }, { label: "Basis", num: true, get: (r) => pct(r.basis, 2) }, { label: "Annualised", num: true, get: (r) => pct(r.annualised_basis, 1) }, { label: "Open interest", num: true, get: (r) => (r.open_interest === null ? "" : num(r.open_interest, 0)) }], ts.contracts); h("p", "hint", c, ts.note + ", fetched " + ts.fetched_at + "."); } else unavailable(root, ts, "Dated futures term structure");
     save(root, "crypto_derivatives", `funding, ${[...new Set(d.rows.map((r) => r.symbol))].join("+")}`, d, "/api/crypto/derivatives", X.lastBody, false, [...new Set(d.rows.map((r) => r.symbol))]);
   }
   function buildCarry(X, root, d) {
@@ -209,6 +212,7 @@
     const p = h("div", "card", root); h("h3", "", p, "Each position on its own share of the collateral");
     table(p, [{ label: "Coin", get: (x) => x.symbol }, { label: "Venue", get: (x) => x.venue }, { label: "Notional", num: true, get: (x) => money(x.notional, 0) }, { label: "Leverage", num: true, get: (x) => num(x.isolated.leverage, 2) + "x" }, { label: "Liquidated at", num: true, get: (x) => pct(x.isolated.liquidation_move, 1) }, { label: "Over the venue limit", get: (x) => (x.isolated.over_venue_limit ? "yes" : "") }], d.positions);
     h("p", "hint", p, "Betas to BTC: " + (Object.keys(d.betas).length ? Object.entries(d.betas).map(([a, b]) => `${a} ${num(b, 2)}`).join(", ") : "none measured (1 assumed)") + ".");
+    h("p", "hint", root, "Margin model: " + d.margin_model + ". " + (d.approximate ? "An approximate stress scenario, not an exchange's liquidation engine." : ""));
     const dd = h("details", "how", root); h("summary", "", dd, "Assumptions"); for (const a of d.assumptions) h("p", "hint", dd, a);
     save(root, "crypto_liquidation", `${d.positions.length}-position book`, d, "/api/crypto/liquidation", X.lastBody, true, [...new Set(d.positions.map((p) => p.symbol))]);
   }

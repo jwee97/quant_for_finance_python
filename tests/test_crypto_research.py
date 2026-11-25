@@ -192,3 +192,38 @@ def test_every_family_runs_with_costs_benchmarks_and_a_walk_forward():
     assert wf["folds"] and wf["oos_days"] > 0 and wf["n_settings"] == 5
     capped = cv.run(ser, "tsmom", target_vol=0.2, max_leverage=1.0, walk=False, bootstrap_n=30)
     assert capped["constraints"]["target_vol"] == 0.2
+
+
+def test_funding_of_different_settlement_intervals_is_normalised_to_one_daily_and_annual_basis():
+    s = series(120, funding=0.0003)
+    out = cr.funding_intelligence({"BTC": s}, observed_only=False)
+    rows = {r["venue"]: r for r in out["rows"] if r["symbol"] == "BTC"}
+    assert rows["OKX"]["annualised"] == pytest.approx(0.0003 * 365)
+    for v, r in rows.items():
+        assert r["rate_per_interval"] == pytest.approx(r["annualised"] / 365 * r["interval_hours"] / 24)
+    assert cr.PERIODS == 365.0 and "365" in out["normalisation"]
+
+
+def test_risk_tiers_raise_the_maintenance_requirement_with_size_and_haircuts_cut_the_collateral():
+    pos = [{"symbol": "BTC", "venue": "BINANCE", "side": "long", "notional": 2e5}]
+    big = [{"symbol": "BTC", "venue": "BINANCE", "side": "long", "notional": 6e5}]
+    flat = cr.portfolio_liquidation(big, 3e5)
+    tiered = cr.portfolio_liquidation(big, 3e5, use_tiers=True)
+    assert cr.tier_rate("BINANCE", 2e5) == 0.005 and cr.tier_rate("BINANCE", 3e7) == 0.10
+    assert tiered["liquidation_shock_down"] > flat["liquidation_shock_down"] and tiered["approximate"] and "illustrative" in tiered["margin_model"]
+    cut = cr.portfolio_liquidation(pos, 1e5, collateral_haircut=0.2)
+    assert cut["liquidation_shock_down"] == pytest.approx((0.004 * 2e5 - 0.8e5) / (2e5 * (1 - 0.004)), abs=2e-3)
+    custom = cr.portfolio_liquidation(pos, 1e5, tiers={"BINANCE": [(float("inf"), 0.02, 20)]})
+    assert custom["liquidation_shock_down"] == pytest.approx((0.02 * 2e5 - 1e5) / (2e5 * 0.98), abs=2e-3)
+
+
+def test_the_dated_futures_curve_annualises_the_basis_per_contract():
+    from datetime import timedelta
+
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    exp = (now + timedelta(days=90)).date()
+    payload = {"venue": "DERIBIT", "fetched_at": now.isoformat().replace("+00:00", "Z"), "contracts": [{"instrument": "BTC-X", "expiry": exp.isoformat(), "mark_price": 51_000.0, "underlying_price": 50_000.0, "open_interest": 10.0, "volume_usd": 1.0}]}
+    out = cr.futures_term_structure(payload, now)
+    row = out["contracts"][0]
+    assert row["basis"] == pytest.approx(0.02) and row["annualised_basis"] == pytest.approx(0.02 * 365 / row["days"]) and 89 < row["days"] < 91
+    assert cr.futures_term_structure(None)["state"] == "unavailable"

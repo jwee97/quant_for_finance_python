@@ -141,3 +141,15 @@ def test_invalid_settings_are_refused(chain):
     for kw in ({"selection": "x"}, {"coordinate": "z"}, {"nx": 3}):
         with pytest.raises(ValueError):
             vs.build(chain, **kw)
+
+
+def test_a_per_expiry_svi_fit_is_never_called_globally_arbitrage_free():
+    import pandas as pd
+    from src.assets import options_analytics as oa
+    from src.assets import vol_surface as vs
+
+    chain = oa.prepare_chain(oa.build_model_chain(100.0, pd.Timestamp("2025-01-02"), 0.2))
+    out = vs.build(chain, "otm", "k", 7, 400, 41, True)
+    fit = out["fit"]
+    assert fit["globally_arbitrage_free"] is False and fit["arbitrage_status"] in ("none_detected_on_tested_grid", "violations_detected") and "NOT a globally arbitrage-free" in fit["status_text"] or fit["arbitrage_status"] == "violations_detected"
+    assert out["meta"]["recommended_view"] in ("surface", "smile")
