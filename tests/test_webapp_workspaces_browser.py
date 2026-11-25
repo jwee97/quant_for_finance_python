@@ -106,7 +106,8 @@ def test_each_asset_tab_opens_on_a_read_only_view_that_says_where_its_numbers_co
     badge = ws.locator(f"#{tab}-results .prov .src").first.inner_text()
     assert badge in SOURCES and badge in expected, "the repository holds no option quotes or futures prices, so those pages must not claim to be data"
     assert ws.locator(f"#{tab}-results .banner.err").count() == 0 and "Read the guide" in ws.inner_text(f"#{tab}-results")
-    assert "Simulated" in ws.inner_text(f"#{tab}-results"), "the simulated part is named in words, not only badged"
+    if tab != "crypto":                                                                                            # the crypto tab opens on observed Deribit data only: nothing in it is simulated
+        assert "Simulated" in ws.inner_text(f"#{tab}-results"), "the simulated part is named in words, not only badged"
 
 
 def test_the_option_chain_shows_both_sides_and_the_strategy_builder_draws_a_payoff(ws):
@@ -328,6 +329,8 @@ def test_the_crypto_views_keep_real_and_simulated_apart_and_count_what_survives_
 
 def test_the_crypto_overview_draws_the_price_against_its_own_history(ws):
     ws.click("#tab-crypto")
+    ws.wait_for_selector("#crypto-results .tile", timeout=90_000)
+    _mode(ws, "crypto", "overview")
     ws.wait_for_selector("#crypto-results svg.chart", timeout=90_000)
     text = ws.inner_text("#crypto-results")
     for title in ("BTC against its 200-day average", "The cone of volatility", "Drawdown from the previous high", "BTC/ETH against its own 60 days", "BTC/ETH: rolling correlation", "Where these ideas come from"):
@@ -511,7 +514,7 @@ def test_the_crypto_tab_downloads_a_coin_and_reads_its_real_books_and_funding(fr
     page.wait_for_selector("#crypto-results .tile", timeout=90_000)
     card = page.locator("#crypto details.freedata")
     page.wait_for_selector("#crypto details.freedata button[data-action=download]")
-    assert card.evaluate("d => d.open") and card.locator("input[data-value]").count() == 3 and card.locator("input[data-value]:checked").count() == 3
+    assert card.evaluate("d => d.open") and card.locator("input[data-value]").count() == 6 and card.locator("input[data-value]:checked").count() == 3
     card.locator("select[data-key=days]").select_option("260")
     _download(page, "crypto")
     assert page.locator("#crypto .fdres li:not(.fail)").count() == 3 and page.locator("#crypto .fdres li.fail").count() == 0
