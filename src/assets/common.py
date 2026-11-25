@@ -21,7 +21,7 @@ from dataclasses import asdict, dataclass, field
 import numpy as np
 import pandas as pd
 
-SOURCES = ("platform", "user_file", "downloaded", "simulated", "mixed")
+SOURCES = ("platform", "user_file", "downloaded", "simulated", "mixed", "unavailable")
 TRADING_DAYS = 252.0
 
 
@@ -49,6 +49,9 @@ def overall_source(parts: dict[str, str]) -> str:
     if bad:
         raise ValueError(f"unknown source {sorted(bad)}; choose from {SOURCES}")
     kinds = {"simulated" if k == "model" else k for k in kinds}
+    if kinds == {"unavailable"}:
+        return "unavailable"                                                       # nothing could be computed from observed data: no source to name
+    kinds.discard("unavailable")                                                  # a part that is unavailable is stated in the payload; it does not make the others "mixed"
     if not kinds:
         return "simulated"
     return kinds.pop() if len(kinds) == 1 else "mixed"

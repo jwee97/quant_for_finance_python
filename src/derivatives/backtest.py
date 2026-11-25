@@ -109,7 +109,7 @@ class _Book:
 
 class OptionBacktester:
     def __init__(self, chains: dict, spot: pd.Series, capital: float, multiplier: float = 100.0, commission: float = 0.65, hedge_cost_bps: float = 1.0,
-                 fill_fraction: float = 1.0, execution_lag: int = 1):
+                 fill_fraction: float = 1.0, execution_lag: int = 1, margin_fn=None):
         if capital <= 0 or multiplier <= 0 or not 0.0 <= fill_fraction <= 1.0 or execution_lag < 0:
             raise ValueError("capital and multiplier must be positive, fill_fraction in [0, 1], execution_lag >= 0")
         self.chains = {pd.Timestamp(k): v for k, v in chains.items()}
@@ -117,6 +117,7 @@ class OptionBacktester:
         self.spot = spot.reindex(self.dates)
         self.capital, self.mult, self.commission, self.hedge_bps = capital, multiplier, commission, hedge_cost_bps
         self.fill_fraction, self.lag = fill_fraction, execution_lag
+        self.margin_fn = margin_fn                                    # (legs, spot) -> the day's indicative margin requirement; measured and reported, never charged
         self._quotes = {d: _quote_lookup(c) for d, c in self.chains.items()}
 
     # ------------------------------------------------------------------------------------------------------------------ helpers
@@ -240,7 +241,13 @@ class OptionBacktester:
                     pending.append((i + self.lag, list(orders)))
             totals, per_contract = self._greeks(d, book)
             equity_hist[d], costs[d] = equity, day_cost
-            rows_pos.append({"date": d, "open_contracts": float(sum(abs(v) for v in book.positions.values())), "underlying_units": book.units})
+            row = {"date": d, "open_contracts": float(sum(abs(v) for v in book.positions.values())), "underlying_units": book.units}
+            if self.margin_fn is not None:
+                legs = [{"type": "option", "right": key[2], "strike": float(key[1]), "quantity": float(q)} for key, q in book.positions.items()]
+                if abs(book.units) > 1e-12:
+                    legs.append({"type": "stock", "quantity": float(book.units)})
+                row["margin"] = float(self.margin_fn(legs, float(spot), self.mult)) if legs else 0.0
+            rows_pos.append(row)
             rows_greeks.append({"date": d, **totals})
             prev_state, prev_equity = (dict(book.positions), book.units, spot, per_contract, d), equity
         equity_s = pd.Series(equity_hist)

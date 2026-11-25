@@ -451,3 +451,55 @@ def portfolio_liquidation(positions: list[dict], collateral: float, betas: dict 
             "assumptions": ["Cross margin across the listed positions; the shock moves every coin by its beta times the shock at once, with no gap, no funding and no auto-deleveraging.",
                             "Maintenance rates are the platform's per-venue defaults, not your account's tiered rates.",
                             "Isolated liquidation move: the fall (long) or rise (short) of that coin that wipes out the position's share of the collateral down to the maintenance requirement."]}
+
+
+# ------------------------------------------------------------------------------------------------------------------ market overview
+def _tile(id_: str, label: str, value, percentile=None, detail: str = "", source: str = "", unit: str = "") -> dict:
+    return {"id": id_, "label": label, "state": "ok", "value": value, "unit": unit, "percentile": percentile, "detail": detail, "source": source}
+
+
+def _missing(id_: str, label: str, reason: str, needs: list[str] | None = None) -> dict:
+    return {"id": id_, "label": label, "state": "unavailable", "value": None, "percentile": None, "detail": reason, "needs": list(needs or []), "source": ""}
+
+
+def market_summary(s, days: int = 365) -> dict:
+    """The top of the crypto overview for one coin over a chosen window: spot and perpetual price, the 24-hour return, realised volatility, funding, the basis, the drawdown from the window's high and
+    the regime, each with its percentile inside the window. Volume and open interest are not stored by the platform: their tiles say so."""
+    days = int(days)
+    spot = s.spot.dropna()
+    if len(spot) < 40:
+        return unavailable(f"{s.symbol} has fewer than 40 daily prices")
+    win = spot.tail(days + 1)
+    ret = spot.pct_change().dropna()
+    src = s.source
+    rv = (ret.rolling(21).std(ddof=1) * math.sqrt(PERIODS)).dropna()
+    tiles = [_tile("spot", "Spot", float(spot.iloc[-1]), percentile_rank(win, float(spot.iloc[-1])), f"daily mark of {spot.index[-1].date()}", src, "usd"),
+             _tile("return_24h", "24h return", float(ret.iloc[-1]), percentile_rank(ret.tail(days), float(ret.iloc[-1])), "last daily mark against the one before", src, "pct")]
+    if s.perp is not None and s.perp.dropna().size:
+        tiles.insert(1, _tile("perp", "Perpetual", float(s.perp.dropna().iloc[-1]), percentile_rank(s.perp.dropna().tail(days + 1), float(s.perp.dropna().iloc[-1])), f"{s.funding_venue.title()} perpetual", src, "usd"))
+    else:
+        tiles.insert(1, _missing("perp", "Perpetual", "no perpetual price for this coin", ["a perpetual history"]))
+    tiles.append(_missing("volume", "24h volume", "daily traded volume is not stored by the platform", ["an exchange volume history"]))
+    if len(rv):
+        tiles.append(_tile("realized_vol", "Realised vol (21d)", float(rv.iloc[-1]), percentile_rank(rv.tail(days), float(rv.iloc[-1])), "annualised by 365 on calendar days", src, "pct"))
+    if s.funding is not None and s.funding.dropna().size > 30:
+        f = s.funding.dropna()
+        tiles.append(_tile("funding", "Funding (7d avg, annualised)", float(f.tail(7).mean() * PERIODS), percentile_rank((f.rolling(7).mean() * PERIODS).dropna().tail(days), float(f.tail(7).mean() * PERIODS)),
+                           f"earned by the short on {s.funding_venue.title()}", src, "pct"))
+    else:
+        tiles.append(_missing("funding", "Funding", "no funding history for this coin", ["funding history"]))
+    tiles.append(_missing("open_interest", "Open interest change", "open interest is not stored by the platform", ["an exchange open-interest history"]))
+    if s.perp is not None:
+        b = (s.perp / s.spot - 1.0).dropna()
+        if len(b) > 30:
+            tiles.append(_tile("basis", "Basis (perp / spot - 1)", float(b.iloc[-1]), percentile_rank(b.tail(days), float(b.iloc[-1])), "perpetual over spot", src, "pct"))
+    dd = float(win.iloc[-1] / win.cummax().iloc[-1] - 1.0)
+    dd_series = (win / win.cummax() - 1.0)
+    tiles.append(_tile("drawdown", "Drawdown from window high", dd, percentile_rank(dd_series, dd), f"high {win.idxmax().date()}", src, "pct"))
+    ma = spot.tail(200).mean() if len(spot) >= 200 else None
+    vol_pct = next((t["percentile"] for t in tiles if t["id"] == "realized_vol"), None)
+    regime = {"trend": None if ma is None else ("above its 200-day average" if spot.iloc[-1] > ma else "below its 200-day average"),
+              "volatility": None if vol_pct is None else ("high" if vol_pct > 0.8 else "low" if vol_pct < 0.2 else "normal"),
+              "rule": "trend: price against its 200-day mean; volatility: percentile of 21-day realised volatility inside the window (high above 80%, low below 20%). A description of the window, not a forecast."}
+    return {"state": "ok", "symbol": s.symbol, "window_days": days, "last_mark": str(spot.index[-1].date()), "tiles": tiles, "regime": regime,
+            "series": {"dates": [str(d.date()) for d in win.index], "spot": [round(float(x), 4) for x in win], "drawdown": [round(float(x), 5) for x in dd_series]}}

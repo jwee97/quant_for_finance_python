@@ -55,6 +55,10 @@ def kind_of(source: str, calibrated: bool = False) -> str:
 
 def build(parts: dict[str, str], as_of=None, observed_at=None, instrument: str | None = None, provider: str | None = None, assumptions=None, warnings=None, calibration: dict | None = None, now=None) -> dict:
     """The provenance block of a payload. ``parts`` maps each part of the payload to its source word (``platform``, ``user_file``, ``downloaded``, ``simulated``, ``model``, ``mixed``)."""
+    if parts and all(s == "unavailable" for s in parts.values()):
+        return Provenance(kind="unavailable", source="unavailable", parts={p: "unavailable" for p in parts}, as_of=None if as_of is None else str(pd.Timestamp(as_of).date()), freshness="not_applicable",
+                          warnings=list(warnings or []) + ["Nothing could be computed from observed data."], help="No observed data: the page says what is needed.").to_dict()
+    parts = {p: s for p, s in parts.items() if s != "unavailable"}
     kinds = {p: kind_of(s, calibration is not None and calibration.get("status") == "calibrated" and s in ("model", "simulated") and False) for p, s in parts.items() if s}
     if calibration and calibration.get("status") == "calibrated":
         kinds = {p: ("calibrated_model" if k == "synthetic" and parts[p] == "model" else k) for p, k in kinds.items()}

@@ -233,7 +233,7 @@ def venue_funding(s: CryptoSeries, venue: str) -> tuple[pd.Series, str]:
     return pd.Series(s.funding.to_numpy() * factor + offset + shock, index=idx, name=f"{s.symbol}@{venue}"), "simulated"
 
 
-def funding_dashboard(series: dict[str, CryptoSeries], venues: tuple = VENUE_ORDER, days: int = 120) -> dict:
+def funding_dashboard(series: dict[str, CryptoSeries], venues: tuple = VENUE_ORDER, days: int = 120, observed_only: bool = False) -> dict:
     """Funding by coin and venue: the rate per funding interval, annualised, the 7- and 30-day averages, the 90-day z-score and one-year percentile, and a series for the chart. Flags crowded funding and
     large gaps between venues (a funding arbitrage, before costs)."""
     rows, flags, charts = [], [], {}
@@ -244,12 +244,17 @@ def funding_dashboard(series: dict[str, CryptoSeries], venues: tuple = VENUE_ORD
         by_venue = {}
         for v in venues:
             f, src = venue_funding(s, v)
+            if observed_only and src == "simulated":
+                flags.append(f"{sym} on {v}: simulated, hidden in observed-only mode")
+                continue
             f = f.dropna()
             hours = VENUES[v]["funding_hours"]
             rows.append({"symbol": sym, "venue": v, "interval_hours": hours, "rate_per_interval": float(f.iloc[-1] * hours / 24.0), "annualised": float(f.iloc[-1] * ANN), "avg_7d": float(f.tail(7).mean() * ANN),
                          "avg_30d": float(f.tail(30).mean() * ANN), "zscore_90d": last_zscore(f, 90), "percentile_1y": percentile_rank(f.tail(365), float(f.iloc[-1])), "source": src})
             by_venue[v] = (f, src)
             charts.setdefault(sym, {})[v] = {"source": src, "dates": [str(d.date()) for d in f.index[-days:]], "annualised": [round(float(x), 5) for x in (f.tail(days).rolling(3, min_periods=1).mean() * ANN)]}
+        if not by_venue:
+            continue
         latest = {v: float(f.tail(7).mean() * ANN) for v, (f, _) in by_venue.items()}
         gap = max(latest.values()) - min(latest.values())
         add_flag(flags, gap > 0.05, f"{sym}: funding differs by {gap:.1%} a year between venues" + (" (some of the venues are simulated)" if any(src == "simulated" for _, src in by_venue.values()) else ""))

@@ -1473,8 +1473,55 @@ def _backtest_result(name: str, params: dict | None, n_days: int, seed: int, cap
         raise ValueError("days must be between 60 and 756")
     market = simulated_market(n_days, seed, premium)
     spot = market.underlying["spot"]
-    bt = OptionBacktester(market._by_date, spot, capital=float(capital), commission=float(commission), fill_fraction=float(fill_fraction))
+    bt = OptionBacktester(market._by_date, spot, capital=float(capital), commission=float(commission), fill_fraction=float(fill_fraction), margin_fn=backtest_margin)
     return bt.run(_timed(make_strategy(name, **(params or {})), parse_timing(timing))), spot
+
+
+def backtest_margin(legs: list[dict], spot: float, mult: float = MULTIPLIER) -> float:
+    """The day's indicative margin of a backtest's open book. A book with an uncapped loss (a naked short option) needs the Reg-T style requirement of ``margin_estimate`` plus the stock's margin; a book with
+    a bounded loss needs its worst loss at expiry over the spot range 0 to 3x spot (intrinsic values only: the premium already moved through cash). Indicative, for comparing structures."""
+    est = margin_estimate(legs, spot, 0.0, mult)
+    if not est["defined_risk"]:
+        return float(est["naked_requirement"] + est["stock_margin"])
+    grid = np.linspace(0.0, 3.0 * spot, 241)
+    pay = np.zeros_like(grid)
+    for l in legs:
+        if l["type"] == "stock":
+            pay += l["quantity"] * (grid - spot)
+        else:
+            intrinsic = np.maximum(grid - l["strike"], 0.0) if l["right"] == "C" else np.maximum(l["strike"] - grid, 0.0)
+            pay += l["quantity"] * mult * intrinsic
+    return float(max(-pay.min(), 0.0) + est["stock_margin"])
+
+
+def margin_summary(result, capital: float) -> dict:
+    """What the backtest's margin would have been, beside its P&L (measured, not charged). ``peak`` and ``mean`` margin, how many times the capital the peak is, the days the requirement exceeded the
+    account (capital plus the P&L so far: a margin call), and the return on the margin tied up against the return on the stated capital."""
+    pos = result.positions
+    if "margin" not in pos.columns:
+        return {"available": False, "reason": "the backtest did not track margin"}
+    m = pos["margin"].reindex(result.equity.index).fillna(0.0)
+    account = float(capital) + result.pnl.reindex(m.index).fillna(0.0).cumsum()
+    calls = m > account
+    held = m[m > 0]
+    pnl_total = float(result.pnl.sum())
+    mean_margin = float(held.mean()) if len(held) else 0.0
+    return {"available": True, "peak": float(m.max()), "mean_when_held": mean_margin, "peak_to_capital": float(m.max() / capital), "days_over_capital": int((m > capital).sum()), "margin_call_days": int(calls.sum()),
+            "first_margin_call": None if not calls.any() else str(m.index[calls.to_numpy().argmax()].date()),
+            "return_on_margin": float(pnl_total / mean_margin) if mean_margin > 0 else None, "return_on_capital": float(pnl_total / capital),
+            "series": {"dates": [str(d.date()) for d in m.index[::2]], "margin": [round(float(v), 2) for v in m.to_numpy()[::2]]},
+            "basis": "indicative: Reg-T style requirement for uncapped short options, worst loss at expiry for bounded books; measured every close and never charged",
+            "not_modelled": ["interest on margin or cash", "broker house requirements and intraday margin", "margin released or raised by a hedge in the underlying beyond its stock margin", "forced liquidation on a margin call"]}
+
+
+BACKTEST_LIMITATIONS = [
+    {"id": "synthetic_market", "text": "The option market is simulated: an arbitrage-free SSVI surface that pays the variance premium it was built with and has jumps. It validates the machinery (costs, hedges, settlement), not whether a premium exists."},
+    {"id": "not_historical", "text": "It is not a historical backtest: no dated bid/ask chain of a real market is replayed. A strategy that works here has shown nothing about the market."},
+    {"id": "no_early_exercise", "text": "Options are cash-settled at expiry as European contracts: no early assignment, pin risk or exercise of American options."},
+    {"id": "margin_not_charged", "text": "Margin is measured (see the margin block) but not charged: cash and margin earn and cost nothing, and a margin call does not liquidate the position."},
+    {"id": "fills", "text": "Fills cross a stated fraction of the simulated bid-ask spread with no size limit, queue or volume cap."},
+    {"id": "fixed_capital", "text": "Returns are daily P&L over a fixed capital; it is not an account that grows or shrinks with its P&L."},
+]
 
 
 def option_actions(result, spot: pd.Series, multiplier: float = 100.0, charts_points: int = 700) -> dict:
@@ -1564,8 +1611,10 @@ def run_strategy_backtest(name: str, params: dict | None = None, n_days: int = 2
             "recent_trades": [{k: (str(v.date()) if isinstance(v, pd.Timestamp) else (float(v) if isinstance(v, (int, float, np.floating, np.integer)) else str(v))) for k, v in row.items()}
                               for row in result.trades.tail(12).to_dict("records")],
             "validation": backtest_validation(returns, "options", fill_fraction, commission),
+            "margin": margin_summary(result, float(capital)),
+            "mode": {"id": "synthetic_validation", "label": "Synthetic validation (model market)", "historical": False, "limitations": BACKTEST_LIMITATIONS},
             "notes": ["The option market is simulated (an SSVI surface with a built-in variance risk premium and jump risk); it is not historical data.",
-                      "Returns are daily P&L over a fixed capital: margin and funding are not modelled."]}
+                      "Returns are daily P&L over a fixed capital: margin is measured and reported (margin block) but not charged, and funding is not modelled."]}
 
 
 OPTION_BACKTEST_MODELLED = {"bid-ask spread crossed on every fill": True, "commissions": True, "no look-ahead: signal at one close, trade at a later quote": True, "expiry settlement": True,
@@ -1580,7 +1629,7 @@ def backtest_validation(returns: pd.Series, instrument: str, fill_fraction: floa
     modelled["bid-ask spread crossed on every fill"] = fill_fraction > 0
     modelled["commissions"] = commission > 0
     return {"bootstrap": val.bootstrap(returns, n=bootstrap_resamples), "realism": val.realism(instrument, modelled, {"assignment and early exercise (American options)": "contracts are cash-settled at expiry as European options",
-                                                                                                                     "margin requirements and funding": "returns are over a fixed capital; cash earns nothing"})}
+                                                                                                                     "margin requirements and funding": "margin is measured and reported, not charged; cash earns nothing and a margin call does not liquidate"})}
 
 
 SWEEP_POINTS = (2, 9)

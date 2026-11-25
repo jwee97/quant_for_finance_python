@@ -7,6 +7,7 @@ need the real data skip cleanly when it is absent.
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -15,6 +16,10 @@ import pandas as pd
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
+
+# The dashboards default to observed-only data. Most tests exercise the platform's simulated chains, curves and coins on purpose, so the session runs with model data allowed (the app reads this when
+# it is built, and module-scoped app fixtures are built before any function fixture); a test of the observed-only behaviour sends ``data_mode=observed`` itself.
+os.environ["QUANT_OBSERVED_ONLY"] = "0"
 
 
 @pytest.fixture(autouse=True)

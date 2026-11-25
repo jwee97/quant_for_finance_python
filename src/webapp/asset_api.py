@@ -13,6 +13,8 @@ User files, all optional, read from ``data/user/``:
 
 from __future__ import annotations
 
+import functools
+import os
 import re
 import threading
 from collections import OrderedDict
@@ -81,14 +83,55 @@ class AssetApi:
         self._lock = threading.Lock()
         self._frames: dict | None = None
         self.downloads = DownloadStore(self.root)
+        self._tl = threading.local()
+        self.observed_default = os.environ.get("QUANT_OBSERVED_ONLY", "1").lower() not in ("0", "false", "no", "off")
+        from .crypto_research_api import CryptoResearchApi
+
+        self.research = CryptoResearchApi(self)
+        from .options_studio_api import OptionsStudioApi
+
+        self.studio = OptionsStudioApi(self)
+
+    # ------------------------------------------------------------------------------------------------------------ data mode
+    def observed(self) -> bool:
+        """Whether the request being served is in observed-only mode (``data_mode=observed``, the default; ``data_mode=model`` allows the platform's simulated data, labelled as such)."""
+        value = getattr(self._tl, "observed", None)
+        return self.observed_default if value is None else bool(value)
+
+    def require_model(self, what: str) -> None:
+        """Refuse ``what`` in observed-only mode: it is simulated, and the page never substitutes it silently."""
+        if self.observed():
+            raise ApiError(f"observed-only mode: {what} is simulated. Use observed data (a Massive or downloaded chain, your own file), or switch the data mode to 'model data allowed' to study the simulation knowingly")
+
+    def _gated(self, fn):
+        def inner(arg):
+            mode = str((arg or {}).get("data_mode") or "")
+            if mode not in ("", "observed", "model"):
+                raise ApiError("data_mode must be observed or model")
+            previous = getattr(self._tl, "observed", None)
+            self._tl.observed = (mode == "observed") if mode else self.observed_default
+            try:
+                return fn(arg)
+            finally:
+                self._tl.observed = previous
+
+        functools.update_wrapper(inner, fn)
+        inner.__self__ = getattr(fn, "__self__", None)                                 # callers (tests) reach the API object through the registered handler
+        return inner
 
     # ------------------------------------------------------------------------------------------------------------ routes
     def get_routes(self) -> dict:
-        return {"/api/assets/catalog": self.catalog, "/api/options/chain": self.options_chain, "/api/options/surface": self.options_surface, "/api/options/distribution": self.options_distribution,
-                "/api/options/positioning": self.options_positioning, "/api/options/surface/research": self.options_surface_research, "/api/options/vol-surface": self.options_vol_surface, "/api/futures/curve": self.futures_curve,
-                "/api/futures/roll": self.futures_roll, "/api/futures/research": self.futures_research, "/api/futures/spread": self.futures_spread, "/api/experiments": self.experiments_list, "/api/options/history": self.options_history, "/api/experiments/get": self.experiments_get, "/api/futures/series": self.futures_series, "/api/crypto/overview": self.crypto_overview, "/api/crypto/funding": self.crypto_funding, "/api/crypto/cross-exchange": self.crypto_cross_exchange}
+        return {k: self._gated(v) for k, v in {**self._get_routes(), **self.research.get_routes(), **self.studio.get_routes()}.items()}
 
     def post_routes(self) -> dict:
+        return {k: self._gated(v) for k, v in {**self._post_routes(), **self.research.post_routes(), **self.studio.post_routes()}.items()}
+
+    def _get_routes(self) -> dict:
+        return {"/api/assets/catalog": self.catalog, "/api/options/chain": self.options_chain, "/api/options/surface": self.options_surface, "/api/options/distribution": self.options_distribution,
+                "/api/options/positioning": self.options_positioning, "/api/options/surface/research": self.options_surface_research, "/api/options/vol-surface": self.options_vol_surface, "/api/futures/curve": self.futures_curve,
+                "/api/futures/roll": self.futures_roll, "/api/futures/research": self.futures_research, "/api/futures/spread": self.futures_spread, "/api/experiments": self.experiments_list, "/api/options/history": self.options_history, "/api/options/backtest-modes": self.options_backtest_modes, "/api/experiments/get": self.experiments_get, "/api/futures/series": self.futures_series, "/api/crypto/overview": self.crypto_overview, "/api/crypto/funding": self.crypto_funding, "/api/crypto/cross-exchange": self.crypto_cross_exchange}
+
+    def _post_routes(self) -> dict:
         return {"/api/options/portfolio-risk": self.options_portfolio_risk, "/api/options/strategy/payoff": self.options_strategy_payoff, "/api/options/strategy/backtest": self.options_strategy_backtest,
                 "/api/options/strategy/sweep": self.options_strategy_sweep, "/api/options/strategy/walkforward": self.options_strategy_walkforward, "/api/options/strategy/compare": self.options_strategy_compare, "/api/futures/margin": self.futures_margin, "/api/experiments/save": self.experiments_save, "/api/options/snapshot": self.options_snapshot, "/api/experiments/delete": self.experiments_delete, "/api/experiments/check": self.experiments_check, "/api/experiments/compare": self.experiments_compare, "/api/futures/strategy/backtest": self.futures_strategy_backtest, "/api/futures/signals": self.futures_signals, "/api/crypto/signals": self.crypto_signals, "/api/crypto/strategy/backtest": self.crypto_strategy_backtest}
 
@@ -232,6 +275,7 @@ class AssetApi:
             return chain, ctx, "user_file", notes
         if not SYMBOL.match(underlying) or underlying not in self._bundle().prices.columns:
             raise ApiError(f"unknown underlying '{underlying}'; the platform's ETFs are {list(self._bundle().prices.columns)}")
+        self.require_model(f"the option chain of {underlying} (a model quoted on the ETF's real close)")
         b = self._bundle()
         vol_frame = b.volume[underlying] if b.volume is not None and underlying in b.volume.columns else None
         try:
@@ -572,6 +616,7 @@ class AssetApi:
 
     def options_strategy_backtest(self, body: dict) -> dict:
         """``POST /api/options/strategy/backtest``: one of the rolling option strategies on the simulated option market, run as a job."""
+        self.require_model("the option market of this validation (a model with a built-in variance premium)")
         name, params = self._backtest_strategy(body)
         args = self._backtest_arguments(body)
 
@@ -588,6 +633,7 @@ class AssetApi:
 
     def options_strategy_sweep(self, body: dict) -> dict:
         """``POST /api/options/strategy/sweep``: the same backtest at 2 to 9 values of one numeric setting (``sweep_param``, ``sweep_values``), run as a job."""
+        self.require_model("the option market of this validation (a model with a built-in variance premium)")
         name, params = self._backtest_strategy(body)
         args = self._backtest_arguments(body)
         param, raw = str(body.get("sweep_param") or ""), body.get("sweep_values")
@@ -609,6 +655,7 @@ class AssetApi:
     def options_strategy_walkforward(self, body: dict) -> dict:
         """``POST /api/options/strategy/walkforward``: choose one setting of a rolling option strategy by walk-forward (``sweep_param``, ``sweep_values``, ``train`` and ``test`` days) and see the out-of-sample
         result against the best setting of the whole period, with a bootstrap interval; run as a job on the simulated option market."""
+        self.require_model("the option market of this validation (a model with a built-in variance premium)")
         name = str(body.get("strategy") or "short_put")
         param = str(body.get("sweep_param") or "")
         values = body.get("sweep_values")
@@ -634,6 +681,7 @@ class AssetApi:
 
     def options_strategy_compare(self, body: dict) -> dict:
         """``POST /api/options/strategy/compare``: every rolling strategy (or the ``strategies`` named) at its defaults on one simulated market, run as a job."""
+        self.require_model("the option market of this validation (a model with a built-in variance premium)")
         args = self._backtest_arguments(body)
         names = body.get("strategies")
         if names is not None and (not isinstance(names, list) or not all(isinstance(x, str) and x in oa.BACKTEST_STRATEGIES for x in names) or len(names) < 2):
@@ -675,6 +723,7 @@ class AssetApi:
             return self._downloaded_curve(root, downloaded[root])
         if root not in fa.ROOTS:
             raise ApiError(f"unknown root '{root}'; the simulated roots are {sorted(fa.ROOTS)} (download it with the Free data card, or put {root}.csv in data/user/futures/ to use your own)")
+        self.require_model(f"the {root} futures curve")
         return fa.simulated_curve(root, self._bundle().index[-1])
 
     @staticmethod
@@ -789,6 +838,26 @@ class AssetApi:
         except ValueError as exc:
             raise ApiError(str(exc)) from None
         return _wrap("options_snapshot", out, {"chain": source}, [], ctx.as_of, notes)
+
+    def options_backtest_modes(self, q: dict) -> dict:
+        """``GET /api/options/backtest-modes?underlying=SPY``: the two kinds of options backtest and which one the platform can run. Synthetic validation (a model market) runs in model-data mode and says
+        so; a historical backtest needs dated chains with bid and ask, which the platform stores only as the snapshots you took. They are never ranked together."""
+        from ..assets.option_history import History
+
+        underlying = str(q.get("underlying") or "SPY")
+        try:
+            dates = History(self.root).dates(underlying)
+        except ValueError as exc:
+            raise ApiError(str(exc)) from None
+        synthetic = {"id": "synthetic_validation", "label": "Synthetic validation (model market)", "state": "available" if not self.observed() else "needs_model_data",
+                     "reason": "" if not self.observed() else "the market is simulated: switch the data mode to 'model data allowed' to run it", "limitations": oa.BACKTEST_LIMITATIONS}
+        need = 60
+        historical = {"id": "historical", "label": "Historical backtest (observed chains)", "state": "unavailable", "snapshots": len(dates), "snapshots_needed": need,
+                      "reason": f"{len(dates)} dated chains of {underlying} are stored; a historical backtest replays a dated bid and ask chain on every trading day (at least {need}). The Massive daily aggregates give "
+                                "closes without bid and ask, so rebuilt chains cannot cross a spread.",
+                      "needs": ["a daily snapshot of the chain (the Snapshot button) kept for at least 60 trading days, or a vendor history with historical bid and ask quotes"]}
+        return _wrap("options_backtest_modes", {"underlying": underlying, "modes": [synthetic, historical], "ranking": "never combined: the two kinds of result answer different questions and are shown apart"},
+                     {"modes": "platform"}, [], dates[-1] if dates else None)
 
     def options_history(self, q: dict) -> dict:
         """``GET /api/options/history?underlying=SPY&model=heston``: the dates kept and, with at least three, how the parameters of a model move from one date to the next (each calibration starts from the previous
@@ -1032,6 +1101,7 @@ class AssetApi:
         if symbol in downloaded:
             return self._attach_venue_funding(self._downloaded_series(symbol, downloaded[symbol]))
         if symbol in ca.SIMULATED_ALTS:
+            self.require_model(f"the history of {symbol}")
             return self._attach_venue_funding(ca.simulated_series(symbol, ca.platform_series(self._crypto_frames(), "BTC")))
         raise ApiError(f"unknown symbol '{symbol}'; the platform has {list(ca.REAL_SYMBOLS)}, can simulate {sorted(ca.SIMULATED_ALTS)}, and downloads others with the Free data card "
                        f"(or put {symbol}.csv in data/user/crypto/)")
@@ -1066,6 +1136,8 @@ class AssetApi:
                 books = ca.snapshot_books(snap, s.symbol)
                 spot_books = [b for b, v in zip(books.values(), snap["venues"]) if v["kind"] == "spot"] or list(books.values())
                 book = max(spot_books, key=lambda b: b["depth"]["25bp"]["bid"] + b["depth"]["25bp"]["ask"])
+            elif self.observed():                                                         # no stored book: the liquidity card says so instead of showing a parametric one
+                book, books = None, {}
             else:
                 book = ca.order_book_summary(s.symbol, "BINANCE", float(s.spot.iloc[-1]), seed=int(s.as_of.toordinal()))
                 books = {v: ca.order_book_summary(s.symbol, v, float(s.spot.iloc[-1]), seed=int(s.as_of.toordinal())) for v in ca.VENUE_ORDER}
@@ -1077,7 +1149,7 @@ class AssetApi:
                     "snapshot": None if snap is None else {"fetched_at": snap.get("fetched_at"), "venues": [v["venue"] for v in snap["venues"]], "failed": snap.get("failed", {})}}
         except ValueError as exc:
             raise ApiError(str(exc)) from None
-        parts = {"prices": s.source, "funding": s.source, "stablecoin_supply": "platform", "order_book": "downloaded" if snap is not None else "simulated"}
+        parts = {"prices": s.source, "funding": s.source, "stablecoin_supply": "platform", "order_book": "downloaded" if snap is not None else "unavailable" if self.observed() else "simulated"}
         notes = list(s.notes)
         if snap is not None:
             notes.append(f"The order books are the real ones of {snap.get('fetched_at', 'the download')}; the liquidity card uses the deepest spot venue ({book['venue']}).")
@@ -1088,7 +1160,7 @@ class AssetApi:
         syms = _list(q.get("symbols") or "BTC,ETH,SOL", 6)
         series = {sym.upper(): self._series(sym) for sym in syms}
         try:
-            out = ca.funding_dashboard(series, days=_number(q, "days", 120, 30, 720, integer=True))
+            out = ca.funding_dashboard(series, days=_number(q, "days", 120, 30, 720, integer=True), observed_only=self.observed())
         except ValueError as exc:
             raise ApiError(str(exc)) from None
         parts = {f"{r['symbol']}@{r['venue']}": r["source"] for r in out["rows"]}
@@ -1099,6 +1171,9 @@ class AssetApi:
         snapshot has been downloaded, else modelled ones."""
         s = self._series(str(q.get("symbol") or "BTC"))
         snap = self._snapshot(s.symbol)
+        if snap is None and self.observed():
+            return _wrap("crypto_cross_exchange", {"state": "unavailable", "symbol": s.symbol, "quotes": [], "pairs": [], "reason": "no order-book snapshot is stored, and the other venues' quotes are not observed by the platform",
+                                                   "needs": ["download the venue snapshot (Free data, crypto venues) just before looking"]}, {"quotes": "unavailable"}, [], s.as_of, [])
         try:
             out = ca.cross_exchange(s, _number(q, "slippage_bps", 1.0, 0.0, 50.0), _number(q, "notional", 1e6, 1e3, 1e9), snapshot=snap)
         except ValueError as exc:
