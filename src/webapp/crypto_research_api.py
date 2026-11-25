@@ -17,10 +17,32 @@ class CryptoResearchApi:
 
     def get_routes(self) -> dict:
         return {"/api/crypto/market": self.market, "/api/crypto/derivatives": self.derivatives, "/api/crypto/carry": self.carry, "/api/crypto/executable": self.executable,
-                "/api/crypto/execution": self.execution, "/api/crypto/calendar": self.calendar}
+                "/api/crypto/execution": self.execution, "/api/crypto/calendar": self.calendar, "/api/crypto/margin-schedules": self.margin_schedules}
 
     def post_routes(self) -> dict:
-        return {"/api/crypto/validate": self.validate, "/api/crypto/liquidation": self.liquidation}
+        return {"/api/crypto/validate": self.validate, "/api/crypto/liquidation": self.liquidation, "/api/crypto/margin-schedules/refresh": self.margin_refresh}
+
+    def margin_schedules(self, q: dict) -> dict:
+        """``GET /api/crypto/margin-schedules``: every stored schedule with its versions, source and retrieval time; which venues have a verified schedule and which are hypothetical."""
+        from ..assets.margin_schedules import ScheduleStore
+
+        rows = ScheduleStore(self.api.root).listing()
+        return self._wrap("crypto_margin_schedules", {"schedules": rows, "verified_venues": sorted({r["venue"] for r in rows}), "hypothetical_venues": sorted({"BINANCE", "BYBIT", "OKX", "DERIBIT"} - {r["venue"] for r in rows}),
+                          "reading": "A venue without a stored verified schedule uses a hypothetical margin model, and no liquidation estimate built on it is claimed to be exchange-accurate."}, {"schedules": "downloaded" if rows else "unavailable"})
+
+    def margin_refresh(self, body: dict) -> dict:
+        """``POST /api/crypto/margin-schedules/refresh {symbol, mode}``: fetch OKX's published risk tiers for ``<symbol>-USDT`` (a read-only public request) and store them as a new version."""
+        from ..assets.free_data.http import FetchError, Http
+        from ..assets.margin_schedules import ScheduleStore, fetch_okx
+
+        sym = str(body.get("symbol") or "BTC").upper()
+        mode = _choice(body, "mode", "cross", ("cross", "isolated"))
+        try:
+            s = fetch_okx(Http(), f"{sym}-USDT", None, mode)
+        except (FetchError, ValueError) as exc:
+            raise ApiError(str(exc)) from None
+        ScheduleStore(self.api.root).save(s)
+        return self._wrap("crypto_margin_schedule", {"schedule": {k: v for k, v in s.items() if k != "tiers"}, "n_tiers": len(s["tiers"]), "first_tiers": s["tiers"][:3]}, {"schedule": "downloaded"}, [], s["retrieved_at"][:10], s["notes"])
 
     # ------------------------------------------------------------------------------------------------------------ helpers
     @staticmethod
@@ -51,8 +73,11 @@ class CryptoResearchApi:
         return cr.futures_term_structure(payload) if payload else None
 
     def _liquidations(self, symbol: str):
-        payload = self.api.downloads.read_json("crypto", f"liquidations_{symbol}")
-        return cr.liquidation_view(payload) if payload else None
+        views = [cr.liquidation_view(self.api.downloads.read_json("crypto", n)) for n in (f"liquidations_{symbol}", f"liquidations_{symbol}_DERIBIT") if self.api.downloads.read_json("crypto", n)]
+        views = [v for v in views if v.get("state") == "ok"]
+        if not views:
+            return None
+        return {**views[0], "venues": views} if len(views) > 1 else views[0]
 
     # ------------------------------------------------------------------------------------------------------------ routes
     def calendar(self, q: dict) -> dict:
@@ -221,9 +246,25 @@ class CryptoResearchApi:
                 missing = {str(p.get("venue", "")).upper() for p in positions} - set(tiers)
                 if missing:
                     raise ApiError(f"tiers are missing for {sorted(missing)}")
+            from ..assets.margin_schedules import ScheduleStore
+
+            store = ScheduleStore(self.api.root)
+            as_of = body.get("as_of") or None
+            schedules, prices, sched_notes = {}, {}, []
+            for p in positions:
+                sym, venue = str(p.get("symbol", "")).upper(), str(p.get("venue", "")).upper()
+                s = store.at(venue, f"{sym}-USDT-SWAP", "cross", as_of) if venue == "OKX" else None
+                if s is not None:
+                    schedules[(venue, sym)] = s
+                    try:
+                        prices[sym] = float(self.api._series(sym).spot.dropna().iloc[-1])
+                    except (ApiError, IndexError):
+                        schedules.pop((venue, sym), None)
+                elif venue == "OKX":
+                    sched_notes.append(f"{sym} on OKX: no stored schedule version in force{' on ' + str(as_of) if as_of else ''}: hypothetical margin model used (refresh the schedule to use OKX's published tiers)")
             out = cr.portfolio_liquidation(positions, collateral, betas, _number(body, "liquidation_fee_bps", 50.0, 0.0, 1000.0), use_tiers=str(body.get("use_tiers", "")).lower() in ("1", "true", "yes"), tiers=tiers,
-                                           collateral_haircut=_number(body, "collateral_haircut", 0.0, 0.0, 0.9), funding_per_day=_number(body, "funding_per_day", 0.0, 0.0, 1e9), days=_number(body, "days", 0.0, 0.0, 365.0))
+                                           collateral_haircut=_number(body, "collateral_haircut", 0.0, 0.0, 0.9), funding_per_day=_number(body, "funding_per_day", 0.0, 0.0, 1e9), days=_number(body, "days", 0.0, 0.0, 365.0), schedules=schedules, prices=prices)
         except (ValueError, KeyError, TypeError) as exc:
             raise ApiError(str(exc)) from None
         out["betas"] = betas
-        return self._wrap("crypto_liquidation", out, {"positions": "user_file", **({"betas": "platform"} if betas else {})}, [], None, notes + ["A shock factor moves every coin by its beta; correlations rise in stress, so real moves can be worse."])
+        return self._wrap("crypto_liquidation", out, {"positions": "user_file", **({"betas": "platform"} if betas else {})}, [], None, notes + sched_notes + ["A shock factor moves every coin by its beta; correlations rise in stress, so real moves can be worse."])

@@ -475,6 +475,8 @@ class DataApi:
                 elif what == "liquidations":
                     d = fc.fetch_liquidations(http, coin, progress)
                     out.append(self._save(d, f"{len(d.payload['events'])} recent liquidations on OKX", {"items": [coin], "what": ["liquidations"], "days": s["days"]}, coin))
+                    d2 = fc.fetch_deribit_liquidations(http, coin, 1000, progress)
+                    out.append(self._save(d2, f"{len(d2.payload['events'])} liquidation-flagged Deribit trades in the last {d2.payload['scanned_trades']}", {"items": [coin], "what": ["liquidations"], "days": s["days"]}, coin))
                 else:
                     d = fc.fetch_funding(http, coin, s["days"], progress)
                     out.append(self._save(d, f"{d.meta['as_of']}: {len(d.frame)} days of OKX funding", {"items": [coin], "what": ["funding"], "days": s["days"]}, coin))

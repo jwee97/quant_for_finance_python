@@ -79,7 +79,7 @@ def coinbase_book(http: Http, coin: str) -> dict:
     pair = f"{coin}-USD"
     d = http.get_json(f"{COINBASE}/products/{pair}/book", {"level": 2})
     bids, asks = _trim(_levels(d.get("bids")), _levels(d.get("asks")))
-    return {"venue": "COINBASE", "kind": "spot", "pair": pair, "quote_asset": "USD", "bids": bids, "asks": asks}
+    return {"venue": "COINBASE", "kind": "spot", "pair": pair, "quote_asset": "USD", "bids": bids, "asks": asks, "sequence": d.get("sequence"), "exchange_ts_ms": None}               # the level-2 book carries a sequence but no event time
 
 
 def kraken_book(http: Http, coin: str) -> dict:
@@ -91,7 +91,8 @@ def kraken_book(http: Http, coin: str) -> dict:
     if not isinstance(book, dict):
         raise FetchError("Kraken's answer has no order book")
     bids, asks = _trim(_levels(book.get("bids")), _levels(book.get("asks")))
-    return {"venue": "KRAKEN", "kind": "spot", "pair": pair, "quote_asset": "USD", "bids": bids, "asks": asks}
+    stamps = [float(l[2]) for side in ("bids", "asks") for l in (book.get(side) or [])[:1] if len(l) > 2]                        # each level carries its own update time in seconds
+    return {"venue": "KRAKEN", "kind": "spot", "pair": pair, "quote_asset": "USD", "bids": bids, "asks": asks, "sequence": None, "exchange_ts_ms": int(max(stamps) * 1000) if stamps else None}
 
 
 def bitstamp_book(http: Http, coin: str) -> dict:
@@ -100,7 +101,9 @@ def bitstamp_book(http: Http, coin: str) -> dict:
     if not isinstance(d, dict) or "bids" not in d:
         raise FetchError("Bitstamp's answer has no order book", status=404)
     bids, asks = _trim(_levels(d.get("bids")), _levels(d.get("asks")))
-    return {"venue": "BITSTAMP", "kind": "spot", "pair": pair, "quote_asset": "USD", "bids": bids, "asks": asks}
+    micro = d.get("microtimestamp")
+    return {"venue": "BITSTAMP", "kind": "spot", "pair": pair, "quote_asset": "USD", "bids": bids, "asks": asks, "sequence": None,
+            "exchange_ts_ms": int(int(micro) / 1000) if micro not in (None, "") else (int(d["timestamp"]) * 1000 if d.get("timestamp") not in (None, "") else None)}
 
 
 def okx_book(http: Http, coin: str, swap: bool = False) -> dict:
@@ -111,7 +114,7 @@ def okx_book(http: Http, coin: str, swap: bool = False) -> dict:
         raise FetchError(f"OKX has no order book for {inst} ({(d or {}).get('msg') or 'no data'})", status=404)
     value = _contract_value(http, inst) if swap else 1.0                  # perpetual sizes are contracts of ctVal coins each
     bids, asks = _trim([[p, s * value] for p, s in _levels(data.get("bids"))], [[p, s * value] for p, s in _levels(data.get("asks"))])
-    return {"venue": "OKX-PERP" if swap else "OKX", "kind": "perp" if swap else "spot", "pair": inst, "quote_asset": "USDT", "bids": bids, "asks": asks}
+    return {"venue": "OKX-PERP" if swap else "OKX", "kind": "perp" if swap else "spot", "pair": inst, "quote_asset": "USDT", "bids": bids, "asks": asks, "sequence": data.get("seqId"), "exchange_ts_ms": int(data["ts"]) if data.get("ts") else None}
 
 
 def _contract_value(http: Http, inst: str) -> float:
@@ -133,7 +136,7 @@ def deribit_book(http: Http, coin: str) -> dict:
     if not isinstance(r, dict):
         raise FetchError(f"Deribit has no order book for {inst}", status=404)
     bids, asks = _trim(_levels(r.get("bids"), size_scale="usd"), _levels(r.get("asks"), size_scale="usd"))
-    return {"venue": "DERIBIT-PERP", "kind": "perp", "pair": inst, "quote_asset": "USD", "bids": bids, "asks": asks, "funding_8h": r.get("funding_8h"), "mark": r.get("mark_price")}
+    return {"venue": "DERIBIT-PERP", "kind": "perp", "pair": inst, "quote_asset": "USD", "bids": bids, "asks": asks, "funding_8h": r.get("funding_8h"), "mark": r.get("mark_price"), "sequence": r.get("change_id"), "exchange_ts_ms": r.get("timestamp")}
 
 
 VENUE_FETCHERS = (("COINBASE", coinbase_book), ("KRAKEN", kraken_book), ("BITSTAMP", bitstamp_book), ("OKX", lambda h, c: okx_book(h, c, False)), ("OKX-PERP", lambda h, c: okx_book(h, c, True)),
@@ -475,13 +478,31 @@ def fetch_deribit_futures(http: Http, coin: str, progress=None) -> Download:
             expiry = datetime.strptime(m.group(1), "%d%b%y").date().isoformat()
         except ValueError:
             continue
-        mark, under = _num(r.get("mark_price")), _num(r.get("underlying_price"))
+        mark, under = _num(r.get("mark_price")), _num(r.get("estimated_delivery_price"))                 # the index the future converges to (the live summary has no ``underlying_price`` for futures)
         if math.isfinite(mark) and math.isfinite(under) and under > 0:
             out.append({"instrument": name, "expiry": expiry, "mark_price": mark, "underlying_price": under, "open_interest": _num(r.get("open_interest")), "volume_usd": _num(r.get("volume_usd")),
-                        "timestamp": r.get("creation_timestamp")})
+                        "timestamp": r.get("creation_timestamp"), "settlement_currency": str(r.get("base_currency") or coin), "open_interest_unit": "usd_notional"})
     if not out:
         raise FetchError(f"Deribit returned no dated {coin} futures", status=404)
     when = utc_now().isoformat().replace("+00:00", "Z")
     payload = {"coin": coin, "fetched_at": when, "venue": "DERIBIT", "contracts": sorted(out, key=lambda c: c["expiry"])}
     meta = {"source_id": "deribit", "source": "Deribit", "url": f"{DERIBIT}/get_book_summary_by_currency", "as_of": when[:10], "coin": coin, "notes": [f"{len(out)} dated {coin} futures on Deribit at {when}: a snapshot of the term structure, not a history."]}
     return Download("crypto", f"futures_{coin}", "futures", payload=payload, meta=meta)
+
+
+def fetch_deribit_liquidations(http: Http, coin: str, count: int = 1000, progress=None) -> Download:
+    """Liquidation trades on Deribit's ``coin`` futures: the most recent ``count`` public trades, of which the ones carrying the exchange's ``liquidation`` flag (``M`` maker side, ``T`` taker side or ``MT``) are kept.
+    A PARTIAL observation: only the window those trades cover, and an empty list is a valid answer (no liquidation in the window). Saved as ``liquidations_<COIN>_DERIBIT``."""
+    coin = check_coin(coin)
+    if progress:
+        progress(f"{coin}: recent trades from Deribit")
+    d = http.get_json(f"{DERIBIT}/get_last_trades_by_currency", {"currency": coin, "kind": "future", "count": min(max(int(count), 10), 1000), "include_old": "true"})
+    trades = ((d or {}).get("result") or {}).get("trades") if isinstance(d, dict) else None
+    if trades is None:
+        raise FetchError(f"Deribit returned no trade list for {coin}", status=404)
+    events = [{"time": int(t["timestamp"]), "instrument": t.get("instrument_name"), "side": t.get("direction"), "flag": t.get("liquidation"), "amount_usd": _num(t.get("amount")), "price": _num(t.get("price"))} for t in trades if t.get("liquidation")]
+    when = utc_now().isoformat().replace("+00:00", "Z")
+    first, last = (min(t["timestamp"] for t in trades), max(t["timestamp"] for t in trades)) if trades else (None, None)
+    payload = {"coin": coin, "fetched_at": when, "venue": "DERIBIT", "events": events, "scanned_trades": len(trades), "window": {"first_ms": first, "last_ms": last}}
+    meta = {"source_id": "deribit", "source": "Deribit", "url": f"{DERIBIT}/get_last_trades_by_currency", "as_of": when[:10], "coin": coin, "notes": [f"{len(events)} liquidation-flagged trades among the last {len(trades)} Deribit {coin} futures trades: a partial window, not a history."]}
+    return Download("crypto", f"liquidations_{coin}_DERIBIT", "liquidations", payload=payload, meta=meta)

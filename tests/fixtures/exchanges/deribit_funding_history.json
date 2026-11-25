@@ -1,0 +1,51 @@
+{
+ "jsonrpc": "2.0",
+ "result": [
+  {
+   "index_price": 60846.72,
+   "interest_1h": 0.0,
+   "interest_8h": 3.3848701302280094e-08,
+   "prev_index_price": 60655.0,
+   "timestamp": 1795359600000
+  },
+  {
+   "index_price": 60803.95,
+   "interest_1h": 0.0,
+   "interest_8h": 3.510593023080542e-08,
+   "prev_index_price": 60846.72,
+   "timestamp": 1795363200000
+  },
+  {
+   "index_price": 61165.84,
+   "interest_1h": 1.2210021295644694e-07,
+   "interest_8h": 2.4517491853172447e-07,
+   "prev_index_price": 60803.95,
+   "timestamp": 1795366800000
+  },
+  {
+   "index_price": 60741.09,
+   "interest_1h": 0.0,
+   "interest_8h": 2.506270374461619e-07,
+   "prev_index_price": 61165.84,
+   "timestamp": 1795370400000
+  },
+  {
+   "index_price": 60671.58,
+   "interest_1h": 0.0,
+   "interest_8h": 2.49593681896025e-07,
+   "prev_index_price": 60741.09,
+   "timestamp": 1795374000000
+  },
+  {
+   "index_price": 60640.36,
+   "interest_1h": 0.0,
+   "interest_8h": 2.5039377063411287e-07,
+   "prev_index_price": 60671.58,
+   "timestamp": 1795377600000
+  }
+ ],
+ "testnet": false,
+ "usDiff": 45988,
+ "usIn": 1795616788098454,
+ "usOut": 1795616788144442
+}

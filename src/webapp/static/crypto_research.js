@@ -81,6 +81,8 @@
       };
       draw();
       const add = h("button", "btn", h("div", "row tight", p), "+ Position"); add.addEventListener("click", () => { f.positions.push({ symbol: "BTC", venue: "BINANCE", side: "long", notional: "100000" }); draw(); after(); });
+      const rf = h("button", "btn", h("div", "row tight", p), "Refresh OKX risk tiers (read-only public request)"), msg = h("span", "hint", p); rf.dataset.role = "refresh-schedule";
+      rf.addEventListener("click", async () => { rf.disabled = true; try { const r = await Q.api("/api/crypto/margin-schedules/refresh", { symbol: (f.positions[0] || {}).symbol || "BTC" }); msg.textContent = ` Stored ${r.n_tiers} tiers retrieved ${r.schedule.retrieved_at}. Positions on OKX now use them.`; } catch (e) { msg.textContent = " " + e.message; } finally { rf.disabled = false; } });
       h("p", "hint", p, "Betas of each coin to BTC are measured on observed data when it exists; otherwise 1 is assumed and said.");
     }
   };
@@ -210,7 +212,8 @@
     const c = h("div", "card", root); h("h3", "", c, "Shocks");
     table(c, [{ label: "Market move", get: (r) => r[0] }, { label: "Equity", num: true, get: (r) => money(r[1].equity, 0) }, { label: "Required", num: true, get: (r) => money(r[1].required, 0) }, { label: "Margin ratio", num: true, get: (r) => (r[1].margin_ratio === null ? "" : num(r[1].margin_ratio, 2)) }, { label: "", get: (r) => (r[1].liquidated ? "LIQUIDATED" : "") }], Object.entries(d.shock_table));
     const p = h("div", "card", root); h("h3", "", p, "Each position on its own share of the collateral");
-    table(p, [{ label: "Coin", get: (x) => x.symbol }, { label: "Venue", get: (x) => x.venue }, { label: "Notional", num: true, get: (x) => money(x.notional, 0) }, { label: "Leverage", num: true, get: (x) => num(x.isolated.leverage, 2) + "x" }, { label: "Liquidated at", num: true, get: (x) => pct(x.isolated.liquidation_move, 1) }, { label: "Over the venue limit", get: (x) => (x.isolated.over_venue_limit ? "yes" : "") }], d.positions);
+    table(p, [{ label: "Coin", get: (x) => x.symbol }, { label: "Venue", get: (x) => x.venue }, { label: "Notional", num: true, get: (x) => money(x.notional, 0) }, { label: "Leverage", num: true, get: (x) => num(x.isolated.leverage, 2) + "x" }, { label: "Liquidated at", num: true, get: (x) => pct(x.isolated.liquidation_move, 1) }, { label: "Over the venue limit", get: (x) => (x.isolated.over_venue_limit ? "yes" : "") }, { label: "Margin basis", get: (x) => x.margin_basis }], d.positions);
+    const acc = h("p", d.tiers_verified ? "hint" : "verdict-bad", root, d.accuracy_note); acc.dataset.role = "margin-accuracy";
     h("p", "hint", p, "Betas to BTC: " + (Object.keys(d.betas).length ? Object.entries(d.betas).map(([a, b]) => `${a} ${num(b, 2)}`).join(", ") : "none measured (1 assumed)") + ".");
     h("p", "hint", root, "Margin model: " + d.margin_model + ". " + (d.approximate ? "An approximate stress scenario, not an exchange's liquidation engine." : ""));
     const dd = h("details", "how", root); h("summary", "", dd, "Assumptions"); for (const a of d.assumptions) h("p", "hint", dd, a);

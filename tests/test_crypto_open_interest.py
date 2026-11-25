@@ -79,8 +79,8 @@ def test_the_derivatives_route_uses_downloaded_open_interest_and_still_lists_dat
 
 
 def test_deribit_dated_futures_are_read_and_the_perpetual_is_left_out():
-    rows = [{"instrument_name": "BTC-PERPETUAL", "mark_price": 50_010.0, "underlying_price": 50_000.0}, {"instrument_name": "BTC-27MAR26", "mark_price": 51_000.0, "underlying_price": 50_000.0, "open_interest": 5, "volume_usd": 9, "creation_timestamp": 1},
-            {"instrument_name": "BTC-26JUN26", "mark_price": 52_000.0, "underlying_price": 50_000.0, "open_interest": 7, "volume_usd": 3, "creation_timestamp": 1}]
+    rows = [{"instrument_name": "BTC-PERPETUAL", "mark_price": 50_010.0, "estimated_delivery_price": 50_000.0}, {"instrument_name": "BTC-27MAR26", "mark_price": 51_000.0, "estimated_delivery_price": 50_000.0, "open_interest": 5, "volume_usd": 9, "creation_timestamp": 1},
+            {"instrument_name": "BTC-26JUN26", "mark_price": 52_000.0, "estimated_delivery_price": 50_000.0, "open_interest": 7, "volume_usd": 3, "creation_timestamp": 1}]
     d = fc.fetch_deribit_futures(http({"https://www.deribit.com/api/v2/public/get_book_summary_by_currency": {"result": rows}}), "BTC")
     assert [c["expiry"] for c in d.payload["contracts"]] == ["2026-03-27", "2026-06-26"] and d.name == "futures_BTC"
     with pytest.raises(FetchError):

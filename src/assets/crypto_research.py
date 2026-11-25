@@ -405,9 +405,15 @@ def _age_ref(stamp, now):
 def liquidation_view(payload: dict | None) -> dict:
     """Recent filled liquidations from a downloaded OKX window: the number, the notional (size x contract value x price) of longs and shorts liquidated, the largest event and the window's length. A
     short window of observations, not a history."""
+    if payload and payload.get("venue") == "DERIBIT" and not payload.get("events"):
+        return {"state": "ok", "venue": "DERIBIT", "events": 0, "window_hours": 0.0, "fetched_at": payload.get("fetched_at"), "notional": 0.0, "largest_notional": 0.0, "note": f"no liquidation-flagged trade among the last {payload.get('scanned_trades')}: none occurred in that window"}
     if not payload or not payload.get("events"):
         return unavailable("no liquidation download", ["download recent liquidations (Free data, crypto, 'Recent liquidations')"])
     ev = pd.DataFrame(payload["events"])
+    if payload.get("venue") == "DERIBIT":                                                    # trades flagged as liquidations: the feed does not say which side was liquidated
+        hours = (ev["time"].max() - ev["time"].min()) / 3.6e6
+        return {"state": "ok", "venue": "DERIBIT", "events": int(len(ev)), "window_hours": float(hours), "fetched_at": payload.get("fetched_at"), "notional": float(ev["amount_usd"].sum()), "largest_notional": float(ev["amount_usd"].max()),
+                "note": f"liquidation-flagged trades among the last {payload.get('scanned_trades')} trades; the feed does not state which side was liquidated; a partial window, not a history"}
     cv = payload.get("contract_value")
     ev["notional"] = ev["size_contracts"] * (cv if cv else float("nan")) * ev["price"]
     longs = ev[ev["side"] == "sell"]                                                          # a forced sell closes a long
@@ -469,24 +475,22 @@ def funding_intelligence(series: dict, venues: tuple = ("DERIBIT", "BINANCE", "B
 
 
 # ------------------------------------------------------------------------------------------------------------------ portfolio leverage and liquidation
-ILLUSTRATIVE_TIERS = {                                                                         # (notional up to, maintenance rate, max leverage): ILLUSTRATIVE shapes, not any exchange's current schedule
-    "BINANCE": [(50e3, 0.004, 125), (250e3, 0.005, 100), (1e6, 0.01, 50), (5e6, 0.025, 20), (20e6, 0.05, 10), (float("inf"), 0.10, 5)],
-    "BYBIT": [(2e6, 0.005, 100), (10e6, 0.01, 50), (20e6, 0.025, 25), (float("inf"), 0.05, 10)],
-    "OKX": [(1e6, 0.004, 100), (5e6, 0.01, 50), (20e6, 0.025, 20), (float("inf"), 0.05, 10)],
-    "DERIBIT": [(1e6, 0.005, 50), (10e6, 0.01, 25), (float("inf"), 0.025, 10)],
-}
+from .margin_schedules import HYPOTHETICAL_TIERS, tier_for                                      # noqa: E402  (schedules live in their own versioned module)
+
+ILLUSTRATIVE_TIERS = HYPOTHETICAL_TIERS                                                         # the old name; these are hypothetical shapes, not any exchange's schedule
 
 
 def tier_rate(venue: str, notional: float, tiers: dict | None = None) -> float:
-    """The maintenance rate of the bracket ``notional`` falls in, from ``tiers`` (``{venue: [(up_to, rate, max_leverage)]}``) or the illustrative table."""
-    for up_to, rate, _ in (tiers or ILLUSTRATIVE_TIERS)[venue]:
+    """The maintenance rate of the bracket ``notional`` falls in, from ``tiers`` (``{venue: [(up_to, rate, max_leverage)]}``) or the HYPOTHETICAL table."""
+    for up_to, rate, _ in (tiers or HYPOTHETICAL_TIERS)[venue]:
         if notional <= up_to:
             return float(rate)
-    return float((tiers or ILLUSTRATIVE_TIERS)[venue][-1][1])
+    return float((tiers or HYPOTHETICAL_TIERS)[venue][-1][1])
 
 
 def portfolio_liquidation(positions: list[dict], collateral: float, betas: dict | None = None, liquidation_fee_bps: float = 50.0, shocks: tuple = (-0.5, -0.3, -0.2, -0.1, 0.1, 0.2, 0.3, 0.5),
-                          use_tiers: bool = False, tiers: dict | None = None, collateral_haircut: float = 0.0, funding_per_day: float = 0.0, days: float = 0.0) -> dict:
+                          use_tiers: bool = False, tiers: dict | None = None, collateral_haircut: float = 0.0, funding_per_day: float = 0.0, days: float = 0.0,
+                          schedules: dict | None = None, prices: dict | None = None) -> dict:
     """Cross-margined liquidation risk of perpetual positions. ``positions`` are ``{symbol, venue, side (long/short), notional}``; ``collateral`` is the account's equity in dollars. A market shock ``x``
     moves each coin by ``beta x`` (``betas`` per symbol against the shock factor, 1 when missing; pass observed betas). Equity after the shock is collateral plus the positions' pnl; the requirement
     is each venue's maintenance rate on the shocked notional. Reports the leverage, a liquidation price per position as if isolated with its share of collateral, the portfolio shock at which equity
@@ -506,14 +510,25 @@ def portfolio_liquidation(positions: list[dict], collateral: float, betas: dict 
         n = float(p["notional"])
         if not n > 0:
             raise ValueError("every notional must be positive")
-        mmr = tier_rate(venue, n, tiers) if (use_tiers or tiers) else VENUES[venue]["mmr"]
-        pos.append({"symbol": str(p["symbol"]).upper(), "venue": venue, "sign": 1.0 if side == "long" else -1.0, "notional": n, "mmr": mmr, "max_leverage": VENUES[venue]["max_leverage"]})
+        sym = str(p["symbol"]).upper()
+        sched = (schedules or {}).get((venue, sym))
+        px = (prices or {}).get(sym)
+        if sched is not None and sched.get("verified") and (sched["size_unit"] != "contracts" or px):
+            basis = f"verified {venue} schedule retrieved {sched['retrieved_at']} ({sched['source_url']})"
+            rate = (lambda notional, s=sched, pr=px: float(tier_for(s, notional, pr)["mmr"]))
+        elif tiers:
+            basis, rate = "user-supplied tiers", (lambda notional, v=venue: tier_rate(v, notional, tiers))
+        elif use_tiers:
+            basis, rate = "HYPOTHETICAL tiers (not the exchange's schedule)", (lambda notional, v=venue: tier_rate(v, notional))
+        else:
+            basis, rate = "HYPOTHETICAL flat rate per venue", (lambda notional, v=venue: float(VENUES[v]["mmr"]))
+        pos.append({"symbol": sym, "venue": venue, "sign": 1.0 if side == "long" else -1.0, "notional": n, "mmr": rate(n), "rate": rate, "margin_basis": basis, "verified": basis.startswith("verified"), "max_leverage": VENUES[venue]["max_leverage"]})
     beta = {k.upper(): float(v) for k, v in (betas or {}).items()}
 
     def state(x: float) -> dict:
         pnl = sum(q["sign"] * q["notional"] * beta.get(q["symbol"], 1.0) * x for q in pos)
         equity = collateral * (1.0 - collateral_haircut) + pnl - funding_per_day * days
-        req = sum(q["mmr"] * q["notional"] * max(1.0 + beta.get(q["symbol"], 1.0) * x, 0.0) for q in pos)
+        req = sum(q["rate"](q["notional"] * max(1.0 + beta.get(q["symbol"], 1.0) * x, 0.0)) * q["notional"] * max(1.0 + beta.get(q["symbol"], 1.0) * x, 0.0) for q in pos)         # the tier follows the shocked notional
         return {"equity": float(equity), "required": float(req), "margin_ratio": float(equity / req) if req > 0 else None, "liquidated": bool(equity < req)}
 
     gross = sum(q["notional"] for q in pos)
@@ -527,12 +542,15 @@ def portfolio_liquidation(positions: list[dict], collateral: float, betas: dict 
         lev = q["notional"] / share
         move = (q["mmr"] - 1.0 / lev) / (1.0 - q["mmr"]) if q["sign"] > 0 else (1.0 / lev - q["mmr"]) / (1.0 + q["mmr"])
         q["isolated"] = {"leverage": float(lev), "liquidation_move": float(move), "over_venue_limit": bool(lev > q["max_leverage"])}
-        q.pop("sign"), q.pop("mmr")
+        q.pop("sign"), q.pop("mmr"), q.pop("rate")
     first = down if down is not None and (up is None or abs(down) <= abs(up)) else up
     return {"state": "ok", "collateral": float(collateral), "gross_notional": float(gross), "net_notional": float(net), "gross_leverage": float(gross / collateral), "net_leverage": float(net / collateral),
             "positions": pos, "shock_table": table, "liquidation_shock_down": down, "liquidation_shock_up": up, "nearest_liquidation_shock": first,
             "liquidation_fee_loss_at_nearest": None if first is None else float(liquidation_fee_bps / 1e4 * gross),
-            "margin_model": ("illustrative risk tiers by position notional" if (use_tiers or tiers) else "one flat maintenance rate per venue") + (", configurable" if tiers else "") + f"; collateral haircut {collateral_haircut:.0%}; funding deducted {funding_per_day * days:,.0f}",
+            "margin_model": ("verified exchange schedules" if all(q["verified"] for q in pos) else "hypothetical risk tiers by position notional" if (use_tiers or tiers) else "one hypothetical flat maintenance rate per venue") + f"; collateral haircut {collateral_haircut:.0%}; funding deducted {funding_per_day * days:,.0f}",
+            "exchange_accurate": False, "tiers_verified": bool(all(q["verified"] for q in pos)),
+            "accuracy_note": ("The tiers come from the exchange's published schedule, but its liquidation engine (partial liquidation steps, liquidation fees, insurance fund, account-level netting) is not modelled: an approximate stress scenario." if all(q["verified"] for q in pos)
+                              else "At least one position uses a hypothetical margin model: no claim is made that these liquidation levels match any exchange."),
             "approximate": True,
             "assumptions": ["Approximate stress scenario, NOT an exchange's liquidation engine: exchanges differ in risk tiers, account mode (cross, isolated, portfolio margin), collateral haircuts, partial liquidation and insurance-fund rules. Pass your venue's own tiers to replace the illustrative ones.", "Cross margin across the listed positions; the shock moves every coin by its beta times the shock at once, with no gap, no funding and no auto-deleveraging.",
                             "Maintenance rates are the platform's per-venue defaults, not your account's tiered rates.",

@@ -1,0 +1,75 @@
+{
+ "code": "0",
+ "data": [
+  {
+   "details": [
+    {
+     "bkLoss": "0",
+     "bkPx": "58429.1",
+     "ccy": "",
+     "posSide": "short",
+     "side": "buy",
+     "sz": "1.41",
+     "time": 1795616594315,
+     "ts": "1795616594315"
+    },
+    {
+     "bkLoss": "0",
+     "bkPx": "58429.1",
+     "ccy": "",
+     "posSide": "short",
+     "side": "buy",
+     "sz": "21.71",
+     "time": 1795616594311,
+     "ts": "1795616594311"
+    },
+    {
+     "bkLoss": "0",
+     "bkPx": "58419",
+     "ccy": "",
+     "posSide": "short",
+     "side": "buy",
+     "sz": "3.48",
+     "time": 1795616594088,
+     "ts": "1795616594088"
+    },
+    {
+     "bkLoss": "0",
+     "bkPx": "58419",
+     "ccy": "",
+     "posSide": "short",
+     "side": "buy",
+     "sz": "1.15",
+     "time": 1795616594087,
+     "ts": "1795616594087"
+    },
+    {
+     "bkLoss": "0",
+     "bkPx": "58419",
+     "ccy": "",
+     "posSide": "short",
+     "side": "buy",
+     "sz": "59.31",
+     "time": 1795616594083,
+     "ts": "1795616594083"
+    },
+    {
+     "bkLoss": "0",
+     "bkPx": "58419",
+     "ccy": "",
+     "posSide": "short",
+     "side": "buy",
+     "sz": "0.04",
+     "time": 1795616594074,
+     "ts": "1795616594074"
+    }
+   ],
+   "instFamily": "BTC-USDT",
+   "instId": "BTC-USDT-SWAP",
+   "instType": "SWAP",
+   "totalLoss": "0",
+   "uly": "BTC-USDT"
+  }
+ ],
+ "msg": ""
+}

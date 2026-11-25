@@ -103,3 +103,21 @@ def test_liquidation_route_takes_custom_tiers_and_haircuts(app):
     assert tiered["liquidation_shock_down"] > flat["liquidation_shock_down"] and tiered["approximate"] and "haircut 10%" in tiered["margin_model"]
     with pytest.raises(ApiError, match="tiers are missing"):
         app.extra_post["/api/crypto/liquidation"]({"collateral": 1e5, "positions": pos, "tiers": {"BINANCE": [[None, 0.05, 10]]}})
+
+
+def test_a_stored_verified_schedule_is_used_for_okx_positions_and_a_missing_one_is_said_to_be_hypothetical(app, monkeypatch):
+    from src.assets import margin_schedules as ms
+    from tests.test_crypto_research import okx_schedule
+
+    pos = [{"symbol": "ETH", "venue": "OKX", "side": "long", "notional": 3e5}]
+    before = _safe(app.extra_post["/api/crypto/liquidation"]({"collateral": 1e5, "betas": {"ETH": 1.0}, "positions": pos}))
+    assert not before["tiers_verified"] and any("no stored schedule version" in n for n in before["notes"])
+    monkeypatch.setattr(ms, "fetch_okx", lambda http, family, inst=None, mode="cross": {**okx_schedule(), "instrument": f"{family}-SWAP", "retrieved_at": "2026-01-01T00:00:00Z", "effective_from": "2026-01-01T00:00:00Z"})
+    r = _safe(app.extra_post["/api/crypto/margin-schedules/refresh"]({"symbol": "ETH"}))
+    assert r["n_tiers"] == 3 and r["schedule"]["verified"]
+    listing = _safe(app.extra_get["/api/crypto/margin-schedules"]({}))
+    assert listing["schedules"][0]["venue"] == "OKX" and "OKX" in listing["verified_venues"] and "BINANCE" in listing["hypothetical_venues"]
+    after = _safe(app.extra_post["/api/crypto/liquidation"]({"collateral": 1e5, "betas": {"ETH": 1.0}, "positions": pos}))
+    assert after["tiers_verified"] and "verified OKX schedule" in after["positions"][0]["margin_basis"] and after["exchange_accurate"] is False
+    old = _safe(app.extra_post["/api/crypto/liquidation"]({"collateral": 1e5, "betas": {"ETH": 1.0}, "positions": pos, "as_of": "2025-06-01"}))
+    assert not old["tiers_verified"], "no schedule version existed on that date"

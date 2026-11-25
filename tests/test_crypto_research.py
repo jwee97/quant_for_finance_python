@@ -210,7 +210,7 @@ def test_risk_tiers_raise_the_maintenance_requirement_with_size_and_haircuts_cut
     flat = cr.portfolio_liquidation(big, 3e5)
     tiered = cr.portfolio_liquidation(big, 3e5, use_tiers=True)
     assert cr.tier_rate("BINANCE", 2e5) == 0.005 and cr.tier_rate("BINANCE", 3e7) == 0.10
-    assert tiered["liquidation_shock_down"] > flat["liquidation_shock_down"] and tiered["approximate"] and "illustrative" in tiered["margin_model"]
+    assert tiered["liquidation_shock_down"] > flat["liquidation_shock_down"] and tiered["approximate"] and "hypothetical" in tiered["margin_model"]
     cut = cr.portfolio_liquidation(pos, 1e5, collateral_haircut=0.2)
     assert cut["liquidation_shock_down"] == pytest.approx((0.004 * 2e5 - 0.8e5) / (2e5 * (1 - 0.004)), abs=2e-3)
     custom = cr.portfolio_liquidation(pos, 1e5, tiers={"BINANCE": [(float("inf"), 0.02, 20)]})
@@ -227,3 +227,70 @@ def test_the_dated_futures_curve_annualises_the_basis_per_contract():
     row = out["contracts"][0]
     assert row["basis"] == pytest.approx(0.02) and row["annualised_basis"] == pytest.approx(0.02 * 365 / row["days"]) and 89 < row["days"] < 91
     assert cr.futures_term_structure(None)["state"] == "unavailable"
+
+
+# ------------------------------------------------------------------------------------------------------------------ margin schedules (verified versus hypothetical)
+def okx_schedule(retrieved="2026-11-25T10:00:00Z", scale=1.0):
+    return {"venue": "OKX", "instrument": "BTC-USDT-SWAP", "margin_mode": "cross", "verified": True, "method": "official public API", "size_unit": "contracts", "contract_value": 0.01, "contract_type": "linear", "retrieved_at": retrieved,
+            "effective_from": retrieved, "source_url": "https://www.okx.com/api/v5/public/position-tiers",
+            "tiers": [{"tier": 1, "min_size": 0.0, "max_size": 1000.0, "imr": 0.01, "mmr": 0.004 * scale, "max_leverage": 100.0}, {"tier": 2, "min_size": 1000.01, "max_size": 5000.0, "imr": 0.015, "mmr": 0.005 * scale, "max_leverage": 66.0},
+                      {"tier": 3, "min_size": 5000.01, "max_size": 20000.0, "imr": 0.02, "mmr": 0.0075 * scale, "max_leverage": 50.0}], "notes": []}
+
+
+def test_tier_boundaries_convert_notional_to_contracts_and_move_at_the_edge():
+    from src.assets import margin_schedules as ms
+
+    s, price = okx_schedule(), 50_000.0
+    edge = 1000 * 0.01 * price                                                                                  # 1000 contracts of 0.01 BTC at 50,000 = $500,000
+    assert ms.tier_for(s, edge, price)["tier"] == 1 and ms.tier_for(s, edge * 1.0001, price)["tier"] == 2
+    assert ms.tier_for(s, 20_000 * 0.01 * price * 2, price)["above_top_tier"]
+    with pytest.raises(ValueError):
+        ms.tier_for(s, 1e5, None)
+
+
+def test_a_verified_schedule_sets_the_requirement_and_tiers_follow_the_shocked_notional():
+    pos = [{"symbol": "BTC", "venue": "OKX", "side": "long", "notional": 4.9e5}]
+    out = cr.portfolio_liquidation(pos, 1.2e5, {"BTC": 1.0}, schedules={("OKX", "BTC"): okx_schedule()}, prices={"BTC": 50_000.0})
+    assert out["tiers_verified"] and out["exchange_accurate"] is False and "verified OKX schedule" in out["positions"][0]["margin_basis"] and "not modelled" in out["accuracy_note"]
+    low = cr.portfolio_liquidation(pos, 1.2e5, {"BTC": 1.0}, schedules={("OKX", "BTC"): okx_schedule(scale=0.1)}, prices={"BTC": 50_000.0})
+    assert low["liquidation_shock_down"] < out["liquidation_shock_down"], "a lower maintenance rate liquidates later"
+    up = cr.portfolio_liquidation([{**pos[0], "side": "short"}], 1.2e5, {"BTC": 1.0}, schedules={("OKX", "BTC"): okx_schedule()}, prices={"BTC": 50_000.0})
+    pnl_to_tier2 = (1000 * 0.01 * 50_000 / 4.9e5 - 1.0)
+    assert up["shock_table"]["+10%"]["required"] == pytest.approx(0.005 * 4.9e5 * 1.1) and pnl_to_tier2 > 0, "at +10% the notional is 539k: tier 2's rate applies"
+    assert up["shock_table"]["+10%"]["equity"] == pytest.approx(1.2e5 - 4.9e5 * 0.1)
+
+
+def test_without_a_verified_schedule_the_result_says_it_is_hypothetical():
+    pos = [{"symbol": "BTC", "venue": "BINANCE", "side": "long", "notional": 2e5}]
+    out = cr.portfolio_liquidation(pos, 1e5, use_tiers=True)
+    assert not out["tiers_verified"] and out["exchange_accurate"] is False and "HYPOTHETICAL" in out["positions"][0]["margin_basis"] and "no claim" in out["accuracy_note"]
+    assert "hypothetical" in cr.portfolio_liquidation(pos, 1e5)["margin_model"]
+
+
+def test_schedules_are_versioned_and_never_back_dated(tmp_path):
+    from src.assets import margin_schedules as ms
+
+    store = ms.ScheduleStore(tmp_path)
+    store.save(okx_schedule("2026-01-10T00:00:00Z"))
+    store.save(okx_schedule("2026-06-01T00:00:00Z", scale=2.0))
+    assert store.at("OKX", "BTC-USDT-SWAP", "cross", "2026-03-01")["tiers"][0]["mmr"] == pytest.approx(0.004)
+    assert store.at("OKX", "BTC-USDT-SWAP", "cross", "2026-07-01")["tiers"][0]["mmr"] == pytest.approx(0.008)
+    assert store.at("OKX", "BTC-USDT-SWAP", "cross", "2025-12-31") is None, "a date before the first stored version has no schedule: today's tiers are not back-dated"
+    assert len(store.versions("OKX", "BTC-USDT-SWAP")) == 2 and store.listing()[0]["versions"] == 2
+    with pytest.raises(ValueError, match="verified"):
+        store.save(ms.hypothetical("BINANCE"))
+    assert ms.hypothetical("OKX")["verified"] is False and ms.hypothetical("OKX")["method"] == "hypothetical"
+
+
+def test_okx_schedule_is_parsed_from_the_real_response():
+    import json
+    from pathlib import Path
+
+    from src.assets import margin_schedules as ms
+    from tests import free_data_helpers as fh
+    from src.assets.free_data.http import Http
+
+    fx = Path(__file__).parent / "fixtures" / "exchanges"
+    routes = {"https://www.okx.com/api/v5/public/position-tiers": json.loads((fx / "okx_margin_tiers.json").read_text()), "https://www.okx.com/api/v5/public/instruments": json.loads((fx / "okx_contract_specs.json").read_text())}
+    s = ms.fetch_okx(Http(fh.FakeFeeds(routes), sleep=lambda x: None, pause=0.0, retries=0), "BTC-USDT")
+    assert s["verified"] and s["contract_value"] == 0.01 and s["contract_type"] == "linear" and s["tiers"][0]["mmr"] > 0 and s["tiers"][0]["imr"] > s["tiers"][0]["mmr"] and s["tiers"][0]["max_leverage"] >= 1 and s["source_url"].startswith("https://www.okx.com")

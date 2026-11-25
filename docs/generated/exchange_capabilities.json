@@ -1,0 +1,261 @@
+{
+ "generated_at": "2026-11-25T14:26:32.231217Z",
+ "rows": [
+  {
+   "venue": "OKX",
+   "feature": "funding_history",
+   "adapter": "free_data.crypto.okx_funding_daily",
+   "note": "settlements every 8 hours, newest first, paged by `after`",
+   "tested_at": "2026-11-25T14:26:25.876019Z",
+   "url": "https://www.okx.com/api/v5/public/funding-rate-history",
+   "status": "verified",
+   "http_status": 200,
+   "detail": "ok"
+  },
+  {
+   "venue": "OKX",
+   "feature": "open_interest",
+   "adapter": "free_data.crypto.okx_open_interest",
+   "note": "rows are [time ms, open interest USD, volume USD], aggregated over the currency's contracts, newest first",
+   "tested_at": "2026-11-25T14:26:26.406428Z",
+   "url": "https://www.okx.com/api/v5/rubik/stat/contracts/open-interest-volume",
+   "status": "verified",
+   "http_status": 200,
+   "detail": "ok"
+  },
+  {
+   "venue": "OKX",
+   "feature": "open_interest_instrument",
+   "adapter": null,
+   "note": "one instrument now; the adapter uses the currency-level history instead",
+   "tested_at": "2026-11-25T14:26:26.652904Z",
+   "url": "https://www.okx.com/api/v5/public/open-interest",
+   "status": "not_implemented",
+   "http_status": 200,
+   "detail": "ok"
+  },
+  {
+   "venue": "OKX",
+   "feature": "liquidations",
+   "adapter": "free_data.crypto.fetch_liquidations",
+   "note": "actual filled liquidation orders, a short recent window only (sz in contracts, bkPx the bankruptcy price)",
+   "tested_at": "2026-11-25T14:26:26.882779Z",
+   "url": "https://www.okx.com/api/v5/public/liquidation-orders",
+   "status": "verified",
+   "http_status": 200,
+   "detail": "ok"
+  },
+  {
+   "venue": "OKX",
+   "feature": "contract_specs",
+   "adapter": "free_data.crypto._contract_value",
+   "note": "contract value, multiplier, linear/inverse type and settlement currency",
+   "tested_at": "2026-11-25T14:26:27.176906Z",
+   "url": "https://www.okx.com/api/v5/public/instruments",
+   "status": "verified",
+   "http_status": 200,
+   "detail": "ok"
+  },
+  {
+   "venue": "OKX",
+   "feature": "margin_tiers",
+   "adapter": "assets.margin_schedules.fetch_okx",
+   "note": "official risk tiers by position size",
+   "tested_at": "2026-11-25T14:26:27.426922Z",
+   "url": "https://www.okx.com/api/v5/public/position-tiers",
+   "status": "verified",
+   "http_status": 200,
+   "detail": "ok"
+  },
+  {
+   "venue": "OKX",
+   "feature": "order_book",
+   "adapter": "free_data.crypto.okx_book",
+   "note": "levels [price, size, 0, orders]; swap sizes are contracts",
+   "tested_at": "2026-11-25T14:26:27.683733Z",
+   "url": "https://www.okx.com/api/v5/market/books",
+   "status": "verified",
+   "http_status": 200,
+   "detail": "ok"
+  },
+  {
+   "venue": "DERIBIT",
+   "feature": "funding_history",
+   "adapter": "data.crypto (platform history)",
+   "note": "hourly records; interest_8h is the 8-hour funding rate",
+   "tested_at": "2026-11-25T14:26:27.953323Z",
+   "url": "https://www.deribit.com/api/v2/public/get_funding_rate_history",
+   "status": "verified",
+   "http_status": 200,
+   "detail": "ok"
+  },
+  {
+   "venue": "DERIBIT",
+   "feature": "dated_futures",
+   "adapter": "free_data.crypto.fetch_deribit_futures",
+   "note": "open interest is in USD notional (inverse contracts); the index is estimated_delivery_price",
+   "tested_at": "2026-11-25T14:26:28.196842Z",
+   "url": "https://www.deribit.com/api/v2/public/get_book_summary_by_currency",
+   "status": "verified",
+   "http_status": 200,
+   "detail": "ok"
+  },
+  {
+   "venue": "DERIBIT",
+   "feature": "contract_specs",
+   "adapter": null,
+   "note": "contract size, settlement currency, expiry, maximum leverage, commissions; the maintenance-margin schedule is NOT in the API",
+   "tested_at": "2026-11-25T14:26:28.366500Z",
+   "url": "https://www.deribit.com/api/v2/public/get_instruments",
+   "status": "not_implemented",
+   "http_status": 200,
+   "detail": "ok"
+  },
+  {
+   "venue": "DERIBIT",
+   "feature": "liquidations",
+   "adapter": "free_data.crypto.fetch_deribit_liquidations",
+   "note": "public trades; those with a `liquidation` flag are liquidations (partial window; the flag is absent when none occurred)",
+   "tested_at": "2026-11-25T14:26:30.216586Z",
+   "url": "https://www.deribit.com/api/v2/public/get_last_trades_by_currency",
+   "status": "verified",
+   "http_status": 200,
+   "detail": "ok"
+  },
+  {
+   "venue": "DERIBIT",
+   "feature": "order_book",
+   "adapter": "free_data.crypto.deribit_book",
+   "note": "carries change_id, usable for sequence checks on incremental feeds",
+   "tested_at": "2026-11-25T14:26:30.711749Z",
+   "url": "https://www.deribit.com/api/v2/public/get_order_book",
+   "status": "verified",
+   "http_status": 200,
+   "detail": "ok"
+  },
+  {
+   "venue": "COINBASE",
+   "feature": "order_book",
+   "adapter": "free_data.crypto.coinbase_book",
+   "note": "spot only; carries a sequence number",
+   "tested_at": "2026-11-25T14:26:30.893665Z",
+   "url": "https://api.exchange.coinbase.com/products/BTC-USD/book",
+   "status": "verified",
+   "http_status": 200,
+   "detail": "ok"
+  },
+  {
+   "venue": "KRAKEN",
+   "feature": "order_book",
+   "adapter": "free_data.crypto.kraken_book",
+   "note": "spot only",
+   "tested_at": "2026-11-25T14:26:31.056956Z",
+   "url": "https://api.kraken.com/0/public/Depth",
+   "status": "verified",
+   "http_status": 200,
+   "detail": "ok"
+  },
+  {
+   "venue": "KRAKEN",
+   "feature": "futures_tickers",
+   "adapter": null,
+   "note": "perpetuals and dated futures with open interest and funding; reachable, adapter not implemented",
+   "tested_at": "2026-11-25T14:26:31.238834Z",
+   "url": "https://futures.kraken.com/derivatives/api/v3/tickers",
+   "status": "not_implemented",
+   "http_status": 200,
+   "detail": "ok"
+  },
+  {
+   "venue": "BITSTAMP",
+   "feature": "order_book",
+   "adapter": "free_data.crypto.bitstamp_book",
+   "note": "spot only",
+   "tested_at": "2026-11-25T14:26:31.480782Z",
+   "url": "https://www.bitstamp.net/api/v2/order_book/btcusd/",
+   "status": "verified",
+   "http_status": 200,
+   "detail": "ok"
+  },
+  {
+   "venue": "BYBIT",
+   "feature": "open_interest",
+   "adapter": "free_data.crypto.bybit_open_interest",
+   "note": "daily open interest in coins",
+   "tested_at": "2026-11-25T14:26:32.068325Z",
+   "url": "https://api.bybit.com/v5/market/open-interest",
+   "status": "blocked",
+   "http_status": 403,
+   "detail": "api.bybit.com refused the request (HTTP 403)"
+  },
+  {
+   "venue": "BYBIT",
+   "feature": "margin_tiers",
+   "adapter": null,
+   "note": "public risk-limit tiers",
+   "tested_at": "2026-11-25T14:26:32.140765Z",
+   "url": "https://api.bybit.com/v5/market/risk-limit",
+   "status": "blocked",
+   "http_status": 403,
+   "detail": "api.bybit.com refused the request (HTTP 403) (not asked again: it refused a moment ago)"
+  },
+  {
+   "venue": "BINANCE",
+   "feature": "open_interest",
+   "adapter": "free_data.crypto.binance_open_interest",
+   "note": "about 30 days of daily history",
+   "tested_at": "2026-11-25T14:26:32.140844Z",
+   "url": "https://fapi.binance.com/futures/data/openInterestHist",
+   "status": "blocked",
+   "http_status": 451,
+   "detail": "fapi.binance.com does not serve this location (HTTP 451)"
+  },
+  {
+   "venue": "COINBASE",
+   "feature": "derivatives",
+   "status": "unsupported",
+   "detail": "the Coinbase Exchange public API in use is spot only",
+   "adapter": null,
+   "tested_at": null,
+   "url": null,
+   "note": "the Coinbase Exchange public API in use is spot only"
+  },
+  {
+   "venue": "BITSTAMP",
+   "feature": "derivatives",
+   "status": "unsupported",
+   "detail": "Bitstamp lists no derivatives",
+   "adapter": null,
+   "tested_at": null,
+   "url": null,
+   "note": "Bitstamp lists no derivatives"
+  },
+  {
+   "venue": "KRAKEN",
+   "feature": "spot_derivatives_data",
+   "status": "unsupported",
+   "detail": "the spot API carries no derivatives data (Kraken Futures is a separate API)",
+   "adapter": null,
+   "tested_at": null,
+   "url": null,
+   "note": "the spot API carries no derivatives data (Kraken Futures is a separate API)"
+  },
+  {
+   "venue": "BINANCE",
+   "feature": "margin_tiers",
+   "status": "unsupported",
+   "detail": "Binance's leverage brackets need a signed (authenticated) request; no public endpoint exists, so none is used",
+   "adapter": null,
+   "tested_at": null,
+   "url": null,
+   "note": "Binance's leverage brackets need a signed (authenticated) request; no public endpoint exists, so none is used"
+  }
+ ],
+ "legend": {
+  "verified": "answered live with the fields the adapter reads",
+  "blocked": "refused from the network this was run on (403/451): unverified",
+  "failed": "answered with an error or an unexpected schema",
+  "unsupported": "no public endpoint",
+  "not_implemented": "reachable, no adapter yet"
+ }
+}

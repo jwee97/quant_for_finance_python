@@ -1,0 +1,90 @@
+{
+ "code": "0",
+ "data": [
+  {
+   "baseMaxLoan": "",
+   "imr": "0.01",
+   "instFamily": "BTC-USDT",
+   "instId": "",
+   "maxLever": "100",
+   "maxSz": "1000",
+   "minSz": "0",
+   "mmr": "0.004",
+   "optMgnFactor": "0",
+   "quoteMaxLoan": "",
+   "tier": "1",
+   "uly": "BTC-USDT"
+  },
+  {
+   "baseMaxLoan": "",
+   "imr": "0.015",
+   "instFamily": "BTC-USDT",
+   "instId": "",
+   "maxLever": "66.66",
+   "maxSz": "5000",
+   "minSz": "1000.01",
+   "mmr": "0.005",
+   "optMgnFactor": "0",
+   "quoteMaxLoan": "",
+   "tier": "2",
+   "uly": "BTC-USDT"
+  },
+  {
+   "baseMaxLoan": "",
+   "imr": "0.02",
+   "instFamily": "BTC-USDT",
+   "instId": "",
+   "maxLever": "50",
+   "maxSz": "20000",
+   "minSz": "5000.01",
+   "mmr": "0.0075",
+   "optMgnFactor": "0",
+   "quoteMaxLoan": "",
+   "tier": "3",
+   "uly": "BTC-USDT"
+  },
+  {
+   "baseMaxLoan": "",
+   "imr": "0.025",
+   "instFamily": "BTC-USDT",
+   "instId": "",
+   "maxLever": "40",
+   "maxSz": "40000",
+   "minSz": "20000.01",
+   "mmr": "0.0125",
+   "optMgnFactor": "0",
+   "quoteMaxLoan": "",
+   "tier": "4",
+   "uly": "BTC-USDT"
+  },
+  {
+   "baseMaxLoan": "",
+   "imr": "0.03",
+   "instFamily": "BTC-USDT",
+   "instId": "",
+   "maxLever": "33.33",
+   "maxSz": "60000",
+   "minSz": "40000.01",
+   "mmr": "0.0175",
+   "optMgnFactor": "0",
+   "quoteMaxLoan": "",
+   "tier": "5",
+   "uly": "BTC-USDT"
+  },
+  {
+   "baseMaxLoan": "",
+   "imr": "0.035",
+   "instFamily": "BTC-USDT",
+   "instId": "",
+   "maxLever": "28.57",
+   "maxSz": "80000",
+   "minSz": "60000.01",
+   "mmr": "0.0225",
+   "optMgnFactor": "0",
+   "quoteMaxLoan": "",
+   "tier": "6",
+   "uly": "BTC-USDT"
+  }
+ ],
+ "msg": ""
+}
