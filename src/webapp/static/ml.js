@@ -1628,7 +1628,7 @@
     s.busy = true;
     try {
       const since = s.series ? s.series.epoch.length : 0;
-      const d = await api("/api/training/run", { id, fit: s.fit || undefined, since });
+      const d = await api(`/api/training/run?id=${encodeURIComponent(id)}&since=${since}${s.fit ? "&fit=" + encodeURIComponent(s.fit) : ""}`);
       if (s.id !== id) return;
       const keys = ["epoch", "train_loss", "val_loss", "lr", "grad_norm", "seconds", "rss_mb", "peak_mb", "best_val"];
       if (!s.series || !since) s.series = Object.fromEntries(keys.map((k) => [k, d.series[k].slice()]));
