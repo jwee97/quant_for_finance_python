@@ -67,7 +67,7 @@
       Q.labField(b, { key: "move", label: "Size of the move (%)", kind: "number", step: 0.5, min: 0.5, max: 50, help: "Up for bullish, down for bearish; for neutral, the range it stays within" }, f, after);
       Q.labField(b, { key: "volView", label: "Volatility", kind: "choice", options: [["neutral", "No view"], ["long", "Implied volatility rises"], ["short", "Implied volatility falls"]] }, f, after);
       Q.labField(b, { key: "volMove", label: "Volatility change (points)", kind: "number", step: 0.5, min: 0, max: 50 }, f, after);
-      Q.labField(b, { key: "horizon", label: "Holding period (days)", kind: "number", step: 1, min: 3, max: 400 }, f, after);
+      Q.labField(b, { key: "ideaHorizon", label: "Holding period (days)", kind: "number", step: 1, min: 3, max: 400 }, f, after);
       const c = sec("3. Limits");
       Q.labField(c, { key: "maxLoss", label: "Largest loss you accept ($)", kind: "number", min: 0, help: "Blank: no limit. A structure with an unlimited loss is excluded when a limit is set" }, f, after);
       Q.labField(c, { key: "marginBudget", label: "Margin you can tie up ($, indicative)", kind: "number", min: 0 }, f, after);
@@ -98,7 +98,7 @@
     const m = O.mode, f = O.form;
     if (m === "scan") return W.request(O, () => [{ modes: ["scan"], path: "/api/options/scan", query: settings(), cacheKey: "scan:" + JSON.stringify(settings()) }], "Scanning the chain…");
     const base = settings();
-    if (m === "ideas") return W.request(O, () => [{ modes: ["ideas"], path: "/api/options/studio/recommend", body: { ...base, direction: f.direction, move: Number(f.move) / 100, vol_view: f.volView, vol_move: Number(f.volMove) / 100, horizon_days: Number(f.horizon),
+    if (m === "ideas") return W.request(O, () => [{ modes: ["ideas"], path: "/api/options/studio/recommend", body: { ...base, direction: f.direction, move: Number(f.move) / 100, vol_view: f.volView, vol_move: Number(f.volMove) / 100, horizon_days: Number(f.ideaHorizon),
       max_loss: f.maxLoss === "" ? undefined : Number(f.maxLoss), margin_budget: f.marginBudget === "" ? undefined : Number(f.marginBudget) } }], "Ranking the structures…");
     const path = { builder: "/api/options/studio/build", scenarios: "/api/options/studio/scenarios", tradecheck: "/api/options/studio/validate" }[m];
     return W.request(O, () => [{ modes: [m], path, body: { ...base, legs: legsBody(O), commission: Number(f.commission), ...(m === "tradecheck" ? { max_loss: f.maxLoss === "" ? undefined : Number(f.maxLoss), margin_budget: f.marginBudget === "" ? undefined : Number(f.marginBudget) } : {}) } }],
