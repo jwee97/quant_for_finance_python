@@ -79,6 +79,10 @@ def _mode(page, tab, mode):
     sel = f"#view-{tab} .tabsmall button[data-mode={mode}]"
     if not page.locator(sel).count():                                                                        # a view of another workflow: open its workflow first
         page.click(f"#view-{tab} .tabsmall button[data-views~={mode}]")
+        if not page.locator(sel).count():                                                                    # a workflow with a single view opens it by itself
+            page.wait_for_timeout(300)
+            if not page.locator(sel).count():
+                return
     page.click(sel)
 
 
@@ -736,7 +740,10 @@ def test_the_new_tabs_fit_a_phone(browser, live_ws, tab, ready):  # noqa: F811
         open_tab(pg, tab)
         pg.wait_for_selector(ready, timeout=90_000)
         assert pg.evaluate("document.documentElement.scrollWidth") <= 392
-        modes = [b.get_attribute("data-mode") for b in pg.query_selector_all(f"#view-{tab} .tabsmall button")]
+        modes = []
+        for b in pg.query_selector_all(f"#view-{tab} .tabsmall button"):                                    # a view, or a workflow that holds views
+            modes += [b.get_attribute("data-mode")] if b.get_attribute("data-mode") else (b.get_attribute("data-views") or "").split()
+        modes = list(dict.fromkeys(modes))
         assert len(modes) >= 5
         for mode in modes:
             _mode(pg, tab, mode)
@@ -861,8 +868,8 @@ def test_the_signals_tab_follows_two_markets_reads_them_says_what_the_data_is_an
 def test_a_strategy_backtest_on_each_market_tab_says_what_it_bought_and_sold(ws, tab):
     """The buy-and-sell card of the Backtest tab, on the Futures, Crypto and Options backtests: the latest orders, what is held, and the price with the trades marked, in each market's own terms."""
     ws.click(f"#tab-{tab}")
-    ws.wait_for_selector(f"#{tab} .labtop button[data-mode=backtest]", timeout=120_000)
-    ws.click(f"#{tab} .labtop button[data-mode=backtest]")
+    ws.wait_for_selector(f"#{tab} .labtop button", timeout=120_000)
+    _mode(ws, tab, "backtest")
     ws.wait_for_selector(f"#{tab} .runbar button.primary:not(:disabled)", timeout=60_000)
     ws.click(f"#{tab} .runbar button.primary")
     ws.wait_for_selector(f"#{tab}-results [data-role=actions]", timeout=240_000)
