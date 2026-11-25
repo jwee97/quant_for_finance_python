@@ -17,10 +17,39 @@ class CryptoResearchApi:
 
     def get_routes(self) -> dict:
         return {"/api/crypto/market": self.market, "/api/crypto/derivatives": self.derivatives, "/api/crypto/carry": self.carry, "/api/crypto/executable": self.executable,
-                "/api/crypto/execution": self.execution, "/api/crypto/calendar": self.calendar, "/api/crypto/margin-schedules": self.margin_schedules}
+                "/api/crypto/execution": self.execution, "/api/crypto/calendar": self.calendar, "/api/crypto/margin-schedules": self.margin_schedules, "/api/crypto/history": self.history}
 
     def post_routes(self) -> dict:
-        return {"/api/crypto/validate": self.validate, "/api/crypto/liquidation": self.liquidation, "/api/crypto/margin-schedules/refresh": self.margin_refresh}
+        return {"/api/crypto/validate": self.validate, "/api/crypto/liquidation": self.liquidation, "/api/crypto/margin-schedules/refresh": self.margin_refresh, "/api/crypto/history/record": self.history_record}
+
+    def history(self, q: dict) -> dict:
+        """``GET /api/crypto/history?coin=BTC``: what the recorder holds (books by venue with first/last time, rows, gaps; funding, open interest, futures), and when recording began. Nothing exists before that."""
+        from ..assets.crypto_store import CryptoStore
+
+        store, coin = CryptoStore(self.api.root), str(q.get("coin") or "BTC").upper()
+        books = []
+        base = store.dir / "books"
+        for venue_dir in sorted(base.glob("*")) if base.is_dir() else []:
+            for inst_dir in sorted(venue_dir.glob("*")):
+                if coin in inst_dir.name.upper() or inst_dir.name.upper().startswith(("X", "BTC" if coin == "BTC" else coin)):
+                    c = store.coverage(venue_dir.name, inst_dir.name)
+                    if c["state"] == "ok":
+                        books.append({"venue": venue_dir.name, "instrument": inst_dir.name, **c})
+        out = {"coin": coin, "books": books, "funding_rows": int(sum(len(store.funding(v.name, i.stem)) for v in (store.dir / "funding").glob("*") for i in v.glob("*.parquet"))) if (store.dir / "funding").is_dir() else 0,
+               "bytes": store.size_bytes(), "reading": "Recording begins when the recorder is first run (`python -m src.cli crypto-record`); no order book exists for earlier periods, and a gap in time or sequence is marked, never filled."}
+        return self._wrap("crypto_history", out, {"history": "downloaded" if books else "unavailable"})
+
+    def history_record(self, body: dict) -> dict:
+        """``POST /api/crypto/history/record {coin}``: one sampling pass of public, read-only requests into the store."""
+        from ..assets.crypto_store import CryptoStore, record_once
+        from ..assets.free_data.http import Http
+
+        coin = str(body.get("coin") or "BTC").upper()
+        try:
+            rep = record_once(Http(), CryptoStore(self.api.root), coin)
+        except ValueError as exc:
+            raise ApiError(str(exc)) from None
+        return self._wrap("crypto_record", rep, {"history": "downloaded"})
 
     def margin_schedules(self, q: dict) -> dict:
         """``GET /api/crypto/margin-schedules``: every stored schedule with its versions, source and retrieval time; which venues have a verified schedule and which are hypothetical."""

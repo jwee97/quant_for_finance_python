@@ -737,6 +737,24 @@ def cmd_market_sync(args, config) -> int:
     return code
 
 
+def cmd_crypto_record(args, config) -> int:
+    """Sample public order books, funding, open interest and Deribit's dated futures into data/user/crypto_history (read-only requests)."""
+    import time
+
+    from .assets.crypto_store import CryptoStore, StoreConfig, record_once
+    from .assets.free_data.http import Http
+
+    store = CryptoStore(config.root, StoreConfig(depth=args.depth, min_interval_s=args.interval, retention_days=args.retention_days, max_bytes=int(args.max_gb * 1e9)))
+    http = Http()
+    for i in range(args.passes):
+        rep = record_once(http, store, args.coin.upper())
+        print(f"pass {i + 1}/{args.passes}: books {rep['books']} failed {rep['failed']}")
+        store.prune()
+        if i + 1 < args.passes:
+            time.sleep(args.interval)
+    return 0
+
+
 def cmd_market_migrate(args, config) -> int:
     """Import the earlier iTick downloads into the normalised store (read only; repeating it imports nothing twice)."""
     from .marketdata import legacy
@@ -1016,6 +1034,9 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("market-sync", help="bring stored Massive bars up to date (incremental, gap-filling)")
     p.add_argument("symbols", nargs="+"); p.add_argument("--asset-class", choices=["stocks", "options", "futures", "crypto", "indices"], default="stocks"); p.add_argument("--start")
     p.add_argument("--unadjusted", action="store_true"); p.add_argument("--force", action="store_true"); p.set_defaults(func=cmd_market_sync)
+    p = sub.add_parser("crypto-record", help="record exchange order books, funding, open interest and dated futures to Parquet (public read-only requests; history starts when you first run it)")
+    p.add_argument("--coin", default="BTC"); p.add_argument("--passes", type=int, default=1); p.add_argument("--interval", type=float, default=30.0, help="seconds between passes (and the least spacing of a stored book)")
+    p.add_argument("--depth", type=int, default=50); p.add_argument("--retention-days", type=int, default=30); p.add_argument("--max-gb", type=float, default=2.0); p.set_defaults(func=cmd_crypto_record)
     p = sub.add_parser("market-migrate", help="import the earlier iTick downloads into the normalised store as provider itick (read only, repeatable)"); p.set_defaults(func=cmd_market_migrate)
     p = sub.add_parser("new-strategy", help="write a template for your own strategy into user_strategies/"); p.add_argument("name"); p.set_defaults(func=cmd_new_strategy)
     p = sub.add_parser("ask", help="ask the research database a question in words"); p.add_argument("question", nargs="+"); p.add_argument("--llm", help="model that writes the SQL (needs the anthropic package and an API key)"); p.set_defaults(func=cmd_ask)
