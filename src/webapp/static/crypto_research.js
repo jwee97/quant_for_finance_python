@@ -6,12 +6,12 @@
   const Q = window.QL, W = window.WS;
   if (!Q || !W) return;
   const C = Q.C, h = Q.h, css = Q.css, num = Q.num, pct = Q.pct, money = Q.money, smoney = Q.smoney, tile = Q.tile, chartCard = Q.chartCard, table = Q.simpleTable;
-  const R = { modes: new Set(["market", "derivs", "carry", "exec", "validate", "liq"]) };
+  const R = { modes: new Set(["market", "derivs", "carry", "exec", "validate", "liq", "replay"]), legacy: null };
   const GUIDE = "technique-crypto-funding-basis-and-venues";
   const head = (root, title, sub, d) => { Q.labHead(root, title, sub, GUIDE); if (d) W.provenance(root, d); };
   function unavailable(root, d, title) { const b = h("div", "unavail", root); h("strong", "", b, title + ": "); b.appendChild(document.createTextNode(d.reason || d.detail || "not available")); if (d.needs && d.needs.length) h("div", "hint", b, "Needed: " + d.needs.join("; ")); return b; }
   const fmtTile = (t) => (t.unit === "pct" ? pct(t.value, 2) : t.unit === "usd" ? money(t.value, 2) : num(t.value, 2));
-  R.defaults = () => ({ useTiers: true, haircut: "0",  mkDays: "365", derivSymbols: new Set(["BTC", "ETH"]), notional: "1000000", leverage: "3", cfee: "5", cslip: "2", financing: "0", cdays: "365", eVenue: "", eSide: "buy", eNotional: "100000", eType: "twap", eLimit: "5", eSlices: "6", eReplenish: "50", eProfile: "flat",
+  R.defaults = () => ({ rStrategy: "cross_exchange", rA: "KRAKEN:XBTUSD", rB: "COINBASE:BTC-USD", rSpot: "OKX:BTC-USDT", rPerp: "OKX-PERP:BTC-USDT-SWAP", rFunding: "OKX:BTC-USDT-SWAP", rCoin: "BTC", rNotional: "10000", rFeeA: "10", rFeeB: "10", rEdge: "0", rDelay: "1", rEntry: "10", rWindow: "9", rInventory: "100000", rSide: "buy", useTiers: true, haircut: "0",  mkDays: "365", derivSymbols: new Set(["BTC", "ETH"]), notional: "1000000", leverage: "3", cfee: "5", cslip: "2", financing: "0", cdays: "365", eVenue: "", eSide: "buy", eNotional: "100000", eType: "twap", eLimit: "5", eSlices: "6", eReplenish: "50", eProfile: "flat",
     eVol: "", eHours: "0", maxAge: "5", feeMode: "taker_taker", vStrategy: "tsmom", vParams: {}, vAssets: new Set(["BTC", "ETH"]), vFee: "5", vSlip: "2", vTarget: "", vLev: "1", vShort: true, vWalk: true, collateral: "100000", betaNote: "",
     positions: [{ symbol: "BTC", venue: "BINANCE", side: "long", notional: "200000" }, { symbol: "ETH", venue: "OKX", side: "short", notional: "50000" }] });
 
@@ -63,6 +63,17 @@
         { key: "vLev", label: "Largest exposure (x capital)", kind: "number", step: 0.5, min: 0.1, max: 10 }, { key: "vShort", label: "Allow shorts (through the perpetual, with its funding)", kind: "bool" }, { key: "vWalk", label: "Walk-forward over the strategy's own settings", kind: "bool" }]) Q.labField(c, s, f, after);
       h("p", "hint", c, "Daily marks on every calendar day, annualised by 365. The signal at one close trades the next day's return.");
     }
+    if (m === "replay") {
+      const b = sec("1. What to replay");
+      Q.labField(b, { key: "rStrategy", label: "Replay", kind: "choice", options: [["cross_exchange", "Cross-exchange spread"], ["funding_carry", "Spot-perpetual funding carry"], ["futures_basis", "Dated-futures basis convergence"], ["execution", "Execution cost history of one book"]] }, f, () => Q.renderLab(X));
+      const s = f.rStrategy, txt = (key, label, help) => Q.labField(b, { key, label, kind: "text", help }, f, after), nm = (key, label, step) => Q.labField(b, { key, label, kind: "number", step, min: 0 }, f, after);
+      if (s === "cross_exchange") { txt("rA", "Instrument A (VENUE:INSTRUMENT)", "as recorded, e.g. KRAKEN:XBTUSD"); txt("rB", "Instrument B (VENUE:INSTRUMENT)"); nm("rFeeA", "Taker fee A (bps)", 0.5); nm("rFeeB", "Taker fee B (bps)", 0.5); nm("rEdge", "Least net edge to trade (bps)", 0.5); nm("rDelay", "Delay of the second leg (s)", 0.5); nm("rInventory", "Inventory per venue ($)", 1000); }
+      if (s === "funding_carry") { txt("rSpot", "Spot book"); txt("rPerp", "Perpetual book"); txt("rFunding", "Funding settlements"); nm("rEntry", "Enter above (% a year, trailing)", 1); nm("rWindow", "Settlements in the trailing window", 1); }
+      if (s === "futures_basis") { txt("rCoin", "Coin"); nm("rEntry", "Enter above (% a year)", 1); }
+      if (s === "execution") { txt("rA", "Instrument (VENUE:INSTRUMENT)"); Q.labField(b, { key: "rSide", label: "Side", kind: "choice", options: [["buy", "Buy"], ["sell", "Sell"]] }, f, after); }
+      if (s !== "futures_basis") nm("rNotional", "Notional ($)", 1000);
+      h("p", "hint", b, "A replay uses only what the recorder stored (`python -m src.cli crypto-record`). A decision time without the data it needs is skipped and counted; nothing is filled in. It is not the hypothetical execution simulator.");
+    }
     if (m === "liq") {
       const b = sec("1. Account"); Q.labField(b, { key: "collateral", label: "Collateral (equity, $)", kind: "number", min: 1 }, f, after);
       Q.labField(b, { key: "useTiers", label: "Use illustrative exchange risk tiers (by position size)", kind: "bool", help: "Not any exchange's current schedule: replace it with your venue's tiers through the API" }, f, after);
@@ -103,10 +114,15 @@
     if (m === "exec") return W.request(X, () => { const q = { symbol: f.symbol, venue: f.eVenue || undefined, side: f.eSide, notional: num_(f.eNotional), order_type: f.eType, limit_bps: num_(f.eLimit), slices: num_(f.eSlices), replenish: num_(f.eReplenish) / 100, profile: f.eProfile, vol_annual: opt(f.eVol) === undefined ? undefined : num_(f.eVol) / 100, horizon_hours: num_(f.eHours) };
       return [{ modes: ["exec"], path: "/api/crypto/execution", query: q, cacheKey: key("exec", q) }]; }, "Walking the order book…");
     if (m === "validate") return W.request(X, () => { const params = f.vParams[f.vStrategy] || {}; return [{ modes: ["validate"], job: true, path: "/api/crypto/validate", body: { strategy: f.vStrategy, assets: [...f.vAssets], params, fees_bps: num_(f.vFee), slippage_bps: num_(f.vSlip), target_vol: opt(f.vTarget) === undefined ? undefined : num_(f.vTarget) / 100, max_leverage: num_(f.vLev), allow_short: f.vShort, walk_forward: f.vWalk } }]; }, "Validating on the 24/7 calendar…");
+    if (m === "replay") return W.request(X, () => { const s = f.rStrategy, n = Number(f.rNotional), base = { strategy: s, notional: n };
+      const body = s === "cross_exchange" ? { ...base, a: f.rA, b: f.rB, fee_a_bps: num_(f.rFeeA), fee_b_bps: num_(f.rFeeB), min_edge_bps: num_(f.rEdge), leg_delay_s: num_(f.rDelay), inventory_usd: num_(f.rInventory) }
+        : s === "funding_carry" ? { ...base, spot: f.rSpot, perp: f.rPerp, funding: f.rFunding, entry_annualised: num_(f.rEntry) / 100, window_settlements: num_(f.rWindow) }
+        : s === "futures_basis" ? { strategy: s, coin: f.rCoin, entry_annualised: num_(f.rEntry) / 100 } : { ...base, a: f.rA, side: f.rSide };
+      return [{ modes: ["replay"], path: "/api/crypto/replay", body }]; }, "Replaying the recording…");
     return W.request(X, () => [{ modes: ["liq"], path: "/api/crypto/liquidation", body: { collateral: num_(f.collateral), use_tiers: f.useTiers, collateral_haircut: num_(f.haircut) / 100, positions: f.positions.map((p) => ({ symbol: p.symbol, venue: p.venue, side: p.side, notional: num_(p.notional) })) } }], "Revaluing under shocks…");
   };
-  R.auto = (X) => X.mode !== "validate" && X.mode !== "liq" && X.catalog;
-  R.empty = (X, root) => { const t = { validate: ["Validate a strategy on observed history", "Directional, relative-value, derivatives and risk-managed strategies on a 24/7 calendar, with costs, constraints, benchmarks and a walk-forward."], liq: ["Stress a perpetual book", "Positions and collateral: leverage, the shock at which the account is liquidated, and the table of shocks."] }[X.mode] || ["Nothing yet", "Press the button."]; Q.labEmpty(root, X, t[0], [t[1]], X.runLabel[X.mode]); };
+  R.auto = (X) => X.mode !== "validate" && X.mode !== "liq" && X.mode !== "replay" && X.catalog;
+  R.empty = (X, root) => { const t = { replay: ["Replay recorded observations", "Cross-exchange spreads, funding carry, dated-futures basis and execution costs on the books, settlements and curves the recorder stored, with every decision limited to what was known at its time."], validate: ["Validate a strategy on observed history", "Directional, relative-value, derivatives and risk-managed strategies on a 24/7 calendar, with costs, constraints, benchmarks and a walk-forward."], liq: ["Stress a perpetual book", "Positions and collateral: leverage, the shock at which the account is liquidated, and the table of shocks."] }[X.mode] || ["Nothing yet", "Press the button."]; Q.labEmpty(root, X, t[0], [t[1]], X.runLabel[X.mode]); };
 
   /* Keep a run: its request (so it can be repeated), its headline numbers and where its data came from. */
   const METRICS = {
@@ -149,6 +165,7 @@
     if (lq.state === "ok") W.kv(h("div", "card", root), "Recent liquidations (" + lq.venue + ", " + num(lq.window_hours, 1) + " hours)", [["Events", String(lq.events)], ["Longs liquidated", String(lq.longs_liquidated) + (lq.longs_notional === undefined ? "" : " · " + money(lq.longs_notional, 0))], ["Shorts liquidated", String(lq.shorts_liquidated) + (lq.shorts_notional === undefined ? "" : " · " + money(lq.shorts_notional, 0))], ["Note", lq.note]]); else unavailable(root, lq, "Liquidations");
     const ts = d.dated_futures;
     if (ts.state === "ok") { const c = h("div", "card", root); h("h3", "", c, "Dated futures term structure (" + ts.venue + ")"); table(c, [{ label: "Contract", get: (r) => r.instrument }, { label: "Days", num: true, get: (r) => num(r.days, 0) }, { label: "Basis", num: true, get: (r) => pct(r.basis, 2) }, { label: "Annualised", num: true, get: (r) => pct(r.annualised_basis, 1) }, { label: "Open interest", num: true, get: (r) => (r.open_interest === null ? "" : num(r.open_interest, 0)) }], ts.contracts); h("p", "hint", c, ts.note + ", fetched " + ts.fetched_at + "."); } else unavailable(root, ts, "Dated futures term structure");
+    if (R.legacy) appended(root, "Funding by venue and coin", "/api/crypto/funding?" + new URLSearchParams({ symbols: [...X.form.derivSymbols].join(","), days: 120 }).toString(), (slot, f) => R.legacy.funding(slot, f));
     save(root, "crypto_derivatives", `funding, ${[...new Set(d.rows.map((r) => r.symbol))].join("+")}`, d, "/api/crypto/derivatives", X.lastBody, false, [...new Set(d.rows.map((r) => r.symbol))]);
   }
   function buildCarry(X, root, d) {
@@ -168,6 +185,7 @@
     W.kv(c, "Funding", [["Average per day", smoney(fr.mean_per_day_usd)], ["Days the short paid", String(fr.negative_days)], ["Longest run of paid days", String(fr.longest_negative_run)], ["Worst fall in cumulative funding", smoney(fr.worst_cumulative_drawdown_usd)], ["Days of funding that pay the four fills", fr.breakeven_days === null ? "never (funding is not positive)" : num(fr.breakeven_days, 1)]]);
     table(c, [{ label: "Perpetual price up", get: (r) => r[0] }, { label: "Margin ratio", num: true, get: (r) => num(r[1].margin_ratio, 2) }, { label: "Top-up needed", num: true, get: (r) => money(r[1].topup_needed, 0) }], Object.entries(m.shock_table));
     const dd = h("details", "how", root); h("summary", "", dd, "Assumptions"); for (const a of d.assumptions) h("p", "hint", dd, a);
+    if (R.legacy) appended(root, "Basis of the perpetual over spot", "/api/crypto/overview?" + new URLSearchParams({ symbol: d.symbol, days: 365, fee_bps: X.form.cfee }).toString(), (slot, o) => R.legacy.basis(slot, o));
     save(root, "crypto_carry", `${d.symbol} carry, ${d.leverage}x`, d, "/api/crypto/carry", X.lastBody, false, [d.symbol]);
   }
   function buildExec(X, root, d) {
@@ -219,9 +237,38 @@
     const dd = h("details", "how", root); h("summary", "", dd, "Assumptions"); for (const a of d.assumptions) h("p", "hint", dd, a);
     save(root, "crypto_liquidation", `${d.positions.length}-position book`, d, "/api/crypto/liquidation", X.lastBody, true, [...new Set(d.positions.map((p) => p.symbol))]);
   }
-  R.build = (X, root, d, body) => { X.lastBody = body; return ({ market: buildMarket, derivs: buildDerivs, carry: buildCarry, exec: buildExec, validate: buildValidate, liq: buildLiq })[X.mode](X, root, d, body); };
+  function buildReplay(X, root, d, body) {
+    head(root, "Historical replay", d.state === "ok" ? `${d.strategy.replace(/_/g, " ")} · ${d.mode.label}` : "unavailable", d);
+    const rec = h("div", "card", root); h("h3", "", rec, "Recorded history");
+    const slot = h("div", "", rec); Q.loading(slot, "Reading what is recorded…");
+    Q.api("/api/crypto/history?coin=" + encodeURIComponent((X.form.symbol || "BTC"))).then((c) => { slot.replaceChildren();
+      if (c.books.length) table(slot, [{ label: "Venue", get: (r) => r.venue }, { label: "Instrument", get: (r) => r.instrument }, { label: "Rows", num: true, get: (r) => r.rows }, { label: "First", get: (r) => new Date(r.first_ms).toISOString().slice(0, 19) + "Z" }, { label: "Last", get: (r) => new Date(r.last_ms).toISOString().slice(0, 19) + "Z" }, { label: "Gaps", num: true, get: (r) => r.time_gaps.length + r.sequence_gaps }], c.books);
+      h("p", "hint", slot, c.books.length ? c.reading : "Nothing is recorded yet. " + c.reading);
+      const b = h("button", "btn", slot, "Record one pass now (public, read-only requests)"), msg = h("span", "hint", slot); b.dataset.role = "record-pass";
+      b.addEventListener("click", async () => { b.disabled = true; try { const r = await Q.api("/api/crypto/history/record", { coin: X.form.symbol || "BTC" }); msg.textContent = ` Stored ${Object.keys(r.books).length} books; failed: ${Object.keys(r.failed).join(", ") || "none"}.`; } catch (e) { msg.textContent = " " + e.message; } finally { b.disabled = false; } });
+    }, () => { slot.replaceChildren(); });
+    if (d.state !== "ok") { unavailable(root, d, "Replay"); return; }
+    const k = h("div", "earnrow", root);
+    tile(k, "Net P&L", smoney(d.net_pnl), { text: `gross ${smoney(d.gross_pnl)} · fees ${money(d.fees, 2)}`, dir: d.net_pnl >= 0 ? "up" : "down" }); tile(k, "Funding", smoney(d.funding || 0), { text: `financing ${money(d.financing || 0, 2)}` }); tile(k, "Max drawdown", smoney(d.max_drawdown));
+    tile(k, "Trades", String(d.trades), { text: d.turnover === null || d.turnover === undefined ? "" : `turnover ${num(d.turnover, 2)}x` }); tile(k, "Slippage in gross", smoney(d.slippage_included_in_gross || 0));
+    const cov = d.coverage || {}; W.kv(h("div", "card", root), "Data coverage", Object.entries(cov).filter(([, v]) => typeof v !== "object").map(([a, v]) => [a.replace(/_/g, " "), String(v)]).concat(cov.skipped ? Object.entries(cov.skipped).map(([a, v]) => ["skipped: " + a.replace(/_/g, " "), String(v)]) : []));
+    const rows = d.trades_detail || [];
+    if (rows.length) { const c = h("div", "card", root); h("h3", "", c, "Audit trail"); table(c, [{ label: "Time", get: (r) => new Date(r.time_ms || r.open_ms).toISOString().slice(0, 19) + "Z" }, { label: "Status", get: (r) => r.status }, { label: "Qty", num: true, get: (r) => num(r.qty, 4) },
+      { label: "Gross", num: true, get: (r) => smoney(r.gross) }, { label: "Fees", num: true, get: (r) => money(r.fees, 2) }, { label: "Funding", num: true, get: (r) => (r.funding === undefined ? "" : smoney(r.funding)) }, { label: "Detail", get: (r) => (r.decision_edge_bps !== undefined ? `edge at decision ${num(r.decision_edge_bps, 2)} bps; second leg ${num(r.leg2_delay_s, 2)} s later` : r.settlements !== undefined ? `${r.settlements} settlements, ${r.settlements_missed} missing` : r.instrument || "") }], rows.slice(0, 200)); }
+    for (const u of d.unhedged || []) h("p", "verdict-bad", root, `Left unhedged and excluded: ${u.note}`);
+    if (d.open_position) h("p", "hint", root, d.open_position.note); for (const o of d.open_positions || []) h("p", "hint", root, `${o.instrument}: ${o.note}`);
+    if (d.strategy === undefined && d.slippage_bps) W.kv(h("div", "card", root), "Market-order cost over the recorded books", [["Median slippage", num(d.slippage_bps.median, 2) + " bps"], ["90th percentile", num(d.slippage_bps.p90, 2) + " bps"], ["Books fully filled", pct(d.fully_filled_share, 0)], ["Observations", String(d.observations)]]);
+    const dd = h("details", "how", root); h("summary", "", dd, "Assumptions and limits"); for (const a of d.assumptions || [d.note || ""]) h("p", "hint", dd, a);
+    if (window.Experiments) window.Experiments.saveButton(root, { kind: "crypto_replay", name: `replay: ${d.strategy || "execution"}`, request: { path: "/api/crypto/replay", body }, metrics: { net_pnl: d.net_pnl || 0, gross_pnl: d.gross_pnl || 0, fees: d.fees || 0, max_drawdown: d.max_drawdown || 0, trades: d.trades || 0 }, provenance: d.provenance, universe: [], assumptions: d.assumptions });
+  }
+  R.build = (X, root, d, body) => { X.lastBody = body; return ({ market: buildMarket, derivs: buildDerivs, carry: buildCarry, exec: buildExec, validate: buildValidate, liq: buildLiq, replay: buildReplay })[X.mode](X, root, d, body); };
 
   /* The depth-aware executable edge of the cross-venue view: fetched after the quoted spreads and drawn under them. */
+  /* A section of another view fetched under this one, so that a merged view keeps everything its parts showed. */
+  function appended(root, title, path, draw) {
+    const card = h("div", "card", root); h("h3", "", card, title); const slot = h("div", "", card); Q.loading(slot, "Loading…");
+    Q.api(path).then((d) => { slot.replaceChildren(); draw(slot, d); }, (e) => { slot.replaceChildren(); h("p", "hint", slot, e.message); });
+  }
   R.executable = (X, root, symbol, notional) => {
     const card = h("div", "card", root); h("h3", "", card, "Executable on the real order books"); const body = h("div", "", card); Q.loading(body, "Walking both order books…");
     Q.api("/api/crypto/executable?symbol=" + encodeURIComponent(symbol) + "&notional=" + encodeURIComponent(notional)).then((d) => {

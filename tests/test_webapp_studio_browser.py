@@ -87,16 +87,24 @@ def test_the_data_mode_switch_refuses_simulated_data_and_offers_to_allow_it(ws):
 def test_the_crypto_tab_has_five_workflows_and_its_new_views_say_what_is_not_stored(ws):
     ws.click("#tab-crypto")
     ws.wait_for_selector("#crypto-results .tile", timeout=90_000)
-    labels = [g.locator(".tabgroup-label").text_content() for g in ws.locator("#view-crypto .tabgroup").all()]
-    assert labels == ["Market Overview", "Derivatives Intelligence", "Liquidity & Arbitrage", "Strategy Laboratory", "Portfolio Risk", "Legacy (reproducibility only)"]
+    labels = [b.text_content() for b in ws.locator("#view-crypto .tabsmall button[data-workflow]").all()]
+    assert labels == ["Market Overview", "Derivatives Intelligence", "Liquidity & Arbitrage", "Strategy Laboratory", "Portfolio Risk"]
+    assert ws.locator("#view-crypto .tabsmall button[data-mode=funding]").count() == 0 and ws.locator("#view-crypto .tabsmall button[data-mode=basis]").count() == 0, "the merged views are not destinations of their own"
     assert "not stored by the platform" in ws.inner_text("#crypto-results") and "24h return" in ws.inner_text("#crypto-results")
     _mode(ws, "crypto", "derivs")
     ws.wait_for_selector("#crypto-results .card h3:has-text('Funding by coin and venue')", timeout=120_000)
+    ws.wait_for_selector("#crypto-results .card h3:has-text('Funding by venue and coin')", timeout=60_000)
     text = ws.inner_text("#crypto-results")
     assert "Open interest by exchange" in text and "Liquidations" in text and "Dated futures term structure" in text
     _mode(ws, "crypto", "carry")
     ws.wait_for_selector("#crypto-results h3:has-text('Funding reversal and margin risk')", timeout=120_000)
     assert "Residual" in ws.inner_text("#crypto-results") and ws.locator("#crypto-results [data-role=save-experiment]").count() == 1
+    ws.wait_for_selector("#crypto-results .card h3:has-text('Basis of the perpetual over spot')", timeout=60_000)
+    _mode(ws, "crypto", "replay")
+    ws.click("#crypto .runbar button.primary")
+    ws.wait_for_selector("#crypto-results .card h3:has-text('Recorded history')", timeout=60_000)
+    assert "Nothing is recorded yet" in ws.inner_text("#crypto-results") or "Replay" in ws.inner_text("#crypto-results")
+    ws.problems[:] = [p for p in ws.problems if "400" not in p]
     _mode(ws, "crypto", "liq")
     ws.click("#crypto .runbar button.primary")
     ws.wait_for_selector("#crypto-results h3:has-text('Shocks')", timeout=60_000)

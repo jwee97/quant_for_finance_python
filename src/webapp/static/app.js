@@ -1288,7 +1288,21 @@
     const panel = h("aside", "card panel", root); panel.setAttribute("aria-label", lab.title + " setup");
     const top = h("div", "labtop", panel); h("h2", "", top, lab.title); h("p", "hint", top, lab.about);
     if (lab.dataMode) dataModeBar(top);
-    if (lab.modes.length > 1) {                                                              // a tab with one mode has nothing to switch between
+    if (lab.aliases && lab.aliases[lab.mode]) lab.mode = lab.aliases[lab.mode];                // an older name of a view that was merged into another still opens the right one
+    if (lab.workflows) {                                                                       // a workspace may offer a few workflows, each with its own views: the workflow buttons on top, its views below
+      lab.lastView = lab.lastView || {};
+      const wf = lab.workflows.find(([, , views]) => views.includes(lab.mode)) || lab.workflows[0];
+      lab.lastView[wf[0]] = lab.mode;
+      const label = new Map(lab.modes), pills = h("div", "tabsmall", top); pills.setAttribute("role", "tablist"); pills.setAttribute("aria-label", lab.title + " workflows");
+      for (const [id, text, views] of lab.workflows) {
+        const b = h("button", "", pills, text); b.dataset.workflow = id; b.dataset.views = views.join(" "); b.setAttribute("role", "tab"); b.setAttribute("aria-selected", String(id === wf[0])); b.setAttribute("aria-controls", lab.id + "-results");
+        b.addEventListener("click", () => { lab.mode = lab.lastView[id] || views[0]; renderLab(lab); });
+      }
+      if (wf[2].length > 1) {
+        const sub = h("div", "tabsmall subviews", top); sub.setAttribute("role", "tablist"); sub.setAttribute("aria-label", wf[1] + " views");
+        for (const key of wf[2]) { const b = h("button", "", sub, label.get(key)); b.dataset.mode = key; b.setAttribute("role", "tab"); b.setAttribute("aria-selected", String(key === lab.mode)); b.setAttribute("aria-controls", lab.id + "-results"); b.addEventListener("click", () => { lab.mode = key; renderLab(lab); }); }
+      }
+    } else if (lab.modes.length > 1) {                                                       // a tab with one mode has nothing to switch between
       const pills = h("div", "tabsmall", top); pills.setAttribute("role", "tablist"); pills.setAttribute("aria-label", lab.title + " views");
       const label = new Map(lab.modes), clusters = lab.groups ? lab.groups : [[null, lab.modes.map((m) => m[0])]];              // a workspace may arrange its views in named workflows; every view keeps its own button
       for (const [group, keys] of clusters) {

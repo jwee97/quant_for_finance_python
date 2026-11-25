@@ -17,7 +17,7 @@ import uuid
 from pathlib import Path
 
 KINDS = ("options_calibration", "options_surface", "options_strategy", "options_walkforward", "options_studio", "options_scenarios", "options_validation", "futures_backtest", "futures_spread", "futures_research",
-         "crypto_validation", "crypto_carry", "crypto_execution", "crypto_liquidation", "crypto_derivatives", "other")
+         "crypto_validation", "crypto_replay", "crypto_carry", "crypto_execution", "crypto_liquidation", "crypto_derivatives", "other")
 ID = re.compile(r"^[A-Za-z0-9_-]{6,40}$")
 MAX_METRICS = 60
 

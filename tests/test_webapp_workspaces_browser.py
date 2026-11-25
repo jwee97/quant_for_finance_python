@@ -76,7 +76,10 @@ def tune_ws(browser, live_tune):  # noqa: F811
 
 
 def _mode(page, tab, mode):
-    page.click(f"#view-{tab} .tabsmall button[data-mode={mode}]")
+    sel = f"#view-{tab} .tabsmall button[data-mode={mode}]"
+    if not page.locator(sel).count():                                                                        # a view of another workflow: open its workflow first
+        page.click(f"#view-{tab} .tabsmall button[data-views~={mode}]")
+    page.click(sel)
 
 
 def _open_all(page, tab):
@@ -318,8 +321,8 @@ def test_the_futures_signals_board_reads_every_rule_on_every_root(ws):
 def test_the_crypto_views_keep_real_and_simulated_apart_and_count_what_survives_the_fees(ws):
     ws.click("#tab-crypto")
     ws.wait_for_selector("#crypto-results .tile", timeout=90_000)
-    _mode(ws, "crypto", "funding")
-    ws.wait_for_selector("#crypto-results table.data", timeout=60_000)
+    _mode(ws, "crypto", "derivs")
+    ws.wait_for_selector("#crypto-results .card:has(h3:has-text('Funding by venue and coin')) table.data", timeout=90_000)
     text = ws.inner_text("#crypto-results")
     assert "DERIBIT" in text and "Simulated: a model" in text and ws.locator("#crypto-results svg.chart").count() >= 1
     _mode(ws, "crypto", "cross")
@@ -532,7 +535,7 @@ def test_the_crypto_tab_downloads_a_coin_and_reads_its_real_books_and_funding(fr
     page.wait_for_selector("#crypto-results svg.chart", timeout=60_000)
     text = page.inner_text("#crypto-results")
     assert "Real order books taken" in text and "OKX is quoted in USDT" in text and "n/a" in text, "books too thin for $1 million say n/a instead of a made-up cost"
-    _mode(page, "crypto", "funding")
+    _mode(page, "crypto", "derivs")
     page.wait_for_selector("#crypto-results table.data", timeout=60_000)
     assert "downloaded" in page.locator("#crypto-results").text_content().lower()
 
