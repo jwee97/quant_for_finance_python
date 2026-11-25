@@ -20,7 +20,7 @@ class CryptoResearchApi:
                 "/api/crypto/execution": self.execution, "/api/crypto/calendar": self.calendar, "/api/crypto/margin-schedules": self.margin_schedules, "/api/crypto/history": self.history}
 
     def post_routes(self) -> dict:
-        return {"/api/crypto/validate": self.validate, "/api/crypto/liquidation": self.liquidation, "/api/crypto/margin-schedules/refresh": self.margin_refresh, "/api/crypto/history/record": self.history_record}
+        return {"/api/crypto/validate": self.validate, "/api/crypto/liquidation": self.liquidation, "/api/crypto/margin-schedules/refresh": self.margin_refresh, "/api/crypto/history/record": self.history_record, "/api/crypto/replay": self.replay}
 
     def history(self, q: dict) -> dict:
         """``GET /api/crypto/history?coin=BTC``: what the recorder holds (books by venue with first/last time, rows, gaps; funding, open interest, futures), and when recording began. Nothing exists before that."""
@@ -31,13 +31,50 @@ class CryptoResearchApi:
         base = store.dir / "books"
         for venue_dir in sorted(base.glob("*")) if base.is_dir() else []:
             for inst_dir in sorted(venue_dir.glob("*")):
-                if coin in inst_dir.name.upper() or inst_dir.name.upper().startswith(("X", "BTC" if coin == "BTC" else coin)):
+                if coin in inst_dir.name.upper() or (coin == "BTC" and "XBT" in inst_dir.name.upper()):
                     c = store.coverage(venue_dir.name, inst_dir.name)
                     if c["state"] == "ok":
                         books.append({"venue": venue_dir.name, "instrument": inst_dir.name, **c})
         out = {"coin": coin, "books": books, "funding_rows": int(sum(len(store.funding(v.name, i.stem)) for v in (store.dir / "funding").glob("*") for i in v.glob("*.parquet"))) if (store.dir / "funding").is_dir() else 0,
                "bytes": store.size_bytes(), "reading": "Recording begins when the recorder is first run (`python -m src.cli crypto-record`); no order book exists for earlier periods, and a gap in time or sequence is marked, never filled."}
         return self._wrap("crypto_history", out, {"history": "downloaded" if books else "unavailable"})
+
+    @staticmethod
+    def _inst(body: dict, key: str) -> tuple:
+        raw = str(body.get(key) or "")
+        if ":" not in raw:
+            raise ApiError(f"{key} must be VENUE:INSTRUMENT, for example OKX-PERP:BTC-USDT-SWAP")
+        venue, inst = raw.split(":", 1)
+        return venue.strip().upper(), inst.strip().upper()
+
+    def replay(self, body: dict) -> dict:
+        """``POST /api/crypto/replay``: replay recorded observations (``assets.crypto_replay``). ``strategy`` is ``cross_exchange`` (``a``, ``b``), ``funding_carry`` (``spot``, ``perp``, ``funding``), ``futures_basis``
+        (``coin``) or ``execution`` (``a``, ``side``, ``notional``). Instruments are ``VENUE:INSTRUMENT``. Only recorded books, settlements and observations are used; a gap is reported, never filled."""
+        from ..assets import crypto_replay as rp
+        from ..assets.crypto_store import CryptoStore
+
+        store, name = CryptoStore(self.api.root), str(body.get("strategy") or "")
+        try:
+            if name == "cross_exchange":
+                out = rp.cross_exchange(store, self._inst(body, "a"), self._inst(body, "b"), _number(body, "notional", 10_000.0, 100.0, 1e8), (_number(body, "fee_a_bps", 10.0, 0.0, 200.0), _number(body, "fee_b_bps", 10.0, 0.0, 200.0)),
+                                        _number(body, "max_age_s", 5.0, 0.5, 600.0), _number(body, "max_skew_s", 2.0, 0.1, 600.0), _number(body, "min_edge_bps", 0.0, -50.0, 500.0), _number(body, "leg_delay_s", 1.0, 0.0, 60.0),
+                                        _number(body, "inventory_usd", 100_000.0, 100.0, 1e9))
+            elif name == "funding_carry":
+                out = rp.funding_carry(store, self._inst(body, "spot"), self._inst(body, "perp"), self._inst(body, "funding"), _number(body, "notional", 10_000.0, 100.0, 1e8), _number(body, "entry_annualised", 0.10, -1.0, 5.0),
+                                       _number(body, "exit_annualised", 0.0, -1.0, 5.0), int(_number(body, "window_settlements", 9, 1, 200, integer=True)), (_number(body, "fee_spot_bps", 10.0, 0.0, 200.0), _number(body, "fee_perp_bps", 5.0, 0.0, 200.0)),
+                                       _number(body, "max_age_s", 10.0, 0.5, 600.0), _number(body, "financing_apr", 0.0, 0.0, 1.0), _number(body, "leverage", 3.0, 1.0, 125.0), _number(body, "mmr", 0.005, 0.0005, 0.5))
+            elif name == "futures_basis":
+                out = rp.futures_basis(store, str(body.get("venue") or "DERIBIT").upper(), str(body.get("coin") or "BTC").upper(), _number(body, "entry_annualised", 0.05, -1.0, 5.0), _number(body, "fee_bps", 3.5, 0.0, 200.0),
+                                       _number(body, "notional", 10_000.0, 100.0, 1e8))
+            elif name == "execution":
+                v, i = self._inst(body, "a")
+                out = rp.execution_history(store, v, i, _choice(body, "side", "buy", ("buy", "sell")), _number(body, "notional", 10_000.0, 100.0, 1e9))
+            else:
+                raise ApiError("strategy must be cross_exchange, funding_carry, futures_basis or execution")
+        except ValueError as exc:
+            raise ApiError(str(exc)) from None
+        parts = {"replay": "downloaded" if out.get("state") == "ok" else "unavailable"}
+        return self._wrap("crypto_replay", out, parts, [], None, ["Historical replay of recorded observations: not a simulation of liquidity that was not observed."])
 
     def history_record(self, body: dict) -> dict:
         """``POST /api/crypto/history/record {coin}``: one sampling pass of public, read-only requests into the store."""

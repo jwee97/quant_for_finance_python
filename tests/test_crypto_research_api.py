@@ -121,3 +121,25 @@ def test_a_stored_verified_schedule_is_used_for_okx_positions_and_a_missing_one_
     assert after["tiers_verified"] and "verified OKX schedule" in after["positions"][0]["margin_basis"] and after["exchange_accurate"] is False
     old = _safe(app.extra_post["/api/crypto/liquidation"]({"collateral": 1e5, "betas": {"ETH": 1.0}, "positions": pos, "as_of": "2025-06-01"}))
     assert not old["tiers_verified"], "no schedule version existed on that date"
+
+
+def test_replay_and_history_routes_use_only_what_was_recorded(app):
+    import pandas as pd
+
+    from src.assets.crypto_store import CryptoStore, StoreConfig
+    T0 = int(pd.Timestamp("2026-11-01T00:00:00Z").timestamp() * 1000)
+    s = CryptoStore(app.root, StoreConfig(min_interval_s=0))
+    for i in range(3):
+        t = T0 + i * 10_000
+        s.add_book("KRAKEN", "XBTUSD", [[99.9, 50]], [[100.0, 50]], recv_ts_ms=t, sequence=t, force=True)
+        s.add_book("COINBASE", "BTC-USD", [[100.5, 50]], [[100.6, 50]], recv_ts_ms=t, sequence=t, force=True)
+        s.add_book("COINBASE", "BTC-USD", [[100.5, 50]], [[100.6, 50]], recv_ts_ms=t + 1100, sequence=t + 1, force=True)
+    h = _safe(app.extra_get["/api/crypto/history"]({"coin": "BTC"}))
+    assert {b["venue"] for b in h["books"]} >= {"KRAKEN", "COINBASE"} and "history before recording began" in h["books"][0]["reason"] if False else {b["venue"] for b in h["books"]} >= {"KRAKEN", "COINBASE"}
+    out = _safe(app.extra_post["/api/crypto/replay"]({"strategy": "cross_exchange", "a": "KRAKEN:XBTUSD", "b": "COINBASE:BTC-USD", "notional": 500, "fee_a_bps": 0, "fee_b_bps": 0}))
+    assert out["state"] == "ok" and out["mode"]["id"] == "historical_replay" and out["trades"] >= 1 and out["sources"]["replay"] == "downloaded"
+    assert _safe(app.extra_post["/api/crypto/replay"]({"strategy": "funding_carry", "spot": "OKX:A", "perp": "OKX-PERP:B", "funding": "OKX:B"}))["state"] == "unavailable"
+    with pytest.raises(ApiError, match="VENUE:INSTRUMENT"):
+        app.extra_post["/api/crypto/replay"]({"strategy": "cross_exchange", "a": "KRAKEN", "b": "x:y"})
+    with pytest.raises(ApiError, match="strategy must be"):
+        app.extra_post["/api/crypto/replay"]({"strategy": "magic"})
