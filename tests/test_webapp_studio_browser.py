@@ -10,6 +10,11 @@ from tests.test_webapp_workspaces_browser import _mode, live_ws, ws  # noqa: F40
 sync_api = pytest.importorskip("playwright.sync_api")
 
 
+def run(ws):
+    ws.wait_for_selector("#options .runbar button.primary:not([disabled])", timeout=60_000)
+    ws.click("#options .runbar button.primary")
+
+
 def open_options(ws):
     ws.click("#tab-options")
     ws.wait_for_selector("#options-results .tile", timeout=90_000)
@@ -21,6 +26,7 @@ def test_the_options_studio_is_four_workflows_and_the_scanner_lists_leads_with_q
     assert groups["Strategy Studio"][:5] == ["Opportunity scanner", "Ideas from a view", "Strategy builder", "Scenario laboratory", "Trade validation"]
     assert "Synthetic validation" in groups["Portfolio and validation"]
     _mode(ws, "options", "scan")
+    run(ws)
     ws.wait_for_selector("#options-results .card h3:has-text('Leads')", timeout=120_000)
     text = ws.inner_text("#options-results")
     assert "Implied / realised" in text or "against its own history" in text
@@ -57,7 +63,7 @@ def test_a_position_of_real_contracts_is_priced_revalued_checked_and_can_be_save
 def test_ideas_rank_structures_from_a_view_and_load_their_legs_into_the_builder(ws):
     open_options(ws)
     _mode(ws, "options", "ideas")
-    ws.click("#options .runbar button.primary")
+    run(ws)
     ws.wait_for_selector("#options-results .card h3:has-text('Ranked by profit if you are right')", timeout=120_000)
     assert "If wrong" in ws.inner_text("#options-results")
     ws.locator("#options-results button:has-text('Use these legs')").first.click()
@@ -74,7 +80,8 @@ def test_the_data_mode_switch_refuses_simulated_data_and_offers_to_allow_it(ws):
     ws.click("#options-results [data-role=allow-model]")
     ws.wait_for_selector("#options-results .tile", timeout=90_000)
     assert ws.locator("#options [data-role=data-mode] button[data-mode=model]").get_attribute("aria-pressed") == "true"
-    ws.problems.clear()
+    ws.wait_for_timeout(500)
+    ws.problems[:] = [p for p in ws.problems if "400" not in p]                                                  # the refusal is a 400, which the console reports
 
 
 def test_the_crypto_tab_has_five_workflows_and_its_new_views_say_what_is_not_stored(ws):
