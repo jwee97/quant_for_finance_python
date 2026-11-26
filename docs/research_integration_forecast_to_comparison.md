@@ -64,7 +64,22 @@ Predictive quality (factor-study information coefficient, forecast skill) and tr
 
 ## 5. Verification
 
-See "Test results" at the end.
+**Numerical and API tests added (all passing):** `tests/test_portfolio_attribution.py` (15: replay equals the Lab's accounting, first-rebalance cost, factor identities daily and cumulative for both models, a one-factor world with no specific part, point-in-time exposures, residual shown and not spread, Brinson by hand for one asset per group and for two assets in a group, Brinson daily/cumulative reconciliation, unclassified, benchmark refusal, cash, changing classification, Brinson off with a reason, currency); `tests/test_forecast_alpha.py` (18: every conversion, horizon rules, availability, no later price enters a forecast, reliability or factor estimate, combination weights, identical settings across sources, costs, error sensitivity); `tests/test_research_artifacts_v2.py` (7: legacy migration with bytes unchanged, newer schema refused, round trip, duplicates, versions, re-run, trading study); `tests/test_research_compare_studies.py` (10: common-window recomputation by hand, every blocking and warning rule, predictive separation, assumptions, attribution models); additions to `tests/test_lab_api.py` (portfolio attribution, sources compared, request validation, long step).
+
+**Browser tests** (`tests/test_webapp_research_integration_browser.py`, 4, real Chromium, all passing):
+1. the full scenario: universe → forecast as expected returns (contract, reliability, source comparison, error sensitivity) → cost-aware portfolio → factor and Brinson attribution (waterfall labels read from the chart, reconciliation tile, methodology) → a failing save shows its reason and keeps the dialog open → the save → a double submission keeps one study → a second compatible study → a study with dearer trading → a factor study → comparison: ranked with a note; **not ranked, with the reason** for different costs; predictive and unmeasured blocks; tooltip on hover and chart resizing;
+2. reopen a saved study, run it again as version 2 (session locked to the original), refresh, reopen v2 with its two versions listed;
+3. a schema-1 study is listed, opened with a note that it came from an older version, refuses to be re-run for lack of a stored request, and its file is byte-identical afterwards;
+4. a ticker with no prices shows an error, and the page and the comparison do not scroll sideways at 390 px.
+
+**A bug the regression run found and fixed:** with a rebalance step above 63 days even the default historical source was rejected by the forecast-horizon check (the older Alpha Lab portfolio test caught it). Now only forecast-using sources are checked, with a clear message; a test covers it.
+
+## Test results
+
+* Non-browser, areas touched (portfolio, alphalab, lab API, forecast, research, fundamentals audit and support, marketdata, stage imports, docs): **737 passed, 0 failed**.
+* Browser (integration, alpha research, forecast, research workspace and pages, accessibility, fundamentals import): 59 run; 2 failed under four-way parallel load and **both pass when run alone** after the fix above (one was the bug above; the other, `test_the_evidence_page_...`, is load-sensitive).
+* Earlier whole-area runs this session: 1,857 non-browser tests passed; the 279-test browser sweep had 4 failures, of which one (`test_the_fit_ranks_the_models_draws_the_smiles...`, a data-source label) **fails identically on the commit before this work started (5dff41d)** and three passed alone (load flakes).
+* The whole suite (8,116 tests) was not run end to end: about four hours on this four-core container. The areas above are everything this work touches, plus earlier sweeps.
 
 ## 6. Status
 

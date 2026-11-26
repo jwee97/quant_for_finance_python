@@ -309,3 +309,11 @@ def test_the_expected_return_request_is_checked_before_a_job_starts(app):
         post({"tickers": SIX, "attribution": {"kind": "magic"}})
     with pytest.raises(ApiError, match="sectors must map"):
         post({"tickers": SIX, "sectors": ["a"]})
+
+
+def test_a_long_rebalance_step_is_fine_for_the_historical_source_and_refused_clearly_for_a_forecast_source(app):
+    post = app.extra_post["/api/lab/portfolio"]
+    view = _pf(app, config={"step": 126, "lookback": 252})
+    assert view["status"] == "done", view
+    with pytest.raises(ApiError, match="needs a step of at most 63"):
+        post({"tickers": SIX, "expected_returns": {"source": "forecast"}, "config": {"step": 126}})

@@ -315,14 +315,20 @@ class LabApi:
                 raise ApiError("calibrate is past_slope or none")
             if s.get("combine", "equal") not in ("equal", "inverse_error"):
                 raise ApiError("combine is equal or inverse_error")
+            if src == "historical":                                                           # the window's own mean has no forecast horizon to check
+                label = self._mu_label(s)
+                if label in seen:
+                    raise ApiError("the same source of expected returns is listed twice")
+                seen.add(label)
+                continue
             try:
                 h = int(s.get("horizon") or step)
                 age = int(s.get("max_age_days", 10))
             except (TypeError, ValueError):
                 raise ApiError("horizon and max_age_days are whole numbers") from None
             if not 1 <= h <= 63 or not 1 <= age <= 120:
-                raise ApiError("horizon is 1 to 63 days and max_age_days 1 to 120")
-            if src != "historical" and h != step and not s.get("allow_horizon_scaling"):
+                raise ApiError("horizon is 1 to 63 days and max_age_days 1 to 120" + (f" (the rebalance step is {step} days: a forecast source needs a step of at most 63)" if step > 63 else ""))
+            if h != step and not s.get("allow_horizon_scaling"):
                 raise ApiError(f"the forecast horizon is {h} days and the portfolio is rebalanced every {step}: a forecast is used only at its own horizon (set the horizon to the rebalance step, or allow scaling, a constant-drift assumption)")
             label = self._mu_label(s)
             if label in seen:

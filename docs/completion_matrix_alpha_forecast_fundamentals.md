@@ -34,7 +34,7 @@ The lab opens on a five-stage workflow (`static/alpharesearch.js`, mode "Alpha r
 | Optimiser comparison on identical windows, costs and constraints | **Pre-existing, re-run** (`portfolio.lab.compare`), shown in stage 4 | Same lookback, rebalance dates, covariance, expected-return forecast, cap and cost for every method. `tests/test_portfolio_lab.py`. |
 | Weight sensitivity and concentration | **Implemented and tested** | `portfolio.lab.diagnostics`: effective N, HHI, top-3 share, zero positions, cap binding, weight turnover, rank correlation of weights, movement under noisy expected returns and under another covariance estimate, cost drag, and a long-only efficient frontier under the same cap with each method placed on it. Closed-form checks (equal weight: effective N = N, HHI = 1/N, no turnover), the cap, the frontier, cost drag = turnover x cost. |
 | Cross-sectional breadth guard in the UI | **Implemented and tested** | The page says before the run that a study needs 6 tickers and a rank correlation needs at least 3 assets with a value on the date (a date with fewer is skipped, never scored as zero), and disables the run button. A signal too thin to rank is listed in Discovery with the reason and not scored. |
-| Attribution of the portfolio's return | **Partially implemented** | Stage 5 shows where the signal's paper Sharpe goes (delay, costs, impact, constraints) and the optimisers' cost drag. A **factor or Brinson attribution of the optimised portfolio's return is not implemented.** |
+| Attribution of the portfolio's return | **Implemented and tested** (follow-up round) | Factor and Brinson-Fachler attribution of every optimiser's return, reconciled; see `docs/research_integration_forecast_to_comparison.md`. |
 
 ## Priority 3: Forecasting
 
@@ -75,12 +75,12 @@ No new framework: the existing research session, its context, artifacts and comp
 | Shared context | **Pre-existing, re-run**, extended | The Alpha research workflow reads the session's assets, first day and data source as before and shows them in a strip above the stages. |
 | Experiment identifiers, data versions, assumptions | **Implemented and tested** | A factor study and a forecast evaluation are kept in a session as artifacts (`factor_study`, `forecast`) with the job id, a data fingerprint (assets, dates, source), the horizon, the factors or methods, the point-in-time status and its assumptions. |
 | Historical availability | **Implemented and tested** | The point-in-time status, the number of assumed dates and the lag settings are in the artifact's configuration. |
-| Transaction-cost settings | **Partially implemented** | The portfolio artifact keeps its cost assumption as before. A factor study and a forecast evaluation have no cost by construction. **A trading study cannot be kept in a session** (not implemented). |
+| Transaction-cost settings | **Partially implemented** | The portfolio artifact keeps its cost assumption as before. A factor study and a forecast evaluation have no cost by construction. A trading study can now be kept in a session (follow-up round). |
 | Prevent misleading comparisons across incompatible samples | **Implemented and tested** | In the workflow, a result whose sample or settings no longer match the form is marked stale and, for another sample, not drawn (browser test). In the comparison, studies of different kinds, horizons or dates are blocked from ranking; assumed point-in-time dates and mixed fundamental / price studies are warned about (API tests). A study has no return series, so it is listed and checked but never ranked by performance. |
 | Fundamentals into Alpha Lab | **Implemented and tested** | Fundamental factors are chosen in Discovery, admitted after the point-in-time check, counted in the multiple-testing family, and shown with their check in Validation. |
-| Forecast into Alpha Lab or Portfolio | **Not implemented** | A forecast is not used as an alpha signal or an expected-return input. |
-| Browser test of the Research Comparison with the new kinds | **Not implemented** | The comparison of the new artifact kinds is tested through the API only. |
+| Forecast into Alpha Lab or Portfolio | **Implemented and tested** (follow-up round) | Typed forecast contract, explicit conversions, forecast, factor and combined expected returns into the optimisers. |
+| Browser test of the Research Comparison with the new kinds | **Implemented and tested** (follow-up round) | `tests/test_webapp_research_integration_browser.py`. |
 
 ## Test results
 
-See the end of this file (filled in from the full run).
+Non-browser areas touched: 1,857 passed, 0 failed. Browser sweep: 279 tests, 4 failed; one (`test_the_fit_ranks_the_models_draws_the_smiles_and_says_what_it_fitted`) fails identically at commit 5dff41d, before this work, and three passed alone (load flakes). The full 8,116-test suite was not run end to end (about four hours on this machine). See `docs/research_integration_forecast_to_comparison.md` for the follow-up round.
