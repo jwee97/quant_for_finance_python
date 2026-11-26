@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import numpy as np
 
+from ..alphalab.fundamental import FundamentalError, panels as fundamental_panels
 from ..alphalab import studies as st
 from ..alphalab.registry import RegistryError, SignalRegistry
 from ..portfolio import lab as pl
@@ -133,20 +134,40 @@ class LabApi:
         return self.app.submit_task(f"Alpha study: {signal}", work, kind="lab")
 
     def factors(self, body: dict) -> dict:
-        """``POST /api/lab/factors {tickers, signals, horizon}`` (a job): evaluate the chosen price-built signals, correct for the number compared and combine them from the past only."""
+        """``POST /api/lab/factors {tickers, signals, horizon, fundamental_factors?, fundamentals_db?}`` (a job): evaluate the chosen factors, correct for the number compared and combine them from the past only.
+        ``fundamental_factors`` are derived metrics of the Fundamentals tab (``roe``, ``gross_margin`` ...) read as of each date from the point-in-time tables; they are admitted only after the point-in-time
+        audit of those companies is not ``blocked`` (the audit and the coverage come back with the result)."""
         tickers = _tickers(body, 6)
-        signals, horizon = body.get("signals") or list(st.SIGNALS), int(body.get("horizon") or 5)
+        horizon = int(body.get("horizon") or 5)
+        fundamental = body.get("fundamental_factors") or []
+        if not isinstance(fundamental, list) or not all(isinstance(s, str) and s for s in fundamental) or len(set(fundamental)) != len(fundamental):
+            raise ApiError("fundamental_factors must be a list of distinct metric names from the Fundamentals tab")
+        signals = body.get("signals")
+        signals = list(st.SIGNALS) if signals is None and not fundamental else (signals or [])
         if not isinstance(signals, list) or not all(isinstance(s, str) and s in st.SIGNALS for s in signals) or len(set(signals)) != len(signals):
             raise ApiError(f"signals must be distinct names from: {', '.join(st.SIGNALS)}")
         if not 1 <= horizon <= 63:
             raise ApiError("horizon must be 1 to 63 days")
+        db = str(body.get("fundamentals_db") or "real")
+        if db not in ("real", "demo"):
+            raise ApiError("fundamentals_db must be real or demo")
         self._check(tickers, body)
 
         def work(progress):
             px, universe = self._load(tickers, body, progress)
+            extra, info = {}, None
+            if fundamental:
+                progress("checking when the fundamentals could have been known (point in time)")
+                try:
+                    store = self.app.fundamentals.bench(db, create=db == "real").store
+                    got = fundamental_panels(store, tickers, fundamental, px.index)
+                except FundamentalError as error:
+                    raise ApiError(str(error)) from None
+                extra = got["panels"]
+                info = {"database": db, "basis": got["basis"], "pit": got["pit"], "coverage": got["coverage"], "missing_tickers": got["missing_tickers"], "settings": got["settings"]}
             progress("evaluating, correcting for multiple testing and combining the factors")
             try:
-                out = st.factor_study(px, signals, horizon)
+                out = st.factor_study(px, signals, horizon, extra=extra, extra_info=info)
             except st.StudyError as error:
                 raise ApiError(str(error)) from None
             out["universe"] = {"source": universe.get("source"), "tickers": tickers}

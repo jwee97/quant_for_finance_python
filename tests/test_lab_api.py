@@ -142,3 +142,111 @@ def test_a_factor_study_compares_corrects_and_combines_from_the_past(app):
 def test_a_factor_study_with_a_single_signal_says_what_to_change(app):
     view = _wait(app, app.extra_post["/api/lab/factors"]({"tickers": SIX, "signals": ["momentum"]})["job"], 120)
     assert view["status"] == "error" and "at least two signals" in view["error"]
+
+
+# ------------------------------------------------------------------------------------------------------ fundamental factors, admitted only after the point-in-time check
+def _fundamentals(app, tickers=("AAA", "BBB", "CCC", "DDD", "EEE", "FFF"), filing_lag=50, early=None):
+    """Annual statements for 2011 to 2019 whose profitability differs by company and year; ``early`` makes one company's filings predate their periods (a wrong date)."""
+    from src.fundamentals.providers.base import CompanyProfile
+    from src.fundamentals.store import PeriodStatement
+    store = app.fundamentals.bench("real").store
+    for i, t in enumerate(tickers):
+        sid = store.upsert_security(CompanyProfile("manual", f"us:{t}", t, f"{t} Inc", exchange="US", market="US", country="US", currency="USD"))
+        periods = []
+        for y in range(2011, 2020):
+            filed = f"{y}-11-01" if t == early else (__import__("datetime").date(y, 12, 31) + __import__("datetime").timedelta(days=filing_lag)).isoformat()
+            periods.append(PeriodStatement(fiscal_period="FY", period_end=f"{y}-12-31", fiscal_year=y, filing_date=filed, reporting_currency="USD",
+                                           values={"revenue": 1000.0 + 20 * i, "net_income": 50.0 + 10 * i + 3 * (y - 2011) * (1 if i % 2 else -1), "total_assets": 2000.0, "shareholders_equity": 800.0 + 15 * i,
+                                                   "gross_profit": 400.0 + 12 * i, "operating_cash_flow": 90.0 + 5 * i}))
+        store.store_financials(sid, "manual", periods)
+    return store
+
+
+def test_fundamental_factors_enter_the_study_after_the_point_in_time_check_and_the_audit_travels_with_the_result(app):
+    store = _fundamentals(app)
+    out = _done(app, "/api/lab/factors", {"tickers": SIX, "signals": ["momentum"], "fundamental_factors": ["net_margin", "roe"], "horizon": 21})
+    names = [r["factor"] for r in out["comparison"]["table"]]
+    assert set(names) == {"momentum", "fund:net_margin", "fund:roe"} and out["comparison"]["n_tested"] == 3, "the family corrected for is every factor tried, fundamental ones included"
+    fund = out["fundamental"]
+    assert fund["pit"]["verdict"]["status"] == "ready" and fund["pit"]["estimated"] == 0 and fund["coverage"]["roe"]["tickers_with_a_value"] == 6 and fund["settings"]["info_lag_days"] == 1
+    assert any("point-in-time" in n for n in out["notes"]) and fund["database"] == "real"
+    sig = out["discovery"]["signals"]["fund:roe"]
+    assert sig["rank_persistence"]["lag21"] > 0.9, "a figure that changes once a year barely changes rank from one month to the next"
+    # the factor on the study's own calendar is the figure public that day, never the one for a period still being reported
+    from src.alphalab.fundamental import panels
+    import pandas as pd
+    got = panels(store, ["AAA", "BBB", "CCC", "DDD", "EEE", "FFF"], ["roe"], pd.bdate_range("2013-01-01", "2013-12-31"))["panels"]["fund:roe"]
+    assert got["AAA"].loc["2013-02-01"] == pytest.approx(50.0 / 800.0), "on 1 Feb 2013 the latest public year is 2011: the 2012 statements are filed on 19 Feb 2013"
+    before, after = got["AAA"].loc["2013-02-19"], got["AAA"].loc["2013-02-20"]
+    assert before == pytest.approx(50.0 / 800.0) and after == pytest.approx(47.0 / 800.0), "the 2012 figure appears the day after its filing (19 Feb plus one day) and not on the filing day"
+
+
+def test_a_study_with_a_wrong_filing_date_is_refused_with_the_reason(app):
+    _fundamentals(app, early="CCC")
+    view = _wait(app, app.extra_post["/api/lab/factors"]({"tickers": SIX, "signals": ["momentum"], "fundamental_factors": ["roe"]})["job"], 120)
+    assert view["status"] == "error" and "point-in-time check blocks these figures" in view["error"] and "wrong date" in view["error"]
+
+
+def test_fundamental_factors_need_statements_for_enough_of_the_chosen_tickers(app):
+    _fundamentals(app, tickers=("AAA", "BBB"))
+    view = _wait(app, app.extra_post["/api/lab/factors"]({"tickers": SIX, "signals": ["momentum"], "fundamental_factors": ["roe"]})["job"], 120)
+    assert view["status"] == "error" and "at least 6 of the chosen tickers" in view["error"] and "holds 2" in view["error"]
+
+
+def test_the_fundamental_request_is_checked_before_a_job_starts(app):
+    post = app.extra_post["/api/lab/factors"]
+    with pytest.raises(ApiError, match="distinct metric names"):
+        post({"tickers": SIX, "fundamental_factors": ["roe", "roe"]})
+    with pytest.raises(ApiError, match="fundamentals_db"):
+        post({"tickers": SIX, "fundamental_factors": ["roe"], "fundamentals_db": "elsewhere"})
+    _fundamentals(app)
+    view = _wait(app, post({"tickers": SIX, "signals": [], "fundamental_factors": ["roe"]})["job"], 60)
+    assert view["status"] == "error" and "at least two" in view["error"], "one factor cannot be compared or combined, fundamental or not"
+
+
+# ------------------------------------------------------------------------------------------------------ keeping studies in a research session, and not comparing what cannot be compared
+def _factor_job(app, horizon=21, **body):
+    view = _wait(app, app.extra_post["/api/lab/factors"]({"tickers": SIX, "signals": ["momentum", "reversal", "low_vol"], "horizon": horizon, **body})["job"], 240)
+    assert view["status"] == "done", view
+    return view
+
+
+def test_a_factor_study_is_kept_with_its_assumptions_and_two_studies_of_different_horizons_cannot_be_ranked(app):
+    post = app.extra_post
+    session = post["/api/research/session/create"]({"name": "Factors", "context": {"assets": ["aaa", "bbb", "ccc", "ddd", "eee", "fff"], "start": "2012-01-02"}})["session"]
+    a_view, b_view = _factor_job(app, 5), _factor_job(app, 21)
+    a = post["/api/research/artifact/save"]({"session": session["id"], "job": a_view["id"]})["artifact"]
+    b = post["/api/research/artifact/save"]({"session": session["id"], "job": b_view["id"]})["artifact"]
+    full = app.extra_get["/api/research/artifact"]({"id": a["id"]})
+    assert full["kind"] == "factor_study" and full["evidence"] == "historical_simulation" and not full.get("series")
+    assert full["config"]["horizon"] == 5 and set(full["config"]["factors"]) == {"momentum", "reversal", "low_vol"}
+    assert full["metrics"]["n_tested"] == 3 and full["metrics"]["n_trials"] == 3 and full["context"]["assets"] == ["AAA", "BBB", "CCC", "DDD", "EEE", "FFF"] and full["refs"]["job"] == a_view["id"]
+    assert any("not ranked by performance" in n for n in full["notes"]) and full["context"]["dataset_version"]
+    cmp = post["/api/research/compare"]({"artifacts": [a["id"], b["id"]]})
+    codes = {i["code"]: i for i in cmp["issues"]}
+    assert codes["different_horizon"]["severity"] == "blocks_ranking" and "5 days" in codes["different_horizon"]["message"] and "21 days" in codes["different_horizon"]["message"]
+    assert cmp["rankable"] is False and set(cmp["missing_series"]) == {a["id"], b["id"]}, "listed and checked for comparability, never ranked"
+    same = post["/api/research/compare"]({"artifacts": [a["id"], post["/api/research/artifact/save"]({"session": session["id"], "job": a_view["id"]})["artifact"]["id"]]})
+    assert not [i for i in same["issues"] if i["severity"] == "blocks_ranking"], "the same study twice is comparable"
+
+
+def test_a_fundamental_study_is_kept_with_its_point_in_time_status_and_the_comparison_warns_about_assumed_dates(app):
+    _fundamentals(app, tickers=("AAA", "BBB", "CCC", "DDD", "EEE", "FFF"))
+    store = app.fundamentals.bench("real").store
+    from src.fundamentals.providers.base import CompanyProfile
+    from src.fundamentals.store import PeriodStatement
+    sid = int(store.securities().iloc[0]["security_id"])
+    store.store_financials(sid, "manual", [PeriodStatement(fiscal_period="FY", period_end="2020-12-31", fiscal_year=2020, values={"revenue": 1.0, "net_income": 0.1, "shareholders_equity": 5.0}, reporting_currency="USD")])   # no filing date: assumed
+    post = app.extra_post
+    session = post["/api/research/session/create"]({"name": "Fundamentals"})["session"]
+    with_f = _factor_job(app, 21, signals=["momentum"], fundamental_factors=["roe", "net_margin"])
+    price_only = _factor_job(app, 21)
+    a = post["/api/research/artifact/save"]({"session": session["id"], "job": with_f["id"]})["artifact"]
+    b = post["/api/research/artifact/save"]({"session": session["id"], "job": price_only["id"]})["artifact"]
+    full = app.extra_get["/api/research/artifact"]({"id": a["id"]})
+    fund = full["config"]["fundamental"]
+    assert fund["pit_status"] == "ready_with_assumptions" and fund["assumed_dates"] == 1 and full["config"]["uses_fundamentals"] is True and fund["pit_settings"]["info_lag_days"] == 1
+    assert any("assumed" in n for n in full["notes"]) and any("point-in-time check" in n for n in full["notes"])
+    cmp = post["/api/research/compare"]({"artifacts": [a["id"], b["id"]]})
+    codes = {i["code"]: i for i in cmp["issues"]}
+    assert codes["pit_assumptions"]["severity"] == "warning" and codes["fundamentals_mixed"]["severity"] == "warning"

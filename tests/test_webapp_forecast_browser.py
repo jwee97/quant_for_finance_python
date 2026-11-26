@@ -48,6 +48,11 @@ def _page(browser, live, width=1400):  # noqa: F811
     return pg
 
 
+def _wait_saved(page, scope):
+    from tests.test_webapp_workspaces_browser import _wait_until
+    _wait_until(page, "[...document.querySelectorAll('" + scope + " .hint[role=status]')].some((e) => e.textContent.startsWith('Saved to'))", 30)
+
+
 def _open(page):
     open_tab(page, "forecast")
     page.wait_for_selector("#forecast .panel select[data-role=forecast-ticker]")
@@ -303,6 +308,10 @@ def test_the_forecast_page_is_five_stages_with_forecast_against_outcome_rolling_
         assert "Scope" in conc.inner_text() and "One instrument over one history" in conc.inner_text()
         nav.nth(3).click()
         assert nav.nth(3).get_attribute("aria-pressed") == "true"
+        page.click("[data-action=keep-forecast]")
+        _wait_saved(page, "[data-role=forecast-conclusions]")
+        saved = page.evaluate("""async () => { const s = await QL.api('/api/research/sessions'); const d = await QL.api('/api/research/session?id=' + s.sessions[0].id); return d.artifacts.map((a) => [a.kind, a.evidence]); }""")
+        assert ["forecast", "walk_forward"] in saved, saved
         assert not page.problems, page.problems
     finally:
         page.close()

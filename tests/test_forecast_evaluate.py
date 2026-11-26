@@ -330,3 +330,22 @@ def test_a_skill_that_exists_in_one_half_only_is_a_caution_and_not_a_finding(fla
     fake["common"]["5"]["methods"]["riskmetrics"]["skill_second_half"] = 0.05
     items = {i["topic"]: i for i in conclusions(fake, 5)["items"]}
     assert next(v for k, v in items.items() if "iskmetrics" in k or "RiskMetrics" in k)["status"] == "established"
+
+
+def test_a_forecast_evaluation_is_kept_as_a_study_with_the_common_sample_and_cannot_be_ranked_against_another_horizon(flaky_result):
+    from src.research import compare, extract, store
+    history, r = flaky_result
+    result = {"ticker": "A00", "horizon": 5, "effort": "standard", "evaluation": r, "verdict": {"level": "mixed"}, "universe": {"source": "platform dataset"}, "conclusions": {"items": [{"status": "caution", "text": "a caution"}]}}
+    art = extract.forecast_artifact(result, job_id="job1", code_version="x")
+    assert art["kind"] == "forecast" and art["evidence"] == "walk_forward" and art["context"]["assets"] == ["A00"]
+    c = r["common"]["5"]
+    assert art["metrics"]["common_origins"] == c["n_common"] and art["metrics"]["same_dates"] == 0.0 and art["metrics"]["origins"] == r["origins"]["count"]
+    best = max((v["skill_common"], k) for k, v in c["methods"].items() if k != BASELINE and v["skill_common"] is not None)
+    assert art["config"]["best_method"] == best[1] and art["metrics"]["best_skill_common"] == pytest.approx(best[0])
+    assert any("all methods forecast" in n for n in art["notes"]) and "a caution" in art["notes"]
+    kept = store.check_artifact({**art, "id": "0123456789ab", "session_id": "ba9876543210"})
+    assert kept["kind"] == "forecast" and "series" not in kept
+    other = extract.forecast_artifact({**result, "horizon": 21, "evaluation": {**r, "common": {"21": r["common"]["5"]}}}, job_id="job2")
+    pair = [{**kept, "id": "a" * 12}, {**store.check_artifact({**other, "id": "0123456789ac", "session_id": "ba9876543210"}), "id": "b" * 12}]
+    codes = {i["code"]: i["severity"] for i in compare.issues_for(pair, None)}
+    assert codes.get("different_horizon") == "blocks_ranking"

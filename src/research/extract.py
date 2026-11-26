@@ -176,3 +176,61 @@ def strategy_artifact(result: dict, *, job_id: str = "", code_version: str = "un
     return {"kind": kind, "title": str(result.get("strategy") or result.get("name") or f"{kind} strategy")[:120], "evidence": "simulated" if simulated else "historical_simulation", "data_kind": dk,
             "context": ctx, "config": {"strategy": result.get("strategy"), "params": result.get("params"), "settings": result.get("settings")}, "metrics": metrics,
             "series": {"dates": dates, "equity": equity, "benchmarks": benches}, "refs": {"job": job_id, "code_version": code_version, "dataset": ctx["dataset_version"]}, "notes": notes}
+
+
+def factor_study_artifact(result: dict, *, job_id: str = "", code_version: str = "unknown") -> dict:
+    """The artifact of a finished factor study (the Alpha research workflow, stages 1 to 3). It has no return series, so a comparison lists it and checks that it is comparable with others (same assets, dates,
+    horizon, kind of factor and point-in-time assumptions) without measuring it. The numbers kept are the corrected ones: how many factors were tried, how many survive the multiple-testing correction, and how the
+    best combination did on the test period nothing was fitted on."""
+    for key in ("comparison", "combination", "universe", "assets"):
+        if key not in result:
+            raise StoreError("this job did not produce a factor study")
+    cmp, comb, uni = result["comparison"], result["combination"], result["universe"]
+    rows = cmp["table"]
+    oos = {k: v for k, v in comb["out_of_sample"].items() if not k.startswith("single:")}
+    best = max(oos.items(), key=lambda kv: kv[1]["mean"] if kv[1].get("mean") is not None else -9, default=(None, {}))
+    fund = result.get("fundamental") or None
+    ctx = {"assets": list(result["assets"]), "start": result["first"], "end": result["last"], "frequency": "daily", "data_source": str(uni.get("source") or "platform"),
+           "dataset_version": fingerprint(result["assets"], result["first"], result["last"], uni.get("source"))}
+    metrics = {"n_trials": float(cmp["n_tested"]), "n_tested": float(cmp["n_tested"]), "survive_holm": float(sum(1 for r in rows if r.get("survives_holm"))), "survive_bh": float(sum(1 for r in rows if r.get("survives_bh"))),
+               "best_rank_ic": float(max((abs(r["rank_ic"]) for r in rows if r.get("rank_ic") is not None), default=0.0)), "test_days": float(comb["out_of_sample"][next(iter(comb["out_of_sample"]))].get("n_test_dates", 0))}
+    if best[0] is not None and best[1].get("mean") is not None:
+        metrics["best_combination_test_ic"] = float(best[1]["mean"])
+        metrics["combination_improves"] = float(bool(comb["verdicts"].get(best[0], {}).get("improves_on_baselines")))
+    config = {"horizon": int(result["horizon"]), "factors": [r["factor"] for r in rows], "best_combination": best[0], "uses_fundamentals": bool(fund), "min_assets_per_date": int(result["discovery"].get("min_assets", 0))}
+    notes = ["Rank ICs and their intervals are over the whole period; the combinations were fitted on the first part and judged on the rest. The correction for multiple testing counts every factor tried, including the ones not kept.",
+             "A study has no return series: it is kept so that it can be found again and checked for comparability, not ranked by performance."]
+    if fund:
+        pit = fund["pit"]
+        config["fundamental"] = {"database": fund["database"], "basis": fund["basis"], "pit_status": pit["verdict"]["status"], "assumed_dates": int(pit["estimated"]), "periods": int(pit["periods"]), "pit_settings": fund["settings"]}
+        notes += list(pit.get("assumptions") or [])
+        notes.append(f"Fundamental factors were admitted after a point-in-time check: {pit['verdict']['status'].replace('_', ' ')}.")
+    return {"kind": "factor_study", "title": f"Factor study: {len(rows)} factors, {result['horizon']}-day horizon"[:120], "evidence": "historical_simulation", "data_kind": data_kind(str(uni.get("source", "")), None), "context": ctx,
+            "config": config, "metrics": metrics, "refs": {"job": job_id, "code_version": code_version, "dataset": ctx["dataset_version"]}, "notes": notes}
+
+
+def forecast_artifact(result: dict, *, job_id: str = "", code_version: str = "unknown") -> dict:
+    """The artifact of a finished forecast evaluation: the walk-forward scores of each method against the random walk on the dates every method forecast. Like a factor study it has no return series."""
+    for key in ("evaluation", "verdict", "ticker", "horizon"):
+        if key not in result:
+            raise StoreError("this job did not produce a forecast evaluation")
+    ev, hz = result["evaluation"], str(result["horizon"])
+    common = (ev.get("common") or {}).get(hz) or {}
+    methods = [m for m in (common.get("methods") or {}).items() if m[0] != ev["baseline"] and m[1].get("skill_common") is not None]
+    best = max(methods, key=lambda kv: kv[1]["skill_common"], default=(None, {}))
+    o, uni = ev["origins"], result.get("universe") or {}
+    ctx = {"assets": [result["ticker"]], "start": o["first"], "end": o["last"], "frequency": "daily", "data_source": str(uni.get("source") or "platform"),
+           "dataset_version": fingerprint([result["ticker"]], o["first"], o["last"], o["history_days"], uni.get("source"))}
+    metrics = {"n_trials": float(len(methods)), "origins": float(o["count"]), "common_origins": float(common.get("n_common", 0)), "same_dates": float(bool(common.get("same_dates")))}
+    if best[0] is not None:
+        metrics["best_skill_common"] = float(best[1]["skill_common"])
+        if best[1].get("p_common_adjusted") is not None:
+            metrics["best_adjusted_p"] = float(best[1]["p_common_adjusted"])
+        if best[1].get("coverage90_common") is not None:
+            metrics["best_coverage90"] = float(best[1]["coverage90_common"])
+    conc = result.get("conclusions") or {}
+    config = {"horizon": int(result["horizon"]), "methods": [m[0] for m in methods], "effort": result.get("effort"), "best_method": best[0], "step_days": o["step_days"], "refit_days": o["refit_days"], "paths": o["paths"]}
+    notes = [f"Walk-forward: every forecast used only the prices before its date. The skill is measured on the {common.get('n_common', 0)} dates all methods forecast, against the random walk with the spread of the last year.",
+             "Skill is not a trading result: a forecast can describe the spread of returns well and make no money."] + [i["text"] for i in conc.get("items", []) if i.get("status") == "caution"][:4]
+    return {"kind": "forecast", "title": f"Forecast evaluation: {result['ticker']}, {result['horizon']}-day horizon"[:120], "evidence": "walk_forward", "data_kind": data_kind(str(uni.get("source", "")), None), "context": ctx,
+            "config": config, "metrics": metrics, "refs": {"job": job_id, "code_version": code_version, "dataset": ctx["dataset_version"]}, "notes": notes}

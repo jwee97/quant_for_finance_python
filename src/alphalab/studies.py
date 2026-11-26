@@ -197,7 +197,7 @@ def _controls(prices: pd.DataFrame, returns: pd.DataFrame) -> dict[str, pd.DataF
     return {"beta": beta.reindex(returns.index), "momentum_12_1": (prices.shift(21) / prices.shift(252) - 1.0).reindex(returns.index)}
 
 
-def factor_study(prices: pd.DataFrame, signals: list[str], horizon: int = 5, min_assets: int = 5) -> dict:
+def factor_study(prices: pd.DataFrame, signals: list[str], horizon: int = 5, min_assets: int = 5, extra: dict[str, pd.DataFrame] | None = None, extra_info: dict | None = None) -> dict:
     """The discovery, validation and combination stages on price-built signals: coverage and redundancy; each factor evaluated (rank and Pearson IC with a HAC interval, quantile spread, turnover, stability), the IC left
     after neutralising beta and momentum, the sensitivity of the Pearson IC to winsorisation, the family corrected for multiple testing, and the factors combined four ways from the past only and judged on the last 40%
     of the dates. Forward returns are residuals after the equal-weighted market, as in :func:`alpha_study`."""
@@ -207,13 +207,15 @@ def factor_study(prices: pd.DataFrame, signals: list[str], horizon: int = 5, min
         raise StudyError("a factor study ranks assets against each other: choose at least 6 tickers")
     if not 1 <= horizon <= 63:
         raise StudyError("horizon must be 1 to 63 days")
-    if len(signals) < 2:
+    extra = extra or {}
+    if len(signals) + len(extra) < 2:
         raise StudyError("choose at least two signals to compare and combine")
     returns = prices.pct_change().iloc[1:]
     if returns.shape[0] < 500:
         raise StudyError("need at least 500 days of history")
     fwd = cal.forward_residual(returns, horizon)
     raw = {k: build_signal(prices, k).reindex(returns.index) for k in signals}
+    raw.update({k: v.reindex(index=returns.index, columns=prices.columns) for k, v in extra.items()})                   # fundamental panels, already point in time on this calendar
     z = {k: cal.standardise(v) for k, v in raw.items()}
     controls = _controls(prices, returns)
     try:
@@ -226,9 +228,13 @@ def factor_study(prices: pd.DataFrame, signals: list[str], horizon: int = 5, min
     except fc.FactorError as error:
         raise StudyError(str(error)) from None
     compared.pop("details")
+    notes_extra = []
+    if extra:
+        notes_extra.append("Fundamental factors (fund:...) are the latest figure public on each date, from the point-in-time tables; the point-in-time check that admitted them is in 'fundamental'. They change only when a filing arrives, so their rank "
+                           "persistence is high and their turnover low by construction.")
     return {"horizon": int(horizon), "assets": list(prices.columns), "days": int(len(returns)), "first": str(returns.index[0].date()), "last": str(returns.index[-1].date()), "discovery": disc, "comparison": compared,
-            "combination": combined, "sensitivity": {"pearson_ic_by_winsorisation": sens, "controls": list(controls)},
+            "fundamental": extra_info, "combination": combined, "sensitivity": {"pearson_ic_by_winsorisation": sens, "controls": list(controls)},
             "notes": ["Each factor's rank IC is against the residual return over the horizon; the interval is Newey-West with horizon - 1 lags.",
                       "p-values are corrected for the number of factors (Holm, Benjamini-Hochberg); a factor is called predictive only if it survives the correction.",
                       "Neutralisation removes the cross-sectional dependence on beta and 12-1 momentum, computed from the same prices. A factor that is mostly one of them has nothing left (the momentum signal itself, by construction).",
-                      "Combinations are weighted from the past only and judged on a test period nothing was fitted on; a combination is an improvement only if it beats the best single factor and equal weight."]}
+                      "Combinations are weighted from the past only and judged on a test period nothing was fitted on; a combination is an improvement only if it beats the best single factor and equal weight."] + notes_extra}

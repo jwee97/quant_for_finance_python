@@ -163,6 +163,10 @@ class ResearchApi:
                 if not body.get("method"):
                     raise ApiError("say which method of the study to keep")
                 art = self._store(extract.portfolio_lab_artifact, job["result"], str(body["method"]), job_id=str(body["job"]), code_version=self._code_version())
+            elif job.get("kind") == "lab" and "comparison" in job["result"] and "combination" in job["result"]:
+                art = self._store(extract.factor_study_artifact, job["result"], job_id=str(body["job"]), code_version=self._code_version())
+            elif job.get("kind") == "forecast" and "evaluation" in job["result"]:
+                art = self._store(extract.forecast_artifact, job["result"], job_id=str(body["job"]), code_version=self._code_version())
             elif job["result"].get("kind") in extract.STRATEGY_LABS:
                 art = self._store(extract.strategy_artifact, job["result"], job_id=str(body["job"]), code_version=self._code_version())
             else:

@@ -12,7 +12,7 @@
   const STAGES = [["discovery", "Discovery"], ["validation", "Validation"], ["combination", "Combination"], ["portfolio", "Portfolio construction"], ["performance", "Performance and attribution"]];
   const MIN_TICKERS = 6, MIN_RANK = 3;
   const DEFAULT_METHODS = ["equal_weight", "inverse_vol", "min_variance", "max_sharpe", "risk_parity", "hrp"];
-  const R = { stage: "discovery", signals: null, methods: new Set(DEFAULT_METHODS), perf: { signal: "", cost_bps: 5, long_only: true }, results: {}, keys: {}, busy: {}, jobs: {} };
+  const R = { stage: "discovery", signals: null, fundamental: new Set(), fundCatalogue: null, methods: new Set(DEFAULT_METHODS), perf: { signal: "", cost_bps: 5, long_only: true }, results: {}, keys: {}, busy: {}, jobs: {} };
   const colors = () => ["--s1", "--s2", "--s3", "--s4", "--s5", "--s6", "--s7", "--s8"].map(css);
 
   /* What identifies a sample, and what identifies a run: the second contains the first. A result is current only when its run key is the form's. */
@@ -20,7 +20,7 @@
   const sampleOf = (S) => ({ tickers: tickersOf(S), start: S.form.start || "", source: S.form.source || "" });
   const sig = (S) => (R.signals || S.plan.signals.map((s) => s.key)).slice().sort();
   const runKey = {
-    factors: (S) => JSON.stringify({ ...sampleOf(S), horizon: +S.form.horizon, signals: sig(S) }),
+    factors: (S) => JSON.stringify({ ...sampleOf(S), horizon: +S.form.horizon, signals: sig(S), fundamental: [...R.fundamental].sort() }),
     portfolio: (S) => JSON.stringify({ ...sampleOf(S), methods: [...R.methods].sort(), config: S.form.config, cov: S.form.cov_method || "" }),
     performance: (S) => JSON.stringify({ ...sampleOf(S), horizon: +S.form.horizon, ...R.perf }),
   };
@@ -59,7 +59,7 @@
     const c = h("div", "card ctxstrip", box); c.dataset.role = "research-context";
     const s = sampleOf(S), f = R.results.factors, p = R.results.portfolio;
     const bits = [["Assets", s.tickers.length ? `${s.tickers.length}` : "none"], ["From", s.start || "first available"], ["Source", s.source || "backtest tab's source"], ["Horizon", `${S.form.horizon} days`],
-      ["Signals", `${sig(S).length}`], ["Cost", `${R.perf.cost_bps} bp (trading) / ${(p && p.config && p.config.cost_bps) ?? S.form.config.cost_bps ?? "default"} bp (optimisers)`], ["Data", f && f.universe && f.universe.source ? f.universe.source : "not loaded"]];
+      ["Factors", `${sig(S).length} price${R.fundamental.size ? " + " + R.fundamental.size + " fundamental" : ""}`], ["Cost", `${R.perf.cost_bps} bp (trading) / ${(p && p.config && p.config.cost_bps) ?? S.form.config.cost_bps ?? "default"} bp (optimisers)`], ["Data", f && f.universe && f.universe.source ? f.universe.source : "not loaded"], ...(f && f.fundamental ? [["Point in time", f.fundamental.pit.verdict.status.replace(/_/g, " ")]] : [])];
     const row = h("div", "kv", c); for (const [k, v] of bits) { const d = h("span", "", row); h("b", "", d, k + ": "); d.append(document.createTextNode(String(v))); }
     h("p", "hint", c, "Every stage below is run on this sample. Change the tickers, first day, source or horizon and the earlier results are marked stale instead of being drawn next to the new ones.");
   }
@@ -95,7 +95,9 @@
     return row;
   }
   const baseBody = (S) => ({ ...sampleOf(S), start: S.form.start || undefined, source: S.form.source || undefined });
-  const factorBody = (S) => ({ ...baseBody(S), signals: sig(S).sort((a, b) => S.plan.signals.findIndex((x) => x.key === a) - S.plan.signals.findIndex((x) => x.key === b)), horizon: +S.form.horizon });
+  const factorBody = (S) => ({ ...baseBody(S), signals: sig(S).sort((a, b) => S.plan.signals.findIndex((x) => x.key === a) - S.plan.signals.findIndex((x) => x.key === b)), horizon: +S.form.horizon, ...(R.fundamental.size ? { fundamental_factors: [...R.fundamental] } : {}) });
+  const total = (S) => sig(S).length + R.fundamental.size;
+  const labelOf = (S) => { const m = Object.fromEntries(S.plan.signals.map((s) => [s.key, s.label])); for (const x of (R.fundCatalogue || [])) m["fund:" + x.name] = "Fundamental: " + x.label; return (k) => m[k] || (String(k).startsWith("fund:") ? "Fundamental: " + String(k).slice(5).replace(/_/g, " ") : k); };
 
   /* ------------------------------------------------------------------ 1 Discovery */
   function signalChips(pane, S) {
@@ -104,14 +106,27 @@
       cb.addEventListener("change", () => { const cur = new Set(sig(S)); cb.checked ? cur.add(s.key) : cur.delete(s.key); R.signals = [...cur]; S.redraw(); }); l.append(document.createTextNode(s.label)); }
   }
 
+  const FUND_DEFAULT = ["roe", "net_margin", "gross_margin", "roa", "operating_margin", "debt_to_assets", "sloan_accruals", "asset_turnover"];
+  function fundamentalChips(pane, S) {
+    const box = h("div", "chips", pane); box.dataset.role = "fundamental-factors"; h("span", "hint", box, "Fundamental factors (point in time):");
+    if (R.fundCatalogue === null) { R.fundCatalogue = []; api("/api/fund/catalogue").then((c) => { R.fundCatalogue = (c.metrics || []).filter((m) => FUND_DEFAULT.includes(m.name)); S.redraw(); }).catch(() => { R.fundCatalogue = []; }); }
+    for (const m of R.fundCatalogue) {
+      const l = h("label", "f inline", box); l.title = m.text || ""; const cb = h("input", "", l); cb.type = "checkbox"; cb.dataset.fundamental = m.name; cb.checked = R.fundamental.has(m.name);
+      cb.addEventListener("change", () => { cb.checked ? R.fundamental.add(m.name) : R.fundamental.delete(m.name); S.redraw(); }); l.append(document.createTextNode(m.label));
+    }
+    if (!R.fundCatalogue.length) h("span", "hint", box, "none available");
+    h("p", "hint", pane, "A fundamental factor is the latest figure public on each date, from the Fundamentals tab's point-in-time tables. It is admitted only after the point-in-time check of those companies is not blocked, needs statements for at least 6 of the tickers, and is counted in the correction for the number of factors tried.");
+  }
+
   function discovery(pane, S) {
     const head = h("div", "card", pane); h("h3", "", head, "1. Discovery: is there enough to rank, and are the signals different from each other?");
     h("p", "hint", head, "Coverage, extreme values, drift between the first and second half of the history, how persistent each ranking is (so how much it will trade) and how redundant the signals are. Nothing here looks at returns, so nothing here can be overfitted to them.");
     signalChips(head, S);
-    if (R.signals && R.signals.length < 2) h("p", "hint warn", head, "Choose at least two signals: multiple-testing corrections and combinations need more than one.");
-    runRow(head, S, "factors", "Run the factor study (stages 1 to 3)", "/api/lab/factors", () => factorBody(S), guard(S) || (sig(S).length < 2 ? "Choose at least two signals." : ""));
+    fundamentalChips(head, S);
+    if (total(S) < 2) h("p", "hint warn", head, "Choose at least two factors: multiple-testing corrections and combinations need more than one.");
+    runRow(head, S, "factors", "Run the factor study (stages 1 to 3)", "/api/lab/factors", () => factorBody(S), guard(S) || (total(S) < 2 ? "Choose at least two factors." : ""));
     if (!banner(pane, S, "factors", "factor study")) { const e = h("div", "card empty", pane); h("p", "", e, "No factor study on this sample yet."); return; }
-    const r = R.results.factors, d = r.discovery, rows = Object.entries(d.signals).map(([k, v]) => ({ key: k, ...v })), label = Object.fromEntries(S.plan.signals.map((s) => [s.key, s.label]));
+    const r = R.results.factors, d = r.discovery, rows = Object.entries(d.signals).map(([k, v]) => ({ key: k, ...v })), nmf = labelOf(S), label = new Proxy({}, { get: (_, k) => nmf(k) });
     const thin = rows.filter((x) => !x.rankable);
     if (thin.length) { const b = h("div", "banner warn", pane, `${thin.length} signal${thin.length > 1 ? "s have" : " has"} too thin a cross-section to rank (${thin.map((x) => `${label[x.key] || x.key}: median ${x.n_assets_median} assets`).join("; ")}). They are listed but not scored.`); b.dataset.role = "thin-cross-section"; }
     const tc = h("div", "card", pane); tc.dataset.role = "disc-table"; h("h3", "", tc, `${r.assets.length} assets, ${r.first} to ${r.last}, ${r.days} days`);
@@ -134,13 +149,14 @@
     const head = h("div", "card", pane); h("h3", "", head, "2. Validation: does each factor survive being one of many?");
     h("p", "hint", head, "The same factors, each judged by its rank IC with a heteroskedasticity- and autocorrelation-robust interval, p-values corrected for the number compared (Holm for any false positive, Benjamini-Hochberg for the share of false discoveries), the IC left once beta and momentum are taken out, the IC by thirds of the history and under three clippings of outliers.");
     if (!banner(pane, S, "factors", "factor study")) { const e = h("div", "card empty", pane); h("p", "", e, "Run the factor study in stage 1 first."); const b = h("button", "btn", e, "Go to stage 1"); b.type = "button"; b.addEventListener("click", () => { R.stage = "discovery"; S.redraw(); }); return; }
-    const r = R.results.factors, cmp = r.comparison, rows = cmp.table, c = colors(), label = Object.fromEntries(S.plan.signals.map((s) => [s.key, s.label])), nm = (k) => label[k] || k;
+    const r = R.results.factors, cmp = r.comparison, rows = cmp.table, c = colors(), nm = labelOf(S);
     const k = h("div", "kpis", head);
     Q.tile(k, "Factors tested", String(cmp.n_tested), { text: `family of ${cmp.n_tested}, level ${cmp.alpha}` });
     Q.tile(k, "Survive Holm", String(rows.filter((x) => x.survives_holm).length), { text: "family-wise error controlled", dir: rows.some((x) => x.survives_holm) ? "up" : "" });
     Q.tile(k, "Survive Benjamini-Hochberg", String(rows.filter((x) => x.survives_bh).length), { text: "false-discovery rate controlled", dir: rows.some((x) => x.survives_bh) ? "up" : "" });
     Q.tile(k, "Horizon", `${r.horizon} days`, { text: `${r.days} days, ${r.assets.length} assets` });
     h("p", "hint", head, cmp.note);
+    if (r.fundamental) pitPanel(pane, r.fundamental);
     const tc = h("div", "card", pane); tc.dataset.role = "val-table"; h("h3", "", tc, "Factors, corrected for the number tried");
     Q.simpleTable(tc, [{ label: "Factor", get: (x) => nm(x.factor) }, { label: "Rank IC", num: true, get: (x) => num(x.rank_ic, 4) }, { label: "95% interval (HAC)", num: true, get: (x) => `${num(x.ci_low, 4)} to ${num(x.ci_high, 4)}` }, { label: "t", num: true, get: (x) => num(x.t, 1) },
       { label: "p raw", num: true, get: (x) => num(x.p_raw, 3) }, { label: "p Holm", num: true, get: (x) => num(x.p_holm, 3) }, { label: "p BH", num: true, get: (x) => num(x.p_bh, 3) }, { label: "Survives", get: (x) => (x.survives_holm ? "Holm and BH" : x.survives_bh ? "BH only" : "neither") },
@@ -157,12 +173,35 @@
     Q.simpleTable(sc, [{ label: "Factor", get: (x) => nm(x) }, ...levels.map((l) => ({ label: l.replace("winsor_", "clip ").replace("pct", "%"), num: true, get: (x) => num(sens[x][l], 4) })), { label: "Moves with clipping", get: (x) => { const v = levels.map((l) => sens[x][l]).filter((y) => y !== null); return v.length && Math.max(...v) - Math.min(...v) > 0.5 * Math.max(Math.abs(v[0]), 0.002) ? "yes" : "no"; } }], names);
   }
 
+  const PIT_WORD = { ready: "Ready: every availability date is a real filing date", ready_with_assumptions: "Ready with assumptions", blocked: "Blocked" };
+  function pitPanel(pane, f) {
+    const pit = f.pit, card = h("div", "card", pane); card.dataset.role = "val-pit"; h("h3", "", card, "Fundamental factors: the point-in-time check that admitted them");
+    const b = h("div", "banner " + (pit.verdict.status === "ready" ? "ok" : "warn"), card, `${PIT_WORD[pit.verdict.status] || pit.verdict.status}. ${pit.periods} periods of ${pit.companies} companies; ${pit.estimated} with an assumed date; ${pit.impossible} dated before they end; typical real lag ${pit.lag_days ? Math.round(pit.lag_days.median) + " days" : "n/a"}.`); b.dataset.status = pit.verdict.status;
+    for (const a of pit.assumptions) h("p", "hint", card, a);
+    Q.simpleTable(card, [{ label: "Factor", get: (x) => "Fundamental: " + x[0] }, { label: "Companies with a value", num: true, get: (x) => `${x[1].tickers_with_a_value} of ${x[1].tickers_requested}` }, { label: "Share of company-days with a value", num: true, get: (x) => pct(x[1].share_of_cells, 0) },
+      { label: "Median companies per day", num: true, get: (x) => num(x[1].median_assets_per_date, 1) }, { label: "First value", get: (x) => x[1].first_value || "none" }], Object.entries(f.coverage));
+    if (f.missing_tickers.length) h("p", "hint warn", card, `No statements for ${f.missing_tickers.join(", ")}: those companies have no fundamental factor values.`);
+    h("p", "hint", card, `Basis: ${f.basis === "fy" ? "annual statements" : f.basis}; each figure is used from the day after its filing (${f.settings.info_lag_days} day lag), the figure is dropped when the latest period is older than ${f.settings.max_age_days[f.basis] || "the allowed"} days.`);
+  }
+
+  async function keep(S, btn, status, body, title) {
+    btn.disabled = true; status.textContent = "Saving…";
+    try { const s = await Q.research.ensure(title); await api("/api/research/artifact/save", { session: s.id, ...body }); await Q.research.refresh(); status.textContent = `Saved to "${s.name}".`; toast(`Saved to "${s.name}"`); }
+    catch (e) { status.textContent = ""; toast(e.message); }
+    btn.disabled = false;
+  }
+  function keepRow(pane, S, what, body, title) {
+    const row = h("div", "row", pane), b = h("button", "btn", row, what); b.type = "button"; b.dataset.role = "keep-study"; const st = h("span", "hint", row); st.setAttribute("role", "status");
+    b.title = "Keeps the study in the open research session with its sample, horizon, data version and assumptions. A study has no return series, so a comparison lists it and checks that it is comparable; it is not ranked by performance.";
+    b.addEventListener("click", () => keep(S, b, st, body(), title)); return row;
+  }
+
   /* ------------------------------------------------------------------ 3 Combination */
   function combination(pane, S) {
     const head = h("div", "card", pane); h("h3", "", head, "3. Combination: is a blend better than its best part?");
     h("p", "hint", head, "Equal weight, IC-weighted, ridge and orthogonalised blends, with weights from the past only. The first part of the history chooses the best single factor; the later part, which nothing was fitted on, judges everything. A blend counts as an improvement only if it beats both the best single factor and equal weight by more than 1.96 standard errors of the difference.");
     if (!banner(pane, S, "factors", "factor study")) { const e = h("div", "card empty", pane); h("p", "", e, "Run the factor study in stage 1 first."); return; }
-    const r = R.results.factors, cb = r.combination, label = Object.fromEntries(S.plan.signals.map((s) => [s.key, s.label])), nm = (k) => label[k] || k;
+    const r = R.results.factors, cb = r.combination, nm = labelOf(S);
     const k = h("div", "kpis", head);
     Q.tile(k, "Training period", `${cb.train_dates[0]} to ${cb.train_dates[1]}`, { text: `best single factor on it: ${nm(cb.best_single_on_training)}` });
     Q.tile(k, "Test period", `${cb.test_dates[0]} to ${cb.test_dates[1]}`, { text: "nothing was fitted here" });
@@ -177,6 +216,7 @@
     const tr = cb.training_ic, cc = Q.chartCard(pane, "What the training period saw", "The mean rank IC of each factor on the training period only: how the best single factor was chosen, and what the IC-weighted blend leans on.",
       { draw: (b) => C.hbars(b, { rows: Object.entries(tr).map(([f, v]) => ({ label: nm(f), value: v, from: 0 })), format: (v) => v.toFixed(3), name: "Training IC", label: "Training IC", labelWidth: 120, valueWidth: 60 }), table: (b) => Q.simpleTable(b, [{ label: "Factor", get: (x) => nm(x[0]) }, { label: "Training IC", num: true, get: (x) => num(x[1], 4) }], Object.entries(tr)) });
     cc.dataset.role = "comb-train";
+    keepRow(pane, S, "Keep this study in a research session", () => ({ job: R.jobs.factors }), "Alpha research");
   }
 
   /* ------------------------------------------------------------------ 4 Portfolio construction */
@@ -218,6 +258,11 @@
           lines: fr.slice(1).map((x, i) => ({ x1: fr[i].vol, y1: fr[i].return, x2: x.vol, y2: x.return, color: c[0], name: i === 0 ? "Efficient frontier" : undefined })), xFormat: (v) => (v * 100).toFixed(1) + "%", yFormat: (v) => (v * 100).toFixed(1) + "%", xLabel: "Volatility (annual)", yLabel: "Expected return", height: 280, label: "Optimisers against the efficient frontier" }),
         table: (b) => Q.simpleTable(b, [{ label: "Portfolio", get: (x) => x.name }, { label: "Volatility", num: true, get: (x) => pct(x.vol, 2) }, { label: "Expected return", num: true, get: (x) => pct(x.ret, 2) }], [...fr.map((x) => ({ name: "frontier", vol: x.vol, ret: x.return })), ...Object.entries(pl).map(([k, v]) => ({ name: d.methods[k].label, vol: v.vol, ret: v.return }))]) });
     fc.dataset.role = "pf-frontier";
+    const kc = h("div", "card", pane); kc.dataset.role = "pf-keep"; h("h3", "", kc, "Keep a method in a research session");
+    h("p", "hint", kc, `Saves one method's net equity curve, with equal weight as its benchmark, so it can be compared with other results. Its Sharpe ratio is not corrected for having been picked from ${rows.length} methods.`);
+    const kr = h("div", "row", kc), ks = h("select", "", kr); ks.dataset.key = "keep_method"; ks.setAttribute("aria-label", "Method to keep"); for (const x of rows) { const o = h("option", "", ks, x.method); o.value = x.key; }
+    const kb = h("button", "btn", kr, "Save to session"); kb.type = "button"; kb.dataset.role = "keep-method"; const kt = h("span", "hint", kr); kt.setAttribute("role", "status");
+    kb.addEventListener("click", () => keep(S, kb, kt, { job: R.jobs.portfolio, method: ks.value }, "Alpha research"));
   }
 
   /* ------------------------------------------------------------------ 5 Performance and attribution */

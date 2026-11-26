@@ -110,6 +110,24 @@ def issues_for(arts: list[dict], window: tuple[str, str] | None) -> list[dict]:
             first, last = a["series"]["dates"][0], a["series"]["dates"][-1]
             if first < window[0] or last > window[1]:
                 add("window_cut", "note", f"{_label(a)} covers {first} to {last}; it is measured over {window[0]} to {window[1]}, the days all results share.", [a["id"]])
+    studies = [a for a in arts if a["kind"] in ("factor_study", "forecast")]
+    if len(studies) >= 2:                                                                       # studies without a return stream are comparable only if they asked the same question of the same sample
+        ids = [a["id"] for a in studies]
+        if len({a["kind"] for a in studies}) > 1:
+            add("different_studies", "blocks_ranking", "The results are different kinds of study (a factor study and a forecast evaluation); their scores answer different questions.", ids)
+        hz = {a["config"].get("horizon") for a in studies if a["config"].get("horizon")}
+        if len(hz) > 1:
+            add("different_horizon", "blocks_ranking", "The studies look at different horizons (" + ", ".join(f"{int(h)} days" for h in sorted(hz)) + "): an IC or a forecast score over 5 days is not comparable with one over 21.", ids)
+        spans = {(a["context"].get("start"), a["context"].get("end")) for a in studies if a["context"].get("start")}
+        if len(spans) > 1 and len(asset_sets) <= 1:
+            add("different_sample_window", "blocks_ranking", "The studies cover different dates (" + "; ".join(f"{s} to {e}" for s, e in sorted(spans)) + "): they did not face the same market.", ids)
+    fund = [a for a in arts if (a["config"].get("fundamental") or {})]
+    if fund:
+        statuses = {a["config"]["fundamental"].get("pit_status") for a in fund}
+        if any(s == "ready_with_assumptions" for s in statuses) or len(statuses) > 1:
+            add("pit_assumptions", "warning", "Some results use fundamental figures whose availability dates were partly assumed (" + ", ".join(sorted(str(s) for s in statuses)) + "): when a filing really became public may differ from the assumed lag.", [a["id"] for a in fund])
+        if len(fund) < len([a for a in arts if a["kind"] == "factor_study"]):
+            add("fundamentals_mixed", "warning", "Some factor studies use fundamental factors and some do not; the first have a smaller, slower-moving set of figures to work with.", [a["id"] for a in arts if a["kind"] == "factor_study"])
     many = [(a["id"], a["metrics"].get("n_trials")) for a in arts if a["metrics"].get("n_trials") and a["metrics"]["n_trials"] > 1]
     if many:
         add("selection", "note", "Some results were picked from many tries (" + ", ".join(f"{i}: {int(n)} trials" for i, n in many) + "). The best of many is biased upward; the deflated Sharpe of each result says by how much.", [i for i, _ in many])

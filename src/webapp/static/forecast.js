@@ -116,7 +116,7 @@
       const started = await api("/api/forecast/run", body);
       F.job = started.job; if (isOpen()) F.draw();
       const result = await Q.waitJob(started.job, (v) => { F.busy = `${v.message} (${Math.round(v.elapsed)} s)`; Q.syncLab(F); paintRunning(); }, 700);
-      F.results.forecast = { data: result, body }; F.errors.forecast = null; F.show = { method: "", pit: "" };
+      F.results.forecast = { data: result, body, job: started.job }; F.errors.forecast = null; F.show = { method: "", pit: "" };
     } catch (e) { F.results.forecast = null; F.errors.forecast = e.status === 404 ? "The app behind this page does not know this request: it is older than the page. " + Q.RESTART : e.message; }
     F.busy = ""; F.job = null; Q.syncLab(F); if (isOpen()) { F.draw(); window.scrollTo({ top: 0 }); }
     watchRuns();
@@ -161,7 +161,7 @@
     try {
       const v = await api("/api/job/" + id);
       if (v.status !== "done" || !v.result) throw new Error(v.error || "This run has no result to show.");
-      F.results.forecast = { data: v.result, body: {} }; F.errors.forecast = null; F.show = { method: "", pit: "" }; F.draw(); window.scrollTo({ top: 0 });
+      F.results.forecast = { data: v.result, body: {}, job: id }; F.errors.forecast = null; F.show = { method: "", pit: "" }; F.draw(); window.scrollTo({ top: 0 });
     } catch (e) { Q.toast(e.message); }
   }
   function paintRuns() {
@@ -316,6 +316,16 @@
     const card = h("div", "card", root); card.dataset.role = "forecast-conclusions"; h("h3", "", card, `Research conclusions, ${c.horizon}-day forecasts`);
     const ul = h("ul", "conclusions", card), MARK = { established: "✓", "not established": "✗", caution: "!" };
     for (const i of c.items) { const li = h("li", "c-" + i.status.replace(" ", "-"), ul); li.dataset.status = i.status; h("span", "vicon", li, MARK[i.status] || "?"); h("b", "", li, i.topic + ": "); li.append(document.createTextNode(i.text)); h("span", "hint", li, `  (${i.status})`); }
+    const job = F.results.forecast && F.results.forecast.job;
+    if (!job || !Q.research) return;
+    const row = h("div", "row", card), b = h("button", "btn", row, "Keep this evaluation in a research session"); b.type = "button"; b.dataset.action = "keep-forecast"; const st = h("span", "hint", row); st.setAttribute("role", "status");
+    b.title = "Keeps the evaluation with its sample, horizon, data version and the dates all methods forecast. It has no return series, so a comparison lists it and checks that it is comparable; it is not ranked by performance.";
+    b.addEventListener("click", async () => {
+      b.disabled = true; st.textContent = "Saving…";
+      try { const s = await Q.research.ensure("Forecasting"); await api("/api/research/artifact/save", { session: s.id, job }); await Q.research.refresh(); st.textContent = `Saved to "${s.name}".`; Q.toast(`Saved to "${s.name}"`); }
+      catch (e) { st.textContent = ""; Q.toast(e.message); }
+      b.disabled = false;
+    });
   }
   function verdictCard(root, d) {
     const v = d.verdict, card = h("div", "card verdict-card " + v.level, root); card.dataset.level = v.level;

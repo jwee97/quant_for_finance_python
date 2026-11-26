@@ -28,7 +28,7 @@ from .context import ContextError, validate_context
 SCHEMA = 2                                                       # 2 added saved configurations to a session
 ARTIFACT_SCHEMA = 1                                              # a saved result's own version: it did not change when sessions gained configurations
 ID = re.compile(r"^[0-9a-f]{12}$")
-KINDS = ("backtest", "ml_experiment", "regime", "options", "futures", "crypto", "forecast", "tune", "portfolio_lab")
+KINDS = ("backtest", "ml_experiment", "regime", "options", "futures", "crypto", "forecast", "tune", "portfolio_lab", "factor_study")
 EVIDENCE = ("in_sample", "out_of_sample", "walk_forward", "historical_simulation", "simulated", "retrospective", "paper", "live")
 DATA_KINDS = ("platform", "user_file", "downloaded", "simulated", "mixed", "unavailable")          # the vocabulary of the provenance badges the tabs already show
 MAX_SESSIONS, MAX_ARTIFACTS, MAX_NOTES, MAX_GROUPS, MAX_CONFIGS = 200, 200, 200, 20, 50

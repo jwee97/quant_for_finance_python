@@ -108,3 +108,45 @@ def test_a_result_from_another_sample_or_other_settings_is_marked_and_not_drawn_
     page.fill("#alphalab input[data-key=horizon]", "5")
     stage(page, "validation")
     assert page.get_attribute("button[data-stage=validation]", "data-state") == "current" and page.locator("[data-role=val-table]").count() == 1, "back on the sample it was run on, it is current again"
+
+
+def _seed_fundamentals(page, tickers):
+    """Annual statements for 2014 to 2018, filed on 20 February of the next year, with profitability that differs by company and year, through the Fundamentals tab's own endpoint."""
+    page.evaluate("""async (tickers) => {
+        for (const [i, t] of tickers.entries()) {
+            await QL.api('/api/fund/manual/save', {company: {ticker: t, name: t + ' Inc', exchange: 'US', country: 'US', currency: 'USD'}, units: {money: 'units', shares: 'units'},
+                periods: [2014, 2015, 2016, 2017, 2018].map((y) => ({fiscal_period: 'FY', period_end: y + '-12-31', filing_date: (y + 1) + '-02-20',
+                    values: {revenue: 1000 + 20 * i, net_income: 50 + 10 * i + 3 * (y - 2014) * (i % 2 ? 1 : -1), total_assets: 2000, shareholders_equity: 800 + 15 * i, gross_profit: 400 + 12 * i}}))});
+        }
+    }""", tickers)
+
+
+def test_fundamental_factors_enter_after_the_point_in_time_check_and_studies_are_kept_in_a_research_session(page):
+    _seed_fundamentals(page, ["A00", "A01", "A02", "A03", "A04", "A05", "A06", "A07"])
+    page.fill("#alphalab input[data-key=tickers]", EIGHT)
+    page.wait_for_selector("[data-role=fundamental-factors] input[data-fundamental=roe]", timeout=30_000)
+    page.check("[data-role=fundamental-factors] input[data-fundamental=roe]")
+    page.check("[data-role=fundamental-factors] input[data-fundamental=net_margin]")
+    assert "2 fundamental" in page.inner_text("[data-role=research-context]")
+    page.click("[data-role=run-factors]")
+    page.wait_for_selector("[data-role=disc-table]", timeout=240_000)
+    disc = page.inner_text("[data-role=disc-table]")
+    assert "Fundamental: ROE" in disc or "Fundamental: Return on equity" in disc or "Fundamental:" in disc
+    assert page.locator("[data-role=disc-table] tbody tr").count() == 6, "four price signals and two fundamental ones"
+    stage(page, "validation")
+    pit = page.inner_text("[data-role=val-pit]")
+    assert "point-in-time check that admitted them" in pit and "Ready" in pit and "Companies with a value" in pit and "8 of 8" in pit
+    assert page.locator("[data-role=val-pit] .banner[data-status]").get_attribute("data-status") == "ready"
+    assert "Fundamental:" in page.inner_text("[data-role=val-table]") and "p Holm" in page.inner_text("[data-role=val-table]")
+    stage(page, "combination")
+    page.click("[data-role=keep-study]")
+    _wait_until(page, "[...document.querySelectorAll('[data-role=stage-combination] .hint[role=status]')].some((e) => e.textContent.startsWith('Saved to'))", 30)
+    kept = page.evaluate("""async () => { const s = await QL.api('/api/research/sessions'); const d = await QL.api('/api/research/session?id=' + s.sessions[0].id); const a = await QL.api('/api/research/artifact?id=' + d.artifacts[0].id); return [a.kind, a.config.horizon, a.config.uses_fundamentals, a.config.fundamental.pit_status, a.metrics.n_tested]; }""")
+    assert kept == ["factor_study", 5, True, "ready", 6], kept
+    stage(page, "portfolio")
+    page.click("[data-role=run-portfolio]")
+    page.wait_for_selector("[data-role=pf-keep]", timeout=300_000)
+    page.click("[data-role=keep-method]")
+    _wait_until(page, "[...document.querySelectorAll('[data-role=pf-keep] .hint[role=status]')].some((e) => e.textContent.startsWith('Saved to'))", 30)
+    kinds = page.evaluate("""async () => { const s = await QL.api('/api/research/sessions'); const d = await QL.api('/api/research/session?id=' + s.sessions[0].id); return d.artifacts.map((a) => a.kind).sort(); }""")
+    assert kinds == ["factor_study", "portfolio_lab"], kinds
