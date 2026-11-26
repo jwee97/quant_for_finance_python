@@ -26,6 +26,11 @@ pyarrow>=14.0
 requests>=2.31
 websockets>=12.0
 
+# Reinforcement learning (the ml_ppo, ml_sac and ml_recurrent_ppo models and src/ml/rl): environments and Stable-Baselines3
+gymnasium>=0.29
+stable-baselines3>=2.3
+sb3-contrib>=2.3
+
 # Figures
 matplotlib>=3.8
 

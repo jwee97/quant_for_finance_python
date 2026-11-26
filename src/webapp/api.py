@@ -110,6 +110,11 @@ def code_signature(root: Path = CODE_ROOT) -> tuple[int, float]:
 
 
 LAUNCH_SIGNATURE = code_signature()
+FROZEN_SIGNATURE: tuple[int, float] | None = None                  # set only by the test suite (tests/conftest.py): while it is set, the app reports the code as unchanged, so editing a source file during a long test run cannot raise the "restart needed" banner under a browser test
+
+
+def current_signature() -> tuple[int, float]:
+    return FROZEN_SIGNATURE or code_signature()
 
 
 class ApiError(ValueError):
@@ -279,7 +284,7 @@ class App:
         detectors = [{"name": e.name, "description": e.description} for e in DETECTORS.entries() if e.name != "static"]
         default = self.builder.default_bundle()
         return clean({
-            "api_version": API_VERSION, "restart_needed": code_signature() != LAUNCH_SIGNATURE, "observed_default": os.environ.get("QUANT_OBSERVED_ONLY", "1").lower() not in ("0", "false", "no", "off"),
+            "api_version": API_VERSION, "restart_needed": current_signature() != LAUNCH_SIGNATURE, "observed_default": os.environ.get("QUANT_OBSERVED_ONLY", "1").lower() not in ("0", "false", "no", "off"),
             "models": models, "allocators": allocators, "detectors": detectors, "combinations": [{"name": k, "description": v} for k, v in COMBINATIONS.items()],
             "default_tickers": list(default.assets), "default_classes": dict(default.asset_class), "classes": list(CLASSES), "max_tickers": MAX_TICKERS,
             "sources": [src.status() for src in self.builder.sources.values()], "default_source": "yahoo",

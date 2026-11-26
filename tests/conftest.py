@@ -21,6 +21,13 @@ ROOT = Path(__file__).resolve().parents[1]
 # it is built, and module-scoped app fixtures are built before any function fixture); a test of the observed-only behaviour sends ``data_mode=observed`` itself.
 os.environ["QUANT_OBSERVED_ONLY"] = "0"
 
+# The app compares the code on disk with the code it loaded and shows a "restart needed" banner when they differ. A browser test run takes many minutes; saving a source file in that time (or switching branches) used to
+# raise the banner under whichever test was open, and fail it for a reason that has nothing to do with the test. The suite freezes the signature at the value taken when the process started; the tests of the check
+# itself (tests/test_webapp.py) change LAUNCH_SIGNATURE or call code_signature(root) directly, so they still see a difference.
+from src.webapp import api as _api  # noqa: E402
+
+_api.FROZEN_SIGNATURE = _api.LAUNCH_SIGNATURE
+
 
 @pytest.fixture(autouse=True)
 def _no_finzdata_key(monkeypatch):

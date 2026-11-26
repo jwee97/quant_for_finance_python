@@ -109,11 +109,18 @@
     return (key) => { if (!slots.has(key)) slots.set(key, slots.size); return Q.colorOf(slots.get(key)); };
   }
   function kv(parent, title, rows) {
-    const box = h("div", "kv", parent); h("h4", "", box, title);
+    const box = h("div", "kv", parent); h(subLevel(parent), "", box, title);
     Q.simpleTable(box, [{ label: "Measure", get: (x) => x[0] }, { label: "Value", num: true, get: (x) => x[1] }], rows.filter((x) => x[1] !== null && x[1] !== undefined));
     return box;
   }
-  const sub = (root, text) => h("h4", "subhead", root, text);
+  /* The heading tag for a block title written into ``node``: one level below the nearest heading before it (h2 -> h3, h3 -> h4), a peer after an h4, so no level is ever skipped. */
+  function subLevel(node) {
+    let last = null;
+    for (const e of document.querySelectorAll("h1,h2,h3,h4,h5,h6")) if (node.contains(e) || (node.compareDocumentPosition(e) & Node.DOCUMENT_POSITION_PRECEDING)) last = e;
+    const n = last ? Number(last.tagName[1]) : 2;
+    return "h" + (n <= 2 ? 3 : n === 3 ? 4 : Math.min(n, 6));
+  }
+  const sub = (root, text) => h(subLevel(root), "subhead", root, text);
   const hint = (root, text) => h("p", "hint", root, text);
   const card = (root, title, note) => { const c = h("div", "card", root); if (title) h("h3", "", c, title); if (note) h("p", "note", c, note); return c; };
   const signed = (v, d = 1) => (Q.bad(v) ? "n/a" : (v >= 0 ? "+" : "−") + Math.abs(v).toFixed(d));
