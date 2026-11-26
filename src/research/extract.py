@@ -101,9 +101,25 @@ def portfolio_lab_artifact(result: dict, method: str, *, job_id: str = "", code_
              "walk-forward, but which method to look at was decided with the whole result in view; this is a historical simulation, not out-of-sample evidence."]
     if row.get("fallbacks"):
         notes.append(f"The method failed on {int(row['fallbacks'])} rebalance date(s) and equal weight was used there.")
+    cost = cfg.get("cost_bps")
+    if cost is not None:
+        ctx["costs"] = {"cost_bps": float(cost)}
+    er = result.get("expected_returns") or {}
+    attr = ((result.get("attribution") or {}).get("methods") or {}).get(method) or {}
+    validation = {"expected_returns_source": er.get("source", "historical mean"), "horizon_days": er.get("horizon_days"),
+                  "point_in_time": "weights at each rebalance use only information before it; expected returns from forecasts or factors use records available before the decision",
+                  "attribution_reconciliation": (attr.get("factor") or {}).get("reconciliation", {}).get("status"), "brinson_reconciliation": (attr.get("brinson") or {}).get("reconciliation", {}).get("status"),
+                  "forecast": ({k: er.get("meta", {}).get(k) for k in ("forecast_method", "model_version", "calibrate", "max_age_days", "forecasts", "training_fingerprint_example")} if (er.get("meta") or {}).get("forecast_method") else None)}
+    attribution = None
+    if attr:
+        attribution = {"method": method, "kind": (result.get("attribution") or {}).get("kind"), "factor": attr.get("factor"), "brinson": attr.get("brinson"), "benchmark": (result.get("attribution") or {}).get("benchmark"),
+                       "methodology": (result.get("attribution") or {}).get("methodology"), "brinson_reason": (result.get("attribution") or {}).get("brinson_reason")}
+    if er:
+        notes.append(f"Expected returns for the optimisers that use them: {er.get('source', 'historical mean')}; every source is run with the same risk estimate, caps, costs and schedule.")
     return {"kind": "portfolio_lab", "title": f"Portfolio lab: {row.get('method', method)}"[:120], "evidence": "historical_simulation", "data_kind": data_kind(str(uni.get("source", "")), None), "context": ctx,
-            "config": {"method": method, "study": {k: v for k, v in cfg.items() if isinstance(v, (int, float, str))}, "methods_tried": list(rows)}, "metrics": metrics,
-            "series": {"dates": dates, "equity": equity, "benchmarks": benches}, "refs": {"job": job_id, "code_version": code_version, "dataset": ctx["dataset_version"]}, "notes": notes}
+            "config": {"method": method, "study": {k: v for k, v in cfg.items() if isinstance(v, (int, float, str))}, "methods_tried": list(rows), "mu_source": er.get("source", "historical mean"), "mu_meta": er.get("meta")},
+            "metrics": metrics, "series": {"dates": dates, "equity": equity, "benchmarks": benches}, "refs": {"job": job_id, "code_version": code_version, "dataset": ctx["dataset_version"]}, "notes": notes,
+            "benchmark": "Equal weight" if benches else "", "costs": {"cost_bps": cost, "charged": "on the rebalance day, on the whole of the trade"}, "validation": validation, "attribution": attribution}
 
 
 def ml_artifact(report: dict, returns: pd.DataFrame, *, code_version: str = "unknown") -> dict:
@@ -234,3 +250,30 @@ def forecast_artifact(result: dict, *, job_id: str = "", code_version: str = "un
              "Skill is not a trading result: a forecast can describe the spread of returns well and make no money."] + [i["text"] for i in conc.get("items", []) if i.get("status") == "caution"][:4]
     return {"kind": "forecast", "title": f"Forecast evaluation: {result['ticker']}, {result['horizon']}-day horizon"[:120], "evidence": "walk_forward", "data_kind": data_kind(str(uni.get("source", "")), None), "context": ctx,
             "config": config, "metrics": metrics, "refs": {"job": job_id, "code_version": code_version, "dataset": ctx["dataset_version"]}, "notes": notes}
+
+
+def trading_study_artifact(result: dict, *, job_id: str = "", code_version: str = "unknown") -> dict:
+    """The artifact of a finished Alpha Lab trading study: the calibrated alpha of a signal traded under four policies, and the implementation waterfall from paper Sharpe to the realised book. It has no return
+    series (the study reports the Sharpe ratios and costs of each step), so a comparison lists it and checks that it is comparable but does not measure it."""
+    for key in ("waterfall", "policies", "config", "universe"):
+        if key not in result:
+            raise StoreError("this job did not produce a trading study")
+    wf, pol, cfg, uni = result["waterfall"], result["policies"], result["config"], result["universe"]
+    sharpe = lambda rows, name: next((r.get("sharpe") for r in rows if r.get("index") == name), None)
+    metrics = {"n_trials": float(len(pol)), "days": float(result["days"]), "paper_sharpe": _num_or_none(wf[0].get("sharpe")) if wf else None, "realised_sharpe": _num_or_none(wf[-1].get("sharpe")) if wf else None}
+    for r in pol:
+        if r.get("sharpe") is not None:
+            metrics[f"sharpe_{r.get('index')}"] = _num_or_none(r.get("sharpe"))
+    metrics = {k: v for k, v in metrics.items() if v is not None}
+    ctx = {"assets": list(uni.get("tickers", [])), "start": result["first"], "end": result["last"], "frequency": "daily", "data_source": str(uni.get("source") or "platform"),
+           "costs": {"cost_bps": float(cfg.get("cost_bps") or 0.0)}, "dataset_version": fingerprint(uni.get("tickers"), result["first"], result["last"], uni.get("source"))}
+    return {"kind": "trading_study", "title": f"Trading study: {result['label']}"[:120], "evidence": "historical_simulation", "data_kind": data_kind(str(uni.get("source", "")), None), "context": ctx,
+            "config": {"signal": result["signal"], "horizon": int(result["horizon"]), "policies": [r.get("index") for r in pol], **{k: v for k, v in cfg.items() if isinstance(v, (int, float, str, bool))}},
+            "metrics": metrics, "refs": {"job": job_id, "code_version": code_version, "dataset": ctx["dataset_version"]}, "costs": {k: cfg.get(k) for k in ("cost_bps", "impact", "lag")},
+            "validation": {"point_in_time": "the alpha is calibrated on past data only (rolling window); trading starts after a one-year warm-up", "waterfall": wf},
+            "notes": ["The study reports the Sharpe ratio of the same forecasts as each real-world step is added; a signal built from prices is an example of the interface and not a recommendation.",
+                      "A study has no return series: it is listed and checked for comparability, not ranked by performance."] + list(result.get("notes", []))[:2]}
+
+
+def _num_or_none(x):
+    return None if x is None or (isinstance(x, float) and not math.isfinite(x)) else float(x)

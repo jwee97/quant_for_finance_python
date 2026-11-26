@@ -54,7 +54,7 @@ class ResearchApi:
 
     # ------------------------------------------------------------------------------------------------------ routes
     def get_routes(self) -> dict:
-        return {"/api/research/sessions": self.sessions, "/api/research/session": self.session, "/api/research/artifact": self.artifact, "/api/research/compat": self.compat, "/api/research/overview": self.overview,
+        return {"/api/research/sessions": self.sessions, "/api/research/session": self.session, "/api/research/artifact": self.artifact, "/api/research/artifact/rerun": self.artifact_rerun_spec, "/api/research/artifact/versions": self.artifact_versions, "/api/research/compat": self.compat, "/api/research/overview": self.overview,
                 "/api/regime/plan": self.regime_plan}
 
     def post_routes(self) -> dict:
@@ -149,28 +149,47 @@ class ResearchApi:
                 "advice": "" if not issues else "The result is kept as it was made. Run it again under the current context to get numbers that describe it, or compare it only with results made under the same assumptions."}
 
     def artifact_save(self, body: dict) -> dict:
-        session = _id(body, "session")
-        self._store(self.store.get_session, session)
+        """Keep a finished run in a session. ``{"session"}`` or ``{"new_session": name}``, then ``{"job"}`` or ``{"experiment"}``; optional ``title``, ``notes`` (a text or a list), ``hypothesis`` and ``parent`` (the id of the
+        study this is a new version of). The numbers come from the server's own record of the run. Saving the same run twice keeps one study (the answer says ``duplicate``); a saved study is never changed."""
+        if not body.get("session") and body.get("new_session"):
+            name = str(body["new_session"]).strip()[:80]
+            if not name:
+                raise ApiError("name the new session")
+            session = self._store(self.store.create_session, name, {})["id"]
+            created = True
+        else:
+            session = _id(body, "session")
+            created = False
+            self._store(self.store.get_session, session)
+        job_id = str(body["job"]) if body.get("job") else ""
+        key_parts = []
         if body.get("job"):
-            job = self.app.job(str(body["job"]))
+            job = self.app.job(job_id)
             if job.get("status") != "done" or not isinstance(job.get("result"), dict):
                 raise ApiError("only a finished run can be saved: this one is " + str(job.get("status")))
             if job.get("kind") == "regime":
-                art = self._regime_artifact(job["result"], str(body["job"]))
+                art = self._regime_artifact(job["result"], job_id)
             elif job.get("kind") == "backtest":
-                art = self._store(extract.backtest_artifact, job["result"], job_id=str(body["job"]), code_version=self._code_version())
+                art = self._store(extract.backtest_artifact, job["result"], job_id=job_id, code_version=self._code_version())
             elif job.get("kind") == "lab" and "table" in job["result"] and "equity" in job["result"]:
                 if not body.get("method"):
                     raise ApiError("say which method of the study to keep")
-                art = self._store(extract.portfolio_lab_artifact, job["result"], str(body["method"]), job_id=str(body["job"]), code_version=self._code_version())
+                art = self._store(extract.portfolio_lab_artifact, job["result"], str(body["method"]), job_id=job_id, code_version=self._code_version())
+                key_parts.append(str(body["method"]))
             elif job.get("kind") == "lab" and "comparison" in job["result"] and "combination" in job["result"]:
-                art = self._store(extract.factor_study_artifact, job["result"], job_id=str(body["job"]), code_version=self._code_version())
+                art = self._store(extract.factor_study_artifact, job["result"], job_id=job_id, code_version=self._code_version())
+            elif job.get("kind") == "lab" and "waterfall" in job["result"] and "policies" in job["result"]:
+                art = self._store(extract.trading_study_artifact, job["result"], job_id=job_id, code_version=self._code_version())
             elif job.get("kind") == "forecast" and "evaluation" in job["result"]:
-                art = self._store(extract.forecast_artifact, job["result"], job_id=str(body["job"]), code_version=self._code_version())
+                art = self._store(extract.forecast_artifact, job["result"], job_id=job_id, code_version=self._code_version())
             elif job["result"].get("kind") in extract.STRATEGY_LABS:
-                art = self._store(extract.strategy_artifact, job["result"], job_id=str(body["job"]), code_version=self._code_version())
+                art = self._store(extract.strategy_artifact, job["result"], job_id=job_id, code_version=self._code_version())
             else:
-                raise ApiError(f"a {job.get('kind')} run cannot be saved here yet: save a backtest, a strategy backtest from the Options, Futures or Crypto lab, a machine-learning experiment or a regime estimate")
+                raise ApiError(f"a {job.get('kind')} run cannot be saved here yet: save a backtest, a strategy backtest from the Options, Futures or Crypto lab, a portfolio, factor, trading or forecast study, a machine-learning experiment or a regime estimate")
+            live = self.app.jobs.get(job_id)
+            request = ((live.run or {}).get("request") or live.request) if live is not None else (self.app.joblog.get(job_id) or {}).get("request")
+            art["source"] = {"job": job_id, "request": request, "label": job.get("label")}
+            key = job_id
         elif body.get("experiment"):
             exp_id = str(body["experiment"])
             try:
@@ -180,12 +199,38 @@ class ResearchApi:
             except Exception as error:
                 raise ApiError(f"experiment {exp_id}: {error}") from None
             art = self._store(extract.ml_artifact, report, ret, code_version=self._code_version())
+            art["source"] = {"experiment": exp_id}
+            key = exp_id
         else:
             raise ApiError("say which run to keep: job or experiment")
+        art["refs"] = {**art.get("refs", {}), "save_key": extract.fingerprint(key, *key_parts)}
         if body.get("title"):
             art["title"] = str(body["title"])[:120]
+        if body.get("hypothesis"):
+            art["hypothesis"] = str(body["hypothesis"])[:1000]
+        notes = body.get("notes") or []
+        notes = [notes] if isinstance(notes, str) else notes
+        if not isinstance(notes, list):
+            raise ApiError("notes is a text or a list of texts")
+        art["notes"] = [str(n)[:500] for n in notes if str(n).strip()] + list(art.get("notes") or [])
+        if body.get("parent"):
+            art["parent"] = str(body["parent"])
         saved = self._store(self.store.add_artifact, session, art)
-        return clean({"artifact": {k: v for k, v in saved.items() if k != "series"}})
+        dup = bool(saved.pop("duplicate", False))
+        return clean({"artifact": {k: v for k, v in saved.items() if k not in ("series", "attribution", "validation")}, "duplicate": dup, "session_created": created, "session": session})
+
+    def artifact_rerun_spec(self, q: dict) -> dict:
+        """``GET /api/research/artifact/rerun?id=``: what to submit to run a saved study again as a new version: the route and body of the request that produced it. The saved study is not touched; the new run is saved
+        with ``parent`` set to this id."""
+        art = self._store(self.store.get_artifact, _id(q), series=False)
+        req = (art.get("source") or {}).get("request")
+        if not req or not req.get("path"):
+            raise ApiError("this study kept no record of the request that produced it, so it cannot be re-run from here (studies saved by an older version of the app are like this)")
+        return clean({"id": art["id"], "title": art["title"], "version": art.get("version", 1), "route": req["path"], "body": req.get("body") or {}, "kind": art["kind"], "session": art["session_id"]})
+
+    def artifact_versions(self, q: dict) -> dict:
+        """``GET /api/research/artifact/versions?id=``: the versions of a study, oldest first."""
+        return {"versions": self._store(self.store.versions, _id(q))}
 
     def artifact_delete(self, body: dict) -> dict:
         self._store(self.store.delete_artifact, _id(body))

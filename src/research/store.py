@@ -26,9 +26,9 @@ from pathlib import Path
 from .context import ContextError, validate_context
 
 SCHEMA = 2                                                       # 2 added saved configurations to a session
-ARTIFACT_SCHEMA = 1                                              # a saved result's own version: it did not change when sessions gained configurations
+ARTIFACT_SCHEMA = 2                                              # a saved result's own version: 2 added hypothesis, benchmark, costs, validation, attribution, source, lineage (version, parent) and a place for unknown fields
 ID = re.compile(r"^[0-9a-f]{12}$")
-KINDS = ("backtest", "ml_experiment", "regime", "options", "futures", "crypto", "forecast", "tune", "portfolio_lab", "factor_study")
+KINDS = ("backtest", "ml_experiment", "regime", "options", "futures", "crypto", "forecast", "tune", "portfolio_lab", "factor_study", "trading_study")
 EVIDENCE = ("in_sample", "out_of_sample", "walk_forward", "historical_simulation", "simulated", "retrospective", "paper", "live")
 DATA_KINDS = ("platform", "user_file", "downloaded", "simulated", "mixed", "unavailable")          # the vocabulary of the provenance badges the tabs already show
 MAX_SESSIONS, MAX_ARTIFACTS, MAX_NOTES, MAX_GROUPS, MAX_CONFIGS = 200, 200, 200, 20, 50
@@ -107,6 +107,34 @@ def migrate_session(rec: dict) -> tuple[dict, bool]:
 
 
 # ------------------------------------------------------------------------------------------------------ the store
+ARTIFACT_KNOWN = {"schema", "id", "session_id", "created", "kind", "title", "evidence", "data_kind", "context", "config", "metrics", "refs", "notes", "series", "hypothesis", "benchmark", "costs", "validation",
+                  "attribution", "source", "version", "parent", "extra", "migrated_from"}
+V2_DEFAULTS = {"hypothesis": "", "benchmark": "", "costs": {}, "validation": {}, "attribution": None, "source": {}, "version": 1, "parent": "", "extra": {}}
+
+
+def migrate_artifact(rec: dict) -> dict:
+    """An artifact of an older schema read as the current one. The file is not touched: the older record stays as it was written, and ``migrated_from`` says what it was. A field this version does not know is
+    kept (under ``extra``), never dropped."""
+    schema = int(rec.get("schema", 0))
+    if schema >= ARTIFACT_SCHEMA:
+        return rec
+    out = dict(rec)
+    for k, v in V2_DEFAULTS.items():
+        out.setdefault(k, json.loads(json.dumps(v)))
+    ctx = out.get("context") or {}
+    if not out["costs"] and ctx.get("costs"):
+        out["costs"] = dict(ctx["costs"]) if isinstance(ctx["costs"], dict) else {"assumption": ctx["costs"]}
+    if not out["benchmark"] and (out.get("series") or {}).get("benchmarks"):
+        out["benchmark"] = next(iter(out["series"]["benchmarks"]))
+    stray = {k: v for k, v in rec.items() if k not in ARTIFACT_KNOWN}
+    if stray:
+        out["extra"] = {**stray, **out["extra"]}
+        for k in stray:
+            out.pop(k, None)
+    out["schema"], out["migrated_from"] = ARTIFACT_SCHEMA, schema
+    return out
+
+
 class ResearchStore:
     def __init__(self, root):
         self.root = Path(root)
@@ -269,7 +297,27 @@ class ResearchStore:
             rec = self._session(session_id)
             if len(rec["artifacts"]) >= MAX_ARTIFACTS:
                 raise StoreError(f"at most {MAX_ARTIFACTS} results in a session; delete one first")
-            art = check_artifact({**artifact, "id": _new_id(), "session_id": session_id, "created": _now(), "schema": ARTIFACT_SCHEMA})
+            parent = str(artifact.get("parent") or "")
+            version = 1
+            if parent:
+                try:
+                    prev = self.get_artifact(parent, series=False)
+                except StoreError:
+                    raise StoreError("the study this is a new version of no longer exists") from None
+                if prev["session_id"] != session_id:
+                    raise StoreError("a new version is kept in the same session as the study it replaces")
+                version = int(prev.get("version", 1)) + 1                                  # the earlier study is left exactly as it was
+            key = (artifact.get("refs") or {}).get("save_key")
+            if key:                                                                         # saving the same finished run twice keeps one study
+                for art_id in rec["artifacts"]:
+                    try:
+                        old = self.get_artifact(art_id, series=False)
+                    except StoreError:
+                        continue
+                    same_data = (old.get("context") or {}).get("dataset_version") == (artifact.get("context") or {}).get("dataset_version")
+                    if old.get("refs", {}).get("save_key") == key and str(old.get("parent") or "") == parent and same_data:
+                        return {**old, "duplicate": True}
+            art = check_artifact({**artifact, "id": _new_id(), "session_id": session_id, "created": _now(), "schema": ARTIFACT_SCHEMA, "version": version, "parent": parent})
             text = json.dumps(art, allow_nan=False, separators=(",", ":"))
             if len(text) > MAX_ARTIFACT_CHARS:
                 raise StoreError("this result is too large to keep")
@@ -284,9 +332,33 @@ class ResearchStore:
             raise StoreError("unknown result")
         if int(rec.get("schema", 0)) > ARTIFACT_SCHEMA:
             raise StoreError("this result was written by a newer version of the app")
+        rec = migrate_artifact(rec)
         if not series:
             rec = {k: v for k, v in rec.items() if k != "series"}
         return rec
+
+    def versions(self, artifact_id: str) -> list[dict]:
+        """The chain of versions of a study, oldest first: each one is a separate, unchanged artifact whose ``parent`` is the one before."""
+        cur = self.get_artifact(artifact_id, series=False)
+        chain = [cur]
+        seen = {cur["id"]}
+        while cur.get("parent") and cur["parent"] not in seen:
+            try:
+                cur = self.get_artifact(cur["parent"], series=False)
+            except StoreError:
+                break
+            seen.add(cur["id"])
+            chain.append(cur)
+        root = chain[-1]["id"]
+        later = [a for a in self.list_artifacts(chain[0]["session_id"]) if a.get("parent") and a["id"] not in seen]
+        children = {a["parent"]: a["id"] for a in later}
+        head = chain[0]["id"]
+        forward = []
+        while head in children:
+            nxt = self.get_artifact(children[head], series=False)
+            forward.append(nxt)
+            head = nxt["id"]
+        return [{k: a.get(k) for k in ("id", "title", "created", "version", "parent")} for a in list(reversed(chain)) + forward]
 
     def list_artifacts(self, session_id: str | None = None) -> list[dict]:
         """Short summaries (no series), newest first, of one session's results or of all of them."""
@@ -298,7 +370,7 @@ class ResearchStore:
                     a = self.get_artifact(art_id, series=False)
                 except StoreError:
                     continue
-                out.append({k: a.get(k) for k in ("id", "session_id", "kind", "title", "created", "evidence", "data_kind", "metrics", "context", "refs")})
+                out.append({k: a.get(k) for k in ("id", "session_id", "kind", "title", "created", "evidence", "data_kind", "metrics", "context", "refs", "version", "parent", "hypothesis", "benchmark")})
             return sorted(out, key=lambda r: r["created"] or "", reverse=True)
 
     def delete_artifact(self, artifact_id: str) -> None:
@@ -362,6 +434,31 @@ def check_artifact(raw: dict) -> dict:
     refs = raw.get("refs") or {}
     out["refs"] = {str(k)[:40]: str(v)[:200] for k, v in refs.items() if v not in (None, "")}
     out["notes"] = [str(n)[:500] for n in (raw.get("notes") or [])][:20]
+    out["hypothesis"] = str(raw.get("hypothesis") or "")[:1000]
+    out["benchmark"] = str(raw.get("benchmark") or "")[:120]
+    for name in ("costs", "validation", "source"):
+        value = raw.get(name) or {}
+        if not isinstance(value, dict):
+            raise StoreError(f"{name} must be an object")
+        if len(json.dumps(value, default=str)) > 200_000:
+            raise StoreError(f"{name} is too large to keep")
+        out[name] = json.loads(json.dumps(value, default=str, allow_nan=False)) if value else {}
+    attribution = raw.get("attribution")
+    if attribution:
+        if len(json.dumps(attribution, default=str)) > 2_000_000:
+            raise StoreError("the attribution is too large to keep")
+        out["attribution"] = json.loads(json.dumps(attribution, default=str, allow_nan=False))
+    else:
+        out["attribution"] = None
+    out["version"] = max(int(raw.get("version") or 1), 1)
+    out["parent"] = str(raw.get("parent") or "")
+    extra = dict(raw.get("extra") or {})
+    extra.update({k: v for k, v in raw.items() if k not in ARTIFACT_KNOWN and k != "duplicate"})                  # a field this version does not know is kept, not dropped
+    if len(json.dumps(extra, default=str)) > 200_000:
+        raise StoreError("the extra fields are too large to keep")
+    out["extra"] = json.loads(json.dumps(extra, default=str, allow_nan=False)) if extra else {}
+    if raw.get("migrated_from") is not None:
+        out["migrated_from"] = raw["migrated_from"]
     series = raw.get("series")
     if series:
         dates = [str(d)[:10] for d in series.get("dates", [])]
