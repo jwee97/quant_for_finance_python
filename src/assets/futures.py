@@ -90,7 +90,7 @@ class ContinuousSeries:
     raw: pd.Series                    # the unadjusted splice
     contract: pd.Series               # the contract held on each date
     roll_dates: list
-    returns: pd.Series                # returns of the continuous series (adjust-dependent)
+    returns: pd.Series                # returns: of the held contract (ratio, difference); of the raw splice, roll gaps included (none)
 
 
 def continuous_series(long: pd.DataFrame, roll_days: int = 5, adjust: str = "ratio") -> ContinuousSeries:
@@ -131,7 +131,12 @@ def continuous_series(long: pd.DataFrame, roll_days: int = 5, adjust: str = "rat
             old_px, new_px = adjusted_offsets[d]
             mask = adj.index < d
             adj[mask] = adj[mask] * (new_px / old_px) if adjust == "ratio" else adj[mask] + (new_px - old_px)
-    rets = adj.pct_change()                                                       # the move over the level before it, whichever way the history was adjusted
+    if adjust == "difference":
+        # The percentage change of a DIFFERENCE-adjusted level is not a return anyone earned: the history was shifted by points, so an early day's move is divided by a level that is lower (or negative) than the
+        # price that was traded, and the error grows with every roll. The return is that of the contract held at the previous close, measured on that contract (the same as ``excess_return_series``).
+        rets = excess_return_series(long, roll_days).reindex(adj.index)
+    else:
+        rets = adj.pct_change()                                                   # ratio adjustment preserves every percentage move; ``none`` keeps the roll gap on purpose
     return ContinuousSeries(adj, raw, contract, roll_dates, rets)
 
 

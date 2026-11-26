@@ -78,7 +78,9 @@ def test_the_adjustment_removes_the_gap_from_the_return_of_the_day_of_the_roll_a
     assert np.isnan(ratio.returns.iloc[0]) and ratio.returns.loc["2021-03-15"] == pytest.approx(115.0 / 114.0 - 1.0)
     difference = continuous_series(table(), adjust="difference")
     assert difference.price.loc["2021-03-11"] == 113.0 and difference.price.iloc[0] == 110.0 and difference.price.loc[roll] == 114.0
-    assert difference.returns.loc[roll] == pytest.approx(1.0 / 113.0) and difference.returns.loc["2021-03-09"] == pytest.approx(1.0 / 110.0), "a point move over the adjusted level before it"
+    # Changed deliberately (see tests/test_futures_contract_validation.py): the percentage of a difference-SHIFTED level (1/113, 1/110) is not a return anyone earned, and the error grows with every roll. The
+    # return of a difference-adjusted series is the return of the contract held at the previous close, measured on that contract's own price, exactly as for the ratio adjustment.
+    assert difference.returns.loc[roll] == pytest.approx(104.0 / 103.0 - 1.0) and difference.returns.loc["2021-03-09"] == pytest.approx(101.0 / 100.0 - 1.0)
     none = continuous_series(table(), adjust="none")
     assert none.price.equals(none.raw) and none.returns.loc[roll] == pytest.approx(114.0 / 103.0 - 1.0), "the gap is a 10.7% return that never happened"
     with pytest.raises(ValueError, match="adjust must be ratio, difference or none"):

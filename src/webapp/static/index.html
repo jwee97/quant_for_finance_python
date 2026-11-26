@@ -66,6 +66,7 @@
       <button type="button" class="navhead" id="grp-system" aria-expanded="true" aria-controls="list-system"><span>System</span></button>
       <div class="navlist" id="list-system" role="tablist" aria-orientation="vertical" aria-label="System">
         <button role="tab" id="tab-data" aria-selected="false" aria-controls="view-data" data-keywords="sources datasets freshness files upload cache"><span class="ico" aria-hidden="true">Da</span><span class="lbl">Data management</span></button>
+        <button role="tab" id="tab-datahealth" aria-selected="false" aria-controls="view-datahealth" data-keywords="data health coverage integrity readiness missing periods providers capabilities validate"><span class="ico" aria-hidden="true">Dh</span><span class="lbl">Data health</span></button>
         <button role="tab" id="tab-jobs" aria-selected="false" aria-controls="view-jobs" data-keywords="tasks progress queue cancel retry"><span class="ico" aria-hidden="true">Jb</span><span class="lbl">Background jobs</span></button>
         <button role="tab" id="tab-settings" aria-selected="false" aria-controls="view-settings" data-keywords="preferences theme navigation defaults"><span class="ico" aria-hidden="true">Se</span><span class="lbl">Settings</span></button>
         <button role="tab" id="tab-guides" aria-selected="false" aria-controls="view-guides" data-keywords="help documentation how to"><span class="ico" aria-hidden="true">Gu</span><span class="lbl">Guides</span></button>
@@ -110,6 +111,7 @@
   <section role="tabpanel" id="view-alphalab" aria-labelledby="tab-alphalab" hidden><div class="stack page" id="alphalab"></div></section>
   <section role="tabpanel" id="view-rcompare" aria-labelledby="tab-rcompare" hidden><div class="stack page" id="rcompare"></div></section>
   <section role="tabpanel" id="view-data" aria-labelledby="tab-data" hidden><div class="stack page" id="data"></div></section>
+  <section role="tabpanel" id="view-datahealth" aria-labelledby="tab-datahealth" hidden><div class="stack page" id="datahealth"></div></section>
   <section role="tabpanel" id="view-jobs" aria-labelledby="tab-jobs" hidden><div class="stack page" id="jobs"></div></section>
   <section role="tabpanel" id="view-settings" aria-labelledby="tab-settings" hidden><div class="stack page" id="settings"></div></section>
 </main>
@@ -137,6 +139,7 @@
 <script src="/static/importance.js"></script>
 <script src="/static/evidence.js"></script>
 <script src="/static/compare.js"></script>
+<script src="/static/health.js"></script>
 <script src="/static/libs.js"></script>
 <script src="/static/experiments.js"></script>
 <script src="/static/surface3d.js"></script>
