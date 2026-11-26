@@ -32,13 +32,16 @@
   function picker(session) {
     const card = h("div", "card", root); card.dataset.role = "compare-picker"; h("h3", "", card, `Results in "${session.name}"`);
     if (!S.list.length) { h("p", "empty-note", card, "No results saved in this session."); return; }
-    const t = h("div", "scroll", card), tb = h("table", "data", t), hd = h("tr", "", h("thead", "", tb)); for (const c of ["", "Result", "Kind", "Evidence", "Data", "Period"]) h("th", "", hd, c);
+    const t = h("div", "scroll", card), tb = h("table", "data", t), hd = h("tr", "", h("thead", "", tb)); for (const c of ["", "Result", "Kind", "Version", "Evidence", "Data", "Period", ""]) h("th", "", hd, c);
     const body = h("tbody", "", tb);
     for (const a of S.list) {
       const tr = h("tr", "", body), c0 = h("td", "", tr), cb = h("input", "", c0); cb.type = "checkbox"; cb.checked = S.picked.has(a.id); cb.dataset.id = a.id; cb.setAttribute("aria-label", "compare " + a.title);
       cb.addEventListener("change", () => { cb.checked ? S.picked.add(a.id) : S.picked.delete(a.id); });
-      h("td", "", tr, a.title); h("td", "", tr, a.kind.replace("_", " ")); B.evidence(h("td", "", tr), a.evidence); B.data(h("td", "", tr), a.data_kind); h("td", "", tr, `${a.context.start || "?"} to ${a.context.end || "?"}`);
+      tr.dataset.id = a.id; h("td", "", tr, a.title); h("td", "", tr, a.kind.replace("_", " ")); h("td", "", tr, a.version && a.version > 1 ? `v${a.version}` : "v1"); B.evidence(h("td", "", tr), a.evidence); B.data(h("td", "", tr), a.data_kind); h("td", "", tr, `${a.context.start || "?"} to ${a.context.end || "?"}`);
+      const act = h("td", "", tr), op = h("button", "btn small", act, "Open"); op.type = "button"; op.dataset.action = "open-study"; op.setAttribute("aria-label", "open " + a.title); op.addEventListener("click", () => openStudy(a.id));
+      const rr = h("button", "btn small", act, "Run again"); rr.type = "button"; rr.dataset.action = "rerun-study"; rr.title = "Runs the request that produced this study again with the current data, and saves the result as a new version beside it"; rr.setAttribute("aria-label", "run again " + a.title); rr.addEventListener("click", () => rerun(a, session));
     }
+    const viewer = h("div", "stack", root); viewer.id = "rcompare-open";
     const row = h("div", "row", card);
     const sel = (label, key, opts) => { const l = h("label", "f", row, label), s = h("select", "", l); s.dataset.key = key; for (const [v, t2] of opts) { const o = h("option", "", s, t2); o.value = v; if (S[key] === v) o.selected = true; } s.addEventListener("change", () => { S[key] = s.value; }); return s; };
     sel("Reference", "bench", [["", "None"], ...S.list.filter((a) => a.kind !== "regime").map((a) => [a.id, a.title])]);
@@ -60,6 +63,7 @@
     mk("Download report (Markdown)", async () => { const x = await api("/api/research/export", { ...body(session), format: "markdown", session: S.group ? session.id : undefined, group: S.group ? S.group.id : undefined }); download(x.filename, x.text); });
     for (const m of r.missing_series) h("div", "banner", out, `${(r.artifacts.find((a) => a.id === m) || {}).title || m} has no return series and is listed but not measured.`);
     issues(out, r);
+    studiesBlock(out, r);
     if (!r.window || !Object.keys(r.metrics).length) return;
     const title = (id) => (r.artifacts.find((a) => a.id === id) || {}).title || id, ids = Object.keys(r.metrics);
     const wnd = h("p", "hint", out, `Shared window: ${r.window.start} to ${r.window.end} (${r.series.dates.length} days). Ratios use a risk-free rate of ${pct(r.risk_free)} a year.`); wnd.dataset.role = "compare-window";
@@ -77,6 +81,69 @@
     corr(out, r, title);
     if (r.versus_reference) versus(out, r, title);
     provenance(out, r);
+  }
+
+  /* Saved studies that have no return series are compared on their assumptions and on what they report about themselves; predictive quality is never mixed with trading performance. */
+  function studiesBlock(out, r) {
+    const st = r.studies; if (!st) return;
+    const title = (id) => (r.artifacts.find((a) => a.id === id) || {}).title || id, ids = r.artifacts.map((a) => a.id);
+    if (ids.length > 1 || st.attribution.length) {
+      const card = h("div", "card", out); card.dataset.role = "compare-assumptions"; h("h3", "", card, "Assumptions side by side");
+      h("p", "hint", card, st.assumptions.differing.length ? `They differ in: ${st.assumptions.differing.map((k) => st.assumptions.rows.find((x) => x.key === k).label.toLowerCase()).join(", ")}.` : "No saved assumption differs.");
+      Q.simpleTable(card, [{ label: "", get: (x) => x.label }, ...ids.map((id) => ({ label: `${title(id)}${(r.artifacts.find((a) => a.id === id) || {}).version > 1 ? " (v" + r.artifacts.find((a) => a.id === id).version + ")" : ""}`, get: (x) => { const v = st.assumptions.values[id][x.key]; return v === "" || v === undefined ? "not recorded" : String(v); } })), { label: "", get: (x) => (st.assumptions.differing.includes(x.key) ? "differs" : "") }], st.assumptions.rows);
+    }
+    const preds = Object.entries(st.predictive.studies);
+    if (preds.length) {
+      const card = h("div", "card", out); card.dataset.role = "compare-predictive"; h("h3", "", card, "Predictive quality (not trading performance)");
+      h("p", "hint", card, st.predictive.note);
+      Q.simpleTable(card, [{ label: "Study", get: (x) => title(x[0]) }, { label: "Kind", get: (x) => x[1].kind.replace("_", " ") }, { label: "Headline", num: true, get: (x) => (x[1].headline === null || x[1].headline === undefined ? "n/a" : num(x[1].headline, 4)) }, { label: "What the headline is", get: (x) => x[1].headline_means },
+        { label: "Rank", num: true, get: (x) => (st.predictive.ranking ? String(st.predictive.ranking.indexOf(x[0]) + 1) : "not ranked") }], preds);
+      if (st.predictive.blocked_because.length) { const b = h("div", "issue blocks_ranking", card); b.dataset.role = "predictive-blocked"; h("b", "", b, "Stops a ranking"); b.appendChild(document.createTextNode("These studies are not ranked against each other: " + st.predictive.blocked_because.join("; ") + ".")); }
+    }
+    if (st.attribution.length) {
+      const card = h("div", "card", out); card.dataset.role = "compare-attribution"; h("h3", "", card, "Attribution differences");
+      const lines = [...new Set(st.attribution.flatMap((a) => Object.keys(a.factor_totals || {})))];
+      Q.simpleTable(card, [{ label: "Study", get: (a) => title(a.id) }, { label: "Factor model", get: (a) => a.kind || "n/a" }, ...lines.map((l) => ({ label: l, num: true, get: (a) => (a.factor_totals && a.factor_totals[l] !== undefined ? pct(a.factor_totals[l], 2) : "") })),
+        { label: "Brinson (allocation / selection)", num: true, get: (a) => (a.brinson_totals ? `${pct(a.brinson_totals.allocation, 2)} / ${pct(a.brinson_totals.selection, 2)}` : "not made") }, { label: "Reconciliation", get: (a) => a.factor_status || "n/a" }], st.attribution);
+      h("p", "hint", card, "Lines are compared only between studies that used the same factor model (a warning above says when they did not).");
+    }
+    if (st.unmeasured.length) {
+      const card = h("div", "card", out); card.dataset.role = "compare-unmeasured"; h("h3", "", card, "Not measured over the shared window");
+      const ul = h("ul", "", card); for (const u of st.unmeasured) h("li", "", ul, `${title(u.id)}: ${u.reason}.`);
+    }
+  }
+
+  async function openStudy(id) {
+    const box = $("#rcompare-open"); if (!box) return; box.replaceChildren();
+    let a, vs; try { a = await api("/api/research/artifact?id=" + id); vs = (await api("/api/research/artifact/versions?id=" + id)).versions; } catch (e) { h("div", "banner err", box, e.message); return; }
+    const card = h("div", "card", box); card.dataset.role = "study-viewer"; h("h3", "", card, `${a.title}${a.version > 1 ? " (version " + a.version + ")" : ""}`);
+    if (a.migrated_from) h("p", "hint", card, `Saved by an older version of the app (schema ${a.migrated_from}); shown as the current schema. Its file has not been changed.`);
+    const dl = h("dl", "kv", card), add = (k, v) => { if (v === undefined || v === null || v === "") return; h("dt", "", dl, k); h("dd", "", dl, String(v)); };
+    add("Kind", a.kind.replace("_", " ")); add("Evidence", a.evidence); add("Data", a.data_kind); add("Instruments", (a.context.assets || []).join(", ")); add("Dates", `${a.context.start || "?"} to ${a.context.end || "?"}`); add("Benchmark", a.benchmark);
+    add("Costs", Object.entries(a.costs || {}).map(([k, v]) => `${k} ${v}`).join("; ")); add("Hypothesis", a.hypothesis); add("Created", (a.created || "").slice(0, 19).replace("T", " ")); add("Code version", (a.refs || {}).code_version); add("Data version", (a.refs || {}).dataset);
+    for (const [k, v] of Object.entries(a.metrics || {})) add("Metric: " + k.replace(/_/g, " "), typeof v === "number" ? num(v, 4) : v);
+    if (a.notes && a.notes.length) { h("h4", "", card, "Notes"); const ul = h("ul", "", card); for (const n of a.notes) h("li", "", ul, n); }
+    if (a.validation && Object.keys(a.validation).length) { h("h4", "", card, "Validation"); const ul = h("ul", "", card); for (const [k, v] of Object.entries(a.validation)) if (v !== null && typeof v !== "object") h("li", "", ul, `${k.replace(/_/g, " ")}: ${v}`); }
+    if (vs.length > 1) { h("h4", "", card, "Versions"); const ul = h("ul", "", card); ul.dataset.role = "study-versions"; for (const v of vs) { const li = h("li", "", ul); li.dataset.id = v.id; const btn = h("button", "linklike", li, `v${v.version}: ${v.title}`); btn.type = "button"; btn.addEventListener("click", () => openStudy(v.id)); if (v.id === a.id) li.append(" (open)"); } }
+    if (a.attribution && Q.alphaResearch) {
+      const at = a.attribution, wrap = { kind: at.kind, benchmark: at.benchmark, methodology: at.methodology, brinson_reason: at.brinson_reason, methods: { [at.method || "study"]: { factor: at.factor, brinson: at.brinson } } };
+      Q.alphaResearch.attributionView(box, wrap, { [at.method || "study"]: at.method || a.title }, { state: { key: at.method || "study" } });
+    }
+  }
+
+  async function rerun(a, session) {
+    const status = $("#rcompare-open"); if (status) status.replaceChildren();
+    const say = (txt, cls) => { if (!status) return; status.replaceChildren(); const d = h("div", cls || "banner", status, txt); d.dataset.role = "rerun-status"; d.setAttribute("role", "status"); };
+    let spec; try { spec = await api("/api/research/artifact/rerun?id=" + a.id); } catch (e) { say("Cannot run again: " + e.message, "banner err"); return; }
+    say(`Running "${a.title}" again with the current data…`);
+    try {
+      const { job } = await api(spec.route, spec.body);
+      await Q.waitJob(job, (v) => say(`${v.message} (${Math.round(v.elapsed)} s)`), 1000);
+      const full = await api("/api/research/artifact?id=" + a.id);
+      const saved = await R.saveStudy({ job, ...((full.config || {}).method ? { method: full.config.method } : {}) }, { parent: a.id, session: a.session_id || session.id, title: `${a.title.replace(/ \(re-run.*$/, "")} (re-run)` });
+      say(saved ? `Saved as version ${saved.version}. The earlier study is unchanged.` : "Not saved: the new run is not kept unless you save it.");
+      await R.refresh();
+    } catch (e) { say("The new run failed: " + e.message, "banner err"); }
   }
 
   function issues(out, r) {

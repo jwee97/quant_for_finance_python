@@ -318,13 +318,11 @@
     for (const i of c.items) { const li = h("li", "c-" + i.status.replace(" ", "-"), ul); li.dataset.status = i.status; h("span", "vicon", li, MARK[i.status] || "?"); h("b", "", li, i.topic + ": "); li.append(document.createTextNode(i.text)); h("span", "hint", li, `  (${i.status})`); }
     const job = F.results.forecast && F.results.forecast.job;
     if (!job || !Q.research) return;
-    const row = h("div", "row", card), b = h("button", "btn", row, "Keep this evaluation in a research session"); b.type = "button"; b.dataset.action = "keep-forecast"; const st = h("span", "hint", row); st.setAttribute("role", "status");
+    const row = h("div", "row", card), b = h("button", "btn", row, "Save this evaluation to a research session…"); b.type = "button"; b.dataset.action = "keep-forecast"; const st = h("span", "hint", row); st.setAttribute("role", "status");
     b.title = "Keeps the evaluation with its sample, horizon, data version and the dates all methods forecast. It has no return series, so a comparison lists it and checks that it is comparable; it is not ranked by performance.";
     b.addEventListener("click", async () => {
-      b.disabled = true; st.textContent = "Saving…";
-      try { const s = await Q.research.ensure("Forecasting"); await api("/api/research/artifact/save", { session: s.id, job }); await Q.research.refresh(); st.textContent = `Saved to "${s.name}".`; Q.toast(`Saved to "${s.name}"`); }
-      catch (e) { st.textContent = ""; Q.toast(e.message); }
-      b.disabled = false;
+      const saved = await Q.research.saveStudy({ job }, { title: `Forecast evaluation: ${d.ticker}, ${d.horizon}-day horizon`, sessionName: "Forecasting" });
+      if (saved) { st.textContent = saved.duplicate ? "Already saved: the same run is kept once." : `Saved as "${saved.title}".`; }
     });
   }
   function verdictCard(root, d) {

@@ -45,6 +45,48 @@
       const art = (await api("/api/research/artifact/save", { session: s.id, ...req })).artifact;
       toast(`Saved to "${s.name}"`); await R.refresh(); return art;
     },
+    /* The Save to research session action for a finished study: choose a session (or start one), name the study, add a hypothesis and notes, and keep it. ``req`` says which run (``{job, method?}`` or
+       ``{experiment}``); ``opts.parent`` makes it a new version of a saved study. The dialog stays open with the reason if the save fails, and the button is off while a save is in flight, so a double
+       click keeps one study. Resolves to the saved study, or null if cancelled. */
+    saveStudy(req, opts) {
+      opts = opts || {};
+      return new Promise((resolve) => {
+        const d = document.createElement("dialog"); d.dataset.role = "save-study"; d.setAttribute("aria-label", "Save to a research session"); document.body.appendChild(d);
+        const form = h("form", "pal", d); form.method = "dialog";
+        h("p", "navtitle", form, opts.parent ? "Save as a new version" : "Save to a research session");
+        const sl = h("label", "f", form, "Session"), sel = h("select", "", sl); sel.dataset.key = "session";
+        const cur = active ? active.id : "";
+        for (const s of sessions.filter((x) => x.readable !== false)) { const o = h("option", "", sel, s.name); o.value = s.id; if (s.id === cur || (opts.session && s.id === opts.session)) o.selected = true; }
+        const o = h("option", "", sel, "A new session…"); o.value = "__new__"; if (!sessions.length) o.selected = true;
+        const nl = h("label", "f", form, "Name of the new session"), nn = h("input", "", nl); nn.dataset.key = "new_session"; nn.value = opts.sessionName || "My research"; nl.hidden = sel.value !== "__new__";
+        sel.addEventListener("change", () => { nl.hidden = sel.value !== "__new__"; });
+        if (opts.parent) sel.disabled = true;
+        const tl = h("label", "f", form, "Name of the study"), title = h("input", "", tl); title.dataset.key = "title"; title.value = opts.title || "";
+        const hl = h("label", "f", form, "Hypothesis (what this study was meant to show)"), hyp = h("textarea", "", hl); hyp.dataset.key = "hypothesis"; hyp.rows = 2; hyp.value = opts.hypothesis || "";
+        const ml = h("label", "f", form, "Notes"), notes = h("textarea", "", ml); notes.dataset.key = "notes"; notes.rows = 3;
+        h("p", "hint", form, "The numbers are taken from the server's own record of the run, not from the page. A saved study is never changed: re-running it saves a new version beside it.");
+        const err = h("p", "hint err", form); err.setAttribute("role", "alert"); err.dataset.role = "save-error";
+        const row = h("div", "row", form), ok = h("button", "btn primary", row, "Save"), cancel = h("button", "btn", row, "Cancel"); ok.type = "submit"; ok.dataset.role = "save-confirm"; cancel.type = "button";
+        const done = (v) => { try { d.close(); } catch (e) { /* already closed */ } d.remove(); resolve(v); };
+        cancel.addEventListener("click", () => done(null)); d.addEventListener("cancel", (e) => { e.preventDefault(); done(null); });
+        form.addEventListener("submit", async (e) => {
+          e.preventDefault(); if (ok.disabled) return;
+          ok.disabled = true; ok.textContent = "Saving…"; err.textContent = "";
+          const body = { ...req, title: title.value.trim() || undefined, hypothesis: hyp.value.trim() || undefined, notes: notes.value.trim() || undefined };
+          if (opts.parent) { body.parent = opts.parent; body.session = opts.session; } else if (sel.value === "__new__") body.new_session = nn.value.trim(); else body.session = sel.value;
+          try {
+            const out = await api("/api/research/artifact/save", body);
+            if (out.session) store("session", out.session);
+            await R.refresh();
+            toast(out.duplicate ? "Already saved: the same run is kept once" : "Saved to the research session");
+            const keepOpen = $("[data-role=save-study] [data-role=save-error]");
+            if (keepOpen) keepOpen.textContent = "";
+            done({ ...out.artifact, duplicate: out.duplicate, session: out.session });
+          } catch (x) { err.textContent = "Not saved: " + x.message; ok.disabled = false; ok.textContent = "Save"; }
+        });
+        d.showModal(); title.focus();
+      });
+    },
     /* Apply the open session's context to a tab's own form. Only the next run is affected. */
     applyTo(tab) {
       if (!active) { toast("Open a research session first"); return false; }
