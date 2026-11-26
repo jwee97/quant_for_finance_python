@@ -63,6 +63,18 @@ class _Source:
         return win
 
 
+
+def _grad_level(p: dict, ctx, folder) -> str:
+    level = str(p.get("grad_monitor") or "auto")
+    if level == "auto" and ctx and ctx.get("grad_level") not in (None, "auto"):
+        level = ctx["grad_level"]
+    return level if (folder or level != "auto") else "off"
+
+
+def _family(arch: str) -> str:
+    return {"lstm": "recurrent", "gru": "recurrent", "tft": "transformer", "patchtst": "transformer", "itransformer": "transformer"}.get(arch, "default")
+
+
 class DeepModel(Model):
     needs_dataset = True
 
@@ -134,11 +146,11 @@ class DeepModel(Model):
         resume = bool(p.get("resume", False)) or bool(ctx and ctx["resume"])
         if folder and fit_key:
             folder = str(Path(folder) / f"{self.kind}-{fit_key}")                       # one folder per fit: a walk-forward refits on other windows, and resuming from another window's weights would skip the training
-        skip = {"device", "num_threads", "checkpoint_dir", "resume", "checkpoint_every", "keep_milestones", "epochs", "profile", "accumulation_steps", "amp"}                 # settings that change HOW a run is executed, not WHAT it learns
+        skip = {"device", "num_threads", "checkpoint_dir", "resume", "checkpoint_every", "keep_milestones", "epochs", "profile", "accumulation_steps", "amp", "grad_monitor", "grad_interval"}                 # settings that change HOW a run is executed, not WHAT it learns
         config_fp = fingerprint({"kind": self.kind, "arch": self.arch, "spec": list(getattr(self, "net_spec_", ())), "params": {k: v for k, v in sorted(p.items()) if k not in skip}, "seed": self.seed})
         return TrainConfig(int(p["epochs"]), int(p["batch_size"]), float(p["learning_rate"]), float(p["weight_decay"]), int(p["patience"]), float(p["grad_clip"]), str(p["device"]), self.seed,
                            int(p.get("num_threads", 0)), folder, resume, checkpoint_every=int(p.get("checkpoint_every", 1) or 1), keep_milestones=int(p.get("keep_milestones", 0) or 0),
-                           config_fp=config_fp, data_fp=fit_key, allow_warm_start=bool(ctx and ctx.get("warm")), halt_raises=bool(ctx), accumulation_steps=int(p.get("accumulation_steps", 1) or 1), amp=bool(p.get("amp", False)))
+                           config_fp=config_fp, data_fp=fit_key, allow_warm_start=bool(ctx and ctx.get("warm")), halt_raises=bool(ctx), grad_level=_grad_level(p, ctx, folder), grad_interval=int(p.get("grad_interval", 0) or 0), grad_family=_family(self.arch), accumulation_steps=int(p.get("accumulation_steps", 1) or 1), amp=bool(p.get("amp", False)))
 
     def _split(self, pos: np.ndarray, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
         """Training rows, then (after a purge gap) the validation tail, by time."""
@@ -211,7 +223,9 @@ class DeepModel(Model):
 
         loss_fn = self._ae_loss if is_ae else (self._pinball_loss if self.arch == "tft" else (self._cross_loss if cross else self._mse_loss))
         key = hashlib.sha1(f"{pos.min()}|{pos.max()}|{len(train)}|{len(val)}|{self.seed}|{len(self.features_)}".encode()).hexdigest()[:10]       # the fit's training window, so that a resumed run is the same fit
-        extra = {"groups": {"train": day[train], "val": day[val]}} if cross else {}                  # whole days to a batch, for a loss that compares the assets of a day
+        extra = {"groups": {"train": day[train], "val": day[val]}} if cross else {}
+        if is_ae:
+            extra["aux_fn"] = lambda: self._aux                                                       # reconstruction error and KL divergence per epoch, for the Training monitor                  # whole days to a batch, for a loss that compares the assets of a day
         self.history_ = fit_network(net, batch_fn, loss_fn, len(train), len(val), self._config(key), **extra)
         self.history_.device_note = note
         self.net_ = net
@@ -241,9 +255,13 @@ class DeepModel(Model):
         x, valid = batch
         recon, mu, logvar = net(x)
         loss = (((recon - x) ** 2) * valid).sum() / valid.sum().clamp(min=1.0)
+        aux = {"reconstruction": loss.detach()}
         if logvar is not None:
             kl = -0.5 * (1.0 + logvar - mu ** 2 - logvar.exp()).sum(dim=1).mean()
             loss = loss + float(self.params["beta"]) * kl / x[0].numel()
+            aux["kl"] = kl.detach()
+            aux["kl_weight"] = torch.tensor(float(self.params["beta"]), dtype=torch.float64)           # beta is a constant here: there is no KL annealing schedule to restore
+        self._aux = aux
         return loss
 
     def _fit_readout(self, src: _Source, device, target: np.ndarray) -> None:

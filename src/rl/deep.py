@@ -62,6 +62,47 @@ def _soft_update(target: nn.Module, source: nn.Module, tau: float):
             t.mul_(1 - tau).add_(tau * s)
 
 
+# ------------------------------------------------------------------------------------------------------------------ checkpointing
+BLOCK = 250                                                                                       # environment steps per reporting unit of an off-policy agent
+
+
+def _env_state(env):
+    return env.get_state() if hasattr(env, "get_state") else None
+
+
+def _replay_state(buf: Replay) -> dict:
+    return {"o": buf.o.copy(), "a": buf.a.copy(), "r": buf.r.copy(), "o2": buf.o2.copy(), "n": buf.n, "i": buf.i}
+
+
+def _replay_restore(buf: Replay, s: dict) -> None:
+    buf.o, buf.a, buf.r, buf.o2, buf.n, buf.i = s["o"], s["a"], s["r"], s["o2"], int(s["n"]), int(s["i"])
+
+
+def _session(agent, kind: str, env, steps: int, seed: int, rng, modules: dict, optimizers: dict, S: dict, buf: Replay | None, unit: int, units: int, schedulers: dict | None = None, config: dict | None = None):
+    """The training session of one agent. What is restored is the networks, the optimizers, the random streams, the replay buffer, the environment's state (when the environment can give it) and the loop's position. An
+    environment that cannot save its state caps the guarantee at ``epoch_boundary``."""
+    from ..ml.deep.session import TrainingSession
+
+    def capture() -> dict:
+        out = {"S": {k: (v.copy() if isinstance(v, np.ndarray) else v) for k, v in S.items()}, "env": _env_state(env), "curve": list(S.get("curve", []))}
+        if buf is not None:
+            out["buf"] = _replay_state(buf)
+        return out
+
+    def apply(s: dict) -> None:
+        S.update(s["S"])
+        if s.get("env") is not None:
+            env.set_state(s["env"])
+        S["curve"] = list(s.get("curve", []))
+        if buf is not None:
+            _replay_restore(buf, s["buf"])
+
+    cfg = {"agent": kind, "hyper": {k: v for k, v in vars(agent).items() if isinstance(v, (int, float, str, bool, tuple))}, "steps": steps, "seed": seed, **(config or {})}
+    return TrainingSession("rl_" + kind, config=cfg, data={"env": type(env).__name__, "obs_dim": env.obs_dim, "max_fraction": env.max_fraction, "horizon": getattr(env, "horizon", None), "mu": [float(x) for x in getattr(env, "mu", [])],
+                                                          "sigma": getattr(env, "sigma", None)}, modules=modules, optimizers=optimizers, schedulers=schedulers, rngs={"rng": rng}, capture=capture, apply=apply, units=units,
+                           ceiling="exact" if hasattr(env, "get_state") else "epoch_boundary", family="rl", steps_per_unit=unit)
+
+
 class Agent:
     hi: float = 1.0
 
@@ -93,29 +134,47 @@ class DQN(Agent):
         self.target = copy.deepcopy(self.q)
         opt = torch.optim.Adam(self.q.parameters(), lr=self.lr)
         buf = Replay(env.obs_dim)
-        o = env.reset(seed=seed).astype(np.float32)
-        for t in range(steps):
-            eps = self.eps[0] + (self.eps[1] - self.eps[0]) * min(1.0, t / (0.7 * steps))
-            k = int(rng.integers(self.n_actions)) if rng.random() < eps else int(self.q(torch.from_numpy(o)).argmax())
-            o2, r, done = env.step(self.grid[k])
-            o2 = o2.astype(np.float32)
-            buf.add(o, k, r, o2)
-            o = env.reset().astype(np.float32) if done else o2
-            if buf.n >= self.warmup:
-                bo, ba, br, bo2 = buf.sample(self.batch, rng)
-                with torch.no_grad():
-                    if self.double:
-                        nxt = self.target(bo2).gather(1, self.q(bo2).argmax(1, keepdim=True))
-                    else:
-                        nxt = self.target(bo2).max(1, keepdim=True).values
-                    y = br + self.gamma * nxt
-                q = self.q(bo).gather(1, ba.long())
-                loss = nn.functional.mse_loss(q, y)
-                opt.zero_grad()
-                loss.backward()
-                opt.step()
-                if t % self.target_every == 0:
-                    self.target.load_state_dict(self.q.state_dict())
+        S = {"o": env.reset(seed=seed).astype(np.float32)}
+        blocks = -(-steps // BLOCK)
+        sess = _session(self, "dqn" if not self.double else "double_dqn", env, steps, seed, rng, {"q": self.q, "target": self.target}, {"adam": opt}, S, buf, BLOCK, blocks)
+        mon = sess.monitor("adam", self.q)
+        with sess:
+            resumed = sess.restore()
+            for blk in range(resumed.start if resumed else 0, blocks):
+                sess.begin_unit(blk, BLOCK)
+                losses, rewards, k = [], [], 0
+                for t in range(blk * BLOCK, min((blk + 1) * BLOCK, steps)):
+                    o = S["o"]
+                    eps = self.eps[0] + (self.eps[1] - self.eps[0]) * min(1.0, t / (0.7 * steps))
+                    k_ = int(rng.integers(self.n_actions)) if rng.random() < eps else int(self.q(torch.from_numpy(o)).argmax())
+                    o2, r, done = env.step(self.grid[k_])
+                    o2 = o2.astype(np.float32)
+                    buf.add(o, k_, r, o2)
+                    rewards.append(r)
+                    S["o"] = env.reset().astype(np.float32) if done else o2
+                    if buf.n >= self.warmup:
+                        bo, ba, br, bo2 = buf.sample(self.batch, rng)
+                        with torch.no_grad():
+                            if self.double:
+                                nxt = self.target(bo2).gather(1, self.q(bo2).argmax(1, keepdim=True))
+                            else:
+                                nxt = self.target(bo2).max(1, keepdim=True).values
+                            y = br + self.gamma * nxt
+                        q = self.q(bo).gather(1, ba.long())
+                        loss = nn.functional.mse_loss(q, y)
+                        opt.zero_grad()
+                        loss.backward()
+                        mon.observe(k)
+                        mon.before_step(k)
+                        opt.step()
+                        mon.after_step(k)
+                        k += 1
+                        losses.append(float(loss.detach()))
+                        if t % self.target_every == 0:
+                            self.target.load_state_dict(self.q.state_dict())
+                if sess.end_unit(blk, {"train_loss": float(np.mean(losses)) if losses else None, "val_loss": None, "mean_reward": float(np.mean(rewards)), "epsilon": float(eps), "replay_size": float(buf.n)}) == "stop":
+                    break
+            sess.finish()
         return self
 
     def act(self, obs, deterministic: bool = True) -> float:
@@ -153,37 +212,62 @@ class DDPG(Agent):
         a_opt = torch.optim.Adam(self.actor.parameters(), lr=self.alr)
         c_opt = torch.optim.Adam([p for c in self.critics for p in c.parameters()], lr=self.clr)
         buf = Replay(d)
-        o = env.reset(seed=seed).astype(np.float32)
-        for t in range(steps):
-            if t < self.warmup:
-                a = float(rng.uniform(0.0, self.hi))
-            else:
-                a = float(np.clip(self.act(o, False) + self.noise * rng.normal(), 0.0, self.hi))
-            o2, r, done = env.step(a)
-            o2 = o2.astype(np.float32)
-            buf.add(o, a, r, o2)
-            o = env.reset().astype(np.float32) if done else o2
-            if buf.n < self.warmup:
-                continue
-            bo, ba, br, bo2 = buf.sample(self.batch, rng)
-            with torch.no_grad():
-                a2 = self.hi * torch.sigmoid(self.actor_t(bo2))
-                if self.target_noise > 0:
-                    a2 = (a2 + (self.target_noise * torch.randn_like(a2)).clamp(-self.noise_clip, self.noise_clip)).clamp(0.0, self.hi)
-                q_next = torch.stack(self._q(self.critics_t, bo2, a2)).min(dim=0).values
-                y = br + self.gamma * q_next
-            loss = sum(nn.functional.mse_loss(q, y) for q in self._q(self.critics, bo, ba))
-            c_opt.zero_grad()
-            loss.backward()
-            c_opt.step()
-            if t % self.policy_delay == 0:
-                a_loss = -self._q(self.critics[:1], bo, self._actor(bo))[0].mean()
-                a_opt.zero_grad()
-                a_loss.backward()
-                a_opt.step()
-                _soft_update(self.actor_t, self.actor, self.tau)
-                for ct, c in zip(self.critics_t, self.critics):
-                    _soft_update(ct, c, self.tau)
+        S = {"o": env.reset(seed=seed).astype(np.float32)}
+        blocks = -(-steps // BLOCK)
+        modules = {"actor": self.actor, "actor_t": self.actor_t, **{f"critic{n}": c for n, c in enumerate(self.critics)}, **{f"critic_t{n}": c for n, c in enumerate(self.critics_t)}}
+        sess = _session(self, "td3" if self.twin else "ddpg", env, steps, seed, rng, modules, {"actor": a_opt, "critic": c_opt}, S, buf, BLOCK, blocks)
+        mon_a, mon_c = sess.monitor("actor", self.actor), sess.monitor("critic", {f"critic{n}.{k}": p for n, c in enumerate(self.critics) for k, p in c.named_parameters()})
+        with sess:
+            resumed = sess.restore()
+            for blk in range(resumed.start if resumed else 0, blocks):
+                sess.begin_unit(blk, BLOCK)
+                c_losses, a_losses, rewards, kc, ka = [], [], [], 0, 0
+                for t in range(blk * BLOCK, min((blk + 1) * BLOCK, steps)):
+                    o = S["o"]
+                    if t < self.warmup:
+                        a = float(rng.uniform(0.0, self.hi))
+                    else:
+                        a = float(np.clip(self.act(o, False) + self.noise * rng.normal(), 0.0, self.hi))
+                    o2, r, done = env.step(a)
+                    o2 = o2.astype(np.float32)
+                    buf.add(o, a, r, o2)
+                    rewards.append(r)
+                    S["o"] = env.reset().astype(np.float32) if done else o2
+                    if buf.n < self.warmup:
+                        continue
+                    bo, ba, br, bo2 = buf.sample(self.batch, rng)
+                    with torch.no_grad():
+                        a2 = self.hi * torch.sigmoid(self.actor_t(bo2))
+                        if self.target_noise > 0:
+                            a2 = (a2 + (self.target_noise * torch.randn_like(a2)).clamp(-self.noise_clip, self.noise_clip)).clamp(0.0, self.hi)
+                        q_next = torch.stack(self._q(self.critics_t, bo2, a2)).min(dim=0).values
+                        y = br + self.gamma * q_next
+                    loss = sum(nn.functional.mse_loss(q, y) for q in self._q(self.critics, bo, ba))
+                    c_opt.zero_grad()
+                    loss.backward()
+                    mon_c.observe(kc)
+                    mon_c.before_step(kc)
+                    c_opt.step()
+                    mon_c.after_step(kc)
+                    kc += 1
+                    c_losses.append(float(loss.detach()))
+                    if t % self.policy_delay == 0:
+                        a_loss = -self._q(self.critics[:1], bo, self._actor(bo))[0].mean()
+                        a_opt.zero_grad()
+                        a_loss.backward()
+                        mon_a.observe(ka)
+                        mon_a.before_step(ka)
+                        a_opt.step()
+                        mon_a.after_step(ka)
+                        ka += 1
+                        a_losses.append(float(a_loss.detach()))
+                        _soft_update(self.actor_t, self.actor, self.tau)
+                        for ct, c in zip(self.critics_t, self.critics):
+                            _soft_update(ct, c, self.tau)
+                if sess.end_unit(blk, {"train_loss": float(np.mean(c_losses)) if c_losses else None, "val_loss": None, "critic_loss": float(np.mean(c_losses)) if c_losses else None,
+                                       "actor_loss": float(np.mean(a_losses)) if a_losses else None, "mean_reward": float(np.mean(rewards)), "replay_size": float(buf.n)}) == "stop":
+                    break
+            sess.finish()
         return self
 
     def act(self, obs, deterministic: bool = True) -> float:
@@ -229,43 +313,72 @@ class SAC(Agent):
         c_opt = torch.optim.Adam([p for c in self.critics for p in c.parameters()], lr=2 * self.lr)
         al_opt = torch.optim.Adam([self.log_alpha], lr=self.lr)
         buf = Replay(d)
-        o = env.reset(seed=seed).astype(np.float32)
-        for t in range(steps):
-            if t < self.warmup:
-                a = float(rng.uniform(0.0, self.hi))
-            else:
-                with torch.no_grad():
-                    a = float(self._sample(torch.from_numpy(o).reshape(1, -1))[0])
-            o2, r, done = env.step(a)
-            o2 = o2.astype(np.float32)
-            buf.add(o, a, r, o2)
-            o = env.reset().astype(np.float32) if done else o2
-            if buf.n < self.warmup:
-                continue
-            bo, ba, br, bo2 = buf.sample(self.batch, rng)
-            alpha = self.log_alpha.exp().detach()
-            with torch.no_grad():
-                a2, logp2 = self._sample(bo2)
-                x2 = torch.cat([bo2, a2], dim=1)
-                q_next = torch.min(self.critics_t[0](x2), self.critics_t[1](x2)) - alpha * logp2
-                y = br + self.gamma * q_next
-            x = torch.cat([bo, ba], dim=1)
-            c_loss = sum(nn.functional.mse_loss(c(x), y) for c in self.critics)
-            c_opt.zero_grad()
-            c_loss.backward()
-            c_opt.step()
-            a_new, logp = self._sample(bo)
-            xn = torch.cat([bo, a_new], dim=1)
-            a_loss = (alpha * logp - torch.min(self.critics[0](xn), self.critics[1](xn))).mean()
-            a_opt.zero_grad()
-            a_loss.backward()
-            a_opt.step()
-            al_loss = -(self.log_alpha * (logp.detach() + self.target_entropy)).mean()
-            al_opt.zero_grad()
-            al_loss.backward()
-            al_opt.step()
-            for ct, c in zip(self.critics_t, self.critics):
-                _soft_update(ct, c, self.tau)
+        S = {"o": env.reset(seed=seed).astype(np.float32)}
+        blocks = -(-steps // BLOCK)
+        alpha_holder = nn.ParameterList([self.log_alpha])                                              # the temperature is a bare tensor: wrapped to be saved with the networks
+        modules = {"actor": self.actor, "alpha": alpha_holder, **{f"critic{n}": c for n, c in enumerate(self.critics)}, **{f"critic_t{n}": c for n, c in enumerate(self.critics_t)}}
+        sess = _session(self, "sac", env, steps, seed, rng, modules, {"actor": a_opt, "critic": c_opt, "alpha": al_opt}, S, buf, BLOCK, blocks)
+        mon_a, mon_c = sess.monitor("actor", self.actor), sess.monitor("critic", {f"critic{n}.{k}": p for n, c in enumerate(self.critics) for k, p in c.named_parameters()})
+        mon_t = sess.monitor("temperature", {"log_alpha": self.log_alpha})
+        with sess:
+            resumed = sess.restore()
+            for blk in range(resumed.start if resumed else 0, blocks):
+                sess.begin_unit(blk, BLOCK)
+                c_losses, a_losses, rewards, k = [], [], [], 0
+                for t in range(blk * BLOCK, min((blk + 1) * BLOCK, steps)):
+                    o = S["o"]
+                    if t < self.warmup:
+                        a = float(rng.uniform(0.0, self.hi))
+                    else:
+                        with torch.no_grad():
+                            a = float(self._sample(torch.from_numpy(o).reshape(1, -1))[0])
+                    o2, r, done = env.step(a)
+                    o2 = o2.astype(np.float32)
+                    buf.add(o, a, r, o2)
+                    rewards.append(r)
+                    S["o"] = env.reset().astype(np.float32) if done else o2
+                    if buf.n < self.warmup:
+                        continue
+                    bo, ba, br, bo2 = buf.sample(self.batch, rng)
+                    alpha = self.log_alpha.exp().detach()
+                    with torch.no_grad():
+                        a2, logp2 = self._sample(bo2)
+                        x2 = torch.cat([bo2, a2], dim=1)
+                        q_next = torch.min(self.critics_t[0](x2), self.critics_t[1](x2)) - alpha * logp2
+                        y = br + self.gamma * q_next
+                    x = torch.cat([bo, ba], dim=1)
+                    c_loss = sum(nn.functional.mse_loss(c(x), y) for c in self.critics)
+                    c_opt.zero_grad()
+                    c_loss.backward()
+                    mon_c.observe(k)
+                    mon_c.before_step(k)
+                    c_opt.step()
+                    mon_c.after_step(k)
+                    a_new, logp = self._sample(bo)
+                    xn = torch.cat([bo, a_new], dim=1)
+                    a_loss = (alpha * logp - torch.min(self.critics[0](xn), self.critics[1](xn))).mean()
+                    a_opt.zero_grad()
+                    a_loss.backward()
+                    mon_a.observe(k)
+                    mon_a.before_step(k)
+                    a_opt.step()
+                    mon_a.after_step(k)
+                    al_loss = -(self.log_alpha * (logp.detach() + self.target_entropy)).mean()
+                    al_opt.zero_grad()
+                    al_loss.backward()
+                    mon_t.observe(k)
+                    mon_t.before_step(k)
+                    al_opt.step()
+                    mon_t.after_step(k)
+                    k += 1
+                    c_losses.append(float(c_loss.detach()))
+                    a_losses.append(float(a_loss.detach()))
+                    for ct, c in zip(self.critics_t, self.critics):
+                        _soft_update(ct, c, self.tau)
+                if sess.end_unit(blk, {"train_loss": float(np.mean(c_losses)) if c_losses else None, "val_loss": None, "critic_loss": float(np.mean(c_losses)) if c_losses else None, "actor_loss": float(np.mean(a_losses)) if a_losses else None,
+                                       "mean_reward": float(np.mean(rewards)), "temperature": float(self.log_alpha.exp().detach()), "replay_size": float(buf.n)}) == "stop":
+                    break
+            sess.finish()
         return self
 
     def act(self, obs, deterministic: bool = True) -> float:
@@ -298,45 +411,59 @@ class PPO(Agent):
         self.actor, self.critic = mlp(d, 1, self.hidden), mlp(d, 1, self.hidden)
         self.log_std = nn.Parameter(torch.full((1,), float(np.log(self.init_std))))
         opt = torch.optim.Adam(list(self.actor.parameters()) + list(self.critic.parameters()) + [self.log_std], lr=self.lr)
-        o = env.reset(seed=seed).astype(np.float32)
-        done_steps = 0
-        while done_steps < steps:
-            O, A, R, V, LP, O2 = [], [], [], [], [], []
-            for _ in range(self.rollout):
-                ot = torch.from_numpy(o).reshape(1, -1)
+        S = {"o": env.reset(seed=seed).astype(np.float32)}
+        blocks = -(-steps // self.rollout)
+        holder = nn.ParameterList([self.log_std])
+        sess = _session(self, "ppo", env, steps, seed, rng, {"actor": self.actor, "critic": self.critic, "log_std": holder}, {"adam": opt}, S, None, self.rollout, blocks)
+        mon = sess.monitor("adam", {**{f"actor.{k}": p for k, p in self.actor.named_parameters()}, **{f"critic.{k}": p for k, p in self.critic.named_parameters()}, "log_std": self.log_std})
+        with sess:
+            resumed = sess.restore()
+            for blk in range(resumed.start if resumed else 0, blocks):
+                sess.begin_unit(blk, self.rollout)
+                losses, kk = [], 0
+                O, A, R, V, LP, O2 = [], [], [], [], [], []
+                for _ in range(self.rollout):
+                    ot = torch.from_numpy(S["o"]).reshape(1, -1)
+                    with torch.no_grad():
+                        dist = self._dist(ot)
+                        a = dist.sample()
+                        lp = dist.log_prob(a)
+                        v = self.critic(ot)
+                    o2, r, done = env.step(float(a.clamp(0.0, self.hi)))
+                    O.append(S["o"]); A.append(float(a)); R.append(r); V.append(float(v)); LP.append(float(lp)); O2.append(o2.astype(np.float32))
+                    S["o"] = env.reset().astype(np.float32) if done else o2.astype(np.float32)
+                O, A, R, LP, O2 = (torch.as_tensor(np.asarray(x), dtype=torch.float32) for x in (O, A, R, LP, O2))
                 with torch.no_grad():
-                    dist = self._dist(ot)
-                    a = dist.sample()
-                    lp = dist.log_prob(a)
-                    v = self.critic(ot)
-                o2, r, done = env.step(float(a.clamp(0.0, self.hi)))
-                O.append(o); A.append(float(a)); R.append(r); V.append(float(v)); LP.append(float(lp)); O2.append(o2.astype(np.float32))
-                o = env.reset().astype(np.float32) if done else o2.astype(np.float32)
-            done_steps += self.rollout
-            O, A, R, LP, O2 = (torch.as_tensor(np.asarray(x), dtype=torch.float32) for x in (O, A, R, LP, O2))
-            with torch.no_grad():
-                V = self.critic(O).squeeze(-1)
-                Vn = self.critic(O2).squeeze(-1)                                                   # bootstrap from the true next observation (episode ends are time limits)
-                delta = R + self.gamma * Vn - V
-                adv = torch.zeros_like(delta)
-                run = 0.0
-                for i in reversed(range(len(delta))):
-                    run = float(delta[i]) + self.gamma * self.lam * run
-                    adv[i] = run
-                ret = adv + V
-                adv = (adv - adv.mean()) / (adv.std() + 1e-8)
-            for _ in range(self.epochs):
-                perm = torch.from_numpy(rng.permutation(len(O)))
-                for k in range(0, len(O), self.minibatch):
-                    idx = perm[k:k + self.minibatch]
-                    dist = self._dist(O[idx])
-                    ratio = (dist.log_prob(A[idx].unsqueeze(-1)).squeeze(-1) - LP[idx]).exp()
-                    surr = torch.min(ratio * adv[idx], ratio.clamp(1 - self.clip, 1 + self.clip) * adv[idx]).mean()
-                    v_loss = nn.functional.mse_loss(self.critic(O[idx]).squeeze(-1), ret[idx])
-                    loss = -surr + 0.5 * v_loss - self.entropy * dist.entropy().mean()
-                    opt.zero_grad()
-                    loss.backward()
-                    opt.step()
+                    V = self.critic(O).squeeze(-1)
+                    Vn = self.critic(O2).squeeze(-1)                                                   # bootstrap from the true next observation (episode ends are time limits)
+                    delta = R + self.gamma * Vn - V
+                    adv = torch.zeros_like(delta)
+                    run = 0.0
+                    for i in reversed(range(len(delta))):
+                        run = float(delta[i]) + self.gamma * self.lam * run
+                        adv[i] = run
+                    ret = adv + V
+                    adv = (adv - adv.mean()) / (adv.std() + 1e-8)
+                for _ in range(self.epochs):
+                    perm = torch.from_numpy(rng.permutation(len(O)))
+                    for k in range(0, len(O), self.minibatch):
+                        idx = perm[k:k + self.minibatch]
+                        dist = self._dist(O[idx])
+                        ratio = (dist.log_prob(A[idx].unsqueeze(-1)).squeeze(-1) - LP[idx]).exp()
+                        surr = torch.min(ratio * adv[idx], ratio.clamp(1 - self.clip, 1 + self.clip) * adv[idx]).mean()
+                        v_loss = nn.functional.mse_loss(self.critic(O[idx]).squeeze(-1), ret[idx])
+                        loss = -surr + 0.5 * v_loss - self.entropy * dist.entropy().mean()
+                        opt.zero_grad()
+                        loss.backward()
+                        mon.observe(kk)
+                        mon.before_step(kk)
+                        opt.step()
+                        mon.after_step(kk)
+                        kk += 1
+                        losses.append(float(loss.detach()))
+                if sess.end_unit(blk, {"train_loss": float(np.mean(losses)) if losses else None, "val_loss": None, "mean_reward": float(R.mean()), "policy_std": float(self.log_std.exp().detach())}) == "stop":
+                    break
+            sess.finish()
         return self
 
     def act(self, obs, deterministic: bool = True) -> float:

@@ -80,22 +80,45 @@ def _payoff(y, sharpness: float = 30.0):
     return torch.nn.functional.softplus(torch.exp(y) - 1.0, beta=sharpness)
 
 
-def _train(loss_fn, params, steps: int, lr: float, seed: int, report: int = 200, lbfgs_steps: int = 0):
+def _train(loss_fn, params, steps: int, lr: float, seed: int, report: int = 200, lbfgs_steps: int = 0, identity: dict | None = None):
     """Adam with a cosine learning-rate decay on freshly drawn collocation points, then optionally ``lbfgs_steps`` iterations of L-BFGS on one fixed draw (which polishes the fit far more than more Adam steps do)."""
     import torch
+    from torch import nn
+
+    from ..ml.deep.session import TrainingSession
 
     params = list(params)
+    holder = nn.ParameterList(params)                                                       # the parameters, shared, so that they can be saved and restored together
     opt = torch.optim.Adam(params, lr=lr)
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, max(steps, 1), eta_min=lr * 0.02)
     history = []
-    for step in range(steps):
-        loss = loss_fn()
-        opt.zero_grad()
-        loss.backward()
-        opt.step()
-        sched.step()
-        if step % report == 0 or step == steps - 1:
-            history.append(float(loss.detach()))
+    blocks = -(-steps // report) if steps > 0 else 0
+    # the Adam phase is checkpointed every ``report`` steps (collocation points come from the global generator, which is saved); the L-BFGS polish that follows restarts from the weights the last
+    # checkpoint holds and reruns deterministically (its generator is re-seeded), so an interruption inside it costs that polish only
+    sess = TrainingSession("pinn", config={"identity": identity or {}, "steps": steps, "lr": lr, "seed": seed, "report": report, "lbfgs_steps": lbfgs_steps, "loss": getattr(loss_fn, "__qualname__", "loss")},
+                           data="collocation points are drawn from the seeded global generator", modules={"net": holder}, optimizers={"adam": opt}, schedulers={"cosine": sched}, units=max(blocks, 1),
+                           capture=lambda: {"history": list(history)}, apply=lambda s: history.__init__(s["history"]), steps_per_unit=report)
+    mon = sess.monitor("adam", {f"p{i}": q for i, q in enumerate(params)})
+    with sess:
+        resumed = sess.restore()
+        for blk in range(resumed.start if resumed else 0, blocks):
+            sess.begin_unit(blk, report)
+            vals = []
+            for step in range(blk * report, min((blk + 1) * report, steps)):
+                loss = loss_fn()
+                opt.zero_grad()
+                loss.backward()
+                mon.observe(step)
+                mon.before_step(step)
+                opt.step()
+                mon.after_step(step)
+                sched.step()
+                vals.append(float(loss.detach()))
+                if step % report == 0 or step == steps - 1:
+                    history.append(float(loss.detach()))
+            if sess.end_unit(blk, {"train_loss": float(np.mean(vals)) if vals else None, "val_loss": None, "pde_loss": vals[-1] if vals else None}) == "stop":
+                break
+        sess.finish()
     if lbfgs_steps:
         torch.manual_seed(seed + 1)
         state = torch.get_rng_state()
@@ -114,6 +137,10 @@ def _train(loss_fn, params, steps: int, lr: float, seed: int, report: int = 200,
 
 
 class _PINN:
+    def _identity(self) -> dict:
+        """What makes this fit THIS fit: the class and every scalar setting (the pricing parameters, the network size, the seed). Used to refuse a checkpoint of another problem."""
+        return {"class": type(self).__name__, **{k: v for k, v in vars(self).items() if isinstance(v, (int, float, str, bool)) or (isinstance(v, tuple) and all(isinstance(x, (int, float)) for x in v))}}
+
     def predict_numpy(self, *args):
         import torch
 
@@ -156,7 +183,7 @@ class BSMPINN(_PINN):
             bc = (lo ** 2).mean() + ((hi - (torch.exp(torch.full_like(tb, self.ymax) - q * tb) - torch.exp(-r * tb))) ** 2).mean()
             return (res ** 2).mean() + bc
 
-        self.history = _train(loss, self.net.parameters(), self.steps, self.lr, self.seed, lbfgs_steps=self.lbfgs_steps)
+        self.history = _train(loss, self.net.parameters(), self.steps, self.lr, self.seed, lbfgs_steps=self.lbfgs_steps, identity=self._identity())
         return self
 
     def _eval(self, tau, y):
@@ -200,7 +227,7 @@ class VasicekPINN(_PINN):
             res = u_t - k * (th - r) * u_r - 0.5 * s ** 2 * u_rr + r * u
             return (res ** 2).mean()
 
-        self.history = _train(loss, self.net.parameters(), self.steps, self.lr, self.seed, lbfgs_steps=self.lbfgs_steps)
+        self.history = _train(loss, self.net.parameters(), self.steps, self.lr, self.seed, lbfgs_steps=self.lbfgs_steps, identity=self._identity())
         return self
 
     def _eval(self, tau, r):
@@ -258,7 +285,7 @@ class HestonPINN(_PINN):
             bc = (self._u(tb, -top, vb) ** 2).mean() + ((self._u(tb, top, vb) - (torch.exp(top - q * tb) - torch.exp(-r * tb))) ** 2).mean()
             return (res ** 2).mean() + bc
 
-        self.history = _train(loss, self.net.parameters(), self.steps, self.lr, self.seed, lbfgs_steps=self.lbfgs_steps)
+        self.history = _train(loss, self.net.parameters(), self.steps, self.lr, self.seed, lbfgs_steps=self.lbfgs_steps, identity=self._identity())
         return self
 
     def _eval(self, tau, y, v):

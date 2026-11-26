@@ -35,9 +35,23 @@ def current() -> dict | None:
 
 
 @contextlib.contextmanager
-def use(folder: str, resume: bool = False, warm: bool = False):
-    token = _current.set({"dir": str(folder), "resume": bool(resume), "warm": bool(warm)})
+def use(folder: str, resume: bool = False, warm: bool = False, grad_level: str = "auto", request: dict | None = None):
+    """Run the code inside as a training run: ``folder`` is the run's folder, ``resume`` continues from its checkpoints, ``grad_level`` is the gradient-monitoring level (``auto`` resolves per machine)."""
+    token = _current.set({"dir": str(folder), "resume": bool(resume), "warm": bool(warm), "grad_level": grad_level, "request": request})
     try:
         yield
     finally:
         _current.reset(token)
+
+
+def loop_folder(kind: str, *fingerprints: str):
+    """The folder of one training loop inside the current run (``<run>/<kind>-<fingerprint>``), or ``None`` when no run is active. Two loops of one run (the fits of a walk-forward, an ensemble's members) never share
+    a folder because their fingerprints differ."""
+    import hashlib
+    from pathlib import Path
+
+    ctx = current()
+    if not ctx:
+        return None
+    key = hashlib.sha256("|".join(str(f) for f in fingerprints).encode()).hexdigest()[:10]
+    return Path(ctx["dir"]) / f"{kind}-{key}"

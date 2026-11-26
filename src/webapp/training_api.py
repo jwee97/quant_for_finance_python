@@ -1,6 +1,7 @@
 """HTTP routes of the Training Monitor and the resource-aware start of a deep training (``ml.deep.runs``, ``ml.deep.profiles``).
 
 ``GET  /api/training/runs``       every run on disk with its status derived from its files (running, completed, stopped, paused, interrupted, orphaned), epoch, best score, whether it can be resumed
+``GET  /api/training/gradients``  the gradient diagnostics of a fit: global series, one epoch's layer table, per-layer series and histograms
 ``GET  /api/training/run``        one run's metrics (``since`` returns only newer epochs), events, checkpoints and the request that started it
 ``POST /api/training/control``    ask a running fit to ``stop`` or ``pause`` after the current epoch's checkpoint, or ``clear`` the request
 ``POST /api/training/resume``     start the saved request again with ``resume`` set (never automatic: this route is the user's decision); ``restart`` starts it as a NEW run; ``warm`` as a new run from saved weights
@@ -66,7 +67,7 @@ class TrainingApi:
         self.root = Path(app.root)
 
     def get_routes(self) -> dict:
-        return {"/api/training/runs": self.runs, "/api/training/run": self.run, "/api/training/profiles": self.profiles}
+        return {"/api/training/runs": self.runs, "/api/training/run": self.run, "/api/training/gradients": self.gradients, "/api/training/profiles": self.profiles}
 
     def post_routes(self) -> dict:
         return {"/api/training/control": self.control, "/api/training/resume": self.resume, "/api/training/archive": self.archive, "/api/training/preflight": self.preflight}
@@ -82,6 +83,16 @@ class TrainingApi:
     def run(self, q: dict) -> dict:
         try:
             return runs.detail(self.root, str(q.get("id") or ""), q.get("fit") or None, int(_number(q, "since", 0, 0, 10 ** 6, integer=True)))
+        except KeyError:
+            raise ApiError("unknown training run") from None
+        except ValueError as exc:
+            raise ApiError(str(exc)) from None
+
+    def gradients(self, q: dict) -> dict:
+        """``GET /api/training/gradients?id=&fit=&optimizer=&flow_epoch=&hist_epochs=1,5``: the gradient diagnostics of a run (global series, one epoch's layer table, per-layer series, histograms)."""
+        try:
+            hist = [int(x) for x in str(q.get("hist_epochs") or "").split(",") if x.strip()][:3]
+            return runs.gradients(self.root, str(q.get("id") or ""), q.get("fit") or None, q.get("optimizer") or None, int(_number(q, "flow_epoch", 0, 0, 10 ** 6, integer=True)) or None, hist)
         except KeyError:
             raise ApiError("unknown training run") from None
         except ValueError as exc:
@@ -142,4 +153,8 @@ class TrainingApi:
             new["resume"] = False
         else:
             new.update(run_id=run_id, resume=True, warm_start=(mode == "warm"))
-        return self.ml.train(new)
+        path = req.get("path") or "/api/ml/train"
+        fn = self.app.extra_post.get(path)
+        if fn is None:
+            raise ApiError(f"the request that started this run ({path}) is no longer available")
+        return self.app.with_request(path, fn, new)                                           # the same route, with the run id and the resume flag: any deep training that ran as a job can be resumed this way

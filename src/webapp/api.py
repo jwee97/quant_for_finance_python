@@ -6,6 +6,8 @@ Strategies are never taken as code from the browser: formulas are parsed by ``sr
 
 from __future__ import annotations
 
+import contextlib
+import contextvars
 import hashlib
 import inspect
 import json
@@ -35,6 +37,7 @@ from ..equity.portfolio import PRESETS as book_presets
 from ..strategies.factor_models import KINDS as learner_kinds
 from ..strategies.factor_timing import CALENDAR_STATES, MACRO_STATES
 from ..ml import live, resources
+from ..ml.deep import context as train_context
 from ..ml.deep.context import TrainingHalted
 from ..ml.live import Telemetry
 from ..store.appdb import AppDb, TrainingLog
@@ -42,6 +45,7 @@ from .jobs import ACTIVE, BEAT, JobLog
 
 RETRYABLE = ("error", "cancelled", "interrupted")
 RETRY_KINDS = ("backtest", "regime")                                   # runs whose request is all there is to them: no files, no keys, nothing that changed under them
+_REQUEST_HINT = contextvars.ContextVar("request_hint", default=None)       #  the request being handled, so that the job it starts knows its run id and whether it resumes
 REQUEST_LIMIT = 20_000                                               # a request larger than this is not kept with the job
 from .universe import CLASSES, MAX_TICKERS, TickerStore, UniverseBuilder, UniverseError, massive_source, normalise
 
@@ -161,6 +165,7 @@ class Job:
         self.session = None                                           # the research session this run belongs to, when the request named one
         self.request = None                                           # {"path", "body"} of the request that started it, so that a failed run can be started again
         self.retry_of = None
+        self.run = None                                               # {"dir", "resume", "warm", "grad_level", "request"}: the training run this job writes into (every job has one; it is created only if a loop checkpoints)
         self.training_run = None                                      # the id of the Training monitor run this job writes (a deep network's checkpoints), so that an interrupted job points at what can be resumed
         self.telemetry = Telemetry(on_message=self._say, check=self._check)  # what a network being trained says each epoch (src/ml/live.py): shown in ``view()["live"]`` and as the progress message
 
@@ -196,7 +201,7 @@ class Job:
     def record(self, disk: bool = False) -> dict:
         """The small summary kept on disk and listed by ``/api/jobs`` (never the result). ``disk`` adds the request that started the run (the list does not show it)."""
         out = {"id": self.id, "label": self.label, "kind": self.kind, "status": self.status, "message": self._message, "error": self.error, "created": self.created, "finished": self.finished, "ref": self.ref,
-               "session": self.session, "retry_of": self.retry_of, "training_run": self.training_run, "cancelling": self.cancel_event.is_set() and self.status in ACTIVE}
+               "session": self.session, "retry_of": self.retry_of, "training_run": self.training_run or (self.run["id"] if self.run and os.path.isdir(self.run["dir"]) else None), "cancelling": self.cancel_event.is_set() and self.status in ACTIVE}
         if disk and self.request is not None:
             out["request"] = self.request
         return out
@@ -488,6 +493,14 @@ class App:
         if lane not in ("compute", "data"):
             raise ValueError("lane must be compute or data")
         job = self._register(Job(label, kind))
+        hint = _REQUEST_HINT.get() or {}
+        body = hint.get("body") or {}
+        run_id = str(body.get("run_id") or job.id)
+        if not re.fullmatch(r"[A-Za-z0-9_.-]{3,80}", run_id):
+            raise ApiError("run_id is 3 to 80 letters, digits, '.', '_' or '-'")
+        request = {"path": hint.get("path"), "body": {k: v for k, v in body.items() if k not in ("resume", "warm_start", "run_id")}, "run_id": run_id, "label": label, "created_at": time.time()} if hint else None
+        job.run = {"dir": str(self.root / "data" / "user" / "training" / run_id), "resume": bool(body.get("resume")), "warm": bool(body.get("warm_start")), "grad_level": str(body.get("grad_monitor") or "auto"), "request": request,
+                   "id": run_id}
         job.future = (self._data_pool if lane == "data" else self._pool).submit(self._run_task, job, work)
         return {"job": job.id}
 
@@ -511,7 +524,8 @@ class App:
                 return
             job.status, job.message = "running", "starting"
             job.save()
-            with live.use(job.telemetry):
+            run = job.run or {}
+            with live.use(job.telemetry), (train_context.use(run["dir"], run["resume"], run["warm"], run["grad_level"], run["request"]) if run else contextlib.nullcontext()):
                 job.result = clean(work(progress))
             job.status, job.message = "done", "finished"
             if job.cancel_event.is_set():                           # the work ended before it reached a point where it could stop: its result is thrown away, not half kept
@@ -677,7 +691,11 @@ class App:
 
     def with_request(self, path: str, fn, body: dict):
         """Run a POST handler and, when it started a job, remember the request on that job (for a retry) and the research session the request named."""
-        out = fn(body)
+        token = _REQUEST_HINT.set({"path": path, "body": body if isinstance(body, dict) else {}})
+        try:
+            out = fn(body)
+        finally:
+            _REQUEST_HINT.reset(token)
         job = self.jobs.get(out.get("job")) if isinstance(out, dict) else None
         if job is not None and job.request is None:
             if len(json.dumps(body, default=str)) <= REQUEST_LIMIT:

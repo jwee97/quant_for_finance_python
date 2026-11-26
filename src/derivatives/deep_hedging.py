@@ -104,20 +104,39 @@ def train(S: float, K: float, T: float, r: float, q: float, sigma: float, cost: 
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, iterations, eta_min=learning_rate * 0.05)
     a, history = float(risk_aversion), []
     live.start(epochs=iterations, patience=None, device="cpu", n_params=int(sum(q.numel() for q in policy.parameters())), n_train=int(batch), batch_size=int(batch), name="hedging network (iterations)")
-    for it in range(iterations):
-        paths = gbm_paths(S, r - q, sigma, T, steps, batch, gen)
-        pnl, _, _ = run_policy(policy, paths, K, T, r, q, sigma, cost, call, premium)
-        loss = (torch.logsumexp(-a * pnl, dim=0) - math.log(batch)) / a                         # minus the certainty equivalent
-        opt.zero_grad(set_to_none=True)
-        loss.backward()
-        nn.utils.clip_grad_norm_(policy.parameters(), 1.0)
-        opt.step()
-        sched.step()
-        history.append(-float(loss.detach()))
-        if (it + 1) % 5 == 0 or it == 0:
-            live.epoch(it, -history[-1], None, lr=float(opt.param_groups[0]["lr"]), epochs=iterations)
-        if progress is not None and (it + 1) % 25 == 0:
-            progress(f"training the hedging network: {it + 1} of {iterations} iterations")
+    from ..ml.deep.session import TrainingSession
+
+    block = 5                                                                                   # iterations per reporting unit
+    blocks = -(-iterations // block)
+    sess = TrainingSession("deep_hedging", config={"S": S, "K": K, "T": T, "r": r, "q": q, "sigma": sigma, "cost": cost, "steps": steps, "call": bool(call), "risk_aversion": a, "premium": premium, "iterations": iterations, "batch": batch,
+                                                  "learning_rate": learning_rate, "seed": int(seed), "hidden": hidden}, data="paths are drawn fresh from the seeded generator", modules={"policy": policy}, optimizers={"adam": opt},
+                           schedulers={"cosine": sched}, rngs={"paths": gen}, units=blocks, clip=1.0, capture=lambda: {"history": list(history)}, apply=lambda s: history.__init__(s["history"]), steps_per_unit=block)
+    mon = sess.monitor("adam", policy)
+    with sess:
+        resumed = sess.restore()
+        for blk in range(resumed.start if resumed else 0, blocks):
+            sess.begin_unit(blk, block)
+            for it in range(blk * block, min((blk + 1) * block, iterations)):
+                paths = gbm_paths(S, r - q, sigma, T, steps, batch, gen)
+                pnl, _, _ = run_policy(policy, paths, K, T, r, q, sigma, cost, call, premium)
+                loss = (torch.logsumexp(-a * pnl, dim=0) - math.log(batch)) / a                         # minus the certainty equivalent
+                opt.zero_grad(set_to_none=True)
+                loss.backward()
+                mon.observe(it)
+                nn.utils.clip_grad_norm_(policy.parameters(), 1.0)
+                mon.after_clip(it)
+                mon.before_step(it)
+                opt.step()
+                mon.after_step(it)
+                sched.step()
+                history.append(-float(loss.detach()))
+                if (it + 1) % 5 == 0 or it == 0:
+                    live.epoch(it, -history[-1], None, lr=float(opt.param_groups[0]["lr"]), epochs=iterations)
+                if progress is not None and (it + 1) % 25 == 0:
+                    progress(f"training the hedging network: {it + 1} of {iterations} iterations")
+            if sess.end_unit(blk, {"train_loss": float(np.mean(history[blk * block:])), "val_loss": None, "certainty_equivalent": float(np.mean(history[blk * block:]))}) == "stop":
+                break
+        sess.finish()
     return policy.eval(), history
 
 

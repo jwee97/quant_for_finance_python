@@ -70,23 +70,38 @@ def train_encoder(X: np.ndarray, kind: str = "autoencoder", embed_dim: int = 8, 
     data = torch.as_tensor(X, dtype=torch.float32)
     history = []
     live.start(epochs=epochs, patience=None, device="cpu", n_params=int(sum(q.numel() for q in params)), n_train=int(n), batch_size=int(batch_size))
-    for epoch in range(epochs):
-        order = torch.randperm(n, generator=gen)
-        total = 0.0
-        for i in range(0, n, batch_size):
-            batch = data[order[i:i + batch_size]]
-            if kind == "autoencoder":
-                loss = torch.mean((decoder(encoder(batch)) - batch) ** 2)
-            else:
-                if len(batch) < 4:
-                    continue
-                loss = nt_xent(projector(encoder(augment(batch, gen))), projector(encoder(augment(batch, gen))))
-            opt.zero_grad()
-            loss.backward()
-            opt.step()
-            total += float(loss.detach()) * len(batch)
-        history.append(total / n)
-        live.epoch(epoch, history[-1], None, lr=lr, epochs=epochs)
+    from ..ml.deep.session import TrainingSession, data_fingerprint
+
+    modules = {"encoder": encoder, **({"decoder": decoder} if kind == "autoencoder" else {"projector": projector})}
+    sess = TrainingSession("encoder_" + kind, config={"kind": kind, "embed_dim": embed_dim, "hidden": hidden, "batch_size": batch_size, "lr": lr, "seed": seed}, data=data_fingerprint(X), modules=modules,
+                           optimizers={"adam": opt}, rngs={"order": gen}, capture=lambda: {"history": list(history)}, apply=lambda s: history.__init__(s["history"]), units=epochs)
+    mon = sess.monitor("adam", {f"{n}.{k}": p for n, m in modules.items() for k, p in m.named_parameters()})
+    with sess:
+        resumed = sess.restore()
+        for epoch in range(resumed.start if resumed else 0, epochs):
+            sess.begin_unit(epoch, -(-n // batch_size))
+            order = torch.randperm(n, generator=gen)
+            total = 0.0
+            for step, i in enumerate(range(0, n, batch_size)):
+                batch = data[order[i:i + batch_size]]
+                if kind == "autoencoder":
+                    loss = torch.mean((decoder(encoder(batch)) - batch) ** 2)
+                else:
+                    if len(batch) < 4:
+                        continue
+                    loss = nt_xent(projector(encoder(augment(batch, gen))), projector(encoder(augment(batch, gen))))
+                opt.zero_grad()
+                loss.backward()
+                mon.observe(step)
+                mon.before_step(step)
+                opt.step()
+                mon.after_step(step)
+                total += float(loss.detach()) * len(batch)
+            history.append(total / n)
+            live.epoch(epoch, history[-1], None, lr=lr, epochs=epochs)
+            if sess.end_unit(epoch, {"train_loss": history[-1], "val_loss": None}) == "stop":
+                break
+        sess.finish()
     live.finish(final_train=history[-1] if history else None)
     encoder.eval()
 

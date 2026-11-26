@@ -100,34 +100,63 @@ def train_and_predict_graph(X_train, N_train, y_train, X_val, N_val, y_val, X_te
     def masked_mse(pred, y, m):
         return ((pred - y) ** 2 * m).sum() / m.sum().clamp(min=1.0)
 
-    best, best_state, best_epoch, history, train_history = np.inf, None, 0, [], []
+    from dataclasses import asdict
+
+    from ..ml.deep.session import TrainingSession, data_fingerprint
+
+    st = {"best": np.inf, "best_state": None, "best_epoch": 0, "history": [], "train_history": []}
     # a "batch" is a set of days; the day count per batch keeps the node count per batch near the Stage 27 batch size
     days_per_batch = max(1, settings.batch_size // n_assets)
     live.start(epochs=settings.max_epochs, patience=settings.patience, device="cpu", n_params=int(sum(q.numel() for q in net.parameters())), n_train=int(len(tx)), n_val=int(len(vx)), batch_size=int(settings.batch_size))
-    for epoch in range(settings.max_epochs):
-        net.train()
-        order = torch.randperm(len(tx), generator=generator)
-        running = 0.0
-        for i in range(0, len(order), days_per_batch):
-            idx = order[i:i + days_per_batch]
-            optimiser.zero_grad()
-            loss = masked_mse(net(tx[idx], tn[idx]), ty[idx], tm[idx])
-            loss.backward()
-            optimiser.step()
-            running += float(loss.detach()) * len(idx)
-        net.eval()
-        with torch.no_grad():
-            val_loss = float(masked_mse(net(vx, vn), vy, vm))
-        history.append(val_loss)
-        train_history.append(running / len(order))
-        gained = val_loss < best - 1e-9
-        live.epoch(epoch, train_history[-1], val_loss, lr=settings.learning_rate, best=val_loss if gained else best, best_epoch=epoch if gained else best_epoch, bad=0 if gained else epoch - best_epoch, improved=gained,
-                   epochs=settings.max_epochs, patience=settings.patience)
-        if val_loss < best - 1e-9:
-            best, best_epoch = val_loss, epoch
-            best_state = {k: v.clone() for k, v in net.state_dict().items()}
-        elif epoch - best_epoch >= settings.patience:
-            break
+
+    def apply(s: dict) -> None:
+        st.update(s)
+
+    # the graph's topology is part of the checkpoint's identity: the node order is the asset order, the node count and the feature count are in the net's configuration
+    sess = TrainingSession("graph_forecast", config={"net": net_kwargs or {}, "settings": asdict(settings), "seed": seed, "n_assets": n_assets, "n_features": int(X_train.shape[2]), "nodes": "asset order of the panel"},
+                           data=data_fingerprint(X_train, N_train, y_train, X_val, N_val, y_val), modules={"net": net}, optimizers={"adam": optimiser}, rngs={"order": generator}, capture=lambda: dict(st), apply=apply,
+                           units=settings.max_epochs, patience=settings.patience, family="transformer")
+    mon = sess.monitor("adam", net)
+    with sess:
+        resumed = sess.restore()
+        start = resumed.start if resumed else 0
+        if resumed and start > 0 and start - 1 - st["best_epoch"] >= settings.patience:
+            start = settings.max_epochs
+        for epoch in range(start, settings.max_epochs):
+            sess.begin_unit(epoch, -(-len(tx) // days_per_batch))
+            net.train()
+            order = torch.randperm(len(tx), generator=generator)
+            running = 0.0
+            for k, i in enumerate(range(0, len(order), days_per_batch)):
+                idx = order[i:i + days_per_batch]
+                optimiser.zero_grad()
+                loss = masked_mse(net(tx[idx], tn[idx]), ty[idx], tm[idx])
+                loss.backward()
+                mon.observe(k)
+                mon.before_step(k)
+                optimiser.step()
+                mon.after_step(k)
+                running += float(loss.detach()) * len(idx)
+            net.eval()
+            with torch.no_grad():
+                val_loss = float(masked_mse(net(vx, vn), vy, vm))
+            st["history"].append(val_loss)
+            st["train_history"].append(running / len(order))
+            gained = val_loss < st["best"] - 1e-9
+            live.epoch(epoch, st["train_history"][-1], val_loss, lr=settings.learning_rate, best=val_loss if gained else st["best"], best_epoch=epoch if gained else st["best_epoch"], bad=0 if gained else epoch - st["best_epoch"], improved=gained,
+                       epochs=settings.max_epochs, patience=settings.patience)
+            stop = False
+            if gained:
+                st["best"], st["best_epoch"] = val_loss, epoch
+                st["best_state"] = {k_: v.clone() for k_, v in net.state_dict().items()}
+            elif epoch - st["best_epoch"] >= settings.patience:
+                stop = True
+            if sess.end_unit(epoch, {"train_loss": st["train_history"][-1], "val_loss": val_loss}, improved=gained, last=stop) == "stop":
+                break
+            if stop:
+                break
+        sess.finish(stopped_by="early_stopping" if len(st["history"]) < settings.max_epochs else None)
+    best, best_state, best_epoch, history, train_history = st["best"], st["best_state"], st["best_epoch"], st["history"], st["train_history"]
     live.finish(best_epoch=int(best_epoch) + 1, best_val=float(best), stopped_early=len(history) < settings.max_epochs, final_train=train_history[-1] if train_history else None)
     net.load_state_dict(best_state)
     net.eval()

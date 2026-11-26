@@ -61,26 +61,54 @@ class WGANGP:
         d_opt = torch.optim.Adam(self.D.parameters(), lr=self.lr, betas=(0.5, 0.9))
         self.critic_gap, self.latent_dim = [], self.latent
         live.start(epochs=self.steps, patience=None, device="cpu", n_params=int(sum(q.numel() for q in list(self.G.parameters()) + list(self.D.parameters()))), n_train=int(len(data)), batch_size=int(self.batch), name="wgan-gp (steps)")
-        for step in range(self.steps):
-            for _ in range(self.n_critic):
-                real = data[torch.as_tensor(rng.integers(0, len(data), self.batch))]
-                fake = self.G(torch.randn(self.batch, self.latent)).detach()
-                eps = torch.rand(self.batch, 1)
-                mix = (eps * real + (1 - eps) * fake).requires_grad_(True)
-                grad = torch.autograd.grad(self.D(mix).sum(), mix, create_graph=True)[0]
-                gp = ((grad.norm(2, dim=1) - 1.0) ** 2).mean()
-                gap = self.D(real).mean() - self.D(fake).mean()
-                loss = -gap + self.penalty * gp
-                d_opt.zero_grad()
-                loss.backward()
-                d_opt.step()
-            g_loss = -self.D(self.G(torch.randn(self.batch, self.latent))).mean()
-            g_opt.zero_grad()
-            g_loss.backward()
-            g_opt.step()
-            if step % 25 == 0:
-                self.critic_gap.append(float(gap.detach()))
-                live.epoch(step, float(g_loss.detach()), float(gap.detach()), lr=self.lr, epochs=self.steps)
+        from ..ml.deep.session import TrainingSession, data_fingerprint
+
+        block = 25                                                                                      # a reporting unit is 25 generator updates: the metrics row, the gradient summary and the checkpoint come at its end
+        blocks = -(-self.steps // block)
+        sess = TrainingSession("wgan_gp", config={"latent": self.latent, "hidden": self.hidden, "layers": self.layers, "n_critic": self.n_critic, "batch": self.batch, "lr": self.lr, "penalty": self.penalty, "seed": self.seed, "clip": self.clip},
+                               data=data_fingerprint(Z), modules={"G": self.G, "D": self.D}, optimizers={"g": g_opt, "d": d_opt}, rngs={"data": rng}, units=blocks, family="gan",
+                               capture=lambda: {"critic_gap": list(self.critic_gap)}, apply=lambda s: self.critic_gap.__init__(s["critic_gap"]), steps_per_unit=block * self.n_critic)
+        mon_g, mon_d = sess.monitor("generator", self.G), sess.monitor("critic", self.D)
+        with sess:
+            resumed = sess.restore()
+            for blk in range(resumed.start if resumed else 0, blocks):
+                sess.begin_unit(blk, block)
+                d_k = g_k = 0
+                gaps, g_losses, gps = [], [], []
+                for step in range(blk * block, min((blk + 1) * block, self.steps)):
+                    for _ in range(self.n_critic):
+                        real = data[torch.as_tensor(rng.integers(0, len(data), self.batch))]
+                        fake = self.G(torch.randn(self.batch, self.latent)).detach()
+                        eps = torch.rand(self.batch, 1)
+                        mix = (eps * real + (1 - eps) * fake).requires_grad_(True)
+                        grad = torch.autograd.grad(self.D(mix).sum(), mix, create_graph=True)[0]
+                        gp = ((grad.norm(2, dim=1) - 1.0) ** 2).mean()
+                        gap = self.D(real).mean() - self.D(fake).mean()
+                        loss = -gap + self.penalty * gp
+                        d_opt.zero_grad()
+                        loss.backward()
+                        mon_d.observe(d_k)
+                        mon_d.before_step(d_k)
+                        d_opt.step()
+                        mon_d.after_step(d_k)
+                        d_k += 1
+                    g_loss = -self.D(self.G(torch.randn(self.batch, self.latent))).mean()
+                    g_opt.zero_grad()
+                    g_loss.backward()
+                    mon_g.observe(g_k)
+                    mon_g.before_step(g_k)
+                    g_opt.step()
+                    mon_g.after_step(g_k)
+                    g_k += 1
+                    gaps.append(float(gap.detach()))
+                    g_losses.append(float(g_loss.detach()))
+                    gps.append(float(gp.detach()))
+                    if step % 25 == 0:
+                        self.critic_gap.append(float(gap.detach()))
+                        live.epoch(step, float(g_loss.detach()), float(gap.detach()), lr=self.lr, epochs=self.steps)
+                if sess.end_unit(blk, {"train_loss": float(np.mean(g_losses)), "val_loss": None, "critic_gap": float(np.mean(gaps)), "gradient_penalty": float(np.mean(gps))}) == "stop":
+                    break
+            sess.finish()
         self.G.eval()
         return self
 
@@ -138,23 +166,46 @@ class FactorVAE:
         opt = torch.optim.Adam(params, lr=self.lr)
         self.losses = []
         live.start(epochs=self.epochs, patience=None, device="cpu", n_params=int(sum(q.numel() for q in params)), n_train=int(len(data)), batch_size=int(self.batch))
-        for epoch in range(self.epochs):
-            order = rng.permutation(len(data))
-            total = 0.0
-            for i in range(0, len(order), self.batch):
-                x = data[torch.as_tensor(order[i:i + self.batch])]
-                mu, logvar = self.enc(x).chunk(2, dim=1)
-                logvar = logvar.clamp(-8.0, 4.0)
-                z = mu + (0.5 * logvar).exp() * torch.randn_like(mu)
-                recon = self._log_t(x, self._mean(z))
-                kl = 0.5 * (mu ** 2 + logvar.exp() - 1.0 - logvar).sum(dim=1)
-                loss = -(recon - self.beta * kl).mean()
-                opt.zero_grad()
-                loss.backward()
-                opt.step()
-                total += float(loss.detach()) * len(x)
-            self.losses.append(total / len(data))
-            live.epoch(epoch, self.losses[-1], None, lr=self.lr, epochs=self.epochs)
+        from torch import nn
+        from ..ml.deep.session import TrainingSession, data_fingerprint
+
+        holder = nn.ParameterDict({"B": self.B, "log_scale": self.log_scale, "log_nu": self.log_nu})   # the factor loadings, the noise scale and the t degrees of freedom are parameters outside any module: kept together to be saved
+        kl_hist, rec_hist = [], []
+        sess = TrainingSession("factor_vae", config={"factors": self.K, "hidden": self.hidden, "batch": self.batch, "lr": self.lr, "beta": self.beta, "nu_init": self.nu_init, "seed": self.seed, "clip": self.clip}, data=data_fingerprint(Z),
+                               modules={"enc": self.enc, "g": self.g, "factor": holder}, optimizers={"adam": opt}, rngs={"order": rng}, units=self.epochs,
+                               capture=lambda: {"losses": list(self.losses), "kl": list(kl_hist), "recon": list(rec_hist)},
+                               apply=lambda s: (self.losses.__init__(s["losses"]), kl_hist.__init__(s["kl"]), rec_hist.__init__(s["recon"])))
+        mon = sess.monitor("adam", {**{f"enc.{k}": p for k, p in self.enc.named_parameters()}, **{f"g.{k}": p for k, p in self.g.named_parameters()}, "factor.B": self.B, "factor.log_scale": self.log_scale, "factor.log_nu": self.log_nu})
+        with sess:
+            resumed = sess.restore()
+            for epoch in range(resumed.start if resumed else 0, self.epochs):
+                sess.begin_unit(epoch, -(-len(data) // self.batch))
+                order = rng.permutation(len(data))
+                total = rec_total = kl_total = 0.0
+                for step, i in enumerate(range(0, len(order), self.batch)):
+                    x = data[torch.as_tensor(order[i:i + self.batch])]
+                    mu, logvar = self.enc(x).chunk(2, dim=1)
+                    logvar = logvar.clamp(-8.0, 4.0)
+                    z = mu + (0.5 * logvar).exp() * torch.randn_like(mu)
+                    recon = self._log_t(x, self._mean(z))
+                    kl = 0.5 * (mu ** 2 + logvar.exp() - 1.0 - logvar).sum(dim=1)
+                    loss = -(recon - self.beta * kl).mean()
+                    opt.zero_grad()
+                    loss.backward()
+                    mon.observe(step)
+                    mon.before_step(step)
+                    opt.step()
+                    mon.after_step(step)
+                    total += float(loss.detach()) * len(x)
+                    rec_total += float(recon.detach().mean()) * len(x)
+                    kl_total += float(kl.detach().mean()) * len(x)
+                self.losses.append(total / len(data))
+                rec_hist.append(rec_total / len(data))
+                kl_hist.append(kl_total / len(data))
+                live.epoch(epoch, self.losses[-1], None, lr=self.lr, epochs=self.epochs)
+                if sess.end_unit(epoch, {"train_loss": self.losses[-1], "val_loss": None, "reconstruction_loglik": rec_hist[-1], "kl": kl_hist[-1], "beta": self.beta, "degrees_of_freedom": float(2.0 + self.log_nu.exp().detach())}) == "stop":
+                    break
+            sess.finish()
         live.finish(final_train=self.losses[-1] if self.losses else None)
         return self
 

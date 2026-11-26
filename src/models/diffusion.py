@@ -76,21 +76,37 @@ class Diffusion:
         abar = torch.as_tensor(self.abar, dtype=torch.float32)
         self.losses = []
         live.start(epochs=self.epochs, patience=None, device="cpu", n_params=int(sum(q.numel() for q in self.net.parameters())), n_train=int(len(x0)), batch_size=int(self.batch))
-        for epoch in range(self.epochs):
-            order = torch.randperm(len(x0), generator=gen)
-            running = 0.0
-            for i in range(0, len(order), self.batch):
-                x = x0[order[i:i + self.batch]]
-                t = torch.randint(0, self.steps, (len(x),), generator=gen)
-                eps = torch.randn(x.shape, generator=gen)
-                a = abar[t][:, None]
-                opt.zero_grad()
-                loss = torch.mean((self.net(a.sqrt() * x + (1 - a).sqrt() * eps, t) - eps) ** 2)
-                loss.backward()
-                opt.step()
-                running += float(loss.detach()) * len(x)
-            self.losses.append(running / len(x0))
-            live.epoch(epoch, self.losses[-1], None, lr=self.lr, epochs=self.epochs)
+        from ..ml.deep.session import TrainingSession, data_fingerprint
+
+        # the noise schedule is derived from ``steps`` (cosine) and is part of the configuration: a checkpoint of another schedule is refused; this model keeps no EMA copy of its weights
+        sess = TrainingSession("diffusion", config={"steps": self.steps, "hidden": self.hidden, "layers": self.layers, "batch": self.batch, "lr": self.lr, "seed": self.seed, "schedule": "cosine", "betas_head": [float(b) for b in self.betas[:3]]},
+                               data=data_fingerprint(X), modules={"denoiser": self.net}, optimizers={"adam": opt}, rngs={"noise": gen}, units=self.epochs,
+                               capture=lambda: {"losses": list(self.losses)}, apply=lambda s: self.losses.__init__(s["losses"]))
+        mon = sess.monitor("adam", self.net)
+        with sess:
+            resumed = sess.restore()
+            for epoch in range(resumed.start if resumed else 0, self.epochs):
+                sess.begin_unit(epoch, -(-len(x0) // self.batch))
+                order = torch.randperm(len(x0), generator=gen)
+                running = 0.0
+                for step, i in enumerate(range(0, len(order), self.batch)):
+                    x = x0[order[i:i + self.batch]]
+                    t = torch.randint(0, self.steps, (len(x),), generator=gen)
+                    eps = torch.randn(x.shape, generator=gen)
+                    a = abar[t][:, None]
+                    opt.zero_grad()
+                    loss = torch.mean((self.net(a.sqrt() * x + (1 - a).sqrt() * eps, t) - eps) ** 2)
+                    loss.backward()
+                    mon.observe(step)
+                    mon.before_step(step)
+                    opt.step()
+                    mon.after_step(step)
+                    running += float(loss.detach()) * len(x)
+                self.losses.append(running / len(x0))
+                live.epoch(epoch, self.losses[-1], None, lr=self.lr, epochs=self.epochs)
+                if sess.end_unit(epoch, {"train_loss": self.losses[-1], "val_loss": None}) == "stop":
+                    break
+            sess.finish()
         live.finish(final_train=self.losses[-1] if self.losses else None)
         self.net.eval()
         return self

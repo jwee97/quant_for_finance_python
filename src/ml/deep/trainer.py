@@ -23,6 +23,8 @@ import torch
 
 from .. import live, resources
 from .context import TrainingHalted
+from .gradients import GradientMonitor, append_summary, resolve_level
+from .runs import reconcile_logs
 from .checkpoint import CheckpointManager, assess, restore_rng, rng_states
 
 
@@ -49,6 +51,9 @@ class TrainConfig:
     allow_warm_start: bool = False       # when the fingerprints differ, restore the weights only (explicitly a new experiment from saved weights)
     accumulation_steps: int = 1          # gradient accumulation: the optimizer steps every this many batches
     amp: bool = False                    # mixed precision on CUDA only
+    grad_level: str = "off"              # gradient diagnostics: off, lightweight, standard, detailed, or auto (lightweight on Replit, standard elsewhere, off without a run folder)
+    grad_interval: int = 0               # optimizer steps between full samples (0: chosen from the level)
+    grad_family: str = "default"         # model family for the warning thresholds (default, transformer, recurrent, gan, rl)
 
 
 @dataclass
@@ -154,6 +159,17 @@ def _control(folder: Path | None) -> str:
     return ""
 
 
+def _resource_row(clock: list) -> dict:
+    """CPU, memory and (when present) GPU use since the previous call: what the Training monitor's resource panel shows."""
+    now = [time.process_time(), time.perf_counter()]
+    cpu = 100.0 * (now[0] - clock[0]) / max(now[1] - clock[1], 1e-9)
+    clock[:] = now
+    row = {"system_used_mb": resources.memory_used_mb(), "limit_mb": resources.memory_limit_mb(), "cpu_pct": round(cpu, 1)}
+    if torch.cuda.is_available():
+        row["gpu_alloc_mb"] = torch.cuda.memory_allocated() / 1048576.0
+    return row
+
+
 def _log(folder: Path | None, row: dict) -> None:
     """Append one row to the run's ``metrics.jsonl``: the Training Monitor reads this file, so a reloaded page or a restarted app still has the whole history."""
     if folder is None:
@@ -167,7 +183,7 @@ def _log(folder: Path | None, row: dict) -> None:
         pass
 
 
-def fit_network(net: torch.nn.Module, batch_fn, loss_fn, n_train: int, n_val: int, cfg: TrainConfig, groups: dict | None = None) -> History:
+def fit_network(net: torch.nn.Module, batch_fn, loss_fn, n_train: int, n_val: int, cfg: TrainConfig, groups: dict | None = None, aux_fn=None) -> History:
     """Train ``net`` in place and return its history; the net ends up with its best validation weights. ``batch_fn`` must move its tensors to ``net``'s device (``net`` is already there).
 
     With ``cfg.checkpoint_dir`` every finished epoch is committed as an atomic checkpoint (see ``checkpoint``) and a metrics row is appended to ``metrics.jsonl``; with ``cfg.resume`` the run continues from the newest valid
@@ -184,6 +200,8 @@ def fit_network(net: torch.nn.Module, batch_fn, loss_fn, n_train: int, n_val: in
     scaler = torch.amp.GradScaler("cuda", enabled=bool(cfg.amp and device.type == "cuda"))
     folder = Path(cfg.checkpoint_dir) if cfg.checkpoint_dir else None
     mgr = CheckpointManager(folder, cfg.keep_milestones, 2, cfg.max_checkpoint_bytes or None) if folder is not None else None
+    level = resolve_level(cfg.grad_level, resources.on_replit(), folder is not None) if cfg.grad_level != "off" else "off"
+    mon = GradientMonitor("optimizer", dict(net.named_parameters()), level, interval=cfg.grad_interval, family=cfg.grad_family, clip=cfg.grad_clip if cfg.grad_clip > 0 else None, accumulation=max(int(cfg.accumulation_steps), 1)) if level != "off" else None
     start, best, best_state, bad, total_seconds = 0, float("inf"), deepcopy(net.state_dict()), 0, 0.0
     if mgr is not None and cfg.resume:
         blob, which, problems = mgr.latest_valid()
@@ -207,6 +225,10 @@ def fit_network(net: torch.nn.Module, batch_fn, loss_fn, n_train: int, n_val: in
                 hist.events.extend(h.get("events", []))
                 best, bad, total_seconds = float(blob.get("best_val", best)), int(blob.get("bad", 0)), float(h.get("seconds", 0.0))
                 start = int(blob["epoch"]) + 1
+                if mon is not None:
+                    mon.load_state_dict((blob.get("grad") or {}).get("optimizer"))
+                if folder is not None:
+                    reconcile_logs(folder, start, blob.get("last"))
                 bb = mgr._read(folder / "best.pt")
                 best_state = deepcopy(bb["model"]) if bb is not None else deepcopy(net.state_dict())
             else:
@@ -225,8 +247,15 @@ def fit_network(net: torch.nn.Module, batch_fn, loss_fn, n_train: int, n_val: in
         cfg = dataclasses_replace(cfg, num_threads=resources.default_threads())
     live.start(epochs=cfg.epochs, patience=cfg.patience, device=hist.device, n_params=hist.n_params, n_train=int(n_train), n_val=int(n_val), batch_size=cfg.batch_size)
     _log(folder, {"type": "start", "at": time.time(), "epochs": cfg.epochs, "patience": cfg.patience, "device": hist.device, "n_params": hist.n_params, "n_train": int(n_train), "n_val": int(n_val), "batch_size": cfg.batch_size,
-                  "config_fp": cfg.config_fp, "data_fp": cfg.data_fp, "resumed_from": start})
+                  "config_fp": cfg.config_fp, "data_fp": cfg.data_fp, "resumed_from": start, "diagnostics": {"level": level, "interval": cfg.grad_interval or "auto", "family": cfg.grad_family, "accumulation_steps": max(int(cfg.accumulation_steps), 1), "amp": bool(cfg.amp), "clip": cfg.grad_clip},
+                  "unit": "epoch", "optimizers": ["optimizer"], "modules": ["net"]})
+    if folder is not None and mon is not None:
+        try:
+            (folder / "diagnostics.json").write_text(json.dumps({"level": level, "interval": cfg.grad_interval, "family": cfg.grad_family, "replit": resources.on_replit(), "kind": "fit_network"}))
+        except OSError:
+            pass
     finished = False
+    clock = [time.process_time(), time.perf_counter()]
     accum = max(int(cfg.accumulation_steps), 1)
     try:
         if start > 0 and bad >= cfg.patience:                                                       # the saved run had already stopped early: resuming it must not train one more epoch than the original did
@@ -236,6 +265,10 @@ def fit_network(net: torch.nn.Module, batch_fn, loss_fn, n_train: int, n_val: in
             net.train()
             total, seen, norms = 0.0, 0, []
             plan = batches(n_train, cfg.batch_size, rng, None if groups is None else groups["train"])
+            aux_sum: dict = {}
+            opt_step = 0
+            if mon is not None:
+                mon.begin_epoch(epoch, -(-len(plan) // accum), float(opt.param_groups[0]["lr"]))
             opt.zero_grad(set_to_none=True)
             for bi, rows in enumerate(plan):
                 with torch.autocast(device_type=device.type, enabled=bool(cfg.amp and device.type == "cuda")):
@@ -244,11 +277,25 @@ def fit_network(net: torch.nn.Module, batch_fn, loss_fn, n_train: int, n_val: in
                     _log(folder, {"type": "nonfinite_loss", "epoch": epoch, "at": time.time()})
                     raise ValueError("training diverged (the loss is not finite); lower the learning rate")
                 scaler.scale(loss / accum).backward()
+                if aux_fn is not None:
+                    for k_, v_ in aux_fn().items():
+                        aux_sum[k_] = aux_sum.get(k_, 0.0) + v_.detach().double() * len(rows)                   # kept on the device until the epoch ends
                 if (bi + 1) % accum == 0 or bi + 1 == len(plan):
-                    scaler.unscale_(opt)
+                    scaler.unscale_(opt)                                                                 # the gradient below is the true one, whatever the mixed-precision scale was
+                    if mon is not None:
+                        mon.observe(opt_step)                                                            # the completed (accumulated), unscaled, unclipped gradient
                     norms.append(float(torch.nn.utils.clip_grad_norm_(net.parameters(), cfg.grad_clip if cfg.grad_clip > 0 else float("inf"))))
+                    if mon is not None:
+                        mon.after_clip(opt_step)
+                        mon.before_step(opt_step)
+                    scale_before = scaler.get_scale() if scaler.is_enabled() else None
                     scaler.step(opt)
                     scaler.update()
+                    if mon is not None:
+                        mon.after_step(opt_step)
+                        if scale_before is not None and scaler.get_scale() < scale_before:               # the scaler found a non-finite gradient and skipped this update
+                            mon.note_skipped(opt_step)
+                    opt_step += 1
                     opt.zero_grad(set_to_none=True)
                 total += float(loss.detach()) * len(rows)
                 seen += len(rows)
@@ -267,16 +314,25 @@ def fit_network(net: torch.nn.Module, batch_fn, loss_fn, n_train: int, n_val: in
                 hist.best_epoch = epoch
             else:
                 bad += 1
+            grad_events: list = []
+            if mon is not None:
+                gsum, grad_events = mon.end_epoch(epoch, lr=hist.lr[-1], train_loss=train_loss, val_loss=val_loss if n_val else None)
+                if gsum is not None:
+                    append_summary(folder, gsum)
+                hist.events.extend(grad_events)
             action = _control(folder)
             if action in ("stop", "pause"):                                                          # recorded BEFORE the checkpoint so that the saved history carries it
                 hist.stopped_by = "user_stop" if action == "stop" else "user_pause"
                 hist.events.append({"type": hist.stopped_by, "epoch": epoch + 1, "at": time.time()})
             last_epoch = epoch + 1 >= cfg.epochs or bad >= cfg.patience or action in ("stop", "pause")
+            row = {"type": "epoch", "epoch": epoch + 1, "epochs": cfg.epochs, "train_loss": train_loss, "val_loss": val_loss if n_val else None, "lr": hist.lr[-1], "grad_norm": hist.grad_norm[-1], "seconds": hist.epoch_seconds[-1],
+                   "best_val": best, "best_epoch": hist.best_epoch + 1, "bad": bad, "patience": cfg.patience, "improved": bool(improved), "at": time.time(), "checkpoint": None, "peak_mb": peak_memory_mb(device),
+                   "process_rss_mb": resources.rss_mb(), **_resource_row(clock), "metrics": {k_: float(v_) / max(seen, 1) for k_, v_ in aux_sum.items()}}
             if mgr is not None and (improved or last_epoch or (epoch + 1) % max(int(cfg.checkpoint_every), 1) == 0):
                 hist.seconds = total_seconds + time.perf_counter() - t0
                 state = {"model": net.state_dict(), "optimizer": opt.state_dict(), "scheduler": sched.state_dict(), "scaler": scaler.state_dict() if scaler.is_enabled() else None, "epoch": int(epoch), "global_step": int(epoch + 1) * len(plan),
                          "best_val": float(best), "val_loss": float(val_loss), "bad": int(bad), "rng": rng_states(rng), "history": {**{k: list(getattr(hist, k)) for k in ("train_loss", "val_loss", "lr", "grad_norm", "epoch_seconds")},
-                         "best_epoch": hist.best_epoch, "events": list(hist.events), "seconds": hist.seconds}, "config_fp": cfg.config_fp, "data_fp": cfg.data_fp, "device": hist.device, "config": asdict(cfg)}
+                         "best_epoch": hist.best_epoch, "events": list(hist.events), "seconds": hist.seconds}, "config_fp": cfg.config_fp, "data_fp": cfg.data_fp, "device": hist.device, "config": asdict(cfg), "grad": {"optimizer": mon.state_dict()} if mon is not None else {}, "last": {"row": row, "grad": [gsum] if mon is not None and gsum else [], "events": list(grad_events)}}
                 try:
                     info = mgr.save(state, best=improved)
                     ck = {"epoch": epoch + 1, "bytes": info["bytes"], "path": info["path"], "best": bool(improved)}
@@ -285,9 +341,10 @@ def fit_network(net: torch.nn.Module, batch_fn, loss_fn, n_train: int, n_val: in
                     hist.events.append({"type": "checkpoint_failed", "epoch": epoch + 1, "at": time.time(), "error": str(exc)})
             else:
                 ck = None
-            _log(folder, {"type": "epoch", "epoch": epoch + 1, "epochs": cfg.epochs, "train_loss": train_loss, "val_loss": val_loss if n_val else None, "lr": hist.lr[-1], "grad_norm": hist.grad_norm[-1], "seconds": hist.epoch_seconds[-1],
-                          "best_val": best, "best_epoch": hist.best_epoch + 1, "bad": bad, "patience": cfg.patience, "improved": bool(improved), "at": time.time(), "checkpoint": ck, "peak_mb": peak_memory_mb(device),
-                          "process_rss_mb": resources.rss_mb()})
+            row["checkpoint"] = ck
+            _log(folder, row)
+            for ev_ in grad_events:                                                                     # warnings the gradient monitor raised: persisted next to the metrics, never acted on
+                _log(folder, ev_)
             live.epoch(epoch, train_loss, val_loss if n_val else None, lr=hist.lr[-1], grad=hist.grad_norm[-1], seconds=hist.epoch_seconds[-1], best=best, best_epoch=hist.best_epoch, bad=bad, improved=improved,
                        epochs=cfg.epochs, patience=cfg.patience, peak_mb=peak_memory_mb(device))
             if action in ("stop", "pause"):

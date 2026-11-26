@@ -17,7 +17,7 @@ HORIZONS = {"type": "text", "help": "Extra forecast horizons in days, comma sepa
 def _deep(**over) -> dict:
     """Settings every PyTorch model shares (the trainer in ``ml.deep.trainer``), with a model's own on top."""
     base = {"lookback": 20, "hidden": 32, "layers": 2, "dropout": 0.1, "epochs": 25, "batch_size": 512, "learning_rate": 0.001, "weight_decay": 0.0001, "patience": 5, "grad_clip": 1.0,
-            "val_fraction": 0.15, "max_rows": 60000, "device": "auto", "horizons": "", "num_threads": 0, "checkpoint_dir": "", "resume": 0, "checkpoint_every": 1, "keep_milestones": 0, "accumulation_steps": 1, "amp": 0, "profile": "none"}
+            "val_fraction": 0.15, "max_rows": 60000, "device": "auto", "horizons": "", "num_threads": 0, "checkpoint_dir": "", "resume": 0, "checkpoint_every": 1, "keep_milestones": 0, "accumulation_steps": 1, "amp": 0, "profile": "none", "grad_monitor": "auto", "grad_interval": 0}
     base.update(over)
     return base
 
@@ -36,6 +36,8 @@ DEEP_SPECS = {"device": DEVICE, "horizons": HORIZONS, "checkpoint_dir": {"type":
               "keep_milestones": {"type": "int", "help": "Keep a checkpoint every this many epochs besides the best and the last two (0: none)"},
               "accumulation_steps": {"type": "int", "help": "Gradient accumulation: the optimizer steps every this many batches (the same effective batch with less memory per step)"},
               "amp": {"type": "bool", "help": "Mixed precision (CUDA only)"},
+              "grad_monitor": {"type": "choice", "choices": ["auto", "off", "lightweight", "standard", "detailed"], "help": "Gradient diagnostics: auto is lightweight on Replit and standard elsewhere (off without a run folder); lightweight records global norms and non-finite checks; standard adds layer summaries; detailed adds histograms"},
+              "grad_interval": {"type": "int", "help": "Optimizer steps between full gradient samples (0: chosen from the level)"},
               "profile": {"type": "choice", "choices": ["none", "conservative", "balanced", "performance"], "help": "A resource profile: conservative (Replit, small CPUs), balanced, performance. It sets execution settings only, never the model"}}
 SEQ_SPECS = {**DEEP_SPECS, "loss": LOSS, "rank_weight": {"type": "float", "help": "Weight of the pairwise ranking term of the mse_rank loss"}}
 # 7 leaves: LightGBM grows leaf by leaf with no depth limit, so 15 leaves can make a tree far deeper than XGBoost's depth 3 (at most 8 leaves); on noisy returns the deeper trees fit noise.
@@ -107,14 +109,14 @@ EXTRA_INFO = [
               _deep(latent_dim=8, ridge_alpha=10.0, beta=1.0, lookback=10, layers=1), 63, None, DEEP_SPECS, ("torch",), ("training",)),
     ModelInfo("gcn", "Graph convolutional network", "graph", ("regression",),
               "A graph convolutional network (Kipf and Welling) over the assets of each day: edges from return correlation (training data only) and from shared sector or class; scores come from neighbours' features as well as the asset's own",
-              {"hidden": 32, "layers": 2, "dropout": 0.1, "graph": "both", "neighbors": 4, "corr_weight": 1.0, "sector_weight": 1.0, "epochs": 40, "batch_size": 32, "learning_rate": 0.003, "weight_decay": 0.0001,
+              {"hidden": 32, "layers": 2, "dropout": 0.1, "graph": "both", "neighbors": 4, "corr_weight": 1.0, "sector_weight": 1.0, "epochs": 40, "batch_size": 32, "learning_rate": 0.003, "weight_decay": 0.0001, "checkpoint_every": 1, "keep_milestones": 0, "grad_monitor": "auto", "grad_interval": 0,
                "patience": 6, "grad_clip": 1.0, "val_fraction": 0.15, "device": "auto"}, 126, None,
-              {"graph": {"type": "choice", "choices": ["both", "correlation", "sector"], "help": "Which relationships make the edges"}, "device": DEVICE}, ("torch",), ("training",)),
+              {"graph": {"type": "choice", "choices": ["both", "correlation", "sector"], "help": "Which relationships make the edges"}, "device": DEVICE, "checkpoint_every": DEEP_SPECS["checkpoint_every"], "keep_milestones": DEEP_SPECS["keep_milestones"], "grad_monitor": DEEP_SPECS["grad_monitor"], "grad_interval": DEEP_SPECS["grad_interval"]}, ("torch",), ("training",)),
     ModelInfo("gat", "Graph attention network", "graph", ("regression",),
               "A graph attention network (Velickovic et al.): like the GCN, but each asset learns how much attention to give each neighbour, so the weights of its neighbours depend on the day",
               {"hidden": 32, "layers": 2, "dropout": 0.1, "heads": 2, "graph": "both", "neighbors": 4, "corr_weight": 1.0, "sector_weight": 1.0, "epochs": 40, "batch_size": 32, "learning_rate": 0.003,
                "weight_decay": 0.0001, "patience": 6, "grad_clip": 1.0, "val_fraction": 0.15, "device": "auto"}, 126, None,
-              {"graph": {"type": "choice", "choices": ["both", "correlation", "sector"], "help": "Which relationships make the edges"}, "device": DEVICE}, ("torch",), ("training", "attention")),
+              {"graph": {"type": "choice", "choices": ["both", "correlation", "sector"], "help": "Which relationships make the edges"}, "device": DEVICE, "checkpoint_every": DEEP_SPECS["checkpoint_every"], "keep_milestones": DEEP_SPECS["keep_milestones"], "grad_monitor": DEEP_SPECS["grad_monitor"], "grad_interval": DEEP_SPECS["grad_interval"]}, ("torch",), ("training", "attention")),
     ModelInfo("model_ensemble", "Model ensemble", "ensemble", ("regression",),
               "Several models fitted on the same rows and combined: equal weights, weights that follow each member's recent rank IC (using only outcomes already realised), or weights chosen per regime. It also returns a predictive "
               "distribution (the members' disagreement plus their own uncertainty), which uncertainty-weighted positions can use",

@@ -680,7 +680,7 @@
         series.push({ name: "Validation loss" + tag, color: css(COLORS[i % 6]), values: padTo(f.val_loss, longest), dash: "4 3" });
       });
       chartCard(ch, "Training curves", `The loss on the rows the network trains on (solid) and on the later validation tail it stops on (dashed), epoch by epoch, for the first, middle and last refit. Validation that turns up while training keeps falling is overfitting, and the best epoch is the one kept. ${t.n_fits} fits, a median of ${sig(t.epochs_median, 0)} epochs, ${pct(t.stopped_early_share, 0)} stopped early.`, {
-        draw: (b) => C.line(b, { xs, series, xLabel: "epoch", yFormat: (v) => String(+v.toPrecision(2)), tipFormat: (v) => String(+v.toPrecision(3)), height: 260, label: "Training and validation loss by epoch" }),
+        draw: (b) => C.line(b, { xs, series, xLabel: "epoch", xFormat: (v) => String(Math.round(v)), yFormat: (v) => String(+v.toPrecision(2)), tipFormat: (v) => String(+v.toPrecision(3)), height: 260, label: "Training and validation loss by epoch" }),
         table: (b) => table(b, [{ label: "Epoch", get: (n) => String(xs[n]) }, ...series.map((s) => ({ label: s.name, num: true, get: (n) => (Q.bad(s.values[n]) ? "" : num(s.values[n], 5)) }))], xs.map((_, n) => n)) });
     }
     if (x.ranking) {
@@ -1606,7 +1606,7 @@
   /* ---------- the Training monitor ----------
      Everything shown is read from the run's files on the server (metrics.jsonl, the checkpoint folder, control.json), never from this page's memory: reloading, reopening in another browser or restarting the app shows the
      same history. While a run is going the page asks for the epochs it has not seen yet every two seconds; a run that stops reporting is shown as interrupted or orphaned, never as running. */
-  M.tr = M.tr || { id: "", fit: "", data: null, series: null, timer: null, error: "", busy: false };
+  M.tr = M.tr || { id: "", fit: "", data: null, series: null, timer: null, error: "", busy: false, view: "overview", grad: null, gradError: "", optimizer: "", flowEpoch: 0, flowMetric: "mean_abs", layerPick: new Set(), histPick: [] };
   const TR_WORD = { running: "Running", completed: "Completed", stopped_early: "Early stopping", stopped: "Stopped by you", paused: "Paused", interrupted: "Interrupted", orphaned: "Orphaned", unknown: "Unknown" };
   const TR_HINT = { running: "A new epoch was written a moment ago.", completed: "All epochs ran.", stopped_early: "Validation loss stopped improving; the best epoch's weights were kept.", stopped: "Stopped on request after a checkpoint.",
     paused: "Paused after a checkpoint: resume continues from there.", interrupted: "The process ended without finishing (the app was closed, or the training raised an error). Nothing was resumed automatically.",
@@ -1627,19 +1627,32 @@
     if (s.busy || !isOpen() || M.mode !== "training") return;
     s.busy = true;
     try {
-      const since = s.series ? s.series.epoch.length : 0;
-      const d = await api(`/api/training/run?id=${encodeURIComponent(id)}&since=${since}${s.fit ? "&fit=" + encodeURIComponent(s.fit) : ""}`);
+      const d = await api(`/api/training/run?id=${encodeURIComponent(id)}${s.fit ? "&fit=" + encodeURIComponent(s.fit) : ""}`);
       if (s.id !== id) return;
-      const keys = ["epoch", "train_loss", "val_loss", "lr", "grad_norm", "seconds", "rss_mb", "peak_mb", "best_val"];
-      if (!s.series || !since) s.series = Object.fromEntries(keys.map((k) => [k, d.series[k].slice()]));
-      else for (const k of keys) s.series[k] = s.series[k].concat(d.series[k]);
+      s.series = d.series;
       s.data = d; s.error = "";
     } catch (e) { s.error = e.message; }
     finally { s.busy = false; }
     paintTrainingDetail();
+    if (s.data && !s.error) loadTrainingGradients();
     if (s.data && s.data.summary.status === "running" && !s.error) { stopTrainingPoll(); s.timer = setTimeout(() => loadTrainingRun(id, false), 2000); }
   }
   function paintTrainingDetail() { const box = Q.$("#ml-training-detail"); if (box && M.mode === "training") { box.replaceChildren(); trainingDetail(box); } }
+  const TR_VIEWS = [["overview", "Overview"], ["gradient", "Gradient health"], ["layers", "Layer diagnostics"], ["dist", "Distributions"], ["events", "Recovery & events"]];
+  const SEV_WORD = { info: "Info", warning: "Warning", critical: "Critical" };
+  const LEVEL_NOTE = { off: "Gradient diagnostics are off for this run.", lightweight: "Lightweight: global norms, non-finite checks and clipping frequency only.", standard: "Standard: global statistics and per-layer summaries on sampled steps.",
+    detailed: "Detailed: standard plus per-layer medians and histograms." };
+  const fnum = (v, d = 3) => (Q.bad(v) ? "n/a" : (v !== 0 && (Math.abs(v) < 1e-3 || Math.abs(v) >= 1e5) ? Number(v).toExponential(2) : String(+Number(v).toPrecision(d))));
+  async function loadTrainingGradients() {
+    const s = M.tr;
+    if (!s.id || !s.data || !["gradient", "layers", "dist"].includes(s.view)) return;
+    const q = [`id=${encodeURIComponent(s.id)}`, `fit=${encodeURIComponent(s.data.fit)}`];
+    if (s.optimizer) q.push(`optimizer=${encodeURIComponent(s.optimizer)}`);
+    if (s.flowEpoch) q.push(`flow_epoch=${s.flowEpoch}`);
+    if (s.histPick.length) q.push(`hist_epochs=${s.histPick.join(",")}`);
+    try { s.grad = await api("/api/training/gradients?" + q.join("&")); s.gradError = ""; } catch (e) { s.gradError = e.message; }
+    paintTrainingDetail();
+  }
   function trainingDetail(box) {
     const s = M.tr, d = s.data;
     if (s.error) { h("p", "hint", box, "Could not read the run: " + s.error); return; }
@@ -1650,10 +1663,10 @@
     const st = h("p", "", head); const tag = h("strong", "", st, TR_WORD[sm.status] || sm.status); tag.setAttribute("data-status", sm.status); st.appendChild(document.createTextNode(" · " + (TR_HINT[sm.status] || "")));
     if (d.memory_advice) { const a = d.memory_advice; const p2 = h("p", "hint", head); p2.setAttribute("data-memory-advice", "1"); p2.appendChild(document.createTextNode(`Stopped for lack of memory (${a.reason}). ${a.batch_size ? `Try a batch size of ${a.batch_size}${a.accumulation_steps > 1 ? ` with ${a.accumulation_steps} accumulation steps` : ""}. ` : ""}${a.note || ""}`)); }
     const k = h("div", "earnrow", head);
+    const last = (a) => { for (let i = (a || []).length - 1; i >= 0; i--) if (!Q.bad(a[i])) return a[i]; return null; };
     tile(k, "Epoch", `${sm.epoch}${sm.epochs ? " / " + sm.epochs : ""}`, { text: `last written ${ago(sm.last_at)}` });
     tile(k, "Best validation loss", Q.bad(sm.best_val) ? "n/a" : String(+Number(sm.best_val).toPrecision(4)), { text: Q.bad(sm.best_epoch) ? "" : `at epoch ${sm.best_epoch}` });
-    const last = (a) => { for (let i = a.length - 1; i >= 0; i--) if (!Q.bad(a[i])) return a[i]; return null; };
-    tile(k, "Learning rate", n ? String(+Number(last(ser.lr)).toPrecision(3)) : "n/a", { text: "scheduler lowers it when validation stalls" });
+    tile(k, "Learning rate", n ? String(+Number(last(ser.lr)).toPrecision(3)) : "n/a", { text: "as the scheduler left it" });
     tile(k, "Process memory", n ? mb(last(ser.rss_mb)) : "n/a", { text: Q.bad(last(ser.peak_mb)) ? "" : `peak ${mb(last(ser.peak_mb))}` });
     tile(k, "Epoch time", n ? (+last(ser.seconds)).toFixed(1) + " s" : "n/a", { text: n ? `${(ser.seconds.reduce((a, b) => a + (b || 0), 0) / 60).toFixed(1)} min so far` : "" });
     const rec = (d.events || []).filter((e) => e.type === "resume").pop();
@@ -1670,21 +1683,153 @@
     }
     actions(head, row);
     if (d.control) h("p", "hint", head, `A "${d.control}" request is waiting for the end of the current epoch.`);
-    if (!n) { h("p", "hint", box, "No epoch has finished yet."); return; }
+    const crit = (d.gradient_events || []).filter((e) => e.severity === "critical").length, warn = (d.gradient_events || []).filter((e) => e.severity === "warning").length;
+    if (crit || warn) { const p3 = h("p", "hint", head); p3.setAttribute("data-gradient-alerts", "1"); p3.appendChild(document.createTextNode(`Gradient diagnostics raised ${crit ? crit + " critical" : ""}${crit && warn ? " and " : ""}${warn ? warn + " warning" : ""}${crit + warn === 1 ? "" : "s"}: see Gradient health and Recovery & events. Nothing was changed in the training because of them.`)); }
+    const tabs = h("div", "tabsmall trtabs", box);
+    for (const [v, text] of TR_VIEWS) {
+      const b = h("button", "", tabs, text); b.type = "button"; b.dataset.trview = v; b.setAttribute("aria-selected", String(s.view === v));
+      b.addEventListener("click", () => { s.view = v; s.grad = null; paintTrainingDetail(); loadTrainingGradients(); });
+    }
+    const body = h("div", "", box); body.id = "ml-training-view";
+    if (!n && s.view !== "events") { h("p", "hint", body, "No epoch has finished yet."); return; }
+    ({ overview: trOverview, gradient: trGradient, layers: trLayers, dist: trDist, events: trEvents })[s.view](body, d, ser, sm);
+  }
+  function trOverview(box, d, ser, sm) {
     const xs = ser.epoch, ch = h("div", "grid2", box);
-    const lossSeries = [{ name: "Training loss", color: css("--s1"), values: ser.train_loss, width: 1.5 }, { name: "Validation loss", color: css("--s2"), values: ser.val_loss, dash: "4 3" }];
     chartCard(ch, "Loss by epoch", "Training loss (solid) on the rows the network learns from and validation loss (dashed) on the later validation tail that early stopping watches. Test and forward results are never shown here.",
-      { wide: true, draw: (b) => C.line(b, { xs, series: lossSeries, xLabel: "epoch", yFormat: (v) => String(+v.toPrecision(3)), tipFormat: (v) => String(+v.toPrecision(4)), height: 260, label: "Training and validation loss by epoch" }),
+      { wide: true, draw: (b) => C.line(b, { xs, series: [{ name: "Training loss", color: css("--s1"), values: ser.train_loss, width: 1.5 }, { name: "Validation loss", color: css("--s2"), values: ser.val_loss, dash: "4 3" }], xLabel: "epoch", xFormat: (v) => String(Math.round(v)), yFormat: (v) => String(+v.toPrecision(3)), tipFormat: (v) => String(+v.toPrecision(4)), height: 260, label: "Training and validation loss by epoch",
+        vlines: (sm.best_epoch ? [{ x: sm.best_epoch, label: "best" }] : []) }),
         table: (b) => table(b, [{ label: "Epoch", get: (i) => String(xs[i]) }, { label: "Training loss", num: true, get: (i) => (Q.bad(ser.train_loss[i]) ? "" : num(ser.train_loss[i], 5)) }, { label: "Validation loss", num: true, get: (i) => (Q.bad(ser.val_loss[i]) ? "" : num(ser.val_loss[i], 5)) }], xs.map((_, i) => i)) });
-    chartCard(ch, "Learning rate", "Falls by a factor each time validation loss fails to improve for the scheduler's patience.", { draw: (b) => C.line(b, { xs, series: [{ name: "Learning rate", color: css("--s3"), values: ser.lr }], xLabel: "epoch", yFormat: (v) => v.toExponential(0), tipFormat: (v) => v.toExponential(2), height: 200, label: "Learning rate by epoch" }) });
-    chartCard(ch, "Memory", "The training process's resident memory after each epoch, as the operating system reports it. A steady climb is a leak; a flat line is a network that fits.", { draw: (b) => C.line(b, { xs, series: [{ name: "Process memory (MB)", color: css("--s4"), values: ser.rss_mb }], xLabel: "epoch", yFormat: (v) => String(Math.round(v)), tipFormat: (v) => Math.round(v) + " MB", height: 200, label: "Process memory by epoch" }) });
-    if (ser.grad_norm.some((v) => !Q.bad(v))) chartCard(ch, "Gradient norm", "The size of the gradient before clipping. A norm far above the clip value on most epochs means clipping, not the optimizer, is setting the step.", { draw: (b) => C.line(b, { xs, series: [{ name: "Gradient norm", color: css("--s5"), values: ser.grad_norm }], xLabel: "epoch", yFormat: (v) => String(+v.toPrecision(2)), tipFormat: (v) => String(+v.toPrecision(3)), height: 200, label: "Gradient norm by epoch" }) });
+    chartCard(ch, "Learning rate", "Falls by a factor each time validation loss fails to improve for the scheduler's patience.", { draw: (b) => C.line(b, { xs, series: [{ name: "Learning rate", color: css("--s3"), values: ser.lr }], xLabel: "epoch", xFormat: (v) => String(Math.round(v)), yFormat: (v) => v.toExponential(0), tipFormat: (v) => v.toExponential(2), height: 200, label: "Learning rate by epoch" }) });
+    chartCard(ch, "Memory", "The training process's resident memory after each epoch, as the operating system reports it. A steady climb is a leak; a flat line is a network that fits.", { draw: (b) => C.line(b, { xs, series: [{ name: "Process memory (MB)", color: css("--s4"), values: ser.rss_mb }], xLabel: "epoch", xFormat: (v) => String(Math.round(v)), yFormat: (v) => String(Math.round(v)), tipFormat: (v) => Math.round(v) + " MB", height: 200, label: "Process memory by epoch" }) });
+    const cpu = (ser.cpu_pct || []).some((v) => !Q.bad(v)), gpu = (ser.gpu_mb || []).some((v) => !Q.bad(v));
+    if (cpu || gpu) chartCard(ch, "CPU and GPU", "Process CPU use over each epoch (100 is one core) and, when a GPU is present, the memory PyTorch holds on it.", { draw: (b) => C.line(b, { xs, series: [...(cpu ? [{ name: "CPU (% of one core)", color: css("--s5"), values: ser.cpu_pct }] : []), ...(gpu ? [{ name: "GPU memory (MB)", color: css("--s6"), values: ser.gpu_mb }] : [])], xLabel: "epoch", xFormat: (v) => String(Math.round(v)), yFormat: (v) => String(Math.round(v)), tipFormat: (v) => String(Math.round(v)), height: 200, label: "CPU and GPU use by epoch" }) });
+    const metricNames = Object.keys(ser.metrics || {}).filter((m) => ser.metrics[m].some((v) => !Q.bad(v)));
+    for (const name of metricNames) chartCard(ch, name.replace(/_/g, " "), "A model-specific quantity the loop reports each unit.", { draw: (b) => C.line(b, { xs, series: [{ name, color: css("--s2"), values: ser.metrics[name] }], xLabel: "epoch", xFormat: (v) => String(Math.round(v)), yFormat: (v) => fnum(v, 2), tipFormat: (v) => fnum(v, 4), height: 180, label: name }) });
     const ck = h("div", "card", box); h("h3", "", ck, "Checkpoints");
     if (!d.checkpoints.length) h("p", "hint", ck, "No checkpoint has been written yet.");
     else table(ck, [{ label: "File", get: (c) => c.file }, { label: "Epoch", num: true, get: (c) => (Q.bad(c.epoch) ? "n/a" : String(c.epoch)) }, { label: "Validation loss", num: true, get: (c) => (Q.bad(c.val_loss) ? "n/a" : num(c.val_loss, 5)) },
       { label: "Size", num: true, get: (c) => bytesText(c.bytes) }, { label: "Written", get: (c) => ago(c.saved_at) }, { label: "Verified", get: (c) => (c.valid ? "yes" : "damaged: skipped on resume") }], d.checkpoints);
-    const ev = (d.events || []).filter((e) => e.type !== "start");
-    if (ev.length) { const c = h("div", "card", box); h("h3", "", c, "Events"); table(c, [{ label: "When", get: (e) => (e.at ? new Date(e.at * 1000).toLocaleString() : "") }, { label: "Event", get: (e) => e.type + (e.level ? ` (${e.level})` : "") }, { label: "Detail", get: (e) => e.message || (e.reasons || []).join("; ") || (e.epoch !== undefined ? `epoch ${e.epoch}` : "") }], ev); }
+  }
+  function gradMissing(box, g) {
+    const s = M.tr;
+    if (s.gradError) { h("p", "hint", box, "Could not read the gradient diagnostics: " + s.gradError); return true; }
+    if (!g) { Q.loading(box, "Reading the gradient diagnostics…"); return true; }
+    if (!g.epochs.length) { h("p", "hint", box, g.note || "This run recorded no gradient diagnostics (the monitoring level was off, or no epoch has finished since it was on)."); return true; }
+    return false;
+  }
+  function optimizerPicker(box, g) {
+    if (g.optimizers.length < 2) return;
+    const p = h("p", "hint", box, "Optimizer: ");
+    W.seg(p, g.optimizers.map((o) => [o, o]), g.optimizer, (v) => { M.tr.optimizer = v; M.tr.grad = null; paintTrainingDetail(); loadTrainingGradients(); });
+  }
+  function trGradient(box, d) {
+    const g = M.tr.grad;
+    if (gradMissing(box, g)) return;
+    optimizerPicker(box, g);
+    h("p", "hint", box, `${LEVEL_NOTE[g.level] || ""} Interval: ${g.interval}. Family thresholds: ${g.family}. Measured after the backward pass, with mixed precision unscaled, after accumulation and before clipping.`);
+    const S = g.series, xs = S.epoch, tot = (S.nonfinite_steps || []).reduce((a, b) => a + (b || 0), 0), lastv = (a) => { for (let i = a.length - 1; i >= 0; i--) if (!Q.bad(a[i])) return a[i]; return null; };
+    const k = h("div", "earnrow", box);
+    tile(k, "Global L2 norm", fnum(lastv(S.l2_median)), { text: `largest step ${fnum(lastv(S.l2_max))}` });
+    tile(k, "Largest entry", fnum(lastv(S.linf)), { text: "L-infinity norm (sampled steps)" });
+    tile(k, "Clipped steps", Q.bad(lastv(S.clip_frequency)) ? "n/a" : pct(lastv(S.clip_frequency), 0), { text: Q.bad(lastv(S.clip_value)) ? "clipping off" : `clip value ${fnum(lastv(S.clip_value))}` });
+    tile(k, "Non-finite steps", String(tot), { text: tot ? "see events" : "none seen", dir: tot ? "down" : "" });
+    tile(k, "Zero gradients", Q.bad(lastv(S.zero_frac)) ? "n/a" : pct(lastv(S.zero_frac), 1), { text: Q.bad(lastv(S.near_zero_frac)) ? "" : `${pct(lastv(S.near_zero_frac), 1)} near zero` });
+    const ch = h("div", "grid2", box);
+    const vl = (d.gradient_events || []).filter((e) => e.severity !== "info" && e.optimizer === g.optimizer).map((e) => ({ x: e.epoch + 1, label: e.kind.replace(/_/g, " ") })).slice(0, 12);
+    chartCard(ch, "Global gradient norm", "The L2 norm of the whole gradient at each optimizer step, summarised per epoch: the median, the 90th percentile and the largest step. Log scale. Dashed lines mark warnings.",
+      { wide: true, draw: (b) => C.line(b, { xs, series: [{ name: "Median", color: css("--s1"), values: S.l2_median }, { name: "90th percentile", color: css("--s2"), values: S.l2_p90, width: 1 }, { name: "Largest", color: css("--s3"), values: S.l2_max, width: 1 }], log: true, xLabel: "epoch", xFormat: (v) => String(Math.round(v)), yFormat: (v) => fnum(v, 2), tipFormat: (v) => fnum(v, 3), height: 260, vlines: vl, label: "Global gradient norm by epoch" }),
+        table: (b) => table(b, [{ label: "Epoch", get: (i) => String(xs[i]) }, { label: "Median", num: true, get: (i) => fnum(S.l2_median[i]) }, { label: "P90", num: true, get: (i) => fnum(S.l2_p90[i]) }, { label: "Largest", num: true, get: (i) => fnum(S.l2_max[i]) }], xs.map((_, i) => i)) });
+    if ((S.p50 || []).some((v) => !Q.bad(v))) chartCard(ch, "Gradient percentiles", "Percentiles of the absolute value of single gradient entries on the sampled steps (a fixed-stride subsample when the model is very large). Zero entries are included, so a percentile of zero means that share of entries is exactly zero. Log scale hides zeros: the table shows them.",
+      { draw: (b) => C.line(b, { xs, series: [["p50", "P50", "--s1"], ["p90", "P90", "--s2"], ["p95", "P95", "--s3"], ["p99", "P99", "--s4"]].map(([key, name, c]) => ({ name, color: css(c), values: S[key] })), log: true, xLabel: "epoch", xFormat: (v) => String(Math.round(v)), yFormat: (v) => fnum(v, 2), tipFormat: (v) => fnum(v, 3), height: 220, label: "Absolute-gradient percentiles by epoch" }),
+        table: (b) => table(b, [{ label: "Epoch", get: (i) => String(xs[i]) }, ...["p50", "p90", "p95", "p99"].map((key) => ({ label: key.toUpperCase(), num: true, get: (i) => fnum(S[key][i]) }))], xs.map((_, i) => i)) });
+    if ((S.zero_frac || []).some((v) => !Q.bad(v))) chartCard(ch, "Zero and near-zero gradients", "The share of gradient entries that are exactly zero and that are below the near-zero threshold. Structural zeros (padding, masks, ReLU units that are off for a batch) are normal; a layer that stays at one hundred percent is not.",
+      { draw: (b) => C.line(b, { xs, series: [{ name: "Exactly zero", color: css("--s1"), values: S.zero_frac }, { name: "Near zero", color: css("--s2"), values: S.near_zero_frac, dash: "4 3" }], xLabel: "epoch", xFormat: (v) => String(Math.round(v)), yFormat: (v) => pct(v, 0), tipFormat: (v) => pct(v, 2), height: 200, label: "Zero gradient share by epoch" }) });
+    chartCard(ch, "Clipping and non-finite steps", "The share of optimizer steps whose gradient was clipped, and the count of steps with a non-finite gradient. The post-clip norm is measured separately on the sampled steps.",
+      { draw: (b) => C.line(b, { xs, series: [{ name: "Clipped share", color: css("--s5"), values: S.clip_frequency }, { name: "Skipped by the mixed-precision scaler (share of steps)", color: css("--s6"), values: S.skipped_share }], xLabel: "epoch", xFormat: (v) => String(Math.round(v)), yFormat: (v) => pct(v, 0), tipFormat: (v) => pct(v, 1), height: 200, label: "Clipping by epoch" }),
+        table: (b) => table(b, [{ label: "Epoch", get: (i) => String(xs[i]) }, { label: "Clipped", num: true, get: (i) => (Q.bad(S.clip_frequency[i]) ? "off" : pct(S.clip_frequency[i], 1)) }, { label: "Post-clip norm", num: true, get: (i) => fnum(S.post_clip[i]) }, { label: "Non-finite steps", num: true, get: (i) => String(S.nonfinite_steps[i] || 0) }, { label: "Skipped steps", num: true, get: (i) => String(S.skipped_steps[i] || 0) }], xs.map((_, i) => i)) });
+  }
+  function trLayers(box, d) {
+    const s = M.tr, g = s.grad;
+    if (gradMissing(box, g)) return;
+    optimizerPicker(box, g);
+    if (!g.flow || !g.flow.rows.length) { h("p", "hint", box, "Layer-level diagnostics need the standard or detailed level; this run recorded " + g.level + "."); return; }
+    const rows = g.flow.rows, flowEpoch = g.flow.epoch;
+    const bar = h("p", "hint", box, "Epoch: ");
+    const sel = h("select", "", bar); sel.dataset.role = "flow-epoch";
+    for (const e of g.epochs) { const o = h("option", "", sel, String(e + 1)); o.value = String(e + 1); if (e + 1 === flowEpoch + 1) o.selected = true; }
+    sel.addEventListener("change", () => { s.flowEpoch = Number(sel.value); loadTrainingGradients(); });
+    h("span", "", bar, "  Show: ");
+    W.seg(bar, [["mean_abs", "Mean |g|"], ["median_abs", "Median |g|"], ["max_abs", "Max |g|"], ["g_w", "Gradient / weight"], ["update_ratio", "Update / weight"]], s.flowMetric, (v) => { s.flowMetric = v; paintTrainingDetail(); });
+    const names = rows.map((r) => r.name), xs = names.map((_, i) => i + 1);
+    const zeros = rows.filter((r) => (r.zero_frac || 0) >= 0.999 || r.l2 === 0).map((r) => r.name), nonfinite = rows.filter((r) => r.nonfinite > 0).map((r) => r.name);
+    const metric = s.flowMetric, vals = (key) => rows.map((r) => (Q.bad(r[key]) ? null : r[key]));
+    const ch = h("div", "grid2", box);
+    const lines = metric === "mean_abs" || metric === "median_abs" || metric === "max_abs" ? [["mean_abs", "Mean |g|", "--s1"], ["median_abs", "Median |g|", "--s2"], ["max_abs", "Max |g|", "--s3"]].filter(([key]) => rows.some((r) => !Q.bad(r[key]))) : [[metric, metric === "g_w" ? "Gradient / weight" : "Update / weight", "--s1"]];
+    chartCard(ch, `Gradient flow through the model (epoch ${flowEpoch + 1})`, "Layers in depth order, input to output. Log scale. A layer whose line drops out of the chart has zero, missing or non-finite values at that point (they are not replaced by small numbers); they are listed below the chart.",
+      { wide: true, draw: (b) => C.line(b, { xs, series: lines.map(([key, name, c]) => ({ name, color: css(c), values: vals(key), width: key === "max_abs" ? 1 : 2 })), log: true, xLabel: "layer (input to output)", xFormat: (v) => names[Math.round(v) - 1] || "", tipTitle: (i) => names[i] || "", yFormat: (v) => fnum(v, 2), tipFormat: (v) => fnum(v, 3), height: 280, label: "Gradient flow by layer" }),
+        table: (b) => table(b, [{ label: "Layer", get: (i) => names[i] }, { label: "Parameters", num: true, get: (i) => String(rows[i].n_params || "") }, { label: "Mean |g|", num: true, get: (i) => fnum(rows[i].mean_abs) }, { label: "Max |g|", num: true, get: (i) => fnum(rows[i].max_abs) }, { label: "RMS", num: true, get: (i) => fnum(rows[i].rms) },
+          { label: "Grad/weight", num: true, get: (i) => fnum(rows[i].g_w) }, { label: "Update/weight", num: true, get: (i) => fnum(rows[i].update_ratio) }, { label: "Zero share", num: true, get: (i) => (Q.bad(rows[i].zero_frac) ? "n/a" : pct(rows[i].zero_frac, 1)) }, { label: "Non-finite", num: true, get: (i) => String(rows[i].nonfinite || 0) }], names.map((_, i) => i)) });
+    const flags = h("div", "card", ch); h("h3", "", flags, "What stands out");
+    const rms = rows.map((r) => r.rms).filter((v) => !Q.bad(v) && v > 0), top = rms.length ? Math.max(...rms) : 0;
+    const weak = rows.filter((r) => !Q.bad(r.rms) && r.rms > 0 && top > 0 && r.rms < 1e-3 * top).map((r) => r.name), strong = rows.filter((r) => !Q.bad(r.rms) && r.rms > 0 && top > 0 && r.rms === top).map((r) => r.name);
+    const list = [[zeros, "exactly zero gradient"], [nonfinite, "non-finite gradient values"], [weak, "RMS gradient below a thousandth of the strongest layer's"]].filter(([l]) => l.length);
+    if (!list.length) h("p", "hint", flags, "No layer has zero, non-finite or negligible gradients at this epoch.");
+    for (const [l, text] of list) { const p = h("p", "", flags); p.setAttribute("data-flag", text); p.appendChild(document.createTextNode(`${l.slice(0, 8).join(", ")}${l.length > 8 ? ` and ${l.length - 8} more` : ""}: ${text}.`)); }
+    if (strong.length) h("p", "hint", flags, `Strongest layer: ${strong[0]}. Frozen parameters are excluded from every figure.`);
+    // comparison of chosen layers over the epochs
+    const cmp = h("div", "card", box); h("h3", "", cmp, "Compare layers over training");
+    const picks = s.layerPick.size ? [...s.layerPick] : names.slice(0, 1).concat(names.slice(-1)).filter((v, i, a) => a.indexOf(v) === i);
+    const checks = h("div", "checks", cmp);
+    for (const nme of names) { const lab = h("label", "f inline", checks), c = h("input", "", lab); c.type = "checkbox"; c.checked = picks.includes(nme); c.dataset.layer = nme; lab.appendChild(document.createTextNode(" " + nme)); c.addEventListener("change", () => { const next = new Set(picks); c.checked ? next.add(nme) : next.delete(nme); s.layerPick = next; paintTrainingDetail(); }); }
+    const LS = g.layer_series, colors = ["--s1", "--s2", "--s3", "--s4", "--s5", "--s6"];
+    const pickedNow = picks.filter((p) => LS[p]).slice(0, 6);
+    if (pickedNow.length) {
+      const mk = (key, title, note) => chartCard(cmp, title, note, { draw: (b) => C.line(b, { xs: g.series.epoch, series: pickedNow.map((nme, i) => ({ name: nme, color: css(colors[i % 6]), values: LS[nme][key] })), log: true, xLabel: "epoch", xFormat: (v) => String(Math.round(v)), yFormat: (v) => fnum(v, 2), tipFormat: (v) => fnum(v, 3), height: 200, label: title }) });
+      mk("rms", "RMS gradient by epoch", "Root-mean-square gradient entry of each chosen layer: comparable between layers of different sizes.");
+      mk("g_w", "Gradient-to-weight ratio by epoch", "The layer's gradient norm over its weight norm.");
+      mk("update_ratio", "Update-to-weight ratio by epoch", "How far the optimizer really moved the layer relative to its norm, measured on sampled steps.");
+    }
+  }
+  function trDist(box) {
+    const s = M.tr, g = s.grad;
+    if (gradMissing(box, g)) return;
+    optimizerPicker(box, g);
+    const have = Object.keys(g.histograms).map(Number).sort((a, b) => a - b);
+    if (!have.length) { h("p", "hint", box, g.level === "detailed" ? "No histogram has been recorded yet." : `Histograms are collected at the detailed level; this run used ${g.level}. Start the training with grad_monitor set to detailed to record them.`); return; }
+    h("p", "hint", box, "Choose up to three epochs to compare. Each histogram counts gradient entries by the base-10 logarithm of their absolute value; exact zeros and non-finite values are counted apart, never folded into the smallest bin.");
+    const picks = s.histPick.length ? s.histPick.filter((e) => have.includes(e - 1)) : [have[0] + 1, have[have.length - 1] + 1].filter((v, i, a) => a.indexOf(v) === i);
+    const checks = h("div", "checks", box);
+    for (const e of have) { const lab = h("label", "f inline", checks), c = h("input", "", lab); c.type = "checkbox"; c.checked = picks.includes(e + 1); c.dataset.epoch = String(e + 1); lab.appendChild(document.createTextNode(" epoch " + (e + 1)));
+      c.addEventListener("change", () => { const next = new Set(picks); if (c.checked) { if (next.size >= 3) { c.checked = false; Q.toast("At most three epochs at a time"); return; } next.add(e + 1); } else next.delete(e + 1); s.histPick = [...next].sort((a, b) => a - b); loadTrainingGradients(); }); }
+    const series = [], colors = ["--s1", "--s2", "--s3"];
+    picks.slice(0, 3).forEach((e, i) => { const hst = g.histograms[String(e - 1)]; if (!hst) return; const w = (hst.hi - hst.lo) / hst.bins.length; series.push({ name: `epoch ${e}`, color: css(colors[i]), counts: hst.bins, edges: hst.bins.map((_, j) => hst.lo + j * w).concat([hst.hi]), zeros: hst.zeros, nonfinite: hst.nonfinite }); });
+    const ch = h("div", "grid2", box);
+    if (series.length) chartCard(ch, "Distribution of gradient magnitudes", "Density of log10 |gradient| over the sampled steps of each chosen epoch. A distribution that slides to the left over training is gradients shrinking; a long right tail is a few very large entries.",
+      { wide: true, draw: (b) => C.histogram(b, { series, height: 260, xFormat: (v) => "1e" + Math.round(v), yFormat: (v) => fnum(v, 2), label: "Gradient magnitude histogram" }),
+        table: (b) => table(b, [{ label: "Epoch", get: (x) => x.name }, { label: "Exact zeros", num: true, get: (x) => String(x.zeros) }, { label: "Non-finite", num: true, get: (x) => String(x.nonfinite) }, { label: "Entries counted", num: true, get: (x) => String(x.counts.reduce((a, b) => a + b, 0)) }], series) });
+  }
+  function trEvents(box, d, ser) {
+    const ev = d.events || [], gev = d.gradient_events || [];
+    const c1 = h("div", "card", box); h("h3", "", c1, "Recovery status");
+    const rec = ev.filter((e) => e.type === "resume");
+    if (!rec.length) h("p", "hint", c1, d.summary.status === "interrupted" || d.summary.status === "orphaned" ? "Interrupted: nothing has resumed it. Use Resume above to continue from the newest valid checkpoint." : "This run has not been resumed.");
+    else for (const e of rec) { const p = h("p", "", c1); p.setAttribute("data-recovery", e.level || ""); p.appendChild(document.createTextNode(`${e.at ? new Date(e.at * 1000).toLocaleString() + ": " : ""}resumed after epoch ${e.epoch} (${e.level}). ${RECOVERY_WORD[e.level] || ""}${(e.reasons || []).length ? " " + e.reasons.join("; ") + "." : ""}`)); }
+    const c2 = h("div", "card", box); h("h3", "", c2, "Timeline");
+    const marks = [];
+    for (const c of d.checkpoints) if (c.file === "best.pt" && c.epoch) marks.push({ at: c.saved_at, epoch: c.epoch, what: "best checkpoint", detail: `${c.file}, validation loss ${fnum(c.val_loss, 4)}` });
+    for (const e of ev) { if (e.type === "start") continue; marks.push({ at: e.at, epoch: e.epoch, what: e.type.replace(/_/g, " "), detail: e.level ? `level ${e.level}` : (e.message || e.reason || "") }); }
+    for (const e of gev) marks.push({ at: e.at, epoch: e.epoch + 1, what: `${e.kind.replace(/_/g, " ")} (${e.severity})`, detail: e.message });
+    marks.sort((a, b) => (a.at || 0) - (b.at || 0));
+    if (!marks.length) h("p", "hint", c2, "Nothing notable has happened: no interruption, resume, stop, resource warning or gradient warning.");
+    else table(c2, [{ label: "When", get: (m) => (m.at ? new Date(m.at * 1000).toLocaleString() : "") }, { label: "Epoch", num: true, get: (m) => (Q.bad(m.epoch) ? "" : String(m.epoch)) }, { label: "Event", get: (m) => m.what }, { label: "Detail", get: (m) => m.detail || "" }], marks);
+    const c3 = h("div", "card", box); h("h3", "", c3, "Gradient warnings");
+    h("p", "hint", c3, "Warnings describe what was measured and the thresholds used. They never change the training: no learning rate, clip value or step was altered because of them.");
+    if (!gev.length) h("p", "hint", c3, "No gradient warnings.");
+    else table(c3, [{ label: "Severity", get: (e) => SEV_WORD[e.severity] || e.severity }, { label: "Kind", get: (e) => e.kind.replace(/_/g, " ") }, { label: "Epoch", num: true, get: (e) => String(e.epoch + 1) }, { label: "Step", num: true, get: (e) => (Q.bad(e.step) ? "" : String(e.step)) },
+      { label: "Layers", get: (e) => (e.layers || []).join(", ") }, { label: "Learning rate", num: true, get: (e) => fnum(e.lr) }, { label: "Training", get: (e) => (e.action || "").replace(/_/g, " ") }, { label: "Measured", get: (e) => JSON.stringify(e.metrics).slice(0, 90) }, { label: "Thresholds", get: (e) => JSON.stringify(e.thresholds).slice(0, 90) }], gev);
+    const warns = ev.filter((e) => e.type === "resource_warning");
+    if (warns.length) { const c4 = h("div", "card", box); h("h3", "", c4, "Resource warnings"); table(c4, [{ label: "When", get: (e) => new Date(e.at * 1000).toLocaleString() }, { label: "Epoch", num: true, get: (e) => String(e.epoch) }, { label: "Message", get: (e) => e.message || "" }], warns); }
   }
   async function resumeRun(id, mode) {
     const r = await trainingPost("/api/training/resume", { id, mode });

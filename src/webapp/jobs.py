@@ -10,7 +10,7 @@ under ``data/user/jobs/``:
 A job that was queued or running when its process ended (the app was stopped, restarted or killed; on Replit, the workspace crashed or went idle) can never finish. It is marked ``interrupted``,
 with the last thing it said it was doing, as soon as that is known: at the next start, and whenever the list is read. A process id alone cannot say whether the app is still there (the numbers are
 reused, and an app in a container is process 1 every time), so a running app also says so every few seconds (:meth:`JobLog.beat`) and another process's job with no sign of life for
-``STALE`` seconds counts as gone. Nothing is resumed: a training is not checkpointed, so an interrupted run is started again from the beginning. The log keeps the last 60 jobs, like the table,
+``STALE`` seconds counts as gone. Nothing is resumed automatically. A deep-network training writes checkpoints into its run folder (``ml.deep``), so an interrupted one can be resumed from the Training monitor; any other run is started again from the beginning. The log keeps the last 60 jobs, like the table,
 and a run can be taken off the list (:meth:`JobLog.remove`).
 """
 

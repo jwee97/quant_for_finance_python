@@ -124,8 +124,11 @@ def detail(root, run_id: str, fit: str | None = None, since: int = 0, now: float
     ep = [r for r in rows if r.get("type") == "epoch"]
     s = summarise(folder, now)
     keep = ep[int(since):] if since else ep
-    series = {"epoch": [r["epoch"] for r in keep], "train_loss": [r["train_loss"] for r in keep], "val_loss": [r["val_loss"] for r in keep], "lr": [r["lr"] for r in keep], "grad_norm": [r["grad_norm"] for r in keep],
-              "seconds": [r["seconds"] for r in keep], "rss_mb": [r.get("process_rss_mb") for r in keep], "peak_mb": [r.get("peak_mb") for r in keep], "best_val": [r["best_val"] for r in keep]}
+    series = {"epoch": [r["epoch"] for r in keep], "train_loss": [r.get("train_loss") for r in keep], "val_loss": [r.get("val_loss") for r in keep], "lr": [r.get("lr") for r in keep], "grad_norm": [r.get("grad_norm") for r in keep],
+              "seconds": [r.get("seconds") for r in keep], "rss_mb": [r.get("process_rss_mb") for r in keep], "peak_mb": [r.get("peak_mb") for r in keep], "best_val": [r.get("best_val") for r in keep],
+              "cpu_pct": [r.get("cpu_pct") for r in keep], "system_used_mb": [r.get("system_used_mb") for r in keep], "gpu_mb": [r.get("gpu_alloc_mb") for r in keep]}
+    extra = sorted({k for r in keep for k in (r.get("metrics") or {})})
+    series["metrics"] = {k: [(r.get("metrics") or {}).get(k) for r in keep] for k in extra}                 # model-specific curves: reconstruction and KL, critic gap, rewards ...
     from .checkpoint import CheckpointManager                                             # PyTorch is imported only when a run's checkpoints are listed
 
     mgr = CheckpointManager(folder)
@@ -136,8 +139,64 @@ def detail(root, run_id: str, fit: str | None = None, since: int = 0, now: float
 
         batch = int((((_request(run) or {}).get("body") or {}).get("model") or {}).get("params", {}).get("batch_size", 0) or 0)
         advice = {"reason": str(memory.get("reason")), **(profiles.suggest_smaller(batch) if batch else {"note": "lower the batch size or the lookback, or choose the conservative profile"})}
-    return {"id": run_id, "fit": folder.name, "fits": [f.name for f in folders], "summary": s, "memory_advice": advice, "series": series, "n_epochs_total": len(ep), "events": [r for r in rows if r.get("type") not in ("epoch",)], "checkpoints": mgr.listing(),
+    return {"id": run_id, "fit": folder.name, "fits": [f.name for f in folders], "summary": s, "memory_advice": advice, "gradient_events": [r for r in rows if r.get("type") == "gradient_event"][-200:], "diagnostics": _diagnostics(folder), "series": series, "n_epochs_total": len(ep), "events": [r for r in rows if r.get("type") not in ("epoch", "gradient_event")], "checkpoints": mgr.listing(),
             "request": _request(run), "control": _control_state(folder)}
+
+
+def _diagnostics(folder: Path) -> dict | None:
+    try:
+        return json.loads((folder / "diagnostics.json").read_text())
+    except (OSError, ValueError):
+        return None
+
+
+def gradients(root, run_id: str, fit: str | None = None, optimizer: str | None = None, flow_epoch: int | None = None, hist_epochs: list[int] | None = None, max_layers: int = 40) -> dict:
+    """The gradient diagnostics of one fit, read from ``gradients.jsonl``: the per-epoch series of the global statistics, the layer table of one epoch (the gradient-flow chart), the per-layer series of the ratios and the
+    histograms of chosen epochs. ``flow_epoch`` and ``hist_epochs`` are 1-based epoch numbers."""
+    d = detail(root, run_id, fit)
+    folder = base(root) / run_id / d["fit"] if d["fit"] != run_id else base(root) / run_id
+    if not (folder / "metrics.jsonl").exists():
+        folder = base(root) / run_id
+    rows = read_rows_all(folder / "gradients.jsonl") or []
+    opts = list(dict.fromkeys(r.get("optimizer", "optimizer") for r in rows))
+    out = {"id": run_id, "fit": d["fit"], "optimizers": opts, "optimizer": None, "epochs": [], "level": (d.get("diagnostics") or {}).get("level", "off"), "interval": (d.get("diagnostics") or {}).get("interval") or "auto", "family": (d.get("diagnostics") or {}).get("family", "default"),
+           "series": {}, "layers": [], "flow": None, "layer_series": {}, "histograms": {}, "note": None}
+    if not rows:
+        out["note"] = "no gradient summary has been written: the monitoring level was off, or no epoch has finished since it was on"
+        return out
+    name = optimizer if optimizer in opts else opts[0]
+    mine = [r for r in rows if r.get("optimizer", "optimizer") == name]
+    out["optimizer"], out["level"] = name, mine[-1].get("level", out["level"])
+    out["epochs"] = [r["epoch"] for r in mine]
+
+    def col(f):
+        return [f(r) for r in mine]
+    g = lambda r, k: (r.get("global") or {}).get(k)                                                    # noqa: E731
+    s = lambda r, k: ((r.get("global") or {}).get("sampled") or {}).get(k)                              # noqa: E731
+    obs = lambda r: max((g(r, "observed_steps") or 0), 1)                                               # noqa: E731
+    out["series"] = {"epoch": [e + 1 for e in out["epochs"]], "l2_median": col(lambda r: g(r, "l2_median")), "l2_mean": col(lambda r: g(r, "l2_mean")), "l2_max": col(lambda r: g(r, "l2_max")), "l2_p90": col(lambda r: g(r, "l2_p90")),
+                     "l2_p99": col(lambda r: g(r, "l2_p99")), "l2_cv": col(lambda r: g(r, "l2_cv")), "clip_frequency": col(lambda r: g(r, "clip_frequency")), "clip_value": col(lambda r: g(r, "clip_value")), "post_clip": col(lambda r: g(r, "post_clip_l2_mean")),
+                     "nonfinite_steps": col(lambda r: g(r, "nonfinite_steps") or 0), "skipped_steps": col(lambda r: g(r, "skipped_steps") or 0), "skipped_share": col(lambda r: (g(r, "skipped_steps") or 0) / max(g(r, "optimizer_steps") or 1, 1)),
+                     "missing_gradients": col(lambda r: g(r, "missing_gradients") or 0), "linf": col(lambda r: s(r, "linf")), "rms": col(lambda r: s(r, "rms")), "mean_abs": col(lambda r: s(r, "mean_abs")), "std": col(lambda r: s(r, "std")),
+                     "zero_frac": col(lambda r: s(r, "zero_frac")), "near_zero_frac": col(lambda r: s(r, "near_zero_frac")), "p50": col(lambda r: s(r, "p50")), "p90": col(lambda r: s(r, "p90")), "p95": col(lambda r: s(r, "p95")), "p99": col(lambda r: s(r, "p99"))}
+    names = list(dict.fromkeys(l["name"] for r in mine for l in r.get("layers", [])))
+    out["layers"] = names
+    fe = (int(flow_epoch) - 1) if flow_epoch else out["epochs"][-1]
+    pick = next((r for r in mine if r["epoch"] == fe), mine[-1])
+    out["flow"] = {"epoch": pick["epoch"], "rows": pick.get("layers", [])}
+    keep = names if len(names) <= max_layers else names[:max_layers]
+    for nme in keep:
+        ser = {"rms": [], "g_w": [], "update_ratio": []}
+        for r in mine:
+            lay = next((l for l in r.get("layers", []) if l["name"] == nme), None)
+            for k in ser:
+                ser[k].append(None if lay is None else lay.get(k))
+        out["layer_series"][nme] = ser
+    have = {r["epoch"]: r["histogram"] for r in mine if r.get("histogram")}
+    want = [int(e) - 1 for e in (hist_epochs or [])] or sorted(have)[:1] + sorted(have)[-1:]
+    out["histograms"] = {str(e): have[e] for e in dict.fromkeys(want) if e in have}
+    out["histogram_epochs"] = sorted(have)
+    return out
 
 
 def _request(run: Path) -> dict | None:
@@ -175,6 +234,61 @@ def control(root, run_id: str, action: str, fit: str | None = None) -> dict:
     else:
         p.write_text(json.dumps({"action": action, "at": time.time()}))
     return {"id": run_id, "fit": d["fit"], "control": "" if action == "clear" else action, "note": "read by the training loop at the end of its current epoch"}
+
+
+def reconcile_logs(folder, done: int, last: dict | None) -> dict:
+    """Make the run's logs agree with the checkpoint that is being resumed. ``done`` is the number of finished units the checkpoint holds. A crash can leave a unit's rows in the log although its checkpoint was never
+    committed (it will be run again, so those rows are dropped), or leave the checkpoint without the unit's row (the row, its gradient summary and its events were saved inside the checkpoint as ``last`` and are
+    restored, marked ``recovered``). Markers (start, resume, interruption) are kept. Returns what was changed."""
+    folder = Path(folder)
+    out = {"dropped_rows": 0, "recovered": False}
+    path = folder / "metrics.jsonl"
+    rows = read_rows_all(path)
+    if rows is not None:
+        keep, seen = [], False
+        for r in rows:
+            if r.get("type") == "epoch":
+                if r.get("epoch", 0) > done:
+                    out["dropped_rows"] = len(rows) - len(keep)
+                    break
+                seen = seen or r.get("epoch") == done
+            keep.append(r)
+        if not seen and last and last.get("row"):
+            keep += [{**last["row"], "recovered": True}] + list(last.get("events") or [])
+            out["recovered"] = True
+        if out["dropped_rows"] or out["recovered"]:
+            _rewrite(path, keep)
+    gpath = folder / "gradients.jsonl"
+    grows = read_rows_all(gpath)
+    if grows is not None:
+        gkeep = [r for r in grows if r.get("epoch", 0) <= done - 1]
+        have = {(r.get("optimizer"), r.get("epoch")) for r in gkeep}
+        for g in ((last or {}).get("grad") or []):
+            if g and (g.get("optimizer"), g.get("epoch")) not in have and g.get("epoch") == done - 1:
+                gkeep.append({**g, "recovered": True})
+        if len(gkeep) != len(grows) or any(r.get("recovered") for r in gkeep):
+            _rewrite(gpath, gkeep)
+    return out
+
+
+def read_rows_all(path: Path) -> list[dict] | None:
+    if not path.exists():
+        return None
+    rows = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        try:
+            rows.append(json.loads(line))
+        except ValueError:                                                                    # a half-written last line after a crash
+            continue
+    return rows
+
+
+def _rewrite(path: Path, rows: list[dict]) -> None:
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text("".join(json.dumps(r, default=float) + "\n" for r in rows), encoding="utf-8")
+    import os
+
+    os.replace(tmp, path)
 
 
 def control_clear(run: Path) -> None:

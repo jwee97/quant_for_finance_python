@@ -213,7 +213,15 @@ class GraphModel(Model):
             node, port = model(x, valid)
             return (((node - ny) ** 2) * valid).sum() / valid.sum().clamp(min=1.0) + 0.5 * ((port - py) ** 2).mean()
 
-        cfg = TrainConfig(int(p["epochs"]), int(p["batch_size"]), float(p["learning_rate"]), float(p["weight_decay"]), int(p["patience"]), float(p["grad_clip"]), str(p["device"]), self.seed)
+        from .deep.session import trainer_settings
+
+        skip = {"device", "num_threads", "checkpoint_dir", "resume", "checkpoint_every", "keep_milestones", "epochs", "grad_monitor", "grad_interval"}
+        config = {"kind": self.kind, "params": {k: v for k, v in sorted(p.items()) if k not in skip}, "seed": self.seed, "features": list(self.features_), "net": [self.kind, len(self.features_), int(p["hidden"]), int(p["layers"]), float(p["dropout"]), int(p.get("heads", 1))]}
+        # the graph's identity: the node order, the adjacency itself, the fit window and the rows used (a checkpoint of another graph or another window is refused)
+        data = {"assets": list(self.assets_), "adjacency": hashlib.sha256(np.ascontiguousarray(np.asarray(self.adjacency_, dtype=np.float64)).tobytes()).hexdigest(), "window": self.graph_info_["fit_window"], "cutoff": self.graph_info_["cutoff"],
+                "train": [int(len(train_idx)), int(train_idx[0]), int(train_idx[-1])], "val": [int(len(val_idx)), int(val_idx[0]), int(val_idx[-1])], "relationship": self.graph_info_["relationship_version"]}
+        cfg = TrainConfig(int(p["epochs"]), int(p["batch_size"]), float(p["learning_rate"]), float(p["weight_decay"]), int(p["patience"]), float(p["grad_clip"]), str(p["device"]), self.seed,
+                          **trainer_settings(p, "graph_" + self.kind, config, data, "transformer" if "att" in self.kind or self.kind == "gat" else "default"))
         self.history_ = fit_network(net, batch_fn, loss_fn, len(train_idx), len(val_idx), cfg)
         self.history_.device_note = note
         self.net_ = net

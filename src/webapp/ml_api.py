@@ -534,7 +534,7 @@ class MlApi(AdvancedRoutes, SelectionRoutes, StrategyRoutes, ResearchRoutes):
         run = prepare_training(self.app.root, over, body, "/api/ml/train", label)         # a deep model gets a run folder (checkpoints, metrics) and the resource profile; any other model: None
 
         def work(progress):
-            with _user_errors(), (train_context.use(run["dir"], run["resume"], run["warm"]) if run else contextlib.nullcontext()):
+            with _user_errors(), (train_context.use(run["dir"], run["resume"], run["warm"], str(body.get("grad_monitor") or "auto")) if run else contextlib.nullcontext()):
                 exp = run_experiment(over, config=self.app.config, builder=self.app.builder, registry=self.registry, progress=progress, explain=explain, robustness=robust or None,
                                      stop_after="validation" if mode == "development" else None, entry_point="api")
             return {"id": exp.id, "report": exp.report, "training_run": run["run_id"] if run else None}

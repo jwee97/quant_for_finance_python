@@ -168,3 +168,31 @@ def test_a_run_that_stopped_for_lack_of_memory_says_so_and_suggests_what_to_chan
     d = runs.detail(tmp_path, "oom-run")
     assert d["summary"]["status"] == "interrupted"
     assert d["memory_advice"]["batch_size"] == 512 and d["memory_advice"]["accumulation_steps"] == 2 and "cannot be continued exactly" in d["memory_advice"]["note"]
+
+
+def test_a_detailed_run_exposes_global_layer_and_histogram_diagnostics(app):
+    params = {**TINY, "grad_monitor": "detailed", "epochs": 5, "patience": 50}
+    finished(app, app.extra_post["/api/ml/train"]({**BASE, "run_id": "run-grad", "model": {"kind": "nbeats", "params": params}}))
+    g = app.extra_get["/api/training/gradients"]({"id": "run-grad"})
+    assert g["level"] == "detailed" and g["optimizers"] == ["optimizer"] and len(g["epochs"]) >= 3
+    s = g["series"]
+    assert all(len(s[k]) == len(g["epochs"]) for k in ("l2_median", "p50", "p99", "zero_frac", "clip_frequency", "nonfinite_steps"))
+    assert all(v > 0 for v in s["l2_median"]) and all(a <= b + 1e-12 for a, b in zip(s["p50"], s["p99"]))
+    assert g["flow"]["rows"] and g["layers"] == [r["name"] for r in g["flow"]["rows"]]
+    row = g["flow"]["rows"][0]
+    assert {"mean_abs", "max_abs", "median_abs", "rms", "g_w", "update_ratio", "zero_frac", "n_params"} <= set(row)
+    assert g["layer_series"][g["layers"][0]]["rms"] and g["histogram_epochs"]
+    h = next(iter(g["histograms"].values()))
+    assert len(h["bins"]) == 40 and h["zeros"] >= 0
+    again = app.extra_get["/api/training/gradients"]({"id": "run-grad", "flow_epoch": 1, "hist_epochs": "1,2"})
+    assert again["flow"]["epoch"] == 0 and set(again["histograms"]) == {"0", "1"}
+    d = app.extra_get["/api/training/run"]({"id": "run-grad"})
+    assert d["diagnostics"]["level"] == "detailed" and d["series"]["cpu_pct"][0] is not None
+    with pytest.raises(ApiError):
+        app.extra_get["/api/training/gradients"]({"id": "nope-nope"})
+
+
+def test_a_run_with_diagnostics_off_says_so(app):
+    finished(app, app.extra_post["/api/ml/train"]({**BASE, "run_id": "run-nograd", "model": {"kind": "nbeats", "params": {**TINY, "grad_monitor": "off"}}}))
+    g = app.extra_get["/api/training/gradients"]({"id": "run-nograd"})
+    assert g["epochs"] == [] and "off" in g["note"]

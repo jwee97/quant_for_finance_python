@@ -120,6 +120,10 @@ def train_and_predict(kind: str, X_train, a_train, y_train, X_val, a_val, y_val,
     """
     import torch
 
+    from dataclasses import asdict
+
+    from ..ml.deep.session import TrainingSession, data_fingerprint
+
     torch.set_num_threads(1)
     torch.use_deterministic_algorithms(True)
     torch.manual_seed(seed)
@@ -128,32 +132,56 @@ def train_and_predict(kind: str, X_train, a_train, y_train, X_val, a_val, y_val,
     optimiser = torch.optim.Adam(net.parameters(), lr=settings.learning_rate, weight_decay=settings.weight_decay)
     tx, ta, ty = (torch.as_tensor(X_train, dtype=torch.float32), torch.as_tensor(a_train, dtype=torch.long), torch.as_tensor(y_train, dtype=torch.float32))
     vx, va, vy = (torch.as_tensor(X_val, dtype=torch.float32), torch.as_tensor(a_val, dtype=torch.long), torch.as_tensor(y_val, dtype=torch.float32))
-    best, best_state, best_epoch, history, train_history = np.inf, None, 0, [], []
+    st = {"best": np.inf, "best_state": None, "best_epoch": 0, "history": [], "train_history": []}
     live.start(epochs=settings.max_epochs, patience=settings.patience, device="cpu", n_params=int(sum(q.numel() for q in net.parameters())), n_train=int(len(tx)), n_val=int(len(vx)), batch_size=int(settings.batch_size))
-    for epoch in range(settings.max_epochs):
-        net.train()
-        order = torch.randperm(len(tx), generator=generator)
-        running = 0.0
-        for i in range(0, len(order), settings.batch_size):
-            idx = order[i:i + settings.batch_size]
-            optimiser.zero_grad()
-            loss = torch.mean((net(tx[idx], ta[idx]) - ty[idx]) ** 2)
-            loss.backward()
-            optimiser.step()
-            running += float(loss.detach()) * len(idx)
-        net.eval()
-        with torch.no_grad():
-            val_loss = float(torch.mean((net(vx, va) - vy) ** 2))
-        history.append(val_loss)
-        train_history.append(running / len(order))
-        gained = val_loss < best - 1e-9
-        live.epoch(epoch, train_history[-1], val_loss, lr=settings.learning_rate, best=val_loss if gained else best, best_epoch=epoch if gained else best_epoch, bad=0 if gained else epoch - best_epoch, improved=gained,
-                   epochs=settings.max_epochs, patience=settings.patience)
-        if val_loss < best - 1e-9:
-            best, best_epoch = val_loss, epoch
-            best_state = {k: v.clone() for k, v in net.state_dict().items()}
-        elif epoch - best_epoch >= settings.patience:
-            break
+
+    def apply(s: dict) -> None:
+        st.update(s)
+
+    sess = TrainingSession("forecast_" + kind, config={"kind": kind, "net": net_kwargs or {}, "settings": asdict(settings), "seed": seed, "n_assets": n_assets}, data=data_fingerprint(X_train, a_train, y_train, X_val, a_val, y_val),
+                           modules={"net": net}, optimizers={"adam": optimiser}, rngs={"order": generator}, capture=lambda: dict(st), apply=apply, units=settings.max_epochs, patience=settings.patience,
+                           family="transformer" if "transformer" in kind or "patch" in kind else "default")
+    mon = sess.monitor("adam", net)
+    with sess:
+        resumed = sess.restore()
+        start = resumed.start if resumed else 0
+        if resumed and start > 0 and start - 1 - st["best_epoch"] >= settings.patience:                  # the saved run had already stopped early
+            start = settings.max_epochs
+        for epoch in range(start, settings.max_epochs):
+            sess.begin_unit(epoch, -(-len(tx) // settings.batch_size))
+            net.train()
+            order = torch.randperm(len(tx), generator=generator)
+            running = 0.0
+            for k, i in enumerate(range(0, len(order), settings.batch_size)):
+                idx = order[i:i + settings.batch_size]
+                optimiser.zero_grad()
+                loss = torch.mean((net(tx[idx], ta[idx]) - ty[idx]) ** 2)
+                loss.backward()
+                mon.observe(k)
+                mon.before_step(k)
+                optimiser.step()
+                mon.after_step(k)
+                running += float(loss.detach()) * len(idx)
+            net.eval()
+            with torch.no_grad():
+                val_loss = float(torch.mean((net(vx, va) - vy) ** 2))
+            st["history"].append(val_loss)
+            st["train_history"].append(running / len(order))
+            gained = val_loss < st["best"] - 1e-9
+            live.epoch(epoch, st["train_history"][-1], val_loss, lr=settings.learning_rate, best=val_loss if gained else st["best"], best_epoch=epoch if gained else st["best_epoch"], bad=0 if gained else epoch - st["best_epoch"], improved=gained,
+                       epochs=settings.max_epochs, patience=settings.patience)
+            stop = False
+            if gained:
+                st["best"], st["best_epoch"] = val_loss, epoch
+                st["best_state"] = {k_: v.clone() for k_, v in net.state_dict().items()}
+            elif epoch - st["best_epoch"] >= settings.patience:
+                stop = True
+            if sess.end_unit(epoch, {"train_loss": st["train_history"][-1], "val_loss": val_loss}, improved=gained, last=stop) == "stop":
+                break
+            if stop:
+                break
+        sess.finish(stopped_by="early_stopping" if len(st["history"]) < settings.max_epochs else None)
+    best, best_state, best_epoch, history, train_history = st["best"], st["best_state"], st["best_epoch"], st["history"], st["train_history"]
     live.finish(best_epoch=int(best_epoch) + 1, best_val=float(best), stopped_early=len(history) < settings.max_epochs, final_train=train_history[-1] if train_history else None)
     net.load_state_dict(best_state)
     net.eval()

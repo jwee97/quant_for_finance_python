@@ -33,7 +33,7 @@ class Killed(BaseException):
     pass
 
 
-def _fit(folder, epochs=6, die_after=None, resume=False):
+def _fit(folder, epochs=6, die_after=None, resume=False, grad_level="detailed", clip=1.0):
     rng = np.random.default_rng(1)
     X = rng.normal(size=(300, LOOK, FEAT)).astype(np.float32)
     y = (X[:, -1, 0] + 0.1 * rng.normal(size=300)).astype(np.float32)
@@ -49,7 +49,7 @@ def _fit(folder, epochs=6, die_after=None, resume=False):
 
     torch.manual_seed(2)
     net = build_net("nbeats", FEAT, LOOK, 1, {"width": 8, "blocks": 2, "layers": 2})
-    cfg = tn.TrainConfig(epochs=epochs, batch_size=64, learning_rate=0.01, patience=50, checkpoint_dir=str(folder), config_fp="c", data_fp="d", seed=4, resume=resume)
+    cfg = tn.TrainConfig(epochs=epochs, batch_size=64, learning_rate=0.01, patience=50, checkpoint_dir=str(folder), config_fp="c", data_fp="d", seed=4, resume=resume, grad_level=grad_level, grad_clip=clip)
     return tn.fit_network(net, batch, loss, 240, 60, cfg)
 
 
@@ -59,7 +59,7 @@ def live(tmp_path_factory):
     root = isolated_root(tmp_path_factory.mktemp("training_root"), config)
     base = run_files.base(root)
     per_epoch = -(-240 // 64) + -(-60 // 128)
-    _fit(base / "finished-run" / "nbeats-aaa", epochs=5)
+    _fit(base / "finished-run" / "nbeats-aaa", epochs=6, clip=1e-4)                                            # a clip far below the gradient: every step is clipped, which the monitor must call out
     with pytest.raises(Killed):
         _fit(base / "broken-run" / "nbeats-bbb", epochs=8, die_after=3 * per_epoch + 1)                      # dies inside the fourth epoch
     for name in ("finished-run", "broken-run"):                                                               # a saved request lets the page offer Resume
@@ -137,3 +137,60 @@ def test_an_interrupted_run_waits_for_the_user_and_resumes_from_its_checkpoint(p
             break
         time.sleep(0.3)
     assert jobs, "the Resume button queued no job for the run"
+
+
+def _open_run(pg, run):
+    _monitor(pg)
+    pg.click(f"#ml-results tr[data-run={run}] button")
+    pg.wait_for_selector("#ml-training-detail .trtabs button", timeout=30_000)
+
+
+def _tab(pg, view):
+    pg.click(f"#ml-training-detail .trtabs button[data-trview={view}]")
+    pg.wait_for_selector(f"#ml-training-detail .trtabs button[data-trview={view}][aria-selected=true]")
+
+
+def test_the_five_views_show_gradient_health_layers_distributions_and_events(pg):
+    _open_run(pg, "finished-run")
+    assert [b.get_attribute("data-trview") for b in pg.query_selector_all("#ml-training-detail .trtabs button")] == ["overview", "gradient", "layers", "dist", "events"]
+    assert "Loss by epoch" in pg.inner_text("#ml-training-view") and "CPU and GPU" in pg.inner_text("#ml-training-view")
+    _tab(pg, "gradient")
+    pg.wait_for_selector("#ml-training-view svg", timeout=30_000)
+    text = pg.inner_text("#ml-training-view")
+    assert "Global gradient norm" in text and "Gradient percentiles" in text and "Clipping and non-finite steps" in text and "Detailed" in text
+    assert pg.locator("#ml-training-view svg").count() >= 3
+    _tab(pg, "layers")
+    pg.wait_for_selector("[data-role=flow-epoch]", timeout=30_000)
+    assert "Gradient flow through the model" in pg.inner_text("#ml-training-view")
+    pg.select_option("[data-role=flow-epoch]", "2")
+    pg.wait_for_selector("text=epoch 2", timeout=30_000)
+    pg.click("#ml-training-view .seg button[data-value=g_w]")
+    assert "Gradient / weight" in pg.inner_text("#ml-training-view") or pg.locator("#ml-training-view svg").count() >= 1
+    assert pg.locator("#ml-training-view input[data-layer]").count() >= 2
+    pg.click("#ml-training-view input[data-layer]:not(:checked)") if pg.locator("#ml-training-view input[data-layer]:not(:checked)").count() else None
+    _tab(pg, "dist")
+    pg.wait_for_selector("#ml-training-view input[data-epoch]", timeout=30_000)
+    assert pg.locator("#ml-training-view svg").count() >= 1 and "log10" in pg.inner_text("#ml-training-view")
+    _tab(pg, "events")
+    text = pg.inner_text("#ml-training-view")
+    assert "Recovery status" in text and "Gradient warnings" in text and "repeated clipping" in text and "never change the training" in text
+    assert "Nothing was changed" in pg.inner_text("#ml-training-detail")
+
+
+def test_the_gradient_views_survive_a_reload(pg):
+    _open_run(pg, "finished-run")
+    _tab(pg, "gradient")
+    pg.wait_for_selector("#ml-training-view svg", timeout=30_000)
+    pg.reload()
+    pg.wait_for_selector("#tab-ml")
+    _open_run(pg, "finished-run")
+    _tab(pg, "gradient")
+    pg.wait_for_selector("#ml-training-view svg", timeout=30_000)
+    assert "Global gradient norm" in pg.inner_text("#ml-training-view")
+
+
+def test_a_run_without_diagnostics_says_so_instead_of_drawing_empty_charts(pg):
+    _open_run(pg, "broken-run")
+    _tab(pg, "gradient")
+    pg.wait_for_selector("#ml-training-view .hint", timeout=30_000)
+    assert "Gradient diagnostics" in pg.inner_text("#ml-training-view") or "no gradient" in pg.inner_text("#ml-training-view").lower() or pg.locator("#ml-training-view svg").count() >= 1

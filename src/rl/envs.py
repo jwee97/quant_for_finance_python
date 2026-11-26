@@ -128,6 +128,14 @@ class RegimeFractionEnv(Env):
         self.rng = np.random.default_rng(seed)
         self.regime, self.t = 0, 0
 
+    def get_state(self) -> dict:
+        """Everything that decides the next observation and reward: the generator, the regime and the clock. A training run saves it so that an interrupted run can continue on the same trajectory."""
+        return {"rng": self.rng.bit_generator.state, "regime": int(self.regime), "t": int(self.t)}
+
+    def set_state(self, state: dict) -> None:
+        self.rng.bit_generator.state = state["rng"]
+        self.regime, self.t = int(state["regime"]), int(state["t"])
+
     def _obs(self):
         o = np.zeros(self.n_regimes)
         o[self.regime] = 1.0
