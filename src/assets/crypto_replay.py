@@ -15,32 +15,46 @@ import math
 import numpy as np
 import pandas as pd
 
+from .crypto_book_policy import BookPolicy, annotate, decide
+
 from .crypto_research import PERIODS, walk_book
 
 MODE = {"id": "historical_replay", "label": "Replay of recorded observations", "hypothetical": False}
 
 
 class BookSeries:
-    """The valid book rows of one instrument, for as-of reads without look-ahead."""
+    """The recorded book rows of one instrument for as-of reads without look-ahead. EVERY row is a decision time and is checked by the shared policy (``crypto_book_policy``): the latest row at or before a time
+    must itself be valid and fresh; an invalid or stale newest row means no book, never an older one (unless the policy opts in to the fallback, which is then counted and recorded)."""
 
-    def __init__(self, df: pd.DataFrame):
-        d = df[df["quality"] == "ok"].sort_values("recv_ts_ms").reset_index(drop=True) if len(df) else df
-        self.df, self.t = d, (d["recv_ts_ms"].to_numpy() if len(d) else np.array([], dtype=np.int64))
+    def __init__(self, df: pd.DataFrame, policy: BookPolicy | None = None, venue: str | None = None, instrument: str | None = None):
+        self.policy = policy or BookPolicy()
+        self.df = annotate(df, venue, instrument, self.policy) if df is not None and len(df) else pd.DataFrame()
+        self.t = self.df["recv_ts_ms"].to_numpy() if len(self.df) else np.array([], dtype=np.int64)
+        self.rejected: dict[str, int] = {}
+        self.fallbacks: list[dict] = []
+
+    def decide(self, t_ms: int, max_age_s: float | None = None) -> dict:
+        return decide(self.df, int(t_ms), self.policy, max_age_s)
 
     def asof(self, t_ms: int, max_age_s: float) -> dict | None:
-        i = int(np.searchsorted(self.t, t_ms, side="right")) - 1
-        if i < 0 or t_ms - int(self.t[i]) > max_age_s * 1000:
-            return None
-        r = self.df.iloc[i]
-        return {"recv_ts_ms": int(r["recv_ts_ms"]), "exchange_ts_ms": None if pd.isna(r["exchange_ts_ms"]) else int(r["exchange_ts_ms"]), "sequence": None if pd.isna(r["sequence"]) else int(r["sequence"]),
-                "bids": list(zip(r["bids_px"], r["bids_qty"])), "asks": list(zip(r["asks_px"], r["asks_qty"])), "age_s": (t_ms - int(r["recv_ts_ms"])) / 1000.0}
+        d = self.decide(t_ms, max_age_s)
+        if d["rejected"] is not None:
+            self.rejected[d["reason"]] = self.rejected.get(d["reason"], 0) + 1
+        if d["fallback_used"]:
+            self.fallbacks.append({"decision_ms": int(t_ms), **d["rejected"], "used_recv_ts_ms": d["book"]["recv_ts_ms"]})
+        return d["book"]
 
     def after(self, t_ms: int, max_wait_s: float) -> dict | None:
-        """The first valid book received after ``t_ms`` within ``max_wait_s``: what an order sent at ``t_ms`` would meet when it arrives (used for the second leg)."""
+        """The first row received after ``t_ms`` within ``max_wait_s``, if it is valid: what an order sent at ``t_ms`` would meet when it arrives (used for the second leg). If that first row is invalid there is no
+        book to trade against (the order is not moved on to a later, valid one)."""
         i = int(np.searchsorted(self.t, t_ms, side="right"))
         if i >= len(self.t) or int(self.t[i]) - t_ms > max_wait_s * 1000:
             return None
         return self.asof(int(self.t[i]), 0.001)
+
+    def audit(self) -> dict:
+        """What the policy did, for the experiment's record: the rules, how many decisions were refused and why, and every fallback that was allowed."""
+        return {"policy": self.policy.describe(), "rejected_by_reason": dict(self.rejected), "fallbacks_used": len(self.fallbacks), "fallbacks": self.fallbacks[:50]}
 
 
 def _mid(b: dict) -> float:
@@ -70,25 +84,26 @@ def _unavailable(reason: str, needs: list[str]) -> dict:
 
 # ------------------------------------------------------------------------------------------------------------------ cross-exchange
 def cross_exchange(store, a: tuple, b: tuple, notional: float = 10_000.0, fee_bps: tuple = (10.0, 10.0), max_age_s: float = 5.0, max_skew_s: float = 2.0, min_edge_bps: float = 0.0, leg_delay_s: float = 1.0,
-                   inventory_usd: float = 100_000.0, start=None, end=None) -> dict:
+                   inventory_usd: float = 100_000.0, start=None, end=None, policy: BookPolicy | None = None) -> dict:
     """Spot-versus-spot (or perpetual-versus-perpetual) spread replay between recorded books ``a`` and ``b`` (``(venue, instrument)``). At each recorded book of ``a`` the decision sees both books at that moment
     (each no older than ``max_age_s`` and received within ``max_skew_s`` of the other); the better direction is traded if its net edge after both fees at the decision-time depth is at least ``min_edge_bps``. The first
     leg fills at the decision-time book; the second leg meets the first book of its venue received after ``leg_delay_s``: if there is none the position is left unhedged and counted, never assumed closed. Each venue
     holds ``inventory_usd`` of cash and the same of coin at the first price: a trade is limited by what the selling venue holds and the buying venue can pay, and balances are not rebalanced (no transfers)."""
-    A, B = BookSeries(store.books(*a, start=start, end=end)), BookSeries(store.books(*b, start=start, end=end))
-    if A.df is None or not len(A.df) or not len(B.df):
+    pol = policy or BookPolicy(max_age_s=max_age_s)
+    A, B = BookSeries(store.books(*a, start=start, end=end), pol, *a), BookSeries(store.books(*b, start=start, end=end), pol, *b)
+    if A.df is None or not len(A.df) or not len(B.df) or not A.df["valid"].any() or not B.df["valid"].any():
         return _unavailable("one of the two instruments has no valid recorded book in the period", ["run the recorder (`python -m src.cli crypto-record`) on both venues for the period"])
-    skipped = {"no_book_b": 0, "stale_or_skewed": 0, "no_edge": 0, "no_inventory": 0, "leg2_unavailable": 0}
+    skipped = {"no_book_b": 0, "stale_or_skewed": 0, "invalid_book": 0, "no_edge": 0, "no_inventory": 0, "leg2_unavailable": 0}
     cash = {"a": inventory_usd, "b": inventory_usd}
-    first_mid = _mid(A.asof(int(A.t[0]), 1e9))
+    first_mid = _mid(decide(A.df[A.df["valid"]].reset_index(drop=True), int(A.df[A.df["valid"]].iloc[0]["recv_ts_ms"]), BookPolicy(max_age_s=1e9))["book"])
     coin = {"a": inventory_usd / first_mid, "b": inventory_usd / first_mid}
     trades, equity, expo = [], [], []
     for t in A.t:
         t = int(t)
         ba, bb = A.asof(t, max_age_s), B.asof(t, max_age_s)
         if ba is None or bb is None:
-            other, series = (bb, B) if bb is None else (ba, A)
-            skipped["stale_or_skewed" if series.asof(t, 1e12) is not None else "no_book_b"] += 1                 # an older book exists (stale) or none had been recorded yet
+            why = (A if ba is None else B).decide(t, max_age_s)["reason"]
+            skipped["no_book_b" if why.startswith("no_book") else "stale_or_skewed" if why == "stale" else "invalid_book"] += 1      # none recorded yet / the newest row is stale / the newest row is invalid: never an older book instead
             continue
         if abs(ba["recv_ts_ms"] - bb["recv_ts_ms"]) > max_skew_s * 1000:
             skipped["stale_or_skewed"] += 1
@@ -139,7 +154,7 @@ def cross_exchange(store, a: tuple, b: tuple, notional: float = 10_000.0, fee_bp
         coin[best["sell_on"]] -= qty
         gross = sell["dollars"] - buy["dollars"]
         trades.append({"time_ms": t, "status": "filled", "buy_on": best["buy_on"], "sell_on": best["sell_on"], "qty": float(qty), "buy_vwap": buy["vwap"], "sell_vwap": sell["vwap"], "decision_edge_bps": float(best["edge"]), "notional": float(buy["dollars"]),
-                       "gross": float(gross), "fees": float(fees), "slippage": float(slip), "decision_books": {"a_recv": ba["recv_ts_ms"], "b_recv": bb["recv_ts_ms"], "a_seq": ba["sequence"], "b_seq": bb["sequence"]},
+                       "gross": float(gross), "fees": float(fees), "slippage": float(slip), "decision_books": {"a_recv": ba["recv_ts_ms"], "b_recv": bb["recv_ts_ms"], "a_seq": ba["sequence"], "b_seq": bb["sequence"], "a_fallback": bool(ba.get("fallback")), "b_fallback": bool(bb.get("fallback"))},
                        "leg2_book_recv_ms": leg2["recv_ts_ms"], "leg2_delay_s": (leg2["recv_ts_ms"] - t) / 1000.0})
         equity.append(float(sum(x["gross"] - x["fees"] for x in trades if x["status"] == "filled")))                     # cumulative net P&L after each filled trade
         expo.append(float(buy["dollars"]))
@@ -147,7 +162,7 @@ def cross_exchange(store, a: tuple, b: tuple, notional: float = 10_000.0, fee_bp
     span = (int(A.t[-1]) - int(A.t[0])) / 1000.0
     out = _summary(filled, equity, 2 * inventory_usd, expo, span)
     out.update({"state": "ok", "mode": MODE, "strategy": "cross_exchange", "venues": {"a": list(a), "b": list(b)}, "trades_detail": filled, "unhedged": [x for x in trades if x["status"] == "open_unhedged"],
-                "coverage": {"decision_times": int(len(A.t)), "skipped": skipped, "usable_share": float((len(filled) + skipped["no_edge"]) / max(len(A.t), 1)), "first_ms": int(A.t[0]), "last_ms": int(A.t[-1])},
+                "book_policy": {"a": A.audit(), "b": B.audit()}, "coverage": {"decision_times": int(len(A.t)), "skipped": skipped, "usable_share": float((len(filled) + skipped["no_edge"]) / max(len(A.t), 1)), "first_ms": int(A.t[0]), "last_ms": int(A.t[-1])},
                 "assumptions": ["Takers on both legs; fees as given. The first leg fills at the decision-time book, the second at the first book received after the delay.", "Balances per venue are fixed: no transfers or withdrawals are modelled.",
                                 "The books are REST snapshots at the recorded times; fills between snapshots are not observed."]})
     return out
@@ -155,20 +170,21 @@ def cross_exchange(store, a: tuple, b: tuple, notional: float = 10_000.0, fee_bp
 
 # ------------------------------------------------------------------------------------------------------------------ funding carry
 def funding_carry(store, spot: tuple, perp: tuple, funding: tuple, notional: float = 10_000.0, entry_annualised: float = 0.10, exit_annualised: float = 0.0, window_settlements: int = 9, fee_bps: tuple = (10.0, 5.0),
-                  max_age_s: float = 10.0, financing_apr: float = 0.0, leverage: float = 3.0, mmr: float = 0.005, start=None, end=None) -> dict:
+                  max_age_s: float = 10.0, financing_apr: float = 0.0, leverage: float = 3.0, mmr: float = 0.005, start=None, end=None, policy: BookPolicy | None = None) -> dict:
     """Spot-perpetual funding carry replayed on recorded books and recorded funding settlements. Entry: at a recorded perpetual book, the mean of the last ``window_settlements`` settlements STRICTLY BEFORE that
     time, annualised, exceeds ``entry_annualised`` (spot bought at the asks, perpetual sold at the bids, taker fees). Each recorded settlement while open pays ``rate x perpetual notional at the mark`` to the short
     (the notional is the last recorded mid at or before the settlement); a missing settlement is counted, never filled in. Exit when the trailing rate falls below ``exit_annualised`` or the data end. The perpetual
     margin (``notional / leverage`` plus funding and mark-to-market) is checked at every recorded book: below ``mmr`` of the notional the position is closed as a margin call."""
-    S, P = BookSeries(store.books(*spot, start=start, end=end)), BookSeries(store.books(*perp, start=start, end=end))
+    pol = policy or BookPolicy(max_age_s=max_age_s)
+    S, P = BookSeries(store.books(*spot, start=start, end=end), pol, *spot), BookSeries(store.books(*perp, start=start, end=end), pol, *perp)
     F = store.funding(*funding)
-    if not len(S.df) or not len(P.df):
+    if not len(S.df) or not len(P.df) or not S.df["valid"].any() or not P.df["valid"].any():
         return _unavailable("the spot or the perpetual has no valid recorded book in the period", ["run the recorder on both instruments for the period"])
     if F.empty:
         return _unavailable("no funding settlement is recorded for this instrument", ["run the recorder (it stores OKX funding settlements) or download the funding history"])
     F = F.sort_values("funding_time_ms").reset_index(drop=True)
     ft, fr, fh = F["funding_time_ms"].to_numpy(), F["rate"].to_numpy(), F["interval_hours"].to_numpy()
-    skipped = {"no_spot_book": 0, "no_funding_history": 0, "below_entry": 0}
+    skipped = {"no_spot_book": 0, "no_funding_history": 0, "below_entry": 0, "no_valid_perp_book": 0}
     trades, equity, expo = [], [], []
     pos = None
     last_settle = None
@@ -177,6 +193,7 @@ def funding_carry(store, spot: tuple, perp: tuple, funding: tuple, notional: flo
         bp = P.asof(t, max_age_s)
         bs = S.asof(t, max_age_s)
         if bp is None:
+            skipped["no_valid_perp_book"] += 1                                                                     # the newest perpetual row is invalid or stale: no decision, and no older book in its place
             continue
         k = int(np.searchsorted(ft, t, side="left"))                                                # settlements strictly before t
         trailing = None
@@ -235,7 +252,7 @@ def funding_carry(store, spot: tuple, perp: tuple, funding: tuple, notional: flo
     span = (int(P.t[-1]) - int(P.t[0])) / 1000.0
     out = _summary(trades, equity, notional * (1 + 1 / leverage), expo, span)
     out.update({"state": "ok", "mode": MODE, "strategy": "funding_carry", "trades_detail": trades, "open_position": None if pos is None else {"open_ms": pos["open_ms"], "qty": pos["qty"], "note": "open at the end of the data: not closed, not in the P&L"},
-                "coverage": {"decision_times": int(len(P.t)), "skipped": skipped, "funding_settlements": int(len(ft)), "first_ms": int(P.t[0]), "last_ms": int(P.t[-1])},
+                "book_policy": {"spot": S.audit(), "perp": P.audit()}, "coverage": {"decision_times": int(len(P.t)), "skipped": skipped, "funding_settlements": int(len(ft)), "first_ms": int(P.t[0]), "last_ms": int(P.t[-1])},
                 "assumptions": ["Spot bought and perpetual sold with taker fees at recorded book depth; funding is the recorded settlements times the perpetual notional at the recorded mark.", "Margin is the initial margin plus mark-to-market and funding; the margin-call rate is the one given (hypothetical unless taken from a verified schedule).",
                                 "Borrowing, withdrawal and custody costs are not modelled; financing is the stated annual rate on the capital."]})
     return out
@@ -283,17 +300,19 @@ def futures_basis(store, venue: str, coin: str, entry_annualised: float = 0.05, 
 
 
 # ------------------------------------------------------------------------------------------------------------------ liquidity
-def execution_history(store, venue: str, instrument: str, side: str, notional: float, start=None, end=None, max_age_s: float = 10.0) -> dict:
+def execution_history(store, venue: str, instrument: str, side: str, notional: float, start=None, end=None, max_age_s: float = 10.0, policy: BookPolicy | None = None) -> dict:
     """What a market order of ``notional`` dollars WOULD have cost against every recorded book of an instrument: the distribution over time of slippage against the mid, the unfilled share and the depth. These are real books at
     the recorded times; the order is not placed in them one after another, so the result is a distribution, not a path."""
     if side not in ("buy", "sell"):
         raise ValueError("side must be buy or sell")
-    S = BookSeries(store.books(venue, instrument, start=start, end=end))
-    if not len(S.df):
+    S = BookSeries(store.books(venue, instrument, start=start, end=end), policy or BookPolicy(max_age_s=max_age_s), venue, instrument)
+    if not len(S.df) or not S.df["valid"].any():
         return _unavailable("no valid recorded book for this instrument in the period", ["run the recorder"])
     rows = []
     for i in range(len(S.df)):
         b = S.asof(int(S.t[i]), max_age_s)
+        if b is None:                                                                                           # an invalid recorded book is not a book an order could have met
+            continue
         fill = walk_book(b["asks"] if side == "buy" else b["bids"], notional=notional)
         if fill["coins"] <= 0:
             continue

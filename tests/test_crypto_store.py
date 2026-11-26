@@ -35,7 +35,7 @@ def test_the_sampling_interval_skips_rows_and_a_read_never_sees_the_future_or_a_
     assert s.book_asof("OKX", "X", T0 - 1) is None, "nothing was received before T0"
     assert s.book_asof("OKX", "X", T0 + 12_500, 5)["recv_ts_ms"] == T0 + 12_000
     assert s.book_asof("OKX", "X", T0 + 30_500, 5) is None, "the only newer row is invalid and the last valid one is 18 seconds old"
-    assert s.book_asof("OKX", "X", T0 + 30_500, 60)["recv_ts_ms"] == T0 + 12_000
+    assert s.book_asof("OKX", "X", T0 + 30_500, 60) is None, "a newer INVALID row is the market state: the older valid book is not substituted, however fresh it is allowed to be"
     assert s.book_asof("OKX", "X", pd.Timestamp(T0 + 12_500, unit="ms", tz="UTC"), 5)["recv_ts_ms"] == T0 + 12_000
 
 

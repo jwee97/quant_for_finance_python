@@ -64,7 +64,7 @@ class CryptoStore:
             raise ValueError("kind must be snapshot or update")
         recv = int(recv_ts_ms if recv_ts_ms is not None else _now_ms())
         key = (venue.upper(), instrument.upper())
-        if not force and key in self._last and recv - self._last[key] < self.cfg.min_interval_s * 1000:
+        if not force and key in self._last and 0 <= recv - self._last[key] < self.cfg.min_interval_s * 1000:         # too soon after the last row; a row received EARLIER than the last is kept, never dropped
             return None
         b, a = [(float(p), float(q)) for p, q in bids[: self.cfg.depth]], [(float(p), float(q)) for p, q in asks[: self.cfg.depth]]
         quality = "empty" if not b or not a else "crossed" if b[0][0] >= a[0][0] else "ok"
@@ -75,7 +75,7 @@ class CryptoStore:
         d = self._book_dir(*key) / day
         d.mkdir(parents=True, exist_ok=True)
         pd.DataFrame([row]).to_parquet(d / f"part-{recv}.parquet", compression=COMPRESSION, index=False)
-        self._last[key] = recv
+        self._last[key] = max(recv, self._last.get(key, recv))
         return row
 
     def books(self, venue: str, instrument: str, start=None, end=None) -> pd.DataFrame:
@@ -94,17 +94,19 @@ class CryptoStore:
             out = out[out["recv_ts_ms"] <= _ms(end)]
         return out.reset_index(drop=True)
 
-    def book_asof(self, venue: str, instrument: str, ts, max_age_s: float = 5.0) -> dict | None:
-        """The latest VALID book received at or before ``ts`` and no older than ``max_age_s`` before it, else ``None``: a stale or invalid book is never returned, and nothing received after ``ts`` can be seen."""
+    def book_asof_decision(self, venue: str, instrument: str, ts, max_age_s: float = 5.0, policy=None) -> dict:
+        """The full as-of decision (see :mod:`crypto_book_policy`): the latest row received at or before ``ts`` is checked and, if it is invalid or stale, the answer is NO book with the reason; an older valid book is
+        returned only when the policy allows the fallback, and then the answer says so."""
+        from .crypto_book_policy import BookPolicy, annotate, decide
+        pol = policy or BookPolicy(max_age_s=max_age_s)
         t = _ms(ts)
-        df = self.books(venue, instrument, end=t)
-        df = df[(df["quality"] == "ok")] if len(df) else df
-        if df.empty:
-            return None
-        r = df.iloc[-1]
-        if t - int(r["recv_ts_ms"]) > max_age_s * 1000:
-            return None
-        return {**{k: r[k] for k in ("venue", "instrument", "kind", "exchange_ts_ms", "recv_ts_ms", "sequence")}, "bids": list(zip(r["bids_px"], r["bids_qty"])), "asks": list(zip(r["asks_px"], r["asks_qty"])), "age_s": (t - int(r["recv_ts_ms"])) / 1000.0}
+        d = annotate(self.books(venue, instrument, end=t), venue, instrument, pol)
+        return decide(d, t, pol, max_age_s if policy is None else None)
+
+    def book_asof(self, venue: str, instrument: str, ts, max_age_s: float = 5.0, policy=None) -> dict | None:
+        """The book a decision at ``ts`` may use, or ``None``. Strict by default: the latest row received at or before ``ts`` must itself be valid and no older than ``max_age_s``; an invalid or stale newest row
+        gives ``None`` and an older valid book is never substituted (use ``book_asof_decision`` for the reason, or a policy with ``allow_last_valid_fallback`` to opt in, which marks the book ``fallback``)."""
+        return self.book_asof_decision(venue, instrument, ts, max_age_s, policy)["book"]
 
     # ------------------------------------------------------------------------------------------------------------ derivatives observations
     def _append(self, path: Path, frame: pd.DataFrame, key_cols: list[str]) -> int:
