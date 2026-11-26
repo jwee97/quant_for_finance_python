@@ -19,7 +19,7 @@ from ..references import FORECAST_EVALUATION, references
 from ..forecast import evaluate as ev
 from ..forecast.base import ForecastError, History
 from ..forecast.registry import FAMILIES
-from ..forecast.verdict import judge
+from ..forecast.verdict import conclusions, judge
 from .api import ACTIVE, ApiError
 from .universe import UniverseError, normalise
 
@@ -105,6 +105,7 @@ class ForecastApi:
             except ForecastError as error:
                 raise ApiError(str(error)) from None
             verdict = judge(evaluation, horizon)
+            research = conclusions(evaluation, horizon)
             asof = history.index[-1]
             future = pd.bdate_range(asof + pd.Timedelta(days=1), periods=horizon)
             tail = history.tail(HISTORY_DAYS)
@@ -117,7 +118,7 @@ class ForecastApi:
                 notes.append(f"{METHODS[name].label if name in METHODS else name} could not forecast from the last day: {why}")
             return {"ticker": ticker, "universe": universe, "asof": str(asof.date()), "last_price": float(history.close[-1]), "horizon": horizon, "effort": effort, "methods": chosen,
                     "history": {"dates": [str(d.date()) for d in tail.index], "close": [float(v) for v in tail.close]}, "future_dates": [str(d.date()) for d in future],
-                    "evaluation": evaluation, "now": now, "verdict": verdict, "notes": notes, "stopped": bool(stop.is_set()), "history_days": history.n, "first_date": str(history.index[0].date())}
+                    "evaluation": evaluation, "now": now, "verdict": verdict, "conclusions": research, "notes": notes, "stopped": bool(stop.is_set()), "history_days": history.n, "first_date": str(history.index[0].date())}
 
         for old in [j for j in self.stops if j not in app.jobs or app.jobs[j].status not in ACTIVE]:
             self.stops.pop(old, None)

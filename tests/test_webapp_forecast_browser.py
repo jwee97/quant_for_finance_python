@@ -264,3 +264,45 @@ def test_an_app_older_than_the_tab_says_so_and_the_other_tabs_still_work(browser
         page.wait_for_selector("#tune .panel")
     finally:
         page.close()
+
+
+def test_the_forecast_page_is_five_stages_with_forecast_against_outcome_rolling_errors_common_dates_and_conclusions(browser, live_forecast):  # noqa: F811
+    page = _page(browser, live_forecast)
+    try:
+        _run(page, ids=("riskmetrics", "garch", "hull_white"), horizon="21")
+        nav = page.locator("[data-role=forecast-stages] button")
+        assert nav.all_inner_texts() == ["1. Generate the forecast", "2. Walk-forward validation", "3. Calibration", "4. Model comparison", "5. Research conclusions"]
+        for key in ("generate", "validate", "calibrate", "compare", "conclude"):
+            assert page.locator(f"[data-role=forecast-stage-{key}]").count() == 1, key
+        assert page.locator("[data-role=forecast-stage-generate] [data-role=forecast-fan]").count() == 1
+        assert page.locator("[data-role=forecast-stage-validate] [data-role=forecast-scoreboard]").count() == 1
+        assert page.locator("[data-role=forecast-stage-calibrate] [data-role=forecast-calibration]").count() == 1
+        assert page.locator("[data-role=forecast-stage-compare] [data-role=forecast-pairs]").count() == 1
+
+        out = page.locator("[data-role=forecast-outcomes]")
+        assert out.locator("svg.chart").count() == 1 and "central 90% range" in out.inner_text()
+        before = out.locator("svg.chart").inner_html()
+        out.locator(".seg button[data-view=scatter]").click()
+        assert out.locator("svg.chart").inner_html() != before and out.locator(".seg button[data-view=scatter]").get_attribute("aria-pressed") == "true"
+        out.locator(".seg button:has-text('Table')").click()
+        assert out.locator("table.data tbody tr").count() >= 10 and "Inside 90% range" in out.inner_text() and "Median forecast" in out.inner_text()
+
+        roll = page.locator("[data-role=forecast-rolling]")
+        assert roll.locator("svg.chart").count() == 1 and roll.locator(".seg button[data-view]").all_inner_texts() == ["Skill against the random walk", "How often the 90% range held the outcome", "Error of the median forecast"]
+        shown = roll.locator("svg.chart").inner_html()
+        roll.locator(".seg button[data-view=coverage90]").click()
+        assert roll.locator("svg.chart").inner_html() != shown and "chance alone allows" in roll.inner_text()
+        assert page.locator("[data-role=forecast-coverage-time] svg.chart").count() == 1
+
+        common = page.locator("[data-role=forecast-common]")
+        text = common.inner_text()
+        assert "same dates" in text and "Skill, common dates" in text and "First half / second half" in text and "Adjusted p (Holm)" in text
+        assert common.locator("table.data tbody tr").count() == 4, "the random walk and the three methods"
+        conc = page.locator("[data-role=forecast-conclusions]")
+        assert conc.locator("li").count() >= 3 and conc.locator("li[data-status]").count() == conc.locator("li").count()
+        assert "Scope" in conc.inner_text() and "One instrument over one history" in conc.inner_text()
+        nav.nth(3).click()
+        assert nav.nth(3).get_attribute("aria-pressed") == "true"
+        assert not page.problems, page.problems
+    finally:
+        page.close()

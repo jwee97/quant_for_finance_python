@@ -62,6 +62,7 @@ class _Tape:
         shape = (n_origins, n_h)
         self.crps, self.hit50, self.hit90, self.below5, self.pit, self.mean, self.p_up, self.miss90 = (np.full(shape, np.nan) for _ in range(8))
         self.pinball = np.full(shape + (len(LEVELS),), np.nan)
+        self.q05, self.q50, self.q95 = (np.full(shape, np.nan) for _ in range(3))                    # the forecast's own 5%, 50% and 95% quantiles, kept so the forecast can be drawn against what happened
         self.failures, self.fits, self.seconds = 0, 0, 0.0
         self.last_info: dict = {}
         self.last_error = ""
@@ -167,6 +168,7 @@ def evaluate(history: History, names: list[str], horizon: int = 21, effort: str 
         for j, hz in enumerate(hs):                                          # the predictive mean and the chance of a rise do not need the outcome
             x = fc.at(hz)
             t.mean[oi, j], t.p_up[oi, j] = float(x.mean()), float((x > 0).mean())
+            t.q05[oi, j], t.q50[oi, j], t.q95[oi, j] = (float(v) for v in np.quantile(x, (0.05, 0.5, 0.95)))
 
     for oi, i in enumerate(origins):
         if stop is not None and stop():
@@ -277,11 +279,85 @@ def _summarize(history: History, run: list[str], tapes: dict[str, _Tape], realis
     members = [n for n in run if n in METHODS and n != BASELINE]
     weights = inverse_loss_weights({n: tapes[n].crps[:done, j] for n in members}) if len(members) >= 2 else None
     gain, gain_scale = _cumulative_gain(run, tapes, done, j)
+    series = _series(run, tapes, realised, done, j, [str(dates[i].date()) if dates is not None else i for i in origins], int(horizon))
+    common = _common(run, tapes, done, hs, step)
     return {"horizons": list(hs), "headline": int(horizon), "baseline": BASELINE, "controls": controls, "methods": out_methods, "blend_weights": weights,
+            "series": series, "common": common, "rolling": _rolling(series, run, S.stride_for(int(horizon), step)),
             "pairwise": _pairwise(run, tapes, done, j, S.stride_for(int(horizon), step) - 1, int(horizon)), "gain": gain, "gain_scale": gain_scale,
             "origin_dates": [str(dates[i].date()) if dates is not None else i for i in origins],
             "origins": {"count": done, "first": str(dates[origins[0]].date()) if dates is not None else origins[0], "last": str(dates[origins[-1]].date()) if dates is not None else origins[-1], "step_days": step,
                         "refit_days": cfg["refit_days"], "years": round(cfg["span_days"] / 252.0, 1), "paths": cfg["n_paths"], "history_days": history.n, "effort": cfg["effort"]}}
+
+
+def _series(run: list[str], tapes: dict[str, _Tape], realised: np.ndarray, done: int, j: int, dates: list, horizon: int) -> dict:
+    """What was forecast and what happened, origin by origin, at the headline horizon: the realised log return, and for each method its median and 5%/95% quantiles, mean, CRPS, whether the 90% range held it
+    and its PIT value. ``null`` where a method made no forecast at that origin or the outcome is not yet known. The plots of forecast against outcome, the rolling errors and the common-sample comparison read these."""
+    cut = lambda a: [_f(v) for v in a[:done, j]]
+    return {"horizon": int(horizon), "dates": dates, "realised": cut(realised),
+            "methods": {n: {"median": cut(tapes[n].q50), "q05": cut(tapes[n].q05), "q95": cut(tapes[n].q95), "mean": cut(tapes[n].mean), "crps": cut(tapes[n].crps), "hit90": cut(tapes[n].hit90), "pit": cut(tapes[n].pit)} for n in run}}
+
+
+def _common(run: list[str], tapes: dict[str, _Tape], done: int, hs: tuple[int, ...], step: int) -> dict:
+    """The comparison of methods on the dates every one of them forecast. A method that failed at some origins is scored on fewer dates than the others, and its average score is then not comparable with theirs:
+    a method that could not forecast a turbulent month looks better for it. For each horizon this lists the origins all methods scored (``common``), what each method scored on those alone, its skill against the
+    baseline there and in each half of them (a skill that exists in one half only is not a stable one), and how many origins each lost to failures or to a different horizon of data."""
+    out = {}
+    base = tapes[BASELINE]
+    for j, hz in enumerate(hs):
+        stack = np.vstack([np.isfinite(tapes[n].crps[:done, j]) for n in run])
+        scorable = np.isfinite(base.crps[:done, j])                                          # the origins whose outcome is known and the baseline forecast
+        mask = stack.all(axis=0)
+        idx = np.flatnonzero(mask)
+        half = len(idx) // 2
+        stride = S.stride_for(hz, step)
+        per = {}
+        for n in run:
+            own = np.isfinite(tapes[n].crps[:done, j])
+            c, b = tapes[n].crps[:done, j][mask], base.crps[:done, j][mask]
+            e = {"n_own": int(own.sum()), "n_common": int(mask.sum()), "lost": int((scorable & ~own).sum()), "crps_own": _f(np.nanmean(tapes[n].crps[:done, j][own])) if own.any() else None,
+                 "crps_common": _f(c.mean()) if len(c) else None, "skill_own": _f(S.skill(tapes[n].crps[:done, j][own & scorable], base.crps[:done, j][own & scorable])) if (own & scorable).any() else None,
+                 "skill_common": _f(S.skill(c, b)) if len(c) and n != BASELINE else (0.0 if len(c) else None),
+                 "coverage90_common": _f(np.nanmean(tapes[n].hit90[:done, j][mask])) if len(c) else None}
+            if n != BASELINE and len(idx) >= 20:
+                k1, k2 = idx[:half], idx[half:]
+                e["skill_first_half"] = _f(S.skill(tapes[n].crps[:done, j][k1], base.crps[:done, j][k1]))
+                e["skill_second_half"] = _f(S.skill(tapes[n].crps[:done, j][k2], base.crps[:done, j][k2]))
+                cmp = S.better_than(tapes[n].crps[:done, j][mask], base.crps[:done, j][mask], stride - 1)
+                e["p_common"] = _f(cmp["p"])
+            per[n] = e
+        ps = [per[n].get("p_common", float("nan")) if n != BASELINE else float("nan") for n in run]
+        for n, a in zip(run, S.holm_adjust(ps)):
+            if n != BASELINE and per[n].get("p_common") is not None:
+                per[n]["p_common_adjusted"] = _f(a)
+        out[str(hz)] = {"horizon": hz, "n_scorable": int(scorable.sum()), "n_common": int(mask.sum()), "same_dates": bool(all(per[n]["n_own"] == int(scorable.sum()) for n in run)),
+                        "first": int(idx[0]) if len(idx) else None, "last": int(idx[-1]) if len(idx) else None, "methods": per}
+    return out
+
+
+def _rolling(series: dict, run: list[str], stride: int, window: int = 24) -> dict:
+    """Rolling measures at the headline horizon over the last ``window`` forecasts with an outcome: the median forecast's mean absolute error, the skill against the baseline (1 - CRPS ratio) and the share of
+    outcomes inside the 90% range. A band for the coverage says how far from 90% a window of that many independent forecasts may be by chance (normal approximation, ``window / stride`` independent forecasts)."""
+    y = np.array([np.nan if v is None else v for v in series["realised"]], dtype=float)
+    n = len(y)
+    arr = lambda m, k: np.array([np.nan if v is None else v for v in series["methods"][m][k]], dtype=float)
+    base_crps = arr(BASELINE, "crps")
+    out = {}
+    for m in run:
+        med, crps, hit = arr(m, "median"), arr(m, "crps"), arr(m, "hit90")
+        mae, skill, cov = [], [], []
+        for i in range(n):
+            lo = max(0, i + 1 - window)
+            w = slice(lo, i + 1)
+            ok = np.isfinite(y[w]) & np.isfinite(med[w])
+            mae.append(_f(np.mean(np.abs(y[w][ok] - med[w][ok]))) if ok.sum() >= 5 else None)
+            okc = np.isfinite(crps[w]) & np.isfinite(base_crps[w])
+            skill.append(_f(S.skill(crps[w][okc], base_crps[w][okc])) if okc.sum() >= 5 and m != BASELINE else None)
+            okh = np.isfinite(hit[w])
+            cov.append(_f(hit[w][okh].mean()) if okh.sum() >= 5 else None)
+        out[m] = {"mae": mae, "skill": skill, "coverage90": cov}
+    eff = max(window // max(stride, 1), 1)
+    half = 1.96 * math.sqrt(0.9 * 0.1 / eff)
+    return {"window": window, "independent_per_window": eff, "coverage_band": [_f(0.9 - half), _f(min(1.0, 0.9 + half))], "methods": out}
 
 
 def _pairwise(run: list[str], tapes: dict[str, _Tape], done: int, j: int, lag: int, horizon: int) -> dict:

@@ -90,3 +90,49 @@ def judge(result: dict, horizon: int | None = None) -> dict:
         reasons.append("Could not forecast at some origins: " + ", ".join(f"{m.get('short') or m['label']} ({m['failures']} of {o['count']})" for m in failed) + ". Those origins are left out of that method's scores.")
     reasons.append("A forecast is not a strategy: a method can describe the spread of returns well and still make no money, and the other way round. These results are for one stock over one history; another period would rank the methods differently, and the ranking among the best few is within what luck could change.")
     return {"level": level, "headline": headline, "reasons": reasons}
+
+
+def conclusions(result: dict, horizon: int | None = None) -> dict:
+    """The research conclusions, one line each with the status the evidence supports (``established``, ``not established``, ``caution``) and the numbers behind it. Unlike :func:`judge`, which reads each method's
+    own scores, this reads the comparison on the dates every method forecast (``result["common"]``) and says whether any skill held in both halves of them and whether the ranges stayed calibrated over time
+    (``result["rolling"]``). A claim that depends on dates only some methods scored is not made."""
+    hz = str(int(horizon or result["headline"]))
+    common = result.get("common", {}).get(hz)
+    base = result["baseline"]
+    out = []
+    if not common or common["n_common"] < 20:
+        return {"horizon": int(hz), "items": [{"topic": "Sample", "status": "not established", "text": f"Fewer than 20 forecasts were scored by every method at {hz} days ({common['n_common'] if common else 0}); no comparison between methods is made."}], "common_origins": common["n_common"] if common else 0}
+    items = []
+    lost = {k: v["lost"] for k, v in common["methods"].items() if v["lost"]}
+    if common["same_dates"]:
+        items.append({"topic": "Sample", "status": "established", "text": f"Every method was scored on the same {common['n_common']} forecast dates, so their average scores are comparable."})
+    else:
+        names = ", ".join(f"{_label(result, k)} ({n} of {common['n_scorable']} dates missed)" for k, n in lost.items())
+        items.append({"topic": "Sample", "status": "caution", "text": f"The methods did not all forecast on the same dates: {names}. The comparison below uses the {common['n_common']} of {common['n_scorable']} dates every method scored; the methods' own averages, on different dates, are not comparable with each other."})
+    rows = [(k, v) for k, v in common["methods"].items() if k != base and v.get("skill_common") is not None]
+    winners = []
+    for k, v in sorted(rows, key=lambda t: -(t[1]["skill_common"] or -9)):
+        adj, a, b = v.get("p_common_adjusted"), v.get("skill_first_half"), v.get("skill_second_half")
+        beats = adj is not None and adj < ALPHA and v["skill_common"] >= MIN_SKILL
+        both = a is not None and b is not None and a > 0 and b > 0
+        if beats and both:
+            winners.append(k)
+            items.append({"topic": _label(result, k), "status": "established", "text": f"Better than the random walk on the common dates by {v['skill_common'] * 100:.1f}% (Holm-adjusted p {adj:.3f}), in both halves of them ({a * 100:+.1f}% and {b * 100:+.1f}%)."})
+        elif beats:
+            items.append({"topic": _label(result, k), "status": "caution", "text": f"Better than the random walk overall ({v['skill_common'] * 100:+.1f}%, adjusted p {adj:.3f}) but not in both halves ({(a or 0) * 100:+.1f}% then {(b or 0) * 100:+.1f}%): the skill belongs to one part of the history."})
+        elif (v["skill_common"] or 0) > 0:
+            items.append({"topic": _label(result, k), "status": "not established", "text": f"{v['skill_common'] * 100:+.1f}% against the random walk on the common dates, which luck explains (adjusted p {adj if adj is not None else float('nan'):.3f})."})
+    if not winners and not any(i["status"] == "caution" and "overall" in i["text"] for i in items):
+        items.append({"topic": "Skill", "status": "not established", "text": "No method beat the random walk on the common dates by more than luck allows, with the number of methods compared taken into account."})
+    best = max(rows, key=lambda t: t[1]["skill_common"] or -9, default=None)
+    ro = result.get("rolling")
+    if best and ro:
+        cov = [c for c in ro["methods"][best[0]]["coverage90"] if c is not None]
+        lo, hi = ro["coverage_band"]
+        if cov:
+            out_share = sum(1 for c in cov if c < lo or c > hi) / len(cov)
+            held = best[1].get("coverage90_common")
+            items.append({"topic": f"Calibration of {_label(result, best[0])}", "status": "established" if out_share <= 0.15 else "caution",
+                          "text": f"Its 90% range held the outcome {held * 100:.0f}% of the time on the common dates; in {out_share * 100:.0f}% of the {ro['window']}-forecast windows the share was outside the band chance alone would give ({lo * 100:.0f}% to {hi * 100:.0f}%)." if held is not None else ""})
+    items.append({"topic": "Scope", "status": "caution", "text": "One instrument over one history. A forecast is not a strategy, and a ranking here need not hold on another instrument or period."})
+    return {"horizon": int(hz), "items": items, "common_origins": common["n_common"], "winners": winners}

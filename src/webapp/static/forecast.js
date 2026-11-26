@@ -213,19 +213,110 @@
     const dl = h("button", "btn", acts, "Download the forecast (CSV)"); dl.type = "button"; dl.dataset.action = "download-forecast"; dl.addEventListener("click", () => downloadCsv(d));
     if (d.stopped) Q.labBanner(root, "Stopped early. ", `Only the first ${o.count} forecasts were made and scored; a full run would say more.`);
     verdictCard(root, d);
-    fanCard(root, d);
-    nowCard(root, d);
-    scoreboard(root, d);
-    skillMatrix(root, d);
-    gainCard(root, d);
-    pairCard(root, d);
-    densityCard(root, d);
-    calibrationCard(root, d);
-    meanCard(root, d);
-    assumptionsCard(root, d);
-    learnedCard(root, d);
-    notesCard(root, d);
+    const nav = h("div", "seg stages", root); nav.setAttribute("role", "group"); nav.setAttribute("aria-label", "Forecast workflow"); nav.dataset.role = "forecast-stages";
+    const section = (key, n, title, text) => {
+      const s = h("section", "stage", root); s.dataset.role = "forecast-stage-" + key; s.id = "forecast-stage-" + key; s.setAttribute("aria-labelledby", s.id + "-h");
+      const hd = h("div", "stagehead", s); h("h2", "", hd, `${n}. ${title}`).id = s.id + "-h"; h("p", "hint", hd, text);
+      const b = h("button", "", nav, `${n}. ${title}`); b.type = "button"; b.dataset.stage = key; b.addEventListener("click", () => { s.scrollIntoView({ block: "start" }); for (const x of nav.querySelectorAll("button")) x.setAttribute("aria-pressed", String(x === b)); });
+      return s;
+    };
+    const gen = section("generate", 1, "Generate the forecast", "Each method's distribution of the price from the last day, and where the methods agree.");
+    fanCard(gen, d);
+    nowCard(gen, d);
+    const wf = section("validate", 2, "Walk-forward validation", "The same methods, run at every past forecast date with only the prices before it, and scored on what then happened.");
+    scoreboard(wf, d);
+    skillMatrix(wf, d);
+    gainCard(wf, d);
+    outcomesCard(wf, d);
+    rollingCard(wf, d);
+    meanCard(wf, d);
+    const cal = section("calibrate", 3, "Calibration", "Whether the ranges were the right size, in total and over time.");
+    calibrationCard(cal, d);
+    coverageCard(cal, d);
+    densityCard(cal, d);
+    const cmp = section("compare", 4, "Model comparison", "Every method against the random walk and against each other, on the dates all of them forecast.");
+    commonCard(cmp, d);
+    pairCard(cmp, d);
+    const con = section("conclude", 5, "Research conclusions", "What the evidence supports, what it does not, and what the page assumed.");
+    conclusionsCard(con, d);
+    assumptionsCard(con, d);
+    learnedCard(con, d);
+    notesCard(con, d);
   };
+
+  /* ---------- forecast against outcome, errors over time, and the same-dates comparison ---------- */
+  const series = (d) => (d.evaluation && d.evaluation.series) || null;
+  const nums = (a) => (a || []).map((v) => (v === null || v === undefined ? null : v));
+  function methodPicker(card, d, key, ids, onPick) {
+    const box = h("div", "tabsmall", card._extra); box.setAttribute("role", "group"); box.setAttribute("aria-label", "method shown");
+    if (!F.show[key] || !ids.includes(F.show[key])) F.show[key] = ids.includes(F.show.method) ? F.show.method : ids[0];
+    const paint = () => { for (const b of box.querySelectorAll("button")) b.setAttribute("aria-pressed", String(b.dataset.value === F.show[key])); };
+    for (const id of ids) { const b = h("button", "", box, shortOf(id, d)); b.type = "button"; b.dataset.value = id; b.addEventListener("click", () => { F.show[key] = id; paint(); onPick(); }); }
+    paint();
+  }
+  function outcomesCard(root, d) {
+    const s = series(d); if (!s) return;
+    const ids = evaluated(d).map((m) => m.id).concat([d.evaluation.baseline]).filter((id) => s.methods[id] && s.methods[id].median.some((v) => v !== null));
+    if (!ids.length || s.dates.length < 10) return;
+    if (!F.show.out || !ids.includes(F.show.out)) F.show.out = ids.includes(F.show.method) ? F.show.method : ids[0];                 // chosen before the chart is first drawn
+    const card = chartCard(root, `What was forecast and what happened, ${s.horizon}-day returns`, "Each point is one forecast made on that date: the realised return over the next days, against the method's median and its central 90% range. Points outside the band are the outcomes the method called unlikely; about one in ten should be. The scatter plots the median forecast against the outcome: a method with information about the average lies along the diagonal, and one without it forms a flat cloud.", {
+      draw: (b) => {
+        const m = s.methods[F.show.out], ok = s.dates.map((_, i) => s.realised[i] !== null && m.median[i] !== null);
+        if (F.show.outView === "scatter") {
+          const pts = s.dates.map((dt, i) => (ok[i] ? { x: m.median[i], y: s.realised[i], r: 3, color: m.hit90[i] === 1 ? css("--s1") : css("--neg"), tip: [["Forecast made", dt], ["Median forecast", spct(m.median[i], 2)], ["Realised", spct(s.realised[i], 2)], ["Inside 90% range", m.hit90[i] === 1 ? "yes" : "no"]] } : null)).filter(Boolean);
+          const lim = Math.max(...pts.map((p) => Math.max(Math.abs(p.x), Math.abs(p.y))), 0.01);
+          return C.scatter(b, { points: pts, lines: [{ x1: -lim, y1: -lim, x2: lim, y2: lim, color: css("--muted"), dash: true, name: "Forecast equals outcome" }], xFormat: (v) => (v * 100).toFixed(1) + "%", yFormat: (v) => (v * 100).toFixed(1) + "%", xLabel: "Median forecast", yLabel: "Realised return", xZero: true, yZero: true, height: 300, label: `Forecast against outcome, ${shortOf(F.show.out, d)}` });
+        }
+        C.line(b, { dates: s.dates, series: [{ name: "Median forecast", color: css("--s1"), values: nums(m.median) }, { name: "Realised return", color: css("--ink"), values: nums(s.realised), dots: true, dotSize: 3, width: 0.5 }],
+          bands: [{ name: "Central 90% range", color: css("--s1"), opacity: 0.16, lo: nums(m.q05), hi: nums(m.q95) }], baseline: 0, yFormat: (v) => (v * 100).toFixed(0) + "%", tipFormat: (v) => spct(v, 2), height: 300, label: `Forecast and outcome, ${shortOf(F.show.out, d)}` });
+      },
+      table: (b) => { const m = s.methods[F.show.out], idx = s.dates.map((_, i) => i).filter((i) => s.realised[i] !== null && m.median[i] !== null); table(b, [{ label: "Forecast made", get: (i) => s.dates[i] }, { label: "Median forecast", num: true, get: (i) => spct(m.median[i], 2) }, { label: "5% quantile", num: true, get: (i) => spct(m.q05[i], 2) }, { label: "95% quantile", num: true, get: (i) => spct(m.q95[i], 2) }, { label: "Realised", num: true, get: (i) => spct(s.realised[i], 2) }, { label: "Inside 90% range", get: (i) => (m.hit90[i] === 1 ? "yes" : "no") }], idx); } });
+    card.dataset.role = "forecast-outcomes";
+    const vbox = h("div", "seg", card._extra); vbox.setAttribute("role", "group"); vbox.setAttribute("aria-label", "forecast against outcome view");
+    for (const [v, label] of [["time", "Over time"], ["scatter", "Scatter"]]) { const b = h("button", "", vbox, label); b.type = "button"; b.dataset.view = v; b.setAttribute("aria-pressed", String((F.show.outView || "time") === v)); b.addEventListener("click", () => { F.show.outView = v; for (const x of vbox.querySelectorAll("button")) x.setAttribute("aria-pressed", String(x.dataset.view === v)); card._draw(); }); }
+    methodPicker(card, d, "out", ids, () => card._draw());
+  }
+  function rollingCard(root, d) {
+    const ro = d.evaluation.rolling, s = series(d); if (!ro || !s) return;
+    const base = d.evaluation.baseline, ids = evaluated(d).map((m) => m.id);
+    const VIEWS = { skill: ["Skill against the random walk", "Share by which the method's CRPS was below the random walk's, over the last " + ro.window + " forecasts. Above zero it is helping.", (v) => (v * 100).toFixed(0) + "%", 0, ids], coverage90: ["How often the 90% range held the outcome", `Share of the last ${ro.window} outcomes inside the 90% range. The shaded band is what chance alone allows around 90% for ${ro.independent_per_window} independent forecasts.`, (v) => (v * 100).toFixed(0) + "%", 0.9, ids.concat([base])], mae: ["Error of the median forecast", `Mean absolute error of the median forecast over the last ${ro.window} forecasts, as a ${s.horizon}-day return. The random walk's median is zero, so its error is the size of the move.`, (v) => (v * 100).toFixed(1) + "%", null, ids.concat([base])] };
+    if (!F.show.rollView) F.show.rollView = "skill";
+    const card = chartCard(root, "Errors over time", "", { draw: (b) => {
+      const [, , fmt, ref, list] = VIEWS[F.show.rollView], shown = list.length > 6 ? list.slice(0, 5).concat(list.slice(-1)) : list;
+      C.line(b, { dates: s.dates, series: shown.map((id, k) => ({ name: shortOf(id, d), color: id === base ? css("--muted") : Q.colorOf(k), values: nums(ro.methods[id][F.show.rollView]), dash: id === base ? "5 4" : undefined })), baseline: ref === null ? undefined : ref, bands: F.show.rollView === "coverage90" ? [{ name: "Range chance allows", color: css("--muted"), opacity: 0.14, lo: s.dates.map(() => ro.coverage_band[0]), hi: s.dates.map(() => ro.coverage_band[1]) }] : [], yFormat: fmt, tipFormat: fmt, height: 260, legend: true, label: VIEWS[F.show.rollView][0] });
+    }, table: (b) => { const list = VIEWS[F.show.rollView][4], idx = s.dates.map((_, i) => i).filter((i) => i % Math.max(1, Math.ceil(s.dates.length / 40)) === 0); table(b, [{ label: "Forecast made", get: (i) => s.dates[i] }, ...list.map((id) => ({ label: shortOf(id, d), num: true, get: (i) => { const v = ro.methods[id][F.show.rollView][i]; return v === null || v === undefined ? "" : VIEWS[F.show.rollView][2](v); } }))], idx); } });
+    card.dataset.role = "forecast-rolling";
+    const note = h("p", "note", card, VIEWS[F.show.rollView][1]);
+    const vbox = h("div", "seg", card._extra); vbox.setAttribute("role", "group"); vbox.setAttribute("aria-label", "rolling measure");
+    for (const [v, [label]] of Object.entries(VIEWS)) { const b = h("button", "", vbox, label); b.type = "button"; b.dataset.view = v; b.setAttribute("aria-pressed", String(F.show.rollView === v)); b.addEventListener("click", () => { F.show.rollView = v; note.textContent = VIEWS[v][1]; for (const x of vbox.querySelectorAll("button")) x.setAttribute("aria-pressed", String(x.dataset.view === v)); card._draw(); }); }
+  }
+  /* Calibration over time is the coverage line of the rolling card with its own heading, so the stage reads as one story and the reader need not look for it among the errors. */
+  function coverageCard(root, d) {
+    const ro = d.evaluation.rolling, s = series(d); if (!ro || !s) return;
+    const ids = evaluated(d).map((m) => m.id).filter((id) => ro.methods[id].coverage90.some((v) => v !== null)); if (!ids.length) return;
+    const shown = ids.length > 6 ? ids.slice(0, 6) : ids;
+    const card = chartCard(root, "Did the 90% range stay the right size over time?", `Share of the last ${ro.window} outcomes inside each method's central 90% range. Outside the shaded band (what chance allows for ${ro.independent_per_window} independent forecasts) the range was too narrow or too wide for that stretch.${ids.length > 6 ? " The first six methods are drawn; the table has them all." : ""}`, {
+      draw: (b) => C.line(b, { dates: s.dates, series: shown.map((id, k) => ({ name: shortOf(id, d), color: Q.colorOf(k), values: nums(ro.methods[id].coverage90) })), baseline: 0.9, bands: [{ name: "Range chance allows", color: css("--muted"), opacity: 0.14, lo: s.dates.map(() => ro.coverage_band[0]), hi: s.dates.map(() => ro.coverage_band[1]) }], yFormat: (v) => (v * 100).toFixed(0) + "%", tipFormat: (v) => (v * 100).toFixed(0) + "%", height: 240, legend: true, label: "Rolling coverage of the 90% range" }),
+      table: (b) => { const idx = s.dates.map((_, i) => i).filter((i) => i % Math.max(1, Math.ceil(s.dates.length / 40)) === 0); table(b, [{ label: "Forecast made", get: (i) => s.dates[i] }, ...ids.map((id) => ({ label: shortOf(id, d), num: true, get: (i) => { const v = ro.methods[id].coverage90[i]; return v === null ? "" : (v * 100).toFixed(0) + "%"; } }))], idx); } });
+    card.dataset.role = "forecast-coverage-time";
+  }
+  function commonCard(root, d) {
+    const c = d.evaluation.common && d.evaluation.common[String(d.horizon)]; if (!c) return;
+    const base = d.evaluation.baseline, rows = Object.entries(c.methods).map(([id, v]) => ({ id, ...v })), card = h("div", "card", root); card.dataset.role = "forecast-common";
+    h("h3", "", card, `Methods compared on the same dates, ${d.horizon}-day forecasts`);
+    if (c.same_dates) h("p", "hint", card, `Every method forecast on the same ${c.n_common} dates, so the scores are comparable.`);
+    else { const b = h("div", "banner warn", card, `The methods did not all forecast on the same dates: ${rows.filter((r) => r.lost).map((r) => `${shortOf(r.id, d)} missed ${r.lost} of ${c.n_scorable}`).join("; ")}. The columns headed "on common dates" use the ${c.n_common} dates all of them scored; the "own dates" columns do not compare like with like.`); b.setAttribute("role", "alert"); b.dataset.role = "forecast-common-warning"; }
+    table(card, [{ label: "Method", get: (r) => shortOf(r.id, d) }, { label: "Forecasts scored", num: true, get: (r) => String(r.n_own) }, { label: "Missed", num: true, get: (r) => String(r.lost) }, { label: "Skill, own dates", num: true, get: (r) => (r.id === base ? "baseline" : spct(r.skill_own)) },
+      { label: "Skill, common dates", num: true, get: (r) => (r.id === base ? "baseline" : spct(r.skill_common)) }, { label: "First half / second half", num: true, get: (r) => (r.skill_first_half === undefined ? "" : `${spct(r.skill_first_half)} / ${spct(r.skill_second_half)}`), title: "The skill on the earlier and the later half of the common dates: skill that is in one half only is not stable" },
+      { label: "Adjusted p (Holm)", num: true, get: (r) => (r.p_common_adjusted === undefined ? "" : pval(r.p_common_adjusted)) }, { label: "90% range held", num: true, get: (r) => pct(r.coverage90_common, 0) }], rows);
+    h("p", "hint", card, "Skill is how far below the random walk's average CRPS the method's was. Adjusted p-values allow for the number of methods compared.");
+  }
+  function conclusionsCard(root, d) {
+    const c = d.conclusions; if (!c) return;
+    const card = h("div", "card", root); card.dataset.role = "forecast-conclusions"; h("h3", "", card, `Research conclusions, ${c.horizon}-day forecasts`);
+    const ul = h("ul", "conclusions", card), MARK = { established: "✓", "not established": "✗", caution: "!" };
+    for (const i of c.items) { const li = h("li", "c-" + i.status.replace(" ", "-"), ul); li.dataset.status = i.status; h("span", "vicon", li, MARK[i.status] || "?"); h("b", "", li, i.topic + ": "); li.append(document.createTextNode(i.text)); h("span", "hint", li, `  (${i.status})`); }
+  }
   function verdictCard(root, d) {
     const v = d.verdict, card = h("div", "card verdict-card " + v.level, root); card.dataset.level = v.level;
     const head = h("div", "vhead", card); h("span", "vicon", head, ICON[v.level] || "?"); h("h2", "", head, v.headline);

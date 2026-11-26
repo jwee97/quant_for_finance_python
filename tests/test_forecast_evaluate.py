@@ -214,3 +214,119 @@ def test_the_forecast_from_the_last_day_has_ordered_quantiles_anchored_at_the_pr
     assert wide["p_loss_5"] == pytest.approx(np.mean(np.random.default_rng(0).normal(0, 0.01 * np.sqrt(21), 100_000) < np.log(0.95)), abs=0.2)
     lone = ev.forecast_now(h, ["riskmetrics", BLEND], 5, n_paths=300)
     assert BLEND not in lone["methods"] and BLEND in lone["errors"] and BASELINE in lone["methods"]
+
+
+# --------------------------------------------------------------------------------------------------------------------------------- the same dates for every method, and what the page draws
+class Flaky(Forecaster):
+    """A random walk with a wider spread that refuses at every third forecast, so its average score is over other dates than the others'."""
+
+    name = "flaky"
+    short = "Flaky"
+    label = "Flaky"
+    min_history = 300
+    window, lookback = 400, 300
+
+    def __init__(self):
+        self.calls = 0
+
+    def fit(self, h, horizons):
+        return {}
+
+    def predict(self, state, h, horizons, n, rng):
+        self.calls += 1
+        if self.calls % 3 == 0:
+            raise ForecastError("refused on purpose")
+        return Forecast(np.cumsum(0.012 * rng.standard_normal((n, max(horizons))), axis=1))
+
+
+@pytest.fixture(scope="module")
+def flaky_result():
+    METHODS["flaky"] = Flaky()
+    try:
+        history = W.to_history(W.garch(1700, seed=3))
+        return history, run(history, ["flaky", "riskmetrics"], horizon=5, years=3.0)
+    finally:
+        METHODS.pop("flaky", None)
+
+
+def test_a_method_that_missed_some_dates_is_compared_on_the_dates_all_methods_forecast(flaky_result):
+    history, r = flaky_result
+    c = r["common"]["5"]
+    flaky, rm, base = c["methods"]["flaky"], c["methods"]["riskmetrics"], c["methods"][BASELINE]
+    assert c["same_dates"] is False and c["n_common"] < c["n_scorable"] and c["n_common"] == flaky["n_own"], "the common sample is the dates the flaky method managed"
+    assert flaky["lost"] > 0 and rm["lost"] == 0 and base["lost"] == 0 and rm["n_own"] == c["n_scorable"] and rm["n_common"] == c["n_common"] == flaky["n_common"]
+    s = r["series"]
+    ok = np.array([all(s["methods"][m]["crps"][i] is not None for m in (BASELINE, "flaky", "riskmetrics")) for i in range(len(s["dates"]))])
+    assert ok.sum() == c["n_common"], "the count is the number of origins where every method has a score"
+    crps = lambda m: np.array([np.nan if v is None else v for v in s["methods"][m]["crps"]])
+    for m in ("flaky", "riskmetrics"):
+        expected = 1.0 - np.nanmean(crps(m)[ok]) / np.nanmean(crps(BASELINE)[ok])                       # recomputed here from the series the page draws
+        assert c["methods"][m]["skill_common"] == pytest.approx(expected, abs=1e-12), m
+        assert c["methods"][m]["crps_common"] == pytest.approx(np.nanmean(crps(m)[ok]), abs=1e-12)
+    assert rm["skill_own"] is not None and rm["skill_common"] is not None
+    assert row(r, "flaky")["failures"] == flaky["lost"], "what the common sample drops is what the method reported failing"
+
+
+def test_the_series_the_page_draws_are_the_realised_returns_and_ordered_forecast_quantiles(flaky_result):
+    history, r = flaky_result
+    s = r["series"]
+    assert s["horizon"] == 5 and len(s["dates"]) == len(s["realised"]) == r["origins"]["count"]
+    dates = [str(d.date()) for d in history.index]
+    for k in range(0, len(s["dates"]), 7):
+        i = dates.index(s["dates"][k])
+        want = None if i + 5 >= history.n else float(np.log(history.close[i + 5] / history.close[i]))
+        assert (s["realised"][k] is None) if want is None else s["realised"][k] == pytest.approx(want, abs=1e-12), s["dates"][k]
+    for m, v in s["methods"].items():
+        for a, b, c in zip(v["q05"], v["median"], v["q95"]):
+            assert (a is None) == (b is None) == (c is None)
+            assert a is None or a <= b <= c, m
+        for y, a, c, hit in zip(s["realised"], v["q05"], v["q95"], v["hit90"]):
+            if y is not None and a is not None and hit is not None:
+                assert bool(hit) == (a <= y <= c) or abs(y - a) < 1e-4 or abs(y - c) < 1e-4, "the 90% hit is whether the outcome lay inside the 5% and 95% quantiles (up to the quantile's interpolation)"
+
+
+def test_the_rolling_measures_are_the_means_over_the_last_window_of_forecasts(flaky_result):
+    _, r = flaky_result
+    ro, s = r["rolling"], r["series"]
+    w = ro["window"]
+    assert ro["coverage_band"][0] < 0.9 < ro["coverage_band"][1] and ro["independent_per_window"] >= 1
+    hit = np.array([np.nan if v is None else v for v in s["methods"]["riskmetrics"]["hit90"]])
+    y = np.array([np.nan if v is None else v for v in s["realised"]])
+    med = np.array([np.nan if v is None else v for v in s["methods"]["riskmetrics"]["median"]])
+    for i in (w, w + 5, len(y) - 1):
+        win = slice(i + 1 - w, i + 1)
+        ok = np.isfinite(hit[win])
+        assert ro["methods"]["riskmetrics"]["coverage90"][i] == pytest.approx(hit[win][ok].mean(), abs=1e-12)
+        okm = np.isfinite(y[win]) & np.isfinite(med[win])
+        assert ro["methods"]["riskmetrics"]["mae"][i] == pytest.approx(np.abs(y[win][okm] - med[win][okm]).mean(), abs=1e-12)
+    assert ro["methods"][BASELINE]["skill"][-1] is None, "the baseline has no skill against itself"
+
+
+def test_without_failures_every_method_is_scored_on_the_same_dates():
+    r = run(W.to_history(W.garch(1700, seed=3)), ["riskmetrics", "garch"], years=2.0)
+    c = r["common"]["5"]
+    assert c["same_dates"] is True and c["n_common"] == c["n_scorable"] and all(m["lost"] == 0 and m["skill_common"] == pytest.approx(m["skill_own"] or 0.0, abs=1e-12) for k, m in c["methods"].items() if k != BASELINE)
+
+
+def test_the_conclusions_are_drawn_from_the_common_dates_and_say_when_they_were_not_the_same(flaky_result):
+    from src.forecast.verdict import conclusions
+    _, r = flaky_result
+    c = conclusions(r, 5)
+    topics = {i["topic"]: i for i in c["items"]}
+    assert topics["Sample"]["status"] == "caution" and "did not all forecast on the same dates" in topics["Sample"]["text"] and "Flaky" in topics["Sample"]["text"] and c["common_origins"] == r["common"]["5"]["n_common"]
+    assert topics["Scope"]["status"] == "caution"
+    assert all(i["status"] in ("established", "not established", "caution") and i["text"] for i in c["items"])
+    thin = conclusions({**r, "common": {"5": {**r["common"]["5"], "n_common": 5}}}, 5)
+    assert thin["items"][0]["status"] == "not established" and "no comparison between methods is made" in thin["items"][0]["text"]
+
+
+def test_a_skill_that_exists_in_one_half_only_is_a_caution_and_not_a_finding(flaky_result):
+    from src.forecast.verdict import conclusions
+    _, r = flaky_result
+    fake = {**r, "common": {"5": {**r["common"]["5"], "same_dates": True, "methods": {**r["common"]["5"]["methods"], "riskmetrics": {**r["common"]["5"]["methods"]["riskmetrics"], "skill_common": 0.08, "p_common_adjusted": 0.001, "skill_first_half": 0.2, "skill_second_half": -0.04}}}}}
+    items = {i["topic"]: i for i in conclusions(fake, 5)["items"]}
+    rm = next(v for k, v in items.items() if "iskmetrics" in k or "RiskMetrics" in k)
+    assert rm["status"] == "caution" and "not in both halves" in rm["text"]
+    fake["common"]["5"]["methods"]["riskmetrics"]["skill_second_half"] = 0.05
+    items = {i["topic"]: i for i in conclusions(fake, 5)["items"]}
+    assert next(v for k, v in items.items() if "iskmetrics" in k or "RiskMetrics" in k)["status"] == "established"

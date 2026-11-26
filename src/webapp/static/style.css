@@ -808,3 +808,18 @@ table.obs td:nth-child(2) { white-space: normal; max-width: 280px; }
 .trace { white-space: pre-wrap; overflow-x: auto; font-size: 12px; }
 .stepslist { list-style: none; padding-left: 0; display: flex; flex-direction: column; gap: 6px; }
 .gates-explain[hidden], .gates-progress[hidden] { display: none; }
+
+/* The staged research workflows (Alpha research, Forecast): a row of stage buttons, a heading per stage, and the stale mark of a result that no longer matches the form. */
+.seg.stages { flex-wrap: wrap; gap: 4px; }
+.seg.stages button.stale { border-style: dashed; }
+.seg.stages button.stale::after { content: " (stale)"; font-size: .8em; color: var(--muted); }
+section.stage { display: flex; flex-direction: column; gap: 12px; scroll-margin-top: 12px; }
+section.stage > .stagehead h2 { margin: 12px 0 2px; font-size: 1.15rem; }
+section.stage > .stagehead p { margin: 0; }
+.ctxstrip .kv { display: flex; flex-wrap: wrap; gap: 4px 18px; }
+ul.conclusions { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+ul.conclusions li { padding: 8px 10px; border-left: 3px solid var(--mid); background: var(--surface-2, transparent); }
+ul.conclusions li.c-established { border-left-color: var(--pos); }
+ul.conclusions li.c-not-established { border-left-color: var(--neg); }
+ul.conclusions li.c-caution { border-left-color: var(--warn, var(--s4)); }
+ul.conclusions .vicon { display: inline-block; width: 1.4em; font-weight: 700; }
