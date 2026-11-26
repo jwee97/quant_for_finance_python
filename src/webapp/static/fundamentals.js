@@ -620,6 +620,18 @@
     const labels = ["Q1", "Q2", "Q3", "Q4", "H1", "H2"].filter((l) => quarters.rows.some((r) => r.periods[l]));
     if (quarters.rows.length) table(qd, [{ label: "Year", get: (r) => String(r.year) }].concat(labels.map((l) => ({ label: l, get: (r) => (r.periods[l] ? "✓ " + r.periods[l] : "") }))), quarters.rows.slice().reverse());
     if (quarters.note) h("p", "hint", qd, quarters.note);
+    const cmp = h("div", "stack", qd); cmp.dataset.role = "fund-annual-vs-quarterly";
+    const cmpBtn = h("button", "btn small", qd, "Compare each year with its quarters"); cmpBtn.type = "button"; cmpBtn.dataset.action = "compare-periods"; cmpBtn.title = "Adds up the quarters of each year and compares the sum with the annual figure";
+    cmpBtn.addEventListener("click", async () => {
+      try {
+        const r = await FD.read("/api/fund/periods/compare", { id: c.security_id }); cmp.replaceChildren();
+        const WORD = { reconciles: "adds up", differs: "differs", incomplete: "quarters missing", no_quarters: "no quarters held", no_annual: "no annual figure" };
+        h("p", "", cmp, `${r.summary.reconciles} year-figures add up, ${r.summary.differs} differ by more than ${Q.pct(r.tolerance, 0)}, ${r.summary.incomplete + r.summary.no_quarters} cannot be compared because quarters are missing.`);
+        if (r.rows.length) table(cmp, [{ label: "Year", get: (x) => String(x.fiscal_year) }, { label: "Figure", get: (x) => human(x.metric) }, { label: "Annual", num: true, get: (x) => (x.annual === null ? "" : compact(x.annual)) }, { label: "Quarters held", num: true, get: (x) => `${x.parts} of ${x.parts_needed}` },
+          { label: "Sum of the quarters", num: true, get: (x) => (x.sum_parts === null ? "" : compact(x.sum_parts)) }, { label: "Difference", num: true, get: (x) => (x.relative_difference === null ? "" : Q.pct(x.relative_difference, 1)) }, { label: "Result", get: (x) => WORD[x.status] || x.status }], r.rows);
+        h("p", "hint", cmp, r.note);
+      } catch (e) { Q.toast(e.message); }
+    });
     if (!quarters.rows.length && !quarters.note) h("p", "hint", qd, "None are held for this company.");
     if (c.log.length) {
       const ld = h("details", "how", body); h("summary", "", ld, `Requests made for this company (${c.log.length})`);

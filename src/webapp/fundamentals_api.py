@@ -123,7 +123,7 @@ class FundamentalsApi(ImportRoutes):
     # ------------------------------------------------------------------------------------------------------------ routes
     def get_routes(self) -> dict:
         return self._clean({"/api/fund/status": self.status, "/api/fund/overview": self.overview, "/api/fund/catalogue": self.catalogue, "/api/fund/companies": self.companies,
-                            "/api/fund/company": self.company, "/api/fund/valuation": self.valuation, "/api/fund/coverage": self.coverage, "/api/fund/quality": self.quality, "/api/fund/library": self.library, "/api/fund/alpha": self.alpha,
+                            "/api/fund/company": self.company, "/api/fund/valuation": self.valuation, "/api/fund/coverage": self.coverage, "/api/fund/quality": self.quality, "/api/fund/pit-audit": self.pit_audit, "/api/fund/periods/compare": self.periods_compare, "/api/fund/library": self.library, "/api/fund/alpha": self.alpha,
                             "/api/fund/graveyard": self.graveyard, "/api/fund/runs": self.runs, "/api/fund/run": self.run_summary, "/api/fund/experiments": self.experiments,
                             "/api/fund/manual/template": self.manual_template, "/api/fund/manual/entries": self.manual_entries, **self.import_get_routes()})
 
@@ -295,6 +295,32 @@ class FundamentalsApi(ImportRoutes):
         q = q or {}
         db = _db(q)
         return self._guard(self.bench(db, create=db == "real").quality, _number(q.get("limit", 100), "limit", 1, 1000, True))
+
+    def pit_audit(self, q: dict | None = None) -> dict:
+        """``GET /api/fund/pit-audit?db=&ids=1,2,3``: when each stored period could first have been known (real dates against the assumed lag), periods that would be known before they end, restatements,
+        and whether a factor built from these figures may enter a study. Dates only: no returns are read."""
+        from src.fundamentals import audit
+        q = q or {}
+        db = _db(q)
+        ids = None
+        if q.get("ids"):
+            try:
+                ids = [int(x) for x in str(q["ids"]).split(",") if x.strip()]
+            except ValueError:
+                raise ApiError("ids is a comma-separated list of security ids") from None
+        wb = self.bench(db, create=db == "real")
+        return self._guard(audit.pit_audit, wb.store, None, ids)
+
+    def periods_compare(self, q: dict | None = None) -> dict:
+        """``GET /api/fund/periods/compare?db=&id=``: for each fiscal year of one company, the annual revenue, net income and operating cash flow against the sum of the year's quarters."""
+        from src.fundamentals import audit
+        q = q or {}
+        db = _db(q)
+        try:
+            sid = int(q.get("id"))
+        except (TypeError, ValueError):
+            raise ApiError("say which company: ?id=<security id>") from None
+        return self._guard(audit.annual_vs_quarterly, self.bench(db, create=db == "real").store, sid)
 
     def library(self, q: dict | None = None) -> dict:
         """``GET /api/fund/library?db=&status=&order=&limit=``: the alphas, best first, with the count of each status and of the graveyard."""

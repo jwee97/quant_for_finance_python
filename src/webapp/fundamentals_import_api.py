@@ -35,7 +35,7 @@ class ImportRoutes:
 
     def import_get_routes(self) -> dict:
         return {"/api/fund/import/history": self.import_history, "/api/fund/import/batch": self.import_batch, "/api/fund/import/item": self.import_item, "/api/fund/import/provenance": self.import_provenance,
-                "/api/fund/coverage/overview": self.coverage_overview, "/api/fund/connectors": self.connectors, "/api/fund/pit/asof": self.pit_asof, "/api/fund/import/diagnostics": self.import_diagnostics, "/api/fund/import/observations": self.import_observations, "/api/fund/import/plan": self.import_plan, "/api/fund/import/source": self.import_source, "/api/fund/custom": self.custom_observations, "/api/fund/sources/compare": self.sources_compare, "/api/fund/lineage": self.lineage_route, "/api/fund/health": self.health_route, "/api/fund/events": self.events_route, "/api/fund/sectors": self.sectors_route, "/api/fund/alpha/inputs": self.alpha_inputs_route, "/api/fund/import/extractions": self.import_extractions, "/api/fund/import/candidates": self.import_candidates}
+                "/api/fund/coverage/overview": self.coverage_overview, "/api/fund/connectors": self.connectors, "/api/fund/pit/asof": self.pit_asof, "/api/fund/import/diagnostics": self.import_diagnostics, "/api/fund/import/support": self.import_support, "/api/fund/import/observations": self.import_observations, "/api/fund/import/plan": self.import_plan, "/api/fund/import/source": self.import_source, "/api/fund/custom": self.custom_observations, "/api/fund/sources/compare": self.sources_compare, "/api/fund/lineage": self.lineage_route, "/api/fund/health": self.health_route, "/api/fund/events": self.events_route, "/api/fund/sectors": self.sectors_route, "/api/fund/alpha/inputs": self.alpha_inputs_route, "/api/fund/import/extractions": self.import_extractions, "/api/fund/import/candidates": self.import_candidates}
 
     def import_post_routes(self) -> dict:
         return {"/api/fund/import/create": self.import_create, "/api/fund/import/chunk": self.import_chunk, "/api/fund/import/urls": self.import_urls, "/api/fund/import/process": self.import_process,
@@ -415,6 +415,12 @@ class ImportRoutes:
         """``GET /api/fund/import/diagnostics``: extraction success, statement coverage, reconciliation results, fallback usage, rejection reasons, correction rates, and the last benchmark run."""
         from src.fundamentals.importer import diagnostics
         return self._guard(diagnostics.report, self.bench("real").store)
+
+    def import_support(self, q: dict | None = None) -> dict:
+        """``GET /api/fund/import/support``: for every input format and filing connector, whether it is supported here (dependencies installed) and what has been *demonstrated* about its accuracy: on real
+        person-verified filings, on synthetic documents only, or nothing."""
+        from src.fundamentals.importer import support
+        return self._guard(support.matrix)
 
     def import_candidates(self, q: dict | None = None) -> dict:
         """``GET /api/fund/import/candidates?id=&metric=``: every candidate figure found for an item (or for one line), with the evidence for it and, for a rejected one, why it lost."""

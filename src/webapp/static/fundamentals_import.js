@@ -399,6 +399,14 @@
   }
   /* ---------- importer diagnostics ---------- */
   const P = (x) => (x === null || x === undefined ? "n/a" : `${Math.round(x * 100)}%`);
+  const SUPPORT_WORD = { demonstrated_on_real_filings: "Shown on real filings", demonstrated_on_synthetic_only: "Synthetic documents only", supported_unbenchmarked: "Supported, never benchmarked", blocked: "Blocked here", not_implemented: "Not implemented" };
+  function supportTable(body, sup) {
+    if (!sup) { h("p", "hint", body, "The support matrix is not available."); return; }
+    const box = h("div", "stack", body); box.dataset.role = "import-support";
+    table(box, [{ label: "Format", get: (r) => r.label }, { label: "Status", get: (r) => SUPPORT_WORD[r.status] || r.status }, { label: "Synthetic documents", num: true, get: (r) => (r.synthetic ? `${r.synthetic.cases} · recall ${P(r.synthetic.recall)}` : "none") },
+      { label: "Real, verified, held-out filings", num: true, get: (r) => String(r.real_verified_heldout_filings) }, { label: "What can be said", get: (r) => r.claim }], sup.formats);
+    h("p", "hint", box, sup.note);
+  }
   function diagCard(root) {
     const card = W.card(root, "Importer diagnostics", "How the importer is doing: from the reports it has read here, and from the benchmark."); card.dataset.role = "import-diagnostics";
     const body = h("div", "stack", card);
@@ -417,6 +425,7 @@
       h("p", "", body, `Reconciliations: ${rc.PASS || 0} passed, ${rc.FAIL || 0} failed, ${rc.INSUFFICIENT_DATA || 0} could not be judged (missing inputs), ${rc.NOT_APPLICABLE || 0} not applicable. Unit stated in the report: ${P(l.unit_stated_rate)}. Figures below the confidence threshold: ${P(l.low_confidence_share)} of ${l.figures_scored}.`);
       if (Object.keys(l.rejection_reasons).length) table(body, [{ label: "Why a table or line was not used", get: (r) => r[0] }, { label: "Times", num: true, get: (r) => String(r[1]) }], Object.entries(l.rejection_reasons));
       if (Object.keys(l.failure_reasons).length) table(body, [{ label: "Why a report could not be read", get: (r) => r[0] }, { label: "Times", num: true, get: (r) => String(r[1]) }], Object.entries(l.failure_reasons));
+      h("h4", "subhead", body, "What each format supports, and what has been demonstrated"); supportTable(body, d.support);
       h("h4", "subhead", body, "Benchmark (synthetic documents with known answers)");
       if (!b.available) { h("p", "hint", body, "No benchmark run is stored."); return; }
       const rows = ["dev", "validation", "heldout_first_run", "heldout_post_fix"].filter((k) => b[k]).map((k) => [k.replace(/_/g, " "), b[k]]);
@@ -425,7 +434,7 @@
         { label: "Unit", num: true, get: (r) => P(r[1].unit_accuracy) }], rows);
       h("p", "hint tone-warn", body, b.note + ". The held-out rows are the honest ones; dev and validation were tuned.");
     };
-    go.addEventListener("click", async () => { try { s.diag = await FD.read("/api/fund/import/diagnostics"); paint(s.diag); go.textContent = "Refresh"; } catch (e) { Q.toast(e.message); } });
+    go.addEventListener("click", async () => { try { s.diag = await FD.read("/api/fund/import/diagnostics"); s.diag.support = await FD.read("/api/fund/import/support").catch(() => null); paint(s.diag); go.textContent = "Refresh"; } catch (e) { Q.toast(e.message); } });
     if (s.diag) paint(s.diag);
   }
   function histCard(root) {
@@ -439,7 +448,7 @@
 
   /* ---------- data coverage ---------- */
   CV.s = { data: null, view: "annual", sort: "completeness" };
-  CV.run = () => FD.act("coverage", "Counting what the database holds…", async () => { CV.s.data = await FD.read("/api/fund/coverage/overview", { years: 12 }); return { kind: "coverage" }; });
+  CV.run = () => FD.act("coverage", "Counting what the database holds…", async () => { CV.s.data = await FD.read("/api/fund/coverage/overview", { years: 12 }); CV.s.pit = await FD.read("/api/fund/pit-audit").catch(() => null); return { kind: "coverage" }; });
   CV.auto = () => { if (!CV.s.data && FD.db === "real") CV.run(); };
   CV.empty = (root) => FD.emptyCard(root, "What does the database hold?", ["Press Refresh to count the fiscal years and quarters held for each company, which source each came from, which are missing, and what is waiting for review."], { label: "Refresh", fn: () => CV.run() });
   CV.sections = (panel) => {
@@ -458,6 +467,22 @@
       CV.s.data = await FD.read("/api/fund/coverage/overview", { years: 12 }); return { kind: "coverage", backfill: result };
     });
   }
+  /* Can a factor built from these figures enter a study? Dates only: the audit reads when each period could have been known, and never reads a return. */
+  const PIT_WORD = { ready: "Ready: every date is a real one", ready_with_assumptions: "Ready with assumptions", blocked: "Blocked" };
+  function pitCard(root, a) {
+    const card = W.card(root, "Point-in-time check before a factor enters a study", "When each stored period could first have been known: a real filing date, or the assumed lag. Look-ahead is the commonest way a fundamentals result is flattered."); card.dataset.role = "pit-audit";
+    if (!a) { h("p", "hint", card, "The check could not be run."); return; }
+    const v = a.verdict, box = h("div", "banner " + (v.status === "blocked" ? "err" : v.status === "ready" ? "ok" : "warn"), card, `${PIT_WORD[v.status] || v.status}${v.reasons.length ? ": " + v.reasons.join("; ") : ""}`); box.dataset.status = v.status; box.setAttribute("role", "status");
+    const k = h("div", "earnrow", card);
+    tile(k, "Periods checked", String(a.periods), { text: `${a.companies} companies` });
+    tile(k, "Real filing dates", a.actual_share === null ? "n/a" : pct(a.actual_share, 0), { text: `${a.estimated} periods use an assumed lag` }, a.estimated ? "" : "");
+    tile(k, "Available before they end", String(a.impossible), { text: a.impossible ? "a wrong date: blocks use" : "none" }, a.impossible ? "" : "muted");
+    tile(k, "Restated", String(a.restated), { text: "available from the day first seen" }, "muted");
+    if (a.lag_days) tile(k, "Typical lag (real dates)", `${Math.round(a.lag_days.median)} days`, { text: `10th to 90th percentile ${Math.round(a.lag_days.p10)} to ${Math.round(a.lag_days.p90)}` });
+    for (const s of a.assumptions) h("p", "hint", card, s);
+    if (a.by_period.length) table(card, [{ label: "Kind of period", get: (r) => r.fiscal_period }, { label: "Periods", num: true, get: (r) => String(r.periods) }, { label: "Real dates", num: true, get: (r) => String(r.actual_dates) }, { label: "Assumed", num: true, get: (r) => String(r.assumed_dates) },
+      { label: "Assumed lag (days)", num: true, get: (r) => String(r.assumed_lag_days) }, { label: "Median real lag", num: true, get: (r) => (r.median_lag_days === null ? "n/a" : String(Math.round(r.median_lag_days))) }, { label: "Longest real lag", num: true, get: (r) => (r.longest_lag_days === null ? "n/a" : String(r.longest_lag_days)) }], a.by_period);
+  }
   CV.build = (root, d) => {
     const data = CV.s.data; if (!data) { CV.empty(root); return; }
     Q.labHead(root, "Data coverage", `${data.companies.length} companies · as of ${data.as_of}`);
@@ -469,6 +494,7 @@
     tile(k, "Conflicts with held figures", String(p.import_conflicts), { text: "reports that differ from the database" }, p.import_conflicts ? "" : "muted");
     tile(k, "Failed imports", String(p.failed_imports), {}, p.failed_imports ? "" : "muted");
     tile(k, "Dates assumed", String(p.estimated_availability), { text: "periods with no filing date: availability is estimated" }, p.estimated_availability ? "" : "muted");
+    pitCard(root, CV.s.pit);
     if (!data.companies.length) { FD.emptyCard(root, "Nothing is held yet", ["Add companies in the Data manager, or import a report."]); return; }
     const annual = CV.s.view === "annual";
     const cols = annual ? [...new Set(data.companies.flatMap((c) => Object.keys(c.annual)))].sort() : [...new Set(data.companies.flatMap((c) => Object.keys(c.quarters)))].sort().slice(-30);

@@ -135,3 +135,50 @@ def test_a_country_source_is_listed_with_what_it_permits_and_a_links_only_source
         assert "EDINET_API_KEY" in page.inner_text("#fundamentals .panel")
     finally:
         page.close()
+
+
+def test_the_coverage_view_checks_point_in_time_dates_and_the_diagnostics_separate_support_from_demonstrated_accuracy(browser, live_real):  # noqa: F811
+    page = _page(browser, live_real)
+    try:
+        page.click("#tab-fundamentals")
+        page.wait_for_selector("#fundamentals .panel")
+        page.evaluate("""async () => QL.api('/api/fund/manual/save', {company: {ticker: 'PIT', name: 'Dated Co', exchange: 'US', country: 'US', currency: 'USD'}, units: {money: 'units', shares: 'units'},
+            periods: [{fiscal_period: 'FY', period_end: '2021-12-31', filing_date: '2022-02-15', values: {revenue: 100, total_assets: 500}}, {fiscal_period: 'FY', period_end: '2022-12-31', values: {revenue: 120, total_assets: 520}}]})""")
+        page.click("#fundamentals .labtop button[data-mode=coverage]")
+        page.wait_for_selector("[data-role=pit-audit]", timeout=30_000)
+        card = page.locator("[data-role=pit-audit]")
+        assert card.locator(".banner[data-status]").get_attribute("data-status") in ("ready_with_assumptions", "ready")
+        text = card.inner_text()
+        assert "Point-in-time check" in text and "Periods checked" in text and "Real filing dates" in text and "Available before they end" in text and "Kind of period" in text
+        assert page.locator("[data-role=pit-audit] table.data tbody tr").count() >= 1
+        page.click("#fundamentals .labtop button[data-mode=import]")
+        page.wait_for_selector("[data-action=import-diagnostics]")
+        page.click("[data-action=import-diagnostics]")
+        page.wait_for_selector("[data-role=import-support] table.data", timeout=30_000)
+        sup = page.inner_text("[data-role=import-support]")
+        assert "Synthetic documents only" in sup and "Supported, never benchmarked" in sup and "Real, verified, held-out filings" in sup
+        assert "Shown on real filings" not in sup and "No format is reported as demonstrated on real filings" in sup, "no format is claimed on real filings: none has been benchmarked on any"
+        assert not page.problems, page.problems
+    finally:
+        page.close()
+
+
+def test_a_companys_page_compares_each_year_with_the_sum_of_its_quarters(browser, live_real):  # noqa: F811
+    from tests.test_fund_api import run
+    from tests.test_webapp_fundamentals_browser import _open_first_company
+    app, fake = live_real.app, live_real.fake
+    fake.first_year = 2019
+    app.extra_post["/api/fund/companies/add"]({"symbols": ["AAPL"]})
+    run(app, "/api/fund/sync", budget=11, start_year=2018)
+    page = _page(browser, live_real)
+    try:
+        _open_first_company(page, demo=False)
+        page.locator("[data-role=fund-coverage] details.how summary", has_text="Quarterly and half-year").click()
+        page.click("[data-action=compare-periods]")
+        page.wait_for_selector("[data-role=fund-annual-vs-quarterly] table.data", timeout=30_000)
+        text = page.inner_text("[data-role=fund-annual-vs-quarterly]")
+        assert "year-figures add up" in text and "cannot be compared because quarters are missing" in text and "Sum of the quarters" in text and "A year with fewer than four quarters" in text
+        assert "no quarters held" in text, "annual figures with no quarters are reported as not comparable, never as matching"
+        assert not page.problems, page.problems
+    finally:
+        page.close()
