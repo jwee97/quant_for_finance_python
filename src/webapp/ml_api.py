@@ -25,7 +25,7 @@ from ..ml import ensembles as en
 from ..ml import execution as xexec
 from ..ml import explainability as xp
 from ..ml import frozen_eval as fe
-from ..ml import gates
+from ..ml import gate_guidance, gates
 from ..ml import governance as gv
 from ..ml import monitoring as mon
 from ..ml import null_controls as nc
@@ -223,7 +223,7 @@ class MlApi(AdvancedRoutes, SelectionRoutes, StrategyRoutes, ResearchRoutes):
     # ------------------------------------------------------------------------------------------------------------ routes
     def get_routes(self) -> dict:
         return {"/api/ml/catalog": self.catalog, "/api/ml/experiments": self.experiments, "/api/ml/experiment": self.experiment, "/api/ml/compare": self.compare, "/api/ml/explain": self.explain,
-                "/api/ml/feature-sets": self.feature_sets, "/api/ml/verification": self.verification, "/api/ml/models": self.models, "/api/ml/trials": self.trials, "/api/ml/forward": self.forward, "/api/ml/report-html": self.report_html,
+                "/api/ml/feature-sets": self.feature_sets, "/api/ml/verification": self.verification, "/api/ml/verification/status": self.verification_status, "/api/ml/verification/history": self.verification_history, "/api/ml/plan-readiness": self.plan_readiness, "/api/ml/prospective-readiness": self.prospective_readiness, "/api/ml/models": self.models, "/api/ml/trials": self.trials, "/api/ml/forward": self.forward, "/api/ml/report-html": self.report_html,
                 "/api/ml/lineage": self.lineage, "/api/ml/holdout": self.holdout, "/api/ml/promotion-status": self.promotion_status, "/api/ml/statistical-diagnostics": self.statistical_diagnostics,
                 "/api/ml/null-controls": self.null_controls, "/api/ml/trading-diagnostics": self.trading_diagnostics, "/api/ml/validation-policy": self.validation_policy, "/api/ml/governance": self.governance_status,
                 "/api/ml/alpha-diagnostics": self.alpha_diagnostics, "/api/ml/portfolio-diagnostics": self.portfolio_diagnostics, "/api/ml/improvement-experiment": self.improvement_get,
@@ -775,19 +775,82 @@ class MlApi(AdvancedRoutes, SelectionRoutes, StrategyRoutes, ResearchRoutes):
         from . import ml_verify as mv
         return clean(mv.report(self.registry if (self.registry_root / "registry.sqlite").exists() else None, (q or {}).get("id")))
 
+    def verification_status(self, q: dict | None = None) -> dict:
+        """``GET /api/ml/verification/status``: whether a verification can run here and, if not, exactly why (the runner, the test files, another run in progress), and what the running one is doing now: the
+        requirement and file, how many files are done, the passed/failed/skipped counts so far and the elapsed time. Reads state; starts nothing."""
+        from ..ml import verification as vf
+
+        live = dict(vf.LIVE)
+        if live.get("running"):
+            now = __import__("time").time()
+            live["elapsed_seconds"] = round(now - live.get("started", now), 1)
+            live["file_elapsed_seconds"] = round(now - live.get("file_started", now), 1)
+        return clean({"preflight": vf.preflight(), "live": live if live.get("running") else None})
+
+    def verification_history(self, q: dict) -> dict:
+        """``GET /api/ml/verification/history?id=P0-08[&limit=20]``: every recorded check of one requirement, newest first: status, counts, duration, the fingerprint of the source it checked, and whether that is the
+        source now."""
+        from ..ml import verification as vf
+
+        rid = _id(q)
+        if not (self.registry_root / "registry.sqlite").exists():
+            return {"requirement_id": rid, "history": []}
+        with _user_errors():
+            return clean({"requirement_id": rid, "tests": vf.REQUIREMENTS[rid][0] if rid in vf.REQUIREMENTS else [], "history": vf.history(self.registry, rid, _int(q, "limit", 20, 1, 200))})
+
     def verification_run(self, body: dict) -> dict:
-        """``POST /api/ml/verification/run {"requirements": ["P0-01", ...]}`` (a job): run the tests behind the requirements and record the result."""
+        """``POST /api/ml/verification/run`` (a job). ``{"requirements": ["P0-01", ...]}`` runs the tests behind those requirements; ``{"experiment_id": "...", "scope": "pending"}`` runs those of that experiment's model
+        family that are not currently passed (never run, stale, blocked or failed); ``{"scope": "all_pending"}`` does the same for every requirement. Only the server-side allowlist of registered test files can run
+        (a request names requirement ids, never a path or a command); one verification runs at a time, each test file has a time limit, and at most 40 requirements are taken per request."""
         from . import ml_verify as mv
+        from ..ml import verification as vf
+
+        _only(body, {"requirements", "experiment_id", "scope"}, "/api/ml/verification/run")
         requirements = body.get("requirements")
+        scope = body.get("scope")
         if requirements is not None and (not isinstance(requirements, list) or len(requirements) > 40 or not all(isinstance(r, str) for r in requirements)):
             raise ApiError("requirements must be a list of requirement ids")
+        if scope is not None:
+            if scope not in ("pending", "all_pending") or requirements is not None:
+                raise ApiError("scope is 'pending' (with experiment_id) or 'all_pending', and cannot be combined with a list of requirements")
+            cur = {r["requirement_id"]: r for r in vf.current(self.registry)}
+            if scope == "pending":
+                with _user_errors():
+                    kind = self.registry.get_experiment(_id(body, "experiment_id")).get("model_kind") or ""
+                pool = gates.family_requirements(kind)
+            else:
+                pool = list(vf.REQUIREMENTS)
+            requirements = [r for r in pool if r in cur and (cur[r]["status"] != "pass" or cur[r]["stale"])][:40]
+            if not requirements:
+                raise ApiError("nothing is pending: every requirement in scope is currently passed")
         mv.validate(requirements)
+        pre = vf.preflight(requirements)
+        if not pre["can_run"]:
+            raise ApiError("verification cannot run: " + "; ".join(f"{b['message']} ({b['fix']})" for b in pre["blockers"]))
 
         def work(progress):
             with _user_errors():
-                return clean({"checks": mv.run(self.registry, requirements, progress)})
+                try:
+                    return clean({"checks": mv.run(self.registry, requirements, progress)})
+                except vf.VerificationError as exc:
+                    raise ApiError(str(exc)) from exc
 
         return self._submit("ml: verification", work)
+
+    def plan_readiness(self, q: dict) -> dict:
+        """``GET /api/ml/plan-readiness?id=<experiment>``: what a new frozen evaluation plan would need (the consumed date ranges in the ledger, the first date a new look could protect, the adopted policy's minimum
+        evidence, the steps, and what cannot be completed now). Reads the registry; creates nothing."""
+        from ..ml import gate_guidance as gg
+
+        with _user_errors():
+            return clean(gg.plan_readiness(self.registry, _id(q)))
+
+    def prospective_readiness(self, q: dict) -> dict:
+        """``GET /api/ml/prospective-readiness?id=<experiment>``: the steps Gate C needs (policy, strategy version, limits, recovery plan, forward test, monitoring) with which are done, and the policy minimums."""
+        from ..ml import gate_guidance as gg
+
+        with _user_errors():
+            return clean(gg.prospective_readiness(self.registry, _id(q)))
 
     def experiments(self, q: dict) -> dict:
         """``GET /api/ml/experiments?sort=validation.sharpe&limit=50&universe=&model=&stage=``: the leaderboard, with the number of looks at the data when each result was produced."""
@@ -1087,6 +1150,7 @@ class MlApi(AdvancedRoutes, SelectionRoutes, StrategyRoutes, ResearchRoutes):
         exp_id = _id(q)
         with _user_errors():
             res = gates.decide(self.registry, exp_id, "api")
+            gate_guidance.annotate(res, self.registry, exp_id)
             models = [{"id": m["id"], "stage": m["stage"], "history": gates.stage_history(self.registry, m["id"])} for m in self.registry.list_models() if m["experiment_id"] == exp_id]
         res["models"] = models
         res["history"] = gates.history(self.registry, exp_id, _int(q, "history", 12, 0, 100))

@@ -774,3 +774,37 @@ table.obs td:nth-child(2) { white-space: normal; max-width: 280px; }
 .verdict-ok { color: var(--pos); font-weight: 600; } .verdict-bad { color: var(--neg); font-weight: 600; }
 .unavail { border: 1px dashed var(--axis); border-radius: 8px; padding: 10px 12px; color: var(--ink-2); font-size: 13px; }
 .unavail strong { color: var(--ink); }
+
+/* research gates (gates.js) */
+.gates { display: flex; flex-direction: column; gap: 12px; margin-bottom: 16px; }
+.gates-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.gates-head h3 { margin: 0; }
+.gates-explain { display: flex; flex-direction: column; gap: 10px; padding: 12px 14px; border: 1px solid var(--line, #2a2a2a); border-radius: 10px; }
+.gates-explain-item .hint { margin: 2px 0 0; }
+.gates-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); gap: 12px; }
+.gatecard { display: flex; flex-direction: column; gap: 8px; padding: 14px; border: 1px solid var(--line, #2a2a2a); border-radius: 12px; min-width: 0; }
+.gatecard[data-status=passed] { border-color: var(--pos, #3fb27f); }
+.gatecard[data-status=failed], .gatecard[data-status=blocked] { border-color: var(--neg, #e05d5d); }
+.gatecard-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.gatecard-name { font-weight: 600; }
+.gate-badge { padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; border: 1px solid currentColor; white-space: nowrap; }
+.gate-badge[data-status=passed] { color: var(--pos, #3fb27f); }
+.gate-badge[data-status=failed], .gate-badge[data-status=blocked] { color: var(--neg, #e05d5d); }
+.gate-badge[data-status=stale], .gate-badge[data-status=pending] { color: var(--warn, #e0a33a); }
+.gate-badge[data-status=running] { color: var(--s1, #5aa9e6); }
+.gatecard p { margin: 0; overflow-wrap: anywhere; }
+.gatecard-purpose { color: var(--muted, #aaa); }
+.gatecard-blocker { padding: 8px 10px; border-radius: 8px; background: rgba(224, 93, 93, 0.08); overflow-wrap: anywhere; }
+.gatecard-blocker[data-kind=missing_evidence], .gatecard-blocker[data-kind=stale_evidence], .gatecard-blocker[data-kind=insufficient_evidence] { background: rgba(224, 163, 58, 0.1); }
+.kindtag { font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .03em; margin-right: 4px; }
+.gatecard-action { display: flex; gap: 8px; flex-wrap: wrap; }
+.gatecard-next { font-weight: 600; }
+.gate-items td { vertical-align: top; overflow-wrap: anywhere; }
+.gates-toolbar { display: flex; gap: 8px; flex-wrap: wrap; }
+.gates-progress { padding: 10px 12px; border: 1px solid var(--line, #2a2a2a); border-radius: 10px; }
+.gates-progress .bar { height: 6px; border-radius: 3px; background: var(--line, #2a2a2a); margin: 6px 0; overflow: hidden; }
+.gates-progress .bar i { display: block; height: 100%; background: var(--s1, #5aa9e6); width: 0; transition: width .4s; }
+.gates-panel .card { margin-top: 4px; }
+.trace { white-space: pre-wrap; overflow-x: auto; font-size: 12px; }
+.stepslist { list-style: none; padding-left: 0; display: flex; flex-direction: column; gap: 6px; }
+.gates-explain[hidden], .gates-progress[hidden] { display: none; }

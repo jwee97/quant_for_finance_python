@@ -84,8 +84,37 @@ def permutation_importance(train: TrainResult, ds: Dataset, max_folds: int = 8, 
                 Xp = X.copy()
                 Xp[f] = rng.permutation(Xp[f].to_numpy())
                 drops[f].append(base - _fast_ic(model.predict(Xp), y, codes))
-    out = pd.DataFrame({f: {"mean_drop": float(np.nanmean(v)) if v else float("nan"), "std_drop": float(np.nanstd(v, ddof=1)) if len(v) > 1 else float("nan"), "n": len(v)} for f, v in drops.items()}).T
+    def one(v):
+        finite = np.array([x for x in v if np.isfinite(x)], dtype=float)
+        n = len(finite)
+        mean = float(finite.mean()) if n else float("nan")
+        sd = float(finite.std(ddof=1)) if n > 1 else float("nan")
+        half = 1.96 * sd / np.sqrt(n) if n > 2 and np.isfinite(sd) else float("nan")                   # approximate: the shuffles of one refit are not independent of each other, and neither are neighbouring refits
+        return {"mean_drop": mean, "std_drop": sd, "n": n, "ci_low": mean - half if np.isfinite(half) else float("nan"), "ci_high": mean + half if np.isfinite(half) else float("nan")}
+    out = pd.DataFrame({f: one(v) for f, v in drops.items()}).T
     return out.sort_values("mean_drop", ascending=False)
+
+
+MIN_ASSETS_FOR_RANK_IC = 3
+
+
+def permutation_status(perm: pd.DataFrame, n_assets: int) -> dict:
+    """Whether the permutation importance exists and, when it does not, why. A rank IC needs at least three assets on a date (with two, the rank correlation is always +1, -1 or undefined), so a universe of two
+    assets has NO permutation importance: every drop is undefined, and the page must say so instead of drawing an empty axis. Counts only finite drops."""
+    n_feat = int(len(perm))
+    n_valid = int(np.isfinite(perm["mean_drop"].to_numpy(dtype=float)).sum()) if n_feat and "mean_drop" in perm else 0
+    reason = None
+    if n_feat == 0:
+        reason = "the importance was not computed for this model (no fitted refit could be explained, or the explanation was switched off)"
+    elif n_valid == 0 and n_assets < MIN_ASSETS_FOR_RANK_IC:
+        reason = f"the universe has {n_assets} asset(s) and a cross-sectional rank IC needs at least {MIN_ASSETS_FOR_RANK_IC} on a date: the drop in rank IC is undefined for every feature"
+    elif n_valid == 0:
+        reason = "the out-of-sample rank IC could not be computed on the explained refits (too few dates with enough assets and non-missing outcomes)"
+    elif n_valid < n_feat:
+        reason = f"{n_feat - n_valid} of {n_feat} features have no defined drop (left out of the chart and the table)"
+    return {"computable": n_valid > 0, "n_features": n_feat, "n_valid": n_valid, "n_assets": int(n_assets), "min_assets": MIN_ASSETS_FOR_RANK_IC, "reason": reason, "metric": "out-of-sample rank IC",
+            "sign": "positive: the predictions need the feature; negative: shuffling it improved the metric; zero: no reliance", "interval": "mean ± 1.96 · spread / √n over finite shuffles and refits (approximate: they are not independent)",
+            "sample": "the walk-forward test blocks of the refits, computed once when the experiment ran; it is not recomputed for exploration, so it does not re-read the protected outcomes"}
 
 
 def feature_ic(ds: Dataset, target: str | None = None, features: list[str] | None = None, until=None, evaluation=None) -> pd.DataFrame:

@@ -663,9 +663,7 @@
     if (bars.length) chartCard(ch, "What the model leans on", `Each feature's share of the model's total absolute contribution, averaged over its refits. Stability of the ranking across refits: ${sig(imp.rank_stability)} (1 is identical). It describes the model, not the market.`, {
       draw: (b) => C.hbars(b, { rows: bars.map((x) => ({ label: x.feature, value: x.share, tip: [["Mean contribution", sct(x.mean)], ["Refits agreeing in sign", pct(x.sign_agreement, 0)], ["Average rank", sig(x.mean_rank, 1)]] })), format: (v) => pct(v, 0), name: "Share", label: "Feature importance", labelWidth: 112, color: () => css("--s1") }),
       table: (b) => table(b, [{ label: "Feature", get: (x) => x.feature }, { label: "Share", num: true, get: (x) => pct(x.share, 1) }, { label: "Mean contribution", num: true, get: (x) => sct(x.mean) }, { label: "Sign agreement", num: true, get: (x) => pct(x.sign_agreement, 0) }, { label: "Average rank", num: true, get: (x) => sig(x.mean_rank, 1) }], imp.table || bars) });
-    if (perm.length) chartCard(ch, "What breaks when a feature is shuffled", "The drop in out-of-sample rank IC when one feature's values are shuffled, averaged over refits: how much the predictions need it. A negative bar means shuffling it helped, so the model is leaning on noise.", {
-      draw: (b) => C.hbars(b, { rows: perm.map((x) => ({ label: x.feature, value: x.mean_drop, tip: [["Spread across refits", sct(x.std_drop)], ["Refits tested", String(x.n)]] })), format: (v) => v.toFixed(3), name: "Drop in rank IC", label: "Permutation importance", labelWidth: 112 }),
-      table: (b) => table(b, [{ label: "Feature", get: (x) => x.feature }, { label: "Drop in rank IC", num: true, get: (x) => num(x.mean_drop, 4) }, { label: "Spread", num: true, get: (x) => num(x.std_drop, 4) }, { label: "Refits", num: true, get: (x) => String(x.n) }], perm) });
+    if (perm.length || imp.permutation_status) window.QLImportance.card(ch, perm, imp.permutation_status);                    // src/webapp/static/importance.js: diverging bars, top N, intervals, and an explanation instead of an empty axis
   }
   /* ---------- what a model reports beside its scores (r.model_extras) ---------- */
   const COLORS = ["--s1", "--s2", "--s3", "--s4", "--s5", "--s6"];
@@ -1546,16 +1544,7 @@
     const adv = { drift: (M.results.controls_drift || {}).data, monitor: (M.results.controls_monitor || {}).data, retrain: (M.results.controls_retrain || {}).data, reports: (M.results.controls_reports || {}).data };
     header(root, `Research record for ${shortId(d.experiment_id)}`, `${d.model_kind} · gate policy ${d.policy_version}`);
     W.provenance(root, d);
-    W.flags(root, [d.note, "A stale decision is shown as pending: its evidence has changed since it was decided."], "Read first. ");
-    const k = h("div", "earnrow", root);
-    for (const n of ["A", "B", "C"]) {
-      const g = d.gates[n];
-      tile(k, `Gate ${n}: ${GATE_NAME[n]}`, cap(g.status) + (g.stale ? " (stale)" : ""), { text: g.reasons.length ? g.reasons[0].slice(0, 110) : "nothing outstanding", dir: GATE_DIR[g.status] || "" }, "", "Computed on the server from the persisted evidence; nothing in a request sets it");
-    }
-    for (const n of ["A", "B", "C"]) {
-      const g = d.gates[n], c = W.card(root, `Gate ${n} · ${GATE_NAME[n]}: ${g.status}${g.stale ? " (stale)" : ""}`, g.dependencies.length ? `Needs Gate ${g.dependencies.join(" and ")} as well.` : "");
-      table(c, [{ label: "Evidence", get: (i) => i.label }, { label: "State", get: (i) => ITEM_WORD[i.status] || i.status }, { label: "Why", get: (i) => i.reason }], g.items);
-    }
+    window.QLGates.render(root, d, { reload: () => M.run(true), openMode: () => { const el = [...document.querySelectorAll("#ml-results .card")].find((c) => /Validation policy/.test(c.textContent)); if (el) el.scrollIntoView({ block: "start" }); } });          // the three gates: purpose, status, the exact obstacle, the next action (src/webapp/static/gates.js)
     if (pol) policyCard(root, pol);
     if (st && st.diagnostics) diagnosticsCard(root, st.diagnostics);
     if (gv) governanceCard(root, gv);

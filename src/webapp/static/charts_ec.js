@@ -265,16 +265,20 @@
       chart.setOption({
         animation: false, backgroundColor: "transparent", textStyle: { fontFamily: t.font, color: t.muted },
         grid: { left: 8, right: (o.valueWidth || 54) + 8, top: 4, bottom: 4, containLabel: true },
-        yAxis: { type: "category", inverse: true, data: rows.map((r) => r.label), axisTick: { show: false }, axisLine: { show: false }, axisLabel: { color: t.ink, width: o.labelWidth || 74, overflow: "truncate", interval: 0 } },
-        xAxis: { type: "value", axisLabel: { color: t.muted, formatter: (v) => o.format(v) }, splitLine: { lineStyle: { color: t.grid } }, axisLine: { show: false }, scale: false },
+        yAxis: { type: "category", inverse: true, data: rows.map((r) => r.label), axisTick: { show: false }, axisLine: o.zero ? { show: true, onZero: true, lineStyle: { color: t.ink2, width: 1.5 } } : { show: false }, axisLabel: { color: t.ink, width: o.labelWidth || 74, overflow: "truncate", interval: 0 } },
+        xAxis: { type: "value", splitNumber: box.clientWidth && box.clientWidth < 420 ? 3 : 5, axisLabel: { color: t.muted, formatter: (v) => o.format(v), hideOverlap: true }, splitLine: { lineStyle: { color: t.grid } }, axisLine: { show: false }, scale: false },
         tooltip: { trigger: "item", ...tipBase(t), formatter: (p) => { const r = rows[p.dataIndex], div = document.createElement("div"); row("t", div, r.label); const a = row("r", div); row("k", a, o.name || "Value", "span"); row("", a, r.text !== undefined ? r.text : (o.tipFormat || o.format)(r.value), "b");
           for (const [k, v] of r.tip || []) { const b = row("r", div); row("k", b, k, "span"); row("", b, v, "b"); } return div; } },
         series: [{ type: "custom", animation: false, data: rows.map((r, i) => [i, r.from || 0, r.value]), encode: { x: [1, 2], y: 0 },
           renderItem: (params, api) => {
             const i = api.value(0), p0 = api.coord([api.value(1), i]), p1 = api.coord([api.value(2), i]), r = rows[i], left = Math.min(p0[0], p1[0]), w = Math.max(1, Math.abs(p1[0] - p0[0])), h = 14, y = p0[1] - h / 2, pos = r.value >= (r.from || 0), rad = Math.min(4, w);
+            if (!isFinite(r.value)) return null;                                                      // an undefined value draws nothing (the caller says why); it must not break the other rows
+            const whisk = isFinite(r.lo) && isFinite(r.hi) ? [api.coord([r.lo, i])[0], api.coord([r.hi, i])[0]] : null;
             return { type: "group", children: [
               { type: "rect", shape: { x: left, y, width: w, height: h, r: pos ? [0, rad, rad, 0] : [rad, 0, 0, rad] }, style: { fill: colour(r) } },
-              { type: "text", style: { x: Math.max(p0[0], p1[0]) + 5, y: p0[1], text: textOf(r), fill: css("--ink"), fontSize: 12, textVerticalAlign: "middle", textAlign: "left" } },
+              ...(whisk ? [{ type: "line", shape: { x1: whisk[0], x2: whisk[1], y1: p0[1], y2: p0[1] }, style: { stroke: css("--ink"), lineWidth: 1.5 } }, { type: "line", shape: { x1: whisk[0], x2: whisk[0], y1: p0[1] - 4, y2: p0[1] + 4 }, style: { stroke: css("--ink"), lineWidth: 1.5 } },
+                { type: "line", shape: { x1: whisk[1], x2: whisk[1], y1: p0[1] - 4, y2: p0[1] + 4 }, style: { stroke: css("--ink"), lineWidth: 1.5 } }] : []),
+              { type: "text", style: { x: Math.max(p0[0], p1[0], whisk ? Math.max(...whisk) : 0) + 5, y: p0[1], text: textOf(r), fill: css("--ink"), fontSize: 12, textVerticalAlign: "middle", textAlign: "left" } },
             ] };
           } }],
       }, true);

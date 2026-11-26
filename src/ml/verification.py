@@ -16,6 +16,7 @@ from __future__ import annotations
 import hashlib
 import json
 import platform
+import threading
 import subprocess
 import sys
 import time
@@ -188,7 +189,31 @@ REQUIREMENTS = {                                                # requirement id
 
 
 class VerificationError(ValueError):
-    """A request for a check that does not exist."""
+    """A request for a check that does not exist, or one the runner cannot take now (another run is in progress)."""
+
+
+MAX_REQUIREMENTS_PER_RUN = 40
+FILE_TIMEOUT = 900                                                      # seconds for the tests of one file; a hung test is ended and recorded as a failure that says so
+_RUN_LOCK = threading.Lock()                                            # one verification at a time: each one runs pytest in a subprocess and the machine is shared with the user's own work
+LIVE: dict = {"running": False}                                         # what the running verification is doing now (read by ``GET /api/ml/verification/status``)
+
+
+def preflight(requirements: list[str] | None = None) -> dict:
+    """Whether a verification can run here, and if not exactly why. Nothing is run. Checks that the test runner (pytest) imports, that every test file behind the requirements exists in this checkout, and that no other
+    verification is running."""
+    wanted = list(requirements or REQUIREMENTS)
+    blockers = []
+    try:
+        import pytest as _pytest                                        # noqa: F401
+    except ImportError:
+        blockers.append({"kind": "runner_missing", "message": "pytest is not installed in the environment that runs the app, so no verification can run", "fix": "pip install pytest (the same environment as the app)"})
+    missing = sorted({f for r in wanted if r in REQUIREMENTS for f in REQUIREMENTS[r][0] if not (ROOT / f).exists()})
+    if missing:
+        blockers.append({"kind": "tests_missing", "message": f"{len(missing)} test file(s) are not in this deployment: {', '.join(missing[:4])}{' ...' if len(missing) > 4 else ''}", "fix": "deploy the repository's tests/ folder with the app (verification runs the repository's own tests)"})
+    if _RUN_LOCK.locked() or LIVE.get("running"):
+        blockers.append({"kind": "busy", "message": f"a verification is already running ({LIVE.get('requirement') or 'starting'}, {LIVE.get('file') or 'no file yet'})", "fix": "wait for it to finish"})
+    return {"can_run": not blockers, "blockers": blockers, "python": platform.python_version(), "executable": sys.executable, "test_root": str(ROOT / "tests"), "requirements": len([r for r in wanted if r in REQUIREMENTS]),
+            "timeout_per_file_seconds": FILE_TIMEOUT, "max_requirements_per_run": MAX_REQUIREMENTS_PER_RUN}
 
 
 def source_hash(group: str) -> str:
@@ -220,31 +245,36 @@ def _run_file(path: str, report: Path, timeout: int) -> dict:
         proc = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, timeout=timeout, check=False)
         code = proc.returncode
     except subprocess.TimeoutExpired:
-        return {"file": path, "passed": 0, "failed": 0, "skipped": 0, "errors": 1, "seconds": float(timeout), "exit_code": -1, "failures": ["timed out"], "skips": []}
+        return {"file": path, "passed": 0, "failed": 0, "skipped": 0, "errors": 1, "seconds": float(timeout), "exit_code": -1, "failures": ["timed out"], "skips": [],
+                "details": [{"test": "(timeout)", "message": f"the tests of this file did not finish within {timeout} seconds and were ended", "trace": ""}]}
     counts = {"passed": 0, "failed": 0, "skipped": 0, "errors": 0}
-    failures, skips = [], []
+    failures, skips, details = [], [], []
     if report.exists():
         for case in ET.parse(report).getroot().iter("testcase"):
             name = case.get("name", "")
-            if case.find("failure") is not None:
-                counts["failed"] += 1
+            bad = case.find("failure") if case.find("failure") is not None else case.find("error")
+            if bad is not None:
+                counts["failed" if case.find("failure") is not None else "errors"] += 1
                 failures.append(name)
-            elif case.find("error") is not None:
-                counts["errors"] += 1
-                failures.append(name)
+                body = (bad.text or "").strip().splitlines()
+                details.append({"test": name, "message": (bad.get("message") or "")[:300], "trace": "\n".join(body[-12:])[:1500]})
             elif case.find("skipped") is not None:
                 counts["skipped"] += 1
                 skips.append(f"{name}: {case.find('skipped').get('message', '')}"[:160])
             else:
                 counts["passed"] += 1
-    return {"file": path, **counts, "seconds": round(time.perf_counter() - t0, 1), "exit_code": code, "failures": failures[:10], "skips": skips[:10]}
+    if code not in (0, 1) and not report.exists():                                                           # pytest itself failed to start or collect (an import error in a test module, a crash)
+        tail = (proc.stderr or proc.stdout or "").strip().splitlines()[-6:]
+        details.append({"test": "(collection)", "message": f"pytest exited with status {code} before reporting: {tail[-1] if tail else ''}"[:300], "trace": "\n".join(tail)[:1500]})
+        counts["errors"] += 1
+    return {"file": path, **counts, "seconds": round(time.perf_counter() - t0, 1), "exit_code": code, "failures": failures[:10], "skips": skips[:10], "details": details[:10]}
 
 
 def status_of(results: list[dict]) -> tuple[str, str]:
     """The status and the reason from the results of the files that check a requirement."""
     if not results or sum(r["passed"] + r["failed"] + r["skipped"] + r["errors"] for r in results) == 0:
         return "not_run", "no test was collected"
-    bad = [f"{r['file']}: {', '.join(r['failures'][:3])}" for r in results if r["failed"] or r["errors"]]
+    bad = [f"{r['file']}: {', '.join(r['failures'][:3]) or '; '.join(d['message'] for d in (r.get('details') or [])[:2])}" for r in results if r["failed"] or r["errors"]]
     if bad:
         return "fail", "; ".join(bad)
     skipped = [s for r in results for s in r["skips"] if ": NOT_APPLICABLE" not in s]                  # a skip that says NOT_APPLICABLE (a package that cannot coexist with this environment) is a justified gap, counted apart
@@ -257,19 +287,38 @@ def status_of(results: list[dict]) -> tuple[str, str]:
 def run_verification(registry: Registry, requirements: list[str] | None = None, progress=None, timeout: int = 900) -> list[dict]:
     """Run the tests behind the requirements (all of them by default), record one check per requirement, and return the records."""
     progress = progress or (lambda msg: None)
-    wanted = list(requirements or REQUIREMENTS)
+    wanted = list(dict.fromkeys(requirements or REQUIREMENTS))
     unknown = [r for r in wanted if r not in REQUIREMENTS]
     if unknown:
         raise VerificationError(f"unknown requirement(s) {unknown}; known: {sorted(REQUIREMENTS)}")
+    if len(wanted) > MAX_REQUIREMENTS_PER_RUN and requirements:
+        raise VerificationError(f"at most {MAX_REQUIREMENTS_PER_RUN} requirements per run")
+    if not _RUN_LOCK.acquire(blocking=False):
+        raise VerificationError(f"a verification is already running ({LIVE.get('requirement')}); wait for it to finish")
+    try:
+        return _run_locked(registry, wanted, progress, timeout)
+    finally:
+        LIVE.clear()
+        LIVE["running"] = False
+        _RUN_LOCK.release()
+
+
+def _run_locked(registry: Registry, wanted: list[str], progress, timeout: int) -> list[dict]:
     files = sorted({f for r in wanted for f in REQUIREMENTS[r][0]})
+    owner = {f: [r for r in wanted if f in REQUIREMENTS[r][0]] for f in files}
+    LIVE.update(running=True, started=time.time(), total_files=len(files), index=0, requirements=wanted, requirement=wanted[0] if wanted else "", file="", done=[], counts={"passed": 0, "failed": 0, "skipped": 0, "errors": 0})
     out_dir = registry.root / "verification"
     out_dir.mkdir(exist_ok=True)
     stamp = time.strftime("%Y%m%d-%H%M%S")
     results = {}
     for i, f in enumerate(files):
-        progress(f"running {f} ({i + 1} of {len(files)})")
-        results[f] = _run_file(f, out_dir / f"{stamp}-{Path(f).stem}.xml", timeout) if (ROOT / f).exists() else {"file": f, "passed": 0, "failed": 0, "skipped": 0, "errors": 0, "seconds": 0.0, "exit_code": 4,
-                                                                                                         "failures": [], "skips": []}
+        LIVE.update(index=i + 1, file=f, requirement=", ".join(owner[f]), file_started=time.time())
+        progress(f"running {f} for {', '.join(owner[f])} ({i + 1} of {len(files)})")
+        results[f] = _run_file(f, out_dir / f"{stamp}-{Path(f).stem}.xml", timeout) if (ROOT / f).exists() else {"file": f, "passed": 0, "failed": 0, "skipped": 0, "errors": 1, "seconds": 0.0, "exit_code": 4,
+                                                                                                         "failures": [], "skips": [], "details": [{"test": "(missing file)", "message": f"{f} is not in this deployment", "trace": ""}]}
+        for k in ("passed", "failed", "skipped", "errors"):
+            LIVE["counts"][k] += results[f][k]
+        LIVE["done"].append({"file": f, "seconds": results[f]["seconds"], **{k: results[f][k] for k in ("passed", "failed", "skipped", "errors")}})
     env, records = environment(), []
     for req in wanted:
         paths, group = REQUIREMENTS[req]
@@ -295,8 +344,31 @@ def current(registry: Registry, requirement_id: str | None = None) -> list[dict]
         row = latest.get(req)
         out.append({"requirement_id": req, "status": row["status"] if row else "not_run", "stale": bool(row) and row["subject_hash"] != source_hash(group), "reason": row["reason"] if row else "never run",
                     "created": row["created"] if row else None, "check_id": row["check_id"] if row else None, "environment": row["environment"] if row else None, "artifact_hash": row["artifact_hash"] if row else None,
-                    "files": (row["observed"] or {}).get("files") if row else None})
+                    "files": (row["observed"] or {}).get("files") if row else None, "tests": REQUIREMENTS[req][0], **_summary(row)})
     return out
+
+
+def _summary(row: dict | None) -> dict:
+    """What a person needs to read a check: the counts, how long it took, the fingerprint of the source it checked and how old it is."""
+    if not row:
+        return {"counts": None, "seconds": None, "source_fingerprint": None, "age_seconds": None, "failure_details": []}
+    files = (row["observed"] or {}).get("files") or []
+    counts = {k: sum(int(f.get(k, 0)) for f in files) for k in ("passed", "failed", "skipped", "errors")}
+    try:
+        age = max(0.0, time.time() - time.mktime(time.strptime(str(row["created"])[:19], "%Y-%m-%d %H:%M:%S")))
+    except (ValueError, TypeError):
+        age = None
+    return {"counts": counts, "seconds": round(sum(float(f.get("seconds", 0)) for f in files), 1), "source_fingerprint": (row.get("subject_hash") or "")[:12], "age_seconds": age,
+            "failure_details": [d for f in files for d in (f.get("details") or [])][:10]}
+
+
+def history(registry: Registry, requirement_id: str, limit: int = 20) -> list[dict]:
+    """Every recorded check of one requirement, newest first, with its counts and the fingerprint of the source it checked."""
+    if requirement_id not in REQUIREMENTS:
+        raise VerificationError(f"unknown requirement '{requirement_id}'; known: {sorted(REQUIREMENTS)}")
+    group = REQUIREMENTS[requirement_id][1]
+    now = source_hash(group)
+    return [{"check_id": r["check_id"], "status": r["status"], "created": r["created"], "reason": r["reason"], "current_source": r["subject_hash"] == now, **_summary(r)} for r in registry.list_checks(requirement_id, limit=limit)]
 
 
 def as_json(records: list[dict]) -> str:
