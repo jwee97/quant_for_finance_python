@@ -17,7 +17,7 @@ from pathlib import Path
 
 SIZES = {"small": (16, 2, 2), "medium": (64, 3, 3), "large": (256, 4, 4)}       # width, blocks, layers
 LEVELS = ("off", "lightweight", "standard", "detailed")
-LOOK, FEAT, N_TRAIN, N_VAL, EPOCHS, BATCH = 20, 30, 6000, 1000, 6, 128
+LOOK, FEAT, N_TRAIN, N_VAL, EPOCHS, BATCH = 20, 30, 20000, 2000, 4, 128
 
 
 def child(level: str, size: str, threads: int) -> None:
@@ -49,11 +49,11 @@ def child(level: str, size: str, threads: int) -> None:
     import tempfile
 
     with tempfile.TemporaryDirectory() as tmp:
-        cfg = tn.TrainConfig(epochs=EPOCHS, batch_size=BATCH, learning_rate=0.01, patience=50, checkpoint_dir=tmp if level != "off" else None, config_fp="b", data_fp="b", seed=1, grad_level=level, grad_clip=1.0)
+        cfg = tn.TrainConfig(epochs=EPOCHS, batch_size=BATCH, learning_rate=0.01, patience=50, checkpoint_dir=tmp, config_fp="b", data_fp="b", seed=1, grad_level=level, grad_clip=1.0)
         t0 = time.perf_counter()
         h = tn.fit_network(net, batch, loss, N_TRAIN, N_VAL, cfg)
         total = time.perf_counter() - t0
-        size_kb = sum(f.stat().st_size for f in Path(tmp).glob("gradients.jsonl")) / 1024 if level != "off" else 0.0
+        size_kb = sum(f.stat().st_size for f in Path(tmp).glob("gradients.jsonl")) / 1024
     stop.set()
     print(json.dumps({"epoch_seconds": sorted(h.epoch_seconds)[len(h.epoch_seconds) // 2], "total_seconds": total, "peak_rss_mb": peak[0], "gradient_log_kb": size_kb, "params": int(sum(p.numel() for p in net.parameters()))}))
 

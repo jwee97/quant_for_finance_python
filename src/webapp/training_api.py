@@ -70,7 +70,7 @@ class TrainingApi:
         return {"/api/training/runs": self.runs, "/api/training/run": self.run, "/api/training/gradients": self.gradients, "/api/training/profiles": self.profiles}
 
     def post_routes(self) -> dict:
-        return {"/api/training/control": self.control, "/api/training/resume": self.resume, "/api/training/archive": self.archive, "/api/training/preflight": self.preflight}
+        return {"/api/training/control": self.control, "/api/training/resume": self.resume, "/api/training/archive": self.archive, "/api/training/preflight": self.preflight, "/api/training/prune": self.prune}
 
     def runs(self, q: dict) -> dict:
         return {"runs": runs.list_runs(self.root), "disk": runs.disk_usage(self.root), "machine": resources.machine(), "storage_note": self._storage_note()}
@@ -105,6 +105,10 @@ class TrainingApi:
             raise ApiError("unknown training run") from None
         except ValueError as exc:
             raise ApiError(str(exc)) from None
+
+    def prune(self, body: dict) -> dict:
+        """``POST /api/training/prune {"keep_days": 30, "dry_run": true}``: remove finished runs untouched for that long (and old archives). Runs that can be resumed are never removed."""
+        return runs.prune(self.root, float(_number(body, "keep_days", 30, 0, 3650)), bool(body.get("dry_run")))
 
     def archive(self, body: dict) -> dict:
         try:

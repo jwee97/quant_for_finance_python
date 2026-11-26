@@ -537,6 +537,10 @@ class MlApi(AdvancedRoutes, SelectionRoutes, StrategyRoutes, ResearchRoutes):
             with _user_errors(), (train_context.use(run["dir"], run["resume"], run["warm"], str(body.get("grad_monitor") or "auto")) if run else contextlib.nullcontext()):
                 exp = run_experiment(over, config=self.app.config, builder=self.app.builder, registry=self.registry, progress=progress, explain=explain, robustness=robust or None,
                                      stop_after="validation" if mode == "development" else None, entry_point="api")
+            if run:
+                from ..ml.deep import runs as run_files
+
+                run_files.trim_completed(Path(run["dir"]))                                          # disk retention: the fallback checkpoints of fits that ended normally
             return {"id": exp.id, "report": exp.report, "training_run": run["run_id"] if run else None}
 
         job = self._submit(f"ml: {label}" + (" (development)" if mode == "development" else ""), work)

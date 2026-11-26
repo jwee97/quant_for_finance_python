@@ -256,6 +256,7 @@ def fit_network(net: torch.nn.Module, batch_fn, loss_fn, n_train: int, n_val: in
             pass
     finished = False
     clock = [time.process_time(), time.perf_counter()]
+    warned_at = -99
     accum = max(int(cfg.accumulation_steps), 1)
     try:
         if start > 0 and bad >= cfg.patience:                                                       # the saved run had already stopped early: resuming it must not train one more epoch than the original did
@@ -341,6 +342,12 @@ def fit_network(net: torch.nn.Module, batch_fn, loss_fn, n_train: int, n_val: in
                     hist.events.append({"type": "checkpoint_failed", "epoch": epoch + 1, "at": time.time(), "error": str(exc)})
             else:
                 ck = None
+            lim_, used_ = row.get("limit_mb"), row.get("system_used_mb")
+            if lim_ and used_ and used_ / lim_ > 0.85 and epoch - warned_at >= 5:                         # the machine is nearly out of memory: say so before it kills the run
+                warned_at = epoch
+                warn = {"type": "resource_warning", "kind": "memory", "epoch": epoch + 1, "at": time.time(), "used_mb": used_, "limit_mb": lim_, "message": f"the machine is using {used_:,.0f} of {lim_:,.0f} MB"}
+                grad_events.append(warn)
+                hist.events.append(warn)
             row["checkpoint"] = ck
             _log(folder, row)
             for ev_ in grad_events:                                                                     # warnings the gradient monitor raised: persisted next to the metrics, never acted on

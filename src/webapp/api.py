@@ -528,6 +528,13 @@ class App:
             with live.use(job.telemetry), (train_context.use(run["dir"], run["resume"], run["warm"], run["grad_level"], run["request"]) if run else contextlib.nullcontext()):
                 job.result = clean(work(progress))
             job.status, job.message = "done", "finished"
+            if run:
+                try:
+                    from ..ml.deep import runs as _runs
+
+                    _runs.trim_completed(Path(run["dir"]))                                  # disk retention: the fallback checkpoints of a run that ended normally
+                except Exception:                                                        # noqa: BLE001 - housekeeping never fails a job
+                    pass
             if job.cancel_event.is_set():                           # the work ended before it reached a point where it could stop: its result is thrown away, not half kept
                 App._cancelled(job, "cancelled: the run had already finished its work, so its result was discarded")
         except JobCancelled:

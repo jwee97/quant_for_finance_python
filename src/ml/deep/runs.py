@@ -297,6 +297,45 @@ def control_clear(run: Path) -> None:
         (f / "control.json").unlink(missing_ok=True)
 
 
+def trim_completed(run: Path) -> int:
+    """Disk retention for a run that ended normally: the previous-generation checkpoint and the milestones are only fallbacks for a run that may still be interrupted, so they are removed; ``last.pt`` and ``best.pt``
+    stay (a finished run can be extended or warm-started). Returns the bytes freed. Interrupted, paused and stopped runs are never touched."""
+    freed = 0
+    for fit in fit_folders(run):
+        if summarise(fit)["status"] not in ("completed", "stopped_early"):
+            continue
+        for f in list(fit.glob("last.prev.pt*")) + list(fit.glob("epoch-*.pt*")):
+            try:
+                freed += f.stat().st_size
+                f.unlink()
+            except OSError:
+                pass
+    return freed
+
+
+def prune(root, keep_days: float = 30.0, dry_run: bool = False) -> dict:
+    """Remove whole runs that ended normally (completed or stopped early) and have not been touched for ``keep_days`` days, and archived runs older than twice that. A run that can still be resumed is never removed."""
+    now, removed, freed = time.time(), [], 0
+    cutoff = keep_days * 86400.0
+    for r in list_runs(root):
+        if r["status"] in ("completed", "stopped_early") and now - r["mtime"] > cutoff:
+            removed.append(r["id"])
+            freed += r["disk_bytes"]
+            if not dry_run:
+                shutil.rmtree(base(root) / r["id"], ignore_errors=True)
+    arch = base(root) / "_archive"
+    for d in sorted(arch.glob("*")) if arch.is_dir() else []:
+        try:
+            if d.is_dir() and now - d.stat().st_mtime > 2 * cutoff:
+                removed.append("_archive/" + d.name)
+                freed += _bytes(d)
+                if not dry_run:
+                    shutil.rmtree(d, ignore_errors=True)
+        except OSError:
+            pass
+    return {"removed": removed, "freed_bytes": int(freed), "dry_run": bool(dry_run), "keep_days": keep_days}
+
+
 def archive(root, run_id: str) -> dict:
     if not ID.match(run_id):
         raise ValueError("invalid run id")

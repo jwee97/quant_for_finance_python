@@ -196,3 +196,23 @@ def test_a_run_with_diagnostics_off_says_so(app):
     finished(app, app.extra_post["/api/ml/train"]({**BASE, "run_id": "run-nograd", "model": {"kind": "nbeats", "params": {**TINY, "grad_monitor": "off"}}}))
     g = app.extra_get["/api/training/gradients"]({"id": "run-nograd"})
     assert g["epochs"] == [] and "off" in g["note"]
+
+
+def test_finished_runs_are_trimmed_and_old_ones_pruned_but_a_resumable_one_never(app, tmp_path):
+    from pathlib import Path
+    import os
+    fit = next((runs.base(app.root) / "run-grad").glob("nbeats-*"))
+    assert not list(fit.glob("last.prev.pt")) and not list(fit.glob("epoch-*.pt")) and (fit / "last.pt").exists() and (fit / "best.pt").exists()   # trimmed when the job ended
+    old = 0
+    for f in (runs.base(app.root) / "run-grad").rglob("*"):
+        os.utime(f, (old, old))
+    dry = app.extra_post["/api/training/prune"]({"keep_days": 1, "dry_run": True})
+    assert "run-grad" in dry["removed"] and dry["freed_bytes"] > 0 and (runs.base(app.root) / "run-grad").exists()
+    # a run that was interrupted (resumable) is never removed, however old
+    broken = runs.base(app.root) / "broken-old" / "nbeats-x"
+    broken.mkdir(parents=True)
+    (broken / "metrics.jsonl").write_text(json.dumps({"type": "start", "at": 1.0, "epochs": 5}) + "\n" + json.dumps({"type": "interrupted", "epoch": 0, "at": 2.0, "reason": "killed"}) + "\n")
+    for f in broken.parent.rglob("*"):
+        os.utime(f, (old, old))
+    out = app.extra_post["/api/training/prune"]({"keep_days": 1})
+    assert "run-grad" in out["removed"] and "broken-old" not in out["removed"] and not (runs.base(app.root) / "run-grad").exists() and broken.exists()

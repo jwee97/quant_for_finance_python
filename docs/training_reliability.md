@@ -50,17 +50,7 @@ Routes (`src/webapp/training_api.py`): `GET /api/training/runs`, `GET /api/train
 
 ## 5. Model-by-model compatibility matrix
 
-"Exact" is claimed only where `tests/test_training_recovery_architectures.py` (or the N-BEATS/N-HiTS tests in `tests/test_training_recovery.py`) resumed after an interruption in the middle of an epoch and compared with the uninterrupted run.
-
-| Model | Trainer | Checkpointed | Exact resume verified | Notes |
-|---|---|---|---|---|
-| N-BEATS, N-HiTS | `fit_network` via `DeepModel` | yes | yes (dropout 0.2, scheduler, early stopping) | |
-| LSTM, GRU, TCN | same | yes | yes | |
-| PatchTST, iTransformer, DLinear, TFT | same | yes | yes | |
-| Autoencoder, VAE | same | yes | **no** (checkpointed by the same code, resume not exercised; the VAE draws from the RNG inside the forward pass, which the saved RNG states cover in principle) | |
-| Graph models (`ml/graph.py`) | `fit_network` without a folder | **no** | no | calls the trainer with no checkpoint folder |
-| `models/deep_sequence`, `deep_family`, `deep_forecast`, `generative`, `diffusion`, `pinn`, `representation`, `graph_forecast`; `strategies/deep.py`; `derivatives/deep_hedging.py`; `rl/deep.py` | their own loops | **no** | no | interrupted runs restart from the beginning |
-| Linear, tree and boosting models | single fit | not applicable | n/a | fits take seconds; an interrupted job restarts |
+Superseded by `deep_learning_training_matrix.md`, which covers every deep-training loop (feature-based networks, autoencoders and VAEs, graph networks, forecast networks, GANs, diffusion, deep hedging, physics-informed networks and the reinforcement-learning agents) with fresh-process recovery results and the gradient diagnostics.
 
 ## 6. Small universes
 
@@ -96,9 +86,4 @@ A checkpoint is the weights plus two Adam moment buffers plus the best weights, 
 
 ## 10. Not implemented or not verified
 
-* Exact resume of the autoencoder and VAE; checkpointing of the graph models and of the loops listed as "own loops" above.
-* **Continuing** (not restarting) an interrupted search or Optuna study.
-* A worker **process** separate from the web process, with its own heartbeat: training still runs on the app's worker threads, so an app restart ends the job (the job log marks it `interrupted`, the run is resumable from the monitor).
-* GPU out-of-memory recovery was not exercised (no GPU in the build environment); AMP and `accumulation_steps` are tested for consistency on CPU only (`accumulation_steps`; AMP is a no-op on CPU).
-* Gradient histograms and per-layer diagnostics: only the mean gradient norm per epoch is recorded.
-* Windows behaviour was reasoned about and simulated, not run on Windows.
+See section 8 of `deep_learning_training_matrix.md` for the current list. Still open from this page: continuing (not restarting) an interrupted search or Optuna study; a separate worker process with its own heartbeat (a killed app now leaves a run that a new app can resume, but training still runs on the app's worker threads); GPU behaviour; Windows was reasoned about and simulated, not run.

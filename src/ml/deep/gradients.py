@@ -15,9 +15,9 @@ What is measured (``level``):
 ``off``          nothing.
 ``lightweight``  every ``interval`` steps (default 10): the global L2 norm of the unclipped gradient (every step if clipping is on: it is the number the clipper computes anyway), non-finite detection, clip
                  frequency, the count of trainable parameters with no gradient.
-``standard``     lightweight, plus at about eight sampled steps per epoch: global mean/median/RMS/standard deviation, signed minimum and maximum, L-infinity norm, P50, P90, P95, P99 of |g|, zero and near-zero
+``standard``     lightweight, plus at about four sampled steps per epoch: global mean/median/RMS/standard deviation, signed minimum and maximum, L-infinity norm, P50, P90, P95, P99 of |g|, zero and near-zero
                  fractions; per layer: L2, RMS, mean |g|, max |g|, near-zero fraction, parameter norm, gradient-to-weight ratio and the measured update-to-weight ratio.
-``detailed``     standard at about sixteen samples per epoch, plus per-layer medians and a histogram of log10 |g| (zeros and non-finite values counted apart).
+``detailed``     standard at about eight samples per epoch, plus per-layer medians and a histogram of log10 |g| (zeros and non-finite values counted apart).
 
 Design rules that make the numbers mean something:
 
@@ -42,8 +42,8 @@ import torch
 LEVELS = ("off", "lightweight", "standard", "detailed")
 PERCENTILES = (50, 90, 95, 99)
 HIST_LO, HIST_HI, HIST_BINS = -12.0, 4.0, 40                       # log10 |g| from 1e-12 to 1e4
-SAMPLES_PER_EPOCH = {"standard": 8, "detailed": 16}
-PERCENTILE_CAP = 1_000_000                                         # elements sorted for the global percentiles; more are subsampled with a fixed stride and the result says so
+SAMPLES_PER_EPOCH = {"standard": 4, "detailed": 8}
+PERCENTILE_CAP = 200_000                                           # elements sorted for the global percentiles; more are subsampled with a fixed stride and the result says so
 MAX_LAYERS = 64
 SEVERITY = ("info", "warning", "critical")
 
