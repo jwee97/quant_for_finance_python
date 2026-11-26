@@ -8,8 +8,11 @@
   const Q = window.QL, { h, $, api, toast, css } = Q, C = Q.C;
   const num = (v, d = 2) => (v === null || v === undefined || !isFinite(v) ? "n/a" : Q.num(v, d)), pct = (v, d = 1) => (v === null || v === undefined || !isFinite(v) ? "n/a" : Q.pct(v, d));
   const root = $("#alphalab");
-  const MODES = [["alpha", "Alpha"], ["risk", "Risk"], ["portfolio", "Portfolio"], ["trading", "Trading"]];
-  const S = { mode: "alpha", plan: null, busy: false, results: {}, form: { tickers: "", start: "", source: "", signal: "momentum", horizon: 5, kind: "statistical", n_factors: "", methods: null, config: {}, trading: { cost_bps: 5, target_gross: 1, lag: 1 }, long_only: true }, weightsOf: null, jobs: {} };
+  const MODES = [["research", "Alpha research"], ["alpha", "Alpha"], ["risk", "Risk"], ["portfolio", "Portfolio"], ["trading", "Trading"]];
+  const S = { mode: "research", plan: null, busy: false, results: {}, form: { tickers: "", start: "", source: "", signal: "momentum", horizon: 5, kind: "statistical", n_factors: "", methods: null, config: {}, trading: { cost_bps: 5, target_gross: 1, lag: 1 }, long_only: true }, weightsOf: null, jobs: {} };
+  S.redraw = () => draw();
+  /* In the research workflow the sample is shared by five stages, so a change to it re-draws the stage pane (the guard, the stale marks) and leaves the form, and the cursor in it, alone. */
+  function refreshResearch() { const out = $("#lab-results"); if (!out) return; out.replaceChildren(); Q.alphaResearch.render(out, S); }
   const colors = () => ["--s1", "--s2", "--s3", "--s4", "--s5", "--s6", "--s7", "--s8"].map(css);
 
   function defaults() {
@@ -29,18 +32,20 @@
     form();
     const out = h("div", "stack", root); out.id = "lab-results"; out.setAttribute("aria-live", "polite");
     const r = S.results[S.mode];
-    if (r) ({ alpha, risk, portfolio, trading })[S.mode](out, r);
+    if (S.mode === "research") Q.alphaResearch.render(out, S);
+    else if (r) ({ alpha, risk, portfolio, trading })[S.mode](out, r);
     else { const e = h("div", "card empty", out); h("h3", "", e, "No run yet"); h("p", "", e, (S.plan.studies.find((s) => s.key === S.mode) || {}).what || ""); }
   }
 
   function form() {
     const card = h("div", "card", root); card.dataset.role = "lab-form"; const f = S.form, grid = h("div", "params", card);
-    const text = (label, key, type, wide, parent) => { const l = h("label", "f" + (wide ? " wide" : ""), parent || grid, label), i = h("input", "", l); i.type = type || "text"; i.value = f[key]; i.dataset.key = key; i.addEventListener("input", () => { f[key] = i.value; }); return i; };
-    text("Tickers (at least " + ({ alpha: 6, risk: 4, portfolio: 4, trading: 6 })[S.mode] + ")", "tickers", "text", true); text("First day", "start", "date");
+    const text = (label, key, type, wide, parent) => { const l = h("label", "f" + (wide ? " wide" : ""), parent || grid, label), i = h("input", "", l); i.type = type || "text"; i.value = f[key]; i.dataset.key = key; i.addEventListener("input", () => { f[key] = i.value; if (S.mode === "research") refreshResearch(); }); return i; };
+    text("Tickers (at least " + ({ research: 6, alpha: 6, risk: 4, portfolio: 4, trading: 6 })[S.mode] + ")", "tickers", "text", true); text("First day", "start", "date");
     const sl = h("label", "f", grid, "Data source"), src = h("select", "", sl); src.dataset.key = "source";
-    for (const s of ["", ...(Q.S.catalog ? Q.S.catalog.sources.map((x) => x.name) : [])]) { const o = h("option", "", src, s || "(Backtest tab's source)"); o.value = s; if (s === f.source) o.selected = true; } src.addEventListener("change", () => { f.source = src.value; });
+    for (const s of ["", ...(Q.S.catalog ? Q.S.catalog.sources.map((x) => x.name) : [])]) { const o = h("option", "", src, s || "(Backtest tab's source)"); o.value = s; if (s === f.source) o.selected = true; } src.addEventListener("change", () => { f.source = src.value;  if (S.mode === "research") refreshResearch(); });
     const select = (label, key, options, parent, title) => { const l = h("label", "f", parent || grid, label); if (title) l.title = title; const s = h("select", "", l); s.dataset.key = key; for (const [v, t] of options) { const o = h("option", "", s, t); o.value = v; if (String(f[key]) === String(v)) o.selected = true; } s.addEventListener("change", () => { f[key] = s.value; if (key === "signal") draw(); }); };
     const sigs = S.plan.signals.map((s) => [s.key, s.label]);
+    if (S.mode === "research") text("Forecast horizon (days)", "horizon", "number");
     if (S.mode === "alpha" || S.mode === "trading") { select("Signal", "signal", sigs); text("Forecast horizon (days)", "horizon", "number"); h("p", "hint wide", grid, (S.plan.signals.find((s) => s.key === f.signal) || {}).help || ""); }
     if (S.mode === "risk") { select("Factor model", "kind", [["statistical", "Statistical (principal components)"], ["time_series", "Time series (equal-weighted market)"]]); text("Number of factors (blank: by random-matrix bound)", "n_factors", "number"); }
     if (S.mode === "trading") {
@@ -57,6 +62,7 @@
         const l = h("label", "f", grid, s.label); l.title = s.help; const i = h("input", "", l); i.type = "number"; i.step = "any"; i.value = f.config[s.key]; i.dataset.key = s.key; i.addEventListener("input", () => { f.config[s.key] = i.value === "" ? "" : +i.value; }); h("span", "hint", l, s.help);
       }
     }
+    if (S.mode === "research") { h("p", "hint", card, "Each stage below has its own run button; the sample and settings above are shared by all five."); return; }
     const row = h("div", "row", card), run = h("button", "btn primary", row, "Run the " + MODES.find((m) => m[0] === S.mode)[1].toLowerCase() + " study"); run.type = "button"; run.disabled = S.busy;
     const status = h("span", "hint", row); status.id = "lab-status"; status.setAttribute("role", "status");
     if (S.mode === "alpha") { const reg = h("button", "btn", row, "Keep this signal"); reg.type = "button"; reg.title = "Store the signal panel as a new version in the registry (unchanged panels keep their version)."; reg.addEventListener("click", () => register(reg, status)); }

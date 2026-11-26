@@ -139,7 +139,9 @@ def compare_factors(signals: dict[str, pd.DataFrame], forward: pd.DataFrame, hor
     h, bh = holm(raw), benjamini_hochberg(raw)
     rows = [{"factor": k, "rank_ic": e["rank_ic"]["mean"], "ci_low": e["rank_ic"]["low"], "ci_high": e["rank_ic"]["high"], "t": e["rank_ic"]["t"], "p_raw": raw[k], "p_holm": h[k], "p_bh": bh[k],
              "survives_holm": bool(np.isfinite(h[k]) and h[k] < alpha), "survives_bh": bool(np.isfinite(bh[k]) and bh[k] < alpha), "long_short": e["quantiles"]["long_short_mean"], "turnover": e["turnover"],
-             "stable": e["stability"]["same_sign_share"]} for k, e in evals.items()]
+             "stable": e["stability"]["same_sign_share"], "thirds": e["stability"]["thirds_mean"], "n_assets_median": e["n_assets_median"], "pearson_ic": e["pearson_ic"]["mean"],
+             "ic_neutralised": (e.get("neutralised") or {}).get("rank_ic", {}).get("mean"), "share_kept": (e.get("neutralised") or {}).get("share_of_ic_kept"),
+             "nothing_left": (e.get("neutralised") or {}).get("nothing_left")} for k, e in evals.items()]
     rows.sort(key=lambda r: -abs(r["rank_ic"]) if np.isfinite(r["rank_ic"]) else 0)
     return {"table": rows, "n_tested": len(rows), "alpha": alpha, "details": evals,
             "note": "p-values are corrected for the number of factors compared (Holm controls the family-wise error; Benjamini-Hochberg the false-discovery rate). A factor chosen after looking at many needs the corrected value."}
@@ -240,3 +242,52 @@ def combine_factors(signals: dict[str, pd.DataFrame], forward: pd.DataFrame, hor
     return {"factors": names, "train_dates": [str(train[0].date()), str(train[-1].date())], "test_dates": [str(test[0].date()), str(test[-1].date())], "best_single_on_training": best,
             "training_ic": single_train, "out_of_sample": results, "verdicts": verdicts,
             "note": "Weights use only the past; the test period was never used to choose or fit anything. 'improves_on_baselines' needs the combination to beat both the best single factor (chosen on the training period) and equal weight by more than 1.96 standard errors of the difference."}
+
+
+def discovery(signals: dict[str, pd.DataFrame], min_assets: int = 5, cluster_threshold: float = 0.7) -> dict:
+    """What a person should know about a set of candidate signals before testing any of them: for each, coverage by date and by asset (and the months with the most missing values), the share of extreme values,
+    whether the cross-sectional distribution drifts between the first and second half of the history, how persistent the ranking is (so how much it will turn over), and how redundant the signals are with each other
+    (the average daily rank correlation, and greedy clusters of signals with |correlation| above ``cluster_threshold``). Observed data only; a signal with a cross-section too thin to rank is reported as such, not scored."""
+    names = list(signals)
+    if not names:
+        raise FactorError("choose at least one signal")
+    out = {"signals": {}, "min_assets": min_assets, "rank_ic_min_assets": MIN_ASSETS_RANK_IC}
+    zs = {k: _zs(s) for k, s in signals.items()}
+    for k, s in signals.items():
+        n_med = int(s.notna().sum(axis=1).median()) if len(s) else 0
+        cov_date, cov_asset = s.notna().mean(axis=1), s.notna().mean(axis=0)
+        miss_month = (1 - cov_date).groupby(s.index.to_period("M")).mean().sort_values(ascending=False)
+        z = zs[k]
+        half = len(z) // 2
+        first, second = s.iloc[:half].to_numpy(float).ravel(), s.iloc[half:].to_numpy(float).ravel()   # raw values: a cross-sectional z-score would hide a change of level or scale
+        first, second = first[np.isfinite(first)], second[np.isfinite(second)]
+        ks = stats.ks_2samp(first, second) if len(first) > 50 and len(second) > 50 else None
+        def auto(lag: int) -> float:                                                         # the average daily rank correlation of the signal with itself ``lag`` days later
+            c = cross_sectional_ic(s, s.shift(-lag), "spearman", max(min_assets, MIN_ASSETS_RANK_IC)) if n_med >= max(min_assets, MIN_ASSETS_RANK_IC) else pd.Series(dtype=float)
+            return float(c.mean()) if len(c) else float("nan")
+        out["signals"][k] = {"n_assets_median": n_med, "rankable": n_med >= max(min_assets, MIN_ASSETS_RANK_IC),
+                             "reason": None if n_med >= max(min_assets, MIN_ASSETS_RANK_IC) else f"a median of {n_med} assets have a value on a date; at least {max(min_assets, MIN_ASSETS_RANK_IC)} are needed to rank",
+                             "coverage": {"by_date_mean": float(cov_date.mean()), "by_date_min": float(cov_date.min()), "by_asset": {str(c): float(v) for c, v in cov_asset.items()},
+                                          "worst_months": [{"month": str(m), "missing": float(v)} for m, v in miss_month.head(3).items() if v > 0]},
+                             "extreme_share": float((z.abs() > 4).sum().sum() / max(int(z.notna().sum().sum()), 1)),
+                             "drift": None if ks is None else {"ks": float(ks.statistic), "p": float(ks.pvalue), "mean_first": float(first.mean()), "mean_second": float(second.mean()), "std_first": float(first.std()), "std_second": float(second.std())},
+                             "rank_persistence": {"lag1": auto(1), "lag21": auto(21)}}
+    corr = pd.DataFrame(np.nan, index=names, columns=names)
+    for a in names:
+        for b in names:
+            if a == b:
+                corr.loc[a, b] = 1.0
+            elif np.isnan(corr.loc[a, b]):
+                c = cross_sectional_ic(zs[a], zs[b], "spearman", max(min_assets, MIN_ASSETS_RANK_IC)) if out["signals"][a]["rankable"] and out["signals"][b]["rankable"] else pd.Series(dtype=float)
+                corr.loc[a, b] = corr.loc[b, a] = float(c.mean()) if len(c) else float("nan")
+    clusters, used = [], set()
+    for a in names:
+        if a in used:
+            continue
+        grp = [a] + [b for b in names if b != a and b not in used and np.isfinite(corr.loc[a, b]) and abs(corr.loc[a, b]) >= cluster_threshold]
+        used.update(grp)
+        clusters.append(grp)
+    out["correlation"] = {"names": names, "matrix": [[None if not np.isfinite(v) else float(v) for v in row] for row in corr.to_numpy()]}
+    out["clusters"] = clusters
+    out["redundant"] = [grp for grp in clusters if len(grp) > 1]
+    return out

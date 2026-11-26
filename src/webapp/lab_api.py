@@ -220,8 +220,12 @@ class LabApi:
                 d["note"] = res["notes"].get(key, "")
                 rows.append(d)
             last = {k: {a: float(x) for a, x in w.iloc[-1].items()} for k, w in res["weights"].items()}
+            try:
+                diag = pl.diagnostics(res, px.pct_change().iloc[1:])
+            except Exception as error:                                                                   # the comparison stands without the extra view; say that it is missing and why
+                diag = {"error": f"{type(error).__name__}: {error}"}
             return {"table": rows, "equity": {"dates": [str(d.date()) for d in eq.index], "series": {k: [round(float(x), 6) for x in eq[k].to_numpy()] for k in eq.columns}}, "last_weights": last,
-                    "mean_weights": {k: {a: float(x) for a, x in w.mean().items()} for k, w in res["weights"].items()}, "rebalances": res["rebalances"], "config": res["config"], "universe": {"source": universe.get("source"), "tickers": tickers},
+                    "mean_weights": {k: {a: float(x) for a, x in w.mean().items()} for k, w in res["weights"].items()}, "diagnostics": diag, "rebalances": res["rebalances"], "config": res["config"], "universe": {"source": universe.get("source"), "tickers": tickers},
                     "notes": ["Every method saw the same windows, covariance estimate, caps and costs.",
                               "Sharpe standard errors are large: a difference smaller than about two of them is not evidence that one method is better.",
                               "'Fallbacks' counts the dates a method failed and equal weight was used instead; 'capped' is the average weight moved by the cap."]}

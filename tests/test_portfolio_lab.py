@@ -119,3 +119,28 @@ def test_the_new_allocators_build_long_only_books_within_the_configured_limits()
     for name, kw in (("near_optimal", {"tolerance": 0.0}), ("cdar", {"alpha": 1.0})):
         with pytest.raises(ValueError):
             ALLOCATORS.create(name, **kw)
+
+
+def test_diagnostics_numbers_are_the_obvious_ones_and_use_the_comparisons_own_conditions(returns):
+    """Equal weight is the closed-form case (effective N = 8, HHI = 1/8, no weight turnover, no sensitivity to the inputs); the others satisfy the identities the numbers must obey."""
+    keys = ["equal_weight", "min_variance", "max_sharpe", "inverse_vol"]
+    res = lab.compare(returns, keys, lookback=252, step=42, max_weight=0.4, cost_bps=15.0)
+    d = lab.diagnostics(res, returns, n_draws=8, frontier_points=8)
+    m = d["methods"]
+    eq = m["equal_weight"]
+    assert eq["effective_n"] == pytest.approx(8.0) and eq["hhi"] == pytest.approx(1 / 8) and eq["max_weight"] == pytest.approx(1 / 8) and eq["top3_share"] == pytest.approx(3 / 8)
+    assert eq["weight_turnover"] == pytest.approx(0.0, abs=1e-12) and eq["cov_sensitivity"] == pytest.approx(0.0, abs=1e-9) and eq["mu_sensitivity"] is None and eq["uses_expected_returns"] is False
+    for k, r in m.items():
+        assert 1.0 - 1e-9 <= r["effective_n"] <= 8.0 + 1e-9 and r["hhi"] <= 1.0 and r["max_weight"] <= 0.4 + 1e-6, k   # the cap is honoured in what is reported
+        assert sum(r["last_weights"].values()) == pytest.approx(1.0) and r["cost_drag_per_year"] == pytest.approx(r["turnover_per_year"] * 15e-4)
+    assert m["max_sharpe"]["mu_sensitivity"] is not None and m["max_sharpe"]["mu_sensitivity"] > 0
+    assert m["max_sharpe"]["effective_n"] <= m["equal_weight"]["effective_n"] and m["min_variance"]["weight_turnover"] > 0
+    f = d["frontier"]
+    vols = [x["vol"] for x in f]
+    top = int(np.argmin(vols))
+    assert len(f) >= 4 and all(b >= a - 1e-9 for a, b in zip(vols[top:-1], vols[top + 1:])), "above the minimum-variance point, volatility never falls as the required return rises"
+    assert [x["return"] for x in f] == sorted(x["return"] for x in f)
+    assert d["placed"]["min_variance"]["vol"] <= min(vols) + 1e-6, "the minimum-variance method sits at or below every point of the frontier built under the same cap and covariance"
+    assert d["conditions"]["cost_bps"] == 15.0 and d["conditions"]["max_weight"] == 0.4 and d["conditions"]["lookback"] == 252
+    p = d["placed"]["min_variance"]
+    assert p["vol"] <= d["placed"]["equal_weight"]["vol"] + 1e-9, "the minimum-variance portfolio is no more volatile than equal weight on the window it was fitted to"

@@ -515,7 +515,9 @@ def test_the_alpha_and_portfolio_lab_runs_each_study_and_shows_what_it_found(bro
         open_tab(page, "alphalab")
         page.wait_for_selector("[data-role=lab-form]")
         assert _hash(page) == "#/alphalab" and "Alpha, Risk and Portfolio Lab" in page.inner_text("#alphalab h2")
-        assert "inside the noise" in page.inner_text("[data-role=lab-form]") and page.locator("#alphalab .seg button").count() == 4
+        assert page.locator("#alphalab .seg button[data-mode]").count() == 5 and page.get_attribute("#alphalab .seg button[data-mode=research]", "aria-pressed") == "true", "the lab opens on the five-stage alpha research workflow"
+        page.click("#alphalab .seg button[data-mode=alpha]")
+        assert "inside the noise" in page.inner_text("[data-role=lab-form]")
         page.fill("#alphalab input[data-key=tickers]", "A00, A01, A02, A03, A04, A05")
         page.select_option("#alphalab select[data-key=signal]", "reversal")
         page.click("#alphalab button:text-is('Run the alpha study')")

@@ -127,3 +127,21 @@ def test_too_little_history_or_a_single_factor_is_refused():
     short = {k: v.iloc[:150] for k, v in signals.items()}
     with pytest.raises(fc.FactorError, match="not enough history"):
         fc.combine_factors(short, fwd.iloc[:150])
+
+
+def test_discovery_reports_coverage_redundancy_and_refuses_to_rank_a_thin_cross_section():
+    signals, fwd = market()
+    gappy = signals["planted"].copy()
+    gappy.iloc[:300, :10] = np.nan                                                             # ten assets have no value for the first 300 days
+    d = fc.discovery({**signals, "gappy": gappy, "copy": signals["planted"] * 2.0 + 1.0})
+    g = d["signals"]["gappy"]
+    assert g["coverage"]["by_date_min"] < 0.7 and g["coverage"]["by_asset"][fwd.columns[0]] < 0.7 and g["coverage"]["worst_months"] and g["rankable"] is True
+    assert ["planted", "copy"] in [c[:2] for c in d["clusters"]] or any({"planted", "copy"} <= set(c) for c in d["redundant"]), "a rescaled copy is redundant with the original"
+    assert d["signals"]["noise"]["drift"]["p"] > 0.01 and abs(d["signals"]["noise"]["rank_persistence"]["lag1"]) < 0.05
+    m = d["correlation"]["matrix"]
+    assert m[0][0] == 1.0 and abs(m[0][d["correlation"]["names"].index("copy")] - 1.0) < 1e-9
+    thin = fc.discovery({"two": signals["planted"][list(fwd.columns[:2])]})
+    assert thin["signals"]["two"]["rankable"] is False and "at least 5" in thin["signals"]["two"]["reason"] and thin["signals"]["two"]["rank_persistence"]["lag1"] != thin["signals"]["two"]["rank_persistence"]["lag1"]
+    shifted = signals["noise"].copy()
+    shifted.iloc[len(shifted) // 2:] = shifted.iloc[len(shifted) // 2:] * 3 + 2
+    assert fc.discovery({"s": shifted})["signals"]["s"]["drift"]["p"] < 1e-6, "a signal whose scale and level change half-way is flagged as drifting"

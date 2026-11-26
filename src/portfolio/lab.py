@@ -324,3 +324,82 @@ def compare(returns: pd.DataFrame, methods: list[str] | None = None, lookback: i
     return {"table": table, "equity": equity, "weights": out["weights"], "notes": out["notes"], "rebalances": [str(data.index[p].date()) for p in dates],
             "config": {"methods": keys, "lookback": lookback, "step": step, "cost_bps": cost_bps, "cov_method": cov_method, "mu_shrink": mu_shrink, "max_weight": max_weight, "risk_aversion": risk_aversion,
                        "perturb": perturb, "seed": seed, "assets": n_assets, "rows": len(data), "first": str(data.index[dates[0]].date()), "last": str(equity.index[-1].date())}}
+
+
+def diagnostics(res: dict, returns: pd.DataFrame, n_draws: int = 30, mu_noise: float = 1.0, frontier_points: int = 12, seed: int = 0) -> dict:
+    """What a :func:`compare` result does not say: how concentrated each method's portfolio is, how stable its weights are from one rebalance to the next, how much they move when the return forecast or the
+    covariance estimate is changed a little, what trading costs it, and where the methods sit against the long-only efficient frontier of the last window. Everything uses the SAME window, covariance estimate,
+    return forecast, cap and costs as the comparison (read from ``res["config"]``); nothing is re-chosen per method.
+
+    * concentration: effective number of positions (1 / HHI, averaged over rebalances), mean largest weight, share of the three largest, zero-weight positions, and how often the cap bound;
+    * stability: mean one-way turnover between consecutive target weights (before drift) and the mean rank correlation of consecutive weight vectors;
+    * sensitivity (at the last rebalance): the one-way change in weights (half the L1 distance) when the expected returns get noise of ``mu_noise`` cross-sectional standard deviations (only for methods that use them) and when
+      the covariance is estimated by another method (sample versus shrinkage); the median over ``n_draws`` seeded draws;
+    * cost attribution: yearly turnover times the cost per unit traded, against the gross-to-net return gap;
+    * frontier: minimum-variance long-only portfolios under the same cap for a ladder of expected returns, with each method's last weights placed on it (volatility and expected return from the last window)."""
+    from scipy.optimize import minimize
+
+    cfg = res["config"]
+    keys, cap, lookback, cov_method, mu_shrink, cost = cfg["methods"], cfg["max_weight"], cfg["lookback"], cfg["cov_method"], cfg["mu_shrink"], cfg["cost_bps"] * 1e-4
+    data = returns.dropna(how="any")
+    last_p = len(data) - 1
+    rebal_dates = [pd.Timestamp(d) for d in res["rebalances"]]
+    p = int(data.index.get_indexer([rebal_dates[-1]])[0])
+    win = data.iloc[p - lookback:p]
+    cov = estimate_covariance(win, cov_method, lookback, annualise=True).to_numpy(dtype=float)
+    mu_raw = (win.mean() * ANN).to_numpy(dtype=float)
+    mu = mu_shrink * mu_raw.mean() + (1 - mu_shrink) * mu_raw
+    rng = np.random.default_rng(seed)
+    ctx0 = {"cov": cov, "mu": mu, "lam": cfg["risk_aversion"]}
+
+    def solve(key: str, ctx: dict) -> np.ndarray:
+        w = np.asarray(pd.Series(METHODS[key].fn(win, ctx), index=win.columns).to_numpy(dtype=float))
+        w = np.clip(w, 0.0, None)
+        return cap_weights(w / w.sum(), cap)
+
+    rows = {}
+    for key in keys:
+        W = res["weights"][key]
+        w2 = (W ** 2).sum(axis=1)
+        srt = np.sort(W.to_numpy(), axis=1)[:, ::-1]
+        diffs = W.diff().dropna()
+        corr = [float(W.iloc[i].rank().corr(W.iloc[i + 1].rank())) for i in range(len(W) - 1)]
+        base = solve(key, ctx0)
+        mu_moves, cov_moves = [], []
+        if METHODS[key].uses_mu:
+            sd = float(np.std(mu)) or float(np.std(mu_raw)) or 1e-6
+            for _ in range(n_draws):
+                try:
+                    mu_moves.append(float(np.abs(solve(key, {**ctx0, "mu": mu + mu_noise * sd * rng.normal(size=len(mu))}) - base).sum() / 2))
+                except Exception:
+                    continue
+        for alt in [m for m in ("sample", "shrinkage") if m != cov_method]:
+            try:
+                c2 = estimate_covariance(win, alt, lookback, annualise=True).to_numpy(dtype=float)
+                cov_moves.append(float(np.abs(solve(key, {**ctx0, "cov": c2}) - base).sum() / 2))
+            except Exception:
+                continue
+        row = res["table"].loc[key]
+        rows[key] = {"label": METHODS[key].label, "effective_n": float(np.mean(1.0 / w2)), "hhi": float(w2.mean()), "max_weight": float(srt[:, 0].mean()), "top3_share": float(srt[:, :3].sum(axis=1).mean()),
+                     "zero_weight_positions": float((W.to_numpy() < 1e-4).sum(axis=1).mean()), "cap_binding_share": float(row["capped"]),
+                     "weight_turnover": float(diffs.abs().sum(axis=1).mean() / 2) if len(diffs) else float("nan"), "weight_rank_correlation": float(np.nanmean(corr)) if corr and np.isfinite(corr).any() else float("nan"),
+                     "mu_sensitivity": float(np.median(mu_moves)) if mu_moves else None, "cov_sensitivity": float(np.median(cov_moves)) if cov_moves else None,
+                     "uses_expected_returns": bool(METHODS[key].uses_mu), "turnover_per_year": float(row["turnover_per_year"]), "cost_drag_per_year": float(row["turnover_per_year"] * cost),
+                     "gross_net_sharpe": [float(row["gross_sharpe"]), float(row["sharpe"])], "last_weights": {str(a): float(x) for a, x in zip(win.columns, base)}}
+    # the long-only frontier under the same cap, from the same last-window cov and mu
+    n = len(mu)
+    lo, hi = float(mu.min()), float(min(mu.max(), np.sort(mu)[::-1][: max(int(np.ceil(1 / cap)), 1)].mean()))
+    pts = []
+    w0 = np.full(n, 1.0 / n)
+    for target in np.linspace(lo, hi, frontier_points):
+        r = minimize(lambda w: w @ cov @ w, w0, jac=lambda w: 2 * cov @ w, bounds=[(0.0, cap)] * n, method="SLSQP",
+                     constraints=[{"type": "eq", "fun": lambda w: w.sum() - 1.0}, {"type": "eq", "fun": lambda w, t=target: w @ mu - t}], options={"maxiter": 200})
+        if r.success:
+            pts.append({"return": float(target), "vol": float(np.sqrt(max(r.x @ cov @ r.x, 0.0)))})
+    placed = {k: {"return": float(np.array(list(v["last_weights"].values())) @ mu), "vol": float(np.sqrt(max(np.array(list(v["last_weights"].values())) @ cov @ np.array(list(v["last_weights"].values())), 0.0)))}
+              for k, v in rows.items()}
+    return {"methods": rows, "frontier": pts, "placed": placed, "window": [str(win.index[0].date()), str(win.index[-1].date())], "as_of_rebalance": str(rebal_dates[-1].date()),
+            "conditions": {"lookback": lookback, "cov_method": cov_method, "mu_shrink": mu_shrink, "max_weight": cap, "cost_bps": cfg["cost_bps"], "risk_aversion": cfg["risk_aversion"], "step": cfg["step"], "rebalances": len(rebal_dates)},
+            "notes": ["Every method was given the same windows, covariance, expected-return forecast, cap and costs.",
+                      "Sensitivity is at the last rebalance only: half the L1 change in weights (0 = unchanged, 1 = a completely different portfolio) when the expected returns get noise, or the covariance is estimated another way.",
+                      "A method with a higher Sharpe on the history is not better if its weights are concentrated, unstable or collapse under small changes of the inputs: read the Sharpe with these columns."]}

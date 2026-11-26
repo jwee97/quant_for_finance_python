@@ -16,6 +16,7 @@ from ..riskengine import monitor as mo
 from . import breadth as br
 from . import calibrate as cal
 from . import dynamic as dy
+from ..models.regression import cross_sectional_ic
 from . import ic as icm
 
 SIGNALS = {
@@ -188,9 +189,18 @@ def trading_study(prices: pd.DataFrame, signal: str = "momentum", horizon: int =
                       "The waterfall re-runs the same forecasts with each real-world step added: position limits, trading costs, a policy that respects them, and one day's delay."]}
 
 
+def _controls(prices: pd.DataFrame, returns: pd.DataFrame) -> dict[str, pd.DataFrame]:
+    """The controls a price-built factor is neutralised against, from prices only: the trailing 252-day beta to the equal-weighted market and the 12-1 month momentum. (Size and sector need data the price panel does not
+    carry; they are not invented.)"""
+    mkt = returns.mean(axis=1)
+    beta = returns.rolling(252, min_periods=120).cov(mkt).div(mkt.rolling(252, min_periods=120).var(), axis=0)
+    return {"beta": beta.reindex(returns.index), "momentum_12_1": (prices.shift(21) / prices.shift(252) - 1.0).reindex(returns.index)}
+
+
 def factor_study(prices: pd.DataFrame, signals: list[str], horizon: int = 5, min_assets: int = 5) -> dict:
-    """The validation and combination stages on price-built signals: each factor evaluated (rank and Pearson IC with a HAC interval, quantile spread, turnover, coverage, stability), the family corrected for
-    multiple testing, and the factors combined four ways from the past only and judged on the last 40% of the dates. Forward returns are residuals after the equal-weighted market, as in :func:`alpha_study`."""
+    """The discovery, validation and combination stages on price-built signals: coverage and redundancy; each factor evaluated (rank and Pearson IC with a HAC interval, quantile spread, turnover, stability), the IC left
+    after neutralising beta and momentum, the sensitivity of the Pearson IC to winsorisation, the family corrected for multiple testing, and the factors combined four ways from the past only and judged on the last 40%
+    of the dates. Forward returns are residuals after the equal-weighted market, as in :func:`alpha_study`."""
     from . import factors as fc
 
     if prices.shape[1] < 6:
@@ -203,14 +213,22 @@ def factor_study(prices: pd.DataFrame, signals: list[str], horizon: int = 5, min
     if returns.shape[0] < 500:
         raise StudyError("need at least 500 days of history")
     fwd = cal.forward_residual(returns, horizon)
-    z = {k: cal.standardise(build_signal(prices, k).reindex(returns.index)) for k in signals}
+    raw = {k: build_signal(prices, k).reindex(returns.index) for k in signals}
+    z = {k: cal.standardise(v) for k, v in raw.items()}
+    controls = _controls(prices, returns)
     try:
-        compared = fc.compare_factors(z, fwd, horizon, min_assets=min_assets, returns=returns)
+        disc = fc.discovery(raw, min_assets=min_assets)
+        compared = fc.compare_factors(z, fwd, horizon, min_assets=min_assets, returns=returns, controls=controls)
         combined = fc.combine_factors(z, fwd, horizon, min_assets=min_assets)
+        sens = {}
+        for k, v in raw.items():
+            sens[k] = {f"winsor_{int(w * 100)}pct": float(cross_sectional_ic(cal.standardise(v, winsor=w), fwd, "pearson", min_assets).mean()) for w in (0.0, 0.02, 0.05)}
     except fc.FactorError as error:
         raise StudyError(str(error)) from None
     compared.pop("details")
-    return {"horizon": int(horizon), "assets": list(prices.columns), "days": int(len(returns)), "first": str(returns.index[0].date()), "last": str(returns.index[-1].date()), "comparison": compared, "combination": combined,
+    return {"horizon": int(horizon), "assets": list(prices.columns), "days": int(len(returns)), "first": str(returns.index[0].date()), "last": str(returns.index[-1].date()), "discovery": disc, "comparison": compared,
+            "combination": combined, "sensitivity": {"pearson_ic_by_winsorisation": sens, "controls": list(controls)},
             "notes": ["Each factor's rank IC is against the residual return over the horizon; the interval is Newey-West with horizon - 1 lags.",
                       "p-values are corrected for the number of factors (Holm, Benjamini-Hochberg); a factor is called predictive only if it survives the correction.",
+                      "Neutralisation removes the cross-sectional dependence on beta and 12-1 momentum, computed from the same prices. A factor that is mostly one of them has nothing left (the momentum signal itself, by construction).",
                       "Combinations are weighted from the past only and judged on a test period nothing was fitted on; a combination is an improvement only if it beats the best single factor and equal weight."]}
