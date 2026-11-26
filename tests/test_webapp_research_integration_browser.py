@@ -62,12 +62,20 @@ def _seed_sectors(page):
 
 
 def _methods(page):
-    page.evaluate("""(keep) => { for (const c of document.querySelectorAll('#alphalab input[data-method]')) { if (c.checked !== keep.includes(c.dataset.method)) c.click(); } }""", KEEP)
+    """Tick exactly the methods in KEEP. Every click re-draws the stage, so one box is changed at a time until none differs."""
+    for _ in range(40):
+        done = page.evaluate("""(keep) => { for (const c of document.querySelectorAll('#alphalab input[data-method]')) { if (c.checked !== keep.includes(c.dataset.method)) { c.click(); return false; } } return true; }""", KEEP)
+        if done:
+            return
+    raise AssertionError("the method boxes did not settle")
 
 
 def _run_portfolio(page, timeout=600_000):
+    """Press Run and wait for THIS run to finish (the previous run's tables are still on screen until it does)."""
+    before = page.evaluate("QL.alphaResearch.state.jobs.portfolio || null")
     page.click("[data-role=run-portfolio]")
-    page.wait_for_selector("[data-role=pf-concentration]", timeout=timeout)
+    _wait_until(page, "(() => { const s = QL.alphaResearch.state; return !!s.jobs.portfolio && s.jobs.portfolio !== %s && !s.busy.portfolio && !!s.results.portfolio; })()" % json.dumps(before), timeout / 1000)
+    page.wait_for_selector("[data-role=pf-concentration]", timeout=30_000)
 
 
 def _save(page, button, *, session=None, title=None, hypothesis=None, notes=None, status_scope):
@@ -83,7 +91,10 @@ def _save(page, button, *, session=None, title=None, hypothesis=None, notes=None
     if notes:
         page.fill("[data-role=save-study] textarea[data-key=notes]", notes)
     page.click("[data-role=save-confirm]")
-    page.wait_for_selector("[data-role=save-study]", state="detached", timeout=30_000)
+    try:
+        page.wait_for_selector("[data-role=save-study]", state="detached", timeout=30_000)
+    except sync_api.TimeoutError:
+        raise AssertionError("the save dialog stayed open: " + page.inner_text("[data-role=save-error]")) from None
     return page.inner_text(f"{status_scope} .hint[role=status]")
 
 
@@ -136,6 +147,9 @@ def test_forecast_to_portfolio_to_attribution_to_saved_study_to_comparison(brows
         assert "Factor contribution waterfall" in page.inner_text("[data-role=attr-waterfall]") and "Unexplained residual" in page.inner_text("[data-role=attr-waterfall]") or True
         wf = page.evaluate("""() => { const o = echarts.getInstanceByDom(document.querySelector('[data-role=attr-waterfall] .ec-chart')).getOption(); return o.yAxis[0].data; }""")
         assert any("Trading costs" in x for x in wf) and any("Asset-specific" in x for x in wf) and any("Financing" in x for x in wf) and any("Unexplained residual" in x for x in wf) and wf[-1] == "Net return"
+        assert page.locator("[data-role=brinson-off]").count() == 1, "the first method listed is the benchmark itself: there is no active return to attribute"
+        page.click("[data-role=attribution] button[data-key=min_variance]")
+        page.wait_for_selector("[data-role=brinson]")
         brinson = page.inner_text("[data-role=brinson]")
         assert "Brinson-Fachler attribution against equal weight" in brinson and "Reconciles" in brinson
         groups = page.inner_text("[data-role=brinson-groups]")
@@ -328,8 +342,11 @@ def test_missing_data_and_a_phone_screen(browser, live_int):  # noqa: F811
         stage(page, "performance")
         page.wait_for_selector("[data-role=attr-waterfall]")
         assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1"), "nothing scrolls sideways at phone width"
+        page.evaluate("id => localStorage.setItem('ql.session', JSON.stringify(id))", page.evaluate("async () => (await QL.api('/api/research/session/create', {name: 'Phone', context: {}})).session.id"))
+        page.reload()
+        page.wait_for_selector("body[data-ready]")
         open_tab(page, "rcompare")
         page.wait_for_selector("[data-role=compare-picker]")
-        assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1")
+        assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1"), "the comparison page does not scroll sideways at phone width either"
     finally:
         page.close()

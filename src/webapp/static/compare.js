@@ -41,6 +41,7 @@
       const act = h("td", "", tr), op = h("button", "btn small", act, "Open"); op.type = "button"; op.dataset.action = "open-study"; op.setAttribute("aria-label", "open " + a.title); op.addEventListener("click", () => openStudy(a.id));
       const rr = h("button", "btn small", act, "Run again"); rr.type = "button"; rr.dataset.action = "rerun-study"; rr.title = "Runs the request that produced this study again with the current data, and saves the result as a new version beside it"; rr.setAttribute("aria-label", "run again " + a.title); rr.addEventListener("click", () => rerun(a, session));
     }
+    const note = h("div", "stack", root); note.id = "rcompare-status"; note.setAttribute("aria-live", "polite");
     const viewer = h("div", "stack", root); viewer.id = "rcompare-open";
     const row = h("div", "row", card);
     const sel = (label, key, opts) => { const l = h("label", "f", row, label), s = h("select", "", l); s.dataset.key = key; for (const [v, t2] of opts) { const o = h("option", "", s, t2); o.value = v; if (S[key] === v) o.selected = true; } s.addEventListener("change", () => { S[key] = s.value; }); return s; };
@@ -132,8 +133,8 @@
   }
 
   async function rerun(a, session) {
-    const status = $("#rcompare-open"); if (status) status.replaceChildren();
-    const say = (txt, cls) => { if (!status) return; status.replaceChildren(); const d = h("div", cls || "banner", status, txt); d.dataset.role = "rerun-status"; d.setAttribute("role", "status"); };
+    const say = (txt, cls) => { const box = $("#rcompare-status"); if (!box) return; box.replaceChildren(); const d = h("div", cls || "banner", box, txt); d.dataset.role = "rerun-status"; d.setAttribute("role", "status"); };
+    say("");
     let spec; try { spec = await api("/api/research/artifact/rerun?id=" + a.id); } catch (e) { say("Cannot run again: " + e.message, "banner err"); return; }
     say(`Running "${a.title}" again with the current data…`);
     try {
@@ -141,8 +142,8 @@
       await Q.waitJob(job, (v) => say(`${v.message} (${Math.round(v.elapsed)} s)`), 1000);
       const full = await api("/api/research/artifact?id=" + a.id);
       const saved = await R.saveStudy({ job, ...((full.config || {}).method ? { method: full.config.method } : {}) }, { parent: a.id, session: a.session_id || session.id, title: `${a.title.replace(/ \(re-run.*$/, "")} (re-run)` });
+      await load({ session: a.session_id || session.id });                   // the list now has the new version; the page is drawn once, after the save
       say(saved ? `Saved as version ${saved.version}. The earlier study is unchanged.` : "Not saved: the new run is not kept unless you save it.");
-      await R.refresh();
     } catch (e) { say("The new run failed: " + e.message, "banner err"); }
   }
 
