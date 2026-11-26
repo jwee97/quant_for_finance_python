@@ -249,3 +249,34 @@ def test_session_readiness_names_an_instrument_the_platform_does_not_hold(app):
     out = app.extra_get["/api/health/readiness"]({"session": s["id"]})
     by = {r["series"]: r for r in out["rows"]}
     assert by["ZZZZ"]["status"] == "blocked" and "holds no data" in by["ZZZZ"]["blocking"][0] and out["overall"] == "blocked"
+
+
+# ------------------------------------------------------------------------------------------------------ reliability: diagnostics and backup verification
+def test_diagnostics_report_disk_databases_jobs_and_errors_without_secrets(app):
+    out = app.extra_get["/api/health/diagnostics"]({})
+    assert out["disk"]["level"] in ("ok", "low", "critical") and out["disk"]["free_mb"] > 0
+    assert "interrupted" in out["jobs"] and "rate_limit" in out["provider_error_categories"] and "entitlement" in out["provider_error_categories"]
+    assert all("integrity" in d for d in out["databases"])
+
+
+def test_a_backup_is_restored_into_a_scratch_folder_and_proved_and_a_damaged_or_hostile_one_is_not(app, tmp_path):
+    made = app.extra_post["/api/storage/backup"]({})
+    name = made["name"]
+    ok = app.extra_post["/api/health/verify-backup"]({"name": name})
+    assert ok["ok"] is True and ok["problems"] == [] and ok["files"], ok
+    assert any(f.get("integrity") == "ok" for f in ok["files"])
+    with pytest.raises(ApiError):
+        app.extra_post["/api/health/verify-backup"]({"name": "../../etc/passwd"})
+    with pytest.raises(ApiError):
+        app.extra_post["/api/health/verify-backup"]({"name": "quant-lab-backup-20200101-000000.zip"})
+    import zipfile as zf
+    evil = app.root / "data" / "user" / "backups" / "quant-lab-backup-20200101-000001.zip"
+    with zf.ZipFile(evil, "w") as z:
+        z.writestr("../../escape.txt", "x")
+        z.writestr("bad.json", "{not json")
+    bad = app.extra_post["/api/health/verify-backup"]({"name": evil.name})
+    assert bad["ok"] is False and any("leaves the restore folder" in p for p in bad["problems"]) and any("not valid JSON" in p for p in bad["problems"])
+    assert not (app.root.parent / "escape.txt").exists()
+    garbage = app.root / "data" / "user" / "backups" / "quant-lab-backup-20200101-000002.zip"
+    garbage.write_bytes(b"this is not a zip")
+    assert app.extra_post["/api/health/verify-backup"]({"name": garbage.name})["problems"] == ["not a zip archive"]

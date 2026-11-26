@@ -34,6 +34,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+from . import obs
 from .api import ApiError, App
 
 STATIC = Path(__file__).parent / "static"
@@ -103,6 +104,8 @@ def make_handler(app: App, token: str, port_holder: list, access: str | None = N
     sessions: dict[str, float] = {}                             # session id -> when it expires
     attempts: deque = deque()                                   # times of recent wrong guesses
     gate = threading.Lock()
+    reqlog = obs.RequestLog(app.root / "data" / "user" / "logs" / "requests.jsonl")
+    roots = (str(app.root), os.path.expanduser("~"), str(Path(__file__).resolve().parents[2]))
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "QuantLab"
@@ -119,6 +122,13 @@ def make_handler(app: App, token: str, port_holder: list, access: str | None = N
 
         def log_message(self, fmt, *args):                      # quiet: the terminal belongs to the backtests
             pass
+
+        def _begin(self) -> None:
+            """Start of a request: its correlation id and clock. A connection is reused, so this runs for every request, not once per connection."""
+            self._rid = obs.request_id(self.headers.get("X-Request-Id"))
+            self._t0 = time.perf_counter()
+            self._error_kind = ""
+            self._logged = False
 
         # ------------------------------------------------------------------------------------------ helpers
         def _headers(self, extra: dict | None = None) -> None:
@@ -155,12 +165,23 @@ def make_handler(app: App, token: str, port_holder: list, access: str | None = N
                 body = gzip.compress(body, 5, mtime=0)
                 headers["Content-Encoding"] = "gzip"
             headers["Vary"] = "Accept-Encoding"
+            self._log(status, len(body))                                                      # before the answer leaves, so that a client that has the answer can find its line in the log
             self.send_response(status)
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(body)))
+            self.send_header("X-Request-Id", getattr(self, "_rid", "") or obs.new_id())
             self._headers(headers)
             self.end_headers()
             self.wfile.write(body)
+
+        def _log(self, status: int, size: int) -> None:
+            if getattr(self, "_logged", True):
+                return
+            self._logged = True
+            parsed = urlparse(self.path)
+            names = sorted({k for k, _ in __import__("urllib.parse", fromlist=["parse_qsl"]).parse_qsl(parsed.query, keep_blank_values=True, max_num_fields=MAX_QUERY_FIELDS)})
+            reqlog.write(kind="request", request_id=self._rid, method=self.command, route=parsed.path[:200], query_fields=names, status=int(status), ms=round((time.perf_counter() - self._t0) * 1000, 1), bytes=int(size),
+                         category=obs.category(status, self._error_kind))
 
         def _json(self, status: int, payload) -> None:
             self._send(status, json.dumps(payload, allow_nan=False).encode(), "application/json")
@@ -274,9 +295,13 @@ def make_handler(app: App, token: str, port_holder: list, access: str | None = N
             try:
                 self._json(HTTPStatus.OK, fn(*args))
             except ApiError as error:
+                self._error_kind = "rejected"
                 self._json(HTTPStatus.BAD_REQUEST, {"error": str(error)})
             except Exception as error:                             # reach the page as a message, not a dropped connection
-                self._json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": f"{type(error).__name__}: {error}"})
+                self._error_kind = type(error).__name__
+                rid = getattr(self, "_rid", "") or obs.new_id()
+                reqlog.error(rid, urlparse(self.path).path[:200], error)                  # the traceback stays in the log; the page gets the kind of error and a reference, without file paths
+                self._json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": f"{type(error).__name__}: {obs.scrub(error, roots)} (ref {rid})", "request_id": rid})
 
         # ------------------------------------------------------------------------------------------ routes
         def _query(self) -> dict:
@@ -288,6 +313,7 @@ def make_handler(app: App, token: str, port_holder: list, access: str | None = N
             return {k: v[-1] for k, v in fields.items()}
 
         def do_GET(self):
+            self._begin()
             path = urlparse(self.path).path
             if access is not None and path == "/login":
                 if self._host_ok():
@@ -322,6 +348,7 @@ def make_handler(app: App, token: str, port_holder: list, access: str | None = N
                 self._json(HTTPStatus.NOT_FOUND, {"error": "not found"})
 
         def do_POST(self):
+            self._begin()
             path = urlparse(self.path).path
             if access is not None and path == "/login":
                 if self._host_ok():

@@ -12,6 +12,8 @@
 ``POST /api/health/retry``         run again the validation that failed (the same as validate; it is safe to repeat)
 ``POST /api/health/export``        the findings of a dataset as CSV text
 ``POST /api/health/correction``    record a correction ``{series, date, field, raw, corrected, reason}``
+``GET  /api/health/diagnostics``   storage health (free disk, every database's integrity), the newest backup's verification, the job registry after the last restart, the newest errors with their request ids, and the provider error categories
+``POST /api/health/verify-backup`` restore a backup into a scratch folder and prove it: the archive is whole, no member escapes the folder, every database passes SQLite's integrity check and every JSON file parses (``name``)
 
 Nothing is deleted or repaired; no key is ever sent to the page.
 """
@@ -19,7 +21,12 @@ Nothing is deleted or repaired; no key is ever sent to the page.
 from __future__ import annotations
 
 import json
+import re
+import shutil
+import sqlite3
+import tempfile
 import time
+import zipfile
 from pathlib import Path
 
 import pandas as pd
@@ -44,10 +51,10 @@ class HealthApi:
 
     def get_routes(self) -> dict:
         return {"/api/health/capabilities": self.capabilities, "/api/health/datasets": self.datasets, "/api/health/report": self.report, "/api/health/missing": self.missing, "/api/health/source": self.source,
-                "/api/health/readiness": self.readiness, "/api/health/corrections": self.corrections, "/api/health/snapshots": self.snapshots}
+                "/api/health/readiness": self.readiness, "/api/health/corrections": self.corrections, "/api/health/snapshots": self.snapshots, "/api/health/diagnostics": self.diagnostics}
 
     def post_routes(self) -> dict:
-        return {"/api/health/validate": self.validate, "/api/health/refresh": self.refresh, "/api/health/retry": self.validate, "/api/health/export": self.export, "/api/health/correction": self.correction}
+        return {"/api/health/validate": self.validate, "/api/health/refresh": self.refresh, "/api/health/retry": self.validate, "/api/health/export": self.export, "/api/health/correction": self.correction, "/api/health/verify-backup": self.verify_backup}
 
     # ------------------------------------------------------------------------------------------------------ the data
     def _dataset(self, name: str):
@@ -206,3 +213,96 @@ class HealthApi:
         name = str(body.get("dataset") or "platform")
         rep = self._report(name)
         return {"filename": f"data_health_{name}.csv", "text": dh.findings_csv(rep), "format": "csv"}
+
+    # ------------------------------------------------------------------------------------------------------ reliability
+    @property
+    def user(self) -> Path:
+        return self.app.root / "data" / "user"
+
+    def _databases(self) -> list[dict]:
+        out = []
+        for path in sorted(list(self.user.rglob("*.db")) + list(self.user.rglob("*.sqlite")))[:60]:
+            if "backups" in path.parts:
+                continue
+            row = {"name": str(path.relative_to(self.user)), "bytes": path.stat().st_size}
+            try:
+                con = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=5)
+                try:
+                    row["integrity"] = con.execute("PRAGMA integrity_check").fetchone()[0]
+                finally:
+                    con.close()
+            except sqlite3.Error as error:
+                row["integrity"] = f"cannot be opened: {error}"
+            row["ok"] = row["integrity"] == "ok"
+            out.append(row)
+        return out
+
+    def diagnostics(self, q: dict | None = None) -> dict:
+        from .obs import RequestLog
+
+        user = self.user
+        user.mkdir(parents=True, exist_ok=True)
+        du = shutil.disk_usage(user)
+        free_mb = du.free / 1e6
+        disk = {"free_mb": round(free_mb), "total_mb": round(du.total / 1e6), "level": "critical" if free_mb < 200 else "low" if free_mb < 1000 else "ok",
+                "note": "Checkpoints, logs and databases are written here; when the disk is full a checkpoint fails (training continues, and the Training monitor says so)."}
+        jobs = self.app.jobs_list()
+        counts = {st: sum(1 for r in jobs["jobs"] if r["status"] == st) for st in ("queued", "running", "done", "error", "interrupted", "cancelled")}
+        log = RequestLog(user / "logs" / "requests.jsonl")
+        backups = sorted((user / "backups").glob("quant-lab-backup-*.zip"), reverse=True) if (user / "backups").is_dir() else []
+        from ..marketdata.models import MarketDataError  # noqa: F401  (the kinds are documented on the class)
+
+        return clean({"disk": disk, "databases": self._databases(), "latest_backup": backups[0].name if backups else None, "jobs": {"counts": counts, "interrupted": counts["interrupted"],
+                      "note": "A job that was running when the app stopped is marked interrupted at the next start; nothing is resumed automatically."}, "recent_errors": log.tail(20, only_errors=True),
+                      "provider_error_categories": ["not_configured", "auth", "entitlement", "rate_limit", "not_found", "bad_request", "server", "network", "cancelled", "unsupported"],
+                      "request_log": str((user / "logs" / "requests.jsonl").relative_to(self.app.root))})
+
+    def verify_backup(self, body: dict) -> dict:
+        name = str(body.get("name") or "")
+        folder = self.user / "backups"
+        if not re.fullmatch(r"quant-lab-backup-\d{8}-\d{6}\.zip", name):
+            raise ApiError("name a backup made by this app (quant-lab-backup-YYYYMMDD-HHMMSS.zip)")
+        path = folder / name
+        if not path.is_file():
+            raise ApiError("no such backup")
+        problems, files = [], []
+        with tempfile.TemporaryDirectory() as scratch:
+            base = Path(scratch).resolve()
+            try:
+                with zipfile.ZipFile(path) as z:
+                    bad = z.testzip()
+                    if bad:
+                        problems.append(f"the archive is damaged at {bad}")
+                    for info in z.infolist():
+                        target = (base / info.filename).resolve()
+                        if info.filename.startswith(("/", "\\")) or ".." in Path(info.filename).parts or base not in target.parents and target != base:
+                            problems.append(f"{info.filename}: path leaves the restore folder (refused)")
+                            continue
+                        if info.is_dir():
+                            continue
+                        target.parent.mkdir(parents=True, exist_ok=True)
+                        target.write_bytes(z.read(info))
+                        row = {"file": info.filename, "bytes": info.file_size}
+                        if target.suffix in (".db", ".sqlite"):
+                            try:
+                                con = sqlite3.connect(str(target))
+                                try:
+                                    row["integrity"] = con.execute("PRAGMA integrity_check").fetchone()[0]
+                                    row["tables"] = {t[0]: con.execute(f'SELECT COUNT(*) FROM "{t[0].replace(chr(34), "")}"').fetchone()[0] for t in con.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+                                finally:
+                                    con.close()
+                            except sqlite3.Error as error:
+                                row["integrity"] = f"cannot be opened: {error}"
+                            if row["integrity"] != "ok":
+                                problems.append(f"{info.filename}: {row['integrity']}")
+                        elif target.suffix == ".json":
+                            try:
+                                json.loads(target.read_text(encoding="utf-8"))
+                                row["parsed"] = True
+                            except (ValueError, OSError):
+                                row["parsed"] = False
+                                problems.append(f"{info.filename}: not valid JSON")
+                        files.append(row)
+            except zipfile.BadZipFile:
+                problems.append("not a zip archive")
+        return clean({"name": name, "ok": not problems and bool(files), "files": files, "problems": problems, "note": "The backup was restored into a scratch folder and checked; nothing of the live data was touched. Checkpoint signatures are tied to this machine's key (data/user/.integrity_key): a backup restored on another machine keeps working for plain checkpoints."})

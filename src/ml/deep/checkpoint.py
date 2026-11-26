@@ -83,6 +83,51 @@ def _replace(src: Path, dst: Path, attempts: int = 8) -> None:
             time.sleep(0.05 * (k + 1))
 
 
+from . import integrity                                                                                       # noqa: E402
+
+
+class UnsafeCheckpoint(Exception):
+    """A checkpoint that cannot be loaded safely and was not signed by this installation: it is not read."""
+
+
+SIDECARS = (".sha256", ".hmac")
+
+
+def _wellformed(raw: bytes) -> bool:
+    """Whether ``raw`` is a complete pickle stream (a torch archive's ``data.pkl`` or a legacy pickle): the opcodes are read, never executed."""
+    import pickletools
+    import zipfile
+
+    try:
+        buf = io.BytesIO(raw)
+        if zipfile.is_zipfile(buf):
+            with zipfile.ZipFile(buf) as z:
+                member = next((n for n in z.namelist() if n.endswith("data.pkl")), None)
+                if member is None or z.testzip() is not None:
+                    return False
+                stream = io.BytesIO(z.read(member))
+        else:
+            stream = io.BytesIO(raw)
+        for _ in pickletools.genops(stream):
+            pass
+        return True
+    except Exception:                                                                                               # noqa: BLE001
+        return False
+
+
+def _move_sidecars(src: Path, dst: Path) -> None:
+    """The integrity files of a checkpoint travel with it."""
+    for ext in SIDECARS:
+        a = src.with_name(src.name + ext)
+        if a.exists():
+            _replace(a, dst.with_name(dst.name + ext))
+
+
+def _drop_sidecars(path: Path) -> None:
+    for ext in SIDECARS:
+        path.with_name(path.name + ext).unlink(missing_ok=True)
+
+
 def _checksum(payload: bytes) -> str:
     return hashlib.sha256(payload).hexdigest()
 
@@ -93,6 +138,7 @@ class CheckpointManager:
     def __init__(self, folder, keep_milestones: int = 0, keep_last: int = 2, max_bytes: int | None = None):
         self.dir = Path(folder)
         self.keep_milestones, self.keep_last, self.max_bytes = int(keep_milestones), max(int(keep_last), 2), max_bytes
+        self.unsafe: list[str] = []                                                                                  # files refused because they could not be loaded safely and were not signed here
 
     # ------------------------------------------------------------------------------------------------ writing
     def _atomic(self, path: Path, state: dict) -> dict:
@@ -116,6 +162,7 @@ class CheckpointManager:
             raise
         sidecar = path.with_name(path.name + ".sha256")
         sidecar.write_text(digest)
+        path.with_name(path.name + ".hmac").write_text(integrity.sign(data))
         return {"path": str(path), "bytes": len(data), "sha256": digest}
 
     def save(self, state: dict, best: bool = False) -> dict:
@@ -125,10 +172,9 @@ class CheckpointManager:
         info = self._atomic(self.dir / "last.next.pt", state)
         if last.exists():
             _replace(last, prev)
-            if last.with_name("last.pt.sha256").exists():
-                _replace(last.with_name("last.pt.sha256"), prev.with_name("last.prev.pt.sha256"))
+            _move_sidecars(last, prev)
         _replace(self.dir / "last.next.pt", last)
-        _replace(self.dir / "last.next.pt.sha256", last.with_name("last.pt.sha256"))
+        _move_sidecars(self.dir / "last.next.pt", last)
         if best:
             self._atomic(self.dir / "best.pt", state)
         if self.keep_milestones and (int(state["epoch"]) + 1) % self.keep_milestones == 0:
@@ -150,10 +196,26 @@ class CheckpointManager:
             side = path.with_name(path.name + ".sha256")
             if side.exists() and side.read_text().strip() != _checksum(raw):
                 return None
-            blob = torch.load(io.BytesIO(raw), map_location="cpu", weights_only=False)
+            blob = self._load(raw, path)
             return blob if isinstance(blob, dict) and "model" in blob and "epoch" in blob else None
+        except UnsafeCheckpoint as exc:
+            self.unsafe.append(str(exc))
+            return None
         except Exception:                                                                                           # noqa: BLE001 - a damaged file is a result: fall back to the previous one
             return None
+
+    def _load(self, raw: bytes, path: Path):
+        """Tensors, numbers, strings, lists and dicts are loaded with ``weights_only=True``: nothing in the file can run. Anything else needs the unrestricted load, which is used only for a file this installation signed."""
+        try:
+            return torch.load(io.BytesIO(raw), map_location="cpu", weights_only=True)
+        except Exception:                                                                                           # noqa: BLE001 - contains something other than plain data (or is damaged: the next call says which)
+            pass
+        sig = path.with_name(path.name + ".hmac")
+        if sig.exists() and integrity.verify(raw, sig.read_text()):
+            return torch.load(io.BytesIO(raw), map_location="cpu", weights_only=False)
+        if not _wellformed(raw):                                                                                    # not a whole pickle stream: damaged, not dangerous
+            raise ValueError("the checkpoint is damaged")
+        raise UnsafeCheckpoint(f"{path.name} contains objects that cannot be loaded safely and was not signed by this installation: it was not read")
 
     def latest_valid(self) -> tuple[dict | None, str, list[str]]:
         """``(state, which file, problems)``: the newest checkpoint that reads and verifies (``last``, else ``last.prev``, else ``best`` which carries weights only for a warm start)."""
@@ -170,7 +232,8 @@ class CheckpointManager:
             blob = self._read(p)
             if blob is not None:
                 return blob, name, problems
-            problems.append(f"{name} is damaged and was skipped")
+            refused = next((u for u in self.unsafe if u.startswith(name + " ")), None)
+            problems.append(refused or f"{name} is damaged and was skipped")                                           # a refused file is said to be refused, not merely damaged
         return None, "", problems
 
     def _staged(self) -> dict | None:
@@ -191,18 +254,16 @@ class CheckpointManager:
             if newest is None or int(staged["epoch"]) > int(newest["epoch"]):
                 if last.exists() and newest is not None:
                     _replace(last, prev)
-                    if last.with_name("last.pt.sha256").exists():
-                        _replace(last.with_name("last.pt.sha256"), prev.with_name("last.prev.pt.sha256"))
+                    _move_sidecars(last, prev)
                 _replace(nxt, last)
-                if (self.dir / "last.next.pt.sha256").exists():
-                    _replace(self.dir / "last.next.pt.sha256", last.with_name("last.pt.sha256"))
+                _move_sidecars(nxt, last)
                 done.append(f"completed an interrupted checkpoint commit (epoch {int(staged['epoch']) + 1})")
             else:
                 nxt.unlink(missing_ok=True)
-                nxt.with_name("last.next.pt.sha256").unlink(missing_ok=True)
+                _drop_sidecars(nxt)
         elif nxt.exists():
             nxt.unlink(missing_ok=True)
-            nxt.with_name("last.next.pt.sha256").unlink(missing_ok=True)
+            _drop_sidecars(nxt)
             done.append("removed a damaged staged checkpoint")
         for stray in list(self.dir.glob("*.tmp*")):
             try:
