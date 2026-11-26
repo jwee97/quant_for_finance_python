@@ -250,3 +250,62 @@ def test_a_fundamental_study_is_kept_with_its_point_in_time_status_and_the_compa
     cmp = post["/api/research/compare"]({"artifacts": [a["id"], b["id"]]})
     codes = {i["code"]: i for i in cmp["issues"]}
     assert codes["pit_assumptions"]["severity"] == "warning" and codes["fundamentals_mixed"]["severity"] == "warning"
+
+
+# ------------------------------------------------------------------------------------------------------ expected-return sources and attribution through the portfolio endpoint
+def _pf(app, **body):
+    base = {"tickers": SIX, "methods": ["equal_weight", "min_variance", "max_sharpe"], "config": {"step": 21, "lookback": 252}}
+    view = _wait(app, app.extra_post["/api/lab/portfolio"]({**base, **body})["job"], 600)
+    return view
+
+
+def test_the_portfolio_study_attributes_its_returns_and_says_why_brinson_is_off_without_a_classification(app):
+    view = _pf(app, sector_source="none")
+    assert view["status"] == "done", view
+    out = view["result"]
+    json.dumps(out)
+    a = out["attribution"]
+    assert a["kind"] == "market" and a["brinson_available"] is False and "classification" in a["brinson_reason"]
+    auto = _pf(app)["result"]["attribution"]
+    assert auto["brinson_available"] is True and auto["methods"]["max_sharpe"]["brinson"]["reconciliation"]["status"] == "reconciled", "the platform data carry asset classes, which are used when no classification is given"
+    for key, m in a["methods"].items():
+        rec = m["factor"]["reconciliation"]
+        assert rec["status"] == "reconciled" and rec["max_daily_residual"] < 1e-12, key
+        assert m["factor"]["totals"]["costs"] < 0 and {"market", "specific", "costs", "financing", "residual"} <= set(m["factor"]["totals"]) and m["factor"]["ex_ante"]
+    assert out["expected_returns"]["source"] == "historical mean" and out["source_comparison"] is None and out["config"]["mu_source"] == "historical mean"
+    with_groups = _pf(app, sectors={"AAA": "X", "BBB": "X", "CCC": "X", "DDD": "Y", "EEE": "Y", "FFF": "Y"}, attribution={"kind": "statistical", "n_factors": 2})["result"]["attribution"]
+    assert with_groups["brinson_available"] and with_groups["kind"] == "statistical"
+    b = with_groups["methods"]["max_sharpe"]["brinson"]
+    assert b["reconciliation"]["status"] == "reconciled" and set(b["groups"]) == {"X", "Y"} and b["totals"]["costs"] < 0 or b["totals"]["costs"] == 0
+    assert "PC1" in with_groups["methods"]["max_sharpe"]["factor"]["totals"]
+    off = _pf(app, attribution=None)["result"]
+    assert off["attribution"] is None
+
+
+def test_forecast_and_factor_expected_returns_are_run_on_identical_settings_and_compared(app):
+    view = _pf(app, expected_returns=[{"source": "historical"}, {"source": "factor", "factor": "momentum"}, {"source": "forecast", "forecast_method": "historical", "calibrate": "none"}])
+    assert view["status"] == "done", view
+    out = view["result"]
+    cmp = out["source_comparison"]
+    assert list(cmp) == ["historical mean", "factor: momentum", "forecast: historical"]
+    assert out["expected_returns"]["source"] == "historical mean"
+    mv = {lbl: next(r for r in v["table"] if r["key"] == "min_variance")["sharpe"] for lbl, v in cmp.items()}
+    assert len(set(mv.values())) == 1, "a method that ignores expected returns is identical whatever the source"
+    ms = {lbl: next(r for r in v["table"] if r["key"] == "max_sharpe")["sharpe"] for lbl, v in cmp.items()}
+    assert len(set(ms.values())) > 1, "and one that uses them is not"
+    fore = cmp["forecast: historical"]
+    assert fore["meta"]["forecast_contract"]["model_id"] == "historical" and fore["meta"]["forecast_contract"]["kind"] == "distribution" and fore["meta"]["training_fingerprint_example"]
+    assert any(f > 0 for f in fore["mu_report"]["filled_with_historical"]), "early rebalances have no usable forecast and use the historical mean, which is counted"
+
+
+def test_the_expected_return_request_is_checked_before_a_job_starts(app):
+    post = app.extra_post["/api/lab/portfolio"]
+    for er, word in (({"source": "oracle"}, "historical, factor, forecast or combined"), ({"source": "factor", "factor": "alpha"}, "factor must be"), ({"source": "forecast", "forecast_method": "garch"}, "forecast_method must be"),
+                     ({"source": "forecast", "horizon": 5}, "only at its own horizon"), ({"source": "forecast", "calibrate": "x"}, "calibrate"), ({"source": "forecast", "horizon": 99, "allow_horizon_scaling": True}, "1 to 63"),
+                     ([{"source": "factor"}, {"source": "factor"}], "twice")):
+        with pytest.raises(ApiError, match=word):
+            post({"tickers": SIX, "expected_returns": er, "config": {"step": 21}})
+    with pytest.raises(ApiError, match="attribution.kind"):
+        post({"tickers": SIX, "attribution": {"kind": "magic"}})
+    with pytest.raises(ApiError, match="sectors must map"):
+        post({"tickers": SIX, "sectors": ["a"]})

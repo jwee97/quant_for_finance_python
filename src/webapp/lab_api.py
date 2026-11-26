@@ -17,6 +17,9 @@ import numpy as np
 from ..alphalab.fundamental import FundamentalError, panels as fundamental_panels
 from ..alphalab import studies as st
 from ..alphalab.registry import RegistryError, SignalRegistry
+from ..alphalab import expected as ex
+from ..forecast import alpha as fa
+from ..portfolio import attribution as pat
 from ..portfolio import lab as pl
 from .api import ApiError
 from .universe import UniverseError, normalise
@@ -63,6 +66,11 @@ def _tickers(body: dict, minimum: int, maximum: int = 40) -> list:
     return tickers
 
 
+def _f(v):
+    v = float(v)
+    return v if np.isfinite(v) else None
+
+
 class LabApi:
     def __init__(self, app):
         self.app = app
@@ -100,6 +108,7 @@ class LabApi:
             bundle, universe = self.app.builder.resolve(tickers, None, start, refresh, source, progress)
         except UniverseError as error:
             raise ApiError(str(error)) from None
+        universe = {**universe, "groups": {str(k): str(v) for k, v in dict(getattr(bundle, "group", None) or getattr(bundle, "asset_class", None) or {}).items() if k in tickers}}
         px = bundle.prices[[t for t in tickers if t in bundle.prices.columns]].dropna(how="any")
         if px.shape[1] < len(tickers):
             raise ApiError("some tickers have no prices: " + ", ".join(sorted(set(tickers) - set(px.columns))))
@@ -223,14 +232,31 @@ class LabApi:
             raise ApiError("too many methods")
         if cfg.get("max_weight", 1.0) * len(tickers) < 1.0 - 1e-12:
             raise ApiError(f"a cap of {cfg['max_weight']} on {len(tickers)} tickers cannot be fully invested")
+        step = int(cfg.get("step", 21))
+        specs = self._mu_specs(body, step)
+        attr_cfg = body.get("attribution", {"kind": "market"})
+        if attr_cfg not in (None, False) and (not isinstance(attr_cfg, dict) or attr_cfg.get("kind", "market") not in ("market", "statistical")):
+            raise ApiError("attribution.kind must be market or statistical")
+        sectors = body.get("sectors")
+        if sectors is not None and not (isinstance(sectors, dict) and all(isinstance(k, str) and isinstance(v, str) for k, v in sectors.items())):
+            raise ApiError("sectors must map each ticker to a group name")
+        sector_source = str(body.get("sector_source") or "auto")
+        if sector_source not in ("auto", "fundamentals", "none"):
+            raise ApiError("sector_source must be auto, fundamentals or none")
         self._check(tickers, body)
 
         def work(progress):
             px, universe = self._load(tickers, body, progress)
-            try:
-                res = pl.compare(px.pct_change().iloc[1:], methods, cov_method=cov_method, progress=lambda text, frac=None: progress(f"{text}"), **cfg)
-            except pl.LabError as error:
-                raise ApiError(str(error)) from None
+            data = px.pct_change().iloc[1:]
+            runs = {}
+            for i, spec in enumerate(specs):
+                mu_fn, label, meta = self._mu_provider(spec, px, data, cfg, step, progress)
+                try:
+                    runs[label] = (pl.compare(data, methods, cov_method=cov_method, progress=lambda text, frac=None: progress(f"{text}"), mu_fn=mu_fn, mu_label=label, horizon=int(spec.get("horizon") or step), **cfg), meta)
+                except pl.LabError as error:
+                    raise ApiError(str(error)) from None
+            primary = next(iter(runs))
+            res, mu_meta = runs[primary]
             eq = res["equity"]
             table = res["table"].copy()
             rows = []
@@ -245,13 +271,113 @@ class LabApi:
                 diag = pl.diagnostics(res, px.pct_change().iloc[1:])
             except Exception as error:                                                                   # the comparison stands without the extra view; say that it is missing and why
                 diag = {"error": f"{type(error).__name__}: {error}"}
+            attribution = None
+            if attr_cfg not in (None, False):
+                progress("attributing the returns to factors and, where there is a classification, to groups (Brinson-Fachler)")
+                groups, why = self._sectors(tickers, sectors, sector_source, universe)
+                attribution = pat.compact(pat.attribute_lab_result(res, data, kind=attr_cfg.get("kind", "market"), n_factors=int(attr_cfg.get("n_factors", 2)), sectors=groups))
+                if groups is None and attribution.get("brinson_reason") is None:
+                    attribution["brinson_reason"] = why
+                elif groups is None:
+                    attribution["brinson_reason"] = why or attribution["brinson_reason"]
+            comparison = None
+            if len(runs) > 1:
+                comparison = {lbl: {"table": [{"key": k, "sharpe": _f(r["table"].loc[k, "sharpe"]), "ann_return": _f(r["table"].loc[k, "ann_return"]), "ann_vol": _f(r["table"].loc[k, "ann_vol"]), "turnover_per_year": _f(r["table"].loc[k, "turnover_per_year"]),
+                                              "max_drawdown": _f(r["table"].loc[k, "max_drawdown"])} for k in r["table"].index], "equity": {k: [round(float(x), 6) for x in r["equity"][k].to_numpy()] for k in r["equity"].columns},
+                                    "mu_report": {"filled_with_historical": [v["filled_with_historical"] for v in r["mu_report"].values()], "assets_with_estimate": [v["assets_with_estimate"] for v in r["mu_report"].values()]}, "meta": m}
+                              for lbl, (r, m) in runs.items()}
+            expected = {"source": primary, "meta": mu_meta, "report": {d: {k: v for k, v in rep.items() if k != "info"} for d, rep in res["mu_report"].items()},
+                        "last_info": (list(res["mu_report"].values())[-1]["info"] if res["mu_report"] else {}), "horizon_days": int(specs[0].get("horizon") or step)}
             return {"table": rows, "equity": {"dates": [str(d.date()) for d in eq.index], "series": {k: [round(float(x), 6) for x in eq[k].to_numpy()] for k in eq.columns}}, "last_weights": last,
-                    "mean_weights": {k: {a: float(x) for a, x in w.mean().items()} for k, w in res["weights"].items()}, "diagnostics": diag, "rebalances": res["rebalances"], "config": res["config"], "universe": {"source": universe.get("source"), "tickers": tickers},
+                    "mean_weights": {k: {a: float(x) for a, x in w.mean().items()} for k, w in res["weights"].items()}, "diagnostics": diag, "expected_returns": expected, "attribution": attribution, "source_comparison": comparison, "rebalances": res["rebalances"], "config": res["config"], "universe": {"source": universe.get("source"), "tickers": tickers},
                     "notes": ["Every method saw the same windows, covariance estimate, caps and costs.",
                               "Sharpe standard errors are large: a difference smaller than about two of them is not evidence that one method is better.",
                               "'Fallbacks' counts the dates a method failed and equal weight was used instead; 'capped' is the average weight moved by the cap."]}
 
         return self.app.submit_task("Portfolio lab", work, kind="lab")
+
+    def _mu_specs(self, body: dict, step: int) -> list[dict]:
+        """The sources of expected returns the request asks for (the first is the one the page draws in full; any others are run on identical settings and compared)."""
+        raw = body.get("expected_returns")
+        specs = [{"source": "historical"}] if raw in (None, "", {}) else raw if isinstance(raw, list) else [raw]
+        if not 1 <= len(specs) <= 4 or not all(isinstance(s, dict) for s in specs):
+            raise ApiError("expected_returns is a source, or a list of up to four")
+        seen = set()
+        for s in specs:
+            src = s.get("source", "historical")
+            if src not in ("historical", "factor", "forecast", "combined"):
+                raise ApiError("an expected-return source is historical, factor, forecast or combined")
+            if src in ("factor", "combined") and s.get("factor", "momentum") not in st.SIGNALS:
+                raise ApiError(f"factor must be one of: {', '.join(st.SIGNALS)}")
+            if src in ("forecast", "combined") and s.get("forecast_method", "historical") not in fa.MEAN_METHODS:
+                raise ApiError(f"forecast_method must be one of: {', '.join(fa.MEAN_METHODS)}")
+            if s.get("calibrate", "past_slope") not in ("past_slope", "none"):
+                raise ApiError("calibrate is past_slope or none")
+            if s.get("combine", "equal") not in ("equal", "inverse_error"):
+                raise ApiError("combine is equal or inverse_error")
+            try:
+                h = int(s.get("horizon") or step)
+                age = int(s.get("max_age_days", 10))
+            except (TypeError, ValueError):
+                raise ApiError("horizon and max_age_days are whole numbers") from None
+            if not 1 <= h <= 63 or not 1 <= age <= 120:
+                raise ApiError("horizon is 1 to 63 days and max_age_days 1 to 120")
+            if src != "historical" and h != step and not s.get("allow_horizon_scaling"):
+                raise ApiError(f"the forecast horizon is {h} days and the portfolio is rebalanced every {step}: a forecast is used only at its own horizon (set the horizon to the rebalance step, or allow scaling, a constant-drift assumption)")
+            label = self._mu_label(s)
+            if label in seen:
+                raise ApiError("the same source of expected returns is listed twice")
+            seen.add(label)
+        return specs
+
+    @staticmethod
+    def _mu_label(s: dict) -> str:
+        src = s.get("source", "historical")
+        return {"historical": "historical mean", "factor": f"factor: {s.get('factor', 'momentum')}", "forecast": f"forecast: {s.get('forecast_method', 'historical')}",
+                "combined": f"combined: {s.get('factor', 'momentum')} + {s.get('forecast_method', 'historical')}"}[src]
+
+    def _mu_provider(self, s: dict, px, data, cfg: dict, step: int, progress):
+        src, h = s.get("source", "historical"), int(s.get("horizon") or step)
+        label = self._mu_label(s)
+        if src == "historical":
+            return None, label, {"source": src, "note": "the mean return of the window, the Lab's default"}
+        scaling = bool(s.get("allow_horizon_scaling"))
+        lookback = int(cfg.get("lookback", 252))
+        parts, meta = {}, {"source": src, "horizon_days": h, "allow_horizon_scaling": scaling}
+        if src in ("factor", "combined"):
+            parts["factor"] = ex.factor_provider(px, s.get("factor", "momentum"), h)
+            meta["factor"] = s.get("factor", "momentum")
+        if src in ("forecast", "combined"):
+            method = s.get("forecast_method", "historical")
+            origins = [data.index[p - 1] for p in range(lookback, len(data) - 1, step)]
+            progress(f"forecasting every asset at {len(origins)} rebalance dates with {method}")
+            records = fa.generate(px, method, origins, h, n_paths=int(s.get("n_paths", 300)), seed=int(s.get("seed", 0)))
+            if not records:
+                raise ApiError(f"{method} needs more history than the prices hold: no forecast could be made")
+            parts["forecast"] = ex.forecast_provider(records, px, h, int(s.get("max_age_days", 10)), s.get("calibrate", "past_slope"), scaling)
+            meta.update({"forecast_method": method, "forecasts": len(records), "calibrate": s.get("calibrate", "past_slope"), "max_age_days": int(s.get("max_age_days", 10)),
+                         "training_fingerprint_example": records[-1].training_fingerprint, "model_version": records[-1].model_version, "forecast_contract": records[-1].to_dict()})
+        fn = parts["factor"] if src == "factor" else parts["forecast"] if src == "forecast" else ex.combined_provider(parts, s.get("combine", "equal"), step, h)
+        return fn, label, meta
+
+    def _sectors(self, tickers: list, given, source: str, universe: dict):
+        if source == "none":
+            return None, "classification switched off"
+        if given:
+            return {k: v for k, v in given.items()}, None
+        if source == "fundamentals":
+            try:
+                sec = self.app.fundamentals.bench("real", create=False).store.securities()
+            except Exception:
+                return None, "the fundamentals database could not be read"
+            m = {str(r.ticker).upper(): str(r.sector) for r in sec.itertuples() if getattr(r, "sector", None)}
+            groups = {t: m[t.upper()] for t in tickers if t.upper() in m}
+            return (groups, None) if groups else (None, "the fundamentals database holds no sector for these tickers")
+        groups = (universe or {}).get("groups") or {}
+        groups = {t: g for t, g in groups.items() if g and g != "unknown"}
+        if groups:
+            return groups, None
+        return None, "the data carry no classification of these tickers (give sectors, or take them from the Fundamentals tab)"
 
     def trading(self, body: dict) -> dict:
         tickers = _tickers(body, 6, 30)

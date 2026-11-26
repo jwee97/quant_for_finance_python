@@ -229,7 +229,7 @@ def _metrics(net: pd.Series, gross: pd.Series, turnovers: list, weights: pd.Data
 
 
 def compare(returns: pd.DataFrame, methods: list[str] | None = None, lookback: int = 252, step: int = 21, cost_bps: float = 10.0, cov_method: str = "shrinkage", mu_shrink: float = 0.8, max_weight: float = 1.0,
-            risk_aversion: float = 3.0, perturb: int = 0, seed: int = 0, progress=None) -> dict:
+            risk_aversion: float = 3.0, perturb: int = 0, seed: int = 0, progress=None, mu_fn=None, mu_label: str = "historical", horizon: int | None = None) -> dict:
     """Run the methods over the same walk-forward schedule and tabulate them. ``perturb`` is the number of bootstrap resamples of the window used (at up to six rebalance dates) to measure how much a
     method's weights move when the data do; 0 skips it."""
     keys = list(methods or ["equal_weight", "min_variance", "risk_parity", "hrp", "nco", "max_sharpe"])
@@ -253,11 +253,20 @@ def compare(returns: pd.DataFrame, methods: list[str] | None = None, lookback: i
     rng = np.random.default_rng(seed)
     pert_at = set(dates[:: max(len(dates) // 6, 1)][:6]) if perturb else set()
     cost = cost_bps * 1e-4
-    ctxs = {}
+    ctxs, mu_report = {}, {}
     for p in dates:
         win = data.iloc[p - lookback:p]
         cov = estimate_covariance(win, cov_method, lookback, annualise=True)
         mu = win.mean() * ANN
+        if mu_fn is not None:                                                  # another source of expected returns, from information before row p only; the historical mean fills what it lacks
+            est = mu_fn(p, data)
+            h = int(horizon or step)
+            own = est.mu.reindex(win.columns)
+            put = own * (ANN / h)                                              # a horizon-h expected return in the units of the annualised covariance (the same scaling for every source)
+            n_own = int(put.notna().sum())
+            mu = put.where(put.notna(), mu)
+            mu_report[str(data.index[p].date())] = {"assets_with_estimate": n_own, "assets": int(len(win.columns)), "filled_with_historical": int(len(win.columns) - n_own),
+                                                    "mean_uncertainty": None if est.sd is None or not est.sd.notna().any() else float(est.sd.mean()), "info": est.info}
         mu = (mu_shrink * mu.mean() + (1 - mu_shrink) * mu)
         ctxs[p] = {"cov": cov.to_numpy(dtype=float), "mu": mu.to_numpy(dtype=float), "lam": risk_aversion}
     out = {"net": {}, "weights": {}, "metrics": {}, "notes": {}}
@@ -322,7 +331,8 @@ def compare(returns: pd.DataFrame, methods: list[str] | None = None, lookback: i
     table.insert(1, "family", [METHODS[k].family for k in table.index])
     equity = pd.DataFrame({k: (1.0 + s).cumprod() for k, s in out["net"].items()})
     return {"table": table, "equity": equity, "weights": out["weights"], "notes": out["notes"], "rebalances": [str(data.index[p].date()) for p in dates],
-            "config": {"methods": keys, "lookback": lookback, "step": step, "cost_bps": cost_bps, "cov_method": cov_method, "mu_shrink": mu_shrink, "max_weight": max_weight, "risk_aversion": risk_aversion,
+            "mu_used": {str(data.index[p].date()): ctxs[p]["mu"] for p in dates}, "mu_report": mu_report, "mu_label": mu_label,
+            "config": {"methods": keys, "mu_source": mu_label, "lookback": lookback, "step": step, "cost_bps": cost_bps, "cov_method": cov_method, "mu_shrink": mu_shrink, "max_weight": max_weight, "risk_aversion": risk_aversion,
                        "perturb": perturb, "seed": seed, "assets": n_assets, "rows": len(data), "first": str(data.index[dates[0]].date()), "last": str(equity.index[-1].date())}}
 
 
@@ -349,6 +359,10 @@ def diagnostics(res: dict, returns: pd.DataFrame, n_draws: int = 30, mu_noise: f
     cov = estimate_covariance(win, cov_method, lookback, annualise=True).to_numpy(dtype=float)
     mu_raw = (win.mean() * ANN).to_numpy(dtype=float)
     mu = mu_shrink * mu_raw.mean() + (1 - mu_shrink) * mu_raw
+    used = (res.get("mu_used") or {}).get(str(rebal_dates[-1].date()))
+    if used is not None:                                                    # the expected returns the optimisers were actually given (another source than the window's own mean)
+        mu = np.asarray(used, dtype=float)
+        mu_raw = mu
     rng = np.random.default_rng(seed)
     ctx0 = {"cov": cov, "mu": mu, "lam": cfg["risk_aversion"]}
 
@@ -373,6 +387,17 @@ def diagnostics(res: dict, returns: pd.DataFrame, n_draws: int = 30, mu_noise: f
                     mu_moves.append(float(np.abs(solve(key, {**ctx0, "mu": mu + mu_noise * sd * rng.normal(size=len(mu))}) - base).sum() / 2))
                 except Exception:
                     continue
+        curve = {}
+        if METHODS[key].uses_mu:
+            sd0 = float(np.std(mu)) or float(np.std(mu_raw)) or 1e-6
+            for mult in (0.25, 0.5, 1.0, 2.0):
+                moved = []
+                for _ in range(max(n_draws // 3, 5)):
+                    try:
+                        moved.append(float(np.abs(solve(key, {**ctx0, "mu": mu + mult * sd0 * rng.normal(size=len(mu))}) - base).sum() / 2))
+                    except Exception:
+                        continue
+                curve[str(mult)] = float(np.median(moved)) if moved else None
         for alt in [m for m in ("sample", "shrinkage") if m != cov_method]:
             try:
                 c2 = estimate_covariance(win, alt, lookback, annualise=True).to_numpy(dtype=float)
@@ -383,7 +408,7 @@ def diagnostics(res: dict, returns: pd.DataFrame, n_draws: int = 30, mu_noise: f
         rows[key] = {"label": METHODS[key].label, "effective_n": float(np.mean(1.0 / w2)), "hhi": float(w2.mean()), "max_weight": float(srt[:, 0].mean()), "top3_share": float(srt[:, :3].sum(axis=1).mean()),
                      "zero_weight_positions": float((W.to_numpy() < 1e-4).sum(axis=1).mean()), "cap_binding_share": float(row["capped"]),
                      "weight_turnover": float(diffs.abs().sum(axis=1).mean() / 2) if len(diffs) else float("nan"), "weight_rank_correlation": float(np.nanmean(corr)) if corr and np.isfinite(corr).any() else float("nan"),
-                     "mu_sensitivity": float(np.median(mu_moves)) if mu_moves else None, "cov_sensitivity": float(np.median(cov_moves)) if cov_moves else None,
+                     "mu_sensitivity": float(np.median(mu_moves)) if mu_moves else None, "mu_error_curve": curve, "cov_sensitivity": float(np.median(cov_moves)) if cov_moves else None,
                      "uses_expected_returns": bool(METHODS[key].uses_mu), "turnover_per_year": float(row["turnover_per_year"]), "cost_drag_per_year": float(row["turnover_per_year"] * cost),
                      "gross_net_sharpe": [float(row["gross_sharpe"]), float(row["sharpe"])], "last_weights": {str(a): float(x) for a, x in zip(win.columns, base)}}
     # the long-only frontier under the same cap, from the same last-window cov and mu
