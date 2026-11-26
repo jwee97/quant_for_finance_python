@@ -29,6 +29,7 @@ from ..framework.regimes import market_proxy
 from ..research import ContextError, ResearchStore, StoreError, compatibility, validate_context
 from ..research import compare as cmp
 from ..research import extract
+from ..research import metrics as metric_registry
 from ..research import regime_lab as rl
 from ..research.context import ASSET_CLASSES
 from .api import ApiError
@@ -256,7 +257,11 @@ class ResearchApi:
             cleaned = validate_context({"start": start, "end": end})
         except (TypeError, ValueError, ContextError) as error:
             raise ApiError(str(error)) from None
-        out = cmp.compare(arts, benchmark=bench, start=cleaned.get("start", ""), end=cleaned.get("end", ""), risk_free=rf)
+        rank_by = str(body.get("rank_by") or "")
+        try:
+            out = cmp.compare(arts, benchmark=bench, start=cleaned.get("start", ""), end=cleaned.get("end", ""), risk_free=rf, rank_by=rank_by)
+        except metric_registry.MetricError as error:
+            raise ApiError(str(error)) from None
         return out, session, group
 
     def compare(self, body: dict) -> dict:

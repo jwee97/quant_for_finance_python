@@ -56,9 +56,10 @@ def test_series_on_different_dates_are_measured_over_the_days_they_share_and_the
     lo, hi = max(ra.index[0], rb.index[0]), min(ra.index[-1], rb.index[-1])
     assert out["window"] == {"start": str(lo.date()), "end": str(hi.date())}
     for art, r in ((a, ra), (b, rb)):
-        want = rc.measure(r.loc[lo:hi])
+        lv = (1 + r).cumprod().loc[lo:hi]                                           # the saved levels inside the window; the first of them is the base the returns are measured from
+        want = rc.conventions.measure_levels(lv, rc.conventions.grid_annualisation(lv.index, [rc.conventions.infer_meta(lv.index)]))
         got = out["metrics"][art["id"]]
-        assert got["sharpe"] == pytest.approx(want["sharpe"], abs=1e-9) and got["total_return"] == pytest.approx(float((1 + r.loc[lo:hi]).prod() - 1), abs=1e-9)
+        assert got["sharpe"] == pytest.approx(want["sharpe"], abs=1e-9) and got["total_return"] == pytest.approx(float(lv.iloc[-1] / lv.iloc[0] - 1), abs=1e-9)
     assert codes(out)["window_cut"]["severity"] == "note" and out["rankable"] is True and len(out["ranking"]) == 2
     assert out["studies"]["roles"] == {a["id"]: "trading", b["id"]: "trading"}
 

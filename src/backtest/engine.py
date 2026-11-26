@@ -130,6 +130,7 @@ class BacktestEngine:
     signal_lag: int = 1
     rebalance: str = "monthly"
     weight_drift: bool = True
+    drift_basis: str = "gross"                 # "gross": rescale to the same gross exposure after each return (the historical convention); "equity": drift as an untouched account does (see execution.drift_weights)
     annualisation: int = 252
     min_assets: int = 5
     cost_model: LinearCostModel = field(default_factory=LinearCostModel)
@@ -152,6 +153,7 @@ class BacktestEngine:
             signal_lag=int(config.get("backtest.engine.signal_lag", 1)),
             rebalance=str(config.get("backtest.engine.rebalance", "monthly")),
             weight_drift=bool(config.get("backtest.engine.weight_drift", True)),
+            drift_basis=str(config.get("backtest.engine.drift_basis", "gross")),
             annualisation=int(config.get("backtest.engine.annualisation", 252)),
             min_assets=int(config.get("backtest.engine.min_assets", 5)),
             cost_model=costs,
@@ -188,7 +190,7 @@ class BacktestEngine:
             )
 
         held, traded = build_held_weights(
-            weights, aligned_returns, self.rebalance, self.signal_lag, self.weight_drift
+            weights, aligned_returns, self.rebalance, self.signal_lag, self.weight_drift, self.drift_basis
         )
 
         # R_t = w_{t-1}' r_t. The shift here is the second half of the timing
@@ -231,6 +233,7 @@ class BacktestEngine:
                 "signal_lag": self.signal_lag,
                 "rebalance": self.rebalance,
                 "weight_drift": self.weight_drift,
+                "drift_basis": self.drift_basis,
                 "target_vol": self.target_vol,
                 "ruined_on": None if ruined_on is None else str(ruined_on.date()),
                 **self.cost_model.describe(),

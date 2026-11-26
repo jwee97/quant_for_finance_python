@@ -2,8 +2,8 @@
 
 What it does that a table of the artifacts' own metrics cannot:
 
-* every result is measured again **over the window they all share** with one piece of arithmetic (the one of the Backtest tab's tiles and ``risk.performance``), so a ratio is never a ratio over
-  different years;
+* every result is measured again **on the dates they all share** with one piece of arithmetic (``research.conventions``: elapsed-time CAGR, volatility and Sharpe annualised by the declared or inferred
+  calendar of the common dates, the risk-free rate accrued by elapsed time), so a ratio is never a ratio over different years and a day one result lacks is never a zero return in another;
 * it names every **difference in assumptions** that would make a ranking misleading (different evidence, different data kind, different assets, dataset versions, targets or costs) and says whether
   the difference stops a ranking (``blocks_ranking``) or only deserves a warning. When something blocks, no ranking is produced and the reason is returned instead;
 * it returns the series the page draws (rebased equity, drawdown, rolling Sharpe and volatility, the distribution of daily returns, the correlation of the returns) on that one window, so the charts
@@ -22,11 +22,11 @@ import numpy as np
 import pandas as pd
 
 from ..risk import performance
+from . import conventions, metrics as metric_registry
 from .extract import returns_from_equity
 
-ANN = 252.0
-MIN_DAYS = 30
-RANK_BY = "sharpe"
+MIN_DAYS = 30                                                                           # fewest returns on the common dates for which a comparison is made
+RANK_BY = metric_registry.DEFAULT_TRADING
 EVIDENCE_TEXT = {"in_sample": "in-sample", "out_of_sample": "out-of-sample", "walk_forward": "walk-forward (out-of-sample)", "historical_simulation": "historical simulation of the whole sample", "simulated": "simulated data",
                  "retrospective": "retrospective (uses information not known at the time)", "paper": "paper trading", "live": "live"}
 
@@ -36,10 +36,20 @@ def _num(x):
 
 
 def _returns(art: dict) -> pd.Series | None:
+    """The saved curve's own period returns (the first one relative to the starting capital of 1). Used for a result on its own; the comparison measures on the common dates from the levels (:func:`_levels`)."""
     s = art.get("series") or {}
     if not s.get("dates") or not s.get("equity"):
         return None
     return returns_from_equity(s["dates"], [np.nan if v is None else v for v in s["equity"]]).dropna()
+
+
+def _levels(art: dict) -> pd.Series | None:
+    """The dated levels that were actually observed: a missing level is absent, never filled, so a return is always the change between two observed levels."""
+    s = art.get("series") or {}
+    if not s.get("dates") or not s.get("equity"):
+        return None
+    lv = pd.Series([np.nan if v is None else float(v) for v in s["equity"]], index=pd.to_datetime(list(s["dates"]))).dropna()
+    return lv if len(lv) else None
 
 
 def _extra(art: dict, name: str, index: pd.DatetimeIndex) -> pd.Series | None:
@@ -51,20 +61,25 @@ def _extra(art: dict, name: str, index: pd.DatetimeIndex) -> pd.Series | None:
 
 
 def measure(r: pd.Series, rf: float = 0.0) -> dict:
-    """The headline numbers of a daily-return series (the arithmetic of the Backtest tab, plus a few of ``risk.performance``). ``rf`` is an annual rate taken off the mean before the ratios."""
+    """The headline numbers of a return series dated by its index, under the convention its own dates imply (see :mod:`research.conventions`). Kept for callers that hold returns; the comparison itself measures
+    levels on the common dates with :func:`conventions.measure_levels`."""
     r = r.dropna().astype(float)
-    n = len(r)
-    if n < MIN_DAYS:
-        return {"n_days": n}
-    excess = r - rf / ANN
-    sd = float(r.std(ddof=1))
-    eq = (1.0 + r).cumprod()
-    dd = eq / eq.cummax().clip(lower=1.0) - 1.0
-    cagr = float(eq.iloc[-1] ** (ANN / n) - 1.0)
+    if len(r) < MIN_DAYS:
+        return {"n_days": len(r)}
+    m = conventions.measure_returns(r, rf)
     risk = performance.risk_metrics(r)
-    return {"n_days": n, "cagr": cagr, "ann_vol": sd * math.sqrt(ANN), "sharpe": _num(math.sqrt(ANN) * excess.mean() / sd) if sd > 0 else None, "sortino": _num(risk.get("sortino")),
-            "max_drawdown": float(dd.min()), "calmar": _num(risk.get("calmar")), "skew": _num(risk.get("skew")), "excess_kurtosis": _num(risk.get("excess_kurtosis")), "var_95": _num(risk.get("var_95")),
-            "es_95": _num(risk.get("es_95")), "positive_days": _num(risk.get("positive_days")), "total_return": float(eq.iloc[-1] - 1.0)}
+    m.update(skew=_num(risk.get("skew")), excess_kurtosis=_num(risk.get("excess_kurtosis")), var_95=_num(risk.get("var_95")), es_95=_num(risk.get("es_95")), positive_days=_num(risk.get("positive_days")))
+    return {k: (_num(v) if isinstance(v, float) else v) for k, v in m.items()}
+
+
+def _full_measure(lv: pd.Series, ann: dict, rf: float) -> dict:
+    m = conventions.measure_levels(lv, ann, rf)
+    if m.get("n_days", 0) < 3:
+        return m
+    r = lv.pct_change().dropna()
+    risk = performance.risk_metrics(r)
+    m.update(skew=_num(risk.get("skew")), excess_kurtosis=_num(risk.get("excess_kurtosis")), var_95=_num(risk.get("var_95")), es_95=_num(risk.get("es_95")), positive_days=_num(risk.get("positive_days")))
+    return {k: (_num(v) if isinstance(v, float) else v) for k, v in m.items()}
 
 
 def _label(a: dict) -> str:
@@ -195,7 +210,7 @@ def study_comparison(arts: list[dict]) -> dict:
         if a["kind"] in PREDICTIVE_KINDS:
             key, text = PREDICTIVE_KEY[a["kind"]]
             predictive[a["id"]] = {"kind": a["kind"], "headline": a["metrics"].get(key), "headline_means": text, "metrics": a["metrics"]}
-    ranking = None
+    ranking, key = None, None
     pred_blocks = []
     pa = [a for a in arts if a["kind"] in PREDICTIVE_KINDS]
     if len(pa) >= 2:
@@ -211,8 +226,12 @@ def study_comparison(arts: list[dict]) -> dict:
         if len({a["context"].get("dataset_version") for a in pa}) > 1:
             pred_blocks.append("different data versions")
         if not pred_blocks:
-            ranked = sorted(pa, key=lambda a: -(a["metrics"].get(PREDICTIVE_KEY[a["kind"]][0]) if a["metrics"].get(PREDICTIVE_KEY[a["kind"]][0]) is not None else -9))
-            ranking = [a["id"] for a in ranked]
+            key = PREDICTIVE_KEY[pa[0]["kind"]][0]                                                 # one kind, so one headline metric, sorted in that metric's own direction
+            unfit = metric_registry.applicability(pa, key)
+            if unfit:
+                pred_blocks.extend(unfit)
+            else:
+                ranking = metric_registry.rank({a["id"]: a["metrics"].get(key) for a in pa}, key)
     attribution = []
     for a in arts:
         at = a.get("attribution")
@@ -225,7 +244,7 @@ def study_comparison(arts: list[dict]) -> dict:
                                               "no return series was saved with it, so nothing can be recomputed over a common window; only its saved summary is shown") }
                   for a in arts if not a.get("series")]
     return {"roles": role, "assumptions": {"rows": [{"key": k, "label": lab} for k, lab in ASSUMPTION_ROWS], "values": rows, "differing": differ},
-            "predictive": {"studies": predictive, "ranking": ranking, "blocked_because": pred_blocks,
+            "predictive": {"studies": predictive, "ranking": ranking, "blocked_because": pred_blocks, "ranked_by": None if ranking is None else {"key": key, "label": metric_registry.get(key).label, "direction": metric_registry.get(key).direction},
                            "note": "Predictive quality (IC, forecast skill) and trading performance (Sharpe, drawdown) answer different questions. A better forecast does not by itself make a better portfolio, and a better portfolio does not show a better forecast."},
             "attribution": attribution, "unmeasured": unmeasured}
 
@@ -242,17 +261,73 @@ def all_issues(arts: list[dict], window) -> list[dict]:
     return out
 
 
-def compare(arts: list[dict], *, benchmark: str = "", start: str = "", end: str = "", risk_free: float | None = None, roll: int | None = None) -> dict:
-    """The comparison of ``arts`` (artifacts with their series). ``benchmark`` is the id of one of them to treat as the reference, or ``"equal_weight"``-style names of a benchmark curve a result carries is
-    not used: only a saved result can be the reference, so that it has its own evidence label."""
+def _per_year(ann: dict, n: int, elapsed: float) -> float:
+    """Observations per year: the declared or inferred periods per year, or, for an irregular grid, the number of observations over the elapsed time."""
+    return float(ann["periods_per_year"]) if ann["basis"] == "periods" else (n / elapsed if elapsed > 0 else float("nan"))
+
+
+def convention_issues(arts: list[dict], metas: dict[str, dict], grid_ann: dict, coverage: dict[str, dict]) -> list[dict]:
+    """What differs in how the results were sampled and what that does to the numbers: calendars, frequencies, return types, currencies, an irregular grid, observations dropped to reach the common dates."""
+    out: list[dict] = []
+
+    def add(code, severity, message, ids):
+        out.append({"code": code, "severity": severity, "message": message, "artifacts": ids})
+
+    ids = list(metas)
+    cal = {m["calendar"] for m in metas.values()}
+    if len(cal) > 1:
+        add("different_calendars", "note", "The results trade on different calendars (" + ", ".join(sorted(c.replace("_", " ") for c in cal)) + "). They are measured only on the dates every one of them has a level for; a return across a day one result "
+            "did not trade is the change between two levels it did record, so nothing is invented for the days it lacks.", ids)
+    freq = {m["frequency"] for m in metas.values()}
+    if len(freq) > 1:
+        add("mixed_frequency", "warning", "The results are sampled at different frequencies (" + ", ".join(sorted(freq)) + "). They are compared on the dates they share, which is the coarser grid (" + grid_ann["frequency"] + "); detail finer than that is not used.", ids)
+    rtype = {m.get("return_type") for m in metas.values() if str(m.get("source", "")).startswith("declared")}
+    if len(rtype) > 1:
+        add("different_return_type", "blocks_ranking", "The results declare different return types (" + ", ".join(sorted(map(str, rtype))) + "): simple and logarithmic returns are not added or annualised alike.", ids)
+    cur = {m.get("currency") for m in metas.values() if m.get("currency") not in (None, "", "unspecified")}
+    if len(cur) > 1:
+        add("different_currency", "blocks_ranking", "The results declare different currencies (" + ", ".join(sorted(map(str, cur))) + "): returns in one cannot be ranked against returns in another without conversion.", ids)
+    rfc = {m.get("risk_free") for m in metas.values() if str(m.get("source", "")).startswith("declared") and m.get("risk_free")}
+    if len(rfc) > 1:
+        add("different_risk_free_convention", "warning", "The results declare different risk-free conventions (" + "; ".join(sorted(map(str, rfc))) + "); the comparison uses one for all of them.", ids)
+    if grid_ann["basis"] == "elapsed":
+        add("irregular_spacing", "warning", "The shared dates are unevenly spaced, so volatility and Sharpe are annualised by elapsed time (variance per year of elapsed calendar time), which assumes returns scale with elapsed time. "
+            "They are not multiplied by a fixed number of periods per year.", ids)
+    undeclared = [i for i, m in metas.items() if not str(m.get("source", "")).startswith("declared")]
+    if undeclared:
+        add("annualisation_inferred", "note", f"The calendar and frequency of {len(undeclared)} result(s) were not saved with them and were inferred from their dates; the annualisation used is {grid_ann['calendar'].replace('_', ' ')} "
+            + ("(elapsed time)" if grid_ann["basis"] == "elapsed" else f"({grid_ann['periods_per_year']:g} periods a year)") + ".", undeclared)
+    lost = {i: c for i, c in coverage.items() if c["dropped_in_window"] > 0}
+    if lost:
+        worst = max(lost.values(), key=lambda c: c["dropped_in_window"] / max(c["in_window"], 1))
+        share = worst["dropped_in_window"] / max(worst["in_window"], 1)
+        add("sample_reduced", "warning" if share > 0.2 else "note", "To compare like with like only the dates every result observed are used; observations dropped from the window: "
+            + "; ".join(f"{_title(arts, i)}: {c['dropped_in_window']} of {c['in_window']}" for i, c in lost.items()) + ". A missing date is left out for all results, never counted as a day with no return.", list(lost))
+    return out
+
+
+def _title(arts: list[dict], i: str) -> str:
+    return next((a["title"] for a in arts if a["id"] == i), i)
+
+
+def compare(arts: list[dict], *, benchmark: str = "", start: str = "", end: str = "", risk_free: float | None = None, roll: int | None = None, rank_by: str = "") -> dict:
+    """The comparison of ``arts`` (artifacts with their series). ``benchmark`` is the id of one of them to treat as the reference: only a saved result can be the reference, so that it has its own evidence label.
+
+    The results are measured on **the dates they all observed** (the intersection of their dated levels inside the window they share). Returns are the changes between consecutive common levels, so a result
+    that did not trade on a date, started later, or has a hole in its history is never given a zero return there. ``rank_by`` is a key of :mod:`research.metrics`; it is sorted in that metric's own direction."""
     if len(arts) < 1:
         raise ValueError("choose at least one result")
-    rets = {a["id"]: _returns(a) for a in arts}
-    have = {k: v for k, v in rets.items() if v is not None and len(v)}
+    key = rank_by or RANK_BY
+    metric_registry.get(key)
+    levels = {a["id"]: _levels(a) for a in arts}
+    bad = [i for i, lv in levels.items() if lv is not None and (lv <= 0).any()]
+    have = {k: v for k, v in levels.items() if v is not None and len(v) >= 2 and k not in bad}
     out = {"studies": study_comparison(arts), "artifacts": [{"id": a["id"], "title": a["title"], "kind": a["kind"], "version": a.get("version", 1), "parent": a.get("parent", ""), "hypothesis": a.get("hypothesis", ""), "evidence": a["evidence"], "evidence_text": EVIDENCE_TEXT.get(a["evidence"], a["evidence"]), "data_kind": a["data_kind"],
-                          "context": a["context"], "refs": a["refs"], "reported": a["metrics"], "has_series": a["id"] in have} for a in arts], "missing_series": [i for i in rets if i not in have]}
+                          "context": a["context"], "refs": a["refs"], "reported": a["metrics"], "has_series": a["id"] in have} for a in arts], "missing_series": [i for i in levels if i not in have]}
+    out["metric_registry"] = metric_registry.describe()
     if not have:
         out.update(window=None, issues=all_issues(arts, None), metrics={}, series={}, rankable=False, ranking=None, reason="none of the chosen results has a return series, so nothing can be recomputed over a common window; the studies are compared on their saved summaries")
+        out["issues"] += [{"code": "invalid_levels", "severity": "warning", "scope": "trading", "message": f"{_title(arts, i)} has a level at or below zero, so its returns are undefined and it was not measured.", "artifacts": [i]} for i in bad]
         return out
     lo = max(v.index[0] for v in have.values())
     hi = min(v.index[-1] for v in have.values())
@@ -260,59 +335,92 @@ def compare(arts: list[dict], *, benchmark: str = "", start: str = "", end: str 
         lo = max(lo, pd.Timestamp(start))
     if end:
         hi = min(hi, pd.Timestamp(end))
-    window = (str(lo.date()), str(hi.date()))
+    grid = None
+    for v in have.values():
+        ix = v.loc[lo:hi].index
+        grid = ix if grid is None else grid.intersection(ix)
+    grid = pd.DatetimeIndex(sorted(grid)) if grid is not None else pd.DatetimeIndex([])
+    days = max(len(grid) - 1, 0)
+    window = (str((grid[0] if len(grid) else lo).date()), str((grid[-1] if len(grid) else hi).date()))
     out["window"] = {"start": window[0], "end": window[1]}
-    cut = {k: v.loc[lo:hi] for k, v in have.items()}
-    days = min(len(v) for v in cut.values()) if cut else 0
     out["issues"] = all_issues(arts, window)
+    out["issues"] += [{"code": "invalid_levels", "severity": "warning", "scope": "trading", "message": f"{_title(arts, i)} has a level at or below zero, so its returns are undefined and it was not measured.", "artifacts": [i]} for i in bad]
     rf = float(risk_free or 0.0)
     out["risk_free"] = rf
+    metas = {a["id"]: conventions.meta_of(a.get("series")) for a in arts if a["id"] in have}
+    grid_ann = conventions.grid_annualisation(grid, list(metas.values())) if len(grid) >= 4 else {"basis": "elapsed", "periods_per_year": None, "calendar": "custom", "frequency": "irregular", "source": "too few common dates"}
+    coverage = {}
+    for k, v in have.items():
+        inside = v.loc[lo:hi]
+        gaps = np.diff(inside.index.values).astype("timedelta64[D]").astype(int) if len(inside) > 1 else np.array([0])
+        coverage[k] = {"first": str(v.index[0].date()), "last": str(v.index[-1].date()), "observations": int(len(v)), "in_window": int(len(inside)), "on_common_dates": int(len(grid)), "dropped_in_window": int(len(inside) - len(grid)),
+                       "longest_gap_days": int(gaps.max()), "calendar": metas[k]["calendar"], "frequency": metas[k]["frequency"]}
+    out["coverage"] = coverage
+    out["conventions"] = {"metadata": metas, "common_dates": {**{k: grid_ann[k] for k in ("basis", "periods_per_year", "calendar", "frequency", "source")}, "n_dates": int(len(grid))},
+                          "cagr": "elapsed calendar time between the first and last common date (365.25-day years)", "risk_free": conventions.RF_CONVENTION,
+                          "volatility": ("sd of the per-period returns x sqrt(periods per year)" if grid_ann["basis"] == "periods" else "variance per year of elapsed calendar time, square-rooted")}
+    out["issues"] += convention_issues(arts, metas, grid_ann, coverage)
     if hi <= lo or days < MIN_DAYS:
-        out.update(metrics={}, series={}, rankable=False, ranking=None, reason=f"the results share only {max(days, 0)} days ({window[0]} to {window[1]}); at least {MIN_DAYS} are needed to compare them")
+        out.update(metrics={}, series={}, rankable=False, ranking=None, reason=f"the results share only {max(days, 0)} dates with a level in common ({window[0]} to {window[1]}); at least {MIN_DAYS} returns are needed to compare them")
         out["issues"].append({"code": "short_overlap", "severity": "blocks_ranking", "message": out["reason"], "artifacts": list(have)})
         return out
-    metrics = {k: measure(v, rf) for k, v in cut.items()}
-    for a in arts:                                                                      # costs and turnover, where the result saved them
-        if a["id"] not in cut:
+    on_grid = {k: v.loc[grid] for k, v in have.items()}
+    metrics = {k: _full_measure(v, grid_ann, rf) for k, v in on_grid.items()}
+    out["individual"] = {}                                                               # each result on its own whole history, under its own calendar: informative, not comparable between results
+    for k, v in have.items():
+        own = conventions.grid_annualisation(v.index, [metas[k]]) if len(v) >= 4 else {"basis": "elapsed", "periods_per_year": None, "calendar": "custom", "frequency": "irregular", "source": "too few dates"}
+        out["individual"][k] = {**_full_measure(v, own, rf), "first": str(v.index[0].date()), "last": str(v.index[-1].date())}
+    for a in arts:                                                                      # costs and turnover, where the result saved them, per year of the result's own observations
+        if a["id"] not in have:
             continue
+        own = have[a["id"]]
+        own_ann = conventions.grid_annualisation(own.loc[grid[0]:grid[-1]].index, [metas[a["id"]]])
         for col, name in (("turnover", "turnover_annual"), ("costs", "cost_drag_annual")):
-            s = _extra(a, col, cut[a["id"]].index)
-            if s is not None and s.notna().any():
-                metrics[a["id"]][name] = float(pd.to_numeric(s, errors="coerce").mean() * ANN)
-    window_len = days
-    rw = int(roll or (252 if window_len >= 400 else max(30, window_len // 4)))
-    series = {"dates": [str(d.date()) for d in next(iter(cut.values())).index], "roll_window": rw, "equity": {}, "drawdown": {}, "rolling_sharpe": {}, "rolling_vol": {}}
-    index = next(iter(cut.values())).index
-    for k, r in cut.items():
-        r = r.reindex(index)
-        eq = (1.0 + r.fillna(0.0)).cumprod()
-        series["equity"][k] = [_num(round(v, 5)) for v in eq]
-        series["drawdown"][k] = [_num(round(v, 5)) for v in performance.drawdown_series(r.fillna(0.0))]
-        mean, sd = r.rolling(rw, min_periods=rw).mean(), r.rolling(rw, min_periods=rw).std(ddof=1)
-        series["rolling_sharpe"][k] = [_num(round(v, 3)) for v in (math.sqrt(ANN) * (mean - rf / ANN) / sd)]
-        series["rolling_vol"][k] = [_num(round(v, 4)) for v in sd * math.sqrt(ANN)]
-    frame = pd.DataFrame({k: v.reindex(index) for k, v in cut.items()})
+            s = _extra(a, col, own.loc[grid[0]:grid[-1]].index)
+            if s is None:
+                continue
+            s = pd.to_numeric(s, errors="coerce").iloc[1:]
+            if s.notna().any():
+                span = float((s.index[-1] - own.loc[grid[0]:grid[-1]].index[0]).days) / conventions.YEAR_DAYS
+                metrics[a["id"]][name] = float(s.mean() * _per_year(own_ann, int(s.notna().sum()), span))
+    rw = int(roll or (252 if days >= 400 else max(30, days // 4)))
+    index = grid
+    series = {"dates": [str(d.date()) for d in index], "roll_window": rw, "equity": {}, "drawdown": {}, "rolling_sharpe": {}, "rolling_vol": {}}
+    rets = {}
+    for k, v in on_grid.items():
+        eq = v / v.iloc[0]
+        series["equity"][k] = [_num(round(float(x), 5)) for x in eq]
+        series["drawdown"][k] = [_num(round(float(x), 5)) for x in (eq / eq.cummax() - 1.0)]
+        roll_m = conventions.rolling_measures(v, grid_ann, rw, rf)
+        series["rolling_sharpe"][k] = [None] + [_num(round(float(x), 3)) for x in roll_m["sharpe"]]
+        series["rolling_vol"][k] = [None] + [_num(round(float(x), 4)) for x in roll_m["vol"]]
+        rets[k] = v.pct_change().dropna()
+    frame = pd.DataFrame(rets)
     corr = frame.corr()
     out["correlation"] = {"ids": list(frame.columns), "values": [[_num(round(float(corr.iloc[i, j]), 3)) for j in range(len(corr))] for i in range(len(corr))]}
     edges = np.linspace(float(frame.min().min()), float(frame.max().max()), 31) if len(frame) else np.array([])
     out["distribution"] = {"edges": [_num(round(float(e), 5)) for e in edges], "counts": {k: [int(c) for c in np.histogram(frame[k].dropna(), bins=edges)[0]] for k in frame.columns}} if len(edges) > 2 else None
-    ref = benchmark if benchmark in cut else ""
+    ref = benchmark if benchmark in rets else ""
     if ref:
-        out["versus_reference"] = {k: performance.benchmark_relative(cut[k], cut[ref]) for k in cut if k != ref}
+        out["versus_reference"] = {k: conventions.relative_to(rets[k], rets[ref], grid_ann) for k in rets if k != ref}
         out["reference"] = ref
     elif benchmark:
         out["issues"].append({"code": "reference_missing", "severity": "note", "message": "The reference result has no return series on this window and was ignored.", "artifacts": []})
     out["metrics"], out["series"] = metrics, series
+    out["rank_by"] = {"key": key, "label": metric_registry.get(key).label, "direction": metric_registry.get(key).direction}
     blocks = [i for i in out["issues"] if i["severity"] == "blocks_ranking" and i.get("scope") != "studies"]
-    out["rankable"] = not blocks and len(cut) > 1
-    if len(cut) < 2:
+    out["rankable"] = not blocks and len(on_grid) > 1
+    unfit = metric_registry.applicability([a for a in arts if a["id"] in on_grid], key)
+    if len(on_grid) < 2:
         out["ranking"], out["reason"] = None, "a ranking needs at least two results"
     elif blocks:
         out["ranking"], out["reason"] = None, "not ranked: " + "; ".join(i["message"].split(".")[0] for i in blocks)
+    elif unfit:
+        out["rankable"], out["ranking"], out["reason"] = False, None, "not ranked: " + "; ".join(unfit)
     else:
-        key = RANK_BY
-        out["ranking"] = [k for k, _ in sorted(((k, m.get(key)) for k, m in metrics.items()), key=lambda kv: (kv[1] is None, -(kv[1] or 0.0)))]
-        out["reason"] = f"ranked by {key.replace('_', ' ')} over the shared window; the order is a description of this window, not a forecast, and a small gap is not a difference"
+        out["ranking"] = metric_registry.rank({k: m.get(key) for k, m in metrics.items()}, key)
+        way = {"higher": "highest first", "lower": "lowest first"}[metric_registry.get(key).direction]
+        out["reason"] = f"ranked by {metric_registry.get(key).label} ({way}) on the {days} returns between the dates every result observed; the order is a description of this window, not a forecast, and a small gap is not a difference"
     return out
 
 
@@ -352,7 +460,15 @@ def to_markdown(cmp: dict, *, session: dict | None = None, group: dict | None = 
     title = (group or {}).get("name") or "Research comparison"
     lines = [f"# {title}", "", f"Generated {gen}." + (f" Session: {session['name']} ({session['id']})." if session else ""), ""]
     win = cmp.get("window")
-    lines += [f"**Window shared by all results:** {win['start']} to {win['end']}." if win else "**No shared window.**", f"**Risk-free rate used for ratios:** {cmp.get('risk_free', 0.0):.2%} a year.", ""]
+    lines += [f"**Window shared by all results:** {win['start']} to {win['end']}." if win else "**No shared window.**", f"**Risk-free rate used for ratios:** {cmp.get('risk_free', 0.0):.2%} a year ({conventions.RF_CONVENTION}).", ""]
+    conv = cmp.get("conventions")
+    if conv:
+        g = conv["common_dates"]
+        lines += [f"**Measured on:** the {g['n_dates']} dates every result observed ({g['calendar'].replace('_', ' ')}, {g['frequency']}); annualisation " + (f"{g['periods_per_year']:g} periods a year" if g["basis"] == "periods" else "by elapsed calendar time") + f" ({g['source']}). CAGR: {conv['cagr']}.", ""]
+        if cmp.get("coverage"):
+            lines += ["| Result | Own dates | Observations in window | Left out | Longest gap (days) |", "|---|---|---|---|---|"]
+            by = {a["id"]: a["title"] for a in cmp["artifacts"]}
+            lines += [f"| {by.get(i, i)} | {c['first']} to {c['last']} | {c['in_window']} | {c['dropped_in_window']} | {c['longest_gap_days']} |" for i, c in cmp["coverage"].items()] + [""]
     lines += ["## Results", ""]
     for a in cmp["artifacts"]:
         refs = ", ".join(f"{k} `{v}`" for k, v in a["refs"].items())

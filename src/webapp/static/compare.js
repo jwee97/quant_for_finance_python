@@ -67,8 +67,9 @@
     studiesBlock(out, r);
     if (!r.window || !Object.keys(r.metrics).length) return;
     const title = (id) => (r.artifacts.find((a) => a.id === id) || {}).title || id, ids = Object.keys(r.metrics);
-    const wnd = h("p", "hint", out, `Shared window: ${r.window.start} to ${r.window.end} (${r.series.dates.length} days). Ratios use a risk-free rate of ${pct(r.risk_free)} a year.`); wnd.dataset.role = "compare-window";
+    const wnd = h("p", "hint", out, `Shared window: ${r.window.start} to ${r.window.end} (${r.series.dates.length} dates every result observed; the calendar is ${r.conventions ? r.conventions.common_dates.calendar.replace(/_/g, " ") : "unknown"}). Ratios use a risk-free rate of ${pct(r.risk_free)} a year, accrued by elapsed time.`); wnd.dataset.role = "compare-window";
     metricsTable(out, r, ids, title);
+    conventions(out, r, title);
     const dates = r.series.dates, colorFor = Object.fromEntries(ids.map((id, i) => [id, colorOf(i)]));
     const lines = (k) => ids.map((id) => ({ name: title(id), color: colorFor[id], values: r.series[k][id] }));
     const rowsFor = (k, f) => (b) => Q.simpleTable(b, [{ label: "Date", get: (i) => dates[i] }, ...ids.map((id) => ({ label: title(id), num: true, get: (i) => f(r.series[k][id][i]) }))], Q.sampleRows(dates, null, Math.max(1, Math.ceil(dates.length / 60))));
@@ -76,8 +77,8 @@
       const ex = h("button", "btn", c._extra, "CSV"); ex.type = "button"; ex.addEventListener("click", () => { const head = ["date", ...ids.map(title)].join(","), rows = dates.map((d, i) => [d, ...ids.map((id) => r.series[k][id][i] ?? "")].join(",")); download(`${role}.csv`, [head, ...rows].join("\n")); }); };
     chart("Growth of 1 (rebased to the start of the window)", "compare-equity", "equity", { yFormat: (v) => v.toFixed(2), tipFormat: (v) => v.toFixed(3), label: "Equity curves over the shared window" }, (v) => num(v, 3));
     chart("Drawdown", "compare-drawdown", "drawdown", { area: false, yFormat: (v) => (v * 100).toFixed(0) + "%", tipFormat: (v) => pct(v), baseline: 0, ceil: 0, label: "Drawdowns" }, (v) => pct(v));
-    chart(`Rolling Sharpe (${r.series.roll_window} days)`, "compare-rolling-sharpe", "rolling_sharpe", { baseline: 0, include: 0, yFormat: (v) => v.toFixed(1), tipFormat: (v) => v.toFixed(2), label: "Rolling Sharpe ratios" }, (v) => num(v));
-    chart(`Rolling volatility (${r.series.roll_window} days)`, "compare-rolling-vol", "rolling_vol", { yFormat: (v) => (v * 100).toFixed(0) + "%", tipFormat: (v) => pct(v), label: "Rolling volatilities" }, (v) => pct(v));
+    chart(`Rolling Sharpe (${r.series.roll_window} observations)`, "compare-rolling-sharpe", "rolling_sharpe", { baseline: 0, include: 0, yFormat: (v) => v.toFixed(1), tipFormat: (v) => v.toFixed(2), label: "Rolling Sharpe ratios" }, (v) => num(v));
+    chart(`Rolling volatility (${r.series.roll_window} observations)`, "compare-rolling-vol", "rolling_vol", { yFormat: (v) => (v * 100).toFixed(0) + "%", tipFormat: (v) => pct(v), label: "Rolling volatilities" }, (v) => pct(v));
     if (r.distribution) { const dc = Q.chartCard(out, "Distribution of daily returns", "The same bins for every result.", { wide: true, draw: (b) => C.histogram(b, { series: ids.map((id) => ({ name: title(id), edges: r.distribution.edges, counts: r.distribution.counts[id], color: colorFor[id] })), xFormat: (v) => (v * 100).toFixed(1) + "%", unit: r.distribution.edges[1] - r.distribution.edges[0], yFormat: (v) => (v * 100).toFixed(0) + "%", height: 220, label: "Distribution of daily returns" }), table: (b) => Q.simpleTable(b, [{ label: "Bin from", num: true, get: (i) => pct(r.distribution.edges[i], 2) }, ...ids.map((id) => ({ label: title(id), num: true, get: (i) => String(r.distribution.counts[id][i]) }))], r.distribution.counts[ids[0]].map((_, i) => i)) }); dc.dataset.role = "compare-distribution"; }
     corr(out, r, title);
     if (r.versus_reference) versus(out, r, title);
@@ -155,16 +156,37 @@
   }
 
   function metricsTable(out, r, ids, title) {
-    const card = h("div", "card", out); card.dataset.role = "compare-metrics"; h("h3", "", card, "Metrics over the shared window");
+    const card = h("div", "card", out); card.dataset.role = "compare-metrics"; h("h3", "", card, "Metrics over the dates all results share");
     const verdict = h("p", r.ranking ? "sub" : "hint", card, r.reason); verdict.dataset.role = "compare-verdict";
     const rows = [["cagr", "CAGR", pct], ["ann_vol", "Volatility (annual)", pct], ["sharpe", "Sharpe", num], ["sortino", "Sortino", num], ["max_drawdown", "Max drawdown", pct], ["calmar", "Calmar", num], ["total_return", "Total return", pct], ["turnover_annual", "Turnover (annual)", (v) => num(v, 1)], ["cost_drag_annual", "Costs (annual)", (v) => pct(v, 2)], ["n_days", "Days", (v) => (v === undefined ? "n/a" : String(v))]];
     const t = h("div", "scroll", card), tb = h("table", "data", t), hd = h("tr", "", h("thead", "", tb)); h("th", "", hd, "Metric");
-    ids.forEach((id) => { const th = h("th", "num", hd, title(id)); const rank = r.ranking ? r.ranking.indexOf(id) + 1 : 0; if (rank) th.title = `Ranked ${rank} by Sharpe`; });
+    ids.forEach((id) => { const th = h("th", "num", hd, title(id)); const rank = r.ranking ? r.ranking.indexOf(id) + 1 : 0; if (rank) th.title = `Ranked ${rank} by ${(r.rank_by || {}).label || "Sharpe"}`; });
     const body = h("tbody", "", tb);
     const ev = h("tr", "", body); h("td", "", ev, "Evidence"); ids.forEach((id) => B.evidence(h("td", "num", ev), (r.artifacts.find((a) => a.id === id) || {}).evidence));
     const dk = h("tr", "", body); h("td", "", dk, "Data"); ids.forEach((id) => B.data(h("td", "num", dk), (r.artifacts.find((a) => a.id === id) || {}).data_kind));
-    if (r.ranking) { const rk = h("tr", "", body); h("td", "", rk, "Rank by Sharpe"); ids.forEach((id) => h("td", "num", rk, String(r.ranking.indexOf(id) + 1))); }
+    if (r.ranking) { const rk = h("tr", "", body); h("td", "", rk, "Rank by " + ((r.rank_by || {}).label || "Sharpe") + ((r.rank_by || {}).direction === "lower" ? " (lowest first)" : "")); ids.forEach((id) => h("td", "num", rk, String(r.ranking.indexOf(id) + 1))); }
     for (const [key, label, f] of rows) { const tr = h("tr", "", body); h("td", "", tr, label); ids.forEach((id) => h("td", "num", tr, f(r.metrics[id][key]))); }
+  }
+
+  function conventions(out, r, title) {
+    if (!r.conventions) return;
+    const c = r.conventions, g = c.common_dates, card = h("details", "card", out); card.dataset.role = "compare-conventions"; h("summary", "", card, "How these numbers were measured: calendar, annualisation and coverage");
+    const dl = h("dl", "kv", card), add = (k, v) => { h("dt", "", dl, k); h("dd", "", dl, v); };
+    add("Common dates", `${g.n_dates} dates, ${g.calendar.replace(/_/g, " ")}, ${g.frequency}`);
+    add("Annualisation", g.basis === "periods" ? `${g.periods_per_year} periods a year (${g.source})` : `by elapsed calendar time (${g.source})`);
+    add("CAGR", c.cagr); add("Volatility", c.volatility); add("Risk-free rate", c.risk_free);
+    const ids = Object.keys(r.coverage || {});
+    if (ids.length) {
+      h("h4", "", card, "Coverage of each result");
+      Q.simpleTable(card, [{ label: "Result", get: (i) => title(i) }, { label: "Own dates", get: (i) => `${r.coverage[i].first} to ${r.coverage[i].last}` }, { label: "Calendar", get: (i) => `${r.coverage[i].calendar.replace(/_/g, " ")}, ${r.coverage[i].frequency}` },
+        { label: "Observations in window", num: true, get: (i) => String(r.coverage[i].in_window) }, { label: "Left out (not on every result)", num: true, get: (i) => String(r.coverage[i].dropped_in_window) }, { label: "Longest gap (days)", num: true, get: (i) => String(r.coverage[i].longest_gap_days) }], ids);
+    }
+    const own = Object.entries(r.individual || {});
+    if (own.length) {
+      h("h4", "", card, "Each result on its own whole history");
+      h("p", "hint", card, "Measured under the result's own calendar over every date it has. These numbers describe one result; they are not comparable with another's because the years differ.");
+      Q.simpleTable(card, [{ label: "Result", get: (q) => title(q[0]) }, { label: "Dates", get: (q) => `${q[1].first} to ${q[1].last}` }, { label: "CAGR", num: true, get: (q) => pct(q[1].cagr) }, { label: "Volatility", num: true, get: (q) => pct(q[1].ann_vol) }, { label: "Sharpe", num: true, get: (q) => num(q[1].sharpe) }, { label: "Max drawdown", num: true, get: (q) => pct(q[1].max_drawdown) }], own);
+    }
   }
 
   function corr(out, r, title) {

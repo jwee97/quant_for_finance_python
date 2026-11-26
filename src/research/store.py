@@ -479,5 +479,8 @@ def check_artifact(raw: dict) -> dict:
                 if len(values) != len(dates):
                     raise StoreError(f"the series {name!r} has {len(values)} values for {len(dates)} dates")
                 keep.setdefault(group, {})[str(name)[:60]] = values
+        meta = series.get("meta")
+        if isinstance(meta, dict):                                                                          # the declared convention of the series (frequency, calendar, periods per year, ...)
+            keep["meta"] = {str(k)[:40]: (v if isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) else str(v)[:120]) for k, v in meta.items() if v is not None}
         out["series"] = keep
     return out

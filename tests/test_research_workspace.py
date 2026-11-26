@@ -234,14 +234,17 @@ def test_results_are_measured_over_the_days_they_share_and_the_window_is_stated(
     b = store.add_artifact(s["id"], _art("B", seed=2, start="2016-06-01"))
     out = cmp.compare([a, b])
     assert out["window"]["start"] == b["series"]["dates"][0] and out["window"]["end"] == a["series"]["dates"][-1]
-    assert out["metrics"][a["id"]]["n_days"] == out["metrics"][b["id"]]["n_days"] and len(out["series"]["dates"]) == out["metrics"][a["id"]]["n_days"]
+    # n_days counts returns; the series carries the base date too (the level every return after it is measured from)
+    assert out["metrics"][a["id"]]["n_days"] == out["metrics"][b["id"]]["n_days"] and len(out["series"]["dates"]) == out["metrics"][a["id"]]["n_days"] + 1
     assert {"window_cut"} <= {i["code"] for i in out["issues"]}
     assert out["rankable"] and sorted(out["ranking"]) == sorted([a["id"], b["id"]]) and "not a forecast" in out["reason"]
-    # the same arithmetic as the Backtest tab's tiles
-    r = cmp._returns(a).loc[out["window"]["start"]:out["window"]["end"]]
-    eq = (1 + r).cumprod()
-    assert out["metrics"][a["id"]]["cagr"] == pytest.approx(eq.iloc[-1] ** (252 / len(r)) - 1)
-    assert out["metrics"][a["id"]]["sharpe"] == pytest.approx(np.sqrt(252) * r.mean() / r.std(ddof=1))
+    # one piece of arithmetic: levels on the common dates, CAGR over the elapsed calendar time (not n / 252), volatility and Sharpe from the per-period returns at 252 periods a year (a business-day calendar)
+    lv = pd.Series(a["series"]["equity"], index=pd.to_datetime(a["series"]["dates"])).loc[out["window"]["start"]:out["window"]["end"]]
+    r = lv.pct_change().dropna()
+    years = (lv.index[-1] - lv.index[0]).days / 365.25
+    assert out["metrics"][a["id"]]["cagr"] == pytest.approx((lv.iloc[-1] / lv.iloc[0]) ** (1 / years) - 1)
+    assert out["metrics"][a["id"]]["sharpe"] == pytest.approx(np.sqrt(252) * r.mean() / r.std(ddof=1), rel=0.02), "within the effect of accruing a zero risk-free rate by elapsed time (none)"
+    assert out["conventions"]["common_dates"]["periods_per_year"] == 252.0 and out["conventions"]["common_dates"]["calendar"] == "business_days"
 
 
 def test_different_evidence_data_assets_or_versions_stop_the_ranking_and_say_why(store):

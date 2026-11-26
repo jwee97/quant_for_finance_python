@@ -61,7 +61,7 @@ def restrict_to_rebalances(weights: pd.DataFrame, index: pd.DatetimeIndex,
     return out
 
 
-def drift_weights(targets: pd.DataFrame, returns: pd.DataFrame, return_pre_trade: bool = False):
+def drift_weights(targets: pd.DataFrame, returns: pd.DataFrame, return_pre_trade: bool = False, basis: str = "gross"):
     """Evolve the book between rebalances with realised asset returns.
 
     A portfolio set to 25/25/25/25 does not stay there: the winners grow. This
@@ -80,6 +80,13 @@ def drift_weights(targets: pd.DataFrame, returns: pd.DataFrame, return_pre_trade
     is the book at each close BEFORE trading, i.e. after that day's drift: the
     thing a rebalance actually trades against.
 
+    ``basis`` is how the book is re-expressed as weights after a day's return:
+
+    * ``"gross"`` (the default, and what every saved result was made with): grow each position by its return and rescale so that the sum of absolute weights is what it was. Exact for a fully invested long-only
+      book; for a book with cash or leverage it quietly keeps the gross exposure at its target every day, which trades the book back every day at no cost and with no turnover.
+    * ``"equity"``: grow each position by its return and divide by the growth of equity, ``1 + sum(w r)`` (cash earns nothing). This is what an account does when nothing is traded, and what the ledger records; a
+      book with 50% in an asset drifts to 50.5% after a rise, and a 1.5x book to a little less than 1.5 after a rise. A day on which equity would be wiped out (growth at or below zero) ends the book.
+
     (An earlier version grew the book by day ``t``'s return when stepping to
     ``t+1``, which both applied the rebalance day's return to a book that never
     held through it and left every later row one day stale. The size of the
@@ -97,10 +104,14 @@ def drift_weights(targets: pd.DataFrame, returns: pd.DataFrame, return_pre_trade
     for i in range(len(index)):
         if current is not None:
             grown = current * (1.0 + ret[i])
-            total = np.abs(grown).sum()
-            # Preserve gross exposure: drift changes relative weights, not leverage.
-            gross = np.abs(current).sum()
-            current = grown * (gross / total) if total > 1e-12 else grown
+            if basis == "equity":
+                growth = 1.0 + float((current * ret[i]).sum())
+                current = grown / growth if growth > 1e-12 else np.zeros_like(grown)
+            else:
+                total = np.abs(grown).sum()
+                # Preserve gross exposure: drift changes relative weights, not leverage.
+                gross = np.abs(current).sum()
+                current = grown * (gross / total) if total > 1e-12 else grown
             pre[i] = current
         row = target_values[i]
         if np.isfinite(row).any():
@@ -115,7 +126,7 @@ def drift_weights(targets: pd.DataFrame, returns: pd.DataFrame, return_pre_trade
 
 
 def build_held_weights(targets: pd.DataFrame, returns: pd.DataFrame, frequency: str = "monthly",
-                       lag: int = 1, drift: bool = True) -> tuple[pd.DataFrame, pd.DataFrame]:
+                       lag: int = 1, drift: bool = True, drift_basis: str = "gross") -> tuple[pd.DataFrame, pd.DataFrame]:
     """Full execution pipeline: lag, restrict to rebalances, drift.
 
     Returns ``(held, traded)`` where ``held`` is the book in force on each
@@ -126,7 +137,7 @@ def build_held_weights(targets: pd.DataFrame, returns: pd.DataFrame, frequency: 
     scheduled = restrict_to_rebalances(lagged, pd.DatetimeIndex(targets.index), frequency)
 
     if drift:
-        held, pre_trade = drift_weights(scheduled, returns, return_pre_trade=True)
+        held, pre_trade = drift_weights(scheduled, returns, return_pre_trade=True, basis=drift_basis)
     else:
         held = scheduled.ffill()
         pre_trade = held.shift(1)
