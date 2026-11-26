@@ -122,3 +122,23 @@ def test_a_method_of_a_portfolio_study_is_kept_in_a_session_with_its_benchmark_a
         post["/api/research/artifact/save"]({"session": session["id"], "job": view["id"]})
     with pytest.raises(ApiError, match="no method"):
         post["/api/research/artifact/save"]({"session": session["id"], "job": view["id"], "method": "oracle"})
+
+
+def test_a_factor_study_compares_corrects_and_combines_from_the_past(app):
+    assert "/api/lab/factors" in app.extra_post
+    for body, word in (({"tickers": "AAA, BBB"}, "at least 6"), ({"tickers": SIX, "signals": ["oracle", "momentum"]}, "signals must be"), ({"tickers": SIX, "signals": ["momentum", "momentum"]}, "distinct"),
+                       ({"tickers": SIX, "horizon": 200}, "horizon")):
+        with pytest.raises(ApiError, match=word):
+            app.extra_post["/api/lab/factors"](body)
+    r = _done(app, "/api/lab/factors", {"tickers": SIX, "signals": ["momentum", "reversal", "low_vol"], "horizon": 5})
+    cmp_, comb = r["comparison"], r["combination"]
+    assert cmp_["n_tested"] == 3 and {x["factor"] for x in cmp_["table"]} == {"momentum", "reversal", "low_vol"}
+    for row in cmp_["table"]:
+        assert row["ci_low"] <= row["rank_ic"] <= row["ci_high"] and row["p_holm"] >= row["p_raw"] - 1e-12 and isinstance(row["survives_holm"], bool)
+    assert comb["train_dates"][1] < comb["test_dates"][0] and set(comb["verdicts"]) == {"equal_weight", "ic_weighted", "ridge", "orthogonalised"}
+    assert comb["best_single_on_training"] in ("momentum", "reversal", "low_vol") and any("past only" in n or "only the past" in n or "from the past" in n for n in r["notes"] + [comb["note"]])
+
+
+def test_a_factor_study_with_a_single_signal_says_what_to_change(app):
+    view = _wait(app, app.extra_post["/api/lab/factors"]({"tickers": SIX, "signals": ["momentum"]})["job"], 120)
+    assert view["status"] == "error" and "at least two signals" in view["error"]

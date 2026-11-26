@@ -58,6 +58,9 @@ def _rowwise_correlation(x: np.ndarray, y: np.ndarray, min_valid: int) -> np.nda
     return np.where(counts >= min_valid, rho, np.nan)
 
 
+MIN_ASSETS_RANK_IC = 3                                                       # below this a cross-sectional rank correlation says nothing
+
+
 def cross_sectional_ic(signal: pd.DataFrame, forward_returns: pd.DataFrame,
                        method: str = "spearman", min_assets: int = 5) -> pd.Series:
     """IC per date: ``corr(S_{i,t}, r_{i,t+h})`` across assets.
@@ -66,6 +69,8 @@ def cross_sectional_ic(signal: pd.DataFrame, forward_returns: pd.DataFrame,
     Pearson IC is largely a report on which asset had the biggest move, not on
     whether the ranking was right.
     """
+    if int(min_assets) < MIN_ASSETS_RANK_IC:
+        raise ValueError(f"a cross-sectional IC needs at least {MIN_ASSETS_RANK_IC} assets on a date (with two, the correlation is always +1, -1 or undefined): min_assets={min_assets} is not allowed")
     signal, forward = signal.align(forward_returns, join="inner")
     if signal.empty:
         return pd.Series(dtype=float, name="ic")

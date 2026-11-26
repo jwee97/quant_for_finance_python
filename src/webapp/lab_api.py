@@ -71,7 +71,7 @@ class LabApi:
         return {"/api/lab/plan": self.plan, "/api/lab/signals": self.signals}
 
     def post_routes(self) -> dict:
-        return {"/api/lab/alpha": self.alpha, "/api/lab/risk": self.risk, "/api/lab/portfolio": self.portfolio, "/api/lab/trading": self.trading, "/api/lab/signals/register": self.register,
+        return {"/api/lab/alpha": self.alpha, "/api/lab/risk": self.risk, "/api/lab/portfolio": self.portfolio, "/api/lab/trading": self.trading, "/api/lab/factors": self.factors, "/api/lab/signals/register": self.register,
                 "/api/lab/signals/delete": self.delete}
 
     # ------------------------------------------------------------------------------------------------------ plan
@@ -131,6 +131,28 @@ class LabApi:
             return out
 
         return self.app.submit_task(f"Alpha study: {signal}", work, kind="lab")
+
+    def factors(self, body: dict) -> dict:
+        """``POST /api/lab/factors {tickers, signals, horizon}`` (a job): evaluate the chosen price-built signals, correct for the number compared and combine them from the past only."""
+        tickers = _tickers(body, 6)
+        signals, horizon = body.get("signals") or list(st.SIGNALS), int(body.get("horizon") or 5)
+        if not isinstance(signals, list) or not all(isinstance(s, str) and s in st.SIGNALS for s in signals) or len(set(signals)) != len(signals):
+            raise ApiError(f"signals must be distinct names from: {', '.join(st.SIGNALS)}")
+        if not 1 <= horizon <= 63:
+            raise ApiError("horizon must be 1 to 63 days")
+        self._check(tickers, body)
+
+        def work(progress):
+            px, universe = self._load(tickers, body, progress)
+            progress("evaluating, correcting for multiple testing and combining the factors")
+            try:
+                out = st.factor_study(px, signals, horizon)
+            except st.StudyError as error:
+                raise ApiError(str(error)) from None
+            out["universe"] = {"source": universe.get("source"), "tickers": tickers}
+            return out
+
+        return self.app.submit_task("Factor study", work, kind="lab")
 
     def risk(self, body: dict) -> dict:
         tickers = _tickers(body, 4)

@@ -186,3 +186,31 @@ def trading_study(prices: pd.DataFrame, signal: str = "momentum", horizon: int =
             "notes": ["The same calibrated alpha, covariance and costs go through every policy. The covariance is fixed from the first year; trading starts after it.",
                       "Full trades to the aim every day. Partial adjustment closes the stationary share of the gap (Garleanu-Pedersen). The band holds while the gradient is inside the proportional cost. Threshold trades only when far from the aim.",
                       "The waterfall re-runs the same forecasts with each real-world step added: position limits, trading costs, a policy that respects them, and one day's delay."]}
+
+
+def factor_study(prices: pd.DataFrame, signals: list[str], horizon: int = 5, min_assets: int = 5) -> dict:
+    """The validation and combination stages on price-built signals: each factor evaluated (rank and Pearson IC with a HAC interval, quantile spread, turnover, coverage, stability), the family corrected for
+    multiple testing, and the factors combined four ways from the past only and judged on the last 40% of the dates. Forward returns are residuals after the equal-weighted market, as in :func:`alpha_study`."""
+    from . import factors as fc
+
+    if prices.shape[1] < 6:
+        raise StudyError("a factor study ranks assets against each other: choose at least 6 tickers")
+    if not 1 <= horizon <= 63:
+        raise StudyError("horizon must be 1 to 63 days")
+    if len(signals) < 2:
+        raise StudyError("choose at least two signals to compare and combine")
+    returns = prices.pct_change().iloc[1:]
+    if returns.shape[0] < 500:
+        raise StudyError("need at least 500 days of history")
+    fwd = cal.forward_residual(returns, horizon)
+    z = {k: cal.standardise(build_signal(prices, k).reindex(returns.index)) for k in signals}
+    try:
+        compared = fc.compare_factors(z, fwd, horizon, min_assets=min_assets, returns=returns)
+        combined = fc.combine_factors(z, fwd, horizon, min_assets=min_assets)
+    except fc.FactorError as error:
+        raise StudyError(str(error)) from None
+    compared.pop("details")
+    return {"horizon": int(horizon), "assets": list(prices.columns), "days": int(len(returns)), "first": str(returns.index[0].date()), "last": str(returns.index[-1].date()), "comparison": compared, "combination": combined,
+            "notes": ["Each factor's rank IC is against the residual return over the horizon; the interval is Newey-West with horizon - 1 lags.",
+                      "p-values are corrected for the number of factors (Holm, Benjamini-Hochberg); a factor is called predictive only if it survives the correction.",
+                      "Combinations are weighted from the past only and judged on a test period nothing was fitted on; a combination is an improvement only if it beats the best single factor and equal weight."]}
