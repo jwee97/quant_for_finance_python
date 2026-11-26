@@ -49,7 +49,8 @@ def test_a_killed_app_leaves_a_resumable_run_and_a_new_app_resumes_it(tmp_path):
         child.wait()
     fit = next(run_dir.rglob("metrics.jsonl")).parent
     before = [json.loads(ln) for ln in (fit / "metrics.jsonl").read_text().splitlines()]
-    assert before[-1]["type"] == "epoch" and (fit / "last.pt").exists(), "a killed process leaves no end marker, only the committed checkpoints"
+    tail = [r for r in before if r["type"] != "gradient_event"]                           # a warning is appended right after its epoch's row, so the kill can land between the two
+    assert tail[-1]["type"] == "epoch" and (fit / "last.pt").exists(), "a killed process leaves no end marker, only the committed checkpoints"
     old = time.time() - 3600
     for f in run_dir.rglob("*"):
         if f.is_file():

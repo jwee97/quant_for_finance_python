@@ -249,7 +249,7 @@ RANGES: dict[str, str] = {
     "weight_decay": "[0,)", "width": "[1,8192]", "halflife_days": "[0,)", "rank_weight": "[0,)", "components": "[2,20000]", "bandwidth": "(0,)", "draws": "[1,64]",
     "random_forest.max_features": "(0,1]", "kalman.max_features": "[1,1000]", "model_ensemble.val_fraction": "[0.1,0.5]",
 }
-RANGES.update({"checkpoint_every": "[1,10000]", "keep_milestones": "[0,10000]", "accumulation_steps": "[1,1024]", "grad_interval": "[0,100000]"})        # the deep trainer's durability and memory settings
+RANGES.update({"checkpoint_every": "[1,10000]", "keep_milestones": "[0,10000]", "accumulation_steps": "[1,1024]", "grad_interval": "[0,100000]", "checkpoint_timesteps": "[0,1000000000]"})        # the deep trainer's durability and memory settings
 RANGES.update({f"{k}.batch_size": "[8,1000000]" for k in DEEP_KINDS})                  # the networks' own check: a batch of at least 8
 RANGES.update({f"{k}.hidden": "[4,8192]" for k in AGENT_KINDS})                          # an agent's network is at least 4 wide
 TYPE_FIXES = {("xgboost", "min_child_weight"): FLOAT, ("xgb_ranker", "min_child_weight"): FLOAT, ("hmm_regime", "min_weight"): FLOAT, ("markov_switching", "min_weight"): FLOAT}     # an int default of a setting that takes fractions

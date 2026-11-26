@@ -19,6 +19,33 @@ from pathlib import Path
 
 import numpy as np
 
+FORECAST_KINDS = ("patchtst", "tsmixer", "nbeats", "nhits", "timemixer", "tft", "fnn", "cnn", "lstm", "gru", "transformer")     # every network `models.deep_forecast.build_network` can build
+KILL_SIGNAL = getattr(signal, "SIGKILL", signal.SIGTERM)                                  # Windows has no SIGKILL: SIGTERM there is TerminateProcess, which is as abrupt
+
+
+def record(**row) -> None:
+    """Append one result line to the file named by $QUANT_RECORD_RECOVERY (used to produce docs/generated/*.jsonl); a no-op otherwise."""
+    path = os.environ.get("QUANT_RECORD_RECOVERY")
+    if path:
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(row, default=float) + "\n")
+
+
+def maxdiff(a, b) -> float:
+    a, b = np.asarray(a, dtype=float), np.asarray(b, dtype=float)
+    return float(np.max(np.abs(a - b))) if a.size else 0.0
+
+
+def die() -> None:
+    """End this process at once, with no exception, no cleanup and no flushed buffers (a killed worker)."""
+    os.kill(os.getpid(), KILL_SIGNAL)
+
+
+def was_killed(returncode: int) -> bool:
+    """Whether a subprocess's exit status is that of a process killed by ``die`` (-9 on POSIX; a non-zero status on Windows, where TerminateProcess reports the signal number)."""
+    return returncode == -int(KILL_SIGNAL) if sys.platform != "win32" else returncode not in (0,)
+
+
 SLOW = {"default": 0.002, "rl": 0.0}                      # seconds added to every optimizer step so that a unit lasts long enough for the kill to land inside the run
 
 
@@ -133,13 +160,55 @@ def _pinn():
     return {"loss": m.history, "train_loss": m.history, "outputs": [float(x) for x in m.price(np.array([90.0, 100.0, 110.0]), 100.0, 0.5)], "params": flat(m.net)}
 
 
+def _pinn_full(kind: str):
+    """The configurations the accuracy tests of ``test_generative_pinn.py`` use, so that the recovered network can be held to the same pricing tolerance."""
+    def run():
+        from src.models import pinn
+
+        if kind == "bsm":
+            m = pinn.BSMPINN(0.03, 0.01, 0.25, 1.0, steps=1200, lbfgs_steps=300).fit()
+            out = [float(x) for tau in (0.5, 1.0) for x in m.price(np.array([80.0, 90.0, 100.0, 110.0, 120.0]), 100.0, tau)]
+        elif kind == "vasicek":
+            m = pinn.VasicekPINN(0.8, 0.05, 0.02, maturity=5.0, steps=1500, lbfgs_steps=100).fit()
+            out = [float(x) for x in m.price(np.array([0.0, 0.03, 0.05, 0.08, 0.10]), 3.0)]
+        else:
+            kw = dict(lam=0.5, mu_j=-0.1, sigma_j=0.15) if kind == "bates" else {}
+            m = pinn.HestonPINN(0.03, 0.0, 2.0, 0.04, 0.3, -0.7, steps=900, lbfgs_steps=150, **kw).fit()
+            out = [float(x) for x in m.price(np.array([90.0, 100.0, 110.0]), 100, 1.0, np.array([0.03, 0.04, 0.05]))]
+        return {"loss": m.history, "train_loss": m.history, "outputs": out, "params": flat(m.net)}
+    return run
+
+
+def _sb3(kind: str):
+    """A Stable-Baselines3 agent (PPO, SAC or recurrent PPO) fitted by the platform's own model class on a small synthetic market; run it with a Python that has stable-baselines3, gymnasium and sb3-contrib."""
+    def run():
+        from src.ml import config as mc, datasets as dsm, models as md
+        from tests.ml_helpers import make_bundle
+
+        cfg = mc.experiment_config({"dataset": {"feature_groups": ["price", "volatility"]}, "split": {"min_train_days": 400, "refit_every": 250}}, defaults=mc.DEFAULTS)
+        ds = dsm.build_dataset(make_bundle(8, 1100, seed=31, alpha=1.0), cfg["dataset"], "rl")
+        base = {"hidden": 16, "episode_days": 80, "batch_size": 32, "device": "cpu", "grad_monitor": "standard"}
+        params = {"ppo": {**base, "total_timesteps": 1280, "n_steps": 128, "n_epochs": 2, "checkpoint_timesteps": 128},
+                  "sac": {**base, "total_timesteps": 1000, "learning_starts": 100, "buffer_size": 2000, "checkpoint_timesteps": 100},
+                  "recurrent_ppo": {**base, "total_timesteps": 640, "n_steps": 64, "n_epochs": 2, "lstm_hidden": 8, "checkpoint_timesteps": 64}}[kind]
+        pos = ds.positions()
+        rows = np.flatnonzero((pos >= 80) & (pos < 700) & ds.Y[ds.target].notna().to_numpy())
+        model = md.make_model(kind, params, "regression", 3)
+        model.bind(ds)
+        model.fit(ds.X.iloc[rows], ds.Y[ds.target].iloc[rows], pos[rows])
+        net = model.agent_.policy
+        return {"loss": model.rewards_["mean_reward"], "train_loss": model.rewards_["mean_reward"], "outputs": model.train_curve_["equity"], "params": flat(net),
+                "extra": {"timesteps": [float(x) for x in model.rewards_["timesteps"]], "num_timesteps": float(model.agent_.num_timesteps)}}
+    return run
+
+
 def _rl(name: str):
     def run():
         from src.rl import deep
         from src.rl.envs import RegimeFractionEnv
 
         env = RegimeFractionEnv(seed=0)
-        agent = {"dqn": lambda: deep.DQN(hidden=16, warmup=100), "ddpg": lambda: deep.DDPG(hidden=16, warmup=100), "td3": lambda: deep.TD3(hidden=16, warmup=100), "sac": lambda: deep.SAC(hidden=16, warmup=100),
+        agent = {"dqn": lambda: deep.DQN(hidden=16, warmup=100), "double_dqn": lambda: deep.DQN(double=True, hidden=16, warmup=100, target_every=50), "ddpg": lambda: deep.DDPG(hidden=16, warmup=100), "td3": lambda: deep.TD3(hidden=16, warmup=100), "sac": lambda: deep.SAC(hidden=16, warmup=100),
                  "ppo": lambda: deep.PPO(hidden=16, rollout=200, epochs=2, minibatch=50)}[name]()
         steps = 1200 if name == "ppo" else 2000
         agent.train(env, steps=steps, seed=3)
@@ -152,9 +221,11 @@ def _rl(name: str):
 SCENARIOS = {
     "ae": _model_scenario("autoencoder"), "vae": _model_scenario("vae"), "nbeats": _model_scenario("nbeats"), "nhits": _model_scenario("nhits"), "lstm": _model_scenario("lstm"), "gru": _model_scenario("gru"), "tcn": _model_scenario("tcn"),
     "patchtst": _model_scenario("patchtst"), "itransformer": _model_scenario("itransformer"), "tft": _model_scenario("tft"), "dlinear": _model_scenario("dlinear"), "gcn": _graph_model_scenario("gcn"), "gat": _graph_model_scenario("gat"),
-    "forecast_patchtst": _forecast("patchtst"), "forecast_tsmixer": _forecast("tsmixer"), "graph_forecast": _graph_forecast, "encoder_ae": _encoder("autoencoder"), "encoder_contrastive": _encoder("contrastive"),
+    **{f"forecast_{k}": _forecast(k) for k in FORECAST_KINDS}, "graph_forecast": _graph_forecast, "encoder_ae": _encoder("autoencoder"), "encoder_contrastive": _encoder("contrastive"),
     "wgan_gp": _wgan, "factor_vae": _factor_vae, "diffusion": _diffusion, "deep_hedging": _hedging, "pinn": _pinn,
-    "rl_dqn": _rl("dqn"), "rl_ddpg": _rl("ddpg"), "rl_td3": _rl("td3"), "rl_sac": _rl("sac"), "rl_ppo": _rl("ppo"),
+    "pinn_bsm": _pinn_full("bsm"), "pinn_vasicek": _pinn_full("vasicek"), "pinn_heston": _pinn_full("heston"), "pinn_bates": _pinn_full("bates"),
+    "sb3_ppo": _sb3("ppo"), "sb3_sac": _sb3("sac"), "sb3_recurrent_ppo": _sb3("recurrent_ppo"),
+    "rl_double_dqn": _rl("double_dqn"), "rl_dqn": _rl("dqn"), "rl_ddpg": _rl("ddpg"), "rl_td3": _rl("td3"), "rl_sac": _rl("sac"), "rl_ppo": _rl("ppo"),
 }
 
 
@@ -169,9 +240,40 @@ def _kill_when(folder: Path, units: int) -> None:
                 except OSError:
                     pass
             if seen >= units:
-                os.kill(os.getpid(), signal.SIGKILL)
+                die()
             time.sleep(0.004)
     threading.Thread(target=watch, daemon=True).start()
+
+
+def _kill_in_closure(k: int) -> None:
+    import torch
+
+    real = torch.optim.LBFGS.step
+
+    def step(self, closure):
+        return real(self, lambda: _count(closure, k))
+    torch.optim.LBFGS.step = step
+
+
+_COUNT = {"n": 0}
+
+
+def _count(closure, k):
+    _COUNT["n"] += 1
+    if _COUNT["n"] == k:
+        die()
+    return closure()
+
+
+def _kill_at_finish() -> None:
+    from src.ml.deep.session import TrainingSession
+
+    real = TrainingSession.finish
+
+    def finish(self, **kw):
+        die()
+        return real(self, **kw)
+    TrainingSession.finish = finish
 
 
 def main(argv: list[str]) -> None:
@@ -187,8 +289,19 @@ def main(argv: list[str]) -> None:
         _o.register_optimizer_step_post_hook(lambda opt, a, k: time.sleep(delay))
     from src.ml.deep import context
 
-    if mode == "interrupted":
+    kill_at = argv[argv.index("--kill-at") + 1] if "--kill-at" in argv else ""
+    if mode == "interrupted" and kill_at.startswith("closure:"):
+        _kill_in_closure(int(kill_at.split(":")[1]))                                          # SIGKILL inside the k-th loss evaluation of an L-BFGS step
+    elif mode == "interrupted" and kill_at == "finish":
+        _kill_at_finish()                                                                      # SIGKILL after the last unit is committed, before the closing row
+    elif mode == "interrupted":
         _kill_when(folder, kill_after)
+    if mode == "plain":                                                                    # no training run at all: the code path of a plain library call
+        t0 = time.time()
+        result = SCENARIOS[name]()
+        result["seconds"] = time.time() - t0
+        out.write_text(json.dumps(result, default=float))
+        return
     with context.use(str(folder), resume=(mode == "resume"), grad_level="standard"):
         t0 = time.time()
         result = SCENARIOS[name]()

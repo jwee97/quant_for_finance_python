@@ -86,4 +86,4 @@ A checkpoint is the weights plus two Adam moment buffers plus the best weights, 
 
 ## 10. Not implemented or not verified
 
-See section 8 of `deep_learning_training_matrix.md` for the current list. Still open from this page: continuing (not restarting) an interrupted search or Optuna study; a separate worker process with its own heartbeat (a killed app now leaves a run that a new app can resume, but training still runs on the app's worker threads); GPU behaviour; Windows was reasoned about and simulated, not run.
+See section 8 of `deep_learning_training_matrix.md` for the current list; Stable-Baselines3 checkpointing (chunked `learn` plus an application manifest, exact only for a single CPU environment with constant schedules) and the PINN's checkpointing at L-BFGS boundaries are described in its sections 6.4 and 6.5. Still open from this page: continuing (not restarting) an interrupted search or Optuna study; a separate worker process with its own heartbeat (a killed app now leaves a run that a new app can resume, but training still runs on the app's worker threads); GPU behaviour; Windows was reasoned about and simulated, not run.

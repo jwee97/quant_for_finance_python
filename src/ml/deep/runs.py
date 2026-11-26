@@ -70,7 +70,7 @@ def summarise(folder: Path, now: float | None = None) -> dict:
     resumable = status in ("interrupted", "orphaned", "paused", "stopped") and (folder / "last.pt").exists()
     return {"fit": folder.name, "status": status, "epoch": done, "epochs": total, "best_val": best, "best_epoch": ep[-1]["best_epoch"] if ep else None, "last_at": ep[-1]["at"] if ep else start.get("at"),
             "started_at": start.get("at"), "eta_seconds": None if mean is None or status != "running" else max(total - done, 0) * mean, "elapsed_seconds": float(sum(r["seconds"] for r in ep)) if ep else 0.0,
-            "n_params": start.get("n_params"), "device": start.get("device"), "events": events[-20:], "resumable": resumable, "mtime": mtime}
+            "n_params": start.get("n_params"), "device": start.get("device"), "unit": start.get("unit") or "epoch", "kind": start.get("kind"), "phase": ep[-1].get("phase") if ep else None, "ceiling": start.get("ceiling"), "events": events[-20:], "resumable": resumable, "mtime": mtime}
 
 
 def fit_folders(run: Path) -> list[Path]:
@@ -94,8 +94,8 @@ def list_runs(root, now: float | None = None) -> list[dict]:
         except (OSError, ValueError):
             pass
         newest = max(fits, key=lambda f: f["mtime"])
-        out.append({"id": run.name, "label": req.get("label") or run.name, "kind": (req.get("body", {}).get("model") or {}).get("kind"), "n_fits": len(fits), "status": newest["status"], "epoch": newest["epoch"], "epochs": newest["epochs"],
-                    "best_val": newest["best_val"], "last_at": newest["last_at"], "resumable": any(f["resumable"] for f in fits), "request_saved": bool(req), "mtime": newest["mtime"], "disk_bytes": _bytes(run)})
+        out.append({"id": run.name, "label": req.get("label") or run.name, "kind": (req.get("body", {}).get("model") or {}).get("kind") or newest.get("kind"), "n_fits": len(fits), "status": newest["status"], "epoch": newest["epoch"], "epochs": newest["epochs"],
+                    "best_val": newest["best_val"], "last_at": newest["last_at"], "unit": newest.get("unit"), "phase": newest.get("phase"), "resumable": any(f["resumable"] for f in fits), "request_saved": bool(req), "mtime": newest["mtime"], "disk_bytes": _bytes(run)})
     return sorted(out, key=lambda r: -r["mtime"])
 
 
@@ -127,6 +127,7 @@ def detail(root, run_id: str, fit: str | None = None, since: int = 0, now: float
     series = {"epoch": [r["epoch"] for r in keep], "train_loss": [r.get("train_loss") for r in keep], "val_loss": [r.get("val_loss") for r in keep], "lr": [r.get("lr") for r in keep], "grad_norm": [r.get("grad_norm") for r in keep],
               "seconds": [r.get("seconds") for r in keep], "rss_mb": [r.get("process_rss_mb") for r in keep], "peak_mb": [r.get("peak_mb") for r in keep], "best_val": [r.get("best_val") for r in keep],
               "cpu_pct": [r.get("cpu_pct") for r in keep], "system_used_mb": [r.get("system_used_mb") for r in keep], "gpu_mb": [r.get("gpu_alloc_mb") for r in keep]}
+    series["phase"] = [r.get("phase") for r in keep]
     extra = sorted({k for r in keep for k in (r.get("metrics") or {})})
     series["metrics"] = {k: [(r.get("metrics") or {}).get(k) for r in keep] for k in extra}                 # model-specific curves: reconstruction and KL, critic gap, rewards ...
     from .checkpoint import CheckpointManager                                             # PyTorch is imported only when a run's checkpoints are listed

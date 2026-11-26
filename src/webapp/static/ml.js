@@ -1639,6 +1639,8 @@
   }
   function paintTrainingDetail() { const box = Q.$("#ml-training-detail"); if (box && M.mode === "training") { box.replaceChildren(); trainingDetail(box); } }
   const TR_VIEWS = [["overview", "Overview"], ["gradient", "Gradient health"], ["layers", "Layer diagnostics"], ["dist", "Distributions"], ["events", "Recovery & events"]];
+  const trUnit = () => { const u = (M.tr.data && M.tr.data.summary && M.tr.data.summary.unit) || "epoch"; return u; };
+  const trUnitCap = () => cap(trUnit());
   const SEV_WORD = { info: "Info", warning: "Warning", critical: "Critical" };
   const LEVEL_NOTE = { off: "Gradient diagnostics are off for this run.", lightweight: "Lightweight: global norms, non-finite checks and clipping frequency only.", standard: "Standard: global statistics and per-layer summaries on sampled steps.",
     detailed: "Detailed: standard plus per-layer medians and histograms." };
@@ -1664,11 +1666,14 @@
     if (d.memory_advice) { const a = d.memory_advice; const p2 = h("p", "hint", head); p2.setAttribute("data-memory-advice", "1"); p2.appendChild(document.createTextNode(`Stopped for lack of memory (${a.reason}). ${a.batch_size ? `Try a batch size of ${a.batch_size}${a.accumulation_steps > 1 ? ` with ${a.accumulation_steps} accumulation steps` : ""}. ` : ""}${a.note || ""}`)); }
     const k = h("div", "earnrow", head);
     const last = (a) => { for (let i = (a || []).length - 1; i >= 0; i--) if (!Q.bad(a[i])) return a[i]; return null; };
-    tile(k, "Epoch", `${sm.epoch}${sm.epochs ? " / " + sm.epochs : ""}`, { text: `last written ${ago(sm.last_at)}` });
+    tile(k, trUnitCap(), `${sm.epoch}${sm.epochs ? " / " + sm.epochs : ""}`, { text: `last written ${ago(sm.last_at)}` });
+    const tsv = ser.metrics && ser.metrics.timesteps ? last(ser.metrics.timesteps) : null, rw = ser.metrics && ser.metrics.mean_reward ? last(ser.metrics.mean_reward) : null;
+    if (!Q.bad(tsv)) tile(k, "Timesteps", Number(tsv).toLocaleString(), { text: Q.bad(rw) ? "" : `mean episode reward ${fnum(rw, 3)}` });
+    if (sm.phase) tile(k, "Phase", sm.phase === "adam" ? "Adam" : sm.phase === "lbfgs" ? "L-BFGS" : sm.phase, { text: ser.metrics && ser.metrics.lbfgs_iterations && !Q.bad(last(ser.metrics.lbfgs_iterations)) ? `${last(ser.metrics.lbfgs_iterations)} L-BFGS iterations` : ser.metrics && ser.metrics.adam_steps ? `${last(ser.metrics.adam_steps)} Adam steps` : "" });
     tile(k, "Best validation loss", Q.bad(sm.best_val) ? "n/a" : String(+Number(sm.best_val).toPrecision(4)), { text: Q.bad(sm.best_epoch) ? "" : `at epoch ${sm.best_epoch}` });
     tile(k, "Learning rate", n ? String(+Number(last(ser.lr)).toPrecision(3)) : "n/a", { text: "as the scheduler left it" });
     tile(k, "Process memory", n ? mb(last(ser.rss_mb)) : "n/a", { text: Q.bad(last(ser.peak_mb)) ? "" : `peak ${mb(last(ser.peak_mb))}` });
-    tile(k, "Epoch time", n ? (+last(ser.seconds)).toFixed(1) + " s" : "n/a", { text: n ? `${(ser.seconds.reduce((a, b) => a + (b || 0), 0) / 60).toFixed(1)} min so far` : "" });
+    tile(k, trUnitCap() + " time", n ? (+last(ser.seconds)).toFixed(1) + " s" : "n/a", { text: n ? `${(ser.seconds.reduce((a, b) => a + (b || 0), 0) / 60).toFixed(1)} min so far` : "" });
     const rec = (d.events || []).filter((e) => e.type === "resume").pop();
     if (rec) { const r = h("p", "hint", head); r.setAttribute("data-recovery", rec.level || ""); r.appendChild(document.createTextNode(`Resumed after epoch ${rec.epoch}. ${RECOVERY_WORD[rec.level] || ""}${(rec.reasons || []).length ? " " + rec.reasons.join("; ") + "." : ""}`)); }
     const row = [];
@@ -1695,17 +1700,21 @@
     ({ overview: trOverview, gradient: trGradient, layers: trLayers, dist: trDist, events: trEvents })[s.view](body, d, ser, sm);
   }
   function trOverview(box, d, ser, sm) {
-    const xs = ser.epoch, ch = h("div", "grid2", box);
-    chartCard(ch, "Loss by epoch", "Training loss (solid) on the rows the network learns from and validation loss (dashed) on the later validation tail that early stopping watches. Test and forward results are never shown here.",
-      { wide: true, draw: (b) => C.line(b, { xs, series: [{ name: "Training loss", color: css("--s1"), values: ser.train_loss, width: 1.5 }, { name: "Validation loss", color: css("--s2"), values: ser.val_loss, dash: "4 3" }], xLabel: "epoch", xFormat: (v) => String(Math.round(v)), yFormat: (v) => String(+v.toPrecision(3)), tipFormat: (v) => String(+v.toPrecision(4)), height: 260, label: "Training and validation loss by epoch",
-        vlines: (sm.best_epoch ? [{ x: sm.best_epoch, label: "best" }] : []) }),
-        table: (b) => table(b, [{ label: "Epoch", get: (i) => String(xs[i]) }, { label: "Training loss", num: true, get: (i) => (Q.bad(ser.train_loss[i]) ? "" : num(ser.train_loss[i], 5)) }, { label: "Validation loss", num: true, get: (i) => (Q.bad(ser.val_loss[i]) ? "" : num(ser.val_loss[i], 5)) }], xs.map((_, i) => i)) });
-    chartCard(ch, "Learning rate", "Falls by a factor each time validation loss fails to improve for the scheduler's patience.", { draw: (b) => C.line(b, { xs, series: [{ name: "Learning rate", color: css("--s3"), values: ser.lr }], xLabel: "epoch", xFormat: (v) => String(Math.round(v)), yFormat: (v) => v.toExponential(0), tipFormat: (v) => v.toExponential(2), height: 200, label: "Learning rate by epoch" }) });
-    chartCard(ch, "Memory", "The training process's resident memory after each epoch, as the operating system reports it. A steady climb is a leak; a flat line is a network that fits.", { draw: (b) => C.line(b, { xs, series: [{ name: "Process memory (MB)", color: css("--s4"), values: ser.rss_mb }], xLabel: "epoch", xFormat: (v) => String(Math.round(v)), yFormat: (v) => String(Math.round(v)), tipFormat: (v) => Math.round(v) + " MB", height: 200, label: "Process memory by epoch" }) });
+    const stamps = ser.metrics && ser.metrics.timesteps && ser.metrics.timesteps.every((v) => !Q.bad(v)) ? ser.metrics.timesteps : null;       // reinforcement learning: progress is in timesteps, not epochs
+    const xs = stamps || ser.epoch, ch = h("div", "grid2", box), XL = stamps ? "timesteps" : trUnit();
+    const phases = (ser.phase || []).some((p) => p === "lbfgs") && (ser.phase || []).some((p) => p === "adam");
+    const switchAt = phases ? ser.epoch[ser.phase.indexOf("lbfgs")] : null;
+    const lossSeries = phases ? [{ name: "Adam loss", color: css("--s1"), values: ser.train_loss.map((v, i) => (ser.phase[i] === "adam" ? v : null)), width: 1.5 }, { name: "L-BFGS loss", color: css("--s3"), values: ser.train_loss.map((v, i) => (ser.phase[i] === "lbfgs" ? v : null)), width: 1.5 }] : [{ name: "Training loss", color: css("--s1"), values: ser.train_loss, width: 1.5 }, ...(ser.val_loss.some((v) => !Q.bad(v)) ? [{ name: "Validation loss", color: css("--s2"), values: ser.val_loss, dash: "4 3" }] : [])];
+    chartCard(ch, phases ? "Loss by optimisation phase" : `Loss by ${XL}`, "Training loss (solid) on the rows the network learns from and validation loss (dashed) on the later validation tail that early stopping watches. Test and forward results are never shown here.",
+      { wide: true, draw: (b) => C.line(b, { xs, series: lossSeries, xLabel: XL, xFormat: (v) => String(Math.round(v)), yFormat: (v) => String(+v.toPrecision(3)), tipFormat: (v) => String(+v.toPrecision(4)), height: 260, label: "Training loss",
+        vlines: phases ? [{ x: stamps ? stamps[ser.phase.indexOf("lbfgs")] : switchAt, label: "L-BFGS starts" }] : (sm.best_epoch && !stamps && ser.val_loss.some((v) => !Q.bad(v)) ? [{ x: sm.best_epoch, label: "best" }] : []) }),
+        table: (b) => table(b, [{ label: stamps ? "Timesteps" : trUnitCap(), get: (i) => String(xs[i]) }, { label: "Phase", get: (i) => ser.phase[i] || "" }, { label: "Training loss", num: true, get: (i) => (Q.bad(ser.train_loss[i]) ? "" : num(ser.train_loss[i], 5)) }, { label: "Validation loss", num: true, get: (i) => (Q.bad(ser.val_loss[i]) ? "" : num(ser.val_loss[i], 5)) }], xs.map((_, i) => i)) });
+    chartCard(ch, "Learning rate", "Falls by a factor each time validation loss fails to improve for the scheduler's patience.", { draw: (b) => C.line(b, { xs, series: [{ name: "Learning rate", color: css("--s3"), values: ser.lr }], xLabel: XL, xFormat: (v) => String(Math.round(v)), yFormat: (v) => v.toExponential(0), tipFormat: (v) => v.toExponential(2), height: 200, label: "Learning rate by epoch" }) });
+    chartCard(ch, "Memory", "The training process's resident memory after each epoch, as the operating system reports it. A steady climb is a leak; a flat line is a network that fits.", { draw: (b) => C.line(b, { xs, series: [{ name: "Process memory (MB)", color: css("--s4"), values: ser.rss_mb }], xLabel: XL, xFormat: (v) => String(Math.round(v)), yFormat: (v) => String(Math.round(v)), tipFormat: (v) => Math.round(v) + " MB", height: 200, label: "Process memory by epoch" }) });
     const cpu = (ser.cpu_pct || []).some((v) => !Q.bad(v)), gpu = (ser.gpu_mb || []).some((v) => !Q.bad(v));
-    if (cpu || gpu) chartCard(ch, "CPU and GPU", "Process CPU use over each epoch (100 is one core) and, when a GPU is present, the memory PyTorch holds on it.", { draw: (b) => C.line(b, { xs, series: [...(cpu ? [{ name: "CPU (% of one core)", color: css("--s5"), values: ser.cpu_pct }] : []), ...(gpu ? [{ name: "GPU memory (MB)", color: css("--s6"), values: ser.gpu_mb }] : [])], xLabel: "epoch", xFormat: (v) => String(Math.round(v)), yFormat: (v) => String(Math.round(v)), tipFormat: (v) => String(Math.round(v)), height: 200, label: "CPU and GPU use by epoch" }) });
+    if (cpu || gpu) chartCard(ch, "CPU and GPU", "Process CPU use over each epoch (100 is one core) and, when a GPU is present, the memory PyTorch holds on it.", { draw: (b) => C.line(b, { xs, series: [...(cpu ? [{ name: "CPU (% of one core)", color: css("--s5"), values: ser.cpu_pct }] : []), ...(gpu ? [{ name: "GPU memory (MB)", color: css("--s6"), values: ser.gpu_mb }] : [])], xLabel: trUnit(), xFormat: (v) => String(Math.round(v)), yFormat: (v) => String(Math.round(v)), tipFormat: (v) => String(Math.round(v)), height: 200, label: "CPU and GPU use by epoch" }) });
     const metricNames = Object.keys(ser.metrics || {}).filter((m) => ser.metrics[m].some((v) => !Q.bad(v)));
-    for (const name of metricNames) chartCard(ch, name.replace(/_/g, " "), "A model-specific quantity the loop reports each unit.", { draw: (b) => C.line(b, { xs, series: [{ name, color: css("--s2"), values: ser.metrics[name] }], xLabel: "epoch", xFormat: (v) => String(Math.round(v)), yFormat: (v) => fnum(v, 2), tipFormat: (v) => fnum(v, 4), height: 180, label: name }) });
+    for (const name of metricNames.filter((m) => m !== "timesteps")) chartCard(ch, name.replace(/_/g, " "), "A model-specific quantity the loop reports each unit.", { draw: (b) => C.line(b, { xs, series: [{ name, color: css("--s2"), values: ser.metrics[name] }], xLabel: XL, xFormat: (v) => String(Math.round(v)), yFormat: (v) => fnum(v, 2), tipFormat: (v) => fnum(v, 4), height: 180, label: name }) });
     const ck = h("div", "card", box); h("h3", "", ck, "Checkpoints");
     if (!d.checkpoints.length) h("p", "hint", ck, "No checkpoint has been written yet.");
     else table(ck, [{ label: "File", get: (c) => c.file }, { label: "Epoch", num: true, get: (c) => (Q.bad(c.epoch) ? "n/a" : String(c.epoch)) }, { label: "Validation loss", num: true, get: (c) => (Q.bad(c.val_loss) ? "n/a" : num(c.val_loss, 5)) },
@@ -1738,15 +1747,15 @@
     const ch = h("div", "grid2", box);
     const vl = (d.gradient_events || []).filter((e) => e.severity !== "info" && e.optimizer === g.optimizer).map((e) => ({ x: e.epoch + 1, label: e.kind.replace(/_/g, " ") })).slice(0, 12);
     chartCard(ch, "Global gradient norm", "The L2 norm of the whole gradient at each optimizer step, summarised per epoch: the median, the 90th percentile and the largest step. Log scale. Dashed lines mark warnings.",
-      { wide: true, draw: (b) => C.line(b, { xs, series: [{ name: "Median", color: css("--s1"), values: S.l2_median }, { name: "90th percentile", color: css("--s2"), values: S.l2_p90, width: 1 }, { name: "Largest", color: css("--s3"), values: S.l2_max, width: 1 }], log: true, xLabel: "epoch", xFormat: (v) => String(Math.round(v)), yFormat: (v) => fnum(v, 2), tipFormat: (v) => fnum(v, 3), height: 260, vlines: vl, label: "Global gradient norm by epoch" }),
+      { wide: true, draw: (b) => C.line(b, { xs, series: [{ name: "Median", color: css("--s1"), values: S.l2_median }, { name: "90th percentile", color: css("--s2"), values: S.l2_p90, width: 1 }, { name: "Largest", color: css("--s3"), values: S.l2_max, width: 1 }], log: true, xLabel: trUnit(), xFormat: (v) => String(Math.round(v)), yFormat: (v) => fnum(v, 2), tipFormat: (v) => fnum(v, 3), height: 260, vlines: vl, label: "Global gradient norm by epoch" }),
         table: (b) => table(b, [{ label: "Epoch", get: (i) => String(xs[i]) }, { label: "Median", num: true, get: (i) => fnum(S.l2_median[i]) }, { label: "P90", num: true, get: (i) => fnum(S.l2_p90[i]) }, { label: "Largest", num: true, get: (i) => fnum(S.l2_max[i]) }], xs.map((_, i) => i)) });
     if ((S.p50 || []).some((v) => !Q.bad(v))) chartCard(ch, "Gradient percentiles", "Percentiles of the absolute value of single gradient entries on the sampled steps (a fixed-stride subsample when the model is very large). Zero entries are included, so a percentile of zero means that share of entries is exactly zero. Log scale hides zeros: the table shows them.",
-      { draw: (b) => C.line(b, { xs, series: [["p50", "P50", "--s1"], ["p90", "P90", "--s2"], ["p95", "P95", "--s3"], ["p99", "P99", "--s4"]].map(([key, name, c]) => ({ name, color: css(c), values: S[key] })), log: true, xLabel: "epoch", xFormat: (v) => String(Math.round(v)), yFormat: (v) => fnum(v, 2), tipFormat: (v) => fnum(v, 3), height: 220, label: "Absolute-gradient percentiles by epoch" }),
+      { draw: (b) => C.line(b, { xs, series: [["p50", "P50", "--s1"], ["p90", "P90", "--s2"], ["p95", "P95", "--s3"], ["p99", "P99", "--s4"]].map(([key, name, c]) => ({ name, color: css(c), values: S[key] })), log: true, xLabel: trUnit(), xFormat: (v) => String(Math.round(v)), yFormat: (v) => fnum(v, 2), tipFormat: (v) => fnum(v, 3), height: 220, label: "Absolute-gradient percentiles by epoch" }),
         table: (b) => table(b, [{ label: "Epoch", get: (i) => String(xs[i]) }, ...["p50", "p90", "p95", "p99"].map((key) => ({ label: key.toUpperCase(), num: true, get: (i) => fnum(S[key][i]) }))], xs.map((_, i) => i)) });
     if ((S.zero_frac || []).some((v) => !Q.bad(v))) chartCard(ch, "Zero and near-zero gradients", "The share of gradient entries that are exactly zero and that are below the near-zero threshold. Structural zeros (padding, masks, ReLU units that are off for a batch) are normal; a layer that stays at one hundred percent is not.",
-      { draw: (b) => C.line(b, { xs, series: [{ name: "Exactly zero", color: css("--s1"), values: S.zero_frac }, { name: "Near zero", color: css("--s2"), values: S.near_zero_frac, dash: "4 3" }], xLabel: "epoch", xFormat: (v) => String(Math.round(v)), yFormat: (v) => pct(v, 0), tipFormat: (v) => pct(v, 2), height: 200, label: "Zero gradient share by epoch" }) });
+      { draw: (b) => C.line(b, { xs, series: [{ name: "Exactly zero", color: css("--s1"), values: S.zero_frac }, { name: "Near zero", color: css("--s2"), values: S.near_zero_frac, dash: "4 3" }], xLabel: trUnit(), xFormat: (v) => String(Math.round(v)), yFormat: (v) => pct(v, 0), tipFormat: (v) => pct(v, 2), height: 200, label: "Zero gradient share by epoch" }) });
     chartCard(ch, "Clipping and non-finite steps", "The share of optimizer steps whose gradient was clipped, and the count of steps with a non-finite gradient. The post-clip norm is measured separately on the sampled steps.",
-      { draw: (b) => C.line(b, { xs, series: [{ name: "Clipped share", color: css("--s5"), values: S.clip_frequency }, { name: "Skipped by the mixed-precision scaler (share of steps)", color: css("--s6"), values: S.skipped_share }], xLabel: "epoch", xFormat: (v) => String(Math.round(v)), yFormat: (v) => pct(v, 0), tipFormat: (v) => pct(v, 1), height: 200, label: "Clipping by epoch" }),
+      { draw: (b) => C.line(b, { xs, series: [{ name: "Clipped share", color: css("--s5"), values: S.clip_frequency }, { name: "Skipped by the mixed-precision scaler (share of steps)", color: css("--s6"), values: S.skipped_share }], xLabel: trUnit(), xFormat: (v) => String(Math.round(v)), yFormat: (v) => pct(v, 0), tipFormat: (v) => pct(v, 1), height: 200, label: "Clipping by epoch" }),
         table: (b) => table(b, [{ label: "Epoch", get: (i) => String(xs[i]) }, { label: "Clipped", num: true, get: (i) => (Q.bad(S.clip_frequency[i]) ? "off" : pct(S.clip_frequency[i], 1)) }, { label: "Post-clip norm", num: true, get: (i) => fnum(S.post_clip[i]) }, { label: "Non-finite steps", num: true, get: (i) => String(S.nonfinite_steps[i] || 0) }, { label: "Skipped steps", num: true, get: (i) => String(S.skipped_steps[i] || 0) }], xs.map((_, i) => i)) });
   }
   function trLayers(box, d) {
@@ -1785,7 +1794,7 @@
     const LS = g.layer_series, colors = ["--s1", "--s2", "--s3", "--s4", "--s5", "--s6"];
     const pickedNow = picks.filter((p) => LS[p]).slice(0, 6);
     if (pickedNow.length) {
-      const mk = (key, title, note) => chartCard(cmp, title, note, { draw: (b) => C.line(b, { xs: g.series.epoch, series: pickedNow.map((nme, i) => ({ name: nme, color: css(colors[i % 6]), values: LS[nme][key] })), log: true, xLabel: "epoch", xFormat: (v) => String(Math.round(v)), yFormat: (v) => fnum(v, 2), tipFormat: (v) => fnum(v, 3), height: 200, label: title }) });
+      const mk = (key, title, note) => chartCard(cmp, title, note, { draw: (b) => C.line(b, { xs: g.series.epoch, series: pickedNow.map((nme, i) => ({ name: nme, color: css(colors[i % 6]), values: LS[nme][key] })), log: true, xLabel: trUnit(), xFormat: (v) => String(Math.round(v)), yFormat: (v) => fnum(v, 2), tipFormat: (v) => fnum(v, 3), height: 200, label: title }) });
       mk("rms", "RMS gradient by epoch", "Root-mean-square gradient entry of each chosen layer: comparable between layers of different sizes.");
       mk("g_w", "Gradient-to-weight ratio by epoch", "The layer's gradient norm over its weight norm.");
       mk("update_ratio", "Update-to-weight ratio by epoch", "How far the optimizer really moved the layer relative to its norm, measured on sampled steps.");
@@ -1822,7 +1831,7 @@
     for (const e of gev) marks.push({ at: e.at, epoch: e.epoch + 1, what: `${e.kind.replace(/_/g, " ")} (${e.severity})`, detail: e.message });
     marks.sort((a, b) => (a.at || 0) - (b.at || 0));
     if (!marks.length) h("p", "hint", c2, "Nothing notable has happened: no interruption, resume, stop, resource warning or gradient warning.");
-    else table(c2, [{ label: "When", get: (m) => (m.at ? new Date(m.at * 1000).toLocaleString() : "") }, { label: "Epoch", num: true, get: (m) => (Q.bad(m.epoch) ? "" : String(m.epoch)) }, { label: "Event", get: (m) => m.what }, { label: "Detail", get: (m) => m.detail || "" }], marks);
+    else table(c2, [{ label: "When", get: (m) => (m.at ? new Date(m.at * 1000).toLocaleString() : "") }, { label: trUnitCap(), num: true, get: (m) => (Q.bad(m.epoch) ? "" : String(m.epoch)) }, { label: "Event", get: (m) => m.what }, { label: "Detail", get: (m) => m.detail || "" }], marks);
     const c3 = h("div", "card", box); h("h3", "", c3, "Gradient warnings");
     h("p", "hint", c3, "Warnings describe what was measured and the thresholds used. They never change the training: no learning rate, clip value or step was altered because of them.");
     if (!gev.length) h("p", "hint", c3, "No gradient warnings.");
@@ -1849,12 +1858,12 @@
     if (!d.runs.length) { Q.labEmpty(root, M, EMPTY.training[0], EMPTY.training[1], null); return; }
     const c = h("div", "card", root); h("h3", "", c, "Runs");
     const wrap = h("div", "scroll", c), tb = h("table", "data", wrap), hr = h("tr", "", h("thead", "", tb));
-    for (const [label, numeric] of [["Run"], ["Model"], ["Status"], ["Epoch", 1], ["Best validation loss", 1], ["Last activity"], ["Size", 1], [""]]) h("th", numeric ? "num" : "", hr, label);
+    for (const [label, numeric] of [["Run"], ["Model"], ["Status"], ["Progress", 1], ["Best validation loss", 1], ["Last activity"], ["Size", 1], [""]]) h("th", numeric ? "num" : "", hr, label);
     const body = h("tbody", "", tb);
     for (const r of d.runs) {
       const tr = h("tr", "", body); tr.setAttribute("data-run", r.id);
       h("td", "", tr, r.id); h("td", "", tr, r.kind || ""); const st = h("td", "", tr, TR_WORD[r.status] || r.status); st.title = TR_HINT[r.status] || ""; st.setAttribute("data-status", r.status);
-      h("td", "num", tr, `${r.epoch}${r.epochs ? " / " + r.epochs : ""}`); h("td", "num", tr, Q.bad(r.best_val) ? "n/a" : String(+Number(r.best_val).toPrecision(4)));
+      h("td", "num", tr, `${r.epoch}${r.epochs ? " / " + r.epochs : ""} ${r.unit && r.unit !== "epoch" ? r.unit : ""}${r.phase ? " · " + r.phase : ""}`); h("td", "num", tr, Q.bad(r.best_val) ? "n/a" : String(+Number(r.best_val).toPrecision(4)));
       h("td", "", tr, ago(r.last_at)); h("td", "num", tr, bytesText(r.disk_bytes));
       const b = h("button", "btn", h("td", "", tr), M.tr.id === r.id ? "Close" : "Open"); b.type = "button";
       b.addEventListener("click", () => { if (M.tr.id === r.id) { stopTrainingPoll(); M.tr.id = ""; M.tr.data = null; M.draw(); return; } loadTrainingRun(r.id, true).then(() => 0); M.draw(); });

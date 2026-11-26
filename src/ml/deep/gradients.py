@@ -179,8 +179,10 @@ class GradientMonitor:
         """The completed, unscaled, unclipped gradient of this optimizer step."""
         if self.level == "off":
             return
-        self._opt_steps += 1
         grads = self._grads()
+        if not grads:                                                                          # nothing has been backpropagated yet (the first look of a resumed run reads gradients the process never computed)
+            return
+        self._opt_steps += 1
         if len(grads) < len(self.active):
             self._missing_names.update(n for n, p in self.active.items() if p.grad is None)
         if not self.norm_due(step):
@@ -193,8 +195,11 @@ class GradientMonitor:
             self._norms.append(torch.zeros((), dtype=torch.float64))
         self._norm_steps.append(step)
         if self.sample_due(step):
-            self._sample(step, grads)
-            self._take_snapshot()
+            try:
+                self._sample(step, grads)
+                self._take_snapshot()
+            except Exception:                                                                  # noqa: BLE001 - a diagnostic must never be the reason a training stops
+                self._sample_errors = getattr(self, "_sample_errors", 0) + 1
 
     @torch.no_grad()
     def after_clip(self, step: int) -> None:
@@ -314,6 +319,8 @@ class GradientMonitor:
     def end_epoch(self, epoch: int, *, lr: float | None = None, train_loss: float | None = None, val_loss: float | None = None, action: str = "continued") -> tuple[dict | None, list[dict]]:
         """``(summary, events)`` for the unit just finished; ``summary`` is compact JSON-able data, ``events`` the warnings it raised."""
         if self.level == "off":
+            return None, []
+        if not self._norms and not self._opt_steps and not self._skipped:                   # this optimizer did not step in this unit (a warm-up, another phase): there is nothing to summarise
             return None, []
         norms = np.array(torch.stack(self._norms).cpu().numpy() if self._norms else [], dtype=np.float64)
         steps = list(self._norm_steps)

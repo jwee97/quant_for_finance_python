@@ -123,8 +123,9 @@ class RLAgent(Model):
                 return True
 
         t0 = time.perf_counter()
-        self.agent_ = algo("MlpLstmPolicy" if self.kind == RECURRENT else "MlpPolicy", Monitor(env), **common, **kw)
-        self.agent_.learn(total_timesteps=steps, callback=Log())
+        policy_name = "MlpLstmPolicy" if self.kind == RECURRENT else "MlpPolicy"
+        agent = algo(policy_name, Monitor(env), **common, **kw)
+        self.agent_ = self._learn(agent, algo, Log, history, steps, common, kw, feats, rets, mask)
         self.train_seconds_, self.rewards_ = time.perf_counter() - t0, history
         self.n_params_ = int(sum(q.numel() for q in self.agent_.policy.parameters()))
         self.train_days_ = int(len(days))
@@ -138,6 +139,95 @@ class RLAgent(Model):
         self.train_curve_ = {"dates": [str(x.date()) for x in days[::step]], "equity": [float(v) for v in eq[::step]],
                              "sharpe": float(net.mean() / net.std(ddof=1) * np.sqrt(252.0)) if len(net) > 1 and net.std(ddof=1) > 0 else 0.0}
         return self
+
+    def _learn(self, agent, algo, Log, history: dict, steps: int, common: dict, kw: dict, feats, rets, mask):
+        """Train ``agent`` for ``steps`` timesteps. Outside a training run this is SB3's single ``learn`` call, exactly as before. Inside one (a job, the Training monitor) the same training is cut into blocks of
+        ``checkpoint_timesteps`` (a whole number of rollouts for PPO), and after each block a checkpoint is committed: SB3's own serialisation of the model and replay buffer plus the application manifest of what SB3 does not
+        keep (``sb3_state``). A resumed run rebuilds the agent from the newest valid checkpoint and continues; the guarantee it reports is the one the saved state and the platform's limits (``sb3_state.describe_limits``) support."""
+        from stable_baselines3.common.callbacks import BaseCallback, CallbackList
+        from stable_baselines3.common.utils import safe_mean
+
+        from ..deep import context as train_context
+        from ..deep.session import TrainingSession, data_fingerprint
+        from .. import live
+        from . import sb3_state
+
+        p, kind = self.params, self.kind
+        if train_context.current() is None:
+            agent.learn(total_timesteps=steps, callback=Log())
+            return agent
+        on_policy = kind in ("ppo", RECURRENT)
+        n_steps = int(p.get("n_steps", 1)) if on_policy else 1
+        asked = int(p.get("checkpoint_timesteps", 0) or 0)
+        chunk = asked if asked > 0 else max(steps // 8, 256)
+        chunk = max(-(-chunk // n_steps) * n_steps, n_steps)                                 # PPO collects whole rollouts: a block is a whole number of them
+        units = max(-(-steps // chunk), 1)
+        holder = {"agent": agent}
+        skip = {"checkpoint_timesteps", "grad_monitor", "total_timesteps", "device"}
+        config = {"kind": kind, "params": {k: v for k, v in sorted(p.items()) if k not in skip}, "seed": self.seed, "env": self._env_kwargs(), "versions": sb3_state.versions()}
+        cpu = str(agent.device.type) == "cpu"
+        sess = TrainingSession("sb3_" + kind, config=config, data={"arrays": data_fingerprint(feats, rets, mask), "features": list(self.features_)}, modules={}, optimizers={},
+                               capture=lambda: {"sb3": sb3_state.capture(holder["agent"], kind), "history": {k: list(v) for k, v in history.items()}}, apply=lambda s: None, units=units, unit_name="timestep block",
+                               family="rl", ceiling="exact" if cpu else "epoch_boundary", device=str(agent.device.type), grad_level=str(p.get("grad_monitor") or "auto"), steps_per_unit=chunk,
+                               n_params=int(sum(q.numel() for q in agent.policy.parameters())), lr=float(p["learning_rate"]))
+        with sess:
+            resumed = sess.restore()
+            first_chunk = True
+            if resumed is not None and resumed.level != "warm_start":
+                saved = resumed.state["history"]["extra"]
+                agent, _ = sb3_state.restore(algo, saved["sb3"], str(agent.device.type))
+                holder["agent"] = agent
+                history.update(saved["history"])
+                for note in sb3_state.check_counters(agent, saved["sb3"]):
+                    sess.log({"type": "recovery_note", "message": note, "at": time.time()})
+                first_chunk = False
+                if not hasattr(agent, "_last_lstm_states") and kind == RECURRENT:
+                    sess.log({"type": "recovery_note", "message": "the recurrent state could not be restored", "at": time.time()})
+            monitors = ({"actor": sess.monitor("actor", agent.actor), "critic": sess.monitor("critic", agent.critic)} if kind == "sac" else {"policy": sess.monitor("policy", agent.policy)})
+            if resumed is not None:
+                for name, mon in monitors.items():
+                    mon.load_state_dict(((resumed.state.get("grad") or {}).get(name)))
+            if resumed is None:
+                sess.log({"type": "diagnostics_note", "at": time.time(), "message": "gradient diagnostics for Stable-Baselines3 agents are limited to the public interface: the gradient the last update left on the networks is read between updates (PPO's after its own clipping, SAC's unclipped); per-step pre-clip norms and update-to-weight ratios are not available"})
+                sess.log({"type": "recovery_limits", "at": time.time(), "limits": sb3_state.describe_limits(kind, str(agent.device.type))})
+            state = {"step": 0}
+
+            class Lifecycle(BaseCallback):
+                """Reads, never changes: the gradients the last update left on the networks (public ``.grad``: PPO's are after its own clipping, SAC's are unclipped) and the cancellation and resource checks of a job."""
+
+                def _observe(self) -> None:
+                    for mon in monitors.values():
+                        mon.observe(state["step"])
+                    state["step"] += 1
+
+                def _on_rollout_start(self) -> None:
+                    if on_policy and getattr(self.model, "_n_updates", 0) > 0:
+                        self._observe()
+
+                def _on_step(self) -> bool:
+                    live.batch(int(self.num_timesteps), steps, 0.0, int(self.num_timesteps))                       # a cancelled job or a memory stop ends the training here
+                    if not on_policy and self.model._n_updates > 0 and self.num_timesteps % 8 == 0:
+                        self._observe()
+                    return True
+
+            callbacks = CallbackList([Log(), Lifecycle()])
+            for u in range(resumed.start if resumed is not None and resumed.level != "warm_start" else 0, units):
+                sess.begin_unit(u, chunk)
+                for mon in monitors.values():
+                    mon.begin_epoch(u, max(chunk // max(n_steps, 1), 1), None)
+                state["step"] = 0
+                target = min((u + 1) * chunk, steps)
+                agent.learn(total_timesteps=max(target - agent.num_timesteps, 1), callback=callbacks, reset_num_timesteps=first_chunk)
+                first_chunk = False
+                buf = list(agent.ep_info_buffer)
+                values = {k.replace("train/", ""): float(v) for k, v in getattr(agent.logger, "name_to_value", {}).items() if k.startswith("train/") and np.isfinite(float(v))}
+                loss = values.get("loss", values.get("critic_loss"))
+                metrics = {"train_loss": loss, "val_loss": None, "timesteps": float(agent.num_timesteps), "episodes": float(getattr(agent, "_episode_num", len(buf))), "updates": float(getattr(agent, "_n_updates", 0)),
+                           "mean_reward": float(safe_mean([e["r"] for e in buf])) if buf else None, "mean_episode_length": float(safe_mean([e["l"] for e in buf])) if buf else None, **values}
+                if sess.end_unit(u, metrics, last=agent.num_timesteps >= steps) == "stop":
+                    break
+            sess.finish()
+        return agent
 
     # ------------------------------------------------------------------------------------------------------------ playing
     def _policy(self):

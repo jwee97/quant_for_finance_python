@@ -80,8 +80,16 @@ def _payoff(y, sharpness: float = 30.0):
     return torch.nn.functional.softplus(torch.exp(y) - 1.0, beta=sharpness)
 
 
-def _train(loss_fn, params, steps: int, lr: float, seed: int, report: int = 200, lbfgs_steps: int = 0, identity: dict | None = None):
-    """Adam with a cosine learning-rate decay on freshly drawn collocation points, then optionally ``lbfgs_steps`` iterations of L-BFGS on one fixed draw (which polishes the fit far more than more Adam steps do)."""
+LBFGS_CHUNK = 10                                                                                    # L-BFGS iterations per optimizer boundary (one ``step`` call): the unit of checkpointing
+
+
+def _train(loss_fn, params, steps: int, lr: float, seed: int, report: int = 200, lbfgs_steps: int = 0, identity: dict | None = None, lbfgs_chunk: int | None = None):
+    """Adam with a cosine learning-rate decay on freshly drawn collocation points, then optionally ``lbfgs_steps`` iterations of L-BFGS on one fixed draw (which polishes the fit far more than more Adam steps do).
+
+    Recovery. The run is a sequence of units: Adam blocks of ``report`` steps, then L-BFGS chunks of ``lbfgs_chunk`` iterations. A checkpoint is committed only at the end of a unit, which is always an optimizer
+    boundary: after a whole Adam step, or after a whole L-BFGS ``step`` call (every line-search evaluation of its iterations finished). L-BFGS keeps its history (directions, curvature pairs, the previous gradient)
+    between ``step`` calls, so the chunks are the iterations of one long run; the original stopping rules (the evaluation budget, the gradient and change tolerances) are applied after every iteration of a chunk
+    of one, and at chunk boundaries otherwise. A process killed inside a unit loses that unit only: the next run restores the last committed state, records the recomputed work and carries on."""
     import torch
     from torch import nn
 
@@ -91,18 +99,24 @@ def _train(loss_fn, params, steps: int, lr: float, seed: int, report: int = 200,
     holder = nn.ParameterList(params)                                                       # the parameters, shared, so that they can be saved and restored together
     opt = torch.optim.Adam(params, lr=lr)
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, max(steps, 1), eta_min=lr * 0.02)
-    history = []
-    blocks = -(-steps // report) if steps > 0 else 0
-    # the Adam phase is checkpointed every ``report`` steps (collocation points come from the global generator, which is saved); the L-BFGS polish that follows restarts from the weights the last
-    # checkpoint holds and reruns deterministically (its generator is re-seeded), so an interruption inside it costs that polish only
-    sess = TrainingSession("pinn", config={"identity": identity or {}, "steps": steps, "lr": lr, "seed": seed, "report": report, "lbfgs_steps": lbfgs_steps, "loss": getattr(loss_fn, "__qualname__", "loss")},
-                           data="collocation points are drawn from the seeded global generator", modules={"net": holder}, optimizers={"adam": opt}, schedulers={"cosine": sched}, units=max(blocks, 1),
-                           capture=lambda: {"history": list(history)}, apply=lambda s: history.__init__(s["history"]), steps_per_unit=report)
+    history: list = []
+    adam_units = -(-steps // report) if steps > 0 else 0
+    chunk = max(int(lbfgs_chunk or LBFGS_CHUNK), 1)
+    lbfgs_units = -(-lbfgs_steps // chunk) if lbfgs_steps else 0
+    max_eval = lbfgs_steps * 5 // 4                                                         # torch's default budget for a call of ``lbfgs_steps`` iterations, applied to the whole polish
+    lb = torch.optim.LBFGS(params, lr=1.0, max_iter=chunk, max_eval=chunk * 25, history_size=30, line_search_fn="strong_wolfe", tolerance_grad=1e-12, tolerance_change=1e-14) if lbfgs_steps else None
+    st = {"lbfgs_iters": 0, "lbfgs_calls": 0, "lbfgs_done": False, "final_loss": None, "lbfgs_consumed": 1, "lbfgs_total_evals": 0}
+    sess = TrainingSession("pinn", config={"identity": identity or {}, "steps": steps, "lr": lr, "seed": seed, "report": report, "lbfgs_steps": lbfgs_steps, "lbfgs_chunk": chunk,
+                                           "loss": getattr(loss_fn, "__qualname__", "loss")},
+                           data="collocation points are drawn from the seeded global generator", modules={"net": holder}, optimizers={"adam": opt, **({"lbfgs": lb} if lb is not None else {})}, schedulers={"cosine": sched},
+                           units=max(adam_units + lbfgs_units, 1), capture=lambda: {"history": list(history), "st": dict(st)}, apply=lambda s: (history.__init__(s["history"]), st.update(s["st"])), steps_per_unit=report)
     mon = sess.monitor("adam", {f"p{i}": q for i, q in enumerate(params)})
+    mon_l = sess.monitor("lbfgs", {f"p{i}": q for i, q in enumerate(params)}) if lb is not None else None
     with sess:
         resumed = sess.restore()
-        for blk in range(resumed.start if resumed else 0, blocks):
-            sess.begin_unit(blk, report)
+        start = resumed.start if resumed else 0
+        for blk in range(start, adam_units):
+            sess.begin_unit(blk, report, phase="adam")
             vals = []
             for step in range(blk * report, min((blk + 1) * report, steps)):
                 loss = loss_fn()
@@ -116,23 +130,57 @@ def _train(loss_fn, params, steps: int, lr: float, seed: int, report: int = 200,
                 vals.append(float(loss.detach()))
                 if step % report == 0 or step == steps - 1:
                     history.append(float(loss.detach()))
-            if sess.end_unit(blk, {"train_loss": float(np.mean(vals)) if vals else None, "val_loss": None, "pde_loss": vals[-1] if vals else None}) == "stop":
+            if sess.end_unit(blk, {"train_loss": float(np.mean(vals)) if vals else None, "val_loss": None, "pde_loss": vals[-1] if vals else None, "adam_steps": float(min((blk + 1) * report, steps))}, phase="adam") == "stop":
                 break
+        else:
+            if lb is not None:
+                torch.manual_seed(seed + 1)                                                 # the polish's collocation draw: the same one in every run and after every resume
+                draw = torch.get_rng_state()
+                first = [True]
+
+                def closure():
+                    torch.set_rng_state(draw)                                               # the same collocation points at every evaluation
+                    lb.zero_grad()
+                    value = loss_fn()
+                    value.backward()
+                    if first[0]:                                                            # the gradient at the start of the chunk, read once; nothing is changed
+                        first[0] = False
+                        mon_l.observe(st["lbfgs_calls"])
+                    return value
+
+                for blk in range(max(start, adam_units), adam_units + lbfgs_units):
+                    if st["lbfgs_done"]:
+                        break
+                    sess.begin_unit(blk, 1, phase="lbfgs")
+                    first[0] = True
+                    # torch applies ``max_iter`` and ``max_eval`` to each call. Setting them from what the whole polish has used so far makes each call stop exactly where the single long call of the original would
+                    # (its iteration budget, its evaluation budget, and its own gradient and change tolerances, which torch tests inside the call)
+                    group = lb.param_groups[0]
+                    group["max_iter"] = max(min(chunk, lbfgs_steps - st["lbfgs_iters"]), 1)
+                    group["max_eval"] = max(max_eval - (st["lbfgs_consumed"] - 1), 2)
+                    mon_l.before_step(st["lbfgs_calls"])
+                    lb.step(closure)
+                    mon_l.after_step(st["lbfgs_calls"])
+                    s = lb.state_dict()["state"]
+                    s = s[next(iter(s))] if s else {}
+                    n_iter, total_evals = int(s.get("n_iter", 0)), int(s.get("func_evals", 0))
+                    before = st["lbfgs_iters"]
+                    made = total_evals - st["lbfgs_total_evals"]                                 # evaluations of this call: its start point once, then the line searches
+                    st["lbfgs_consumed"] += made - (1 if st["lbfgs_calls"] else 0)               # the start point of a later call was already counted by the call before
+                    st["lbfgs_total_evals"], st["lbfgs_iters"], st["lbfgs_calls"] = total_evals, n_iter, st["lbfgs_calls"] + 1
+                    prev = s.get("prev_loss")
+                    loss_now = float(prev) if prev is not None else float("nan")
+                    if n_iter <= before or n_iter >= lbfgs_steps or n_iter - before < group["max_iter"]:      # no progress, the budget is spent, or torch's own tests ended the call early
+                        st["lbfgs_done"] = True
+                    st["final_loss"] = loss_now
+                    if sess.end_unit(blk, {"train_loss": loss_now, "val_loss": None, "pde_loss": loss_now, "lbfgs_iterations": float(n_iter), "lbfgs_evaluations": float(st["lbfgs_consumed"])}, last=bool(st["lbfgs_done"]), phase="lbfgs") == "stop":
+                        break
+                if st["lbfgs_calls"]:
+                    first[0] = False
+                    st["final_loss"] = float(closure().detach())                            # the loss at the end of the polish, as the original recorded it
         sess.finish()
-    if lbfgs_steps:
-        torch.manual_seed(seed + 1)
-        state = torch.get_rng_state()
-        lb = torch.optim.LBFGS(params, lr=1.0, max_iter=lbfgs_steps, history_size=30, line_search_fn="strong_wolfe", tolerance_grad=1e-12, tolerance_change=1e-14)
-
-        def closure():
-            torch.set_rng_state(state)                                                                  # the same collocation points at every evaluation
-            lb.zero_grad()
-            value = loss_fn()
-            value.backward()
-            return value
-
-        lb.step(closure)
-        history.append(float(closure().detach()))
+    if lb is not None and st["final_loss"] is not None:
+        history.append(float(st["final_loss"]))                                              # the original appended the loss at the end of the polish
     return history
 
 

@@ -84,7 +84,7 @@ def _session(agent, kind: str, env, steps: int, seed: int, rng, modules: dict, o
     from ..ml.deep.session import TrainingSession
 
     def capture() -> dict:
-        out = {"S": {k: (v.copy() if isinstance(v, np.ndarray) else v) for k, v in S.items()}, "env": _env_state(env), "curve": list(S.get("curve", []))}
+        out = {"S": {k: (v.copy() if isinstance(v, np.ndarray) else v) for k, v in S.items()}, "env": _env_state(env)}
         if buf is not None:
             out["buf"] = _replay_state(buf)
         return out
@@ -93,7 +93,6 @@ def _session(agent, kind: str, env, steps: int, seed: int, rng, modules: dict, o
         S.update(s["S"])
         if s.get("env") is not None:
             env.set_state(s["env"])
-        S["curve"] = list(s.get("curve", []))
         if buf is not None:
             _replay_restore(buf, s["buf"])
 
@@ -134,7 +133,7 @@ class DQN(Agent):
         self.target = copy.deepcopy(self.q)
         opt = torch.optim.Adam(self.q.parameters(), lr=self.lr)
         buf = Replay(env.obs_dim)
-        S = {"o": env.reset(seed=seed).astype(np.float32)}
+        S = {"o": env.reset(seed=seed).astype(np.float32), "updates": 0, "syncs": 0}                   # the counters are part of the state a checkpoint carries
         blocks = -(-steps // BLOCK)
         sess = _session(self, "dqn" if not self.double else "double_dqn", env, steps, seed, rng, {"q": self.q, "target": self.target}, {"adam": opt}, S, buf, BLOCK, blocks)
         mon = sess.monitor("adam", self.q)
@@ -169,10 +168,12 @@ class DQN(Agent):
                         opt.step()
                         mon.after_step(k)
                         k += 1
+                        S["updates"] += 1
                         losses.append(float(loss.detach()))
                         if t % self.target_every == 0:
                             self.target.load_state_dict(self.q.state_dict())
-                if sess.end_unit(blk, {"train_loss": float(np.mean(losses)) if losses else None, "val_loss": None, "mean_reward": float(np.mean(rewards)), "epsilon": float(eps), "replay_size": float(buf.n)}) == "stop":
+                            S["syncs"] += 1
+                if sess.end_unit(blk, {"train_loss": float(np.mean(losses)) if losses else None, "val_loss": None, "mean_reward": float(np.mean(rewards)), "epsilon": float(eps), "replay_size": float(buf.n), "updates": float(S["updates"]), "target_syncs": float(S["syncs"]), "env_steps": float(min((blk + 1) * BLOCK, steps))}) == "stop":
                     break
             sess.finish()
         return self

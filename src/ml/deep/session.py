@@ -140,7 +140,7 @@ def _gen_restore(gen, st: dict) -> None:
 class TrainingSession:
     def __init__(self, kind: str, *, config: dict, data, modules: dict, optimizers: dict | None = None, schedulers: dict | None = None, scaler=None, rngs: dict | None = None, capture=None, apply=None,
                  units: int, unit_name: str = "epoch", checkpoint_every: int = 1, family: str = "default", grad_level: str | None = None, grad_interval: int = 0, clip: float | None = None, accumulation: int = 1,
-                 ceiling: str = "exact", device: str = "cpu", folder=None, resume: bool | None = None, callbacks: list | None = None, patience: int | None = None, keep_milestones: int = 0, steps_per_unit: int | None = None):
+                 ceiling: str = "exact", device: str = "cpu", folder=None, resume: bool | None = None, callbacks: list | None = None, patience: int | None = None, keep_milestones: int = 0, steps_per_unit: int | None = None, n_params: int | None = None, lr: float | None = None):
         self.kind, self.modules, self.optimizers, self.schedulers, self.scaler = kind, dict(modules), dict(optimizers or {}), dict(schedulers or {}), scaler
         self.rngs, self.capture, self.apply, self.units, self.unit_name = dict(rngs or {}), capture, apply, int(units), unit_name
         self.checkpoint_every, self.family, self.ceiling, self.device, self.patience = max(int(checkpoint_every), 1), family, ceiling, device, patience
@@ -158,6 +158,7 @@ class TrainingSession:
         self.grad_interval, self.clip, self.accumulation = int(grad_interval), clip, int(accumulation)
         self.monitors: dict[str, GradientMonitor] = {}
         self.steps_per_unit = steps_per_unit
+        self._n_params_given, self._lr_given = n_params, lr
         self.history_rows = 0
         self.halted: str | None = None
         self.resumed: Resumed | None = None
@@ -169,6 +170,7 @@ class TrainingSession:
         self._cpu_last = (time.process_time(), time.perf_counter())
         self._warned = -99
         self._started = False
+        self._phase = None
 
     # ------------------------------------------------------------------------------------------------------ plumbing
     @property
@@ -236,6 +238,10 @@ class TrainingSession:
                 if level == "exact" and self.ceiling != "exact":
                     level, reasons = "epoch_boundary", reasons + [f"this loop cannot restore everything that shapes the next {self.unit_name} (its environment or data stream): the continuation is approximate"]
                 out = self.resumed = Resumed(start, level, reasons, which, blob)
+                lost = self._read_inflight(start)
+                if lost:
+                    self.log({"type": "recomputed_work", "epoch": start, "at": time.time(), "unit": lost["unit"] + 1, "phase": lost.get("phase"),
+                              "message": f"{self.unit_name} {lost['unit'] + 1}{' (' + lost['phase'] + ')' if lost.get('phase') else ''} had started but was not committed when the process ended: it is recomputed from the last checkpoint"})
                 ev = {"type": "resume", "epoch": start, "at": time.time(), "level": level, "reasons": reasons, "file": which}
                 self.log(ev)
                 self._emit("on_restore", out.as_dict())
@@ -243,12 +249,23 @@ class TrainingSession:
                 self.log({"type": "no_valid_checkpoint", "at": time.time(), "problems": problems})
         return out
 
+    def _read_inflight(self, start: int) -> dict | None:
+        if self.dir is None:
+            return None
+        path = self.dir / "inflight.json"
+        try:
+            note = json.loads(path.read_text())
+        except (OSError, ValueError):
+            return None
+        path.unlink(missing_ok=True)
+        return note if int(note.get("unit", -1)) >= start else None
+
     def _ensure_started(self) -> None:
         if self._started or self.dir is None:
             self._started = True
             return
         self._started = True
-        n_params = int(sum(p.numel() for m in self.modules.values() for p in m.parameters()))
+        n_params = self._n_params_given if self._n_params_given is not None else int(sum(p.numel() for m in self.modules.values() for p in m.parameters()))
         self.log({"type": "start", "at": time.time(), "epochs": self.units, "unit": self.unit_name, "kind": self.kind, "patience": self.patience, "device": self.device, "n_params": n_params, "batch_size": None,
                   "config_fp": self.config_fp, "data_fp": self.data_fp, "resumed": self.resumed is not None, "ceiling": self.ceiling, "diagnostics": {"level": self.grad_level, "interval": self.grad_interval or "auto", "family": self.family},
                   "optimizers": list(self.optimizers), "modules": list(self.modules)})
@@ -261,14 +278,36 @@ class TrainingSession:
             pass
 
     # ------------------------------------------------------------------------------------------------------ units
-    def begin_unit(self, unit: int, steps: int | None = None) -> None:
+    def begin_unit(self, unit: int, steps: int | None = None, phase: str | None = None) -> None:
         self._ensure_started()
         self._t_unit = time.perf_counter()
+        self._phase = phase
+        self._mark_inflight(unit, phase)
         for mon in self.monitors.values():
             mon.begin_epoch(unit, steps or self.steps_per_unit, self._lr())
         self._emit("on_unit_start", unit)
 
+    def _mark_inflight(self, unit: int, phase: str | None) -> None:
+        """A durable note that ``unit`` has started and is not committed. A hard kill leaves it behind, and the next resume reports the work after the last checkpoint as recomputed."""
+        if self.dir is None:
+            return
+        try:
+            (self.dir / "inflight.json").write_text(json.dumps({"unit": int(unit), "phase": phase, "at": time.time()}))
+        except OSError:
+            pass
+
+    def _clear_inflight(self) -> None:
+        if self.dir is not None:
+            try:
+                (self.dir / "inflight.json").unlink(missing_ok=True)
+            except OSError:
+                pass
+
     def _lr(self):
+        if self._lr_given is not None:
+            return float(self._lr_given)
+        if self._phase in self.optimizers:                                                         # a run with phases (Adam, then L-BFGS) reports the learning rate of the optimizer that is working
+            return float(self.optimizers[self._phase].param_groups[0]["lr"])
         for o in self.optimizers.values():
             return float(o.param_groups[0]["lr"])
         return None
@@ -284,7 +323,7 @@ class TrainingSession:
             row["peak_mb"] = torch.cuda.max_memory_allocated() / 1048576.0
         return row
 
-    def end_unit(self, unit: int, metrics: dict, improved: bool | None = None, last: bool = False) -> str:
+    def end_unit(self, unit: int, metrics: dict, improved: bool | None = None, last: bool = False, phase: str | None = None) -> str:
         """Close a unit: summarise the gradients, save a checkpoint when due, write the metrics row, check the monitor's stop and pause requests. Returns ``stop`` when the loop must break."""
         self._ensure_started()
         seconds = time.perf_counter() - self._t_unit
@@ -316,7 +355,7 @@ class TrainingSession:
             self._emit("on_resource_warning", warn)
         row = {"type": "epoch", "epoch": unit + 1, "epochs": self.units, "unit": self.unit_name, "train_loss": train, "val_loss": val, "lr": self._lr(), "grad_norm": grad_norm, "seconds": seconds,
                "best_val": None if not np.isfinite(self.best_val) else self.best_val, "best_epoch": self.best_unit + 1, "bad": None, "patience": self.patience, "improved": bool(improved), "at": time.time(), "checkpoint": None,
-               "metrics": {k: (None if v is None or not np.isfinite(v) else float(v)) for k, v in metrics.items() if k not in ("train_loss", "val_loss")}, **res}
+               "metrics": {k: (None if v is None or not np.isfinite(v) else float(v)) for k, v in metrics.items() if k not in ("train_loss", "val_loss")}, "phase": phase or getattr(self, "_phase", None), **res}
         done = last or unit + 1 >= self.units or bool(self.halted)
         due = (unit + 1) % self.checkpoint_every == 0
         ck = None
@@ -335,6 +374,7 @@ class TrainingSession:
             self._emit("on_event", ev)
         self._emit("on_unit_end", unit, row)
         self.history_rows += 1
+        self._clear_inflight()
         if self.halted:
             self._emit("on_stop", self.halted)
             return "stop"

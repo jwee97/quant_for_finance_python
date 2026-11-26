@@ -19,6 +19,8 @@ pytest.importorskip("torch")
 
 from tests.fresh_process_scenarios import SCENARIOS  # noqa: E402
 
+from tests.fresh_process_scenarios import was_killed   # noqa: E402
+
 ROOT = Path(__file__).resolve().parents[1]
 KILL_AFTER = {"rl_ppo": 2}
 TOLERANCE = {"rtol": 1e-5, "atol": 1e-6}
@@ -40,13 +42,13 @@ def close(a, b) -> float:
     return float(np.max(np.abs(a - b))) if a.size else 0.0
 
 
-@pytest.mark.parametrize("name", sorted(SCENARIOS))
+@pytest.mark.parametrize("name", sorted(n for n in SCENARIOS if not n.startswith(("pinn_", "sb3_")) and not (n.startswith("forecast_") and n not in ("forecast_patchtst", "forecast_tsmixer"))))        # the full-size PINN scenarios, the SB3 agents (they need their own Python) and the other forecast networks have their own files
 def test_a_killed_worker_resumes_in_a_new_process_and_ends_where_the_uninterrupted_run_ends(name, tmp_path):
     ref_dir, run_dir = tmp_path / "ref", tmp_path / "run"
     ref = run(name, ref_dir, "reference", tmp_path / "ref.json")
     assert ref.returncode == 0, ref.stderr[-2000:]
     dead = run(name, run_dir, "interrupted", tmp_path / "dead.json", KILL_AFTER.get(name, 3))
-    assert dead.returncode == -9, f"the worker was not killed before it finished (exit {dead.returncode}); the scenario is too short: {dead.stderr[-800:]}"
+    assert was_killed(dead.returncode), f"the worker was not killed before it finished (exit {dead.returncode}); the scenario is too short: {dead.stderr[-800:]}"
     assert not (tmp_path / "dead.json").exists()
     before = {f: len([r for r in rows(f) if r.get("type") == "epoch"]) for f in run_dir.rglob("metrics.jsonl")}
     assert before and all(n >= KILL_AFTER.get(name, 3) for n in before.values()) and list(run_dir.rglob("last.pt")), "no committed checkpoint survived the kill"
@@ -73,7 +75,7 @@ def test_a_killed_worker_resumes_in_a_new_process_and_ends_where_the_uninterrupt
             for r in rows(g):
                 by_opt.setdefault(r["optimizer"], []).append(r["epoch"])
             for opt, eps in by_opt.items():
-                assert eps == list(range(len(eps))), (g, opt, eps)
+                assert eps == list(range(eps[0], eps[0] + len(eps))), (g, opt, eps)                  # consecutive units (an optimizer that works in a later phase starts later)
     level = [r for f in run_dir.rglob("metrics.jsonl") for r in rows(f) if r.get("type") == "resume"][-1]
     print(f"{name}: max |reference - resumed| = {worst:.2e}")
     record = os.environ.get("QUANT_RECORD_RECOVERY")
