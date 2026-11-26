@@ -7,7 +7,9 @@
 ``POST /api/lab/trading``       the calibrated alpha traded under four policies and the implementation waterfall, as a job
 ``GET  /api/lab/signals``       the versioned signals in the registry; ``POST /api/lab/signals/register`` and ``/api/lab/signals/delete``
 
-A run is not saved to a research session yet. Signals here are built from prices; a signal from a model or from fundamentals is registered through ``src.alphalab.registry`` and studied with the same functions.
+Saving to a research session: a factor study (``/api/lab/factors``), a portfolio comparison (``/api/lab/portfolio``, one method at a time) and a trading study (``/api/lab/trading``) are kept with
+``POST /api/research/artifact/save`` (the Alpha research workflow and the Portfolio Lab have a Save to session button), then versioned, run again and compared in the Research comparison. The single-signal alpha study
+(``/api/lab/alpha``) and the risk study (``/api/lab/risk``) have no saved form yet. Signals here are built from prices; a signal from a model or from fundamentals is registered through ``src.alphalab.registry`` and studied with the same functions.
 """
 
 from __future__ import annotations
@@ -97,7 +99,7 @@ class LabApi:
                 "notes": ["Signals are built from prices. A model's or a fundamentals signal goes through the same functions from the library (src.alphalab).",
                           "Differences between optimisers over a few years are usually inside the noise: the Sharpe standard error is in the table.",
                           "A method that fails on a date falls back to equal weight there and the count is shown.",
-                          "Nothing here is saved to a research session yet."]}
+                          "A factor study, a portfolio comparison (one method at a time) and a trading study can be saved to a research session and compared there; the single-signal alpha study and the risk study cannot yet."]}
 
     # ------------------------------------------------------------------------------------------------------ data
     def _load(self, tickers: list, body: dict, progress):

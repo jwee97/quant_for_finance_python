@@ -1652,6 +1652,12 @@
     const head = h("div", "card", box);
     h("h3", "", head, `Run ${d.id}${d.fits.length > 1 ? ` · fit ${d.fit}` : ""}`);
     const st = h("p", "", head); const tag = h("strong", "", st, TR_WORD[sm.status] || sm.status); tag.setAttribute("data-status", sm.status); st.appendChild(document.createTextNode(" · " + (TR_HINT[sm.status] || "")));
+    const cf = sm.checkpoint_failures;                                                           // a failed checkpoint write is the one thing here a person must not miss: it changes what a restart loses
+    if (cf) {
+      const b = h("div", "banner err", head); b.dataset.role = "checkpoint-warning"; b.setAttribute("role", "alert");
+      h("b", "", b, cf.durable ? "Some checkpoints could not be written, but the run is now saved. " : "Checkpoints could not be written. ");
+      b.appendChild(document.createTextNode(`${cf.count} write${cf.count === 1 ? "" : "s"} failed (${trUnit()}${cf.units.length === 1 ? "" : "s"} ${cf.units.join(", ")}): ${cf.last_error}. The latest completed ${trUnit()} is ${cf.latest_completed}; the latest saved checkpoint, the one a restart continues from, is ${cf.latest_durable || "none"}. ${cf.unsafe_units ? `If the process stops now, ${cf.unsafe_units} ${trUnit()}${cf.unsafe_units === 1 ? "" : "s"} of work will be redone. ` : ""}Training itself is not affected.`));
+    }
     if (d.memory_advice) { const a = d.memory_advice; const p2 = h("p", "hint", head); p2.setAttribute("data-memory-advice", "1"); p2.appendChild(document.createTextNode(`Stopped for lack of memory (${a.reason}). ${a.batch_size ? `Try a batch size of ${a.batch_size}${a.accumulation_steps > 1 ? ` with ${a.accumulation_steps} accumulation steps` : ""}. ` : ""}${a.note || ""}`)); }
     const k = h("div", "earnrow", head);
     const last = (a) => { for (let i = (a || []).length - 1; i >= 0; i--) if (!Q.bad(a[i])) return a[i]; return null; };

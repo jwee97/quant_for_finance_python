@@ -74,10 +74,14 @@ def summarise(folder: Path, now: float | None = None) -> dict:
     if committed is None and ep and any(r.get("committed") for r in ep):
         committed = max(int(r["epoch"]) for r in ep if r.get("committed"))
     pending = None if committed is None or status in ("completed", "stopped_early") else max(done - committed, 0)
+    failed = [r for r in rows if r.get("type") == "checkpoint_failed"]                               # every failed write, not only the newest events kept in ``events``
+    unsafe = max(done - (committed or 0), 0) if failed and status not in ("completed", "stopped_early") else 0
+    failures = None if not failed else {"count": len(failed), "units": [int(r.get("epoch", 0)) for r in failed][-12:], "last_error": str(failed[-1].get("error", ""))[:300], "latest_completed": done, "latest_durable": committed or 0,
+                                        "unsafe_units": unsafe, "durable": unsafe == 0 and status in ("completed", "stopped_early")}
     resumable = status in ("interrupted", "orphaned", "paused", "stopped") and ((folder / "last.pt").exists() or (folder / "last.next.pt").exists())
     return {"fit": folder.name, "status": status, "epoch": done, "epochs": total, "best_val": best, "best_epoch": ep[-1]["best_epoch"] if ep else None, "last_at": ep[-1]["at"] if ep else start.get("at"),
             "started_at": start.get("at"), "eta_seconds": None if mean is None or status != "running" else max(total - done, 0) * mean, "elapsed_seconds": float(sum(r["seconds"] for r in ep)) if ep else 0.0,
-            "n_params": start.get("n_params"), "device": start.get("device"), "unit": start.get("unit") or "epoch", "kind": start.get("kind"), "phase": ep[-1].get("phase") if ep else None, "ceiling": start.get("ceiling"), "committed_epoch": committed, "uncommitted_epochs": pending, "commit_state": None if cm is None else cm.get("state"), "events": events[-20:], "resumable": resumable, "mtime": mtime}
+            "n_params": start.get("n_params"), "device": start.get("device"), "unit": start.get("unit") or "epoch", "kind": start.get("kind"), "phase": ep[-1].get("phase") if ep else None, "ceiling": start.get("ceiling"), "committed_epoch": committed, "uncommitted_epochs": pending, "checkpoint_failures": failures, "commit_state": None if cm is None else cm.get("state"), "events": events[-20:], "resumable": resumable, "mtime": mtime}
 
 
 def fit_folders(run: Path) -> list[Path]:

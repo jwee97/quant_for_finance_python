@@ -134,3 +134,12 @@ def test_an_interrupted_run_shows_what_is_committed_and_what_would_be_recomputed
     assert "Orphaned" in head and "Committed" in head, head
     assert "2 epochs logged after it will be recomputed on resume" in head, head
     assert pg.query_selector("#ml-training-detail [data-resume], #ml-training-detail button")                    # and it can be resumed
+
+
+def test_a_run_whose_checkpoints_could_not_be_written_says_so_prominently_and_names_the_latest_durable_epoch(pg):
+    open_run(pg, "orphan-run")
+    warn = pg.locator("#ml-training-detail [data-role=checkpoint-warning]")
+    assert warn.count() == 1 and warn.get_attribute("role") == "alert"
+    text = warn.inner_text()
+    assert "Checkpoints could not be written" in text and "No space left" in text, text
+    assert "latest completed epoch is 4" in text and "restart continues from, is 2" in text and "2 epochs of work will be redone" in text, text
