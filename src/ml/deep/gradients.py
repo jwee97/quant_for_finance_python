@@ -497,17 +497,17 @@ GRADIENT_FILE_CAP = 4_000_000          # bytes kept in gradients.jsonl; beyond i
 
 
 def append_summary(folder, row: dict) -> None:
-    """Append one unit's compact gradient summary to ``gradients.jsonl``; the file is bounded (older units are thinned, the newest 40 kept whole)."""
+    """Append one unit's compact gradient summary to ``gradients.jsonl``; the file is bounded (older units are thinned, the newest 40 kept whole). Appends are single writes and the thinning replaces the file atomically."""
     if folder is None:
         return
+    from .commit import append_line, atomic_write_text
+
     path = Path(folder) / "gradients.jsonl"
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "a", encoding="utf-8") as fh:
-            fh.write(json.dumps(row, default=float) + "\n")
+        append_line(path, row)
         if path.stat().st_size > GRADIENT_FILE_CAP:
             lines = path.read_text(encoding="utf-8").splitlines()
             keep = [ln for i, ln in enumerate(lines) if i >= len(lines) - 40 or i % 2 == 0]
-            path.write_text("\n".join(keep) + "\n", encoding="utf-8")
+            atomic_write_text(path, "\n".join(keep) + "\n", durable=False)
     except OSError:
         pass

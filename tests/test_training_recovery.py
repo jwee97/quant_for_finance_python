@@ -80,7 +80,9 @@ def test_an_interrupted_run_resumes_exactly_and_ends_where_the_uninterrupted_run
     assert h.recovery["level"] == "exact" and h.recovery["resumed_from_epoch"] == 3 and len(h.train_loss) == 6
     assert h.train_loss == pytest.approx(h_full.train_loss, rel=1e-9) and h.val_loss == pytest.approx(h_full.val_loss, rel=1e-9)
     assert torch.equal(weights(resumed), weights(straight)), "optimizer, scheduler and every RNG came back: the continued run is the uninterrupted one"
-    assert [e["type"] for e in h.events] == ["resume"] and h.best_epoch == h_full.best_epoch
+    assert [e["type"] for e in h.events] == ["recomputed_work", "resume"] and h.best_epoch == h_full.best_epoch
+    lost = h.events[0]
+    assert lost["units"] == [4] and lost["in_flight"] == 4 and "epoch 4" in lost["message"]                    # the epoch that was running when the process stopped is reported as recomputed
 
 
 def test_the_scheduler_and_the_early_stopping_counter_continue_instead_of_restarting(tmp_path):

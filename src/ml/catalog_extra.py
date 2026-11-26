@@ -44,12 +44,14 @@ SEQ_SPECS = {**DEEP_SPECS, "loss": LOSS, "rank_weight": {"type": "float", "help"
 # Measured: on synthetic markets with a planted signal the rank IC rose from 0.14 to 0.20 and from 0.05 to 0.09 (two seeds), on nine large stocks from 0.008 to 0.026 (docs/ml_pipeline_audit.md).
 BOOST = {"n_estimators": 300, "num_leaves": 7, "learning_rate": 0.03, "subsample": 0.7, "colsample_bytree": 0.7, "min_child_samples": 100, "reg_lambda": 5.0}
 RL_COMMON = {"total_timesteps": 20000, "learning_rate": 0.0003, "gamma": 0.99, "batch_size": 64, "hidden": 64, "reward": "risk_adjusted", "risk_aversion": 0.5, "turnover_penalty": 0.0,
-             "drawdown_penalty": 0.0, "max_weight": 0.3, "gross": 1.0, "long_only": 0, "device": "cpu", "episode_days": 252, "cost_bps": 7.0, "impact": 0.0, "max_turnover": 0.0, "checkpoint_timesteps": 0, "grad_monitor": "auto"}
+             "drawdown_penalty": 0.0, "max_weight": 0.3, "gross": 1.0, "long_only": 0, "device": "cpu", "episode_days": 252, "cost_bps": 7.0, "impact": 0.0, "max_turnover": 0.0, "checkpoint_timesteps": 0, "grad_monitor": "auto", "lr_schedule": "constant", "clip_schedule": "constant"}
 RL_SPECS = {"cost_bps": {"type": "float", "help": "One-way cost per unit of turnover, commission plus slippage, in basis points. Match the Backtest section's costs (the form fills it in from them)"},
             "impact": {"type": "float", "help": "Quadratic market-impact cost: this times the sum of squared weight changes"},
             "max_turnover": {"type": "float", "help": "Largest one-way turnover per day (0: no limit); a larger trade is shortened to it"},
             "reward": {"type": "choice", "choices": ["risk_adjusted", "dsr", "return"], "help": "risk_adjusted: return less a variance and drawdown penalty; dsr: the differential Sharpe ratio of Moody and Saffell; return: the plain net return"},
             "checkpoint_timesteps": {"type": "int", "help": "Timesteps between checkpoints of a training that runs inside a run folder (0: about an eighth of the total, a whole number of rollouts for PPO). A checkpoint is a whole-rollout (PPO) or any-step (SAC) boundary"},
+            "lr_schedule": {"type": "choice", "choices": ["constant", "linear"], "help": "constant, or linear from the learning rate down to a tenth of it over the whole training. The schedule follows the agent's own timestep count, so a training that is checkpointed in blocks, interrupted and resumed follows the same rates as one uninterrupted call."},
+            "clip_schedule": {"type": "choice", "choices": ["constant", "linear"], "help": "PPO only: the clip range, constant or linear down to a tenth of it, on the same global timestep clock."},
             "grad_monitor": DEEP_SPECS["grad_monitor"],
             "long_only": {"type": "bool", "help": "Long-only weights that sum to the gross exposure; otherwise long-short with zero net exposure"}, "device": DEVICE}
 

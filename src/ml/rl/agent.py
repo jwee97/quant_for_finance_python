@@ -100,21 +100,27 @@ class RLAgent(Model):
         env = PortfolioEnv(feats, rets, mask, **self._env_kwargs())
         algo = _classes(self.kind)
         steps, seed = int(p["total_timesteps"]), self.seed
-        common = {"learning_rate": float(p["learning_rate"]), "gamma": float(p["gamma"]), "batch_size": int(p["batch_size"]), "seed": seed, "device": str(p["device"]), "verbose": 0}
+        from . import sb3_state
+
+        common = {"learning_rate": sb3_state.make_schedule(p["learning_rate"], p.get("lr_schedule", "constant"), steps), "gamma": float(p["gamma"]), "batch_size": int(p["batch_size"]), "seed": seed, "device": str(p["device"]), "verbose": 0}
         arch = [int(p["hidden"]), int(p["hidden"])]
         if self.kind == "sac":
             kw = dict(buffer_size=int(p["buffer_size"]), learning_starts=int(p["learning_starts"]), tau=float(p["tau"]), policy_kwargs={"net_arch": arch})
         elif self.kind == "ppo":
-            kw = dict(n_steps=int(p["n_steps"]), n_epochs=int(p["n_epochs"]), ent_coef=float(p["ent_coef"]), clip_range=float(p["clip_range"]), policy_kwargs={"net_arch": arch})
+            kw = dict(n_steps=int(p["n_steps"]), n_epochs=int(p["n_epochs"]), ent_coef=float(p["ent_coef"]), clip_range=sb3_state.make_schedule(p["clip_range"], p.get("clip_schedule", "constant"), steps), policy_kwargs={"net_arch": arch})
         else:
-            kw = dict(n_steps=int(p["n_steps"]), n_epochs=int(p["n_epochs"]), ent_coef=float(p["ent_coef"]), clip_range=float(p["clip_range"]),
+            kw = dict(n_steps=int(p["n_steps"]), n_epochs=int(p["n_epochs"]), ent_coef=float(p["ent_coef"]), clip_range=sb3_state.make_schedule(p["clip_range"], p.get("clip_schedule", "constant"), steps),
                       policy_kwargs={"lstm_hidden_size": int(p["lstm_hidden"]), "n_lstm_layers": 1, "net_arch": [int(p["hidden"])]})
             common["batch_size"] = int(p["n_steps"])                                     # a recurrent policy trains on whole rollouts
         history = {"timesteps": [], "mean_reward": []}
         every = max(steps // 40, 64)
 
         class Log(BaseCallback):
+            def _on_training_start(self) -> None:
+                sb3_state.set_clock(self.model)                                                  # a non-constant schedule reads the agent's own timestep count, so blocks and one plain call train alike
+
             def _on_step(self) -> bool:
+                sb3_state.set_clock(self.model)
                 if self.num_timesteps % every < 1 or self.num_timesteps == steps:
                     buf = list(self.model.ep_info_buffer)
                     if buf:
@@ -148,6 +154,7 @@ class RLAgent(Model):
         from stable_baselines3.common.utils import safe_mean
 
         from ..deep import context as train_context
+        from ..deep.context import CheckpointIncompatible
         from ..deep.session import TrainingSession, data_fingerprint
         from .. import live
         from . import sb3_state
@@ -165,21 +172,31 @@ class RLAgent(Model):
         holder = {"agent": agent}
         skip = {"checkpoint_timesteps", "grad_monitor", "total_timesteps", "device"}
         config = {"kind": kind, "params": {k: v for k, v in sorted(p.items()) if k not in skip}, "seed": self.seed, "env": self._env_kwargs(), "versions": sb3_state.versions()}
-        cpu = str(agent.device.type) == "cpu"
+        reasons = sb3_state.ceiling_reasons(agent, kind, str(p.get("device") or "auto"), chunk)
+        device = str(agent.device.type)
+
+        def apply(extra):
+            """Rebuild the agent from the checkpoint and check it against the digests recorded with it. A mismatch that would change what is trained (timesteps, policy, optimizer, replay buffer, next observation, environment) stops the
+            continuation; the others lower the guarantee."""
+            saved = extra["sb3"]
+            new, _, verdict = sb3_state.restore(algo, saved, device)
+            holder["agent"], holder["verdict"] = new, verdict
+            history.update(extra["history"])
+            if verdict["blocking"]:
+                raise CheckpointIncompatible([f"the restored agent does not match the checkpoint: {m}" for m in verdict["blocking"]])
+            return verdict["downgrade"]
+
         sess = TrainingSession("sb3_" + kind, config=config, data={"arrays": data_fingerprint(feats, rets, mask), "features": list(self.features_)}, modules={}, optimizers={},
-                               capture=lambda: {"sb3": sb3_state.capture(holder["agent"], kind), "history": {k: list(v) for k, v in history.items()}}, apply=lambda s: None, units=units, unit_name="timestep block",
-                               family="rl", ceiling="exact" if cpu else "epoch_boundary", device=str(agent.device.type), grad_level=str(p.get("grad_monitor") or "auto"), steps_per_unit=chunk,
+                               capture=lambda: {"sb3": sb3_state.capture(holder["agent"], kind), "history": {k: list(v) for k, v in history.items()}}, apply=apply, units=units, unit_name="timestep block",
+                               family="rl", ceiling="epoch_boundary" if reasons else "exact", device=device, grad_level=str(p.get("grad_monitor") or "auto"), steps_per_unit=chunk,
                                n_params=int(sum(q.numel() for q in agent.policy.parameters())), lr=float(p["learning_rate"]))
         with sess:
             resumed = sess.restore()
             first_chunk = True
             if resumed is not None and resumed.level != "warm_start":
-                saved = resumed.state["history"]["extra"]
-                agent, _ = sb3_state.restore(algo, saved["sb3"], str(agent.device.type))
-                holder["agent"] = agent
-                history.update(saved["history"])
-                for note in sb3_state.check_counters(agent, saved["sb3"]):
-                    sess.log({"type": "recovery_note", "message": note, "at": time.time()})
+                agent = holder["agent"]
+                verdict = holder["verdict"]
+                sess.log({"type": "recovery_checks", "at": time.time(), "checks": verdict["checks"], "blocking": verdict["blocking"], "downgrade": verdict["downgrade"]})
                 first_chunk = False
                 if not hasattr(agent, "_last_lstm_states") and kind == RECURRENT:
                     sess.log({"type": "recovery_note", "message": "the recurrent state could not be restored", "at": time.time()})
@@ -189,7 +206,8 @@ class RLAgent(Model):
                     mon.load_state_dict(((resumed.state.get("grad") or {}).get(name)))
             if resumed is None:
                 sess.log({"type": "diagnostics_note", "at": time.time(), "message": "gradient diagnostics for Stable-Baselines3 agents are limited to the public interface: the gradient the last update left on the networks is read between updates (PPO's after its own clipping, SAC's unclipped); per-step pre-clip norms and update-to-weight ratios are not available"})
-                sess.log({"type": "recovery_limits", "at": time.time(), "limits": sb3_state.describe_limits(kind, str(agent.device.type))})
+                sess.log({"type": "recovery_limits", "at": time.time(), "limits": sb3_state.describe_limits(kind, str(agent.device.type)), "exactness_blocked_by": reasons,
+                          "private_sb3_members_used": sorted(sb3_state.PRIVATE_USED)})
             state = {"step": 0}
 
             class Lifecycle(BaseCallback):

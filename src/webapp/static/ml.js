@@ -1666,7 +1666,9 @@
     if (d.memory_advice) { const a = d.memory_advice; const p2 = h("p", "hint", head); p2.setAttribute("data-memory-advice", "1"); p2.appendChild(document.createTextNode(`Stopped for lack of memory (${a.reason}). ${a.batch_size ? `Try a batch size of ${a.batch_size}${a.accumulation_steps > 1 ? ` with ${a.accumulation_steps} accumulation steps` : ""}. ` : ""}${a.note || ""}`)); }
     const k = h("div", "earnrow", head);
     const last = (a) => { for (let i = (a || []).length - 1; i >= 0; i--) if (!Q.bad(a[i])) return a[i]; return null; };
+    const pend = sm.uncommitted_epochs;
     tile(k, trUnitCap(), `${sm.epoch}${sm.epochs ? " / " + sm.epochs : ""}`, { text: `last written ${ago(sm.last_at)}` });
+    if (sm.committed_epoch != null && (sm.status === "interrupted" || sm.status === "orphaned" || sm.status === "stopped" || sm.status === "paused")) tile(k, "Committed", String(sm.committed_epoch), { text: pend ? `${pend} ${trUnit()}${pend === 1 ? "" : "s"} logged after it will be recomputed on resume` : "a resume continues from here" });
     const tsv = ser.metrics && ser.metrics.timesteps ? last(ser.metrics.timesteps) : null, rw = ser.metrics && ser.metrics.mean_reward ? last(ser.metrics.mean_reward) : null;
     if (!Q.bad(tsv)) tile(k, "Timesteps", Number(tsv).toLocaleString(), { text: Q.bad(rw) ? "" : `mean episode reward ${fnum(rw, 3)}` });
     if (sm.phase) tile(k, "Phase", sm.phase === "adam" ? "Adam" : sm.phase === "lbfgs" ? "L-BFGS" : sm.phase, { text: ser.metrics && ser.metrics.lbfgs_iterations && !Q.bad(last(ser.metrics.lbfgs_iterations)) ? `${last(ser.metrics.lbfgs_iterations)} L-BFGS iterations` : ser.metrics && ser.metrics.adam_steps ? `${last(ser.metrics.adam_steps)} Adam steps` : "" });

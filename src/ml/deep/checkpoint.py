@@ -102,15 +102,18 @@ class CheckpointManager:
         data = buf.getvalue()
         digest = _checksum(data)
         tmp = path.with_name(path.name + f".tmp{os.getpid()}")
-        with open(tmp, "wb") as fh:
-            fh.write(data)
-            fh.flush()
-            os.fsync(fh.fileno())
-        check = torch.load(io.BytesIO(tmp.read_bytes()), map_location="cpu", weights_only=False)                     # read back what was written before it replaces anything
-        if _checksum(tmp.read_bytes()) != digest or check.get("epoch") != state.get("epoch"):
+        try:
+            with open(tmp, "wb") as fh:
+                fh.write(data)
+                fh.flush()
+                os.fsync(fh.fileno())
+            check = torch.load(io.BytesIO(tmp.read_bytes()), map_location="cpu", weights_only=False)                 # read back what was written before it replaces anything
+            if _checksum(tmp.read_bytes()) != digest or check.get("epoch") != state.get("epoch"):
+                raise OSError("the checkpoint did not verify after writing; the previous one was kept")
+            _replace(tmp, path)
+        except BaseException:                                                                                       # a full disk, a failed verification, a kill signal in this thread: never leave a partial file behind
             tmp.unlink(missing_ok=True)
-            raise OSError("the checkpoint did not verify after writing; the previous one was kept")
-        _replace(tmp, path)
+            raise
         sidecar = path.with_name(path.name + ".sha256")
         sidecar.write_text(digest)
         return {"path": str(path), "bytes": len(data), "sha256": digest}
@@ -155,6 +158,11 @@ class CheckpointManager:
     def latest_valid(self) -> tuple[dict | None, str, list[str]]:
         """``(state, which file, problems)``: the newest checkpoint that reads and verifies (``last``, else ``last.prev``, else ``best`` which carries weights only for a warm start)."""
         problems = []
+        staged = self._staged()
+        if staged is not None:                                                                                      # a commit was interrupted between its two renames: the staged file is complete and newer
+            newest = self._read(self.dir / "last.pt") if (self.dir / "last.pt").exists() else None
+            if newest is None or int(staged["epoch"]) > int(newest["epoch"]):
+                return staged, "last.next.pt", problems
         for name in ("last.pt", "last.prev.pt", "best.pt"):
             p = self.dir / name
             if not p.exists():
@@ -164,6 +172,45 @@ class CheckpointManager:
                 return blob, name, problems
             problems.append(f"{name} is damaged and was skipped")
         return None, "", problems
+
+    def _staged(self) -> dict | None:
+        """The contents of ``last.next.pt`` when it is a complete, verified checkpoint. It is only ever created by renaming a file that had been written, flushed, read back and verified, so a present file is whole; a
+        sidecar that exists must still agree."""
+        p = self.dir / "last.next.pt"
+        return self._read(p) if p.exists() else None
+
+    def repair(self) -> list[str]:
+        """Finish or undo what a killed process left half-done: complete an interrupted commit (staged file newer than ``last.pt``), and remove temporary files of writes that never finished. Returns what was done, for the log."""
+        done: list[str] = []
+        if not self.dir.is_dir():
+            return done
+        staged = self._staged()
+        last, prev, nxt = self.dir / "last.pt", self.dir / "last.prev.pt", self.dir / "last.next.pt"
+        if staged is not None:
+            newest = self._read(last) if last.exists() else None
+            if newest is None or int(staged["epoch"]) > int(newest["epoch"]):
+                if last.exists() and newest is not None:
+                    _replace(last, prev)
+                    if last.with_name("last.pt.sha256").exists():
+                        _replace(last.with_name("last.pt.sha256"), prev.with_name("last.prev.pt.sha256"))
+                _replace(nxt, last)
+                if (self.dir / "last.next.pt.sha256").exists():
+                    _replace(self.dir / "last.next.pt.sha256", last.with_name("last.pt.sha256"))
+                done.append(f"completed an interrupted checkpoint commit (epoch {int(staged['epoch']) + 1})")
+            else:
+                nxt.unlink(missing_ok=True)
+                nxt.with_name("last.next.pt.sha256").unlink(missing_ok=True)
+        elif nxt.exists():
+            nxt.unlink(missing_ok=True)
+            nxt.with_name("last.next.pt.sha256").unlink(missing_ok=True)
+            done.append("removed a damaged staged checkpoint")
+        for stray in list(self.dir.glob("*.tmp*")):
+            try:
+                stray.unlink()
+                done.append(f"removed the leftover {stray.name} of a write that never finished")
+            except OSError:
+                pass
+        return done
 
     def listing(self) -> list[dict]:
         out = []
@@ -200,6 +247,6 @@ def assess(blob: dict | None, which: str, config_fp: str, data_fp: str, device: 
     complete = all(blob.get(k) is not None for k in ("optimizer", "scheduler", "rng", "history"))
     if not complete:
         notes.append("the checkpoint lacks optimizer, scheduler, RNG or history state")
-    if which != "last.pt":
+    if which not in ("last.pt", "last.next.pt"):
         notes.append(f"the newest checkpoint was damaged: continuing from {which}")
     return {"level": "exact" if (complete and not notes) else "epoch_boundary", "reasons": notes, "state": blob}

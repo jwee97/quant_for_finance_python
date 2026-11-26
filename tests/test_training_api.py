@@ -115,10 +115,12 @@ def test_stop_ends_the_whole_experiment_after_a_checkpoint_and_the_run_can_be_re
     assert resume and resume[0]["level"] in ("exact", "epoch_boundary")
 
 
-def test_archive_removes_a_run_from_the_list_without_deleting_its_files(app, first):
-    out = app.extra_post["/api/training/archive"]({"id": "run-stop"})
+def test_archive_removes_a_run_from_the_list_without_deleting_its_files(app):
+    # the run is made here: a test must not depend on a run another test left behind (under xdist the tests of a module run on different workers, in any order)
+    finished(app, app.extra_post["/api/ml/train"]({**BASE, "run_id": "run-archive"}))
+    out = app.extra_post["/api/training/archive"]({"id": "run-archive"})
     assert (runs.base(app.root) / "_archive" / out["archived_to"]).is_dir()
-    assert all(r["id"] != "run-stop" for r in app.extra_get["/api/training/runs"]({})["runs"])
+    assert all(r["id"] != "run-archive" for r in app.extra_get["/api/training/runs"]({})["runs"])
 
 
 def test_unknown_and_malformed_ids_are_refused(app):
@@ -201,13 +203,14 @@ def test_a_run_with_diagnostics_off_says_so(app):
 def test_finished_runs_are_trimmed_and_old_ones_pruned_but_a_resumable_one_never(app, tmp_path):
     from pathlib import Path
     import os
-    fit = next((runs.base(app.root) / "run-grad").glob("nbeats-*"))
+    finished(app, app.extra_post["/api/ml/train"]({**BASE, "run_id": "run-prune"}))                   # its own run (see the archive test)
+    fit = next((runs.base(app.root) / "run-prune").glob("nbeats-*"))
     assert not list(fit.glob("last.prev.pt")) and not list(fit.glob("epoch-*.pt")) and (fit / "last.pt").exists() and (fit / "best.pt").exists()   # trimmed when the job ended
     old = 0
-    for f in (runs.base(app.root) / "run-grad").rglob("*"):
+    for f in (runs.base(app.root) / "run-prune").rglob("*"):
         os.utime(f, (old, old))
     dry = app.extra_post["/api/training/prune"]({"keep_days": 1, "dry_run": True})
-    assert "run-grad" in dry["removed"] and dry["freed_bytes"] > 0 and (runs.base(app.root) / "run-grad").exists()
+    assert "run-prune" in dry["removed"] and dry["freed_bytes"] > 0 and (runs.base(app.root) / "run-prune").exists()
     # a run that was interrupted (resumable) is never removed, however old
     broken = runs.base(app.root) / "broken-old" / "nbeats-x"
     broken.mkdir(parents=True)
@@ -215,4 +218,4 @@ def test_finished_runs_are_trimmed_and_old_ones_pruned_but_a_resumable_one_never
     for f in broken.parent.rglob("*"):
         os.utime(f, (old, old))
     out = app.extra_post["/api/training/prune"]({"keep_days": 1})
-    assert "run-grad" in out["removed"] and "broken-old" not in out["removed"] and not (runs.base(app.root) / "run-grad").exists() and broken.exists()
+    assert "run-prune" in out["removed"] and "broken-old" not in out["removed"] and not (runs.base(app.root) / "run-prune").exists() and broken.exists()

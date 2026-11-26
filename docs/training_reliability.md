@@ -42,6 +42,25 @@ Routes (`src/webapp/training_api.py`): `GET /api/training/runs`, `GET /api/train
 * **Resume** submits the saved request again with the same run id: every fit whose checkpoint verifies continues from it (finished fits return their saved best weights), others start fresh. **Warm start** is for a changed data window. **Restart** makes a new run.
 * **Archive** moves the run to `data/user/training/_archive/`; files are kept.
 
+## 3a. When is a unit finished? The completion protocol
+
+`src/ml/deep/commit.py`. An epoch (or an optimizer block, or a block of timesteps) is *finished* when its checkpoint has replaced `last.pt`, and for no other reason. The logs, the monitor and the job's progress message are copies and announcements of that fact, written afterwards in a fixed order:
+
+| Step | What happens | Durable? | If the process dies right after |
+|---|---|---|---|
+| 1 begin | `inflight.json` names the unit | no (one small write) | the unit is reported as recomputed work |
+| 2 commit | checkpoint written, `fsync`ed, read back, checksummed, then `os.replace`d over `last.pt` (the commit point). The checkpoint also carries the unit's own record (`last`: metrics row, gradient summaries, warnings). Then `commit.json` is replaced atomically with `state: committed` | yes | the unit is finished; the logs are repaired from the checkpoint on restart |
+| 3 apply | gradient summary, metrics row (`committed: true`) and warnings are appended; `commit.json` becomes `state: applied` | the row is flushed | whatever is missing is restored from the checkpoint |
+| 4 announce | job progress, callbacks | no | nothing: recovery never reads them |
+
+A unit that is not checkpointed (`checkpoint_every` above 1, no improvement, or a checkpoint that failed for lack of space) still logs its row so that the monitor moves, marked `committed: false`. It is provisional.
+
+On a resume, `commit.reconcile` compares the checkpoint that was read (the truth), `commit.json` (what the dead process believed) and the logs, and: cuts a half-written last line; drops the rows of every unit the checkpoint does not contain; restores the row, the gradient summaries and the warnings of the checkpoint's last unit when the kill fell between steps 2 and 3 (also when only some were applied); and writes one `recomputed_work` row naming the units that will be run again (in flight, logged but not committed, or committed according to `commit.json` but unreadable in the checkpoint that survived), with their number and phase. `CheckpointManager.repair` completes a commit that died between its two renames (the staged `last.next.pt` is read as the newest checkpoint when it is complete and newer) and removes the temporary files of writes that never finished.
+
+The monitor shows `committed_epoch` (from `commit.json`, never more than the checkpoint holds) next to the last epoch logged, and for an interrupted run how many logged epochs a resume will recompute.
+
+**Not covered:** a power loss between `os.replace` and the directory's own flush is handled with `fsync` of the directory on POSIX only; on Windows NTFS journals the rename. A log line that could not be written because the disk was full (as opposed to a checkpoint) is not rebuilt: the monitor shows a gap, training and the checkpoint's own history are intact. Tests: `tests/test_epoch_commit_protocol.py` (kill at each of eight steps, both loops), `tests/test_checkpoint_hardening.py`, `tests/test_recovery_faults.py`.
+
 ## 4. Resource profiles and the memory estimate
 
 `src/ml/deep/profiles.py`: `conservative` (batch cap 128, fewer loader threads), `balanced` (cap 512), `performance` (cap 2048, mixed precision when CUDA is present). A profile only caps execution settings and reports what it changed; `comparable_with_unprofiled_run` is false whenever it changed the batch size, because a different batch size is a different optimisation. `estimate()` prices a configuration with `ml/resources.deep_mb` and reports a range (x0.7 to x1.8, the model's own rule of thumb is not exact) against the free memory and the cgroup limit. A request whose upper bound exceeds what is free is refused before it is queued, with a smaller batch size suggested; `force: true` overrides.

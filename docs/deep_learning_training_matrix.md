@@ -198,7 +198,7 @@ Stable-Baselines3 owns its training loop and is not installed in the main enviro
 * *Approximate* (verified: `test_a_damaged_newest_checkpoint_is_reported_as_approximate_and_another_configuration_is_refused`): the newest checkpoint is damaged and the previous generation is used; training continues but the RNG state is not restored, so the curve will not match the uninterrupted run.
 * *Refused*: a different algorithm, policy, hyperparameters or data window is rejected (`CheckpointIncompatible`), never resumed.
 * *Restart*: no readable checkpoint; training starts at timestep 0 (`test_with_no_checkpoint_a_resume_trains_from_the_start`).
-* *Not claimed*: GPU runs, vectorised environments, `VecNormalize`, learning-rate or clip schedules that depend on the remaining progress, other SB3 versions. The manifest reads three private attributes of SB3 (`_last_obs`, `_last_episode_starts`, `_last_lstm_states`) because `load` leaves them unset; `check_counters` compares the timestep, update and episode counters of the rebuilt agent with the checkpoint's after every restore and writes a `recovery_note` event for each difference (it warns; it does not stop training), so a library change shows up in the monitor's events, not as a silent drift.
+* *Not claimed*: GPU runs, vectorised environments, `VecNormalize`, learning-rate or clip schedules that depend on the remaining progress, other SB3 versions. The manifest reads three private attributes of SB3 (`_last_obs`, `_last_episode_starts`, `_last_lstm_states`) because `load` leaves them unset; The restored agent is validated against digests recorded in the checkpoint (section 10.3): a disagreement that would change what is trained blocks the continuation, the others lower the guarantee to `epoch_boundary`.
 * *Gradient diagnostics*: through public parameters only: the policy network (PPO) or actor and critic (SAC) `.grad` read between updates. PPO's are after SB3's own clipping, and the update-to-weight ratio is not measured: marked limited.
 
 ### 6.6 Real process termination, corruption and missing checkpoints
@@ -258,5 +258,97 @@ Statuses, used and nothing else: **Implemented and fresh-process tested**, **Imp
 
 ### 9.2 Regression results
 
-Main environment (Python 3.11, PyTorch 2.15.0 CPU): the ML, training, deep-learning, web-app and algorithm-catalogue suites ran with `-n 4`; the only failures were `tests/test_training_api.py` `test_finished_runs_are_trimmed_and_old_ones_pruned_but_a_resumable_one_never` and `test_archive_removes_a_run_from_the_list_without_deleting_its_files` (they depend on a previous test's run folder and fail under `-n 4` on the code from before this upgrade as well; both pass when the file is run serially) and one kill-timing race in `tests/test_worker_crash_recovery.py` (the process can be killed between an epoch row and the gradient warning written right after it; the test now ignores warning rows when it looks for the last epoch). The SB3-environment suites of `test_ml_rl*.py`, `test_ml_param_schema.py` and the fresh-process SB3 tests passed. Browser suites: training, training recovery, studio, workspaces and main ran; two `test_webapp_browser.py` tests failed once because the source files were changed under the running server (it shows a restart banner), and pass when run alone.
+Main environment (Python 3.11, PyTorch 2.15.0 CPU): the ML, training, deep-learning, web-app and algorithm-catalogue suites ran with `-n 4`; the only failures were `tests/test_training_api.py` `test_finished_runs_are_trimmed_and_old_ones_pruned_but_a_resumable_one_never` and `test_archive_removes_a_run_from_the_list_without_deleting_its_files` (they depended on runs that other tests of the module had left behind and failed whenever xdist put them on a different worker; fixed in the third upgrade, section 10.1) and one kill-timing race in `tests/test_worker_crash_recovery.py` (the process can be killed between an epoch row and the gradient warning written right after it; the test now ignores warning rows when it looks for the last epoch). Superseded by section 10. The SB3-environment suites of `test_ml_rl*.py`, `test_ml_param_schema.py` and the fresh-process SB3 tests passed. Browser suites: training, training recovery, studio, workspaces and main ran; two `test_webapp_browser.py` tests failed once because the source files were changed under the running server (it shows a restart banner), and pass when run alone.
 
+## 10. Final hardening (third upgrade)
+
+Everything in this section was added after the second upgrade's report; sections 1 to 9 stay as they were except where a sentence was corrected (marked). Nothing here changes a loss, a gradient, an update or a random draw: every comparison below is against a run that was never interrupted.
+
+### 10.1 Parallel test isolation (`tests/test_training_api.py`)
+
+**Cause.** The module shares one `app` per xdist worker and two tests read runs that *other* tests of the module had created: `test_archive_removes_a_run_...` archived `run-stop` (made by the stop test) and `test_finished_runs_are_trimmed_...` pruned `run-grad` (made by the gradient test). Serially they ran in file order and passed; under `-n 4` xdist hands the tests of one module to different workers, whose apps know nothing of each other's runs, so they failed with `StopIteration`. No global state, registry, port or temporary directory was shared between workers; the fault was an ordering dependency between tests. **Fix.** Each of the two tests now makes its own run (`run-archive`, `run-prune`) and the prune test no longer deletes a run another test reads. Not marked serial-only. **Evidence.** `tests/test_training_api.py` passed 15 of 15 under `-n 4` (three times), `-n 3`, `-n 8` and `-n 2`, and serially.
+
+### 10.2 The completion protocol
+
+Described in `training_reliability.md` section 3a: a unit is finished when its checkpoint replaced `last.pt`; `commit.json` (atomic) records `committed` then `applied`; logs and progress follow and are repairable from the checkpoint's own record of the unit. Audit findings that were fixed:
+
+| Finding (second upgrade code) | Consequence | Fix |
+|---|---|---|
+| The gradient summary was appended BEFORE the checkpoint | a kill left a diagnostic row for a unit that did not exist | written after the commit, from the same record the checkpoint carries |
+| `reconcile_logs` stopped at the first row of an uncommitted unit and dropped everything after it, markers included; it restored only the checkpoint's last row, never its warnings | markers and warnings could be lost | rows are dropped by unit, markers kept, the last unit's row, gradient summaries and warnings restored when absent |
+| A half-written last line stayed in the file and the next append glued two records | one lost, one unparsable record | `repair_tail` before any append after a restart |
+| A kill between the two renames of a checkpoint commit left no `last.pt`; `last.next.pt` (complete, newest) was ignored | one unit lost and the recovery reported as "damaged checkpoint" | the staged file is read as the newest checkpoint and `repair()` finishes the commit |
+| A failed checkpoint write (`ENOSPC`) left its temporary file | disk kept filling | temporary file removed on any failure; strays removed on restart |
+| `fit_network` had no in-flight marker | recomputed work after a kill inside an epoch was not reported | marker per epoch in both loops; one `recomputed_work` row with the units, their number and phase |
+| A checkpoint that failed was not written to the log by `fit_network` | the monitor could not show it | logged with the unit's warnings |
+| New protocol bug found by the new tests: `TrainingSession.restore` treated whatever a loop's `apply` returned as "reasons to downgrade" | every PINN resume was silently downgraded to `epoch_boundary` | only a list of strings is read |
+
+**Tests (all executed, section 10.8):** `tests/test_epoch_commit_protocol.py`: for both loops (`fit_network`, `TrainingSession`) a SIGKILL at each of eight steps (before the checkpoint, between the renames, before and after the metadata, after the gradient row, in the middle of the metrics row, after the row, after everything), then a resume in a new process that must equal the uninterrupted run, hold one row and one gradient summary per unit, report exactly the recomputed units, and end with `commit.json` applied; plus the documented order of durable steps, the torn-line repair and the atomicity of `commit.json`.
+
+### 10.3 Stable-Baselines3
+
+* **Schedules.** `lr_schedule` and `clip_schedule` (`constant` or `linear`, to a tenth). SB3 computes `progress_remaining` from the timesteps of the current `learn` call, so a naive blockwise run would restart a linear schedule in every block and differ from one plain call. `sb3_state.GlobalSchedule` reads the agent's own `num_timesteps` and the run's total instead (constant: the float, exactly as before). Constant and linear are tested separately: blocks equal one plain call bit for bit, and a killed and resumed run equals the uninterrupted one bit for bit, for PPO (constant, linear learning rate and clip) and SAC (linear); a test confirms the linear schedule really changes the policy.
+* **Validation before "exact".** The checkpoint records digests of the counters, the policy parameters, every optimizer's state (policy, actor, critic, entropy coefficient), the replay buffer (size, position, full flag, content), the next observation and a canonical digest of the environment (not a pickle's bytes: those differ after a round trip). After a restore the agent is compared with them before anything is stepped. **Blocking** (a `CheckpointIncompatible`, nothing trained, no resume row): timesteps, policy, an optimizer, the replay buffer, the next observation, the environment. **Downgrade to `epoch_boundary`, with the reason in the resume row:** the update counter, the episode counter, a different library version than the one that wrote the checkpoint, a checkpoint with no digests. Each case is tested by tampering with a real checkpoint and resuming it in a new process; the monitor shows the checks (`recovery_checks`).
+* **Cap.** A GPU, more than one environment, `VecNormalize`, a block that splits a PPO rollout or an off-policy collection phase, `train_freq` in episodes, a missing private member, or an SB3 version other than the verified 2.9 cap the guarantee at `epoch_boundary` before training starts (`recovery_limits.exactness_blocked_by`). **The cap logic is tested with stand-in agents; whether these configurations would in fact be exact or not has no evidence, either way, and is not claimed.**
+* **Private SB3 API (unavoidable).** `_last_obs`, `_last_episode_starts` (SB3's `load` leaves them unset: without them a restored agent would reset its environment and start a new episode), `_last_lstm_states` (RecurrentPPO), and, read only to cross-check, `_n_updates` and `_episode_num`. Everything else is public (`save`, `load`, `save_replay_buffer`, `num_timesteps`, `policy`, `actor`, `critic`, `replay_buffer`, `get_env`, `n_envs`, `action_space`, `logger`, `learning_rate`, `clip_range`). The list with the reason for each is `sb3_state.PRIVATE_USED`; a test builds a real PPO, SAC and RecurrentPPO on the installed version and fails if one of those members has disappeared.
+
+### 10.4 Physics-informed networks: the permanent regression
+
+`tests/pinn_reference.py` freezes the original single-call loop (commit 20a1cbe). `tests/test_pinn_lbfgs_regression.py` trains BSM, Vasicek and Heston with it and with the chunked loop (chunks of 3, 10 and one chunk) in the same process and requires identical prices, loss histories and parameters (**tolerance 0**: the chunks are the iterations of one run with the optimizer's memory carried across and the evaluation budget applied to the whole polish, so identical arithmetic in identical order cannot differ; a difference would mean the mathematics changed). It also checks that the monitor's record runs Adam units, then L-BFGS units, with cumulative L-BFGS iterations rising to the requested number and never above it, that each optimizer is monitored only in its own phase with contiguous units, and that a run interrupted at a chunk boundary and one interrupted inside a line search each resume to the identical network, with the interrupted unit reported. The accuracy tests of the models (`tests/test_generative_pinn.py`, the fresh-process pricing tolerances 0.7, 0.005, 1.5, 1.5) are untouched.
+
+### 10.5 Faults injected into real workers
+
+`tests/test_recovery_faults.py` (both loops unless noted), each compared with an uninterrupted run, including the gradient summaries of every unit (`global` statistics equal to 1e-6 relative):
+
+* stopped and resumed three times in a row (killed after 2, after 4, after 6, then finished): three `exact` resumes, one row per unit, `commit.json` applied, no temporary file;
+* killed while a checkpoint is being written (half the payload on disk) and killed with the temporary file complete but not renamed: only that unit is lost, the leftover is removed and the removal reported;
+* `ENOSPC` for the checkpoints of units 3 and 4, then a kill: those rows are `committed: false` and carry the error, `commit.json` stays at 2, the monitor reports 2 epochs that would be recomputed, the resume recomputes units 3 and 4 (and 5 if it had started) and ends equal to the uninterrupted run; with no kill, training is unchanged and the next checkpoint commits everything up to it;
+* the kernel's own file-size limit (`RLIMIT_FSIZE`, POSIX): every checkpoint write refused by the operating system, training still completes with identical results, no partial file, the run is not offered for resume;
+* `ENOSPC` for one unit's log rows: training and the checkpoints are unaffected; **the monitor shows a gap for that unit (documented limit)**.
+
+`tests/test_checkpoint_hardening.py`: seven kinds of damage to the newest checkpoint (truncated, empty, one flipped byte, wrong sidecar, garbage, a payload with no model, deleted) each fall back to the previous one, reported as `epoch_boundary`; both generations damaged leaves `best.pt` as a weights-only warm start; nothing readable says restart; a changed model is refused; an interrupted commit is completed; a stale or damaged staged file and half-written temporary files are removed; a failed write leaves the old checkpoint byte-identical; retention (two generations, `best.pt`, exactly the milestones asked for, the size cap removing the oldest milestones first and never `last`, `last.prev` or `best`; a finished run is trimmed to `best.pt` and `last.pt`, an interrupted one never).
+
+Bates PINN, previously one kill point: now seven (during Adam, before the switch, inside the L-BFGS line search at three depths, just after a finished step, after the polish), all `exact`, parameters identical (difference 0.0), pricing error 0.80 against the unchanged tolerance 1.5.
+
+### 10.6 Windows
+
+**Unverified.** No Windows machine was available. `scripts/verify_windows_recovery.py` runs seven real checks (spawn-based workers terminated while writing checkpoints, atomic replacement against a reader holding the file, SQLite locks held by a terminated process in rollback-journal and WAL mode, kill and resume of a training worker, the protocol scenarios, browser reconnection after the server is terminated and restarted, a Task Scheduler resume) and writes a report that records the platform. See `windows_recovery_verification.md` for how to run it, what each check does, and the Linux report (6 passed, 1 skipped: Task Scheduler). Linux results are listed separately and are not Windows evidence.
+
+### 10.7 Status of the features of this upgrade
+
+| Feature | Status |
+|---|---|
+| Completion protocol (commit.json, reconcile, repair, recomputed work) | Implemented and fresh-process tested (Linux, CPU) |
+| `tests/test_training_api.py` under parallel execution | Implemented and verified (7 parallel runs and 1 serial, all passing) |
+| SB3 restore validation, global schedules (constant, linear) | Implemented and fresh-process tested in the isolated environment; Dependency-blocked in the main environment |
+| SB3 on a GPU, vectorised environments, `VecNormalize` | Implemented but fresh-process unverified (capped at `epoch_boundary`; no evidence of exactness) |
+| PINN chunked L-BFGS vs the original loop (BSM, Vasicek, Heston) | Implemented and fresh-process tested (in-process regression with tolerance 0, plus fresh-process kills) |
+| Bates PINN | Implemented and fresh-process tested (seven kill points) |
+| Disk-full and file-size-limit behaviour, repeated stop/resume, mid-write kills | Implemented and fresh-process tested (Linux) |
+| Windows: spawn, atomic replace, SQLite locks, termination, browser reconnection, Task Scheduler | Implemented but unverified on Windows (script written; Linux run recorded separately) |
+| GPU training, mixed precision | Implemented but fresh-process unverified |
+
+### 10.8 Verification run
+
+Environment: Linux 6.18 (x86_64, glibc 2.39), 4 CPUs, 16 GB, Python 3.11.18, PyTorch 2.15.0+cpu, NumPy 2.4.6; isolated SB3 environment: stable-baselines3 2.9.2, sb3-contrib 2.9.2, gymnasium 1.4.0. Counts come from the `--junitxml` of each command.
+
+| # | Command (from the repository root) | Tests | Failed | Skipped |
+|---|---|---|---|---|
+| 1 | `python -m pytest tests/test_training_api.py -n 4` (three runs: `-n 4`, `-n 4`, `-n 2`) | 15 each | 0 | 0 |
+| 2 | `python -m pytest tests/test_ml_*.py tests/test_training_*.py tests/test_gradient_diagnostics*.py tests/test_resource_constrained_training.py tests/test_worker_crash_recovery.py tests/test_research_interrupted_operations.py tests/test_webapp_assets_ml.py tests/test_deep_forecast.py tests/test_frontier_models.py tests/test_generative_pinn.py tests/test_diffusion.py tests/test_deep_hedging.py tests/test_rl_deep.py tests/test_webapp.py tests/test_algo_catalog.py tests/test_epoch_commit_protocol.py tests/test_checkpoint_hardening.py tests/test_platform_recovery_checks.py -n 4` | 2209 | 0 | 53 |
+| 3 | `python -m pytest tests/test_fresh_process_recovery.py tests/test_fresh_process_pinn.py tests/test_fresh_process_double_dqn.py tests/test_fresh_process_forecast.py tests/test_recovery_faults.py -n 4` | 76 | 0 | 0 |
+| 4 | `python -m pytest tests/test_pinn_lbfgs_regression.py tests/test_generative_pinn.py tests/test_gradient_diagnostics_families.py -n 4` (numerical regression) | 41 | 0 | 0 |
+| 5 | `/tmp/sb3env/bin/python -m pytest tests/test_ml_rl.py tests/test_ml_rl_accounting_reference.py tests/test_ml_rl_events.py tests/test_ml_param_schema.py tests/test_fresh_process_sb3.py tests/test_sb3_recovery_validation.py -n 4` (isolated SB3 environment) | 389 | 0 | 0 |
+| 6 | `python -m pytest tests/test_webapp_training_browser.py tests/test_webapp_training_recovery_browser.py tests/test_webapp_studio_browser.py tests/test_webapp_workspaces_browser.py tests/test_webapp_browser.py` (browser) | 101 | 0 | 0 |
+| 7 | `python scripts/verify_windows_recovery.py --report docs/generated/linux_recovery_report.json` (Linux, not Windows) | 7 checks | 0 | 1 (Task Scheduler) |
+
+The 53 skips of command 2 are all missing optional packages in the main environment (gymnasium, stable-baselines3, catboost, ngboost, optuna) plus the Windows-only Task Scheduler test; the SB3 tests they stand for ran in command 5. Recorded results of the fresh-process runs: `docs/generated/fresh_process_round3_results.jsonl` (33 rows: 18 PINN, 11 forecast networks, 3 SB3, 1 Double DQN).
+
+### 10.9 Remaining limitations
+
+* Windows: unverified (10.6). GPU: not run. macOS: not run.
+* SB3: exact only for one CPU environment, no `VecNormalize`, SB3 2.9.x; three private SB3 attributes are read; PPO gradient diagnostics are post-clip and the update-to-weight ratio is not measured.
+* A log line lost to a full disk is not rebuilt (a gap in the monitor); the checkpoint keeps the complete history.
+* `commit.json` can lag the checkpoint by one unit in the window between the checkpoint rename and the metadata write; the monitor then shows the conservative (lower) committed epoch, and the resume reads the checkpoint, not the metadata.
+* The job registry's progress message is information only; after an app restart it can name an epoch later than the last committed one.
+* A search or Optuna study that was interrupted is restarted, not continued (unchanged from the first upgrade).

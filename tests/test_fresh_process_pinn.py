@@ -54,10 +54,12 @@ CASES = [("pinn_bsm", "adam", ["--kill-after", "3"]), ("pinn_bsm", "before_switc
          ("pinn_bsm", "after_lbfgs_step", ["--kill-after", "8"]), ("pinn_bsm", "after_polish", ["--kill-at", "finish"]),
          ("pinn_vasicek", "adam", ["--kill-after", "4"]), ("pinn_vasicek", "lbfgs_closure", ["--kill-at", "closure:25"]), ("pinn_vasicek", "after_polish", ["--kill-at", "finish"]),
          ("pinn_heston", "adam", ["--kill-after", "2"]), ("pinn_heston", "lbfgs_closure", ["--kill-at", "closure:30"]), ("pinn_heston", "after_polish", ["--kill-at", "finish"]),
-         ("pinn_bates", "lbfgs_closure", ["--kill-at", "closure:30"])]
+         ("pinn_bates", "lbfgs_closure", ["--kill-at", "closure:30"]),
+         ("pinn_bates", "adam", ["--kill-after", "2"]), ("pinn_bates", "before_switch", ["--kill-after", "5"]), ("pinn_bates", "lbfgs_closure", ["--kill-at", "closure:8"]),
+         ("pinn_bates", "lbfgs_closure", ["--kill-at", "closure:80"]), ("pinn_bates", "after_lbfgs_step", ["--kill-after", "9"]), ("pinn_bates", "after_polish", ["--kill-at", "finish"])]
 
 
-@pytest.mark.parametrize("name, point, args", CASES, ids=[f"{n}-{p}" for n, p, _ in CASES])
+@pytest.mark.parametrize("name, point, args", CASES, ids=[f"{n}-{p}-{a[-1]}" for n, p, a in CASES])
 def test_a_pinn_killed_at_this_point_resumes_in_a_new_process_to_the_uninterrupted_result(name, point, args, tmp_path):
     ref = run(name, tmp_path / "ref", "reference", tmp_path / "ref.json")
     assert ref.returncode == 0, ref.stderr[-1500:]

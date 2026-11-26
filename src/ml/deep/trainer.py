@@ -24,6 +24,7 @@ import torch
 from .. import live, resources
 from .context import TrainingHalted
 from .gradients import GradientMonitor, append_summary, resolve_level
+from .commit import append_line, clear_inflight, mark_inflight, read_inflight, recompute_report, write_commit
 from .runs import reconcile_logs
 from .checkpoint import CheckpointManager, assess, restore_rng, rng_states
 
@@ -175,11 +176,8 @@ def _log(folder: Path | None, row: dict) -> None:
     if folder is None:
         return
     try:
-        folder.mkdir(parents=True, exist_ok=True)
-        with open(folder / "metrics.jsonl", "a", encoding="utf-8") as fh:
-            fh.write(json.dumps(row, default=float) + "\n")
-            fh.flush()
-    except OSError:
+        append_line(folder / "metrics.jsonl", row, durable=bool(row.get("committed")))                  # one write per row; the row that completes a committed unit is also flushed to disk
+    except OSError:                                                                                    # a full disk loses a log line, never the training: the checkpoint holds the unit's record and a restart restores it
         pass
 
 
@@ -204,6 +202,7 @@ def fit_network(net: torch.nn.Module, batch_fn, loss_fn, n_train: int, n_val: in
     mon = GradientMonitor("optimizer", dict(net.named_parameters()), level, interval=cfg.grad_interval, family=cfg.grad_family, clip=cfg.grad_clip if cfg.grad_clip > 0 else None, accumulation=max(int(cfg.accumulation_steps), 1)) if level != "off" else None
     start, best, best_state, bad, total_seconds = 0, float("inf"), deepcopy(net.state_dict()), 0, 0.0
     if mgr is not None and cfg.resume:
+        repairs = mgr.repair()                                                                           # finish a commit that was interrupted between its renames; remove the leftovers of unfinished writes
         blob, which, problems = mgr.latest_valid()
         verdict = assess(blob, which, cfg.config_fp, cfg.data_fp, device.type, cfg.allow_warm_start)          # raises CheckpointIncompatible when the model or the data changed
         if verdict["state"] is not None:
@@ -228,7 +227,13 @@ def fit_network(net: torch.nn.Module, batch_fn, loss_fn, n_train: int, n_val: in
                 if mon is not None:
                     mon.load_state_dict((blob.get("grad") or {}).get("optimizer"))
                 if folder is not None:
-                    reconcile_logs(folder, start, blob.get("last"))
+                    report = reconcile_logs(folder, start, blob.get("last"))
+                    lost = recompute_report("epoch", start, report, read_inflight(folder, start))
+                    if lost:
+                        hist.events.append(lost)
+                        _log(folder, lost)
+                    for note in repairs:
+                        _log(folder, {"type": "recovery_note", "at": time.time(), "message": note})
                 bb = mgr._read(folder / "best.pt")
                 best_state = deepcopy(bb["model"]) if bb is not None else deepcopy(net.state_dict())
             else:
@@ -237,6 +242,8 @@ def fit_network(net: torch.nn.Module, batch_fn, loss_fn, n_train: int, n_val: in
             ev = {"type": "resume", "epoch": start, "at": time.time(), "level": level, "reasons": hist.recovery["reasons"], "file": which}
             hist.events.append(ev)
             _log(folder, ev)
+            if level != "warm_start":
+                write_commit(folder, committed=start, applied=start, state="applied", file=which)
         elif problems:
             hist.events.append({"type": "no_valid_checkpoint", "at": time.time(), "problems": problems})
     previous_threads = torch.get_num_threads()
@@ -263,6 +270,7 @@ def fit_network(net: torch.nn.Module, batch_fn, loss_fn, n_train: int, n_val: in
             hist.stopped_early, hist.stopped_by = True, "early_stopping"
         for epoch in range(start, start if hist.stopped_early else cfg.epochs):
             e0 = time.perf_counter()
+            mark_inflight(folder, epoch, None)
             net.train()
             total, seen, norms = 0.0, 0, []
             plan = batches(n_train, cfg.batch_size, rng, None if groups is None else groups["train"])
@@ -318,9 +326,7 @@ def fit_network(net: torch.nn.Module, batch_fn, loss_fn, n_train: int, n_val: in
             grad_events: list = []
             if mon is not None:
                 gsum, grad_events = mon.end_epoch(epoch, lr=hist.lr[-1], train_loss=train_loss, val_loss=val_loss if n_val else None)
-                if gsum is not None:
-                    append_summary(folder, gsum)
-                hist.events.extend(grad_events)
+                hist.events.extend(grad_events)                                                          # the gradient summary is written below, AFTER the checkpoint that carries it
             action = _control(folder)
             if action in ("stop", "pause"):                                                          # recorded BEFORE the checkpoint so that the saved history carries it
                 hist.stopped_by = "user_stop" if action == "stop" else "user_pause"
@@ -339,7 +345,9 @@ def fit_network(net: torch.nn.Module, batch_fn, loss_fn, n_train: int, n_val: in
                     ck = {"epoch": epoch + 1, "bytes": info["bytes"], "path": info["path"], "best": bool(improved)}
                 except OSError as exc:                                                              # a full disk must not end the training: say so and carry on without a new checkpoint
                     ck = {"epoch": epoch + 1, "error": str(exc)}
-                    hist.events.append({"type": "checkpoint_failed", "epoch": epoch + 1, "at": time.time(), "error": str(exc)})
+                    failed = {"type": "checkpoint_failed", "epoch": epoch + 1, "at": time.time(), "error": str(exc)}
+                    hist.events.append(failed)
+                    grad_events.append(failed)                                                          # logged with the unit's other warnings
             else:
                 ck = None
             lim_, used_ = row.get("limit_mb"), row.get("system_used_mb")
@@ -349,9 +357,18 @@ def fit_network(net: torch.nn.Module, batch_fn, loss_fn, n_train: int, n_val: in
                 grad_events.append(warn)
                 hist.events.append(warn)
             row["checkpoint"] = ck
+            committed = ck is not None and "error" not in ck
+            row["committed"] = committed
+            if committed:                                                                                # step 2: the checkpoint is the commit point; the metadata follows it atomically
+                write_commit(folder, committed=epoch + 1, applied=epoch, state="committed", sha256=info.get("sha256"))
+            if mon is not None and gsum is not None:                                                    # step 3: apply the unit's record to the logs
+                append_summary(folder, gsum)
             _log(folder, row)
             for ev_ in grad_events:                                                                     # warnings the gradient monitor raised: persisted next to the metrics, never acted on
                 _log(folder, ev_)
+            if committed:
+                write_commit(folder, committed=epoch + 1, applied=epoch + 1, state="applied", sha256=info.get("sha256"))
+            clear_inflight(folder)
             live.epoch(epoch, train_loss, val_loss if n_val else None, lr=hist.lr[-1], grad=hist.grad_norm[-1], seconds=hist.epoch_seconds[-1], best=best, best_epoch=hist.best_epoch, bad=bad, improved=improved,
                        epochs=cfg.epochs, patience=cfg.patience, peak_mb=peak_memory_mb(device))
             if action in ("stop", "pause"):

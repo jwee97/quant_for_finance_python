@@ -52,6 +52,13 @@ def live(tmp_path_factory):
     killed_then_resumed(sys.executable, "forecast_lstm", base / "lstm-run", "--kill-after", "3")
     if SB3_PY:
         killed_then_resumed(SB3_PY, "sb3_ppo", base / "ppo-run", "--kill-after", "3")
+    import os, time
+    dead = subprocess.run([sys.executable, "-W", "ignore", "-m", "tests.fresh_process_scenarios", "forecast_lstm", str(base / "orphan-run"), "interrupted", str(base / "orphan.json"), "--kill-after", "4"],
+                          cwd=ROOT, capture_output=True, text=True, timeout=900, env={**os.environ, "QUANT_FAULT": "enospc_ckpt:3-4"})
+    assert was_killed(dead.returncode), dead.stderr[-600:]                                                     # checkpoints of epochs 3 and 4 could not be written: two epochs are logged but not committed
+    for f in (base / "orphan-run").rglob("*"):
+        if f.is_file():
+            os.utime(f, (time.time() - 7200,) * 2)                                                              # nothing has written to it for two hours: orphaned
     bundle = make_bundle(n_assets=8, n=1300, seed=3, alpha=1.0)
     store = TickerStore(tmp_path_factory.mktemp("recovery_prices"), fetch=_fetch)
     app = App(config, builder=UniverseBuilder(config, store, default_loader=lambda c: bundle), root=root)
@@ -119,3 +126,11 @@ def test_a_recovered_sb3_agent_is_shown_in_timesteps_and_rewards(pg):
     pg.wait_for_selector("#ml-training-view .card")
     text = pg.inner_text("#ml-training-view")
     assert "diagnostics note" in text and "recovery limits" in text
+
+
+def test_an_interrupted_run_shows_what_is_committed_and_what_would_be_recomputed(pg):
+    open_run(pg, "orphan-run")
+    head = pg.inner_text("#ml-training-detail")
+    assert "Orphaned" in head and "Committed" in head, head
+    assert "2 epochs logged after it will be recomputed on resume" in head, head
+    assert pg.query_selector("#ml-training-detail [data-resume], #ml-training-detail button")                    # and it can be resumed

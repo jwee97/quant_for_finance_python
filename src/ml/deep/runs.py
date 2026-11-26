@@ -67,10 +67,17 @@ def summarise(folder: Path, now: float | None = None) -> dict:
     mean = float(np.mean([r["seconds"] for r in ep[-5:]])) if ep else None
     best = min((r["val_loss"] for r in ep if r.get("val_loss") is not None), default=None)
     events = [r for r in rows if r.get("type") not in ("epoch", "start", "finish")]
-    resumable = status in ("interrupted", "orphaned", "paused", "stopped") and (folder / "last.pt").exists()
+    from .commit import read_commit
+
+    cm = read_commit(folder)
+    committed = None if cm is None else int(cm.get("committed_unit", 0))                         # what the checkpoint holds, as the training process itself recorded it
+    if committed is None and ep and any(r.get("committed") for r in ep):
+        committed = max(int(r["epoch"]) for r in ep if r.get("committed"))
+    pending = None if committed is None or status in ("completed", "stopped_early") else max(done - committed, 0)
+    resumable = status in ("interrupted", "orphaned", "paused", "stopped") and ((folder / "last.pt").exists() or (folder / "last.next.pt").exists())
     return {"fit": folder.name, "status": status, "epoch": done, "epochs": total, "best_val": best, "best_epoch": ep[-1]["best_epoch"] if ep else None, "last_at": ep[-1]["at"] if ep else start.get("at"),
             "started_at": start.get("at"), "eta_seconds": None if mean is None or status != "running" else max(total - done, 0) * mean, "elapsed_seconds": float(sum(r["seconds"] for r in ep)) if ep else 0.0,
-            "n_params": start.get("n_params"), "device": start.get("device"), "unit": start.get("unit") or "epoch", "kind": start.get("kind"), "phase": ep[-1].get("phase") if ep else None, "ceiling": start.get("ceiling"), "events": events[-20:], "resumable": resumable, "mtime": mtime}
+            "n_params": start.get("n_params"), "device": start.get("device"), "unit": start.get("unit") or "epoch", "kind": start.get("kind"), "phase": ep[-1].get("phase") if ep else None, "ceiling": start.get("ceiling"), "committed_epoch": committed, "uncommitted_epochs": pending, "commit_state": None if cm is None else cm.get("state"), "events": events[-20:], "resumable": resumable, "mtime": mtime}
 
 
 def fit_folders(run: Path) -> list[Path]:
@@ -238,38 +245,10 @@ def control(root, run_id: str, action: str, fit: str | None = None) -> dict:
 
 
 def reconcile_logs(folder, done: int, last: dict | None) -> dict:
-    """Make the run's logs agree with the checkpoint that is being resumed. ``done`` is the number of finished units the checkpoint holds. A crash can leave a unit's rows in the log although its checkpoint was never
-    committed (it will be run again, so those rows are dropped), or leave the checkpoint without the unit's row (the row, its gradient summary and its events were saved inside the checkpoint as ``last`` and are
-    restored, marked ``recovered``). Markers (start, resume, interruption) are kept. Returns what was changed."""
-    folder = Path(folder)
-    out = {"dropped_rows": 0, "recovered": False}
-    path = folder / "metrics.jsonl"
-    rows = read_rows_all(path)
-    if rows is not None:
-        keep, seen = [], False
-        for r in rows:
-            if r.get("type") == "epoch":
-                if r.get("epoch", 0) > done:
-                    out["dropped_rows"] = len(rows) - len(keep)
-                    break
-                seen = seen or r.get("epoch") == done
-            keep.append(r)
-        if not seen and last and last.get("row"):
-            keep += [{**last["row"], "recovered": True}] + list(last.get("events") or [])
-            out["recovered"] = True
-        if out["dropped_rows"] or out["recovered"]:
-            _rewrite(path, keep)
-    gpath = folder / "gradients.jsonl"
-    grows = read_rows_all(gpath)
-    if grows is not None:
-        gkeep = [r for r in grows if r.get("epoch", 0) <= done - 1]
-        have = {(r.get("optimizer"), r.get("epoch")) for r in gkeep}
-        for g in ((last or {}).get("grad") or []):
-            if g and (g.get("optimizer"), g.get("epoch")) not in have and g.get("epoch") == done - 1:
-                gkeep.append({**g, "recovered": True})
-        if len(gkeep) != len(grows) or any(r.get("recovered") for r in gkeep):
-            _rewrite(gpath, gkeep)
-    return out
+    """Make the run's logs agree with the checkpoint that is being resumed (``done`` finished units): see ``commit.reconcile`` for the protocol. Returns what was changed and what is recomputed."""
+    from .commit import reconcile
+
+    return reconcile(folder, done, last)
 
 
 def read_rows_all(path: Path) -> list[dict] | None:
@@ -285,11 +264,9 @@ def read_rows_all(path: Path) -> list[dict] | None:
 
 
 def _rewrite(path: Path, rows: list[dict]) -> None:
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text("".join(json.dumps(r, default=float) + "\n" for r in rows), encoding="utf-8")
-    import os
+    from .commit import atomic_write_text
 
-    os.replace(tmp, path)
+    atomic_write_text(path, "".join(json.dumps(r, default=float) + "\n" for r in rows))
 
 
 def control_clear(run: Path) -> None:

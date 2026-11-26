@@ -179,7 +179,7 @@ def _pinn_full(kind: str):
     return run
 
 
-def _sb3(kind: str):
+def _sb3(kind: str, extra: dict | None = None):
     """A Stable-Baselines3 agent (PPO, SAC or recurrent PPO) fitted by the platform's own model class on a small synthetic market; run it with a Python that has stable-baselines3, gymnasium and sb3-contrib."""
     def run():
         from src.ml import config as mc, datasets as dsm, models as md
@@ -191,6 +191,7 @@ def _sb3(kind: str):
         params = {"ppo": {**base, "total_timesteps": 1280, "n_steps": 128, "n_epochs": 2, "checkpoint_timesteps": 128},
                   "sac": {**base, "total_timesteps": 1000, "learning_starts": 100, "buffer_size": 2000, "checkpoint_timesteps": 100},
                   "recurrent_ppo": {**base, "total_timesteps": 640, "n_steps": 64, "n_epochs": 2, "lstm_hidden": 8, "checkpoint_timesteps": 64}}[kind]
+        params = {**params, **(extra or {})}
         pos = ds.positions()
         rows = np.flatnonzero((pos >= 80) & (pos < 700) & ds.Y[ds.target].notna().to_numpy())
         model = md.make_model(kind, params, "regression", 3)
@@ -225,6 +226,7 @@ SCENARIOS = {
     "wgan_gp": _wgan, "factor_vae": _factor_vae, "diffusion": _diffusion, "deep_hedging": _hedging, "pinn": _pinn,
     "pinn_bsm": _pinn_full("bsm"), "pinn_vasicek": _pinn_full("vasicek"), "pinn_heston": _pinn_full("heston"), "pinn_bates": _pinn_full("bates"),
     "sb3_ppo": _sb3("ppo"), "sb3_sac": _sb3("sac"), "sb3_recurrent_ppo": _sb3("recurrent_ppo"),
+    "sb3_ppo_linear": _sb3("ppo", {"lr_schedule": "linear", "clip_schedule": "linear"}), "sb3_sac_linear": _sb3("sac", {"lr_schedule": "linear"}), "sb3_ppo_constant": _sb3("ppo", {"lr_schedule": "constant", "clip_schedule": "constant"}),
     "rl_double_dqn": _rl("double_dqn"), "rl_dqn": _rl("dqn"), "rl_ddpg": _rl("ddpg"), "rl_td3": _rl("td3"), "rl_sac": _rl("sac"), "rl_ppo": _rl("ppo"),
 }
 
@@ -276,6 +278,141 @@ def _kill_at_finish() -> None:
     TrainingSession.finish = finish
 
 
+def _kill_at_commit(stage: str, n: int) -> None:
+    """SIGKILL at one precise step of the n-th unit's completion protocol (``src/ml/deep/commit.py``): ``before_checkpoint`` (computed, nothing durable), ``mid_rename`` (the checkpoint is staged but ``last.pt`` is not yet
+    replaced), ``before_meta`` (checkpoint durable, commit.json stale), ``after_meta`` (commit.json says committed, no log yet), ``after_gradient`` (gradient summary written, no metrics row), ``torn_row`` (half of the
+    metrics row written), ``after_row`` (metrics row written, no warnings and no final metadata), ``after_applied`` (everything written, announcements pending)."""
+    from src.ml.deep import checkpoint, commit, session, trainer
+
+    def wrap(mod, name, fn):
+        real = getattr(mod, name)
+        setattr(mod, name, fn(real))
+
+    if stage in ("mid_write", "after_tmp"):
+        real = checkpoint.CheckpointManager._atomic
+
+        def atomic(self, path, state):
+            if path.name == "last.next.pt" and int(state["epoch"]) + 1 == n:
+                import io as _io
+
+                buf = _io.BytesIO()
+                torch = __import__("torch")
+                torch.save(state, buf)
+                data = buf.getvalue()
+                tmp = path.with_name(path.name + f".tmp{os.getpid()}")
+                with open(tmp, "wb") as fh:
+                    fh.write(data if stage == "after_tmp" else data[: len(data) // 2])          # half the payload (killed while writing) or all of it (killed before the rename)
+                    fh.flush()
+                die()
+            return real(self, path, state)
+        checkpoint.CheckpointManager._atomic = atomic
+    elif stage == "before_checkpoint":
+        real = checkpoint.CheckpointManager.save
+
+        def save(self, state, best=False):
+            if int(state["epoch"]) + 1 == n:
+                die()
+            return real(self, state, best)
+        checkpoint.CheckpointManager.save = save
+    elif stage == "mid_rename":
+        real = checkpoint._replace
+
+        def rep(src, dst, attempts=8):
+            if Path(src).name == "last.next.pt" and Path(dst).name == "last.pt":
+                _COUNT["n"] += 1
+                if _COUNT["n"] == n:
+                    die()
+            return real(src, dst, attempts)
+        checkpoint._replace = rep
+    elif stage in ("before_meta", "after_meta", "after_applied"):
+        want = "applied" if stage == "after_applied" else "committed"
+
+        def mk(real):
+            def f(folder, *, committed, applied, state, **kw):
+                if stage == "before_meta" and state == "committed" and committed == n:
+                    die()
+                out = real(folder, committed=committed, applied=applied, state=state, **kw)
+                if stage != "before_meta" and state == want and committed == n:
+                    die()
+                return out
+            return f
+        for mod in (session, trainer):
+            wrap(mod, "write_commit", mk)
+    elif stage == "after_gradient":
+        def mk(real):
+            def f(folder, row):
+                real(folder, row)
+                if int(row.get("epoch", -1)) + 1 == n:
+                    die()
+            return f
+        for mod in (session, trainer):
+            wrap(mod, "append_summary", mk)
+    elif stage in ("after_row", "torn_row"):
+        def mk(real):
+            def f(folder, row):
+                if row.get("type") == "epoch" and int(row.get("epoch", 0)) == n:
+                    if stage == "torn_row":
+                        with open(Path(folder) / "metrics.jsonl", "ab") as fh:
+                            fh.write(json.dumps(row, default=float).encode()[:60])                          # half a line, no newline: what a kill in the middle of an append leaves
+                            fh.flush()
+                        die()
+                    real(folder, row)
+                    die()
+                return real(folder, row)
+            return f
+        for mod in (session, trainer):
+            wrap(mod, "_log", mk)
+    else:
+        raise SystemExit(f"unknown commit stage {stage}")
+
+
+def _apply_faults() -> None:
+    """Faults injected into a worker through ``$QUANT_FAULT`` (comma-separated): ``enospc_ckpt:A-B`` makes the checkpoint of units A to B fail with ``ENOSPC`` (no space left on device); ``enospc_log:A-B`` does the same to the
+    metrics and gradient rows of those units; ``fsize:BYTES`` sets the kernel's file-size limit (``RLIMIT_FSIZE``, POSIX only), so that any write that would make a file larger fails with the operating system's own error."""
+    import errno
+
+    spec = os.environ.get("QUANT_FAULT", "")
+    for item in [x for x in spec.split(",") if x]:
+        kind, _, arg = item.partition(":")
+        if kind == "fsize":
+            import resource
+
+            signal.signal(signal.SIGXFSZ, signal.SIG_IGN)                                       # the kernel would kill the process; ignoring it turns the failure into an OSError, like a full disk
+            resource.setrlimit(resource.RLIMIT_FSIZE, (int(arg), resource.getrlimit(resource.RLIMIT_FSIZE)[1]))      # the soft limit only: the harness lifts it to write its own result file
+            continue
+        lo, hi = (int(x) for x in arg.split("-"))
+        from src.ml.deep import checkpoint, commit, trainer
+
+        if kind == "enospc_ckpt":
+            real = checkpoint.CheckpointManager._atomic
+
+            def atomic(self, path, state, real=real, lo=lo, hi=hi):
+                if lo <= int(state["epoch"]) + 1 <= hi:
+                    raise OSError(errno.ENOSPC, "No space left on device")
+                return real(self, path, state)
+            checkpoint.CheckpointManager._atomic = atomic
+        elif kind == "enospc_log":
+            real = commit.append_line
+
+            def append(path, row, durable=False, real=real, lo=lo, hi=hi):
+                unit = int(row.get("epoch", -1)) + (1 if row.get("type") == "gradient_event" or "optimizer" in row else 0)       # gradient summaries carry the 0-based unit
+                if lo <= unit <= hi and row.get("type") in (None, "epoch", "gradient_event") and ("optimizer" in row or row.get("type") == "epoch"):
+                    raise OSError(errno.ENOSPC, "No space left on device")
+                return real(path, row, durable)
+            commit.append_line = append
+            trainer.append_line = append
+        else:
+            raise SystemExit(f"unknown fault {kind}")
+
+
+def _lift_file_limit() -> None:
+    if os.environ.get("QUANT_FAULT") and sys.platform != "win32":
+        import resource
+
+        hard = resource.getrlimit(resource.RLIMIT_FSIZE)[1]
+        resource.setrlimit(resource.RLIMIT_FSIZE, (hard, hard))
+
+
 def main(argv: list[str]) -> None:
     name, folder, mode, out = argv[0], Path(argv[1]), argv[2], Path(argv[3])
     kill_after = int(argv[argv.index("--kill-after") + 1]) if "--kill-after" in argv else 0
@@ -290,22 +427,29 @@ def main(argv: list[str]) -> None:
     from src.ml.deep import context
 
     kill_at = argv[argv.index("--kill-at") + 1] if "--kill-at" in argv else ""
-    if mode == "interrupted" and kill_at.startswith("closure:"):
+    _apply_faults()
+    interrupted = mode in ("interrupted", "interrupted_resume")                              # interrupted_resume: resumes the run AND is killed again (a repeated stop and resume)
+    if interrupted and kill_at.startswith("closure:"):
         _kill_in_closure(int(kill_at.split(":")[1]))                                          # SIGKILL inside the k-th loss evaluation of an L-BFGS step
-    elif mode == "interrupted" and kill_at == "finish":
+    elif interrupted and kill_at.startswith("commit:"):
+        _, stage, k = kill_at.split(":")
+        _kill_at_commit(stage, int(k))                                                         # SIGKILL at one step of the n-th unit's completion protocol
+    elif interrupted and kill_at == "finish":
         _kill_at_finish()                                                                      # SIGKILL after the last unit is committed, before the closing row
-    elif mode == "interrupted":
+    elif interrupted:
         _kill_when(folder, kill_after)
     if mode == "plain":                                                                    # no training run at all: the code path of a plain library call
         t0 = time.time()
         result = SCENARIOS[name]()
         result["seconds"] = time.time() - t0
+        _lift_file_limit()
         out.write_text(json.dumps(result, default=float))
         return
-    with context.use(str(folder), resume=(mode == "resume"), grad_level="standard"):
+    with context.use(str(folder), resume=(mode in ("resume", "interrupted_resume")), grad_level="standard"):
         t0 = time.time()
         result = SCENARIOS[name]()
     result["seconds"] = time.time() - t0
+    _lift_file_limit()
     out.write_text(json.dumps(result, default=float))
 
 

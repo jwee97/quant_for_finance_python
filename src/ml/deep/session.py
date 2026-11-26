@@ -37,6 +37,7 @@ from . import context as train_context
 from .checkpoint import CheckpointManager, assess, fingerprint, restore_rng, rng_states
 from .context import TrainingHalted
 from .gradients import GradientMonitor, append_summary, resolve_level
+from .commit import clear_inflight, mark_inflight, read_inflight, recompute_report, write_commit
 from .runs import reconcile_logs
 from .trainer import _control, _log
 
@@ -187,7 +188,7 @@ class TrainingSession:
                     pass
 
     def log(self, row: dict) -> None:
-        _log(self.dir, row)
+        _log(self.dir, row)                                                                          # never raises: a full disk loses a log line, not the run
 
     def monitor(self, name: str, params, *, clip: float | None = None, accumulation: int | None = None, family: str | None = None):
         """The gradient monitor of one optimizer (``params`` is ``{name: Parameter}`` or a module). A loop with several optimizers asks once per optimizer."""
@@ -206,6 +207,7 @@ class TrainingSession:
         self._emit("on_start", info)
         out = None
         if self.mgr is not None and self.resume_requested:
+            repairs = self.mgr.repair()                                                         # finish an interrupted commit; remove the leftovers of writes that never finished
             blob, which, problems = self.mgr.latest_valid()
             verdict = assess(blob, which, self.config_fp, self.data_fp, self.device, self.allow_warm)
             if verdict["state"] is not None:
@@ -224,41 +226,39 @@ class TrainingSession:
                         for n, g in self.rngs.items():
                             if n in blob["rng"].get("gens", {}):
                                 _gen_restore(g, blob["rng"]["gens"][n])
+                    capped: list[str] = []
                     if self.apply is not None:
-                        self.apply(blob["history"]["extra"])
+                        got = self.apply(blob["history"]["extra"])
+                        capped = [x for x in got if isinstance(x, str)] if isinstance(got, list) else []      # a loop may RETURN A LIST of reasons why what it restored cannot be called exact (it raises CheckpointIncompatible when it must not continue); any other return value is ignored
                     for n, mon in self.monitors.items():
                         mon.load_state_dict((blob.get("grad") or {}).get(n))
                     self._seconds_before = float(blob["history"].get("seconds", 0.0))
                     self.best_val, self.best_unit = float(blob["history"].get("best_val", float("inf"))), int(blob["history"].get("best_unit", -1))
                     start = int(blob["epoch"]) + 1
-                    if self.dir is not None:
-                        reconcile_logs(self.dir, start, blob.get("last"))
+                    report = reconcile_logs(self.dir, start, blob.get("last")) if self.dir is not None else {}
                 else:
                     start = 0
+                if capped and level == "exact":
+                    level, reasons = "epoch_boundary", reasons + capped
                 if level == "exact" and self.ceiling != "exact":
                     level, reasons = "epoch_boundary", reasons + [f"this loop cannot restore everything that shapes the next {self.unit_name} (its environment or data stream): the continuation is approximate"]
                 out = self.resumed = Resumed(start, level, reasons, which, blob)
-                lost = self._read_inflight(start)
+                lost = recompute_report(self.unit_name, start, report, self._read_inflight(start)) if level != "warm_start" and self.dir is not None else None
                 if lost:
-                    self.log({"type": "recomputed_work", "epoch": start, "at": time.time(), "unit": lost["unit"] + 1, "phase": lost.get("phase"),
-                              "message": f"{self.unit_name} {lost['unit'] + 1}{' (' + lost['phase'] + ')' if lost.get('phase') else ''} had started but was not committed when the process ended: it is recomputed from the last checkpoint"})
+                    self.log(lost)
+                for note in repairs:
+                    self.log({"type": "recovery_note", "at": time.time(), "message": note})
                 ev = {"type": "resume", "epoch": start, "at": time.time(), "level": level, "reasons": reasons, "file": which}
                 self.log(ev)
+                if level != "warm_start" and self.dir is not None:
+                    write_commit(self.dir, committed=start, applied=start, state="applied", file=which)
                 self._emit("on_restore", out.as_dict())
             elif problems:
                 self.log({"type": "no_valid_checkpoint", "at": time.time(), "problems": problems})
         return out
 
     def _read_inflight(self, start: int) -> dict | None:
-        if self.dir is None:
-            return None
-        path = self.dir / "inflight.json"
-        try:
-            note = json.loads(path.read_text())
-        except (OSError, ValueError):
-            return None
-        path.unlink(missing_ok=True)
-        return note if int(note.get("unit", -1)) >= start else None
+        return read_inflight(self.dir, start)
 
     def _ensure_started(self) -> None:
         if self._started or self.dir is None:
@@ -288,20 +288,11 @@ class TrainingSession:
         self._emit("on_unit_start", unit)
 
     def _mark_inflight(self, unit: int, phase: str | None) -> None:
-        """A durable note that ``unit`` has started and is not committed. A hard kill leaves it behind, and the next resume reports the work after the last checkpoint as recomputed."""
-        if self.dir is None:
-            return
-        try:
-            (self.dir / "inflight.json").write_text(json.dumps({"unit": int(unit), "phase": phase, "at": time.time()}))
-        except OSError:
-            pass
+        """A note that ``unit`` has started and is not committed (see ``commit``): a hard kill leaves it behind and the next resume reports the work after the last checkpoint as recomputed."""
+        mark_inflight(self.dir, unit, phase)
 
     def _clear_inflight(self) -> None:
-        if self.dir is not None:
-            try:
-                (self.dir / "inflight.json").unlink(missing_ok=True)
-            except OSError:
-                pass
+        clear_inflight(self.dir)
 
     def _lr(self):
         if self._lr_given is not None:
@@ -337,8 +328,7 @@ class TrainingSession:
         for name, mon in self.monitors.items():
             summary, ev = mon.end_epoch(unit, lr=self._lr(), train_loss=train, val_loss=val, action="continued")
             if summary is not None:
-                summaries.append(summary)
-                append_summary(self.dir, summary)
+                summaries.append(summary)                                                          # written to gradients.jsonl after the checkpoint that carries it (see commit)
                 grad_norm = grad_norm if grad_norm is not None else summary["global"].get("l2_median")
             events += ev
         action = _control(self.dir) if self.dir is not None else ""
@@ -358,7 +348,7 @@ class TrainingSession:
                "metrics": {k: (None if v is None or not np.isfinite(v) else float(v)) for k, v in metrics.items() if k not in ("train_loss", "val_loss")}, "phase": phase or getattr(self, "_phase", None), **res}
         done = last or unit + 1 >= self.units or bool(self.halted)
         due = (unit + 1) % self.checkpoint_every == 0
-        ck = None
+        ck, info = None, {}
         if self.mgr is not None and (due or improved or done):
             try:
                 info = self.mgr.save(self._state(unit, metrics, {"row": row, "grad": summaries, "events": events}), best=bool(improved))
@@ -368,11 +358,19 @@ class TrainingSession:
                 ck = {"epoch": unit + 1, "error": str(exc)}
                 events.append({"type": "checkpoint_failed", "epoch": unit + 1, "at": time.time(), "error": str(exc)})
         row["checkpoint"] = ck
+        committed = ck is not None and "error" not in ck
+        row["committed"] = committed
+        if committed and self.dir is not None:                                                        # step 2: the checkpoint is the commit point; the metadata follows it atomically
+            write_commit(self.dir, committed=unit + 1, applied=unit, state="committed", sha256=info.get("sha256"), phase=phase or self._phase)
+        for summary in summaries:                                                                      # step 3: apply the unit's record to the logs
+            append_summary(self.dir, summary)
         self.log(row)
         for ev in events:
             self.log(ev)
             self._emit("on_event", ev)
-        self._emit("on_unit_end", unit, row)
+        if committed and self.dir is not None:
+            write_commit(self.dir, committed=unit + 1, applied=unit + 1, state="applied", sha256=info.get("sha256"), phase=phase or self._phase)
+        self._emit("on_unit_end", unit, row)                                                           # step 4: announcements are information, recovery never reads them
         self.history_rows += 1
         self._clear_inflight()
         if self.halted:
