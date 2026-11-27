@@ -151,11 +151,46 @@ def ml_artifact(report: dict, returns: pd.DataFrame, *, code_version: str = "unk
     cfg = report.get("config") or {}
     ctx = {"start": dates[0], "end": dates[-1], "frequency": "daily", "data_source": str(prov.get("label") or prov.get("source") or "platform"), "dataset_version": str(report.get("dataset_key") or "")[:64]}
     notes = [f"Out-of-sample net returns of a walk-forward run (first prediction {dates[0]}); the segments column says which days are validation, test or held out."] + [str(n) for n in (prov.get("notes") or [])][:4]
-    return {"kind": "ml_experiment", "title": str(report.get("name") or "Experiment")[:120], "evidence": "walk_forward", "data_kind": kind, "context": ctx,
-            "config": {"model": (cfg.get("model") or {}), "dataset": (cfg.get("dataset") or {}), "split": (cfg.get("split") or {}), "signal": (cfg.get("signal") or {}), "backtest": (cfg.get("backtest") or {}),
-                       "segments": (report.get("segments") or {}).get("plan"), "n_assets": ds.get("n_assets"), "n_features": ds.get("n_features"), "target": ds.get("target"), "horizon": ds.get("horizon")},
-            "metrics": metrics, "series": {"dates": dates, "equity": _clean_series(equity.to_numpy()), "benchmarks": benches, "extra": extra},
-            "refs": {"ml_experiment": str(report.get("id") or ""), "config_hash": str(report.get("config_hash") or ""), "dataset": str(report.get("dataset_key") or ""), "code_version": code_version}, "notes": notes}
+    out = {"kind": "ml_experiment", "title": str(report.get("name") or "Experiment")[:120], "evidence": "walk_forward", "data_kind": kind, "context": ctx,
+           "config": {"model": (cfg.get("model") or {}), "dataset": (cfg.get("dataset") or {}), "split": (cfg.get("split") or {}), "signal": (cfg.get("signal") or {}), "backtest": (cfg.get("backtest") or {}),
+                      "segments": (report.get("segments") or {}).get("plan"), "n_assets": ds.get("n_assets"), "n_features": ds.get("n_features"), "target": ds.get("target"), "horizon": ds.get("horizon")},
+           "metrics": metrics, "series": {"dates": dates, "equity": _clean_series(equity.to_numpy()), "benchmarks": benches, "extra": extra},
+           "refs": {"ml_experiment": str(report.get("id") or ""), "config_hash": str(report.get("config_hash") or ""), "dataset": str(report.get("dataset_key") or ""), "code_version": code_version}, "notes": notes}
+    if (cfg.get("signal") or {}).get("method") == "portfolio_allocation" and report.get("portfolio_allocation"):
+        _allocation_fields(out, report, cfg, ds)
+    return out
+
+
+def _allocation_fields(out: dict, report: dict, cfg: dict, ds: dict) -> None:
+    """What an allocation study adds to its artifact so that it can be compared with portfolio studies on like terms: the construction in the portfolio lab's own vocabulary, the cost it charged, the benchmark,
+    the currency it was valued in, and the point-in-time statement with what the run depended on."""
+    pa = report["portfolio_allocation"]
+    pc = pa.get("config") or {}
+    lim = pc.get("limits") or {}
+    bt = cfg.get("backtest") or {}
+    fx = report.get("fx") or {}
+    assets = list(ds.get("universe") or []) if isinstance(ds.get("universe"), list) else []
+    if not assets:                                                                  # the universe may be a preset name; the books name the stocks that were really held
+        for rec in pa.get("records") or []:
+            if rec.get("weights"):
+                assets = sorted(rec["weights"])
+                break
+    out["context"].update({"assets": assets, "costs": {"cost_bps": float(bt.get("cost_bps", 0.0)) + float(bt.get("slippage_bps", 0.0))}})
+    out["costs"] = {"cost_bps": float(bt.get("cost_bps", 0.0)) + float(bt.get("slippage_bps", 0.0)), "charged": "on every trade, as a fraction of the weight traded"}
+    out["benchmark"] = "Equal weight"
+    out["config"]["study"] = {"lookback": pc.get("cov_window"), "step": pa.get("opt_every"), "cov_method": pc.get("cov_method"), "max_weight": lim.get("max_weight"), "risk_aversion": pc.get("risk_aversion"),
+                              "holding_days": pa.get("holding_window_days"), "allocator": pa.get("allocator")}
+    out["config"]["mu_source"] = "ML forecast, calibrated on past outcomes" if pc.get("calibrate", "slope") == "slope" else "ML forecast, uncalibrated"
+    out["config"]["allocation"] = {"allocator": pa.get("allocator"), "settings": pc, "counts": pa.get("counts"), "config_hash": pa.get("config_hash")}
+    if fx:
+        out["config"]["currency"] = fx.get("base")
+    out["validation"] = {"point_in_time": "each weight uses only forecasts, returns and eligibility known at its decision date; the forecast is calibrated on outcomes resolved before it; the covariance is estimated on earlier returns",
+                         "holdout": (report.get("holdout") or {}).get("status"), "forecast": (pa.get("records") or [{}])[-1].get("forecast") if pa.get("records") else None,
+                         "fx": None if not fx else {"base": fx.get("base"), "assumption": (fx.get("forecast_conversion") or {}).get("assumption"), "exchange_accurate": fx.get("exchange_accurate"), "hedge": (fx.get("hedge") or {}).get("active")}}
+    out["notes"].append(f"Portfolio allocation by {(pa.get('documentation') or {}).get('label', pa.get('allocator'))}: the books are a function of the ML forecast, a risk estimate and limits; equal weight is the benchmark. "
+                        "Net returns include the backtest's costs" + (" and the currency conversion and hedge costs." if fx else "."))
+    if fx and not fx.get("exchange_accurate", True):
+        out["notes"].append("The currency hedge is an explicit forward overlay without forward points or financing: not exchange-accurate.")
 
 
 def returns_from_equity(dates, equity) -> pd.Series:

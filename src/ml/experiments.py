@@ -17,7 +17,9 @@ import numpy as np
 import pandas as pd
 
 from . import evaluation as ev
+from . import alloc_fx as fxm
 from . import execution as xe
+from . import fx_data as fxd
 from . import explainability as xp
 from . import model_report as mr
 from . import provenance as pv
@@ -151,9 +153,10 @@ def realistic_requested(cfg: dict) -> bool:
 def _market(cfg: dict, bundle=None, config=None, builder=None, info: dict | None = None, market: dict | None = None) -> dict | None:
     """The market data a run needs beyond the dataset (the traded volume), from the bundle given or resolved for the configuration's universe: the realistic execution mode needs it, and so does a
     liquidity-aware allocation (``signal.capital``). ``None`` when the run asked for neither; a missing universe is an error, not a silent fall-back to a run without liquidity."""
-    if not realistic_requested(cfg) and cfg.get("signal", {}).get("capital") is None:
+    fx_spec = (cfg.get("backtest") or {}).get("fx")
+    if not realistic_requested(cfg) and cfg.get("signal", {}).get("capital") is None and not fx_spec:
         return None
-    if market is not None:
+    if market is not None and (not fx_spec or market.get("fx") is not None):
         return market
     if bundle is None:
         try:
@@ -161,7 +164,21 @@ def _market(cfg: dict, bundle=None, config=None, builder=None, info: dict | None
         except (FileNotFoundError, KeyError, ValueError) as exc:
             what = "realistic execution" if realistic_requested(cfg) else "a liquidity-aware allocation (signal.capital)"
             raise ExperimentError(f"{what} needs the market data (volume) for universe '{cfg['dataset']['universe']}': {exc}") from None
-    return {"volume": getattr(bundle, "volume", None), "status": str((info or {}).get("source", "unknown"))}
+    out = {"volume": getattr(bundle, "volume", None), "status": str((info or {}).get("source", "unknown"))}
+    if fx_spec:                                                                          # exchange rates through the same ticker store as the prices, as of the dates they were available
+        if builder is None:
+            raise ExperimentError("currency conversion needs the dashboard's ticker store for the exchange-rate history; none is available here")
+        try:
+            spec = fxm.check_spec(fx_spec)
+            first = cfg["dataset"].get("start") or (str(bundle.prices.index[0].date()) if bundle is not None and len(bundle.prices) else "2005-01-03")
+            start = str(pd.Timestamp(first) - pd.Timedelta(days=10))[:10]                      # a few days before the first price, so the first return has a rate to start from
+            table, report = fxd.load_table(builder.store, spec["base"], spec["currencies"].values(), start, available_lag_days=spec["available_lag_days"],
+                                           max_stale_days=spec["max_stale_days"])
+            out["fx"] = fxm.context_from_spec(spec, table)
+            out["fx_report"] = report
+        except fxm.FxError as exc:
+            raise ExperimentError(str(exc)) from None
+    return out
 
 
 def _segments_ic(ic: pd.Series, labels: pd.Series, horizon: int) -> dict:
@@ -270,15 +287,31 @@ def evaluate_run(cfg: dict, ds: Dataset, train: TrainResult, info: dict, registr
     dist = train.extras.get("distribution")
     unc_wide = None if dist is None else dist["std"].unstack("asset").reindex(index=ds.dates, columns=ds.assets)          # the model's own predictive standard deviation, for the uncertainty-aware rules
     progress("building positions and backtesting")
+    fx_ctx = (market or {}).get("fx")
+    ret_bt, inv_bt, fx_block = ds.returns, ds.investable, None
+    if fx_ctx is not None:                                                             # the book is valued in the base currency: unhedged base returns for the engine, the hedge as explicit positions
+        if cfg["signal"]["method"] != "portfolio_allocation":
+            raise ExperimentError("currency conversion (backtest.fx) is supported by the portfolio-allocation method only")
+        if realistic_requested(cfg):
+            raise ExperimentError("currency conversion is not available in the realistic execution mode: its ledger books one currency; use the vectorized mode")
+        try:
+            ret_bt, fx_ret, fx_missing = fxm.base_returns(ds.returns, fx_ctx, apply_hedge=False)
+        except fxm.FxError as exc:
+            raise ExperimentError(str(exc)) from None
+        gone = ds.returns.notna() & ret_bt.isna()
+        if gone.any().any():
+            inv_bt = (ds.investable if ds.investable is not None else pd.DataFrame(True, index=ds.returns.index, columns=ds.returns.columns)) & ~gone
+        ret_bt = ret_bt.where(ret_bt.notna() | ds.returns.isna())
     try:
         volume = (market or {}).get("volume")                                               # shares traded, where the universe has them: the liquidity-aware allocation is refused without
         dollars = None if volume is None else volume.reindex(index=ds.dates, columns=ds.assets) * ds.prices.reindex(index=ds.dates, columns=ds.assets)
-        weights = build_weights(scores, cfg["signal"], vol, conf, regime_on, groups, ds.investable, unc_wide, ds.returns, dollars, prices=ds.prices.reindex(index=ds.dates, columns=ds.assets), probability=prob_wide)
+        weights = build_weights(scores, cfg["signal"], vol, conf, regime_on, groups, ds.investable, unc_wide, ds.returns, dollars, prices=ds.prices.reindex(index=ds.dates, columns=ds.assets), probability=prob_wide, fx=fx_ctx)
     except ValueError as exc:
         raise ExperimentError(str(exc)) from None
     labelled = ds.Y[train.target].dropna().index.get_level_values(0)
     weights = hold_last_book(weights, scores, labelled.max() if len(labelled) else None)     # a development run is predicted only to the end of validation, on purpose: that cut-off is not held past
-    result = run_backtest(weights, ds.returns, ds.investable, cfg["backtest"], lag, cfg["name"])
+    pab = None if fx_ctx is None else fxm.per_asset_bps(fx_ctx, float(cfg["backtest"]["cost_bps"]) + float(cfg["backtest"]["slippage_bps"]), ds.assets)       # conversion costs on foreign assets, in the engine's own cost model
+    result = run_backtest(weights, ret_bt, inv_bt, cfg["backtest"], lag, cfg["name"], per_asset_bps=pab)
     realistic = None
     if realistic_requested(cfg):                                               # the declared evaluation mode: the same weights through orders, fills and the ledger instead of a cost per unit of turnover
         mk = _market(cfg, None, None, None, info, market)
@@ -292,12 +325,18 @@ def evaluate_run(cfg: dict, ds: Dataset, train: TrainResult, info: dict, registr
     first_signal = scores.dropna(how="all").index[0]
     parts = trim_to_signal(result, first_signal, lag)
     net, gross, costs, turnover = parts["net"], parts["gross"], parts["costs"], parts["turnover"]
+    if fx_ctx is not None:
+        overlay = fxm.hedge_overlay(result.weights, result.trades, fx_ret, fx_ctx)
+        ov_pnl, ov_cost = overlay["pnl"].reindex(net.index).fillna(0.0), overlay["cost"].reindex(net.index).fillna(0.0)
+        net, gross, costs = net + ov_pnl - ov_cost, gross + ov_pnl, costs + ov_cost
+        parts = {**parts, "net": net, "gross": gross, "costs": costs}
+        fx_block = {"overlay": overlay, "returns": fx_ret, "missing": fx_missing, "held": result.weights}
     if stop_after:                                                             # the positions of the last day still earn for `lag` more days; nothing later belongs to the run
         cut = net.index.searchsorted(train.plan.dates[train.plan.bounds[stop_after][1] - 1]) + lag + 1
         net, gross, costs, turnover = net.iloc[:cut], gross.iloc[:cut], costs.iloc[:cut], turnover.iloc[:cut]
-    trading = tl.build(weights.attrs.get("decisions"), parts, ds.returns, cfg, lag, scores)     # every rule has a ledger of its buys and sells; only decision_policy also has a decision log
+    trading = tl.build(weights.attrs.get("decisions"), parts, ret_bt, cfg, lag, scores)     # every rule has a ledger of its buys and sells; only decision_policy also has a decision log
     labels = label_days(net.index, train.plan.labels())
-    bench = equal_weight_benchmark(ds.returns, ds.investable).reindex(net.index)
+    bench = equal_weight_benchmark(ret_bt, inv_bt).reindex(net.index)
     # the train segment: the first model's in-sample positions, run through the same engine
     insample_net = None
     s_in = train.scores_wide(ds, "insample")
@@ -306,7 +345,7 @@ def evaluate_run(cfg: dict, ds: Dataset, train: TrainResult, info: dict, registr
         if sig_in["method"] in (*UNCERTAINTY_METHODS, *ALLOCATION_METHODS, *SIZING_METHODS, *DECISION_METHODS, *PORTFOLIO_METHODS):                                                                              # no predictive distribution, no optimiser and no calibration on in-sample scores
             sig_in["method"] = "proportional"
         w_in = build_weights(s_in, sig_in, vol, confidence_from_scores(s_in, None), regime_on, groups, ds.investable)
-        r_in = trim_to_signal(run_backtest(w_in, ds.returns, ds.investable, cfg["backtest"], lag, cfg["name"] + "_in_sample"), s_in.dropna(how="all").index[0], lag)["net"]
+        r_in = trim_to_signal(run_backtest(w_in, ret_bt, inv_bt, cfg["backtest"], lag, cfg["name"] + "_in_sample", per_asset_bps=pab), s_in.dropna(how="all").index[0], lag)["net"]
         last_in = s_in.dropna(how="all").index[-1]
         insample_net = r_in.iloc[: r_in.index.searchsorted(last_in) + 1]
     seg_stats = ev.segment_stats(net, labels, insample_net)
@@ -406,6 +445,9 @@ def evaluate_run(cfg: dict, ds: Dataset, train: TrainResult, info: dict, registr
             report["warnings"].append(f"The portfolio allocation had no solution at {c['failed'] + c['infeasible'] + c['not_justified'] + c['unsuitable']} of {c['decisions']} decisions and used the configured failure policy '{pa_log['config']['on_failure']}' there: see report.portfolio_allocation.")
         if c["no_edge"] + c["insufficient_history"]:
             report["warnings"].append(f"At {c['no_edge'] + c['insufficient_history']} of {c['decisions']} decisions the forecast had no calibrated edge (or too little history to show one), so the book was set by risk and the limits alone.")
+    if fx_block is not None:
+        report["fx"] = jsonable(fxm.report_block(fx_ctx, ds.returns, fx_block["returns"], fx_block["held"], result.trades, fx_block["overlay"], fx_block["missing"], (market or {}).get("fx_report")))
+        report["warnings"].append("Currency: the hedge is an explicit forward overlay without forward points or financing, so it is not exchange-accurate (see report.fx).")
     report["holdout"] = jsonable(holdout if holdout is not None else {"status": "development" if stop_after else "unrecorded"})
     report["lineage"] = jsonable(lineage if lineage is not None else {"study": rc.study_of(cfg), "operation": None, "note": "not registered as an operation (this run was made through a path that records none)"})
     if registry is not None:

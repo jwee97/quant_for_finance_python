@@ -22,18 +22,18 @@ def total_cost_bps(bt_cfg: dict, multiple: float = 1.0) -> float:
     return (float(bt_cfg["cost_bps"]) + float(bt_cfg["slippage_bps"])) * float(multiple)
 
 
-def make_engine(bt_cfg: dict, lag: int = 1, cost_multiple: float = 1.0, extra_lag: int | None = None) -> BacktestEngine:
+def make_engine(bt_cfg: dict, lag: int = 1, cost_multiple: float = 1.0, extra_lag: int | None = None, per_asset_bps: dict | None = None) -> BacktestEngine:
     """The engine for a ``backtest`` configuration section. ``lag`` is the dataset's lag (labels and trades must start at the same time); ``extra_lag`` defaults to the section's own."""
     extra = int(bt_cfg.get("extra_lag", 0)) if extra_lag is None else int(extra_lag)
     return BacktestEngine(signal_lag=int(lag) + extra, rebalance=str(bt_cfg["rebalance"]), weight_drift=True, annualisation=252, min_assets=1,
-                          cost_model=LinearCostModel(cost_bps=total_cost_bps(bt_cfg, cost_multiple)), target_vol=None if bt_cfg.get("target_vol") in (None, 0) else float(bt_cfg["target_vol"]), vol_lookback=63,
+                          cost_model=LinearCostModel(cost_bps=total_cost_bps(bt_cfg, cost_multiple), per_asset_bps={a: float(v) * float(cost_multiple) for a, v in (per_asset_bps or {}).items()}), target_vol=None if bt_cfg.get("target_vol") in (None, 0) else float(bt_cfg["target_vol"]), vol_lookback=63,
                           max_leverage=float(bt_cfg.get("max_leverage", 1.5)))
 
 
 def run_backtest(weights: pd.DataFrame, returns: pd.DataFrame, investable: pd.DataFrame | None, bt_cfg: dict, lag: int = 1, name: str = "ml_strategy", cost_multiple: float = 1.0,
-                 extra_lag: int | None = None) -> BacktestResult:
+                 extra_lag: int | None = None, per_asset_bps: dict | None = None) -> BacktestResult:
     """Backtest target ``weights`` (date x asset, stamped at the decision date) against daily simple ``returns``."""
-    engine = make_engine(bt_cfg, lag, cost_multiple, extra_lag)
+    engine = make_engine(bt_cfg, lag, cost_multiple, extra_lag, per_asset_bps)
     w = weights.reindex(index=returns.index, columns=returns.columns).fillna(0.0)
     return engine.run(w, returns, name, investable, apply_vol_target=engine.target_vol is not None)
 

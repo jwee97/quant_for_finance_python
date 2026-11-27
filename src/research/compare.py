@@ -154,10 +154,10 @@ def issues_for(arts: list[dict], window: tuple[str, str] | None) -> list[dict]:
         rfs = {a["context"].get("risk_free") for a in trading if a["context"].get("risk_free") is not None}
         if len(rfs) > 1:
             add("different_risk_free", "warning", "The results assumed different risk-free rates; the comparison uses the one given above for all of them.", [a["id"] for a in trading])
-    pl = [a for a in arts if a["kind"] == "portfolio_lab"]
+    pl = [a for a in arts if a["kind"] == "portfolio_lab" or (a["kind"] == "ml_experiment" and (a["config"].get("allocation") or {}))]               # an allocation study is a constructed portfolio too
     if len(pl) >= 2:
-        keys = ("lookback", "step", "cov_method", "max_weight", "risk_aversion", "mu_shrink")
-        diff = [k for k in keys if len({str((a["config"].get("study") or {}).get(k)) for a in pl}) > 1]
+        keys = ("lookback", "step", "cov_method", "max_weight", "risk_aversion", "mu_shrink", "holding_days")
+        diff = [k for k in keys if len({str((a["config"].get("study") or {}).get(k)) for a in pl if k != "holding_days" or (a["config"].get("study") or {}).get(k) is not None}) > 1]          # the holding window is compared among the studies that have one
         if diff:
             add("different_construction", "blocks_ranking", "The portfolios were constructed with different assumptions (" + ", ".join(diff) + "): a difference in performance may be a difference in how they were built, not in what they were built from.", [a["id"] for a in pl])
         mus = {a["config"].get("mu_source") or "historical mean" for a in pl}

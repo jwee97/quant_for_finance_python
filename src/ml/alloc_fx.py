@@ -101,7 +101,8 @@ class FxContext:
     assumption: FxAssumption = field(default_factory=FxAssumption)
     hedge: dict | None = None             # asset -> share of its currency exposure hedged (0..1), default 0
     missing: str = "raise"                # raise | exclude
-    fx_cost_bps: float = 0.0
+    fx_cost_bps: float = 0.0              # cost of converting currency on every trade of a foreign asset, bps of the notional traded (a purchase converts into the currency, a sale back)
+    hedge_cost_bps: float = 0.0           # cost of changing the notional of the forward hedge, bps of the notional changed
 
     def __post_init__(self):
         if self.missing not in ("raise", "exclude"):
@@ -141,8 +142,12 @@ def fx_returns(ctx: FxContext, assets, dates: pd.DatetimeIndex) -> pd.DataFrame:
     return pd.DataFrame(out, index=dates)[list(assets)]
 
 
-def base_returns(local: pd.DataFrame, ctx: FxContext) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
-    """Daily returns in the base currency, ``(1 + R_local)(1 + (1 - k) R_fx) - 1``, the FX return used for each asset-day, and a report of the missing observations."""
+def base_returns(local: pd.DataFrame, ctx: FxContext, apply_hedge: bool = True) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
+    """Daily returns in the base currency, the FX return used for each asset-day, and a report of the missing observations.
+
+    ``apply_hedge=True`` (the allocator's risk estimation): ``(1 + R_local)(1 + (1 - k) R_fx) - 1``, the return of a holding whose currency exposure is hedged to the ratio ``k``: a device for estimating the risk
+    of the hedged book, not a P&L. ``apply_hedge=False`` (what the backtest values the book with): the unhedged ``(1 + R_local)(1 + R_fx) - 1``; the hedge is then an explicit overlay of forward positions
+    (``hedge_overlay``) whose P&L and costs are computed from notionals."""
     ctx.check(list(local.columns))
     fxr = fx_returns(ctx, list(local.columns), local.index)
     k = pd.Series({a: ctx.hedge_of(a) for a in local.columns})
@@ -164,7 +169,7 @@ def base_returns(local: pd.DataFrame, ctx: FxContext) -> tuple[pd.DataFrame, pd.
     if missing and ctx.missing == "raise":
         raise FxError("exchange rates are missing: " + "; ".join(f"{a} ({m['currency']}): {m['days_missing_after_first_rate']} day(s) with no usable rate, {m['days_before_first_rate']} before the first one" for a, m in missing.items())
                       + ". Provide the rates, or set missing='exclude' to drop those asset-days; a missing rate is never taken as no change")
-    eff = fxr.mul(1.0 - k.reindex(fxr.columns), axis=1)
+    eff = fxr.mul(1.0 - k.reindex(fxr.columns), axis=1) if apply_hedge else fxr
     base = (1.0 + local) * (1.0 + eff) - 1.0                                       # NaN fx -> NaN: the asset-day is excluded, not valued at zero FX change
     return base, fxr, {"assets": missing, "policy": ctx.missing}
 
@@ -240,3 +245,122 @@ def prepare(score: pd.DataFrame, returns: pd.DataFrame, ctx: FxContext, horizon:
               "quote": "base_per_local (base units per one unit of the instrument's currency)", "identity": "1 + R_base = (1 + R_local)(1 + (1 - k) R_fx)", "forecast_conversion": conv, "missing": miss, "fx_cost_bps": ctx.fx_cost_bps,
               "excluded_asset_days": int(exclude.sum().sum())}
     return base_score, base_ret, inv, report
+
+
+# ------------------------------------------------------------------------------------------------------------ configuration, costs, explicit hedge positions
+SPEC_KEYS = {"base", "currencies", "hedge", "cost_bps", "hedge_cost_bps", "missing", "assumption", "available_lag_days", "max_stale_days"}
+
+
+def check_spec(spec: dict) -> dict:
+    """Validate a ``backtest.fx`` section and return it with its defaults filled (the base currency is explicit; nothing about an asset's currency is assumed)."""
+    if not isinstance(spec, dict):
+        raise FxError("fx must be an object")
+    extra = set(spec) - SPEC_KEYS
+    if extra:
+        raise FxError(f"fx has no setting {sorted(extra)}; the settings are {sorted(SPEC_KEYS)}")
+    base = str(spec.get("base") or "").upper()
+    if len(base) != 3 or not base.isalpha():
+        raise FxError("fx.base is the base (reporting) currency as a three-letter code, for example USD")
+    ccy = spec.get("currencies")
+    if not isinstance(ccy, dict) or not ccy:
+        raise FxError("fx.currencies maps every ticker to the currency it trades in, for example {\"NVDA\": \"USD\", \"SAP.DE\": \"EUR\"}: a currency is never assumed")
+    ccy = {str(a).upper(): str(c).upper() for a, c in ccy.items()}
+    if any(len(c) != 3 or not c.isalpha() for c in ccy.values()):
+        raise FxError("every currency is a three-letter code")
+    hedge = spec.get("hedge", 0.0)
+    if isinstance(hedge, dict):
+        hedge = {str(a).upper(): float(v) for a, v in hedge.items()}
+        ok = all(0.0 <= v <= 1.0 for v in hedge.values())
+    else:
+        hedge = float(hedge or 0.0)
+        ok = 0.0 <= hedge <= 1.0
+    if not ok:
+        raise FxError("a hedge ratio is between 0 and 1")
+    out = {"base": base, "currencies": ccy, "hedge": hedge, "cost_bps": float(spec.get("cost_bps", 0.0)), "hedge_cost_bps": float(spec.get("hedge_cost_bps", 0.0)), "missing": str(spec.get("missing", "raise")),
+           "assumption": str(spec.get("assumption", "random_walk")), "available_lag_days": int(spec.get("available_lag_days", 0)), "max_stale_days": int(spec.get("max_stale_days", 5))}
+    if out["cost_bps"] < 0 or out["hedge_cost_bps"] < 0 or out["available_lag_days"] < 0 or out["max_stale_days"] < 0:
+        raise FxError("costs, the availability lag and the stale limit are not negative")
+    if out["missing"] not in ("raise", "exclude"):
+        raise FxError("fx.missing is raise or exclude")
+    if out["assumption"] != "random_walk":
+        raise FxError("fx.assumption: a forecast is converted with a random-walk exchange rate (expected FX change 0); a supplied FX forecast is available through the Python interface only")
+    return out
+
+
+def context_from_spec(spec: dict, table: FxTable) -> FxContext:
+    s = check_spec(spec)
+    hedge = s["hedge"] if isinstance(s["hedge"], dict) else {a: s["hedge"] for a, c in s["currencies"].items() if c != s["base"]}
+    return FxContext(table, s["currencies"], FxAssumption(s["assumption"]), hedge, s["missing"], s["cost_bps"], s["hedge_cost_bps"])
+
+
+def per_asset_bps(ctx: FxContext, base_bps: float, assets) -> dict:
+    """The one-way cost of each asset for the backtest's linear cost model: the trading cost, plus the currency-conversion cost on every foreign asset (a purchase converts base into the currency and a sale back)."""
+    foreign = set(ctx.foreign(list(assets)))
+    return {a: float(base_bps) + (ctx.fx_cost_bps if a in foreign else 0.0) for a in assets}
+
+
+def hedge_overlay(held: pd.DataFrame, trades: pd.DataFrame, fxr: pd.DataFrame, ctx: FxContext) -> dict:
+    """Explicit forward hedge positions on the book's currency exposure, with their own cash flows.
+
+    At each close the notional hedged in currency ``c`` is ``sum_i k_i w_i`` over the assets trading in ``c`` (``w`` the book held at that close, ``k`` the hedge ratio): it is struck on days the book traded and
+    left fixed in between (the exposure then drifts away from the hedge, and the residual is reported). The overlay sells ``c`` forward: it earns ``-N_{t-1} R_fx,t`` on day ``t`` (settled daily, as a futures-style
+    mark: no discounting) and pays ``hedge_cost_bps`` of the notional changed. Forward points (the interest-rate differential) are NOT modelled: no financing rates are available to the platform, so the carry of
+    the hedge is zero here and the overlay is not exchange-accurate; the report says so. Returns the daily P&L, cost, notionals by currency and the residual unhedged exposure."""
+    assets = list(held.columns)
+    foreign = ctx.foreign(assets)
+    ccys = sorted({ctx.currencies[a] for a in foreign})
+    if not foreign or not any(ctx.hedge_of(a) > 0 for a in foreign):
+        z = pd.Series(0.0, index=held.index)
+        return {"pnl": z, "cost": z, "notional": pd.DataFrame(0.0, index=held.index, columns=ccys), "residual_exposure": pd.DataFrame(0.0, index=held.index, columns=ccys), "active": False}
+    k = pd.Series({a: ctx.hedge_of(a) for a in foreign})
+    exposure = pd.DataFrame({c: held[[a for a in foreign if ctx.currencies[a] == c]].mul(k[[a for a in foreign if ctx.currencies[a] == c]], axis=1).sum(axis=1) for c in ccys}, index=held.index)
+    traded = trades.reindex(index=held.index, columns=assets).abs().sum(axis=1) > 1e-12
+    notional = exposure.where(traded).ffill().fillna(0.0)
+    notional.iloc[0] = exposure.iloc[0] if bool(traded.iloc[0]) else 0.0
+    fx_by_ccy = pd.DataFrame({c: fxr[[a for a in foreign if ctx.currencies[a] == c][0]] for c in ccys}, index=held.index).fillna(0.0)
+    pnl = -(notional.shift(1).fillna(0.0) * fx_by_ccy).sum(axis=1)
+    cost = notional.diff().abs().fillna(notional.abs()).sum(axis=1) * ctx.hedge_cost_bps / 1e4
+    total_exposure = pd.DataFrame({c: held[[a for a in foreign if ctx.currencies[a] == c]].sum(axis=1) for c in ccys}, index=held.index)
+    return {"pnl": pnl, "cost": cost, "notional": notional, "residual_exposure": total_exposure - notional, "active": True}
+
+
+def coverage(table: FxTable, assets_ccy: dict, dates: pd.DatetimeIndex) -> dict:
+    """Missing-data diagnostics per currency: how much of the asset calendar has a usable rate, the longest run without one, and the first and last usable date."""
+    out = {}
+    for c in sorted({c for c in assets_ccy.values() if c != table.base}):
+        u = table.usable(c, dates)
+        ok = u.notna()
+        run = longest = 0
+        for v in ok.to_numpy():
+            run = 0 if v else run + 1
+            longest = max(longest, run)
+        out[c] = {"days": int(len(dates)), "usable": int(ok.sum()), "coverage": float(ok.mean()) if len(dates) else None, "longest_gap_days": int(longest),
+                  "first": None if not ok.any() else str(ok[ok].index[0].date()), "last": None if not ok.any() else str(ok[ok].index[-1].date())}
+    return out
+
+
+def report_block(ctx: FxContext, local_returns: pd.DataFrame, fx_ret: pd.DataFrame, held: pd.DataFrame, trades: pd.DataFrame, overlay: dict, missing: dict, provenance: dict | None) -> dict:
+    """Everything the page shows about currency for one run: the assumptions, exposure and its hedge, the split of return into local and currency parts, the costs, and the data diagnostics."""
+    assets = list(held.columns)
+    att = currency_attribution(held.shift(1).fillna(0.0), local_returns, fx_ret, ctx)
+    ccys = sorted({ctx.currencies[a] for a in assets})
+    exposure = pd.DataFrame({c: held[[a for a in assets if ctx.currencies[a] == c]].sum(axis=1) for c in ccys}, index=held.index)
+    step = max(1, len(held) // 300)
+    idx = held.index[::step]
+    conv_cost = float(fx_cost_series(trades.reindex(columns=assets).fillna(0.0), ctx).sum())
+    hedge_pnl, hedge_cost = float(overlay["pnl"].sum()), float(overlay["cost"].sum())
+    reasons = ["forward points and financing rates are not available: the hedge earns no carry in this model", "rates are daily closes, not executable quotes"]
+    return {"base": ctx.table.base, "currencies": dict(ctx.currencies), "foreign_assets": ctx.foreign(assets), "hedge_ratio": {a: ctx.hedge_of(a) for a in ctx.foreign(assets)},
+            "quote": "base currency per one unit of the instrument's currency", "identity": "1 + R_base = (1 + R_local)(1 + R_fx); hedged overlay P&L = -(notional hedged) x R_fx, settled daily",
+            "forecast_conversion": {"assumption": ctx.assumption.kind, "note": "the expected exchange-rate change over the forecast horizon is zero (a random walk): an assumption, not an estimate"},
+            "exposure": {"latest": {c: float(v) for c, v in exposure.iloc[-1].items()}, "mean": {c: float(v) for c, v in exposure.mean().items()},
+                         "series": {"dates": [str(d.date()) for d in idx], **{c: [float(v) for v in exposure[c].reindex(idx)] for c in ccys}}},
+            "hedge": {"active": bool(overlay["active"]), "notional_latest": {c: float(v) for c, v in overlay["notional"].iloc[-1].items()}, "residual_exposure_latest": {c: float(v) for c, v in overlay["residual_exposure"].iloc[-1].items()},
+                      "pnl_total": hedge_pnl, "cost_total": hedge_cost, "carry": "not modelled", "instrument": "forward positions struck on days the book traded, settled daily"},
+            "attribution": {"local_return_total": att["total_local"], "currency_return_total": att["total_fx"],
+                            "by_currency_local": {c: float(v) for c, v in att["by_currency_local"].sum().items()}, "by_currency_fx": {c: float(v) for c, v in att["by_currency_fx"].sum().items()},
+                            "note": "sums of daily contributions (not compounded); the currency part includes the local-times-currency cross term"},
+            "costs": {"conversion_cost_total": conv_cost, "conversion_cost_bps": ctx.fx_cost_bps, "hedge_cost_total": hedge_cost, "hedge_cost_bps": ctx.hedge_cost_bps,
+                      "note": "the conversion cost is inside the engine's costs (a per-asset rate); the hedge cost and P&L are added to the net result beside it"},
+            "data": {"missing": missing, "coverage": coverage(ctx.table, ctx.currencies, local_returns.index), "series": (provenance or {}).get("series", {}), "assumptions": (provenance or {}).get("assumptions", [])},
+            "exchange_accurate": False, "not_exchange_accurate_because": reasons}

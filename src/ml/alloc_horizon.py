@@ -30,9 +30,45 @@ COV_HORIZON_METHODS = ("linear", "variance_ratio", "multiperiod")
 N0 = 12.0                                   # independent windows at which the direct estimate and the linear one carry equal weight
 
 
-def edge_scale(holding: int, horizon: int) -> float:
-    """Share of the h-day expected return earned over an L-day holding window (evenly within the horizon, nothing beyond it)."""
-    return min(int(holding), int(horizon)) / float(horizon)
+EDGE_MODELS = ("linear", "compound")
+BEYOND = ("zero", "persist")
+FORECAST_SOURCES = ("scaled", "direct")
+
+
+def edge_scale(holding: int, horizon: int, beyond: str = "zero") -> float:
+    """Share of the h-day expected return earned over an L-day holding window. ``zero`` (the default): evenly within the horizon and nothing beyond it, ``min(L, h) / h``. ``persist``: the same daily rate
+    continues past the horizon, ``L / h`` (an assumption nothing in a model trained on an h-day target supports; offered, labelled, and never the default)."""
+    frac = int(holding) / float(horizon) if beyond == "persist" else min(int(holding), int(horizon)) / float(horizon)
+    return frac
+
+
+def scale_expected_return(mu, holding: int, horizon: int, model: str = "linear", beyond: str = "zero"):
+    """Expected simple return over the holding window from the h-day forecast ``mu``.
+
+    Identity versus assumption, kept apart:
+    * IDENTITY: if the daily log return has a constant mean, the expected log return over a window is proportional to its length, and for L = h the forecast needs no scaling at all.
+    * ASSUMPTION ``linear``: the simple return scales the same way (``mu * L / h``): exact to first order, and a small overstatement for large returns (it ignores compounding).
+    * ASSUMPTION ``compound``: ``(1 + mu) ** (L / h) - 1``: exact under a constant daily growth rate.
+    * ASSUMPTION ``zero`` beyond the horizon: the model says nothing about days after h, so none is credited. ``persist`` assumes the rate continues.
+    With a *direct* forecast (a model trained on an L-day target, ``forecast_source = direct``) none of these is used."""
+    frac = edge_scale(holding, horizon, beyond)
+    if model == "compound":
+        return (1.0 + mu).clip(lower=1e-9) ** frac - 1.0
+    return mu * frac
+
+
+def assumptions(holding: int, horizon: int, model: str, beyond: str, cov_method: str, source: str) -> list[str]:
+    """The modelling assumptions behind a decision's expected return and covariance, in words (what is an identity is not listed)."""
+    out = []
+    if source == "direct":
+        out.append(f"the forecast is a direct {horizon}-day forecast of the holding window: no scaling is applied")
+    elif int(holding) != int(horizon):
+        out.append(f"the {horizon}-day forecast is scaled to the {holding}-day holding window ({model} scaling; "
+                   + ("nothing is credited beyond the forecast horizon" if beyond == "zero" else "the same daily rate is assumed to continue beyond the horizon") + ")")
+    out.append({"linear": "returns are uncorrelated through time, so the covariance over the window is the daily covariance times its length",
+                "variance_ratio": "each asset's variance over the window follows its past serial correlation (variance ratio); the correlation between assets is the daily one",
+                "multiperiod": "the covariance is estimated directly from overlapping windows of past returns and shrunk toward the linear estimate by the number of independent windows"}[cov_method])
+    return out
 
 
 def variance_ratio(window: pd.DataFrame, L: int) -> pd.Series:
@@ -94,3 +130,52 @@ def horizon_covariance(daily: pd.DataFrame, window: pd.DataFrame, L: int, method
 def tranche_count(holding: int, every: int) -> int:
     """Staggered tranches alive at once: a tranche is held for L sessions and a new one is opened every ``every`` sessions, so ``ceil(L / every)`` overlap."""
     return max(1, int(math.ceil(int(holding) / max(int(every), 1))))
+
+
+def ledger_replay(targets: pd.DataFrame, returns: pd.DataFrame, frequency: str, lag: int, cost_bps, capital: float = 1.0, cost_on: str = "traded_notional") -> dict:
+    """An independent units-and-cash accounting of a book, for checking an engine's weight-based accounting (cash conservation, trades, costs, P&L).
+
+    The account holds ``units`` of each asset and ``cash``. On a day the (lagged, rebalance-scheduled) target is struck at the close: equity before trading is ``cash + units . price``, costs are
+    ``rate * |units traded| * price`` taken out of equity, and the new units are ``target weight * equity after costs / price``; cash is the rest. Between trades units are fixed, so the book drifts with prices
+    exactly as an account does. ``cost_bps`` is one rate or one per asset. ``cost_on`` is the base the proportional cost is charged on: ``traded_notional`` (physical: a fraction of the value traded at the close) or ``prior_equity`` (the
+    engine's convention, a fraction of the equity at the previous close, subtracted from the day's return; it differs from the physical one by the cost times the day's return, about a hundredth of a cost). Returns the daily equity, net return, cash, costs, traded notional and the largest violation of
+    ``cash + units . price = equity`` and of ``cash >= 0``."""
+    from ..backtest.execution import apply_execution_lag, restrict_to_rebalances
+
+    index = pd.DatetimeIndex(targets.index)
+    cols = list(targets.columns)
+    ret = returns.reindex(index=index, columns=cols).fillna(0.0).to_numpy(dtype=float)
+    sched = restrict_to_rebalances(apply_execution_lag(targets, lag), index, frequency).to_numpy(dtype=float)
+    rate = (pd.Series(float(cost_bps), index=cols) if np.isscalar(cost_bps) else pd.Series(cost_bps).reindex(cols).fillna(0.0)).to_numpy(dtype=float) / 1e4
+    price = np.ones(len(cols))
+    units = np.zeros(len(cols))
+    cash, started, prev_equity = float(capital), False, float(capital)
+    eq_out, cash_out, cost_out, traded_out, ident_err, min_cash = [], [], [], [], 0.0, 0.0
+    for i in range(len(index)):
+        price = price * (1.0 + ret[i])
+        equity = cash + float(units @ price)
+        target = sched[i]
+        cost = 0.0
+        traded = 0.0
+        if np.isfinite(target).any():
+            w = np.nan_to_num(target, nan=0.0)
+            pre_w = (units * price) / equity if equity > 0 else np.zeros(len(cols))
+            dw = np.abs(w - pre_w)
+            cost = float((dw * rate).sum()) * (prev_equity if cost_on == "prior_equity" else equity)
+            traded = float(dw.sum()) * equity
+            equity -= cost
+            units = w * equity / price
+            cash = equity - float(units @ price)
+            started = True
+        elif not started:
+            cash = float(capital)
+        ident_err = max(ident_err, abs(cash + float(units @ price) - (equity if started else cash)))
+        min_cash = min(min_cash, cash)
+        prev_equity = cash + float(units @ price)
+        eq_out.append(prev_equity)
+        cash_out.append(cash)
+        cost_out.append(cost)
+        traded_out.append(traded)
+    eq = pd.Series(eq_out, index=index)
+    return {"equity": eq, "net_return": eq / eq.shift(1).fillna(float(capital)) - 1.0, "cash": pd.Series(cash_out, index=index), "costs": pd.Series(cost_out, index=index) / eq.shift(1).fillna(float(capital)),
+            "traded_notional": pd.Series(traded_out, index=index), "identity_error": float(ident_err), "min_cash": float(min_cash)}

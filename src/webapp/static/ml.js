@@ -61,7 +61,7 @@
 
   Object.assign(M.form, { alWhat: "allocate", alAllocator: "mean_variance", alKind: "return", alCov: "lw_constant_correlation", alCovWindow: "252", alRiskAversion: "5", alCalibrate: "slope", alMinT: "1", alMinW: "0", alMaxW: "60", alLongOnly: true, alCash: false,
     alGross: "1", alTurnover: "", alVolTarget: "", alSector: "", alOptEvery: "", alOnFailure: "risk_only", alTurnPen: "0", alKelly: "0.5", alRebalance: "weekly", alCommission: "5", alSlippage: "2", alProtected: false, alStab: false,
-    alHolding: "1", alLifecycle: "single_book", alCovHorizon: "linear", alCalMethod: "pooled", alInference: "sqrt_horizon", alShrink: "0", alMinEff: "30", alMinNeff: "0", alMinConf: "0", alPreset: "none", alBaseline: "none", alBlend: "none",
+    alHolding: "1", alLifecycle: "single_book", alSource: "scaled", alEdgeModel: "linear", alBeyond: "zero", alFxBase: "none", alFxCcy: "", alFxHedge: "0", alFxCost: "3", alFxHedgeCost: "2", alFxMissing: "raise", alCovHorizon: "linear", alCalMethod: "pooled", alInference: "sqrt_horizon", alShrink: "0", alMinEff: "30", alMinNeff: "0", alMinConf: "0", alPreset: "none", alBaseline: "none", alBlend: "none",
     alAlpha: "0.5", alBlendMax: "1", alMaxChange: "", alSens: false });
   M.alloc = { cat: null, run: null, compare: null, calibration: null, error: "" };
 
@@ -472,7 +472,7 @@
       }
       const before = M.results.allocation;
       await W.request(M, () => [{ modes: ["allocation"], job: true, path: "/api/ml/rebacktest", body: { id: M.cur, name: "allocation-" + f.alAllocator, signal: { method: "portfolio_allocation", holding_period: needNumber(f.alHolding, "Holding period"), allocation: allocationBody(f) },
-        backtest: { rebalance: f.alRebalance, cost_bps: needNumber(f.alCommission, "Commission"), slippage_bps: needNumber(f.alSlippage, "Slippage") } } }], "Allocating and backtesting…");
+        backtest: { rebalance: f.alRebalance, cost_bps: needNumber(f.alCommission, "Commission"), slippage_bps: needNumber(f.alSlippage, "Slippage"), ...fxBody(f) } } }], "Allocating and backtesting…");
       if (M.results.allocation && M.results.allocation !== before) { M.alloc.run = M.results.allocation.data; invalidate(); }
       return;
     }
@@ -614,13 +614,20 @@
     M.alloc.loading = true;
     api("/api/ml/allocation/catalog").then((c) => { M.alloc.cat = c; M.alloc.loading = false; if (isOpen()) Q.renderLab(M); }, (e) => { M.alloc.loading = false; M.alloc.error = e.message; });
   }
+  function fxBody(f) {                                                                       // the currency settings of the backtest, or nothing: a currency is never assumed
+    if (!f.alFxBase || f.alFxBase === "none") return {};
+    const map = {};
+    for (const part of String(f.alFxCcy).split(/[\s,;]+/).filter(Boolean)) { const [t, c] = part.split(":"); if (!t || !c) throw new Error(`Currencies are written TICKER:CCY, for example NVDA:USD, SAP.DE:EUR (not '${part}')`); map[t.toUpperCase()] = c.toUpperCase(); }
+    if (!Object.keys(map).length) throw new Error("Say which currency each ticker trades in (TICKER:CCY): a currency is never assumed.");
+    return { fx: { base: f.alFxBase, currencies: map, hedge: needNumber(f.alFxHedge, "Hedge ratio") / 100, cost_bps: needNumber(f.alFxCost, "Conversion cost"), hedge_cost_bps: needNumber(f.alFxHedgeCost, "Hedge cost"), missing: f.alFxMissing } };
+  }
   function allocationBody(f, forCompare) {
     const preset = f.alPreset && f.alPreset !== "none" ? f.alPreset : null;
     const lim = { long_only: !!f.alLongOnly, cash_allowed: !!f.alCash, min_weight: needNumber(f.alMinW, "Minimum weight") / 100, gross_max: needNumber(f.alGross, "Gross exposure") };
     if (!preset) lim.max_weight = needNumber(f.alMaxW, "Maximum weight") / 100;
     for (const [key, name, field] of [["turnover_max", "Turnover limit", "alTurnover"], ["vol_target", "Volatility target", "alVolTarget"], ["max_sector", "Sector cap", "alSector"]]) { const v = optNumber(f[field], name); if (v !== undefined) lim[key] = v / 100; }
     const a = { forecast_kind: f.alKind, cov_method: f.alCov, cov_window: needNumber(f.alCovWindow, "Risk window"), calibrate: f.alCalibrate, calib_method: f.alCalMethod, calib_asset_min_eff: needNumber(f.alMinEff, "Independent windows per asset"),
-      on_failure: f.alOnFailure, kelly_fraction: needNumber(f.alKelly, "Kelly fraction"), cost_bps: needNumber(f.alCommission, "Commission") + needNumber(f.alSlippage, "Slippage"), cov_horizon: f.alCovHorizon, lifecycle: f.alLifecycle,
+      on_failure: f.alOnFailure, kelly_fraction: needNumber(f.alKelly, "Kelly fraction"), cost_bps: needNumber(f.alCommission, "Commission") + needNumber(f.alSlippage, "Slippage"), cov_horizon: f.alCovHorizon, lifecycle: f.alLifecycle, forecast_source: f.alSource, edge_model: f.alEdgeModel, edge_beyond_horizon: f.alBeyond,
       min_n_eff: needNumber(f.alMinNeff, "Minimum independent observations"), min_confidence: needNumber(f.alMinConf, "Minimum confidence"), sensitivity: !!f.alSens, limits: lim };
     if (preset) a.preset = preset;
     else {
@@ -670,6 +677,11 @@
     h("p", "hint", bt, "Four quantities are kept apart: the prediction horizon (fixed by the model's target), the holding period, how often a new decision is made, and the execution lag (set in the dataset and backtest settings).");
     Q.labField(bt, { key: "alHolding", label: "Holding period (days; 1 = use the forecast horizon, the original behaviour)", kind: "number", step: 1, min: 1, max: 60, help: "The window the optimisation is posed over and, for staggered tranches, how long each tranche is held. The forecast's edge accrues within its own horizon and is not extrapolated beyond it." }, f, after);
     Q.labField(bt, { key: "alLifecycle", label: "Overlapping decisions", kind: "choice", options: [["single_book", "One book, re-optimised at each decision (a new forecast replaces the last)"], ["staggered_tranches", "Staggered tranches, each held for the holding period"]] }, f, after);
+    Q.labField(bt, { key: "alSource", label: "The forecast of the holding window is", kind: "choice", options: [["scaled", "The model's horizon forecast, scaled to the holding window (states its assumption)"], ["direct", "A direct forecast: the model was trained on the holding window itself (no scaling)"]] }, f, after);
+    if (f.alSource === "scaled") {
+      Q.labField(bt, { key: "alEdgeModel", label: "Scaling of a forecast to another window", kind: "choice", options: [["linear", "Linear: the return scales with the window"], ["compound", "Compound: constant daily growth"]] }, f, after);
+      Q.labField(bt, { key: "alBeyond", label: "Days beyond the forecast horizon", kind: "choice", options: [["zero", "No edge is credited (conservative)"], ["persist", "The same daily rate continues (an assumption)"]] }, f, after);
+    }
     Q.labField(bt, { key: "alOptEvery", label: "Decide every (days; blank = the holding period)", kind: "number", step: 1, min: 1, max: 60 }, f, after);
     Q.labField(bt, { key: "alCovHorizon", label: "Risk over the holding window", kind: "choice", options: [["linear", "Daily covariance times the window (the original rule)"], ["variance_ratio", "Adjusted for serial correlation (variance ratio)"], ["multiperiod", "Estimated directly from overlapping windows, shrunk toward the linear one"]] }, f, after);
     const bc = sec("5. Forecast calibration and evidence", false);
@@ -707,6 +719,16 @@
     Q.labField(b4, { key: "alTurnover", label: "Turnover limit per rebalance, % one way (blank = none)", kind: "number", step: 5, min: 0, max: 100 }, f, after);
     Q.labField(b4, { key: "alVolTarget", label: "Volatility target, % a year (blank = none)", kind: "number", step: 1, min: 1, max: 100 }, f, after);
     h("p", "hint", b4, "Limits are checked before the optimiser runs. If no book can satisfy them the decision is reported infeasible and the failure policy applies: a limit is never relaxed silently.");
+    const bf = sec("9. Currency", false);
+    Q.labField(bf, { key: "alFxBase", label: "Base currency (the portfolio is valued in it)", kind: "choice", options: [["none", "Not used: every price is in one currency"], ...["USD", "EUR", "GBP", "JPY", "CHF", "CAD", "AUD", "HKD", "SGD"].map((c) => [c, c])] }, f, again);
+    if (f.alFxBase && f.alFxBase !== "none") {
+      Q.labField(bf, { key: "alFxCcy", label: "Currency of each ticker (TICKER:CCY, separated by commas)", kind: "text", placeholder: "NVDA:USD, SAP.DE:EUR, 7203.T:JPY", help: "A currency is never assumed: every ticker of the experiment must be listed. Exchange rates come from the same market-data source as the prices (pair <currency><base>=X)." }, f, after);
+      Q.labField(bf, { key: "alFxHedge", label: "Hedge ratio of foreign exposure, %", kind: "number", step: 10, min: 0, max: 100, help: "An explicit forward overlay struck when the book trades, settled daily. No forward points or financing rates are available, so it is not exchange-accurate." }, f, after);
+      Q.labField(bf, { key: "alFxCost", label: "Currency conversion cost on foreign trades (bps)", kind: "number", step: 0.5, min: 0, max: 500 }, f, after);
+      Q.labField(bf, { key: "alFxHedgeCost", label: "Hedge cost, bps of the notional changed", kind: "number", step: 0.5, min: 0, max: 500 }, f, after);
+      Q.labField(bf, { key: "alFxMissing", label: "When an exchange rate is missing", kind: "choice", options: [["raise", "Stop and say which (recommended)"], ["exclude", "Leave that stock out on those days"]] }, f, after);
+      h("p", "hint", bf, "A forecast is converted to the base currency with a random-walk exchange rate (expected change 0): an assumption, shown on the page. Only the portfolio-allocation method supports currency conversion.");
+    }
     const b5 = sec("8. Trading", false);
     Q.labField(b5, { key: "alRebalance", label: "Rebalance frequency (when the engine may trade)", kind: "choice", options: [["daily", "Daily"], ["weekly", "Weekly"], ["monthly", "Monthly"]] }, f, after);
     Q.labField(b5, { key: "alCommission", label: "Commission (bps)", kind: "number", step: 0.5, min: 0, max: 250 }, f, after);
@@ -728,6 +750,13 @@
     const c = pa.counts, rec = lastRecord(pa), doc = pa.documentation || {}, bt = (r.config || {}).backtest || {}, costBps = Number(bt.cost_bps || 0) + Number(bt.slippage_bps || 0);
     header(root, `Portfolio allocation: ${doc.label || pa.allocator}`, `${c.decisions} decisions · ${c.optimal} solved · settings ${pa.config_hash} · child of ${shortId(d.parent || "")}`);
     if ((r.warnings || []).length) W.flags(root, r.warnings, "Watch. ");
+    if (Q.research && d.id) {
+      const sv = h("div", "row", root), sb = h("button", "btn", sv, "Save to a research session");
+      sb.type = "button"; sb.dataset.role = "save-allocation-study";
+      sb.addEventListener("click", async () => {
+        try { await Q.research.saveStudy({ experiment: d.id }, { title: `Allocation: ${doc.label || pa.allocator}`, sessionName: "Portfolio allocation" }); } catch (e) { Q.toast("Not saved: " + e.message); }
+      });
+    }
     const k = h("div", "earnrow", root);
     tile(k, "Decisions solved", `${c.optimal} of ${c.decisions}`, { text: c.failure_policy_used ? `${c.failure_policy_used} used the failure policy` : "no fallback used", dir: c.failure_policy_used ? "down" : "" }, "", "A decision with no solution is never hidden: it is counted here and the configured failure policy applies");
     tile(k, "Forecast had no edge", String(c.no_edge + c.insufficient_history), { text: "book set by risk and limits alone", dir: "" }, "", "The calibration slope was not distinguishable from zero (or there was too little past outcome history), so the forecast was not used as a return");
@@ -772,7 +801,8 @@
       const hh = W.card(root, "Horizon, holding and decisions", "Four separate quantities: the horizon the model forecasts, how long a position is meant to be held, how often a decision is made, and the execution lag.");
       table(hh, [{ label: "Quantity", get: (x) => x[0] }, { label: "Value", get: (x) => x[1] }], [["Prediction horizon", `${hz.forecast_days || pa.holding_window_days} days`], ["Holding window", `${hz.holding_days || pa.holding_window_days} days${hz.edge_scale !== undefined ? ` (the edge is scaled by ${sig(hz.edge_scale, 2)}: it accrues within the horizon, not beyond it)` : ""}`],
         ["Decision every", `${hz.decision_every || pa.opt_every} days`], ["Execution lag", `${hz.lag ?? pa.lag} day(s)`], ["Overlapping decisions", hz.lifecycle === "staggered_tranches" ? `staggered tranches: ${hz.tranches} alive at once, each held ${hz.holding_days} days` : "one book; each new decision replaces the last"],
-        ["Risk over the window", ((hz.covariance || {}).method || "linear") + ((hz.covariance || {}).fallback ? ": " + hz.covariance.fallback : "")]]);
+        ["Risk over the window", ((hz.covariance || {}).method || "linear") + ((hz.covariance || {}).fallback ? ": " + hz.covariance.fallback : "")],
+        ["Modelling assumptions", (hz.assumptions || []).join(" · ") || "none beyond the daily covariance times the window"]]);
       const covs = rec.covariance_window, cor = rec.correlation;
       if (cor && names.length > 1) {
         const cr = W.card(root, "Covariance and correlation used", "Estimated only from returns before the decision date, over the holding window. Correlation is what makes two stocks one bet; volatility is what each adds on its own.");
@@ -803,9 +833,28 @@
         table(cs, [{ label: "Commission + slippage (bps)", num: true, get: (x) => sig(x.cost_bps, 1) }, { label: "Turnover penalty", num: true, get: (x) => sig(x.turnover_penalty, 1) }, ...names.map((a) => ({ label: a, num: true, get: (x) => (x.weights ? pct(x.weights[a], 1) : "n/a") })), { label: "Turnover from the previous book", num: true, get: (x) => (Q.bad(x.turnover) ? "n/a" : pct(x.turnover, 1)) }], sn.costs);
       }
     }
+    if (r.fx) allocationFx(root, r.fx);
     const cd = W.card(root, "The allocator", `${doc.label || ""}`);
     table(cd, [{ label: "Objective", get: (x) => x[0] }, { label: "Detail", get: (x) => x[1] }], [["Objective", doc.objective], ["Assumes", doc.assumptions], ["Needs", doc.needs], ["Fails when", doc.failure], ["Reads the forecast", doc.uses_forecast ? "yes" : "no: risk-only"],
       ["Risk model", `${(pa.config || {}).cov_method} over ${(pa.config || {}).cov_window} days (only observations before each decision)`], ["Failure policy", (pa.config || {}).on_failure], ["Limits", JSON.stringify((pa.config || {}).limits)]]);
+  }
+  function allocationFx(root, x) {
+    const c = W.card(root, `Currency and FX (base ${x.base})`, `Quotation: ${x.quote}. ${x.identity}.`);
+    c.setAttribute("data-allocation-fx", x.base);
+    if (!x.exchange_accurate) W.flags(root, [`Not exchange-accurate: ${(x.not_exchange_accurate_because || []).join("; ")}.`], "Assumption. ");
+    const ccys = Object.keys(x.exposure.latest);
+    table(c, [{ label: "Currency", get: (k) => k }, { label: "Exposure now", num: true, get: (k) => pct(x.exposure.latest[k], 1) }, { label: "Mean exposure", num: true, get: (k) => pct(x.exposure.mean[k], 1) },
+      { label: "Hedge notional now", num: true, get: (k) => (x.hedge.notional_latest[k] === undefined ? "—" : pct(x.hedge.notional_latest[k], 1)) }, { label: "Unhedged now", num: true, get: (k) => (x.hedge.residual_exposure_latest[k] === undefined ? "—" : pct(x.hedge.residual_exposure_latest[k], 1)) },
+      { label: "Local-currency return (sum)", num: true, get: (k) => spct(x.attribution.by_currency_local[k], 2) }, { label: "Currency return (sum)", num: true, get: (k) => spct(x.attribution.by_currency_fx[k], 2) }], ccys);
+    table(c, [{ label: "Item", get: (r2) => r2[0] }, { label: "Value", get: (r2) => r2[1] }], [["Forecast conversion", `${x.forecast_conversion.assumption}: ${x.forecast_conversion.note}`], ["Hedge", x.hedge.active ? `${x.hedge.instrument}; carry ${x.hedge.carry}` : "none"],
+      ["Hedge P&L / cost", `${spct(x.hedge.pnl_total, 2)} / ${pct(x.hedge.cost_total, 3)}`], ["Currency conversion cost", `${pct(x.costs.conversion_cost_total, 3)} at ${sig(x.costs.conversion_cost_bps, 1)} bps (inside the backtest's costs)`],
+      ["Hedge ratio", Object.entries(x.hedge_ratio).map(([a, v]) => `${a} ${pct(v, 0)}`).join(", ") || "none"], ["Sources", Object.values((x.data || {}).series || {}).map((s2) => `${s2.symbol} (${s2.provider}, ${s2.first} to ${s2.last}, ${s2.observations} days)`).join("; ") || "none"]]);
+    table(c, [{ label: "Currency", get: (k) => k }, { label: "Usable days", num: true, get: (k) => `${x.data.coverage[k].usable} of ${x.data.coverage[k].days}` }, { label: "Coverage", num: true, get: (k) => pct(x.data.coverage[k].coverage, 1) },
+      { label: "Longest gap (days)", num: true, get: (k) => String(x.data.coverage[k].longest_gap_days) }, { label: "First usable", get: (k) => x.data.coverage[k].first || "none" }, { label: "Last usable", get: (k) => x.data.coverage[k].last || "none" }], Object.keys(x.data.coverage || {}));
+    for (const m2 of Object.entries(((x.data || {}).missing || {}).assets || {})) W.hint(c, `${m2[0]} (${m2[1].currency}): ${m2[1].days_missing_after_first_rate} day(s) with no usable rate after the first one, ${m2[1].days_before_first_rate} before it (policy: ${x.data.missing.policy}).`);
+    for (const a of (x.data || {}).assumptions || []) W.hint(c, a);
+    const ex = x.exposure.series;
+    if (ex.dates.length > 1) { const ch = h("div", "charts", root); chartCard(ch, "Currency exposure through time", "Share of the book in each currency (before the hedge).", { draw: (b) => C.line(b, { dates: ex.dates, series: ccys.map((k, i) => ({ name: k, color: expColor(i), values: ex[k] })), baseline: 0, yFormat: pctTick, tipFormat: (v) => pct(v, 1), height: 200, label: "Currency exposure" }), table: (b) => table(b, [{ label: "Date", get: (i) => ex.dates[i] }, ...ccys.map((k) => ({ label: k, num: true, get: (i) => pct(ex[k][i], 1) }))], ex.dates.map((_, i) => i).filter((i) => i % 10 === 0)) }); }
   }
   function allocationCompare(root, o) {
     const sel = o.select_on, rows = o.allocators.concat(o.table.existing_rule ? ["existing_rule"] : []).filter((k, i, arr) => arr.indexOf(k) === i && o.table[k]);

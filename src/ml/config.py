@@ -152,6 +152,9 @@ def validate(cfg: dict) -> dict:
             sig["allocation"] = alloc_cfg
         elif alloc_cfg.get("holding_days") is not None:
             sig["holding_period"] = int(alloc_cfg["holding_days"])                      # one number for the holding window: the allocation's, shown in the signal section as well
+        if alloc_cfg.get("forecast_source") == "direct":
+            hd = alloc_cfg.get("holding_days")
+            _check(hd is None or int(hd) == int(d["horizon"]), f"a direct holding-horizon forecast must be a forecast of the holding window: the model's target is {int(d['horizon'])} trading days and the holding window is {hd}. Train on fwd_ret_{hd} (dataset.horizon {hd}) or use forecast_source 'scaled'")
         if alloc_cfg.get("lifecycle") == "staggered_tranches" and alloc_cfg.get("holding_days") is None:
             alloc_cfg["holding_days"] = hp                                              # a tranche lives for the signal's holding period
             sig["allocation"] = alloc_cfg
@@ -170,6 +173,16 @@ def validate(cfg: dict) -> dict:
         for k in ("cost_bps", "window_days", "label_offset", "rebalance", "lag_total"):
             sig.pop(k, None)
     _check(d.get("regime_detector") in (None, "vol_state", "hmm", "gmm"), "dataset.regime_detector must be null, vol_state, hmm or gmm")
+    if bt.get("fx") is not None:                                                       # optional, absent from the defaults so that no existing configuration hash changes
+        from . import alloc_fx
+
+        try:
+            bt["fx"] = alloc_fx.check_spec(bt["fx"])
+        except alloc_fx.FxError as exc:
+            raise MLConfigError(f"backtest.fx: {exc}") from None
+        _check(sig["method"] == "portfolio_allocation", "backtest.fx (currency conversion) is supported by the portfolio-allocation method only")
+        for t in (d["universe"] if isinstance(d["universe"], list) else []):
+            _check(str(t).upper() in bt["fx"]["currencies"], f"backtest.fx.currencies does not say which currency {t} trades in: a currency is never assumed")
     if d.get("sessions") is not None:                                                  # optional, and absent from the defaults so that no existing configuration hash changes
         from .sessions import SessionError, validate_settings
 

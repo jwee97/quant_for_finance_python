@@ -126,7 +126,7 @@ SPEC = {
                "decision_max_holding": ("int", 1, 500), "decision_cooldown": ("int", 0, 60), "decision_rebalance_days": ("int", 1, 60), "decision_resize_band": ("float", 0.0, 5.0),
                "decision_horizon": ("int", 1, 252), "decision_min_edge_bps": ("float", 0.0, 1000.0), "decision_forecast_is_return": ("bool",), "allocation": ("allocation",)},
     "backtest": {"rebalance": ("choice", ("daily", "weekly", "monthly", "on_change")), "cost_bps": ("float", 0.0, 250.0), "slippage_bps": ("float", 0.0, 250.0), "target_vol": ("float", 0.01, 1.0), "max_leverage": ("float", 0.5, 5.0),
-                 "extra_lag": ("int", 0, 20)},
+                 "extra_lag": ("int", 0, 20), "fx": ("fx",)},
     "execution": {"mode": ("choice", ("vectorized_legacy", "realistic_cash_equity")), "capital": ("float", 1_000.0, 1e12), "max_participation": ("float", 0.001, 1.0), "adv_window": ("int", 5, 250),
                   "commission_bps": ("float", 0.0, 250.0), "half_spread_bps": ("float", 0.0, 250.0), "slippage_bps": ("float", 0.0, 250.0), "impact_coefficient": ("float", 0.0, 5.0),
                   "sizing": ("choice", ("decision_close", "fill_time")), "min_trade_weight": ("float", 0.0, 0.2), "expiry_sessions": ("int", 1, 20), "cash_rate": ("float", 0.0, 0.5),
@@ -141,7 +141,7 @@ ALLOCATION_SPEC = {"allocator": ("choice", palloc.ALLOCATORS), "forecast_kind": 
                    "cov_method": ("choice", tuple(palloc.rm.METHODS)), "cov_window": ("int", 60, 1000), "cov_halflife": ("float", 5.0, 500.0), "cov_min_obs": ("int", 20, 1000),
                    "risk_aversion": ("float", 0.01, 1000.0), "tau": ("float", 0.001, 1.0), "kelly_fraction": ("float", 0.05, 1.0), "kelly_min_t": ("float", 0.0, 10.0), "cvar_alpha": ("float", 0.8, 0.99),
                    "robust_kappa": ("float", 0.0, 10.0), "opt_every": ("int", 1, 60), "cost_bps": ("float", 0.0, 250.0), "turnover_penalty": ("float", 0.0, 100.0), "on_failure": ("choice", palloc.FAILURE_POLICIES),
-                   "holding_days": ("int", 1, 252), "lifecycle": ("choice", palloc.LIFECYCLES), "cov_horizon": ("choice", palloc.hz.COV_HORIZON_METHODS),
+                   "holding_days": ("int", 1, 252), "lifecycle": ("choice", palloc.LIFECYCLES), "forecast_source": ("choice", palloc.hz.FORECAST_SOURCES), "edge_model": ("choice", palloc.hz.EDGE_MODELS), "edge_beyond_horizon": ("choice", palloc.hz.BEYOND), "cov_horizon": ("choice", palloc.hz.COV_HORIZON_METHODS),
                    "calib_method": ("choice", palloc.cal.METHODS), "calib_inference": ("choice", palloc.cal.INFERENCE), "calib_asset_min_eff": ("float", 5.0, 1000.0), "calib_prior_sd": ("float", 0.01, 5.0),
                    "baseline": ("choice", palloc.stab.BASELINES), "blend": ("choice", palloc.stab.BLENDS), "blend_alpha": ("float", 0.0, 1.0), "blend_max": ("float", 0.0, 1.0), "blend_window": ("int", 5, 500),
                    "blend_min_obs": ("int", 3, 500), "uncertainty_shrink": ("float", 0.0, 5.0), "min_n_eff": ("float", 0.0, 10000.0), "min_confidence": ("float", 0.0, 1.0), "max_weight_change": ("float", 0.001, 1.0),
@@ -195,6 +195,24 @@ def _clean_allocation(path: str, raw) -> dict:
     except palloc.AllocationError as exc:
         raise ApiError(f"{path}: {exc}") from None
     return out
+
+
+def _clean_fx(path: str, raw) -> dict:
+    """The ``backtest.fx`` section: the base currency, the currency of every ticker, the hedge ratio, the conversion and hedge costs and the missing-rate policy, each checked here and the whole by the FX module."""
+    from ..ml import alloc_fx
+
+    if not isinstance(raw, dict):
+        raise ApiError(f"{path} must be an object")
+    ranges = {"cost_bps": (0.0, 500.0), "hedge_cost_bps": (0.0, 500.0), "available_lag_days": (0, 10), "max_stale_days": (0, 30)}
+    for k, (lo, hi) in ranges.items():
+        if raw.get(k) is not None:
+            _num(f"{path}.{k}", raw[k], lo, hi, k.endswith("days"))
+    if isinstance(raw.get("currencies"), dict) and len(raw["currencies"]) > MAX_TICKERS:
+        raise ApiError(f"{path}.currencies names at most {MAX_TICKERS} tickers")
+    try:
+        return alloc_fx.check_spec(raw)
+    except alloc_fx.FxError as exc:
+        raise ApiError(f"{path}: {exc}") from None
 
 
 def _id(q: dict, key: str = "id") -> str:
@@ -379,6 +397,8 @@ class MlApi(AdvancedRoutes, SelectionRoutes, StrategyRoutes, ResearchRoutes):
                 out[key] = value
             elif kind == "allocation":
                 out[key] = _clean_allocation(path, value)
+            elif kind == "fx":
+                out[key] = _clean_fx(path, value)
             elif kind == "states":
                 if not isinstance(value, list) or not value or len(value) > 5:
                     raise ApiError(f"{path} must be a list of regime state numbers")
@@ -640,7 +660,7 @@ class MlApi(AdvancedRoutes, SelectionRoutes, StrategyRoutes, ResearchRoutes):
         lim = palloc.Limits()
         return jsonable({"version": palloc.VERSION, "allocators": [{"key": k, **palloc.DOCS[k]} for k in palloc.ALLOCATORS], "forecast_kinds": list(palloc.FORECAST_KINDS), "failure_policies": list(palloc.FAILURE_POLICIES),
                          "risk_models": list(palloc.rm.METHODS), "defaults": palloc.asdict(base), "limit_defaults": palloc.asdict(lim),
-                         "lifecycles": list(palloc.LIFECYCLES), "cov_horizon_methods": list(palloc.hz.COV_HORIZON_METHODS), "calibration_methods": list(palloc.cal.METHODS), "calibration_inference": list(palloc.cal.INFERENCE),
+                         "lifecycles": list(palloc.LIFECYCLES), "forecast_sources": list(palloc.hz.FORECAST_SOURCES), "edge_models": list(palloc.hz.EDGE_MODELS), "edge_beyond": list(palloc.hz.BEYOND), "cov_horizon_methods": list(palloc.hz.COV_HORIZON_METHODS), "calibration_methods": list(palloc.cal.METHODS), "calibration_inference": list(palloc.cal.INFERENCE),
                          "baselines": list(palloc.stab.BASELINES), "blends": list(palloc.stab.BLENDS), "presets": {k: {"description": v["description"], "allocation": v["allocation"], "limits": v["limits"]} for k, v in palloc.stab.PRESETS.items()},
                          "horizon_note": "Four quantities are kept apart: the prediction horizon (dataset.horizon), the holding window (holding days), the decision frequency (opt_every) and the execution lag (dataset.lag + backtest.extra_lag).",
                          "note": "The default signal method is unchanged: portfolio allocation is used only when it is selected. Equal weight stays available as the benchmark and as an allocator."})

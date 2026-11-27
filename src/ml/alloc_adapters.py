@@ -98,3 +98,85 @@ def raw_book(key: str, mu: pd.Series, cov_w: pd.DataFrame, scenarios: np.ndarray
             raise ValueError(f"the robust CVaR programme failed: {out['message']}")
         return out["weights"].reindex(names)
     raise ValueError(f"unknown adapter '{key}'")
+
+
+# ------------------------------------------------------------------------------------------------------------ robustness diagnostics
+def cluster_labels(key: str, cov: pd.DataFrame) -> np.ndarray:
+    """The cluster partition HERC or NCO would use for this covariance (Ward linkage on the correlation distance, the number of clusters chosen by silhouette: the libraries' own rules)."""
+    from scipy.cluster.hierarchy import fcluster, linkage
+    from scipy.spatial.distance import squareform
+
+    from ..portfolio.covariance import nearest_positive_definite
+    from ..portfolio.hierarchical import choose_number_of_clusters, correlation_distance, correlation_matrix
+
+    if key not in ("herc", "nco", "nco_max_sharpe"):
+        raise ValueError("cluster labels exist for herc and nco only")
+    c = nearest_positive_definite(cov)
+    dist = correlation_distance(correlation_matrix(c)).to_numpy(dtype=float)
+    link = linkage(squareform(dist, checks=False), method="ward")
+    k = choose_number_of_clusters(link, dist, (2, 6) if key == "herc" else (2, 8))
+    return fcluster(link, t=k, criterion="maxclust")
+
+
+def cluster_stability(returns: pd.DataFrame, key: str = "herc", window: int = 252, step: int = 21, n_boot: int = 60, seed: int = 0) -> dict:
+    """How stable the clusters (and the books built on them) are, on a real or simulated panel.
+
+    Through time: the partition at every ``step``-th date from the trailing ``window`` days, and the adjusted Rand index between consecutive partitions (1 = identical grouping) and the turnover of the book.
+    Within a date: the partition of ``n_boot`` stationary-bootstrap resamples of that window against the partition of the window itself. A partition that changes between neighbouring dates or under resampling
+    is a discontinuity in the book that the data do not justify."""
+    from sklearn.metrics import adjusted_rand_score
+
+    from ..probability.resampling import bootstrap_indices
+
+    cols = list(returns.columns)
+    book = "herc" if key == "herc" else "nco"
+    dates = list(range(window, len(returns), step))
+    labs, books, ks = [], [], []
+    for i in dates:
+        w = returns.iloc[i - window:i].dropna(how="any")
+        if len(w) < window // 2:
+            continue
+        cov = w.cov()
+        labs.append(cluster_labels(key, cov))
+        books.append(raw_book(book, pd.Series(0.0, index=cols), cov * 5.0, None, 5.0, 0.0, 1.0, cols).to_numpy())
+        ks.append(int(len(set(labs[-1]))))
+    if len(labs) < 3:
+        return {"error": "too few dates to judge stability"}
+    ari_t = [adjusted_rand_score(labs[j - 1], labs[j]) for j in range(1, len(labs))]
+    turnover = [float(np.abs(books[j] - books[j - 1]).sum() / 2.0) for j in range(1, len(books))]
+    rng = np.random.default_rng(seed)
+    boot_ari, boot_w = [], []
+    last = returns.iloc[len(returns) - window:].dropna(how="any")
+    base_lab = cluster_labels(key, last.cov())
+    base_w = raw_book(book, pd.Series(0.0, index=cols), last.cov() * 5.0, None, 5.0, 0.0, 1.0, cols).to_numpy()
+    for _ in range(n_boot):
+        idx = bootstrap_indices(len(last), "stationary", 10.0, int(rng.integers(0, 2 ** 31 - 1)))
+        b = last.iloc[idx]
+        boot_ari.append(adjusted_rand_score(base_lab, cluster_labels(key, b.cov())))
+        boot_w.append(raw_book(book, pd.Series(0.0, index=cols), b.cov() * 5.0, None, 5.0, 0.0, 1.0, cols).to_numpy())
+    bw = np.array(boot_w)
+    return {"key": key, "window": window, "dates": len(labs), "clusters": {"min": int(min(ks)), "max": int(max(ks)), "mean": float(np.mean(ks))},
+            "consecutive_ari": {"mean": float(np.mean(ari_t)), "p10": float(np.quantile(ari_t, 0.1)), "share_changed": float(np.mean(np.array(ari_t) < 0.999))},
+            "book_turnover_between_dates": {"mean": float(np.mean(turnover)), "p90": float(np.quantile(turnover, 0.9))},
+            "bootstrap": {"draws": n_boot, "ari_mean": float(np.mean(boot_ari)), "ari_p10": float(np.quantile(boot_ari, 0.1)), "weight_sd_mean": float(bw.std(axis=0, ddof=1).mean()),
+                          "weight_l1_distance_to_full_sample_mean": float(np.abs(bw - base_w).sum(axis=1).mean())}}
+
+
+def wasserstein_radius_sensitivity(scenarios: np.ndarray, names: list, relative_radii=(0.0, 0.02, 0.05, 0.1, 0.2, 0.5, 1.0), alpha: float = 0.95, lb: float = 0.0, ub: float = 1.0) -> dict:
+    """The Wasserstein-robust CVaR book across ambiguity radii, in units of the mean scenario standard deviation (the adapter uses 0.1). Reports each book, its worst-case and empirical CVaR and its concentration,
+    so that the choice of radius is visible instead of buried. The radius is an assumption about how wrong the scenarios may be; nothing here estimates it."""
+    from ..portfolio.robust_wasserstein import wasserstein_cvar_weights
+
+    scale = float(np.mean(np.std(scenarios, axis=0, ddof=1)))
+    rows = []
+    for r in relative_radii:
+        out = wasserstein_cvar_weights(pd.DataFrame(scenarios, columns=names), eps=r * scale, alpha=alpha, lb=lb, ub=ub)
+        w = out["weights"].reindex(names)
+        hhi = float((w ** 2).sum())
+        rows.append({"relative_radius": float(r), "eps": float(r * scale), "ok": bool(out["ok"]), "weights": {str(k): float(v) for k, v in w.items()}, "worst_case_cvar": out["worst_case_cvar"], "empirical_cvar": out["empirical_cvar"],
+                     "effective_n": 1.0 / hhi if hhi > 0 else None, "gap": out["gap"]})
+    w0 = np.array(list(rows[0]["weights"].values()))
+    for row in rows:
+        row["l1_distance_from_radius_zero"] = float(np.abs(np.array(list(row["weights"].values())) - w0).sum())
+    return {"scenario_scale": scale, "alpha": alpha, "rows": rows, "adapter_relative_radius": 0.1,
+            "note": "the radius is an assumption about model error, not an estimate; a larger radius asks for a less concentrated book and a larger worst-case loss"}

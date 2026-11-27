@@ -133,6 +133,9 @@ class AllocConfig:
     holding_days: int | None = None            # intended holding window L; None: the forecast horizon
     lifecycle: str = "single_book"             # single_book: one book re-optimised at each decision | staggered_tranches: overlapping tranches, each held L sessions
     cov_horizon: str = "linear"                # linear | variance_ratio | multiperiod
+    forecast_source: str = "scaled"            # scaled: the h-day forecast is scaled to the holding window | direct: the model's target IS the holding window (no scaling; refused if they differ)
+    edge_model: str = "linear"                 # linear | compound: how a forecast is scaled to another window
+    edge_beyond_horizon: str = "zero"          # zero | persist: whether edge is credited for days beyond the forecast horizon
     # forecast calibration beyond the pooled baseline (see alloc_calibration)
     calib_method: str = "pooled"               # pooled | asset | partial_pooling | sector_pooling | regularized
     calib_inference: str = "sqrt_horizon"      # sqrt_horizon (legacy) | hac | block_bootstrap
@@ -164,7 +167,7 @@ class AllocConfig:
         return hashlib.sha256(json.dumps(self.content(), sort_keys=True, default=str).encode()).hexdigest()[:16]
 
 
-_NEW_DEFAULTS = {"holding_days": None, "lifecycle": "single_book", "cov_horizon": "linear", "calib_method": "pooled", "calib_inference": "sqrt_horizon", "calib_asset_min_eff": 30.0, "calib_prior_sd": 0.5,
+_NEW_DEFAULTS = {"holding_days": None, "lifecycle": "single_book", "cov_horizon": "linear", "forecast_source": "scaled", "edge_model": "linear", "edge_beyond_horizon": "zero", "calib_method": "pooled", "calib_inference": "sqrt_horizon", "calib_asset_min_eff": 30.0, "calib_prior_sd": 0.5,
                  "baseline": "none", "blend": "none", "blend_alpha": 0.5, "blend_max": 1.0, "blend_window": 24, "blend_min_obs": 12, "uncertainty_shrink": 0.0, "min_n_eff": 0.0, "min_confidence": 0.0,
                  "max_weight_change": None, "sensitivity": False, "preset": None}
 _LIMIT_KEYS = set(Limits.__dataclass_fields__)
@@ -229,6 +232,8 @@ def check_config(c: AllocConfig) -> None:
         raise AllocationError("calib_asset_min_eff is at least 5 independent windows and calib_prior_sd is positive")
     if c.lifecycle not in LIFECYCLES:
         raise AllocationError(f"lifecycle must be one of {list(LIFECYCLES)}")
+    if c.forecast_source not in hz.FORECAST_SOURCES or c.edge_model not in hz.EDGE_MODELS or c.edge_beyond_horizon not in hz.BEYOND:
+        raise AllocationError(f"forecast_source must be one of {list(hz.FORECAST_SOURCES)}, edge_model one of {list(hz.EDGE_MODELS)} and edge_beyond_horizon one of {list(hz.BEYOND)}")
     if c.cov_horizon not in hz.COV_HORIZON_METHODS:
         raise AllocationError(f"cov_horizon must be one of {list(hz.COV_HORIZON_METHODS)}")
     lim = c.limits
@@ -947,6 +952,9 @@ def run(score: pd.DataFrame, returns: pd.DataFrame, investable: pd.DataFrame | N
         if cfg.forecast_kind == "price":
             cfg = replace(cfg, forecast_kind="return")
     L = int(cfg.holding_days) if cfg.holding_days else h                              # the window the optimisation is posed over: the holding window, or the forecast horizon when none is set
+    if cfg.forecast_source == "direct" and L != h:
+        raise AllocationError(f"a direct holding-horizon forecast must be a forecast of the holding window: the model's target is {h} trading days and the holding window is {L}. Train on fwd_ret_{L} "
+                              f"(dataset.horizon {L}) or use forecast_source 'scaled', which states its scaling assumption")
     every = int(cfg.opt_every or L)
     K = hz.tranche_count(L, every) if cfg.lifecycle == "staggered_tranches" else 1   # overlapping tranches alive at once
     tranches: list = []                                                                # the last K tranche books (staggered lifecycle only)
@@ -1051,9 +1059,12 @@ def run(score: pd.DataFrame, returns: pd.DataFrame, investable: pd.DataFrame | N
         window_ret = ret[names].loc[:date].tail(cfg.cov_window)
         cov_w, hinfo = hz.horizon_covariance(fit_cov, window_ret, L, cfg.cov_horizon)
         rec["horizon"] = {"forecast_days": h, "holding_days": L, "decision_every": every, "lag": lag, "lifecycle": cfg.lifecycle, "tranches": K, "covariance": hinfo}
-        if cfg.holding_days:                                                                # an explicit holding window: the edge accrues evenly within the forecast horizon and not beyond it
-            sc = hz.edge_scale(L, h)
-            est = replace(est, mu=est.mu * sc, mu_raw=est.mu_raw * sc, sd=est.sd * math.sqrt(sc))
+        rec["horizon"].update(forecast_source=cfg.forecast_source, edge_model=cfg.edge_model, beyond_horizon=cfg.edge_beyond_horizon,
+                              assumptions=hz.assumptions(L, h, cfg.edge_model, cfg.edge_beyond_horizon, cfg.cov_horizon, cfg.forecast_source))
+        if cfg.holding_days and cfg.forecast_source == "scaled":               # an explicit holding window: the h-day forecast is scaled to it under the stated assumption
+            sc = hz.edge_scale(L, h, cfg.edge_beyond_horizon)
+            est = replace(est, mu=hz.scale_expected_return(est.mu, L, h, cfg.edge_model, cfg.edge_beyond_horizon), mu_raw=hz.scale_expected_return(est.mu_raw, L, h, cfg.edge_model, cfg.edge_beyond_horizon),
+                          sd=est.sd * math.sqrt(sc))
             rec["horizon"]["edge_scale"] = sc
         vol_daily = pd.Series(np.sqrt(np.diag(fit_cov.to_numpy())), index=names)
         mu = est.mu.reindex(names).fillna(0.0)

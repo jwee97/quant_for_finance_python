@@ -327,12 +327,14 @@ def target_weights(score: pd.DataFrame, gross: float = 1.0) -> pd.DataFrame:
 
 def build_weights(score: pd.DataFrame, cfg: dict, vol: pd.DataFrame | None = None, confidence: pd.DataFrame | None = None, regime_on: pd.Series | None = None, groups: dict | None = None,
                   investable: pd.DataFrame | None = None, uncertainty: pd.DataFrame | None = None, returns: pd.DataFrame | None = None, dollar_volume: pd.DataFrame | None = None,
-                  prices: pd.DataFrame | None = None, probability: pd.DataFrame | None = None) -> pd.DataFrame:
+                  prices: pd.DataFrame | None = None, probability: pd.DataFrame | None = None, fx=None) -> pd.DataFrame:
     """Target weights for a panel of scores according to the ``signal`` section of an experiment configuration (method and its settings, ``max_weight``, ``sector_cap``, ``holding_period``)."""
     method = cfg["method"]
     if method not in METHODS:
         raise ValueError(f"unknown signal method '{method}'; choose from {list(METHODS)}")
     gross, net = float(cfg.get("gross", 1.0)), float(cfg.get("net", 0.0))
+    if fx is not None and method not in PORTFOLIO_METHODS:
+        raise ValueError(f"currency conversion is supported by the portfolio-allocation method only; '{method}' does not convert forecasts or returns to the base currency. Remove backtest.fx or choose portfolio_allocation")
     s = score.where(investable.reindex_like(score).fillna(False)) if investable is not None else score
     if method == "top_n_long_short":
         w = top_n_long_short(s, int(cfg.get("n", 3)), gross, net)
@@ -374,7 +376,7 @@ def build_weights(score: pd.DataFrame, cfg: dict, vol: pd.DataFrame | None = Non
         from . import portfolio_alloc as pa
 
         try:
-            w, pa_log = pa.run(score if investable is None else s, returns, investable, cfg, groups, prices=prices, probability=probability, predictive_sd=uncertainty)
+            w, pa_log = pa.run(score if investable is None else s, returns, investable, cfg, groups, prices=prices, probability=probability, predictive_sd=uncertainty, fx=fx)
         except pa.AllocationError as exc:
             raise ValueError(str(exc)) from None
     elif method == "calibrated_sizing":

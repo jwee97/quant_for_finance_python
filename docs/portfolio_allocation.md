@@ -140,12 +140,88 @@ needs an assumption about the exchange rate over the horizon: `random_walk` (exp
 read (tested by rewriting the future). Costs of converting are `fx_cost_bps` of the foreign exposure traded; `currency_attribution` splits the return exactly into local and currency parts (including the cross term) by currency;
 `fx_exposure` reports exposure by currency. The original currency refusals stand when no FX context is supplied.
 
+## Round three: real data, multi-horizon audit, currency in the pipeline, robustness, research sessions
+
+### Mathematical identities and modelling assumptions (`alloc_horizon.py`)
+
+Kept apart on purpose; each assumption is listed in the run's `horizon.assumptions` and on the page ("Modelling assumptions").
+
+* **Identity** (true whatever the data): for a holding window `L` no longer than the forecast horizon `h`, scaling the forecast mean by `L/h` and the covariance by `L` leaves the mean-variance book unchanged when the risk aversion is
+  scaled with it, and the two enter the optimiser only through that ratio; the book is invariant to `L`. Two-stock books can sit on a corner of the limits, where the invariance is invisible: the tests use a weak forecast.
+* **Assumption**: `L > h`. Under `edge_beyond_horizon="zero"` (the default) a forecast is credited with no edge beyond its own horizon, so conviction *shrinks* as `L` grows; `"persist"` credits the same edge per day and restores
+  the invariance. `edge_model="linear"` scales the mean by `L/h`; `"compound"` scales the growth rate. Variance scaled linearly assumes uncorrelated daily increments; `cov_horizon="variance_ratio"` rescales by the empirical
+  variance ratio instead, and says when it fell back.
+* **Direct holding-horizon forecasts**: `forecast_source="direct"` uses a model trained on the holding window's own target and refuses to run unless `L == h`, rather than rescaling silently.
+* **Overlapping tranches** (`lifecycle="staggered_tranches"`): the combined book equals equal-capital sleeves reset at each decision. `ledger_replay` is an independent units-and-cash ledger: it reconciles with the
+  engine's net returns, costs and weights to about 1e-16 (the engine charges cost as a fraction of prior-close equity, so the replay does the same), cash is conserved on every day, and no leverage appears.
+
+### Currency in the pipeline (`fx_data.py`, `alloc_fx.py`, `experiments.py`)
+
+`backtest.fx = {base, currencies: {ticker: ccy}, hedge, cost_bps, hedge_cost_bps, missing}` (portfolio allocation only; a currency must be declared for every ticker, never assumed). Rates are fetched through the same
+ticker store as prices (`<local><base>=X` symbols), with their provenance, an availability lag and a stale limit; a rate unavailable at a decision is never read. The backtest is valued in the base currency: returns are
+`(1 + R_local)(1 + R_fx) - 1`; conversion costs enter the authoritative engine through `LinearCostModel.per_asset_bps` (not beside it); the hedge is an explicit forward overlay (notional struck when the book trades, settled daily,
+cost on the notional changed). The risk model sees the hedged-return device `(1 + R_local)(1 + (1 - k) R_fx) - 1`, documented as a risk-estimation device, while P&L uses unhedged returns plus the overlay.
+**Not exchange-accurate**: there are no forward points and no financing rates, so the hedge earns no carry; the report says so (`exchange_accurate: false`, with reasons) and the page prints it. Exposure by currency,
+coverage per currency, days missing after the first rate and longest gaps are reported. The expected return of a foreign holding converts under a random-walk assumption (expected FX return 0).
+
+### Optimiser robustness (`alloc_adapters.py`)
+
+`cluster_stability` reports the cluster labels of HERC and NCO through time (adjusted Rand index between consecutive decisions, and under stationary-bootstrap resampling of the returns) and the turnover those changes cause.
+`wasserstein_radius_sensitivity` re-solves the Wasserstein-robust CVaR book over a grid of radii (in units of the mean scenario standard deviation; the adapter uses 0.1). `compare_calibration` claims one calibration beats the
+pooled baseline only when the HAC paired interval of the loss difference excludes zero.
+
+### Research sessions
+
+A finished allocation experiment is saved from the server's own record (`POST /api/research/artifact/save {experiment}`; the page has a **Save to a research session** button). The artifact carries the construction in the
+portfolio lab's vocabulary (`config.study`: lookback, step, covariance method, maximum weight, risk aversion, holding window, allocator), the costs charged, the benchmark, the currency, the point-in-time statement and the
+forecast status. Comparison treats it as a constructed portfolio: unlike construction blocks ranking, a different source of expected returns is named, different currencies block ranking, and a holding window is compared only
+among studies that carry one. Saving the same run twice keeps one study.
+
+### The NVDA and MU study (`scripts/nvda_mu_allocation_study.py`)
+
+Real daily prices (Yahoo, through the ticker store, 2008-01-02 to 2026-11-25; two stocks, weekly decisions, 5 + 2 bps, ridge forecasts, no leverage, no cash, 80% weight cap) are run through the development protocol, which reads no
+test or forward outcome. On the **validation** segment all six allocators use identical dates, limits, costs and execution:
+
+| allocator | net return | Sharpe | Sharpe 95% interval (HAC) | max drawdown | turnover / yr | effective N | max weight |
+|---|---|---|---|---|---|---|---|
+| equal weight | 192.7% | 0.89 | [-0.06, 1.84] | -51.5% | 1.3 | 2.00 | 50% |
+| inverse volatility | 199.5% | 0.90 | [-0.05, 1.85] | -51.4% | 1.4 | 1.99 | 52% |
+| ERC | 199.5% | 0.90 | [-0.05, 1.85] | -51.4% | 1.4 | 1.99 | 52% |
+| mean-variance | 193.1% | 0.87 | [-0.08, 1.82] | -58.1% | 5.4 | 1.77 | 66% |
+| robust mean-variance | 309.2% | 1.07 | [0.12, 2.02] | -50.8% | 10.5 | 1.75 | 67% |
+| Black-Litterman | 146.7% | 0.77 | [-0.17, 1.71] | -55.0% | 4.9 | 1.88 | 60% |
+
+The paired 95% interval of every allocator's Sharpe ratio minus equal weight's includes zero. The nearest to excluding it is robust mean-variance, [-0.002, 0.354], which touches zero and trades about ten times a year, so it
+is not a result that survives costs of a different size. **No allocator is shown to beat equal weight.** The forecasts themselves have no demonstrable skill on validation (skill against a zero forecast is slightly negative for every calibration variant, and with two stocks the
+asset-specific and partial-pooling variants fall back to the pooled slope), so the differences between books are risk-driven and not evidence for the forecasts.
+
+**The final untouched evaluation has not been run.** The first evaluation plan was consumed when the final run failed on a duplicate operation (the baseline was identical to the equal-weight candidate); the replacement plan
+is recorded as not untouched, and reusing the consumed holdout was not authorised. The study scripts stop there: no result for the protected test or forward segments exists in this repository, and none was used to choose
+anything.
+
+### Twelve real stocks (`scripts/allocator_robustness_study.py`)
+
+AAPL, MSFT, NVDA, MU, AMZN, GOOGL, JPM, XOM, JNJ, KO, CAT and PG (real daily prices, development protocol only; the study ends at 2021-05-10 and reads no test or forward outcome). Measured on the validation segment:
+
+* **Cluster stability.** HERC and NCO share the same Ward clusters on 1 - correlation distance (252-day windows, 149 decisions, 2 to 6 clusters, mean 3.1). The adjusted Rand index between consecutive decisions averages 0.80
+  (10th percentile 0.35) and the cluster labels changed at 44% of decisions; under stationary-bootstrap resampling of the same window the index averages 0.82 (10th percentile 0.66). The book moved by 7.7% (HERC) and 7.4%
+  (NCO) one-way between decisions on average, but under resampling the NCO book is much less stable than HERC (mean L1 distance to the full-sample book 0.26 against 0.11). The cluster count is therefore not a stable
+  quantity at this sample size, and NCO inherits more of that instability than HERC.
+* **Wasserstein radius.** The radius is an assumption. Over relative radii from 0 to 1 (in mean scenario standard deviations) the effective number of positions rises from 4.2 to 11.9 and the worst-case CVaR from 4.0% to 28%
+  while the empirical CVaR stays near 4% to 5%: a larger radius buys diversification by giving up the tail estimate, not by finding a better one. The adapter's 0.1 gives 9.5 effective positions.
+* **Calibration, pooled against partial pooling.** Against the pooled square-root-horizon baseline, every variant (pooled HAC, regularised, asset-specific, partial pooling with HAC or block inference) has a paired HAC
+  interval for the difference in squared error that includes zero: they **cannot be told apart from the baseline on this sample**. Partial pooling has the lowest squared error and the best skill against a zero forecast
+  (0.6%), but not by an amount the sample can distinguish, and 13% of its decisions fell back to the pooled slope. No superiority is claimed.
+* **Allocators on identical forecasts, dates, limits and costs (validation).** Equal weight: Sharpe 1.08, net return 132%, turnover 1.4 a year. Inverse volatility and ERC are indistinguishable from it (paired Sharpe intervals
+  [-0.15, 0.13] and [-0.18, 0.14]), as are HERC [-0.36, 0.21], NCO [-0.70, 0.17] and Wasserstein CVaR [-0.44, 0.30]. Mean-variance (Sharpe 0.61, turnover 23 a year), robust mean-variance (0.61, 14 a year),
+  Black-Litterman (0.78, 19 a year) and the near-optimal book (0.68, 28 a year) are **worse** than equal weight, with paired intervals that exclude zero on the negative side. With forecasts that carry little skill, the
+  optimisers act on estimation error and pay for it in turnover. The validation-selected allocator is equal weight.
+
 ## Limitations and what was not implemented
 
-* The experiment pipeline has no exchange-rate data source: the currency layer is complete at the computational level (`run(fx=...)`, `allocator_compare.compare(fx=...)`, tests) but is not reachable from the web form, which still refuses a
-  forecast in a currency other than the portfolio's. A data ingestion for rates is the missing piece, not the arithmetic.
-* FX costs are computed beside the backtest (one cost rate for every asset is all the engine has) and are not yet subtracted inside it.
-* Partial hedging ignores the carry (interest differential) of the hedge.
+* Exchange rates are fetched through Yahoo-style symbols. The code path is tested with an offline fake provider; a live fetch of real rates was not exercised here. A currency pair the provider does not carry fails with
+  the missing symbol rather than being replaced.
+* The hedge is not exchange-accurate (no forward points or financing); the explicit overlay is still a model, not a quote.
 * Asset-specific and hierarchical calibration cannot be evaluated on two stocks: they fall back to the pooled slope by design. Whether they beat it on larger universes is an empirical question the comparison answers per dataset;
   nothing here claims they do.
 * HRP, HERC and NCO need three or four assets; the Wasserstein ball radius is an assumption (10% of the mean scenario standard deviation); NCO and HERC choose their cluster count by silhouette, which can change the book discontinuously.
