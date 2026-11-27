@@ -62,6 +62,8 @@ def check_signal_use(kind: str, task: str, target: str, signal_cfg: dict) -> str
         raise OutputContractError(f"a {kind} model on {target} forecasts {ok.replace('_', ' ')}, which is not how attractive an asset is; map it to a strategy explicitly, or set signal.reinterpret_outputs to rank assets by it as it is")
     elif method == "cost_aware_mean_variance":
         _return_forecast(kind, target, ok, signal_cfg, "the cost-aware optimiser weighs the forecast against risk and cost")
+    elif method == "portfolio_allocation":
+        _allocation_forecast(kind, target, ok, signal_cfg)
     elif method == "calibrated_sizing":
         if ok not in ("expected_return", "ranking_score", "quantile_forecast"):
             raise OutputContractError(f"calibrated sizing calibrates a score to a return by regression on what followed it, which needs a score that orders assets by their return; a {kind} model on {target} outputs a {ok.replace('_', ' ')}"
@@ -73,6 +75,21 @@ def check_signal_use(kind: str, task: str, target: str, signal_cfg: dict) -> str
     if signal_cfg.get("trade_filter_k") is not None:
         _return_forecast(kind, target, ok, signal_cfg, "the trade filter compares each trade's edge with the forecast error and the cost")
     return ok
+
+
+def _allocation_forecast(kind: str, target: str, ok: str, signal_cfg: dict) -> None:
+    """The portfolio allocation reads a forecast as an absolute expected return (or a probability of a rise it can turn into one). A rank score, a relative return, a volatility or a book is refused with what to change."""
+    from .targets import parse_target
+
+    fk = (signal_cfg.get("allocation") or {}).get("forecast_kind", "return")
+    tkind = parse_target(target)[0]
+    if fk in ("return", "distribution", "price"):
+        if ok not in ("expected_return", "quantile_forecast", "predictive_distribution") or tkind != "fwd_ret":
+            raise OutputContractError(f"the portfolio allocation needs the forecast of an asset's own return (target fwd_ret_h), but a {kind} model on {target} outputs a {ok.replace('_', ' ')}"
+                                      f"{'' if ok != 'expected_return' else ' of a ' + tkind.replace('_', ' ') + ' target'}: a rank or a return relative to the universe says nothing about how much of the book to hold. Train on fwd_ret_h, or set allocation.forecast_kind to 'probability' for a direction_h classifier")
+    elif fk == "probability":
+        if ok != "class_probability" or tkind != "direction":
+            raise OutputContractError(f"a probability forecast is read through the payoff of an up and a down move, which needs a classifier trained on direction_h; a {kind} model on {target} outputs a {ok.replace('_', ' ')}")
 
 
 def _return_forecast(kind: str, target: str, ok: str, signal_cfg: dict, why: str) -> None:

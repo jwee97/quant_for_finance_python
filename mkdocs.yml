@@ -36,6 +36,7 @@ nav:
       - "ML strategies: explicit buy, sell and hold decisions and the Strategy Explorer": ml_strategy.md
       - "Stock universe lab: point-in-time universes, screens and nested validation": universe_lab.md
       - "ML research workspaces: comparison, features, simulation and evidence": ml_research.md
+      - "ML portfolio allocation: forecast-driven, risk-aware weights": portfolio_allocation.md
       - "Charts: the SVG kit and Apache ECharts": charts.md
       - "Why models lose to the equal-weight benchmark: the shared pipeline audit": ml_pipeline_audit.md
       - "The five-book roadmap: what is built, what existed, what is not": roadmap_audit.md

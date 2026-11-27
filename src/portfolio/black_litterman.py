@@ -68,7 +68,8 @@ def views_from_signal(signal: pd.Series, assets: list[str], spread: float = 0.03
 
 def black_litterman_posterior(covariance: pd.DataFrame, equilibrium: pd.Series,
                               views: pd.DataFrame, view_returns: pd.Series,
-                              tau: float = 0.05, view_confidence: float = 0.30) -> pd.Series:
+                              tau: float = 0.05, view_confidence: float = 0.30,
+                              view_variance: pd.Series | None = None) -> pd.Series:
     """Posterior expected returns.
 
     ``Omega`` is set proportional to the variance of each view portfolio
@@ -76,6 +77,10 @@ def black_litterman_posterior(covariance: pd.DataFrame, equilibrium: pd.Series,
     combination is automatically held with less confidence than a view on a
     stable one, which is the behaviour you want and the reason not to set
     Omega by hand.
+
+    ``view_variance`` (optional, one value per view, in the units of the returns squared) replaces that rule
+    with a measured one: the variance of the view as an estimate of the mean, e.g. a model's out-of-sample
+    forecast error variance divided by the number of independent forecasts it was measured on.
     """
     assets = list(covariance.columns)
     if views.empty:
@@ -87,7 +92,10 @@ def black_litterman_posterior(covariance: pd.DataFrame, equilibrium: pd.Series,
     pi = equilibrium.reindex(assets).fillna(0.0).to_numpy(dtype=float)
 
     tau_sigma = tau * sigma
-    omega = np.diag(np.diag(P @ tau_sigma @ P.T)) / max(view_confidence, 1e-6)
+    if view_variance is not None:
+        omega = np.diag(view_variance.reindex(views.index).to_numpy(dtype=float))
+    else:
+        omega = np.diag(np.diag(P @ tau_sigma @ P.T)) / max(view_confidence, 1e-6)
     omega = omega + np.eye(len(Q)) * 1e-12  # keep it invertible
 
     tau_sigma_inv = np.linalg.pinv(tau_sigma)

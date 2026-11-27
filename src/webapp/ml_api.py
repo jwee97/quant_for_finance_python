@@ -41,7 +41,9 @@ from ..ml.datasets import UNIVERSES, build_dataset, feature_catalog, resolve_bun
 from ..ml.deep import context as train_context
 from ..ml.deep.context import CheckpointIncompatible
 from ..ml.deep.manifest import ARCHITECTURES, architecture                      # a table of text: importing it does not import PyTorch
-from ..ml.experiments import RL_KINDS, load_run, rebacktest, run_experiment
+from ..ml.experiments import RL_KINDS, compare_saved, load_run, rebacktest, run_experiment
+from ..ml import allocator_compare as alc
+from ..ml import portfolio_alloc as palloc
 from ..ml import resources
 from ..ml.features import FEATURES, GROUPS
 from ..ml.models import Model, ModelUnavailable, default_refit, model_catalog
@@ -94,6 +96,7 @@ SIGNAL_TEXT = {"top_n_long_short": "Long the n highest scores, short the n lowes
                "uncertainty_weighted": "Score divided by the model's own predictive standard deviation (needs a model that reports one), with views on unusually uncertain assets shrunk by kappa",
                "uncertainty_mean_variance": "The same uncertainty-adjusted views through the inverse covariance of trailing returns: the covariance-aware version",
                "cost_aware_mean_variance": "The book that maximises the forecast return less risk, trading cost and turnover from the book actually held (needs a return forecast; solver status is reported)",
+               "portfolio_allocation": "Per-stock weights from the calibrated forecast, its uncertainty, risk, correlation and your limits, by a chosen allocator (mean-variance, Black-Litterman, risk parity and more). Equal weight stays the benchmark; the saved forecasts must be of an asset's own return or direction",
                "calibrated_sizing": "The score calibrated to a return by regression on settled outcomes, sized by edge, its uncertainty, risk and signal stability; flat when no edge has been shown",
                "decision_policy": "Explicit buy, sell, short, cover and hold decisions: open on the best-ranked names, keep them until they fall out of a wider band, close on a stop, a target or a time limit, and size what is held (set the decision_* settings and backtest.rebalance = on_change; the Strategy Explorer shows every decision)",
                "target_weights": "The scores ARE the target weights (for the reinforcement-learning agents, which size their own positions)"}
@@ -121,7 +124,7 @@ SPEC = {
                "decision_max_position": ("float", 0.01, 1.0), "decision_sizing": ("choice", ("equal", "inverse_vol", "score")), "decision_allow_short": ("bool",), "decision_long_exposure": ("float", 0.0, 3.0),
                "decision_short_exposure": ("float", 0.0, 3.0), "decision_cash_floor": ("float", 0.0, 0.95), "decision_stop_loss_vol": ("float", 0.1, 20.0), "decision_take_profit_vol": ("float", 0.1, 50.0),
                "decision_max_holding": ("int", 1, 500), "decision_cooldown": ("int", 0, 60), "decision_rebalance_days": ("int", 1, 60), "decision_resize_band": ("float", 0.0, 5.0),
-               "decision_horizon": ("int", 1, 252), "decision_min_edge_bps": ("float", 0.0, 1000.0), "decision_forecast_is_return": ("bool",)},
+               "decision_horizon": ("int", 1, 252), "decision_min_edge_bps": ("float", 0.0, 1000.0), "decision_forecast_is_return": ("bool",), "allocation": ("allocation",)},
     "backtest": {"rebalance": ("choice", ("daily", "weekly", "monthly", "on_change")), "cost_bps": ("float", 0.0, 250.0), "slippage_bps": ("float", 0.0, 250.0), "target_vol": ("float", 0.01, 1.0), "max_leverage": ("float", 0.5, 5.0),
                  "extra_lag": ("int", 0, 20)},
     "execution": {"mode": ("choice", ("vectorized_legacy", "realistic_cash_equity")), "capital": ("float", 1_000.0, 1e12), "max_participation": ("float", 0.001, 1.0), "adv_window": ("int", 5, 250),
@@ -131,6 +134,62 @@ SPEC = {
                   "shorts": ("choice", ("unconstrained", "refuse"))},
 }
 NULLABLE = {"decision_stop_loss_vol", "decision_take_profit_vol", "decision_max_holding", "decision_min_edge_bps", "start", "end", "regime_detector", "sector_cap", "target_vol", "max_participation", "no_trade_margin", "no_trade_hold_margin", "trade_filter_k", "regime_exposure"}                    # an explicit null means "none", not "use the default"
+
+
+ALLOCATION_SPEC = {"allocator": ("choice", palloc.ALLOCATORS), "forecast_kind": ("choice", palloc.FORECAST_KINDS), "forecast_horizon": ("int", 1, 252), "forecast_currency": ("text",), "base_currency": ("text",),
+                   "calibrate": ("choice", ("slope", "none")), "calib_window": ("int", 60, 2000), "calib_min_obs": ("int", 20, 1000), "calib_min_t": ("float", 0.0, 10.0),
+                   "cov_method": ("choice", tuple(palloc.rm.METHODS)), "cov_window": ("int", 60, 1000), "cov_halflife": ("float", 5.0, 500.0), "cov_min_obs": ("int", 20, 1000),
+                   "risk_aversion": ("float", 0.01, 1000.0), "tau": ("float", 0.001, 1.0), "kelly_fraction": ("float", 0.05, 1.0), "kelly_min_t": ("float", 0.0, 10.0), "cvar_alpha": ("float", 0.8, 0.99),
+                   "robust_kappa": ("float", 0.0, 10.0), "opt_every": ("int", 1, 60), "cost_bps": ("float", 0.0, 250.0), "turnover_penalty": ("float", 0.0, 100.0), "on_failure": ("choice", palloc.FAILURE_POLICIES)}
+ALLOCATION_LIMITS = {"long_only": ("bool",), "cash_allowed": ("bool",), "min_weight": ("float", 0.0, 1.0), "max_weight": ("float", 0.0, 1.0), "max_sector": ("float", 0.05, 1.0), "gross_max": ("float", 0.1, 3.0),
+                     "net_min": ("float", -1.0, 3.0), "net_max": ("float", -1.0, 3.0), "turnover_max": ("float", 0.0, 1.0), "vol_target": ("float", 0.01, 1.0), "max_leverage": ("float", 0.5, 5.0)}
+
+
+def _clean_allocation(path: str, raw) -> dict:
+    """The ``signal.allocation`` block: every setting named, typed and bounded here (an unknown name is refused, never carried), then the whole checked by the allocation module itself (consistency between the
+    settings, and that the limits are feasible for the universe is checked when the experiment is built)."""
+    if not isinstance(raw, dict):
+        raise ApiError(f"{path} must be an object of allocation settings")
+    out: dict = {}
+    for src, table, dest, label in ((raw, ALLOCATION_SPEC, out, path), (raw.get("limits") or {}, ALLOCATION_LIMITS, None, f"{path}.limits")):
+        if not isinstance(src, dict):
+            raise ApiError(f"{label} must be an object")
+        target = {} if dest is None else dest
+        for k, v in src.items():
+            if table is ALLOCATION_SPEC and k == "limits":
+                continue
+            if k not in table:
+                raise ApiError(f"{label} has no setting '{k}'; the settings are {sorted(table)}")
+            if v is None or v == "":
+                target[k] = None
+                continue
+            spec = table[k]
+            if spec[0] in ("int", "float"):
+                target[k] = _num(f"{label}.{k}", v, spec[1], spec[2], spec[0] == "int")
+            elif spec[0] == "choice":
+                if v not in spec[1]:
+                    raise ApiError(f"{label}.{k} must be one of {list(spec[1])}")
+                target[k] = v
+            elif spec[0] == "bool":
+                if not isinstance(v, bool):
+                    raise ApiError(f"{label}.{k} must be true or false")
+                target[k] = v
+            else:
+                if not isinstance(v, str) or not re.match(r"^[A-Za-z]{3,8}$", v):
+                    raise ApiError(f"{label}.{k} must be a currency code such as USD")
+                target[k] = v.upper()
+        if dest is None:
+            out["limits"] = target
+    rb = (raw.get("limits") or {}).get("risk_budget")
+    if rb is not None:
+        if not isinstance(rb, dict) or not rb or len(rb) > 200 or any(not isinstance(k, str) or not isinstance(v, (int, float)) or isinstance(v, bool) or not 0 <= v <= 1 for k, v in rb.items()):
+            raise ApiError(f"{path}.limits.risk_budget must be an object of ticker -> share between 0 and 1")
+        out["limits"]["risk_budget"] = {k: float(v) for k, v in rb.items()}
+    try:
+        palloc.config_from_signal({"allocation": out})
+    except palloc.AllocationError as exc:
+        raise ApiError(f"{path}: {exc}") from None
+    return out
 
 
 def _id(q: dict, key: str = "id") -> str:
@@ -227,10 +286,10 @@ class MlApi(AdvancedRoutes, SelectionRoutes, StrategyRoutes, ResearchRoutes):
                 "/api/ml/lineage": self.lineage, "/api/ml/holdout": self.holdout, "/api/ml/promotion-status": self.promotion_status, "/api/ml/statistical-diagnostics": self.statistical_diagnostics,
                 "/api/ml/null-controls": self.null_controls, "/api/ml/trading-diagnostics": self.trading_diagnostics, "/api/ml/validation-policy": self.validation_policy, "/api/ml/governance": self.governance_status,
                 "/api/ml/alpha-diagnostics": self.alpha_diagnostics, "/api/ml/portfolio-diagnostics": self.portfolio_diagnostics, "/api/ml/improvement-experiment": self.improvement_get,
-                "/api/ml/delay-report": self.delay_report, **self.strategy_get_routes(), **self.research_get_routes(), **self.advanced_get_routes(), **self.selection_get_routes(), **self.training.get_routes()}
+                "/api/ml/delay-report": self.delay_report, "/api/ml/allocation/catalog": self.allocation_catalog, **self.strategy_get_routes(), **self.research_get_routes(), **self.advanced_get_routes(), **self.selection_get_routes(), **self.training.get_routes()}
 
     def post_routes(self) -> dict:
-        return {"/api/ml/dataset/build": self.dataset_build, "/api/ml/train": self.train, "/api/ml/rebacktest": self.rebacktest, "/api/ml/search": self.search, "/api/ml/tune": self.tune, "/api/ml/tune/stop": self.tune_stop,
+        return {"/api/ml/dataset/build": self.dataset_build, "/api/ml/train": self.train, "/api/ml/rebacktest": self.rebacktest, "/api/ml/allocation/compare": self.allocation_compare, "/api/ml/search": self.search, "/api/ml/tune": self.tune, "/api/ml/tune/stop": self.tune_stop,
                 "/api/ml/combine": self.combine, "/api/ml/meta-label": self.meta_label, "/api/ml/forward/step": self.forward_step, "/api/ml/promote": self.promote, "/api/ml/verification/run": self.verification_run, "/api/ml/delete": self.delete,
                 "/api/ml/evaluation-plan": self.evaluation_plan, "/api/ml/evaluation-plan/freeze": self.evaluation_plan_freeze, "/api/ml/evaluate": self.evaluate,
                 "/api/ml/null-controls/run": self.null_controls_run, "/api/ml/selection-tests/run": self.selection_tests_run, "/api/ml/validation-policy": self.validation_policy_adopt,
@@ -313,6 +372,8 @@ class MlApi(AdvancedRoutes, SelectionRoutes, StrategyRoutes, ResearchRoutes):
                 if not isinstance(value, bool):
                     raise ApiError(f"{path} must be true or false")
                 out[key] = value
+            elif kind == "allocation":
+                out[key] = _clean_allocation(path, value)
             elif kind == "states":
                 if not isinstance(value, list) or not value or len(value) > 5:
                     raise ApiError(f"{path} must be a list of regime state numbers")
@@ -566,6 +627,43 @@ class MlApi(AdvancedRoutes, SelectionRoutes, StrategyRoutes, ResearchRoutes):
             return {"id": exp.id, "parent": exp_id, "report": exp.report}
 
         return self._submit(f"ml: re-backtest {exp_id[-6:]}", work)
+
+    def allocation_catalog(self, q: dict) -> dict:
+        """``GET /api/ml/allocation/catalog``: the allocators with their objective, assumptions, needs and failure modes; the risk models; the limits and the defaults of every setting. The page builds its controls from this."""
+        _only(q, set(), "/api/ml/allocation/catalog")
+        base = palloc.AllocConfig()
+        lim = palloc.Limits()
+        return jsonable({"version": palloc.VERSION, "allocators": [{"key": k, **palloc.DOCS[k]} for k in palloc.ALLOCATORS], "forecast_kinds": list(palloc.FORECAST_KINDS), "failure_policies": list(palloc.FAILURE_POLICIES),
+                         "risk_models": list(palloc.rm.METHODS), "defaults": base.content(), "limit_defaults": palloc.asdict(lim),
+                         "note": "The default signal method is unchanged: portfolio allocation is used only when it is selected. Equal weight stays available as the benchmark and as an allocator."})
+
+    def allocation_compare(self, body: dict) -> dict:
+        """``POST /api/ml/allocation/compare`` (a job): every allocator on a saved experiment's forecasts, with the same dates, limits, costs and execution. Allocators are ranked, and one selected, on the
+        selection segment only (validation by default); ``evaluate`` lists protected segments (test, forward) to report for every allocator, flagged as not used for selection. Nothing is refitted or saved as an experiment."""
+        _only(body, {"id", "allocators", "select_on", "evaluate", "select_by", "allocation", "include_existing_rule"}, "/api/ml/allocation/compare")
+        exp_id = _id(body)
+        allocs = body.get("allocators")
+        if allocs is not None and (not isinstance(allocs, list) or not allocs or any(a not in palloc.ALLOCATORS for a in allocs)):
+            raise ApiError(f"allocators must be a non-empty list drawn from {list(palloc.ALLOCATORS)}")
+        evaluate = body.get("evaluate") or []
+        if not isinstance(evaluate, list) or any(e not in ("test", "forward") for e in evaluate):
+            raise ApiError("evaluate may list test and/or forward (protected segments: reported, never used to select)")
+        select_on = str(body.get("select_on") or "validation")
+        if select_on not in ("train", "validation"):
+            raise ApiError("select_on must be validation (or train): the test and forward segments cannot be used to choose an allocator")
+        select_by = str(body.get("select_by") or "sharpe")
+        if select_by not in ("sharpe", "net_return", "max_drawdown"):
+            raise ApiError("select_by must be sharpe, net_return or max_drawdown")
+        allocation = _clean_allocation("allocation", body.get("allocation") or {})
+
+        def work(progress):
+            progress("comparing allocation policies on the saved forecasts")
+            with _user_errors():
+                out = compare_saved(self.registry, exp_id, allocs, select_on=select_on, evaluate=tuple(evaluate), select_by=select_by, allocation=allocation,
+                                    include_existing_rule=bool(body.get("include_existing_rule", True)))
+            return jsonable(alc.public(out))
+
+        return self._submit(f"ml: allocator comparison {exp_id[-6:]}", work)
 
     def meta_label(self, body: dict) -> dict:
         """``POST /api/ml/meta-label`` (a job): train a secondary model on a saved experiment's out-of-sample bets and size the book with it."""

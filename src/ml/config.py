@@ -135,7 +135,15 @@ def validate(cfg: dict) -> dict:
             schedule_from(sig)
         except ValueError as exc:
             raise MLConfigError(str(exc)) from None
-    derived = sig["method"] in ("cost_aware_mean_variance", "calibrated_sizing", "decision_policy") or sig.get("no_trade_margin") is not None or sig.get("trade_filter_k") is not None
+    if sig["method"] == "portfolio_allocation":
+        from . import portfolio_alloc as pa
+
+        try:
+            pa.config_from_signal(sig)
+        except pa.AllocationError as exc:
+            raise MLConfigError(f"signal.allocation: {exc}") from None
+        _check(int(sig.get("holding_period", 1)) == 1, "the portfolio allocation weighs forecast, risk and cost itself: averaging its books over a holding period would change what it optimised (set signal.holding_period to 1)")
+    derived = sig["method"] in ("cost_aware_mean_variance", "calibrated_sizing", "decision_policy", "portfolio_allocation") or sig.get("no_trade_margin") is not None or sig.get("trade_filter_k") is not None
     if derived:                                                                             # what these rules need from the other sections, set here so that one place decides each of them
         sig["cost_bps"] = float(bt["cost_bps"]) + float(bt["slippage_bps"])
         sig["window_days"] = int(d["horizon"])                                               # the forecast horizon: the window the covariance is scaled to

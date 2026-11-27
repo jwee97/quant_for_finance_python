@@ -29,7 +29,7 @@ from .config import DEFAULTS, build_key, config_hash, dataset_key, experiment_co
 from .datasets import Dataset, build_dataset, resolve_bundle
 from .models import Model
 from .registry import Registry
-from .signals import ALLOCATION_METHODS, DECISION_METHODS, OVERLAY_KEYS, SIZING_METHODS, UNCERTAINTY_METHODS, build_weights
+from .signals import ALLOCATION_METHODS, DECISION_METHODS, OVERLAY_KEYS, PORTFOLIO_METHODS, SIZING_METHODS, UNCERTAINTY_METHODS, build_weights
 from .models import task_for
 from .contracts import OutputContractError, build_contract, check_signal_use
 from .targets import forward_return, is_classification
@@ -273,7 +273,7 @@ def evaluate_run(cfg: dict, ds: Dataset, train: TrainResult, info: dict, registr
     try:
         volume = (market or {}).get("volume")                                               # shares traded, where the universe has them: the liquidity-aware allocation is refused without
         dollars = None if volume is None else volume.reindex(index=ds.dates, columns=ds.assets) * ds.prices.reindex(index=ds.dates, columns=ds.assets)
-        weights = build_weights(scores, cfg["signal"], vol, conf, regime_on, groups, ds.investable, unc_wide, ds.returns, dollars)
+        weights = build_weights(scores, cfg["signal"], vol, conf, regime_on, groups, ds.investable, unc_wide, ds.returns, dollars, prices=ds.prices.reindex(index=ds.dates, columns=ds.assets), probability=prob_wide)
     except ValueError as exc:
         raise ExperimentError(str(exc)) from None
     labelled = ds.Y[train.target].dropna().index.get_level_values(0)
@@ -303,7 +303,7 @@ def evaluate_run(cfg: dict, ds: Dataset, train: TrainResult, info: dict, registr
     s_in = train.scores_wide(ds, "insample")
     if s_in.notna().any().any():
         sig_in = {k: v for k, v in cfg["signal"].items() if k not in OVERLAY_KEYS}                                                                                       # the in-sample book is a display: no overlay is run on it
-        if sig_in["method"] in (*UNCERTAINTY_METHODS, *ALLOCATION_METHODS, *SIZING_METHODS, *DECISION_METHODS):                                                                              # no predictive distribution, no optimiser and no calibration on in-sample scores
+        if sig_in["method"] in (*UNCERTAINTY_METHODS, *ALLOCATION_METHODS, *SIZING_METHODS, *DECISION_METHODS, *PORTFOLIO_METHODS):                                                                              # no predictive distribution, no optimiser and no calibration on in-sample scores
             sig_in["method"] = "proportional"
         w_in = build_weights(s_in, sig_in, vol, confidence_from_scores(s_in, None), regime_on, groups, ds.investable)
         r_in = trim_to_signal(run_backtest(w_in, ds.returns, ds.investable, cfg["backtest"], lag, cfg["name"] + "_in_sample"), s_in.dropna(how="all").index[0], lag)["net"]
@@ -396,6 +396,16 @@ def evaluate_run(cfg: dict, ds: Dataset, train: TrainResult, info: dict, registr
         bad = int(alloc_log["failed"]) + int(alloc_log["infeasible"])
         if bad or alloc_log["fallback_used"]:
             report["warnings"].append(f"The cost-aware optimiser had no solution in {bad} of {alloc_log['solves']} solves (the previous book was held) and used a configured fallback {alloc_log['fallback_used']} time(s): see report.allocation.")
+    pa_log = weights.attrs.get("portfolio_allocation")
+    if pa_log:                                                                     # every decision of the allocation: forecasts, risk, weights, risk contributions and why, so that attribution and the page can read them
+        recs = pa_log["records"]
+        keep = recs if len(recs) <= 400 else [recs[int(j)] for j in np.linspace(0, len(recs) - 1, 400)]
+        report["portfolio_allocation"] = jsonable({**{k: v for k, v in pa_log.items() if k != "records"}, "records": keep, "records_total": len(recs), "records_sampled": len(keep) < len(recs)})
+        c = pa_log["counts"]
+        if c["failed"] or c["infeasible"] or c["not_justified"] or c["unsuitable"]:
+            report["warnings"].append(f"The portfolio allocation had no solution at {c['failed'] + c['infeasible'] + c['not_justified'] + c['unsuitable']} of {c['decisions']} decisions and used the configured failure policy '{pa_log['config']['on_failure']}' there: see report.portfolio_allocation.")
+        if c["no_edge"] + c["insufficient_history"]:
+            report["warnings"].append(f"At {c['no_edge'] + c['insufficient_history']} of {c['decisions']} decisions the forecast had no calibrated edge (or too little history to show one), so the book was set by risk and the limits alone.")
     report["holdout"] = jsonable(holdout if holdout is not None else {"status": "development" if stop_after else "unrecorded"})
     report["lineage"] = jsonable(lineage if lineage is not None else {"study": rc.study_of(cfg), "operation": None, "note": "not registered as an operation (this run was made through a path that records none)"})
     if registry is not None:
@@ -572,3 +582,45 @@ def rebacktest(registry: Registry, exp_id: str, overrides: dict | None = None, p
         op.experiment_id = exp.id
         op.finish_detail = {"parent": exp_id, "holdout": holdout.get("status")}
     return exp
+
+
+def compare_allocators(exp: Experiment, allocators=None, **kw) -> dict:
+    """Compare allocation policies on the forecasts of an experiment already in memory; see :func:`_compare_core`."""
+    return _compare_core(exp.cfg, exp.dataset, exp.train, exp.scores, exp.id, allocators, **kw)
+
+
+def compare_saved(registry: Registry, exp_id: str, allocators=None, **kw) -> dict:
+    """The same comparison on a saved experiment's predictions (nothing is refitted and nothing is saved: the comparison is a read of the saved forecasts)."""
+    cfg, ds, train, _ = load_run(registry, exp_id)
+    return _compare_core(cfg, ds, train, train.scores_wide(ds), exp_id, allocators, **kw)
+
+
+def _compare_core(cfg: dict, ds: Dataset, train: TrainResult, scores: pd.DataFrame, exp_id: str, allocators=None, *, select_on: str = "validation", evaluate: tuple = (), select_by: str = "sharpe",
+                  allocation: dict | None = None, include_existing_rule: bool = True, seed: int = 0) -> dict:
+    """Compare allocation policies on identical forecasts, dates, limits, costs and execution. ``allocation`` overrides the experiment's ``signal.allocation`` block (limits, risk model, calibration, costs); the
+    experiment's own position rule is included as a further row unless it already is the portfolio-allocation method. The protected segments are computed only for the segments named in ``evaluate`` and are
+    never used to select."""
+    from . import allocator_compare as ac
+    from . import portfolio_alloc as pa
+
+    if select_on not in ("train", "validation"):
+        raise ExperimentError("an allocator is selected on the validation segment (or the warm-up training segment); the test and forward segments are protected and can only be evaluated, never selected on")
+    if any(e not in ("test", "forward", "train", "validation") for e in evaluate):
+        raise ExperimentError("evaluate may list test and forward")
+    sig = {**cfg["signal"]}
+    sig["allocation"] = merge(dict(sig.get("allocation") or {}), allocation or {})
+    sig["window_days"] = int(ds.horizon)
+    sig["lag_total"] = int(ds.lag) + int(cfg["backtest"].get("extra_lag", 0))
+    prob_wide = train.probabilities.unstack("asset").reindex(index=ds.dates, columns=ds.assets) if train.probabilities is not None else None
+    dist = train.extras.get("distribution")
+    unc = None if dist is None else dist["std"].unstack("asset").reindex(index=ds.dates, columns=ds.assets)
+    groups = ds.group or ds.asset_class
+    legacy = cfg["signal"] if include_existing_rule and cfg["signal"]["method"] != "portfolio_allocation" else None
+    try:
+        out = ac.compare(scores, ds.returns, ds.investable, sig, cfg["backtest"], ds.lag, train.plan.labels(), groups, allocators=tuple(allocators or pa.ALLOCATORS), select_on=select_on, evaluate=tuple(evaluate),
+                         select_by=select_by, prices=ds.prices.reindex(index=ds.dates, columns=ds.assets), probability=prob_wide, predictive_sd=unc, legacy_rule=legacy, seed=seed)
+    except pa.AllocationError as exc:
+        raise ExperimentError(str(exc)) from None
+    out["prediction_quality"] = ac.prediction_quality(scores, ds.returns, int(ds.horizon), int(ds.lag), label_days(scores.index, train.plan.labels()), segments=(select_on, *evaluate))
+    out["experiment"] = exp_id
+    return out
