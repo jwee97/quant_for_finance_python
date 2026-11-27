@@ -2,7 +2,7 @@
 
 This report states what was found, what was changed, what was run and what was not. A source file existing is not evidence that a feature works; a mocked test is not evidence that a provider still answers; a Linux run is not evidence about Windows; a synthetic backtest is not evidence of profitability. Where a claim below rests on a test, the test file is named.
 
-Branch `claude/multi-asset-quant-platform-uwqect`. Commits of this round: `0693ab4`, `e5e4077`, `40b9fd0`, `89f2154`, `0f11be6`, `b4d34e4` (and the report commit).
+Branch `claude/multi-asset-quant-platform-uwqect`. Commits of this round: `0693ab4`, `e5e4077`, `40b9fd0`, `89f2154`, `0f11be6`, `b4d34e4` and the follow-up fixes listed in section 3.2.
 
 ---
 
@@ -61,9 +61,65 @@ Backward compatibility: saved artifacts and research sessions are read unchanged
 
 ## 3. Verification
 
-RESULTS_PENDING
+### 3.1 Test runs (this machine: Linux, Python 3.11, CPU only, Chromium through Playwright)
 
----
+The first attempt at one end-to-end `pytest tests` run died at about 26% with no summary (the process disappeared; the cause was not established), so the suite was run in three managed batches instead. Every file under `tests/` was in exactly one batch.
+
+| Batch | Tests | Passed | Failed | Skipped | Notes |
+|---|---|---|---|---|---|
+| Files for the areas changed (research, compare, lab, crypto, futures, backtest, ledger, engine, attribution, checkpoint, recovery, training, server, webapp, forecast, marketdata, health; 136 files) | 2,000 | 1,977 | 3 | 20 | The 3 failures are described below; each was fixed and the files re-run green |
+| All other non-browser files (326 files) | 6,027 | 5,990 | 0 | 37 | |
+| Browser files (36 files, Chromium, 2 workers) | 301 | 296 | 3 | 2 | One failure is the known baseline failure, one is a load flake, one was a stale page count; see below |
+
+Non-browser total: 8,027 tests, 0 failures after the fixes. Browser: 301, 3 failures, all explained. The batches ran at different points of the work: the first batch ran before the last two fixes below, and the files those fixes touch (`test_observability.py`, `test_webapp_assets_ml.py`, `test_server_hardening.py`, `test_fresh_process_double_dqn.py`, `test_fresh_process_sb3.py`, `test_webapp_research_browser.py`) were re-run afterwards and passed. A single run of the final tree over everything was not made.
+
+### 3.2 Failures found by the regression, and what they were
+
+| Failure | Cause | Outcome |
+|---|---|---|
+| `test_server`-family: `test_the_workspaces_are_served_with_query_strings_and_the_token` (connection dropped) | **A real defect of this round**: the request logger raised on a query with too many fields, turning a 400 into a dropped connection | Logger made non-failing; regression test `test_a_request_with_too_many_query_fields_is_answered_with_a_400_and_logged_not_dropped` |
+| `test_fresh_process_double_dqn` and `test_fresh_process_sb3` (changed configuration "refused") | The tests forged a checkpoint by re-saving it and deleting only the `.sha256`; with signed checkpoints the stale `.hmac` made the file untrusted, so the run started fresh instead of reporting an incompatible checkpoint | Test fixed to sign the forged file as this installation would. The behaviour (an unsigned or altered checkpoint that needs the unrestricted loader is not read, and the run starts fresh with the reason in the resume event) is intentional and is tested in `test_checkpoint_security.py` |
+| Browser `test_every_page_old_and_new_fits_a_phone_in_both_themes` | Expected 30 pages; the Data health page makes 31 | Count updated; the test also checks the new page fits a phone width in both themes and passes |
+| Browser `test_the_gradient_views_survive_a_reload` | Timeout under two-worker load; passes alone | Load flake |
+| Browser `test_the_fit_ranks_the_models_draws_the_smiles_and_says_what_it_fitted` | Fails identically at the baseline commit (recorded in the previous round) | Not caused by this work; not fixed |
+
+The Stable-Baselines3 tests ran: `tests/test_fresh_process_sb3.py` uses its own Python environment at `/tmp/sb3env` (which holds Stable-Baselines3); the main interpreter does not have the package. That environment lives in `/tmp` and is not a durable part of the checkout.
+
+### 3.3 Tests added this round (all run and passing)
+
+| File | Tests | What it proves |
+|---|---|---|
+| `test_crypto_book_policy.py` | 16 | valid to invalid, valid to stale, valid to crossed, sequence gap, invalid to valid, out-of-order timestamps, multi-exchange latencies; store and replay agree |
+| `test_research_compare_conventions.py` | 20 (17 fail on the old `compare.py`) | elapsed-time CAGR; 252, 365, 52, 12 and elapsed-time annualisation against independent numpy; risk-free accrual; equity against crypto calendars; holes, inception dates, flat days, partial coverage, mixed frequencies, declared metadata, currency and return-type blocking; rolling statistics; benchmark-relative |
+| `test_research_metrics.py` | 15 | direction of every metric, missing values last, kind, horizon and unit refusal |
+| `test_accounting_cross_engine.py` | 17 | weight engine against ledger: drift bases, costs, dividends, splits, funding, partial fills, futures roll, option expiry, foreign currency |
+| `test_attribution_independent_reference.py` | 5 | an independent BHB decomposition and Carino linking |
+| `test_data_health.py` | 23 | coverage, integrity checks, readiness, fingerprints, corrections, capability-registry evidence rules, API routes, diagnostics, backup restore verification |
+| `test_webapp_data_health_browser.py` | 5 | the page in Chromium: readiness, coverage, integrity, capabilities, missing periods, source, correction, validate as a job, refresh refusal, CSV export |
+| `test_futures_contract_validation.py` | 10 | specification rules, executability, roll table, the difference-adjusted return defect |
+| `test_training_checkpoint_warning.py` and one browser test | 3 + 1 | the failed-checkpoint summary and the banner |
+| `test_backtest_audit_trail.py` | 8 | the trail reconciles to the result to 1e-9 under four engine settings; timing; per-asset costs; no look-ahead |
+| `test_checkpoint_security.py` | 6 | a forged pickle with a matching hash is not executed; signatures follow rotations; plain checkpoints never use the unrestricted loader |
+| `test_security_audit.py` | 8 | no secret in any status response, static allow-list, verification allow-list, no shell use, fixed SQL fragments |
+| `test_observability.py` | 7 | correlation ids, log contents, scrubbed errors, rotation, a failing log never fails a request |
+| `test_lab_help_consistency.py` | 2 | the Alpha Lab help matches the save route |
+
+### 3.4 Numerical reconciliation
+
+* Comparison: every metric of the new arithmetic equals an independent numpy computation to 1e-9 or better (`test_research_compare_conventions.py`).
+* Weight engine against ledger: equal to 1e-12 with zero costs; with costs the equity differs by no more than three times the derived second-order bound (cost x turnover x the day's return) and by less than a tenth of the costs themselves.
+* Audit trail against the result: total gross return and total costs equal to 1e-9.
+* Attribution: BHB and Carino references to 1e-12 to 1e-14.
+* Effects on existing numbers: the Research Comparison's CAGR, volatility, Sharpe and window change for every saved result (the old arithmetic was wrong); the weight engine's default drift is unchanged; a difference-adjusted continuous futures series' returns change.
+
+### 3.5 Not verified
+
+* **Live providers:** nothing was called live this session. The exchange matrix of 2026-11-25 (OKX and Deribit answered live; Bybit and Binance were refused from that network) was not re-run. No Massive key exists on this machine, so every Massive dataset is mock-tested or untested.
+* **Windows:** not run. `scripts/verify_windows_recovery.py` exists and has never run on Windows.
+* **Real filings:** no real filing was benchmarked for any jurisdiction.
+* **Performance and Replit memory:** not profiled.
+* **GPU:** not available.
+* **Synthetic backtests:** every backtest result here is on simulated or historical data and says nothing about profitability.
 
 ## 4. Remaining work, classified
 
