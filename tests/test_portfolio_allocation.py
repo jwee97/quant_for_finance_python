@@ -19,7 +19,7 @@ from src.ml import portfolio_alloc as pa
 from src.ml.backtest import run_backtest
 
 N = 700
-DATES = pd.bdate_range("2018-01-01", periods=N)
+DATES = pd.bdate_range("2018-01-01", periods=2000)
 
 
 def panel(vols=(0.01, 0.01), corr=0.0, seed=0, drift=0.0, n=N):

@@ -142,7 +142,23 @@ def validate(cfg: dict) -> dict:
             pa.config_from_signal(sig)
         except pa.AllocationError as exc:
             raise MLConfigError(f"signal.allocation: {exc}") from None
-        _check(int(sig.get("holding_period", 1)) == 1, "the portfolio allocation weighs forecast, risk and cost itself: averaging its books over a holding period would change what it optimised (set signal.holding_period to 1)")
+        # The holding period is the allocation's own window, not an after-the-fact average of its books: averaging optimal books of different dates would not be what any one optimisation chose. It reaches the
+        # allocator as ``allocation.holding_days`` (the window the optimisation is posed over and the tranche lifetime); ``allocation.lifecycle`` says whether overlapping decisions replace each other (one book) or
+        # are held as staggered tranches. 1 with no holding_days is the original behaviour (the window is the forecast horizon).
+        alloc_cfg = dict(sig.get("allocation") or {})
+        hp = int(sig.get("holding_period", 1))
+        if alloc_cfg.get("holding_days") is None and hp != 1:
+            alloc_cfg["holding_days"] = hp
+            sig["allocation"] = alloc_cfg
+        elif alloc_cfg.get("holding_days") is not None:
+            sig["holding_period"] = int(alloc_cfg["holding_days"])                      # one number for the holding window: the allocation's, shown in the signal section as well
+        if alloc_cfg.get("lifecycle") == "staggered_tranches" and alloc_cfg.get("holding_days") is None:
+            alloc_cfg["holding_days"] = hp                                              # a tranche lives for the signal's holding period
+            sig["allocation"] = alloc_cfg
+        try:
+            pa.config_from_signal(sig)
+        except pa.AllocationError as exc:
+            raise MLConfigError(f"signal.allocation: {exc}") from None
     derived = sig["method"] in ("cost_aware_mean_variance", "calibrated_sizing", "decision_policy", "portfolio_allocation") or sig.get("no_trade_margin") is not None or sig.get("trade_filter_k") is not None
     if derived:                                                                             # what these rules need from the other sections, set here so that one place decides each of them
         sig["cost_bps"] = float(bt["cost_bps"]) + float(bt["slippage_bps"])

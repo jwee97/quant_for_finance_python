@@ -41,7 +41,7 @@ from ..ml.datasets import UNIVERSES, build_dataset, feature_catalog, resolve_bun
 from ..ml.deep import context as train_context
 from ..ml.deep.context import CheckpointIncompatible
 from ..ml.deep.manifest import ARCHITECTURES, architecture                      # a table of text: importing it does not import PyTorch
-from ..ml.experiments import RL_KINDS, compare_saved, load_run, rebacktest, run_experiment
+from ..ml.experiments import RL_KINDS, calibration_saved, compare_saved, load_run, rebacktest, run_experiment
 from ..ml import allocator_compare as alc
 from ..ml import portfolio_alloc as palloc
 from ..ml import resources
@@ -140,7 +140,12 @@ ALLOCATION_SPEC = {"allocator": ("choice", palloc.ALLOCATORS), "forecast_kind": 
                    "calibrate": ("choice", ("slope", "none")), "calib_window": ("int", 60, 2000), "calib_min_obs": ("int", 20, 1000), "calib_min_t": ("float", 0.0, 10.0),
                    "cov_method": ("choice", tuple(palloc.rm.METHODS)), "cov_window": ("int", 60, 1000), "cov_halflife": ("float", 5.0, 500.0), "cov_min_obs": ("int", 20, 1000),
                    "risk_aversion": ("float", 0.01, 1000.0), "tau": ("float", 0.001, 1.0), "kelly_fraction": ("float", 0.05, 1.0), "kelly_min_t": ("float", 0.0, 10.0), "cvar_alpha": ("float", 0.8, 0.99),
-                   "robust_kappa": ("float", 0.0, 10.0), "opt_every": ("int", 1, 60), "cost_bps": ("float", 0.0, 250.0), "turnover_penalty": ("float", 0.0, 100.0), "on_failure": ("choice", palloc.FAILURE_POLICIES)}
+                   "robust_kappa": ("float", 0.0, 10.0), "opt_every": ("int", 1, 60), "cost_bps": ("float", 0.0, 250.0), "turnover_penalty": ("float", 0.0, 100.0), "on_failure": ("choice", palloc.FAILURE_POLICIES),
+                   "holding_days": ("int", 1, 252), "lifecycle": ("choice", palloc.LIFECYCLES), "cov_horizon": ("choice", palloc.hz.COV_HORIZON_METHODS),
+                   "calib_method": ("choice", palloc.cal.METHODS), "calib_inference": ("choice", palloc.cal.INFERENCE), "calib_asset_min_eff": ("float", 5.0, 1000.0), "calib_prior_sd": ("float", 0.01, 5.0),
+                   "baseline": ("choice", palloc.stab.BASELINES), "blend": ("choice", palloc.stab.BLENDS), "blend_alpha": ("float", 0.0, 1.0), "blend_max": ("float", 0.0, 1.0), "blend_window": ("int", 5, 500),
+                   "blend_min_obs": ("int", 3, 500), "uncertainty_shrink": ("float", 0.0, 5.0), "min_n_eff": ("float", 0.0, 10000.0), "min_confidence": ("float", 0.0, 1.0), "max_weight_change": ("float", 0.001, 1.0),
+                   "sensitivity": ("bool",), "preset": ("choice", tuple(palloc.stab.PRESETS))}
 ALLOCATION_LIMITS = {"long_only": ("bool",), "cash_allowed": ("bool",), "min_weight": ("float", 0.0, 1.0), "max_weight": ("float", 0.0, 1.0), "max_sector": ("float", 0.05, 1.0), "gross_max": ("float", 0.1, 3.0),
                      "net_min": ("float", -1.0, 3.0), "net_max": ("float", -1.0, 3.0), "turnover_max": ("float", 0.0, 1.0), "vol_target": ("float", 0.01, 1.0), "max_leverage": ("float", 0.5, 5.0)}
 
@@ -289,7 +294,7 @@ class MlApi(AdvancedRoutes, SelectionRoutes, StrategyRoutes, ResearchRoutes):
                 "/api/ml/delay-report": self.delay_report, "/api/ml/allocation/catalog": self.allocation_catalog, **self.strategy_get_routes(), **self.research_get_routes(), **self.advanced_get_routes(), **self.selection_get_routes(), **self.training.get_routes()}
 
     def post_routes(self) -> dict:
-        return {"/api/ml/dataset/build": self.dataset_build, "/api/ml/train": self.train, "/api/ml/rebacktest": self.rebacktest, "/api/ml/allocation/compare": self.allocation_compare, "/api/ml/search": self.search, "/api/ml/tune": self.tune, "/api/ml/tune/stop": self.tune_stop,
+        return {"/api/ml/dataset/build": self.dataset_build, "/api/ml/train": self.train, "/api/ml/rebacktest": self.rebacktest, "/api/ml/allocation/compare": self.allocation_compare, "/api/ml/allocation/calibration": self.allocation_calibration, "/api/ml/search": self.search, "/api/ml/tune": self.tune, "/api/ml/tune/stop": self.tune_stop,
                 "/api/ml/combine": self.combine, "/api/ml/meta-label": self.meta_label, "/api/ml/forward/step": self.forward_step, "/api/ml/promote": self.promote, "/api/ml/verification/run": self.verification_run, "/api/ml/delete": self.delete,
                 "/api/ml/evaluation-plan": self.evaluation_plan, "/api/ml/evaluation-plan/freeze": self.evaluation_plan_freeze, "/api/ml/evaluate": self.evaluate,
                 "/api/ml/null-controls/run": self.null_controls_run, "/api/ml/selection-tests/run": self.selection_tests_run, "/api/ml/validation-policy": self.validation_policy_adopt,
@@ -634,13 +639,16 @@ class MlApi(AdvancedRoutes, SelectionRoutes, StrategyRoutes, ResearchRoutes):
         base = palloc.AllocConfig()
         lim = palloc.Limits()
         return jsonable({"version": palloc.VERSION, "allocators": [{"key": k, **palloc.DOCS[k]} for k in palloc.ALLOCATORS], "forecast_kinds": list(palloc.FORECAST_KINDS), "failure_policies": list(palloc.FAILURE_POLICIES),
-                         "risk_models": list(palloc.rm.METHODS), "defaults": base.content(), "limit_defaults": palloc.asdict(lim),
+                         "risk_models": list(palloc.rm.METHODS), "defaults": palloc.asdict(base), "limit_defaults": palloc.asdict(lim),
+                         "lifecycles": list(palloc.LIFECYCLES), "cov_horizon_methods": list(palloc.hz.COV_HORIZON_METHODS), "calibration_methods": list(palloc.cal.METHODS), "calibration_inference": list(palloc.cal.INFERENCE),
+                         "baselines": list(palloc.stab.BASELINES), "blends": list(palloc.stab.BLENDS), "presets": {k: {"description": v["description"], "allocation": v["allocation"], "limits": v["limits"]} for k, v in palloc.stab.PRESETS.items()},
+                         "horizon_note": "Four quantities are kept apart: the prediction horizon (dataset.horizon), the holding window (holding days), the decision frequency (opt_every) and the execution lag (dataset.lag + backtest.extra_lag).",
                          "note": "The default signal method is unchanged: portfolio allocation is used only when it is selected. Equal weight stays available as the benchmark and as an allocator."})
 
     def allocation_compare(self, body: dict) -> dict:
         """``POST /api/ml/allocation/compare`` (a job): every allocator on a saved experiment's forecasts, with the same dates, limits, costs and execution. Allocators are ranked, and one selected, on the
         selection segment only (validation by default); ``evaluate`` lists protected segments (test, forward) to report for every allocator, flagged as not used for selection. Nothing is refitted or saved as an experiment."""
-        _only(body, {"id", "allocators", "select_on", "evaluate", "select_by", "allocation", "include_existing_rule"}, "/api/ml/allocation/compare")
+        _only(body, {"id", "allocators", "select_on", "evaluate", "select_by", "allocation", "include_existing_rule", "policies"}, "/api/ml/allocation/compare")
         exp_id = _id(body)
         allocs = body.get("allocators")
         if allocs is not None and (not isinstance(allocs, list) or not allocs or any(a not in palloc.ALLOCATORS for a in allocs)):
@@ -655,15 +663,55 @@ class MlApi(AdvancedRoutes, SelectionRoutes, StrategyRoutes, ResearchRoutes):
         if select_by not in ("sharpe", "net_return", "max_drawdown"):
             raise ApiError("select_by must be sharpe, net_return or max_drawdown")
         allocation = _clean_allocation("allocation", body.get("allocation") or {})
+        raw_pol = body.get("policies") or {}
+        if not isinstance(raw_pol, dict) or len(raw_pol) > 12 or any(not re.match(r"^[A-Za-z0-9_ .-]{1,40}$", str(k)) for k in raw_pol):
+            raise ApiError("policies is an object of at most twelve named policies, each a set of allocation settings")
+        policies = {}
+        for name, ov in raw_pol.items():
+            if not isinstance(ov, dict):
+                raise ApiError(f"policy {name!r} must be an object of allocation settings")
+            label = ov.get("label")
+            if label is not None and (not isinstance(label, str) or len(label) > 60):
+                raise ApiError(f"policy {name!r}: label is a short text")
+            clean = _clean_allocation(f"policies.{name}", {k: v for k, v in ov.items() if k != "label"})
+            policies[str(name)] = {**clean, **({"label": label} if label else {})}
 
         def work(progress):
             progress("comparing allocation policies on the saved forecasts")
             with _user_errors():
                 out = compare_saved(self.registry, exp_id, allocs, select_on=select_on, evaluate=tuple(evaluate), select_by=select_by, allocation=allocation,
-                                    include_existing_rule=bool(body.get("include_existing_rule", True)))
+                                    include_existing_rule=bool(body.get("include_existing_rule", True)), policies=policies or None)
             return jsonable(alc.public(out))
 
         return self._submit(f"ml: allocator comparison {exp_id[-6:]}", work)
+
+    def allocation_calibration(self, body: dict) -> dict:
+        """``POST /api/ml/allocation/calibration`` (a job): calibration methods compared chronologically out of sample on a saved experiment's forecasts, on the selection segment only. A method is called better than
+        the pooled baseline only when the paired difference in squared error has an autocorrelation-robust interval that excludes zero."""
+        _only(body, {"id", "variants", "select_on", "step", "allocation"}, "/api/ml/allocation/calibration")
+        exp_id = _id(body)
+        select_on = str(body.get("select_on") or "validation")
+        if select_on not in ("train", "validation"):
+            raise ApiError("select_on must be validation (or train): the test and forward segments are protected")
+        step = _int(body, "step", 5, 1, 60)
+        raw = body.get("variants") or {"pooled_sqrt_horizon": {}, "pooled_hac": {"calib_inference": "hac"}, "asset_hac": {"calib_method": "asset", "calib_inference": "hac"},
+                                         "partial_pooling_hac": {"calib_method": "partial_pooling", "calib_inference": "hac"}, "regularized_hac": {"calib_method": "regularized", "calib_inference": "hac"}}
+        if not isinstance(raw, dict) or not 1 <= len(raw) <= 10 or any(not re.match(r"^[A-Za-z0-9_ .-]{1,40}$", str(k)) for k in raw):
+            raise ApiError("variants is an object of one to ten named calibration settings")
+        calib_keys = {"calib_method", "calib_inference", "calib_asset_min_eff", "calib_prior_sd", "calib_min_t", "calib_window", "calib_min_obs"}
+        variants = {}
+        for name, ov in raw.items():
+            if not isinstance(ov, dict) or set(ov) - calib_keys:
+                raise ApiError(f"variant {name!r} may set only {sorted(calib_keys)}")
+            variants[str(name)] = _clean_allocation(f"variants.{name}", ov)
+        allocation = _clean_allocation("allocation", body.get("allocation") or {})
+
+        def work(progress):
+            progress("calibrating on the saved forecasts, chronologically")
+            with _user_errors():
+                return jsonable(calibration_saved(self.registry, exp_id, variants, select_on=select_on, step=step, allocation=allocation))
+
+        return self._submit(f"ml: calibration comparison {exp_id[-6:]}", work)
 
     def meta_label(self, body: dict) -> dict:
         """``POST /api/ml/meta-label`` (a job): train a secondary model on a saved experiment's out-of-sample bets and size the book with it."""

@@ -596,7 +596,7 @@ def compare_saved(registry: Registry, exp_id: str, allocators=None, **kw) -> dic
 
 
 def _compare_core(cfg: dict, ds: Dataset, train: TrainResult, scores: pd.DataFrame, exp_id: str, allocators=None, *, select_on: str = "validation", evaluate: tuple = (), select_by: str = "sharpe",
-                  allocation: dict | None = None, include_existing_rule: bool = True, seed: int = 0) -> dict:
+                  allocation: dict | None = None, include_existing_rule: bool = True, seed: int = 0, policies: dict | None = None) -> dict:
     """Compare allocation policies on identical forecasts, dates, limits, costs and execution. ``allocation`` overrides the experiment's ``signal.allocation`` block (limits, risk model, calibration, costs); the
     experiment's own position rule is included as a further row unless it already is the portfolio-allocation method. The protected segments are computed only for the segments named in ``evaluate`` and are
     never used to select."""
@@ -618,9 +618,31 @@ def _compare_core(cfg: dict, ds: Dataset, train: TrainResult, scores: pd.DataFra
     legacy = cfg["signal"] if include_existing_rule and cfg["signal"]["method"] != "portfolio_allocation" else None
     try:
         out = ac.compare(scores, ds.returns, ds.investable, sig, cfg["backtest"], ds.lag, train.plan.labels(), groups, allocators=tuple(allocators or pa.ALLOCATORS), select_on=select_on, evaluate=tuple(evaluate),
-                         select_by=select_by, prices=ds.prices.reindex(index=ds.dates, columns=ds.assets), probability=prob_wide, predictive_sd=unc, legacy_rule=legacy, seed=seed)
+                         select_by=select_by, prices=ds.prices.reindex(index=ds.dates, columns=ds.assets), probability=prob_wide, predictive_sd=unc, legacy_rule=legacy, seed=seed, policies=policies)
     except pa.AllocationError as exc:
         raise ExperimentError(str(exc)) from None
     out["prediction_quality"] = ac.prediction_quality(scores, ds.returns, int(ds.horizon), int(ds.lag), label_days(scores.index, train.plan.labels()), segments=(select_on, *evaluate))
+    out["experiment"] = exp_id
+    return out
+
+
+def calibration_saved(registry: Registry, exp_id: str, variants: dict, *, select_on: str = "validation", step: int = 5, allocation: dict | None = None) -> dict:
+    """Compare calibration methods on a saved experiment's forecasts, chronologically and out of sample, on the selection segment only (see ``allocator_compare.compare_calibration``)."""
+    from . import allocator_compare as ac
+    from . import portfolio_alloc as pa
+
+    if select_on not in ("train", "validation"):
+        raise ExperimentError("calibrations are compared on the validation segment (or the warm-up training segment); the test and forward segments are protected")
+    cfg, ds, train, _ = load_run(registry, exp_id)
+    sig = {**cfg["signal"]}
+    sig["allocation"] = merge(dict(sig.get("allocation") or {}), allocation or {})
+    sig["window_days"] = int(ds.horizon)
+    sig["lag_total"] = int(ds.lag) + int(cfg["backtest"].get("extra_lag", 0))
+    prob_wide = train.probabilities.unstack("asset").reindex(index=ds.dates, columns=ds.assets) if train.probabilities is not None else None
+    try:
+        out = ac.compare_calibration(train.scores_wide(ds), ds.returns, sig, ds.lag, train.plan.labels(), ds.group or ds.asset_class, variants=variants, select_on=select_on, step=step,
+                                     prices=ds.prices.reindex(index=ds.dates, columns=ds.assets), probability=prob_wide)
+    except pa.AllocationError as exc:
+        raise ExperimentError(str(exc)) from None
     out["experiment"] = exp_id
     return out

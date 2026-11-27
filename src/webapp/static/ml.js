@@ -60,8 +60,10 @@
   };
 
   Object.assign(M.form, { alWhat: "allocate", alAllocator: "mean_variance", alKind: "return", alCov: "lw_constant_correlation", alCovWindow: "252", alRiskAversion: "5", alCalibrate: "slope", alMinT: "1", alMinW: "0", alMaxW: "60", alLongOnly: true, alCash: false,
-    alGross: "1", alTurnover: "", alVolTarget: "", alSector: "", alOptEvery: "", alOnFailure: "risk_only", alTurnPen: "0", alKelly: "0.5", alRebalance: "weekly", alCommission: "5", alSlippage: "2", alProtected: false });
-  M.alloc = { cat: null, run: null, compare: null, error: "" };
+    alGross: "1", alTurnover: "", alVolTarget: "", alSector: "", alOptEvery: "", alOnFailure: "risk_only", alTurnPen: "0", alKelly: "0.5", alRebalance: "weekly", alCommission: "5", alSlippage: "2", alProtected: false, alStab: false,
+    alHolding: "1", alLifecycle: "single_book", alCovHorizon: "linear", alCalMethod: "pooled", alInference: "sqrt_horizon", alShrink: "0", alMinEff: "30", alMinNeff: "0", alMinConf: "0", alPreset: "none", alBaseline: "none", alBlend: "none",
+    alAlpha: "0.5", alBlendMax: "1", alMaxChange: "", alSens: false });
+  M.alloc = { cat: null, run: null, compare: null, calibration: null, error: "" };
 
   /* ---------- what the server offers, and the list of experiments ---------- */
   function init(cat) {
@@ -239,8 +241,8 @@
     if (!usable.some((r) => r.id === M.cur)) { const now = rows.find((r) => r.id === M.cur), parent = now && usable.find((r) => r.id === now.parent); setCurrent((parent || usable[0]).id); }
     f.exp = M.cur;
     Q.labField(b, { key: "exp", label: "Experiment", kind: "choice", options: usable.map((r) => [r.id, expLabel(r)]) }, f, () => {
-      setCurrent(f.exp); f.asset = ""; for (const k of ["explain", "overfit", "forward", "forward_step", "meta", "child", "allocation", "alloc_compare"]) { M.results[k] = null; M.errors[k] = null; }
-      M.alloc.run = M.alloc.compare = null;                                                      // an allocation belongs to the forecasts it was made from
+      setCurrent(f.exp); f.asset = ""; for (const k of ["explain", "overfit", "forward", "forward_step", "meta", "child", "allocation", "alloc_compare", "alloc_cal"]) { M.results[k] = null; M.errors[k] = null; }
+      M.alloc.run = M.alloc.compare = M.alloc.calibration = null;                                                      // an allocation belongs to the forecasts it was made from
       Q.renderLab(M);
     });
     if (usable.length < rows.length) h("p", "hint", b, "Re-backtests and meta-labelled runs are not listed: they have no model of their own.");
@@ -457,12 +459,19 @@
     if (m === "combine") return W.request(M, () => [{ modes: ["combine"], path: "/api/ml/combine", body: { ids: [...M.picked], methods: [...f.methods], lookback: needNumber(f.lookback, "Window"), rebalance: needNumber(f.every, "Re-estimate every"), risk_aversion: needNumber(f.riskAversion, "Risk aversion") } }], "Combining…");
     if (m === "allocation") {
       if (f.alWhat === "compare") {
-        const got = await sideJob("alloc_compare", "/api/ml/allocation/compare", { id: M.cur, allocation: allocationBody(f, true), evaluate: f.alProtected ? ["test", "forward"] : [] }, "Comparing the allocators…");
+        const policies = f.alStab ? { mv_conservative: { label: "Mean-variance, conservative preset", allocator: "mean_variance", preset: "conservative" },
+          mv_blend: { label: "Mean-variance blended 50/50 with inverse volatility", allocator: "mean_variance", baseline: "inverse_vol", blend: "fixed", blend_alpha: 0.5 } } : undefined;
+        const got = await sideJob("alloc_compare", "/api/ml/allocation/compare", { id: M.cur, allocation: allocationBody(f, true), evaluate: f.alProtected ? ["test", "forward"] : [], policies }, "Comparing the allocators…");
         if (got) { M.alloc.compare = got; if (!M.results.allocation) M.results.allocation = { data: { compareOnly: true }, body: {} }; M.draw(); }
         return;
       }
+      if (f.alWhat === "calibration") {
+        const got = await sideJob("alloc_cal", "/api/ml/allocation/calibration", { id: M.cur, allocation: allocationBody(f, true) }, "Comparing the calibration methods…");
+        if (got) { M.alloc.calibration = got; if (!M.results.allocation) M.results.allocation = { data: { compareOnly: true }, body: {} }; M.draw(); }
+        return;
+      }
       const before = M.results.allocation;
-      await W.request(M, () => [{ modes: ["allocation"], job: true, path: "/api/ml/rebacktest", body: { id: M.cur, name: "allocation-" + f.alAllocator, signal: { method: "portfolio_allocation", holding_period: 1, allocation: allocationBody(f) },
+      await W.request(M, () => [{ modes: ["allocation"], job: true, path: "/api/ml/rebacktest", body: { id: M.cur, name: "allocation-" + f.alAllocator, signal: { method: "portfolio_allocation", holding_period: needNumber(f.alHolding, "Holding period"), allocation: allocationBody(f) },
         backtest: { rebalance: f.alRebalance, cost_bps: needNumber(f.alCommission, "Commission"), slippage_bps: needNumber(f.alSlippage, "Slippage") } } }], "Allocating and backtesting…");
       if (M.results.allocation && M.results.allocation !== before) { M.alloc.run = M.results.allocation.data; invalidate(); }
       return;
@@ -599,129 +608,226 @@
   const ALLOC_FALLBACK = [["equal_weight", "Equal weight (benchmark)"], ["inverse_vol", "Inverse volatility"], ["erc", "Equal risk contribution"], ["mean_variance", "Mean-variance"], ["black_litterman", "Black-Litterman"], ["hrp", "Hierarchical risk parity (3+ assets)"],
     ["cvar", "CVaR"], ["robust_mv", "Robust mean-variance"], ["kelly", "Fractional Kelly"]];
   const DRIVER_WORD = { forecast: "the forecast", risk: "risk and correlation", constraints: "the limits", equal: "nothing: it is the equal-weight book" };
+  const PRESET_FIELDS = ["alRiskAversion", "alInference", "alMinT", "alShrink", "alBaseline", "alBlend", "alMaxChange", "alTurnPen", "alMaxW"];          // what a preset sets: hidden while one is chosen, so that it cannot be overridden by a form default
   function loadAllocationCatalog() {
     if (M.alloc.loading) return;
     M.alloc.loading = true;
     api("/api/ml/allocation/catalog").then((c) => { M.alloc.cat = c; M.alloc.loading = false; if (isOpen()) Q.renderLab(M); }, (e) => { M.alloc.loading = false; M.alloc.error = e.message; });
   }
   function allocationBody(f, forCompare) {
-    const lim = { long_only: !!f.alLongOnly, cash_allowed: !!f.alCash, min_weight: needNumber(f.alMinW, "Minimum weight") / 100, max_weight: needNumber(f.alMaxW, "Maximum weight") / 100, gross_max: needNumber(f.alGross, "Gross exposure") };
+    const preset = f.alPreset && f.alPreset !== "none" ? f.alPreset : null;
+    const lim = { long_only: !!f.alLongOnly, cash_allowed: !!f.alCash, min_weight: needNumber(f.alMinW, "Minimum weight") / 100, gross_max: needNumber(f.alGross, "Gross exposure") };
+    if (!preset) lim.max_weight = needNumber(f.alMaxW, "Maximum weight") / 100;
     for (const [key, name, field] of [["turnover_max", "Turnover limit", "alTurnover"], ["vol_target", "Volatility target", "alVolTarget"], ["max_sector", "Sector cap", "alSector"]]) { const v = optNumber(f[field], name); if (v !== undefined) lim[key] = v / 100; }
-    const a = { forecast_kind: f.alKind, cov_method: f.alCov, cov_window: needNumber(f.alCovWindow, "Risk window"), risk_aversion: needNumber(f.alRiskAversion, "Risk aversion"), calibrate: f.alCalibrate, calib_min_t: needNumber(f.alMinT, "Calibration t-statistic"),
-      on_failure: f.alOnFailure, turnover_penalty: needNumber(f.alTurnPen, "Turnover penalty"), kelly_fraction: needNumber(f.alKelly, "Kelly fraction"), cost_bps: needNumber(f.alCommission, "Commission") + needNumber(f.alSlippage, "Slippage"), limits: lim };
-    const every = optNumber(f.alOptEvery, "Optimise every"); if (every !== undefined) a.opt_every = every;
+    const a = { forecast_kind: f.alKind, cov_method: f.alCov, cov_window: needNumber(f.alCovWindow, "Risk window"), calibrate: f.alCalibrate, calib_method: f.alCalMethod, calib_asset_min_eff: needNumber(f.alMinEff, "Independent windows per asset"),
+      on_failure: f.alOnFailure, kelly_fraction: needNumber(f.alKelly, "Kelly fraction"), cost_bps: needNumber(f.alCommission, "Commission") + needNumber(f.alSlippage, "Slippage"), cov_horizon: f.alCovHorizon, lifecycle: f.alLifecycle,
+      min_n_eff: needNumber(f.alMinNeff, "Minimum independent observations"), min_confidence: needNumber(f.alMinConf, "Minimum confidence"), sensitivity: !!f.alSens, limits: lim };
+    if (preset) a.preset = preset;
+    else {
+      Object.assign(a, { risk_aversion: needNumber(f.alRiskAversion, "Risk aversion"), calib_inference: f.alInference, calib_min_t: needNumber(f.alMinT, "Calibration t-statistic"), uncertainty_shrink: needNumber(f.alShrink, "Uncertainty shrinkage"),
+        turnover_penalty: needNumber(f.alTurnPen, "Turnover penalty") });
+      if (f.alBaseline !== "none" && f.alBlend !== "none") { a.baseline = f.alBaseline; a.blend = f.alBlend; a.blend_alpha = needNumber(f.alAlpha, "Blend weight"); a.blend_max = needNumber(f.alBlendMax, "Maximum blend weight"); }
+      const mc = optNumber(f.alMaxChange, "Maximum weight change"); if (mc !== undefined) a.max_weight_change = mc / 100;
+    }
+    const every = optNumber(f.alOptEvery, "Decide every"); if (every !== undefined) a.opt_every = every;
+    const hold = needNumber(f.alHolding, "Holding period"); if (hold !== 1 || f.alLifecycle === "staggered_tranches") a.holding_days = hold;
     if (!forCompare) a.allocator = f.alAllocator;
     return a;
   }
   function allocationSections(sec, f, after) {
     const cat = M.alloc.cat, again = () => { M.results.allocation = null; M.errors.allocation = null; Q.renderLab(M); };
     if (!cat) { loadAllocationCatalog(); h("p", "hint", sec("1. The experiment"), M.alloc.error || "Loading the allocators…"); return; }
+    const preset = f.alPreset && f.alPreset !== "none";
     const b1 = sec("1. The experiment");
     expSelect(b1, true);
     h("p", "hint", b1, "The saved predictions are re-used: nothing is refitted. The model must forecast an asset's own return (fwd_ret_h) or the direction of its move; a rank or relative-return forecast says nothing about how much to hold, and is refused with what to change.");
     const b2 = sec("2. What to run");
-    W.seg(b2, [["allocate", "Allocate and backtest one policy"], ["compare", "Compare all allocators"]], f.alWhat, (v) => { f.alWhat = v; Q.renderLab(M); });
+    W.seg(b2, [["allocate", "Allocate and backtest one policy"], ["compare", "Compare all allocators"], ["calibration", "Compare calibration methods"]], f.alWhat, (v) => { f.alWhat = v; Q.renderLab(M); });
     if (f.alWhat === "compare") {
+      Q.labField(b2, { key: "alStab", label: "Also compare the stabilisers (conservative preset; 50% confidence-weighted blend with inverse volatility)", kind: "bool" }, f, after);
       Q.labField(b2, { key: "alProtected", label: "Also report the test and forward segments, flagged as not used to select", kind: "bool", help: "Allocators are ranked and one is selected on the validation segment only. Reporting the protected segments is a look at them and is counted as one." }, f, after);
-      h("p", "hint", b2, "Every allocator gets the same forecasts, dates, limits, costs and execution. The ranking and the multiple-testing control use the validation segment only.");
+      h("p", "hint", b2, "Every allocator gets the same forecasts, dates, limits, costs, risk windows and execution. The ranking and the multiple-testing control use the validation segment only.");
     }
+    if (f.alWhat === "calibration") h("p", "hint", b2, "Pooled, asset-specific, partially pooled and regularised calibration, each from outcomes resolved before every decision, scored on the validation segment. A method is called better than the pooled baseline only when the interval of the paired difference excludes zero.");
     const b3 = sec("3. Allocation policy");
-    const opts = (cat.allocators || []).map((a) => [a.key, a.label]);
-    if (f.alWhat !== "compare") Q.labField(b3, { key: "alAllocator", label: "Allocator", kind: "choice", options: opts.length ? opts : ALLOC_FALLBACK }, f, again);
+    const opts = (cat.allocators || []).map((a) => [a.key, a.label + (a.uses_forecast ? "" : " (risk only)")]);
+    if (f.alWhat === "allocate") Q.labField(b3, { key: "alAllocator", label: "Allocator", kind: "choice", options: opts.length ? opts : ALLOC_FALLBACK }, f, again);
     const doc = (cat.allocators || []).find((a) => a.key === f.alAllocator);
-    if (doc && f.alWhat !== "compare") { const p = h("p", "hint", b3); p.setAttribute("data-allocator-doc", doc.key); p.textContent = `${doc.objective}. Assumes: ${doc.assumptions}. Needs: ${doc.needs}. Fails when: ${doc.failure}.`; }
+    if (doc && f.alWhat === "allocate") {
+      const p = h("p", "hint", b3); p.setAttribute("data-allocator-doc", doc.key);
+      p.textContent = `${doc.objective}. Assumes: ${doc.assumptions}. Needs: ${doc.needs}. Fails when: ${doc.failure}.`;
+      const u = h("p", doc.uses_forecast ? "hint" : "banner", b3); u.setAttribute("data-uses-forecast", String(!!doc.uses_forecast));
+      u.textContent = doc.uses_forecast ? "This allocator reads the calibrated forecast." : "This allocator is risk-only: it does not respond to the ML forecast. It uses only the covariance of past returns.";
+      if (doc.min_assets > 2) h("p", "hint", b3, `Needs at least ${doc.min_assets} assets.`);
+    }
     Q.labField(b3, { key: "alKind", label: "The forecast is a", kind: "choice", options: [["return", "Return over the horizon"], ["price", "Future price"], ["probability", "Probability of a rise (needs a direction classifier)"], ["distribution", "Return distribution"]] }, f, after);
-    Q.labField(b3, { key: "alCalibrate", label: "Calibrate the forecast on past outcomes", kind: "choice", options: [["slope", "Yes: slope through the origin, past only"], ["none", "No: use it as it is (labelled uncalibrated)"]] }, f, after);
-    Q.labField(b3, { key: "alMinT", label: "Forecast confidence: minimum calibration t-statistic", kind: "number", step: 0.5, min: 0, max: 10, help: "Below this the forecast is treated as no edge and the book is set by risk and the limits alone" }, f, after);
     Q.labField(b3, { key: "alCov", label: "Risk model", kind: "choice", options: (cat.risk_models || ["lw_constant_correlation"]).map((k) => [k, k.replace(/_/g, " ")]) }, f, after);
     Q.labField(b3, { key: "alCovWindow", label: "Risk window (days)", kind: "number", step: 21, min: 60, max: 1000 }, f, after);
-    Q.labField(b3, { key: "alRiskAversion", label: "Risk aversion", kind: "number", step: 1, min: 0.01, max: 1000, help: "Higher means a smaller bet on the forecast and a book nearer the minimum-risk one" }, f, after);
+    if (!preset) Q.labField(b3, { key: "alRiskAversion", label: "Risk aversion", kind: "number", step: 1, min: 0.01, max: 1000, help: "Higher means a smaller bet on the forecast and a book nearer the minimum-risk one. The historical default is 5." }, f, after);
     if (f.alAllocator === "kelly" || f.alWhat === "compare") Q.labField(b3, { key: "alKelly", label: "Kelly fraction", kind: "number", step: 0.05, min: 0.05, max: 1 }, f, after);
     Q.labField(b3, { key: "alOnFailure", label: "When a decision has no solution", kind: "choice", options: [["risk_only", "Risk-based book (inverse volatility)"], ["hold", "Hold the previous book"], ["equal_weight", "Equal weight"], ["cash", "Go to cash"]], help: "Never silent: every such decision is counted and recorded" }, f, after);
-    const b4 = sec("4. Weight limits", false);
+    const bt = sec("4. Time: horizon, holding, decisions", false);
+    h("p", "hint", bt, "Four quantities are kept apart: the prediction horizon (fixed by the model's target), the holding period, how often a new decision is made, and the execution lag (set in the dataset and backtest settings).");
+    Q.labField(bt, { key: "alHolding", label: "Holding period (days; 1 = use the forecast horizon, the original behaviour)", kind: "number", step: 1, min: 1, max: 60, help: "The window the optimisation is posed over and, for staggered tranches, how long each tranche is held. The forecast's edge accrues within its own horizon and is not extrapolated beyond it." }, f, after);
+    Q.labField(bt, { key: "alLifecycle", label: "Overlapping decisions", kind: "choice", options: [["single_book", "One book, re-optimised at each decision (a new forecast replaces the last)"], ["staggered_tranches", "Staggered tranches, each held for the holding period"]] }, f, after);
+    Q.labField(bt, { key: "alOptEvery", label: "Decide every (days; blank = the holding period)", kind: "number", step: 1, min: 1, max: 60 }, f, after);
+    Q.labField(bt, { key: "alCovHorizon", label: "Risk over the holding window", kind: "choice", options: [["linear", "Daily covariance times the window (the original rule)"], ["variance_ratio", "Adjusted for serial correlation (variance ratio)"], ["multiperiod", "Estimated directly from overlapping windows, shrunk toward the linear one"]] }, f, after);
+    const bc = sec("5. Forecast calibration and evidence", false);
+    Q.labField(bc, { key: "alCalibrate", label: "Calibrate the forecast on past outcomes", kind: "choice", options: [["slope", "Yes: only outcomes resolved before the decision"], ["none", "No: use it as it is (labelled uncalibrated)"]] }, f, after);
+    Q.labField(bc, { key: "alCalMethod", label: "Calibration", kind: "choice", options: (cat.calibration_methods || ["pooled"]).map((k) => [k, { pooled: "Pooled slope (baseline)", asset: "A slope per asset (enough history only)", partial_pooling: "Partial pooling across assets (3+ assets)", sector_pooling: "Partial pooling by sector (needs a sector map)", regularized: "Pooled slope shrunk toward no edge" }[k] || k]) }, f, after);
+    if (!preset) {
+      Q.labField(bc, { key: "alInference", label: "Standard errors", kind: "choice", options: [["sqrt_horizon", "Independent errors times the square root of the horizon (original)"], ["hac", "HAC: overlapping outcomes, serial and cross-asset correlation"], ["block_bootstrap", "Block bootstrap of dates"]] }, f, after);
+      Q.labField(bc, { key: "alMinT", label: "Forecast confidence: minimum calibration t-statistic", kind: "number", step: 0.5, min: 0, max: 10, help: "Below this the forecast is treated as no edge and the book is set by risk and the limits alone" }, f, after);
+      Q.labField(bc, { key: "alShrink", label: "Uncertainty shrinkage (standard errors subtracted from the slope)", kind: "number", step: 0.25, min: 0, max: 5 }, f, after);
+    }
+    Q.labField(bc, { key: "alMinEff", label: "Independent outcome windows an asset needs for a slope of its own", kind: "number", step: 5, min: 5, max: 1000 }, f, after);
+    Q.labField(bc, { key: "alMinNeff", label: "Minimum independent observations behind the calibration (0 = none)", kind: "number", step: 10, min: 0, max: 10000 }, f, after);
+    Q.labField(bc, { key: "alMinConf", label: "Minimum confidence per asset (probability its slope is positive; 0 = none)", kind: "number", step: 0.05, min: 0, max: 1 }, f, after);
+    const bs = sec("6. Stability: baseline, blending, weight changes", false);
+    Q.labField(bs, { key: "alPreset", label: "Preset", kind: "choice", options: [["none", "None: the settings below"], ...Object.entries(cat.presets || {}).map(([k]) => [k, "Conservative (documented, not an optimum)"])] }, f, again);
+    if (preset) { const d = (cat.presets || {})[f.alPreset]; const p = h("p", "hint", bs); p.setAttribute("data-preset-doc", f.alPreset); p.textContent = d ? d.description : ""; }
+    else {
+      Q.labField(bs, { key: "alBaseline", label: "Baseline book (the risk-based book the ML book is blended with)", kind: "choice", options: [["none", "None: the allocator's own book"], ["equal_weight", "Equal weight"], ["inverse_vol", "Inverse volatility"], ["erc", "Equal risk contribution"]] }, f, again);
+      if (f.alBaseline !== "none") {
+        Q.labField(bs, { key: "alBlend", label: "Blend weight on the ML book (alpha)", kind: "choice", options: [["none", "No blend"], ["fixed", "Fixed alpha"], ["confidence", "From forecast confidence"], ["validation", "From past resolved decisions only"]] }, f, again);
+        if (f.alBlend === "fixed") Q.labField(bs, { key: "alAlpha", label: "alpha (0 = baseline, 1 = the ML book)", kind: "number", step: 0.05, min: 0, max: 1 }, f, after);
+        if (f.alBlend !== "none" && f.alBlend !== "fixed") Q.labField(bs, { key: "alBlendMax", label: "Largest alpha allowed", kind: "number", step: 0.05, min: 0, max: 1 }, f, after);
+        h("p", "hint", bs, "w_final = (1 - alpha) w_baseline + alpha w_ML. alpha uses only what was known at the decision; it is never fitted on the test or forward segments.");
+      }
+      Q.labField(bs, { key: "alMaxChange", label: "Largest weight change per decision, % (blank = none)", kind: "number", step: 1, min: 0.1, max: 100 }, f, after);
+    }
+    Q.labField(bs, { key: "alSens", label: "Compute sensitivities of the latest decision (forecast, risk aversion, costs)", kind: "bool" }, f, after);
+    const b4 = sec("7. Weight limits", false);
     Q.labField(b4, { key: "alLongOnly", label: "Long only", kind: "bool" }, f, after);
     Q.labField(b4, { key: "alCash", label: "Cash allowed (weights may sum to less than the gross limit)", kind: "bool" }, f, after);
     Q.labField(b4, { key: "alMinW", label: "Minimum weight per stock, %", kind: "number", step: 1, min: 0, max: 100 }, f, after);
-    Q.labField(b4, { key: "alMaxW", label: "Maximum weight per stock, %", kind: "number", step: 5, min: 0, max: 100 }, f, after);
+    if (!preset) Q.labField(b4, { key: "alMaxW", label: "Maximum weight per stock, %", kind: "number", step: 5, min: 0, max: 100 }, f, after);
     Q.labField(b4, { key: "alGross", label: "Gross exposure limit", kind: "number", step: 0.1, min: 0.1, max: 3 }, f, after);
     Q.labField(b4, { key: "alSector", label: "Sector cap, % (blank = none)", kind: "number", step: 5, min: 5, max: 100 }, f, after);
     Q.labField(b4, { key: "alTurnover", label: "Turnover limit per rebalance, % one way (blank = none)", kind: "number", step: 5, min: 0, max: 100 }, f, after);
     Q.labField(b4, { key: "alVolTarget", label: "Volatility target, % a year (blank = none)", kind: "number", step: 1, min: 1, max: 100 }, f, after);
     h("p", "hint", b4, "Limits are checked before the optimiser runs. If no book can satisfy them the decision is reported infeasible and the failure policy applies: a limit is never relaxed silently.");
-    const b5 = sec("5. Trading", false);
-    Q.labField(b5, { key: "alRebalance", label: "Rebalance frequency", kind: "choice", options: [["daily", "Daily"], ["weekly", "Weekly"], ["monthly", "Monthly"]] }, f, after);
-    Q.labField(b5, { key: "alOptEvery", label: "Re-optimise every (decisions; blank = at each rebalance)", kind: "number", step: 1, min: 1, max: 60 }, f, after);
+    const b5 = sec("8. Trading", false);
+    Q.labField(b5, { key: "alRebalance", label: "Rebalance frequency (when the engine may trade)", kind: "choice", options: [["daily", "Daily"], ["weekly", "Weekly"], ["monthly", "Monthly"]] }, f, after);
     Q.labField(b5, { key: "alCommission", label: "Commission (bps)", kind: "number", step: 0.5, min: 0, max: 250 }, f, after);
     Q.labField(b5, { key: "alSlippage", label: "Slippage (bps)", kind: "number", step: 0.5, min: 0, max: 250 }, f, after);
-    Q.labField(b5, { key: "alTurnPen", label: "Turnover penalty in the optimiser", kind: "number", step: 0.5, min: 0, max: 100 }, f, after);
+    if (!preset) Q.labField(b5, { key: "alTurnPen", label: "Turnover penalty in the optimiser", kind: "number", step: 0.5, min: 0, max: 100 }, f, after);
   }
   const lastRecord = (pa) => { const r = (pa.records || []).filter((x) => x.weights && Object.keys(x.weights).length && x.explain); return r.length ? r[r.length - 1] : null; };
   function buildAllocation(root, d) {
-    const cmp = M.alloc.compare, run = d && d.report ? d : (M.alloc.run && M.alloc.run.report ? M.alloc.run : null);
+    const cmp = M.alloc.compare, cal = M.alloc.calibration, run = d && d.report ? d : (M.alloc.run && M.alloc.run.report ? M.alloc.run : null);
     if (run) allocationRun(root, run);
-    else header(root, "Portfolio allocation", "Compare every allocator on the saved forecasts");
+    else header(root, "Portfolio allocation", "Compare allocators and calibration methods on the saved forecasts");
     if (cmp) allocationCompare(root, cmp);
+    if (cal) allocationCalibration(root, cal);
     if (run) reportView(root, run);
   }
   function allocationRun(root, d) {
     const r = d.report, pa = r.portfolio_allocation;
     if (!pa) { header(root, "Portfolio allocation", ""); W.flags(root, ["This run did not use the portfolio-allocation method, so it has no allocation record."], ""); return; }
-    const c = pa.counts, rec = lastRecord(pa), doc = pa.documentation || {};
+    const c = pa.counts, rec = lastRecord(pa), doc = pa.documentation || {}, bt = (r.config || {}).backtest || {}, costBps = Number(bt.cost_bps || 0) + Number(bt.slippage_bps || 0);
     header(root, `Portfolio allocation: ${doc.label || pa.allocator}`, `${c.decisions} decisions · ${c.optimal} solved · settings ${pa.config_hash} · child of ${shortId(d.parent || "")}`);
     if ((r.warnings || []).length) W.flags(root, r.warnings, "Watch. ");
     const k = h("div", "earnrow", root);
     tile(k, "Decisions solved", `${c.optimal} of ${c.decisions}`, { text: c.failure_policy_used ? `${c.failure_policy_used} used the failure policy` : "no fallback used", dir: c.failure_policy_used ? "down" : "" }, "", "A decision with no solution is never hidden: it is counted here and the configured failure policy applies");
     tile(k, "Forecast had no edge", String(c.no_edge + c.insufficient_history), { text: "book set by risk and limits alone", dir: "" }, "", "The calibration slope was not distinguishable from zero (or there was too little past outcome history), so the forecast was not used as a return");
     if (rec) {
+      const conc = rec.concentration || {};
       tile(k, "Expected return (window)", spct(rec.expected_return, 2), { text: "from the calibrated forecast" }, "", "The weighted calibrated expected return over the holding window, at the latest decision");
       tile(k, "Estimated risk (window)", pct(rec.forecast_vol_window, 2), { text: "from the covariance as of that date" });
-      tile(k, "Turnover of the latest rebalance", pct(rec.turnover_from_previous, 1), { text: "one way" });
+      tile(k, "Turnover of the latest rebalance", pct(rec.turnover_from_previous, 1), { text: `one way · about ${sig((rec.turnover_from_previous || 0) * 2 * costBps, 1)} bps of cost` }, "", "One-way turnover times twice the commission and slippage in basis points: an estimate; the backtest charges the actual trades");
+      tile(k, "Effective number of positions", Q.bad(conc.effective_n) ? "n/a" : sig(conc.effective_n, 2), { text: `largest weight ${pct(conc.max_weight, 0)}` }, "", "The inverse of the Herfindahl index of the weights: 2.00 for two equal weights, 1.00 for one stock");
     }
     if (rec) {
-      const ex = rec.explain, names = rec.assets || Object.keys(rec.weights), fc = rec.forecast || {};
+      const ex = rec.explain, names = rec.assets || Object.keys(rec.weights), fc = rec.forecast || {}, bl = rec.blend || {}, hz = rec.horizon || {};
+      const hist0 = (pa.records || []).filter((x) => x.weights && Object.keys(x.weights).length), prev = hist0.length > 1 ? hist0[hist0.length - 2] : null;
+      const held = rec.held_weights || rec.weights;
       const cw = W.card(root, `Why each stock got its weight (decision of ${rec.date})`, `The weights are split exactly into the equal-weight book, what risk and correlation changed, and what the forecast changed. ${DRIVER_WORD[ex.driver] ? "At this decision the weights are mainly set by " + DRIVER_WORD[ex.driver] + "." : ""}`);
       cw.setAttribute("data-allocation-explain", ex.driver);
-      table(cw, [{ label: "Stock", get: (a) => a }, { label: "Raw forecast", num: true, get: (a) => spct((rec.mu_raw || {})[a], 2) }, { label: "Calibrated forecast", num: true, get: (a) => spct((rec.mu || {})[a], 2) }, { label: "Forecast uncertainty (sd)", num: true, get: (a) => (Q.bad((rec.sd || {})[a]) ? "n/a" : pct(rec.sd[a], 2)) },
-        { label: "Volatility (a year)", num: true, get: (a) => pct(((rec.volatility_daily || {})[a] || 0) * Math.sqrt(252), 1) }, { label: "Equal weight", num: true, get: (a) => pct(ex.equal[a], 1) }, { label: "From risk", num: true, get: (a) => spct(ex.risk_effect[a], 1) },
-        { label: "From forecast", num: true, get: (a) => spct(ex.forecast_effect[a], 1) }, { label: "Weight", num: true, get: (a) => pct(rec.weights[a], 1) }, { label: "Share of risk", num: true, get: (a) => (rec.risk_contributions && rec.risk_contributions[a] && !Q.bad(rec.risk_contributions[a].share) ? pct(rec.risk_contributions[a].share, 1) : "n/a") }], names);
+      const cols = [{ label: "Stock", get: (a) => a }, { label: "Raw forecast", num: true, get: (a) => spct((rec.mu_raw || {})[a], 2) }, { label: "Calibration slope", num: true, get: (a) => { const s = (fc.slopes || {})[a]; return Q.bad(s === undefined ? fc.slope : s) ? "n/a" : sig(s === undefined ? fc.slope : s, 2); } },
+        { label: "Forecast confidence", num: true, get: (a) => { const x = (fc.confidence || {})[a]; return x === undefined || x === null ? (fc.status === "calibrated" ? "n/a" : "no edge") : pct(x, 0); } },
+        { label: "Calibrated forecast", num: true, get: (a) => spct((rec.mu || {})[a], 2) }, { label: "Forecast uncertainty (sd)", num: true, get: (a) => (Q.bad((rec.sd || {})[a]) ? "n/a" : pct(rec.sd[a], 2)) },
+        { label: "Volatility (a year)", num: true, get: (a) => pct(((rec.volatility_daily || {})[a] || 0) * Math.sqrt(252), 1) }, { label: "Equal weight", num: true, get: (a) => pct(ex.equal[a], 1) }];
+      if (bl.status === "blended") cols.push({ label: "Baseline book", num: true, get: (a) => pct((bl.baseline_weights || {})[a], 1) }, { label: "ML-only book", num: true, get: (a) => pct((bl.ml_weights || {})[a], 1) });
+      cols.push({ label: "From risk", num: true, get: (a) => spct(ex.risk_effect[a], 1) }, { label: "From forecast", num: true, get: (a) => spct(ex.forecast_effect[a], 1) }, { label: bl.status === "blended" ? "Final (blended)" : "Weight", num: true, get: (a) => pct(rec.weights[a], 1) },
+        { label: "Change from the previous decision", num: true, get: (a) => (prev && prev.weights ? spct(rec.weights[a] - ((prev.weights || {})[a] || 0), 1) : "first book") },
+        { label: "Share of risk", num: true, get: (a) => (rec.risk_contributions && rec.risk_contributions[a] && !Q.bad(rec.risk_contributions[a].share) ? pct(rec.risk_contributions[a].share, 1) : "n/a") });
+      table(cw, cols, names);
       const why = [];
       if (fc.status && fc.status !== "calibrated") why.push(`The forecast is ${String(fc.status).replace(/_/g, " ")}${fc.note ? ": " + fc.note : ""}, so it did not move the weights.`);
-      else if (fc.status === "calibrated") why.push(`The forecast is calibrated on ${fc.n_obs} past outcomes (slope ${sig(fc.slope, 2)}, t ${sig(fc.t_stat, 1)}): it is shrunk by the slope before it is used, so it moves the book by ${pct(ex.forecast_share, 0)} of the total change from equal weight.`);
+      else if (fc.status === "calibrated") why.push(`The forecast is calibrated on ${fc.n_obs} past outcomes worth ${sig(fc.n_eff, 0)} independent observations (slope ${sig(fc.slope, 2)}, t ${sig(fc.t_stat, 1)}${fc.method && fc.method !== "pooled" ? ", " + String(fc.method).replace(/_/g, " ") + " calibration" : ""}): it is shrunk by the slope before it is used, so it moves the book by ${pct(ex.forecast_share, 0)} of the total change from equal weight.`);
+      if (fc.fallback) why.push("Calibration fell back to the pooled slope: " + fc.fallback + ".");
       if ((ex.binding || []).length) why.push("Binding limits: " + ex.binding.join("; ") + ".");
+      if (rec.weight_change_limited) why.push(`The limit of ${pct(rec.weight_change_limited.limit, 0)} on weight changes restricted the move.`);
+      if (rec.turnover_limited) why.push("The turnover limit restricted the move.");
       if (!why.length) why.push("No limit is binding.");
       W.hint(cw, why.join(" "));
-      const hist = (pa.records || []).filter((x) => x.weights && Object.keys(x.weights).length), assets = rec.assets || Object.keys(rec.weights);
+      if (rec.narrative) {
+        const cn = W.card(root, "In words", rec.narrative.book || "");
+        cn.setAttribute("data-allocation-narrative", "1");
+        const ul = h("ul", "plain", cn);
+        for (const a of names) h("li", "", ul, rec.narrative.per_asset[a] || "");
+      }
+      if (bl.status === "blended") W.hint(cw, `Blended: w_final = (1 − α) w_${String(bl.baseline).replace(/_/g, " ")} + α w_ML with α = ${sig(bl.alpha, 2)} (${bl.mode}${bl.note ? ": " + bl.note : ""}).${bl.projection ? " The blend broke a limit and was projected onto the feasible set (moved " + pct(bl.projection.l1_deviation, 1) + " in total)." : ""}`);
+      const hh = W.card(root, "Horizon, holding and decisions", "Four separate quantities: the horizon the model forecasts, how long a position is meant to be held, how often a decision is made, and the execution lag.");
+      table(hh, [{ label: "Quantity", get: (x) => x[0] }, { label: "Value", get: (x) => x[1] }], [["Prediction horizon", `${hz.forecast_days || pa.holding_window_days} days`], ["Holding window", `${hz.holding_days || pa.holding_window_days} days${hz.edge_scale !== undefined ? ` (the edge is scaled by ${sig(hz.edge_scale, 2)}: it accrues within the horizon, not beyond it)` : ""}`],
+        ["Decision every", `${hz.decision_every || pa.opt_every} days`], ["Execution lag", `${hz.lag ?? pa.lag} day(s)`], ["Overlapping decisions", hz.lifecycle === "staggered_tranches" ? `staggered tranches: ${hz.tranches} alive at once, each held ${hz.holding_days} days` : "one book; each new decision replaces the last"],
+        ["Risk over the window", ((hz.covariance || {}).method || "linear") + ((hz.covariance || {}).fallback ? ": " + hz.covariance.fallback : "")]]);
+      const covs = rec.covariance_window, cor = rec.correlation;
+      if (cor && names.length > 1) {
+        const cr = W.card(root, "Covariance and correlation used", "Estimated only from returns before the decision date, over the holding window. Correlation is what makes two stocks one bet; volatility is what each adds on its own.");
+        table(cr, [{ label: "", get: (a) => a }, ...names.map((b) => ({ label: b, num: true, get: (a) => sig(cor[a][b], 2) }))], names);
+        table(cr, [{ label: "Window volatility", get: (a) => a }, { label: "Std dev over the window", num: true, get: (a) => pct(Math.sqrt(covs[a][a]), 2) }, { label: "Annualised", num: true, get: (a) => pct(Math.sqrt(covs[a][a] * 252 / (hz.holding_days || pa.holding_window_days)), 1) }], names);
+      }
+      const hist = hist0, assets = names, step = Math.max(1, Math.floor(hist.length / 60));
       if (hist.length > 1) {
         const ch = h("div", "charts", root);
         chartCard(ch, "Weights through time", `The target weight of each stock at every decision${pa.records_sampled ? " (thinned to 400 of " + pa.records_total + ")" : ""}. Equal weight would be a flat line at ${pct(1 / assets.length, 0)}.`, { wide: true,
-          draw: (b) => C.line(b, { dates: hist.map((x) => x.date), series: assets.map((a, i) => ({ name: a, color: expColor(i), values: hist.map((x) => (x.weights[a] === undefined ? null : x.weights[a])) })), baseline: 0, yFormat: pctTick, tipFormat: (v) => pct(v, 1), height: 240, label: "Target weights through time" }),
-          table: (b) => table(b, [{ label: "Date", get: (x) => x.date }, ...assets.map((a) => ({ label: a, num: true, get: (x) => (x.weights[a] === undefined ? "n/a" : pct(x.weights[a], 1)) }))], hist.filter((_, i) => i % Math.max(1, Math.floor(hist.length / 40)) === 0)) });
+          draw: (b) => C.line(b, { dates: hist.map((x) => x.date), series: assets.map((a, i) => ({ name: a, color: expColor(i), values: hist.map((x) => ((x.held_weights || x.weights)[a] === undefined ? null : (x.held_weights || x.weights)[a])) })), baseline: 0, yFormat: pctTick, tipFormat: (v) => pct(v, 1), height: 240, label: "Target weights through time" }),
+          table: (b) => table(b, [{ label: "Date", get: (x) => x.date }, ...assets.map((a) => ({ label: a, num: true, get: (x) => (x.weights[a] === undefined ? "n/a" : pct(x.weights[a], 1)) }))], hist.filter((_, i) => i % step === 0)) });
+        const turn = hist.map((x) => x.turnover_from_previous), mean = turn.reduce((s2, v) => s2 + (v || 0), 0) / turn.length, big = turn.filter((v) => v > 0.01).length / turn.length;
+        chartCard(ch, "Turnover and cost of each decision", `One-way turnover of the target book from the previous decision, and the cost it implies at ${sig(costBps, 1)} bps each way. Mean ${pct(mean, 1)} per decision; ${pct(big, 0)} of decisions moved the book by more than one point (allocation stability).`, {
+          draw: (b) => C.line(b, { dates: hist.map((x) => x.date), series: [{ name: "Turnover (one way)", color: css("--s2"), values: turn }], baseline: 0, yFormat: pctTick, tipFormat: (v) => pct(v, 1), height: 200, label: "Turnover by decision" }),
+          table: (b) => table(b, [{ label: "Date", get: (x) => x.date }, { label: "Turnover", num: true, get: (x) => pct(x.turnover_from_previous, 1) }, { label: "Estimated cost, bps", num: true, get: (x) => sig((x.turnover_from_previous || 0) * 2 * costBps, 1) }], hist.filter((_, i) => i % step === 0)) });
         chartCard(ch, "Risk contribution at the latest decision", "Each stock's share of the portfolio variance. A book that is 50/50 in weight is rarely 50/50 in risk.", {
           draw: (b) => C.hbars(b, { rows: assets.map((a) => ({ label: a, value: ((rec.risk_contributions || {})[a] || {}).share || 0, tip: [["Weight", pct(rec.weights[a], 1)]] })), format: (v) => pct(v, 0), name: "Share of risk", label: "Risk contributions", labelWidth: 70 }),
           table: (b) => table(b, [{ label: "Stock", get: (a) => a }, { label: "Weight", num: true, get: (a) => pct(rec.weights[a], 1) }, { label: "Share of risk", num: true, get: (a) => pct(((rec.risk_contributions || {})[a] || {}).share, 1) }], assets) });
       }
+      if (rec.sensitivity && rec.sensitivity.base) {
+        const sn = rec.sensitivity, cs = W.card(root, "How sensitive is this book?", "The latest decision recomputed under perturbed forecasts, risk aversion and trading costs. A book that moves a lot under small changes is amplifying noise.");
+        cs.setAttribute("data-allocation-sensitivity", "1");
+        if (sn.forecast && sn.forecast.available) table(cs, [{ label: "Forecast perturbed within one standard error of the slope", get: (a) => a }, { label: "Base", num: true, get: (a) => pct(sn.base[a], 1) }, { label: "Mean", num: true, get: (a) => pct(sn.forecast.weight_mean[a], 1) }, { label: "Std dev", num: true, get: (a) => pct(sn.forecast.weight_sd[a], 1) },
+          { label: "Min", num: true, get: (a) => pct(sn.forecast.weight_min[a], 1) }, { label: "Max", num: true, get: (a) => pct(sn.forecast.weight_max[a], 1) }], names);
+        else W.hint(cs, (sn.forecast || {}).note || "The forecast has no calibrated slope to perturb.");
+        table(cs, [{ label: "Risk aversion", num: true, get: (x) => sig(x.risk_aversion, 2) }, ...names.map((a) => ({ label: a, num: true, get: (x) => (x.weights ? pct(x.weights[a], 1) : "n/a") })), { label: "Effective positions", num: true, get: (x) => (x.concentration ? sig(x.concentration.effective_n, 2) : "n/a") }], sn.risk_aversion);
+        table(cs, [{ label: "Commission + slippage (bps)", num: true, get: (x) => sig(x.cost_bps, 1) }, { label: "Turnover penalty", num: true, get: (x) => sig(x.turnover_penalty, 1) }, ...names.map((a) => ({ label: a, num: true, get: (x) => (x.weights ? pct(x.weights[a], 1) : "n/a") })), { label: "Turnover from the previous book", num: true, get: (x) => (Q.bad(x.turnover) ? "n/a" : pct(x.turnover, 1)) }], sn.costs);
+      }
     }
     const cd = W.card(root, "The allocator", `${doc.label || ""}`);
-    table(cd, [{ label: "Objective", get: (x) => x[0] }, { label: "Detail", get: (x) => x[1] }], [["Objective", doc.objective], ["Assumes", doc.assumptions], ["Needs", doc.needs], ["Fails when", doc.failure], ["Risk model", `${(pa.config || {}).cov_method} over ${(pa.config || {}).cov_window} days (only observations before each decision)`],
-      ["Failure policy", (pa.config || {}).on_failure], ["Limits", JSON.stringify((pa.config || {}).limits)]]);
+    table(cd, [{ label: "Objective", get: (x) => x[0] }, { label: "Detail", get: (x) => x[1] }], [["Objective", doc.objective], ["Assumes", doc.assumptions], ["Needs", doc.needs], ["Fails when", doc.failure], ["Reads the forecast", doc.uses_forecast ? "yes" : "no: risk-only"],
+      ["Risk model", `${(pa.config || {}).cov_method} over ${(pa.config || {}).cov_window} days (only observations before each decision)`], ["Failure policy", (pa.config || {}).on_failure], ["Limits", JSON.stringify((pa.config || {}).limits)]]);
   }
   function allocationCompare(root, o) {
     const sel = o.select_on, rows = o.allocators.concat(o.table.existing_rule ? ["existing_rule"] : []).filter((k, i, arr) => arr.indexOf(k) === i && o.table[k]);
-    const c = W.card(root, `Allocators on identical forecasts (${SEG_NAME[sel] || sel} segment)`, `${o.n_allocators} policies, same forecasts, dates, limits, costs and execution. Selected on the ${sel} segment only: ${o.selected ? (o.table[o.selected] || {}).label : "none eligible"}. ${o.deflated_sharpe_of_selected && o.deflated_sharpe_of_selected.probability !== undefined ? "Probability its Sharpe beats the best of " + o.deflated_sharpe_of_selected.n_trials + " trials by chance: " + pct(o.deflated_sharpe_of_selected.probability, 0) + "." : ""}`);
+    const c = W.card(root, `Allocators on identical forecasts (${SEG_NAME[sel] || sel} segment)`, `${o.n_allocators} policies, same forecasts, dates, limits, costs, risk windows and execution. Selected on the ${sel} segment only: ${o.selected ? (o.table[o.selected] || {}).label : "none eligible"}. ${o.deflated_sharpe_of_selected && o.deflated_sharpe_of_selected.probability !== undefined ? "Probability its Sharpe beats the best of " + o.deflated_sharpe_of_selected.n_trials + " trials by chance: " + pct(o.deflated_sharpe_of_selected.probability, 0) + "." : ""}`);
     c.setAttribute("data-allocator-comparison", "1");
     const seg = (k, s) => (o.table[k].segments[s] || {});
+    const ci = (k) => { const x = ((o.sharpe_ci || {})[k] || {}).hac; return x && x.interval ? `[${sig(x.interval[0], 2)}, ${sig(x.interval[1], 2)}]` : "—"; };
     const cols = [{ label: "Allocator", get: (k) => o.table[k].label + (k === "equal_weight" ? " (benchmark)" : "") + (k === o.selected ? " ★" : "") }, { label: "Net return", num: true, get: (k) => spct(seg(k, sel).net_return, 1) }, { label: "Sharpe", num: true, get: (k) => sig(seg(k, sel).sharpe) },
+      { label: "Sharpe 95% interval (HAC)", num: true, get: ci }, { label: "Sortino", num: true, get: (k) => sig(seg(k, sel).sortino) },
       { label: "Max drawdown", num: true, get: (k) => pct(seg(k, sel).max_drawdown, 1) }, { label: "Turnover / yr", num: true, get: (k) => sig(seg(k, sel).turnover_per_year, 1) }, { label: "Cost bps / yr", num: true, get: (k) => sig(seg(k, sel).cost_bps_per_year, 0) },
       { label: "Effective N", num: true, get: (k) => sig(seg(k, sel).effective_n, 2) }, { label: "Max weight", num: true, get: (k) => pct(seg(k, sel).max_weight, 0) }, { label: "Mean weight change", num: true, get: (k) => pct(seg(k, sel).mean_change_per_decision, 1) },
-      { label: "vs equal weight (daily mean, 95%)", num: true, get: (k) => { const p = (o.paired_vs_equal_weight || {})[k]; return p && p.interval ? `${spct(p.mean_daily_difference, 3)} [${spct(p.interval[0], 3)}, ${spct(p.interval[1], 3)}]` : "—"; } },
+      { label: "vs equal weight, daily mean (95%)", num: true, get: (k) => { const p = (o.paired_vs_equal_weight || {})[k]; return p && p.interval ? `${spct(p.mean_daily_difference, 3)} [${spct(p.interval[0], 3)}, ${spct(p.interval[1], 3)}]` : "—"; } },
+      { label: "Sharpe vs equal weight (95%)", num: true, get: (k) => { const p = (o.paired_sharpe_vs_equal_weight || {})[k]; return p && p.interval ? `${sig(p.difference, 2)} [${sig(p.interval[0], 2)}, ${sig(p.interval[1], 2)}]` : "—"; } },
       { label: "Holm p", num: true, get: (k) => { const p = (o.paired_vs_equal_weight || {})[k]; return p && !Q.bad(p.p_value_holm) ? sig(p.p_value_holm, 3) : "—"; } }];
     table(c, cols, rows);
     for (const [k, why] of Object.entries(o.skipped || {})) W.hint(c, `${o.table[k] ? o.table[k].label : k} was not run: ${why}`);
     for (const n of o.notes || []) W.hint(c, n);
+    W.hint(c, "Equal weight is the benchmark and is not expected to lose: when an interval includes zero the allocators cannot be told apart on this sample.");
     for (const s of o.evaluated_segments || []) {
       const cp = W.card(root, `${SEG_NAME[s] || s} segment: reported for every allocator, not used to select`, "These outcomes were not used to rank or choose. Reading them is a look at a protected segment and counts as one.");
-      table(cp, [{ label: "Allocator", get: (k) => o.table[k].label }, { label: "Net return", num: true, get: (k) => spct(seg(k, s).net_return, 1) }, { label: "Sharpe", num: true, get: (k) => sig(seg(k, s).sharpe) }, { label: "Max drawdown", num: true, get: (k) => pct(seg(k, s).max_drawdown, 1) },
-        { label: "Turnover / yr", num: true, get: (k) => sig(seg(k, s).turnover_per_year, 1) }], rows);
+      table(cp, [{ label: "Allocator", get: (k) => o.table[k].label }, { label: "Net return", num: true, get: (k) => spct(seg(k, s).net_return, 1) }, { label: "Sharpe", num: true, get: (k) => sig(seg(k, s).sharpe) }, { label: "Sortino", num: true, get: (k) => sig(seg(k, s).sortino) },
+        { label: "Max drawdown", num: true, get: (k) => pct(seg(k, s).max_drawdown, 1) }, { label: "Turnover / yr", num: true, get: (k) => sig(seg(k, s).turnover_per_year, 1) }], rows);
     }
     const eq = (o.curves.equity || {})[sel] || {}, keys = Object.keys(eq);
     if (keys.length) {
@@ -737,6 +843,15 @@
         ["RMSE of the forecast", pct(pq.rmse, 2)], ["RMSE of a zero forecast", pct(pq.rmse_zero_forecast, 2)], ["Skill against a zero forecast", spct(pq.skill_vs_zero, 1)], ["Cross-sectional rank IC", pq.cross_sectional_rank_ic === null || pq.cross_sectional_rank_ic === undefined ? "not estimated" : sig(pq.cross_sectional_rank_ic, 3)]]);
       if (pq.cross_sectional_note) W.hint(cq, pq.cross_sectional_note);
     }
+  }
+  function allocationCalibration(root, o) {
+    const c = W.card(root, `Calibration methods, out of sample (${SEG_NAME[o.select_on] || o.select_on} segment)`, `${o.decision_dates} decision dates, every ${o.step}th; each method used only outcomes resolved before the decision. ${o.note}`);
+    c.setAttribute("data-calibration-comparison", "1");
+    const keys = Object.keys(o.variants);
+    table(c, [{ label: "Method", get: (k) => k + (k === o.baseline ? " (baseline)" : "") }, { label: "Squared error", num: true, get: (k) => (o.variants[k].mse === undefined ? "n/a" : String(+o.variants[k].mse.toPrecision(3))) }, { label: "Skill vs a zero forecast", num: true, get: (k) => spct(o.variants[k].skill_vs_zero, 1) },
+      { label: "Correlation", num: true, get: (k) => sig(o.variants[k].correlation, 3) }, { label: "Used the pooled fallback", num: true, get: (k) => pct(o.variants[k].share_with_pooled_fallback, 0) }, { label: "Independent windows", num: true, get: (k) => sig(o.variants[k].mean_independent_windows, 0) },
+      { label: "Against the baseline", get: (k) => (o.variants[k].versus_baseline ? o.variants[k].versus_baseline.verdict : k === o.baseline ? "the reference" : "—") }], keys);
+    W.hint(c, "No method is called better unless the interval of the paired difference in squared error excludes zero; with two stocks asset-specific and hierarchical calibration fall back to the pooled slope.");
   }
 
   /* ---------- the leaderboard ---------- */

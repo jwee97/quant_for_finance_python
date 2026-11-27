@@ -28,21 +28,28 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 
 import numpy as np
 import pandas as pd
 from scipy.optimize import linprog, minimize
 
 from . import allocation as alloc
+from . import alloc_adapters as ad
+from . import alloc_calibration as cal
+from . import alloc_fx as fxm
+from . import alloc_horizon as hz
+from . import alloc_stability as stab
 from . import risk_models as rm
 
 VERSION = "portfolio-allocation-v1"
-ALLOCATORS = ("equal_weight", "inverse_vol", "erc", "mean_variance", "black_litterman", "hrp", "cvar", "robust_mv", "kelly")
+CORE_ALLOCATORS = ("equal_weight", "inverse_vol", "erc", "mean_variance", "black_litterman", "hrp", "cvar", "robust_mv", "kelly")
+ALLOCATORS = CORE_ALLOCATORS + tuple(ad.ADAPTERS)          # the adapters (alloc_adapters) are listed after the original nine
 FORECAST_KINDS = ("return", "price", "probability", "distribution")
 FAILURE_POLICIES = ("risk_only", "hold", "equal_weight", "cash")
-USES_FORECAST = {"mean_variance", "black_litterman", "cvar", "robust_mv", "kelly"}
-LONG_ONLY_ONLY = {"equal_weight", "inverse_vol", "erc", "hrp"}
+LIFECYCLES = ("single_book", "staggered_tranches")
+USES_FORECAST = {"mean_variance", "black_litterman", "cvar", "robust_mv", "kelly"} | ad.FORECAST_ADAPTERS
+LONG_ONLY_ONLY = {"equal_weight", "inverse_vol", "erc", "hrp"} | set(ad.ADAPTERS)
 TOL = 1e-8
 
 
@@ -76,6 +83,7 @@ DOCS = {
     "kelly": {"label": "Fractional Kelly", "objective": "mean-variance with risk aversion 1/f (f = Kelly fraction): the growth-optimal book scaled by f", "assumptions": "the forecast is calibrated (slope significantly positive over enough outcomes); returns are not strongly serially dependent",
               "needs": "a calibration t-statistic above the threshold and enough resolved forecasts", "failure": "full Kelly is aggressive and very sensitive to an overstated edge: it is used only where the calibration justifies it and otherwise reported as not justified (risk-only book)", "uses_forecast": True, "long_short": True, "min_assets": 1},
 }
+DOCS.update(ad.docs())                                                           # the adapters declare their own documentation (alloc_adapters.ADAPTERS)
 
 
 # ------------------------------------------------------------------------------------------------------------ configuration
@@ -121,16 +129,44 @@ class AllocConfig:
     turnover_penalty: float = 0.0
     on_failure: str = "risk_only"
     limits: Limits = field(default_factory=Limits)
+    # position lifecycle (see alloc_horizon): None / defaults reproduce the one-window behaviour recorded before these settings existed
+    holding_days: int | None = None            # intended holding window L; None: the forecast horizon
+    lifecycle: str = "single_book"             # single_book: one book re-optimised at each decision | staggered_tranches: overlapping tranches, each held L sessions
+    cov_horizon: str = "linear"                # linear | variance_ratio | multiperiod
+    # forecast calibration beyond the pooled baseline (see alloc_calibration)
+    calib_method: str = "pooled"               # pooled | asset | partial_pooling | sector_pooling | regularized
+    calib_inference: str = "sqrt_horizon"      # sqrt_horizon (legacy) | hac | block_bootstrap
+    calib_asset_min_eff: float = 30.0          # independent outcome windows an asset needs before it gets a slope of its own
+    calib_prior_sd: float = 0.5                # prior standard deviation of the slope around zero for the regularised method
+    # keeping a weak forecast from becoming a concentrated book (see alloc_stability); the defaults leave the allocator's own book untouched
+    baseline: str = "none"                     # none | equal_weight | inverse_vol | erc: the risk-based book the ML book is blended with
+    blend: str = "none"                        # none | fixed | confidence | validation: how alpha in (1 - alpha) w_baseline + alpha w_ml is chosen
+    blend_alpha: float = 0.5
+    blend_max: float = 1.0
+    blend_window: int = 24
+    blend_min_obs: int = 12
+    uncertainty_shrink: float = 0.0            # forecasts use the slope minus this many standard errors of the slope
+    min_n_eff: float = 0.0                     # independent outcome windows the calibration must rest on before the forecast is used at all
+    min_confidence: float = 0.0                # an asset whose slope is positive with less than this probability gets no forecast
+    max_weight_change: float | None = None     # no weight moves more than this in one decision (not applied to the first book)
+    sensitivity: bool = False                  # attach forecast, risk-aversion and cost sensitivities of the last decision to the record
+    preset: str | None = None                  # a documented set of the above (alloc_stability.PRESETS); explicit settings win
 
     def content(self) -> dict:
         d = asdict(self)
         d["schema"] = VERSION
+        for k, v in _NEW_DEFAULTS.items():                                       # settings added after the first release appear only when they are used, so that an existing record keeps its hash
+            if d.get(k) == v:
+                d.pop(k, None)
         return d
 
     def content_hash(self) -> str:
         return hashlib.sha256(json.dumps(self.content(), sort_keys=True, default=str).encode()).hexdigest()[:16]
 
 
+_NEW_DEFAULTS = {"holding_days": None, "lifecycle": "single_book", "cov_horizon": "linear", "calib_method": "pooled", "calib_inference": "sqrt_horizon", "calib_asset_min_eff": 30.0, "calib_prior_sd": 0.5,
+                 "baseline": "none", "blend": "none", "blend_alpha": 0.5, "blend_max": 1.0, "blend_window": 24, "blend_min_obs": 12, "uncertainty_shrink": 0.0, "min_n_eff": 0.0, "min_confidence": 0.0,
+                 "max_weight_change": None, "sensitivity": False, "preset": None}
 _LIMIT_KEYS = set(Limits.__dataclass_fields__)
 _CFG_KEYS = set(AllocConfig.__dataclass_fields__) - {"limits"}
 
@@ -139,6 +175,12 @@ def config_from_signal(sig: dict) -> AllocConfig:
     """The ``signal.allocation`` block as a validated :class:`AllocConfig`. Unknown keys are refused (a typo must not become a default)."""
     raw = dict(sig.get("allocation") or {})
     lim_raw = dict(raw.pop("limits", {}) or {})
+    if raw.get("preset") is not None:                                           # a preset fills in what the request did not set; the request wins
+        if raw["preset"] not in stab.PRESETS:
+            raise AllocationError(f"unknown preset '{raw['preset']}'; the presets are {sorted(stab.PRESETS)}")
+        pr = stab.PRESETS[raw["preset"]]
+        raw = {**pr["allocation"], **raw}
+        lim_raw = {**pr.get("limits", {}), **lim_raw}
     unknown = (set(raw) - _CFG_KEYS) | (set(lim_raw) - _LIMIT_KEYS)
     if unknown:
         raise AllocationError(f"unknown allocation setting(s) {sorted(unknown)}; the settings are {sorted(_CFG_KEYS | _LIMIT_KEYS)}")
@@ -167,6 +209,28 @@ def check_config(c: AllocConfig) -> None:
         raise AllocationError("calib_min_obs and cov_min_obs are at least 20 and no larger than their windows")
     if c.opt_every is not None and c.opt_every < 1:
         raise AllocationError("opt_every is at least 1 day")
+    if c.holding_days is not None and not 1 <= int(c.holding_days) <= 252:
+        raise AllocationError("holding_days is between 1 and 252 sessions")
+    if c.baseline not in stab.BASELINES or c.blend not in stab.BLENDS:
+        raise AllocationError(f"baseline must be one of {list(stab.BASELINES)} and blend one of {list(stab.BLENDS)}")
+    if c.blend != "none" and c.baseline == "none":
+        raise AllocationError("blending needs a baseline: choose equal_weight, inverse_vol or erc")
+    if c.blend != "none" and c.allocator not in USES_FORECAST:
+        raise AllocationError(f"{DOCS[c.allocator]['label']} reads no forecast, so there is nothing to blend with a baseline; choose a forecast-driven allocator or no blend")
+    if not (0 <= c.blend_alpha <= 1 and 0 <= c.blend_max <= 1 and c.blend_window >= 5 and c.blend_min_obs >= 3 and c.uncertainty_shrink >= 0 and c.min_n_eff >= 0 and 0 <= c.min_confidence <= 1):
+        raise AllocationError("blend_alpha and blend_max are in [0, 1]; blend_window at least 5 and blend_min_obs at least 3; uncertainty_shrink, min_n_eff non-negative; min_confidence in [0, 1]")
+    if c.max_weight_change is not None and not 0 < c.max_weight_change <= 1:
+        raise AllocationError("max_weight_change is a share of capital in (0, 1]")
+    if c.calib_method not in cal.METHODS:
+        raise AllocationError(f"calib_method must be one of {list(cal.METHODS)}")
+    if c.calib_inference not in cal.INFERENCE:
+        raise AllocationError(f"calib_inference must be one of {list(cal.INFERENCE)}")
+    if not (c.calib_asset_min_eff >= 5 and c.calib_prior_sd > 0):
+        raise AllocationError("calib_asset_min_eff is at least 5 independent windows and calib_prior_sd is positive")
+    if c.lifecycle not in LIFECYCLES:
+        raise AllocationError(f"lifecycle must be one of {list(LIFECYCLES)}")
+    if c.cov_horizon not in hz.COV_HORIZON_METHODS:
+        raise AllocationError(f"cov_horizon must be one of {list(hz.COV_HORIZON_METHODS)}")
     lim = c.limits
     if c.allocator in LONG_ONLY_ONLY and not lim.long_only:
         raise AllocationError(f"{DOCS[c.allocator]['label']} builds long-only books; choose mean-variance, Black-Litterman, CVaR, robust mean-variance or Kelly for a long-short allocation")
@@ -387,9 +451,21 @@ class Estimate:
     n_eff: float
     status: str                        # calibrated | no_edge | uncalibrated | insufficient_history
     note: str = ""
+    slopes: pd.Series | None = None    # the slope applied to each asset (asset-specific and partially pooled calibration); None: one pooled slope
+    confidence: pd.Series | None = None  # per asset: probability the true slope is positive given the evidence (0 where there is no edge)
+    method: str = "pooled"
+    inference: str = "sqrt_horizon"
+    fallback: str = ""
+    tau: float | None = None
+    n_dates: int = 0
 
     def info(self) -> dict:
-        return {"status": self.status, "slope": self.slope, "slope_se": self.slope_se, "t_stat": self.t_stat, "n_obs": int(self.n_obs), "n_eff": float(self.n_eff), "note": self.note}
+        out = {"status": self.status, "slope": self.slope, "slope_se": self.slope_se, "t_stat": self.t_stat, "n_obs": int(self.n_obs), "n_eff": float(self.n_eff), "note": self.note}
+        if self.method != "pooled" or self.inference != "sqrt_horizon":
+            out.update(method=self.method, inference=self.inference, fallback=self.fallback, tau=self.tau, n_dates=int(self.n_dates),
+                       slopes=None if self.slopes is None else {str(k): float(v) for k, v in self.slopes.items()},
+                       confidence=None if self.confidence is None else {str(k): float(v) for k, v in self.confidence.items()})
+        return out
 
 
 def realised_window_returns(returns: pd.DataFrame, horizon: int, lag: int) -> pd.DataFrame:
@@ -401,10 +477,17 @@ def realised_window_returns(returns: pd.DataFrame, horizon: int, lag: int) -> pd
     return out
 
 
-def check_forecast_contract(cfg: AllocConfig, dataset_horizon: int, base_currency: str | None = None) -> None:
-    """Refuse a forecast whose horizon or currency is not the portfolio's, and say which."""
+def check_forecast_contract(cfg: AllocConfig, dataset_horizon: int, base_currency: str | None = None, fx: "fxm.FxContext | None" = None) -> None:
+    """Refuse a forecast whose horizon or currency is not the portfolio's, and say which. With an FX context the forecast may be in each asset's own (local) currency or the base: it is converted at the decision date
+    under the stated FX assumption (alloc_fx); any other currency, or a foreign asset with no exchange-rate series, is refused."""
     if cfg.forecast_horizon is not None and int(cfg.forecast_horizon) != int(dataset_horizon):
         raise AllocationError(f"the forecast is for {int(cfg.forecast_horizon)} trading days but the portfolio's holding window is {int(dataset_horizon)}: forecasts of another horizon are not rescaled; re-train the model on the matching target")
+    if fx is not None:
+        if cfg.forecast_currency is not None and str(cfg.forecast_currency).upper() not in ("LOCAL", fx.table.base):
+            raise AllocationError(f"the forecast is declared in {cfg.forecast_currency}: with an FX context a forecast is in each asset's own currency ('local') or in the base currency {fx.table.base}")
+        if cfg.base_currency is not None and str(cfg.base_currency).upper() != fx.table.base:
+            raise AllocationError(f"the allocation's base currency is {cfg.base_currency} but the exchange-rate table is quoted against {fx.table.base}")
+        return
     base = cfg.base_currency or base_currency
     if cfg.forecast_currency is not None and base is not None and str(cfg.forecast_currency).upper() != str(base).upper():
         raise AllocationError(f"the forecast is in {cfg.forecast_currency} and the portfolio in {base}: convert the forecast with an exchange-rate forecast first; the allocation does not mix currencies")
@@ -429,8 +512,9 @@ class ForecastModel:
     """Calibrated expected returns and their uncertainty, as of any row, from outcomes known by then."""
 
     def __init__(self, score: pd.DataFrame, returns: pd.DataFrame, cfg: AllocConfig, horizon: int, lag: int, prices: pd.DataFrame | None = None, probability: pd.DataFrame | None = None,
-                 predictive_sd: pd.DataFrame | None = None):
+                 predictive_sd: pd.DataFrame | None = None, groups: dict | None = None):
         self.cfg, self.h, self.lag = cfg, int(horizon), int(lag)
+        self.groups = groups
         self.returns = returns.reindex(index=score.index, columns=score.columns)
         self.predictive_sd = predictive_sd
         self.kind = cfg.forecast_kind
@@ -462,6 +546,8 @@ class ForecastModel:
         n = len(pair)
         if n < cfg.calib_min_obs:
             return Estimate(raw * 0.0, raw, pd.Series(np.nan, index=cols), None, None, None, n, n / self.h, "insufficient_history", f"{n} resolved forecasts; {cfg.calib_min_obs} are needed")
+        if cfg.calib_method != "pooled" or cfg.calib_inference != "sqrt_horizon":
+            return self._calibrated(i, lo, last, xs, ys, raw, n)
         x, y = pair["x"].to_numpy(), pair["y"].to_numpy()
         sxx = float((x ** 2).sum())
         if sxx <= 0:
@@ -477,6 +563,31 @@ class ForecastModel:
             return Estimate(raw * 0.0, raw, sd, max(b, 0.0), se, t, n, n_eff, "no_edge", f"the forecast has not predicted: slope {b:.2f}, t {t:.2f} (below {cfg.calib_min_t:g})")
         bc = min(b, 1.0)
         return Estimate(raw * bc, raw, sd, bc, se, t, n, n_eff, "calibrated", f"calibrated by a slope of {bc:.2f} (t {t:.1f}, {n} outcomes)")
+
+    def _calibrated(self, i: int, lo: int, last: int, xs: pd.DataFrame, ys: pd.DataFrame, raw: pd.Series, n: int) -> Estimate:
+        """Calibration by the method and dependence-aware inference in the configuration (alloc_calibration), from the same resolved forecasts as the baseline."""
+        cfg, cols = self.cfg, list(raw.index)
+        c = cal.calibrate(xs, ys, cfg, self.h, self.groups)
+        slopes = c.slopes.reindex(cols).fillna(0.0)
+        sd = self._sd_vec(i, lo, last, cols, slopes)
+        pooled_b = float(min(max(c.pooled_slope, 0.0), 1.0))
+        if not (slopes > 0).any():
+            return Estimate(raw * 0.0, raw, sd, pooled_b, c.pooled_se, c.pooled_t, n, c.n_eff, "no_edge", f"no demonstrated edge: pooled slope {c.pooled_slope:.2f}, t {c.pooled_t:.2f} (below {cfg.calib_min_t:g}); {c.note}",
+                            slopes, c.confidence.reindex(cols).fillna(0.0), c.method, c.inference, c.fallback, c.tau, c.n_dates)
+        note = c.note + (f"; {c.fallback}" if c.fallback else "")
+        return Estimate(raw * slopes, raw, sd, pooled_b, c.pooled_se, c.pooled_t, n, c.n_eff, "calibrated", note, slopes, c.confidence.reindex(cols).fillna(0.0), c.method, c.inference, c.fallback, c.tau, c.n_dates)
+
+    def _sd_vec(self, i: int, lo: int, last: int, cols, slopes: pd.Series) -> pd.Series:
+        """Forecast-error standard deviation per asset when each asset has its own slope."""
+        xs, ys = self.x.iloc[lo:last + 1], self.real.iloc[lo:last + 1]
+        err = ys - xs * slopes.reindex(xs.columns).fillna(0.0)
+        pooled = float(np.nanstd(err.to_numpy(), ddof=1)) if np.isfinite(err.to_numpy()).sum() > 2 else float("nan")
+        per = err.std(ddof=1).where(err.count() >= self.cfg.calib_min_obs, pooled)
+        sd = per.reindex(cols).fillna(pooled)
+        if self.predictive_sd is not None:
+            own = self.predictive_sd.iloc[i].reindex(cols)
+            sd = own.where(own > 0, sd)
+        return sd
 
     def _sd(self, i: int, lo: int, last: int, index, b: float | None) -> pd.Series:
         """Out-of-sample forecast-error standard deviation of the window return per asset (pooled when an asset has too few outcomes); the model's own predictive std replaces it where it has one."""
@@ -702,6 +813,15 @@ def allocate(allocator: str, mu: pd.Series, sd: pd.Series, cov_w: pd.DataFrame, 
         out.detail["posterior"] = {str(k): float(v) for k, v in post.items()}
         out.detail["prior"] = {str(k): float(v) for k, v in prior.items()}
         return out
+    if allocator in ad.ADAPTERS:
+        try:
+            raw = ad.raw_book(allocator, mu, cov_w, scenarios, cfg.risk_aversion, lim.min_weight if lim.long_only else 0.0, lim.max_weight, names)
+        except Exception as exc:                                                             # noqa: BLE001 - an optimiser failure is a failed decision with its reason
+            return Result(None, "failed", f"{DOCS[allocator]['label']} failed: {exc}")
+        if raw.isna().any() or abs(float(raw.sum()) - 1.0) > 1e-6:
+            return Result(None, "failed", f"{DOCS[allocator]['label']} returned an invalid book")
+        w = project(raw, lim, groups)                                                        # what the optimiser cannot honour itself (caps, floors, sector caps) is enforced by the nearest feasible book
+        return Result(w, "optimal", "", {"projection_l1": float((w - raw).abs().sum()), "optimiser_book": {str(k): float(v) for k, v in raw.items()}, "uses_forecast": ad.ADAPTERS[allocator].uses_forecast})
     if allocator == "cvar":
         if scenarios is None or len(scenarios) < 60:
             return Result(None, "failed", f"CVaR needs at least 60 scenarios of window returns; {0 if scenarios is None else len(scenarios)} available")
@@ -731,8 +851,82 @@ def _explain(final: pd.Series, risk_only: pd.Series, equal: pd.Series, lim: Limi
             "forecast_effect": {str(k): float(v) for k, v in fc_eff.items()}, "forecast_share": float(share), "driver": driver, "binding": bind}
 
 
+def _apply_evidence(est: Estimate, cfg: AllocConfig) -> tuple[Estimate, dict]:
+    """Shrink and gate a calibrated forecast by the evidence behind it: the slope minus ``uncertainty_shrink`` standard errors, no forecast at all below ``min_n_eff`` independent windows, and none for an asset whose
+    slope is positive with less than ``min_confidence`` probability. Returns the estimate to use and what was done (empty when nothing applied)."""
+    info: dict = {}
+    if est.status != "calibrated":
+        return est, info
+    cols = list(est.mu_raw.index)
+    slopes = est.slopes.reindex(cols).fillna(0.0) if est.slopes is not None else pd.Series(float(est.slope or 0.0), index=cols)
+    if cfg.min_n_eff > 0 and est.n_eff < cfg.min_n_eff:
+        info["min_n_eff"] = f"{est.n_eff:.1f} independent outcome windows; {cfg.min_n_eff:g} are required: no forecast is used"
+        return replace(est, mu=est.mu * 0.0, status="no_edge", note=info["min_n_eff"]), info
+    new = slopes.copy()
+    if cfg.uncertainty_shrink > 0:
+        new = stab.uncertainty_shrunk_slopes(slopes, est.slope_se, cfg.uncertainty_shrink)
+        info["uncertainty_shrink"] = {"kappa": cfg.uncertainty_shrink, "slope_before": {str(k): float(v) for k, v in slopes.items()}, "slope_after": {str(k): float(v) for k, v in new.items()}}
+    conf = est.confidence if est.confidence is not None else pd.Series(float(_norm_cdf(est.t_stat)) if est.t_stat is not None and np.isfinite(est.t_stat) else 0.0, index=cols)
+    if cfg.min_confidence > 0:
+        low = conf.reindex(cols).fillna(0.0) < cfg.min_confidence
+        if low.any():
+            new = new.where(~low, 0.0)
+            info["min_confidence"] = {"threshold": cfg.min_confidence, "dropped": [str(c) for c in low.index[low]]}
+    if not info:
+        return (est if est.confidence is not None else replace(est, confidence=conf)), info
+    mu = est.mu_raw * new
+    status = "calibrated" if (new > 0).any() else "no_edge"
+    return replace(est, mu=mu, slopes=new, status=status, confidence=conf), info
+
+
+def _norm_cdf(t: float) -> float:
+    return 0.5 * (1.0 + math.erf(float(t) / math.sqrt(2.0)))
+
+
+def decision_sensitivity(inp: dict, cfg: AllocConfig, groups: dict | None, seed: int = 0) -> dict:
+    """How much the last decision's book would move under perturbations: the forecast (resampled within the slope's standard error), the risk aversion (x1/4 .. x4), the transaction cost and the turnover penalty."""
+    names, mu, sd, cov_w, vol, w0, est, scen = inp["names"], inp["mu"], inp["sd"], inp["cov_w"], inp["vol"], inp["w0"], inp["est"], inp["scen"]
+
+    def book(c: AllocConfig, m: pd.Series) -> pd.Series | None:
+        r = allocate(c.allocator, m, sd, cov_w, vol, w0, c, groups, est, scen)
+        return r.weights.reindex(names).fillna(0.0) if r.weights is not None else None
+
+    base = book(cfg, mu)
+    out: dict = {"base": None if base is None else {str(k): float(v) for k, v in base.items()}}
+    if base is None:
+        return out
+    rel = None
+    if est is not None and est.slope and est.slope > 0 and est.slope_se is not None and np.isfinite(est.slope_se):
+        rel = float(est.slope_se / est.slope)
+    if rel is None:
+        out["forecast"] = {"available": False, "note": "the forecast has no calibrated slope to perturb (uncalibrated, no edge or too little history)"}
+    else:
+        rng = np.random.default_rng(seed)
+        draws = []
+        for _ in range(40):
+            b = book(cfg, mu * max(0.0, 1.0 + float(rng.standard_normal()) * rel))
+            if b is not None:
+                draws.append(b.to_numpy())
+        arr = np.array(draws)
+        lo, hi = book(cfg, mu * max(0.0, 1.0 - rel)), book(cfg, mu * (1.0 + rel))
+        out["forecast"] = {"available": True, "relative_se": rel, "draws": int(len(arr)), "weight_mean": {n: float(v) for n, v in zip(names, arr.mean(axis=0))}, "weight_sd": {n: float(v) for n, v in zip(names, arr.std(axis=0, ddof=1))},
+                           "weight_min": {n: float(v) for n, v in zip(names, arr.min(axis=0))}, "weight_max": {n: float(v) for n, v in zip(names, arr.max(axis=0))},
+                           "weight_at_minus_1se": None if lo is None else {str(k): float(v) for k, v in lo.items()}, "weight_at_plus_1se": None if hi is None else {str(k): float(v) for k, v in hi.items()}}
+    ra = []
+    for f in (0.25, 0.5, 1.0, 2.0, 4.0):
+        b = book(replace(cfg, risk_aversion=cfg.risk_aversion * f), mu)
+        ra.append({"risk_aversion": cfg.risk_aversion * f, "weights": None if b is None else {str(k): float(v) for k, v in b.items()}, "concentration": None if b is None else stab.concentration(b)})
+    out["risk_aversion"] = ra
+    costs = []
+    for c_bps, pen in ((0.0, 0.0), (cfg.cost_bps, cfg.turnover_penalty), (max(cfg.cost_bps * 5.0, 25.0), cfg.turnover_penalty), (100.0, cfg.turnover_penalty + 5.0)):
+        b = book(replace(cfg, cost_bps=c_bps, turnover_penalty=pen), mu)
+        costs.append({"cost_bps": c_bps, "turnover_penalty": pen, "weights": None if b is None else {str(k): float(v) for k, v in b.items()}, "turnover": None if b is None else float((b - w0).abs().sum() / 2.0)})
+    out["costs"] = costs
+    return out
+
+
 def run(score: pd.DataFrame, returns: pd.DataFrame, investable: pd.DataFrame | None, sig: dict, groups: dict | None = None, *, prices: pd.DataFrame | None = None, probability: pd.DataFrame | None = None,
-        predictive_sd: pd.DataFrame | None = None, allocator: str | None = None) -> tuple[pd.DataFrame, dict]:
+        predictive_sd: pd.DataFrame | None = None, allocator: str | None = None, fx: "fxm.FxContext | None" = None) -> tuple[pd.DataFrame, dict]:
     """Target weights for every row of ``score`` plus the log of every decision. ``sig`` is the ``signal`` section of an experiment configuration (``signal.allocation`` holds the settings, ``window_days`` the
     dataset's horizon and ``lag_total`` the lag between a decision and the first return it earns). Row ``t`` uses the scores, returns and eligibility of rows up to ``t``."""
     cfg = config_from_signal(sig)
@@ -741,18 +935,47 @@ def run(score: pd.DataFrame, returns: pd.DataFrame, investable: pd.DataFrame | N
         check_config(cfg)
     h = int(sig["window_days"])
     lag = int(sig.get("lag_total", 1))
-    check_forecast_contract(cfg, h)
-    every = int(cfg.opt_every or h)
+    check_forecast_contract(cfg, h, None, fx)
+    fx_report = None
+    if fx is not None:                                                                 # everything below is then read in the base currency
+        try:
+            score, returns, fx_excluded, fx_report = fxm.prepare(score, returns, fx, h, cfg.forecast_kind, prices)
+        except fxm.FxError as exc:
+            raise AllocationError(str(exc)) from None
+        if fx_excluded is not None:
+            investable = fx_excluded if investable is None else (investable.reindex_like(fx_excluded).fillna(False).astype(bool) & fx_excluded)
+        if cfg.forecast_kind == "price":
+            cfg = replace(cfg, forecast_kind="return")
+    L = int(cfg.holding_days) if cfg.holding_days else h                              # the window the optimisation is posed over: the holding window, or the forecast horizon when none is set
+    every = int(cfg.opt_every or L)
+    K = hz.tranche_count(L, every) if cfg.lifecycle == "staggered_tranches" else 1   # overlapping tranches alive at once
+    tranches: list = []                                                                # the last K tranche books (staggered lifecycle only)
     cols = list(score.columns)
     need = int(DOCS[cfg.allocator]["min_assets"])
     if len(cols) < need:
         raise AllocationError(f"{DOCS[cfg.allocator]['label']} needs at least {need} assets and this universe has {len(cols)}: {DOCS[cfg.allocator]['failure']}")
     ret = returns.reindex(index=score.index, columns=cols)
-    fm = ForecastModel(score, ret, cfg, h, lag, prices, probability, predictive_sd)
+    fm = ForecastModel(score, ret, cfg, h, lag, prices, probability, predictive_sd, groups)
     cov_spec = rm.CovSpec(cfg.cov_method, window=cfg.cov_window, halflife=cfg.cov_halflife, min_obs=cfg.cov_min_obs)
     out = np.zeros(score.shape)
     last = pd.Series(0.0, index=cols)
+
+    def commit(book: pd.Series) -> pd.Series:
+        """The book held after a decision. One book: the decision itself, superseding the last (overlapping forecasts are never added). Staggered tranches: the average of the last K tranche books (each a full
+        book of its own, held for L sessions), so that overlapping forecasts are K partial positions and not K independent full-size trades."""
+        if K == 1:
+            return book
+        tranches.append(book.copy())
+        del tranches[:-K]
+        return sum(tranches) / float(len(tranches))
+
+    def start_book() -> pd.Series:
+        """What the tranche being opened replaces: the tranche that is expiring, or nothing while the first K are being opened."""
+        return tranches[0].copy() if K > 1 and len(tranches) == K else (pd.Series(0.0, index=cols) if K > 1 else last)
     records: list[dict] = []
+    blend_hist: list = []                                                              # (row, baseline book, ML book) of each past decision, for the validation rule for alpha
+    real_L = realised_window_returns(ret, L, lag) if cfg.blend == "validation" else None
+    last_inputs: dict | None = None
     started = False
     counts = {"no_risk_estimate": 0, "decisions": 0, "optimal": 0, "failed": 0, "infeasible": 0, "not_justified": 0, "unsuitable": 0, "insufficient_history": 0, "no_edge": 0, "failure_policy_used": 0, "turnover_limited": 0, "vol_scaled": 0,
               "single_asset": 0, "repaired_covariance": 0}
@@ -773,7 +996,7 @@ def run(score: pd.DataFrame, returns: pd.DataFrame, investable: pd.DataFrame | N
             counts["infeasible"] += 1
             rec.update(status="infeasible", reason=str(exc))
             records.append(rec)
-            w = _failure_book(cfg, last, names, cols, None, groups)
+            w = commit(_failure_book(cfg, last, names, cols, None, groups))
             counts["failure_policy_used"] += 1
             rec["failure_policy"] = cfg.on_failure
             out[i] = w.to_numpy()
@@ -783,6 +1006,10 @@ def run(score: pd.DataFrame, returns: pd.DataFrame, investable: pd.DataFrame | N
         if est.status in ("insufficient_history", "no_edge"):
             counts[est.status] += 1
         rec["forecast"] = est.info()
+        est, evid = _apply_evidence(est, cfg)
+        if evid:
+            rec["evidence"] = evid
+            rec["forecast"]["status_after_evidence_controls"] = est.status
         try:
             fit = rm.fit_asof(ret, date, cov_spec, investable) if len(names) >= 2 else None
         except ValueError as exc:
@@ -815,18 +1042,26 @@ def run(score: pd.DataFrame, returns: pd.DataFrame, investable: pd.DataFrame | N
             counts["failed"] += 1
             counts["failure_policy_used"] += 1
             records.append(rec)
-            w = _failure_book(cfg, last, names, cols, None, groups)
+            w = commit(_failure_book(cfg, last, names, cols, None, groups))
             rec["failure_policy"] = cfg.on_failure
             out[i] = w.to_numpy()
             last = w
             continue
         started = True
-        cov_w = fit_cov * float(h)
+        window_ret = ret[names].loc[:date].tail(cfg.cov_window)
+        cov_w, hinfo = hz.horizon_covariance(fit_cov, window_ret, L, cfg.cov_horizon)
+        rec["horizon"] = {"forecast_days": h, "holding_days": L, "decision_every": every, "lag": lag, "lifecycle": cfg.lifecycle, "tranches": K, "covariance": hinfo}
+        if cfg.holding_days:                                                                # an explicit holding window: the edge accrues evenly within the forecast horizon and not beyond it
+            sc = hz.edge_scale(L, h)
+            est = replace(est, mu=est.mu * sc, mu_raw=est.mu_raw * sc, sd=est.sd * math.sqrt(sc))
+            rec["horizon"]["edge_scale"] = sc
         vol_daily = pd.Series(np.sqrt(np.diag(fit_cov.to_numpy())), index=names)
         mu = est.mu.reindex(names).fillna(0.0)
         sd = est.sd.reindex(names)
-        w0 = last.reindex(names).fillna(0.0)
-        scen = scenario_matrix(ret, i, cfg.cov_window, h, names) if cfg.allocator == "cvar" else None
+        extra_bad: list = []
+        blend_alpha_used, blend_base_book = None, None
+        w0 = start_book().reindex(names).fillna(0.0)
+        scen = scenario_matrix(ret, i, cfg.cov_window, L, names) if (cfg.allocator == "cvar" or cfg.allocator in ad.NEEDS_SCENARIOS) else None
         res = allocate(cfg.allocator, mu, sd, cov_w, vol_daily, w0, cfg, groups, est, scen)
         rec["allocator_detail"] = res.detail
         if res.weights is None:
@@ -841,14 +1076,52 @@ def run(score: pd.DataFrame, returns: pd.DataFrame, investable: pd.DataFrame | N
             w = res.weights.reindex(names).fillna(0.0)
             if cfg.limits.min_weight > 0 and cfg.limits.long_only and cfg.allocator in USES_FORECAST:
                 w = project(w, cfg.limits, groups)                                         # the optimiser has no floor of its own: enforce it by the nearest feasible book
+            w_ml = w.copy()
+            if cfg.blend != "none":
+                base_res = allocate(cfg.baseline, mu * 0.0, sd, cov_w, vol_daily, w0, cfg, groups, None, scen)
+                if base_res.weights is None:
+                    rec["blend"] = {"status": "baseline_failed", "reason": base_res.reason, "alpha": 1.0}
+                else:
+                    wb = base_res.weights.reindex(names).fillna(0.0)
+                    if cfg.blend == "fixed":
+                        alpha, ainfo = cfg.blend_alpha, {"note": "the configured alpha"}
+                    elif cfg.blend == "confidence":
+                        alpha, note = stab.confidence_alpha(est.confidence, names, cfg.blend_max)
+                        ainfo = {"note": note}
+                    else:
+                        alpha, ainfo = stab.validation_alpha(blend_hist, real_L, i, lag, L, cfg.blend_window, cfg.blend_min_obs, cfg.risk_aversion)
+                    full_b, full_m = pd.Series(0.0, index=cols), pd.Series(0.0, index=cols)
+                    full_b[names], full_m[names] = wb, w_ml
+                    blend_hist.append((i, full_b, full_m))
+                    w = (1.0 - alpha) * wb + alpha * w_ml
+                    blend_base_book, blend_alpha_used = wb, alpha
+                    rec["blend"] = {"status": "blended", "mode": cfg.blend, "baseline": cfg.baseline, "alpha": float(alpha), "baseline_weights": {str(k): float(v) for k, v in wb.items()}, "ml_weights": {str(k): float(v) for k, v in w_ml.items()}, **ainfo}
+                    bad_b = violations(w, cfg.limits, groups)
+                    if bad_b:                                                              # a blend of two feasible books breaks nothing the limits make convex; if it does, the nearest feasible book is used and the move is reported
+                        try:
+                            wp = project(w, cfg.limits, groups)
+                            rec["blend"]["projection"] = {"reason": bad_b, "l1_deviation": float((wp - w).abs().sum())}
+                            w = wp
+                        except InfeasibleConstraints as exc:
+                            rec["blend"]["projection"] = {"reason": bad_b, "failed": str(exc)}
             w, limited = limit_turnover(w, w0, cfg.limits)
             counts["turnover_limited"] += int(limited)
             rec["turnover_limited"] = bool(limited)
-            w, ann, f = scale_to_vol(w, cov_w, h, cfg.limits)
+            if cfg.max_weight_change is not None and float(w0.abs().sum()) > 1e-12:           # the first book is built from nothing: the limit governs the moves after it
+                lo_b, hi_b = _bounds(cfg.limits, len(names))
+                total = 1.0 if (cfg.limits.long_only and not cfg.limits.cash_allowed) else None
+                w2, moved, ok = stab.weight_change_limited(w, w0, cfg.max_weight_change, float(lo_b[0]), float(hi_b[0]), total)
+                if not ok:
+                    extra_bad.append(f"no book within {cfg.max_weight_change:g} of the previous weights can satisfy the limits")
+                elif moved:
+                    rec["weight_change_limited"] = {"limit": cfg.max_weight_change, "l1_change": float((w2 - w).abs().sum())}
+                    counts["weight_change_limited"] = counts.get("weight_change_limited", 0) + 1
+                    w = w2
+            w, ann, f = scale_to_vol(w, cov_w, L, cfg.limits)
             if cfg.limits.vol_target is not None:
                 counts["vol_scaled"] += int(abs(f - 1.0) > 1e-9)
                 rec["vol_scaling"] = {"forecast_vol": ann, "factor": f, "target": cfg.limits.vol_target}
-        bad = violations(w, cfg.limits, groups)
+        bad = violations(w, cfg.limits, groups) + extra_bad
         if bad:                                                                                # never hand a book that breaks a limit to the backtest
             rec.update(status="infeasible", reason="the book broke: " + "; ".join(bad))
             counts["infeasible"] += 1
@@ -858,6 +1131,8 @@ def run(score: pd.DataFrame, returns: pd.DataFrame, investable: pd.DataFrame | N
         eq = project(pd.Series(1.0 / len(names), index=names), cfg.limits, groups) if cfg.limits.long_only else pd.Series(1.0 / len(names), index=names) * min(1.0, cfg.limits.gross_max)
         ro = _risk_only(cfg, res, mu, sd, cov_w, vol_daily, w0, groups, scen)
         risk_only = (ro if ro is not None else eq).reindex(names).fillna(0.0)
+        if blend_base_book is not None:                                                    # the same blend with no forecast: what the policy would hold on risk alone
+            risk_only = (1.0 - blend_alpha_used) * blend_base_book + blend_alpha_used * risk_only
         wf = w.reindex(names).fillna(0.0)
         rec["weights"] = {str(k): float(v) for k, v in wf.items()}
         rec["mu"] = {str(k): float(v) for k, v in mu.items()}
@@ -868,15 +1143,35 @@ def run(score: pd.DataFrame, returns: pd.DataFrame, investable: pd.DataFrame | N
         rec["forecast_vol_window"] = float(math.sqrt(max(wf.to_numpy() @ cov_w.to_numpy() @ wf.to_numpy(), 0.0)))
         rec["risk_contributions"] = risk_contributions(wf, cov_w)
         rec["explain"] = _explain(wf, risk_only, eq, cfg.limits, groups)
+        rec["concentration"] = stab.concentration(wf)
+        rec["covariance_window"] = {str(a): {str(b): float(cov_w.loc[a, b]) for b in names} for a in names}
+        rec["correlation"] = {str(a): {str(b): float(cov_w.loc[a, b] / math.sqrt(cov_w.loc[a, a] * cov_w.loc[b, b])) if cov_w.loc[a, a] > 0 and cov_w.loc[b, b] > 0 else None for b in names} for a in names}
+        if cfg.sensitivity:
+            last_inputs = {"names": names, "mu": mu, "sd": sd, "cov_w": cov_w, "vol": vol_daily, "w0": w0, "est": est, "scen": scen, "rec": rec}
         rec["turnover_from_previous"] = float((wf - w0).abs().sum() / 2.0)
         records.append(rec)
         full = pd.Series(0.0, index=cols)
         full[names] = wf
-        out[i] = full.to_numpy()
-        last = full
+        held = commit(full)
+        if K > 1:                                                                              # the held book is an average of books that each satisfy the limits: check it as well, and keep it visible
+            bad_held = violations(held.reindex(names).fillna(0.0), cfg.limits, groups)
+            rec["held_weights"] = {str(k): float(v) for k, v in held.reindex(names).fillna(0.0).items()}
+            rec["tranche"] = {"active": len(tranches), "of": K, "replaced": None if len(tranches) < K else "the oldest, expiring tranche"}
+            if bad_held:
+                rec["held_violations"] = bad_held
+        out[i] = held.to_numpy()
+        last = held
     weights = pd.DataFrame(out, index=score.index, columns=cols)
-    log = {"version": VERSION, "config": cfg.content(), "config_hash": cfg.content_hash(), "allocator": cfg.allocator, "documentation": DOCS[cfg.allocator], "holding_window_days": h, "lag": lag, "opt_every": every,
-           "counts": counts, "records": records, "note": "weights at row t use the scores, returns and eligibility known at t; the backtest applies the execution lag, drift, costs and the ledger"}
+    if last_inputs is not None:
+        try:
+            last_inputs["rec"]["sensitivity"] = decision_sensitivity(last_inputs, cfg, groups)
+        except Exception as exc:                                                                 # noqa: BLE001 - a diagnostic must never take the allocation down
+            last_inputs["rec"]["sensitivity"] = {"error": str(exc)}
+    shown = [r for r in records if r.get("weights") and r.get("explain")]
+    if shown:                                                                                    # the plain-language account of the latest decision, from its own record
+        shown[-1]["narrative"] = stab.narrative(shown[-1], cfg.content())
+    log = {"version": VERSION, "config": cfg.content(), "config_hash": cfg.content_hash(), "allocator": cfg.allocator, "documentation": DOCS[cfg.allocator], "holding_window_days": L, "forecast_horizon_days": h, "lag": lag, "opt_every": every,
+           "counts": counts, "records": records, **({"fx": fx_report} if fx_report is not None else {}), "note": "weights at row t use the scores, returns and eligibility known at t; the backtest applies the execution lag, drift, costs and the ledger"}
     return weights, log
 
 

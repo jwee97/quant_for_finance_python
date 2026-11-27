@@ -73,15 +73,87 @@ Exactly: `weight = equal-weight base + risk effect + forecast effect`, where the
 * API: `POST /api/ml/rebacktest` with `signal: {method: "portfolio_allocation", holding_period: 1, allocation: {...}}`; `POST /api/ml/allocation/compare`; `GET /api/ml/allocation/catalog`.
 * The model must forecast an asset's own return (`fwd_ret_h`) or, with `forecast_kind: "probability"`, the direction of its move.
 
+## Round two: holding period, calibration, stability, adapters, currency
+
+### Why the holding period was restricted to one day, and what changed
+
+Exact cause. `signal.holding_period` is, for every other position rule, applied *after* the book is built: `signals.holding_period` averages the last `H` daily books (staggered tranches). The allocation module is not intrinsically
+one-day (it reads `window_days` and `opt_every`), but averaging its books after the fact would have meant that the weights the backtest held were an average of optima of different dates, which is a book that no optimisation
+chose, with a cost term that no longer matched the trades. The guard `config.validate` raised `the portfolio allocation weighs forecast, risk and cost itself ... set signal.holding_period to 1` was the only thing enforcing it, and
+the UI sent `holding_period: 1`. Removing the check alone would have silently averaged.
+
+What was done instead: the holding period became a first-class input of the allocation (`alloc_horizon.py`), with four quantities kept apart:
+
+| Quantity | Setting | Meaning |
+|---|---|---|
+| Prediction horizon `h` | `dataset.horizon` (`window_days`) | what the model's number forecasts; outcomes resolve `lag + h` sessions after the decision |
+| Holding window `L` | `signal.holding_period` / `allocation.holding_days` | the window the optimisation is posed over and, for tranches, how long each is held; `h` when not set |
+| Decision frequency | `allocation.opt_every` (and `backtest.rebalance` for when the engine may trade) | how often a new book is chosen |
+| Execution lag | `dataset.lag + backtest.extra_lag` | how long after a decision the first return is earned |
+
+Expected return over `L` is `mu_h * min(L, h) / h`: the edge accrues evenly within the forecast horizon and is **not extrapolated** beyond it. Covariance over `L` is one of `linear` (daily x `L`, the original rule),
+`variance_ratio` (each asset's variance scaled by its Lo-MacKinlay variance ratio from past daily returns) or `multiperiod` (overlapping `L`-day returns, blended with the linear estimate by the number of *independent* windows
+the past holds; with too few it is the linear estimate and says so).
+
+Overlapping forecasts. `lifecycle: single_book` re-optimises one book at each decision; a new forecast replaces the previous, so overlapping forecasts are never stacked into a larger position (tested). `lifecycle:
+staggered_tranches` opens a tranche every `opt_every` sessions and holds each for `L`; `ceil(L / opt_every)` overlap, each is a full book chosen by its own optimisation with the expiring tranche as its starting book (so the
+cost term matches the trades), and the held book is their mean (feasible because the limits are convex). `holding_period = 1` with no `holding_days` is exactly the original behaviour; recorded runs reproduce to the digit.
+
+Tested end to end through train, forecast, allocate, lagged execution and costs for 1-, 5-, 10- and 20-day horizons with their own holding windows, tranche counts and decision schedules.
+
+### Calibration (`alloc_calibration.py`)
+
+The pooled slope stays as the baseline. Optional: `asset` (own slope where an asset has `calib_asset_min_eff` independent windows), `partial_pooling` (empirical-Bayes shrinkage toward the pooled slope; DerSimonian-Laird
+between-asset variance, **needs three assets**), `sector_pooling` (needs a sector map and three sectors) and `regularized` (the pooled slope shrunk toward zero by a normal prior). Standard errors: the original
+`sqrt(horizon)` inflation, or `hac` (Newey-West on the per-date score, which carries the cross-asset correlation, with at least `horizon - 1` lags) or `block_bootstrap`. An effective sample size is reported. With two stocks the
+asset-level methods fall back to the pooled slope and say why. `compare_calibration` scores each method out of sample on the validation segment only and calls a method better than the baseline **only** when the interval of the
+paired HAC difference in squared error excludes zero; on the synthetic data used in the tests the methods are indistinguishable, and the output says so.
+
+### Stabilisers (`alloc_stability.py`)
+
+`w_final = (1 - alpha) w_baseline + alpha w_ML` with an equal-weight, inverse-volatility or ERC baseline; alpha is fixed, from forecast confidence, or from the best of a fixed grid by mean-variance utility over the last `blend_window`
+**resolved** past decisions (baseline until `blend_min_obs`). Also: uncertainty shrinkage (slope minus `kappa` standard errors), minimum-evidence controls (`min_n_eff`, `min_confidence`), an explicit per-decision weight-change limit
+(exact projection for a fully invested book; reported as infeasible if it cannot be honoured), concentration diagnostics, and forecast, risk-aversion and cost sensitivities. A blend that breaks a limit is projected onto the feasible
+set and the deviation is reported. The default risk aversion stays 5. `preset: conservative` is a documented set of explicit values (risk aversion 20, HAC calibration with minimum t 2, one-standard-error shrinkage, a
+confidence-weighted blend with inverse volatility capped at 0.5, 10-point weight-change limit, 60% position cap, small turnover penalty); explicit settings override it and it is not claimed to be optimal.
+
+### Optimiser adapters (`alloc_adapters.py`)
+
+| Key | Source | Reads the forecast? | Min assets | Native limits | Others |
+|---|---|---|---|---|---|
+| `herc` | `portfolio.hierarchical.herc_weights` | **no, risk-only** | 3 | none | projected, move reported |
+| `nco` | `portfolio.nco` (minimum variance) | **no, risk-only** | 4 | none | projected, move reported |
+| `nco_max_sharpe` | `portfolio.nco` (maximum Sharpe) | yes (calibrated mu, long-only per stage) | 4 | none | projected, move reported |
+| `near_optimal` | `portfolio.near_optimal` | yes | 2 | box, sum | projected |
+| `wasserstein_cvar` | `portfolio.robust_wasserstein` | **no, risk-only** | 2 (60 scenarios) | box, sum | projected |
+
+Every adapter declares required inputs, the minimum asset count, whether it uses expected returns, that it is long-only (a long-short request is refused), what it honours natively, its window, its failure behaviour and its numerical
+limitations (`GET /api/ml/allocation/catalog`). A limit an optimiser cannot honour (a position cap, a sector cap) is enforced by the Euclidean projection and the size of the move is recorded as `projection_l1`; the books are
+re-checked against every limit after allocation (tests). HERC is implemented as the risk-only allocator it is and the page labels it so.
+
+### Currency (`alloc_fx.py`)
+
+Quotation is fixed: **base currency units per one unit of the instrument's currency** (a series quoted the other way is inverted on entry). For an unhedged holding `1 + R_base = (1 + R_local)(1 + R_fx)`; with a hedge ratio `k`,
+`(1 + R_local)(1 + (1 - k) R_fx)` (carry ignored). Every rate has the time it refers to and the time it became available; a rate is used only if it was available before the date ended and is not older than `max_stale_days`.
+A missing rate is never 1 and never "no change": the conversion raises, or with `missing="exclude"` removes the asset-day and reports how many. Observed returns use the rates of their own day. A forecast made at the decision date
+needs an assumption about the exchange rate over the horizon: `random_walk` (expected FX return 0, labelled an assumption) or a caller-supplied expected FX return read only on that date; no exchange rate after the decision date is
+read (tested by rewriting the future). Costs of converting are `fx_cost_bps` of the foreign exposure traded; `currency_attribution` splits the return exactly into local and currency parts (including the cross term) by currency;
+`fx_exposure` reports exposure by currency. The original currency refusals stand when no FX context is supplied.
+
 ## Limitations and what was not implemented
 
-* Holding period must be 1 (the allocator sets the book at each decision; averaging books over a holding window is refused).
-* Forecast calibration is a slope through the origin per universe (pooled over assets); asset-specific slopes need far more history than a two-stock universe offers and are not estimated.
-* HRP needs three assets; CVaR needs 60 scenarios; Kelly needs a significant calibration. When a method is not justified it reports so and the failure policy applies.
-* Sector caps need a sector map in the dataset; without one the cap is refused rather than ignored.
-* Currency conversion is not performed: a forecast in another currency is refused.
-* Not implemented here: HERC and other Alpha Lab optimisers are not wired into this method (they remain in the Alpha Lab and `src/portfolio`). Equal weight beating the optimised books on a short sample is a common and expected result (DeMiguel, Garlappi and Uppal 2009): read the intervals, not the ranking.
+* The experiment pipeline has no exchange-rate data source: the currency layer is complete at the computational level (`run(fx=...)`, `allocator_compare.compare(fx=...)`, tests) but is not reachable from the web form, which still refuses a
+  forecast in a currency other than the portfolio's. A data ingestion for rates is the missing piece, not the arithmetic.
+* FX costs are computed beside the backtest (one cost rate for every asset is all the engine has) and are not yet subtracted inside it.
+* Partial hedging ignores the carry (interest differential) of the hedge.
+* Asset-specific and hierarchical calibration cannot be evaluated on two stocks: they fall back to the pooled slope by design. Whether they beat it on larger universes is an empirical question the comparison answers per dataset;
+  nothing here claims they do.
+* HRP, HERC and NCO need three or four assets; the Wasserstein ball radius is an assumption (10% of the mean scenario standard deviation); NCO and HERC choose their cluster count by silhouette, which can change the book discontinuously.
+* Sensitivities are computed for the latest decision only. Alpha from past resolved decisions needs a history of them (`blend_min_obs`); before that the baseline is used.
+* Fractional Kelly with a full covariance and parameter uncertainty beyond the robust and fractional forms is not implemented. Equal weight beating the optimised books on a short sample is a common and expected result (DeMiguel, Garlappi and
+  Uppal 2009): read the intervals, not the ranking.
 
 ## References
 
-Markowitz (1952); Black and Litterman (1992); Rockafellar and Uryasev (2000); Ledoit and Wolf (2004); DeMiguel, Garlappi and Uppal (2009); López de Prado (2016); Gu, Kelly and Xiu (2020).
+Markowitz (1952); Black and Litterman (1992); Rockafellar and Uryasev (2000); Ledoit and Wolf (2004); DeMiguel, Garlappi and Uppal (2009); Lo and MacKinlay (1988) for the variance ratio; Newey and West (1987); DerSimonian and Laird (1986);
+Raffinot (2018) for HERC; Lopez de Prado (2016, 2019); Gu, Kelly and Xiu (2020).
