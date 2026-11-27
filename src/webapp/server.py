@@ -32,7 +32,7 @@ from http import HTTPStatus
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, parse_qsl, urlparse
 
 from . import obs
 from .api import ApiError, App
@@ -175,13 +175,20 @@ def make_handler(app: App, token: str, port_holder: list, access: str | None = N
             self.wfile.write(body)
 
         def _log(self, status: int, size: int) -> None:
+            """One line in the request log. Whatever the request looked like (a query with too many fields, a path that does not decode), logging never raises: it must not turn an answer into a dropped connection."""
             if getattr(self, "_logged", True):
                 return
             self._logged = True
-            parsed = urlparse(self.path)
-            names = sorted({k for k, _ in __import__("urllib.parse", fromlist=["parse_qsl"]).parse_qsl(parsed.query, keep_blank_values=True, max_num_fields=MAX_QUERY_FIELDS)})
-            reqlog.write(kind="request", request_id=self._rid, method=self.command, route=parsed.path[:200], query_fields=names, status=int(status), ms=round((time.perf_counter() - self._t0) * 1000, 1), bytes=int(size),
-                         category=obs.category(status, self._error_kind))
+            try:
+                parsed = urlparse(self.path)
+                try:
+                    names = sorted({k for k, _ in parse_qsl(parsed.query, keep_blank_values=True, max_num_fields=MAX_QUERY_FIELDS)})
+                except ValueError:
+                    names = ["(too many fields)"]
+                reqlog.write(kind="request", request_id=self._rid, method=self.command, route=parsed.path[:200], query_fields=names, status=int(status), ms=round((time.perf_counter() - self._t0) * 1000, 1), bytes=int(size),
+                             category=obs.category(status, self._error_kind))
+            except Exception:                                                                 # noqa: BLE001
+                pass
 
         def _json(self, status: int, payload) -> None:
             self._send(status, json.dumps(payload, allow_nan=False).encode(), "application/json")

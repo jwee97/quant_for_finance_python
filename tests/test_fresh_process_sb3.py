@@ -20,6 +20,8 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
+from src.ml.deep import integrity  # noqa: E402
+
 from tests.fresh_process_scenarios import maxdiff, record, was_killed   # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -159,6 +161,7 @@ def test_a_damaged_newest_checkpoint_is_reported_as_approximate_and_another_conf
     for f in fit.glob("*.pt*"):
         f.unlink()
     torch.save(b, fit / "last.pt")
+    (fit / "last.pt.hmac").write_text(integrity.sign((fit / "last.pt").read_bytes()))                 # a checkpoint of another configuration that this installation wrote: signed, readable, and refused as incompatible
     bad = run(name, run_dir, "resume", tmp_path / "res2.json")
     assert bad.returncode != 0 and "CheckpointIncompatible" in bad.stderr
 

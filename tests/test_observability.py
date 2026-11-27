@@ -78,3 +78,17 @@ def test_a_log_that_cannot_be_written_never_fails_a_request(tmp_path):
     blocker = tmp_path / "logs"
     blocker.write_text("a file where the folder should be")
     obs.RequestLog(blocker / "requests.jsonl").write(kind="request", request_id="abcdefgh12", route="/x", status=200)
+
+
+def test_a_request_with_too_many_query_fields_is_answered_with_a_400_and_logged_not_dropped(live, app):
+    path = "/api/catalog?" + "&".join(f"a{i}=1" for i in range(server_fields() + 5))
+    s, body, h = _call(live, "GET", path, {"X-Token": live.token})
+    assert s in (400, 200) and h.get("x-request-id")
+    r = [x for x in lines(app) if x["request_id"] == h["x-request-id"]]
+    assert r and r[0]["query_fields"] == ["(too many fields)"]
+
+
+def server_fields():
+    from src.webapp import server
+
+    return server.MAX_QUERY_FIELDS

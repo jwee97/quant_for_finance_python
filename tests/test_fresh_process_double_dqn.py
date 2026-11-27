@@ -15,6 +15,8 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
+from src.ml.deep import integrity  # noqa: E402
+
 from tests.fresh_process_scenarios import maxdiff, record, was_killed   # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -133,6 +135,7 @@ def test_with_no_checkpoint_a_resume_starts_fresh_and_a_changed_environment_is_r
     (fit / "metrics.jsonl").unlink()
     torch.save(blob, fit / "last.pt")
     (fit / "last.pt.sha256").unlink(missing_ok=True)
+    (fit / "last.pt.hmac").write_text(integrity.sign((fit / "last.pt").read_bytes()))                    # signed by this installation, so it is read, and refused because it is another problem's
     (fit / "last.prev.pt").unlink(missing_ok=True)
     bad = run(tmp_path / "run", "resume", tmp_path / "res2.json")
     assert bad.returncode != 0 and "CheckpointIncompatible" in bad.stderr
